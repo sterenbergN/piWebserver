@@ -34,8 +34,18 @@ export async function register() {
             const parts = memLines[1].trim().split(/\s+/).filter(Boolean);
             const usedRaw = parts[2];
             const totalRaw = parts[1];
-            memUsed = parseFloat(usedRaw) || 0;
-            memTotal = parseFloat(totalRaw) || 1;
+            
+            // free -h gives human readable like 2.3G or 512M
+            const parseHuman = (str: string) => {
+              const val = parseFloat(str) || 0;
+              if (str.toUpperCase().includes('G')) return val;
+              if (str.toUpperCase().includes('M')) return val / 1024;
+              if (str.toUpperCase().includes('K')) return val / (1024 * 1024);
+              return val;
+            };
+
+            memUsed = parseHuman(usedRaw);
+            memTotal = parseHuman(totalRaw);
           } else {
             memUsed = 2.4; memTotal = 8.0; 
           }
@@ -49,7 +59,7 @@ export async function register() {
           const newEntry = {
             timestamp: new Date().toISOString(),
             temp: tempNum,
-            ramUsage: (memUsed / memTotal) * 100,
+            ramUsed: memUsed, // Store in GB
             cpuLoad: cpuLoad
           };
 

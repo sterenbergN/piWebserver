@@ -314,8 +314,8 @@ export default function AdminDashboard() {
                     <input type="text" name="caption" disabled={uploadLoading} placeholder="A beautiful sunset..." />
                   </div>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Image (Max 25MB)</label>
-                    <input type="file" name="image" accept="image/*" required disabled={uploadLoading} style={{ background: 'transparent', padding: '0.5rem 0', border: 'none' }} />
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Images (Max 25MB each)</label>
+                    <input type="file" name="image" accept="image/*" multiple required disabled={uploadLoading} style={{ background: 'transparent', padding: '0.5rem 0', border: 'none' }} />
                   </div>
                 </>
               )}

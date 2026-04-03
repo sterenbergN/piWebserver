@@ -57,31 +57,38 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const type = formData.get('type') as string;
 
-    // ── Gallery image upload ──────────────────────────────────────
+    // ── Gallery image upload (supports multiple) ─────────────────
     if (type === 'gallery') {
-      const file = formData.get('image') as File;
+      const files = formData.getAll('image') as File[];
       const caption = (formData.get('caption') as string) || '';
       const albumId = (formData.get('albumId') as string) || 'general';
-      if (!file) return NextResponse.json({ success: false, message: 'No file uploaded' }, { status: 400 });
+      
+      if (!files.length) return NextResponse.json({ success: false, message: 'No files uploaded' }, { status: 400 });
 
-      const bytes = await file.arrayBuffer();
-      const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
+      const albums = await readAlbums();
       const saveDir = path.join(base, 'gallery');
       await mkdir(saveDir, { recursive: true });
-      await writeFile(path.join(saveDir, filename), Buffer.from(bytes));
 
-      const src = `/api/media/uploads/gallery/${filename}`;
-      const albums = await readAlbums();
-      const added = findAndAddImage(albums, albumId, { src, caption });
-      if (!added) {
-        // Album not found — add to General
-        const general = albums.find(a => a.id === 'general');
-        if (general) general.images.unshift({ src, caption });
-        else albums.push({ id: 'general', name: 'General', images: [{ src, caption }], albums: [] });
+      const results = [];
+      for (const file of files) {
+        const bytes = await file.arrayBuffer();
+        const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
+        await writeFile(path.join(saveDir, filename), Buffer.from(bytes));
+
+        const src = `/api/media/uploads/gallery/${filename}`;
+        
+        // Match existing album logic
+        const added = findAndAddImage(albums, albumId, { src, caption: files.length > 1 ? '' : caption });
+        if (!added) {
+          const general = albums.find(a => a.id === 'general');
+          if (general) general.images.unshift({ src, caption: files.length > 1 ? '' : caption });
+          else albums.push({ id: 'general', name: 'General', images: [{ src, caption: files.length > 1 ? '' : caption }], albums: [] });
+        }
+        results.push(src);
       }
+      
       await saveAlbums(albums);
-
-      return NextResponse.json({ success: true, url: src });
+      return NextResponse.json({ success: true, count: files.length });
     }
 
     // ── Blog post upload ──────────────────────────────────────────

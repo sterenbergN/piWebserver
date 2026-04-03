@@ -35,7 +35,7 @@ export async function GET() {
     const { stdout: ramOut } = await execAsync("free -h | awk '/^Mem:/ {print $3 \" / \" $2}'");
 
     // Storage
-    const { stdout: diskOut } = await execAsync("df -h / | awk 'NR==2 {print $3 \" / \" $2 \" (\" $4 \" Free)\"}'");
+    const { stdout: diskOut } = await execAsync("df -h . | awk 'NR==2 {print $3 \" / \" $2 \" (\" $4 \" Free)\"}'");
 
     // System uptime
     let uptimeStr = 'N/A';

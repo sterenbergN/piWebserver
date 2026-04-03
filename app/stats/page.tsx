@@ -14,7 +14,7 @@ interface SystemStats {
 interface StatHistory {
   timestamp: string;
   temp: number;
-  ramUsage: number;
+  ramUsed: number;
   cpuLoad: number;
 }
 
@@ -28,7 +28,7 @@ const calculateAverages = (history: StatHistory[], type: StatType, mins: number)
   
   if (type === 'temp') return (relevant.reduce((acc, curr) => acc + curr.temp, 0) / relevant.length).toFixed(1) + '°C';
   if (type === 'cpu') return (relevant.reduce((acc, curr) => acc + curr.cpuLoad, 0) / relevant.length).toFixed(1) + '%';
-  if (type === 'ram') return (relevant.reduce((acc, curr) => acc + curr.ramUsage, 0) / relevant.length).toFixed(1) + '%';
+  if (type === 'ram') return (relevant.reduce((acc, curr) => acc + (curr.ramUsed || 0), 0) / relevant.length).toFixed(1) + 'GB';
   return null;
 };
 
