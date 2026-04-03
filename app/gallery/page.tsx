@@ -20,6 +20,7 @@ export default function GalleryPage() {
   const [columns, setColumns] = useState(3);
   const [showCaptions, setShowCaptions] = useState(true);
   const [cycleTime, setCycleTime] = useState(5000);
+  const [shuffleMode, setShuffleMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   // Grid
@@ -28,6 +29,7 @@ export default function GalleryPage() {
   // Picture frame
   const [frameMode, setFrameMode] = useState(false);
   const [frameIndex, setFrameIndex] = useState(0);
+  const [activeFrameImages, setActiveFrameImages] = useState<(AlbumImage & { albumId: string })[]>([]);
   const [mounted, setMounted] = useState(false);
 
   // Admin: album creation
@@ -58,10 +60,12 @@ export default function GalleryPage() {
     const savedCaps = localStorage.getItem('gal_caps');
     const savedCycle = localStorage.getItem('gal_cycle');
     const savedView = localStorage.getItem('gal_view') as 'albums' | 'all' | null;
+    const savedShuffle = localStorage.getItem('gal_shuffle');
     if (savedCols) setColumns(Number(savedCols));
     if (savedCaps) setShowCaptions(savedCaps === 'true');
     if (savedCycle) setCycleTime(Number(savedCycle));
     if (savedView) setViewMode(savedView);
+    if (savedShuffle) setShuffleMode(savedShuffle === 'true');
     loadAlbums();
   }, [loadAlbums]);
 
@@ -124,14 +128,27 @@ export default function GalleryPage() {
     : rootAlbums.flatMap(a => collectAllImages(a));
 
   useEffect(() => {
-    if (!frameMode || frameImages.length === 0) return;
-    const interval = setInterval(() => setFrameIndex(p => (p + 1) % frameImages.length), cycleTime);
+    if (!frameMode || activeFrameImages.length === 0) return;
+    const interval = setInterval(() => setFrameIndex(p => (p + 1) % activeFrameImages.length), cycleTime);
     return () => clearInterval(interval);
-  }, [frameMode, frameImages.length, cycleTime]);
+  }, [frameMode, activeFrameImages.length, cycleTime]);
 
   const startFrameMode = async () => {
     if (frameImages.length === 0) return;
-    setFrameIndex(0); setFrameMode(true); setExpandedIndex(null);
+    
+    // Proper Fisher-Yates shuffle
+    const list = [...frameImages];
+    if (shuffleMode) {
+      for (let i = list.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+      }
+    }
+    
+    setActiveFrameImages(list);
+    setFrameIndex(0); 
+    setFrameMode(true); 
+    setExpandedIndex(null);
     try { await document.documentElement.requestFullscreen(); } catch { }
   };
   const exitFrameMode = async () => {
@@ -261,7 +278,9 @@ export default function GalleryPage() {
             ) : (
               <div className="glass-panel" style={{ padding: isExpanded ? '2rem' : '0.5rem', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <div style={{ position: 'relative', width: '100%', aspectRatio: isExpanded ? 'auto' : '1/1', height: isExpanded ? '72vh' : 'auto', borderRadius: '8px', overflow: 'hidden' }}>
-                  <img src={img.src.startsWith('/api') || img.src.startsWith('http') ? img.src : `/api/media${img.src.startsWith('/') ? '' : '/'}${img.src}`} alt={img.caption}
+                  <img 
+                    src={(img.src.startsWith('/api') || img.src.startsWith('http') ? img.src : `/api/media${img.src.startsWith('/') ? '' : '/'}${img.src}`) + (isExpanded ? '' : '?w=400')} 
+                    alt={img.caption}
                     style={{ width: '100%', height: '100%', objectFit: isExpanded ? 'contain' : 'cover', transition: 'transform 0.3s' }}
                     onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.transform = 'scale(1.05)'; }}
                     onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.transform = ''; }} />
@@ -440,7 +459,7 @@ export default function GalleryPage() {
             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Columns:</label>
             <select value={columns} onChange={e => { setColumns(Number(e.target.value)); saveSetting('gal_cols', e.target.value); }}
               style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.5rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
-              <option value={2}>2</option><option value={3}>3</option><option value={4}>4</option><option value={5}>5</option>
+              {[2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
           <div>
@@ -454,6 +473,12 @@ export default function GalleryPage() {
             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Captions:</label>
             <button className={showCaptions ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => { setShowCaptions(!showCaptions); saveSetting('gal_caps', (!showCaptions).toString()); }}>
               {showCaptions ? 'On' : 'Off'}
+            </button>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Shuffle Mode:</label>
+            <button className={shuffleMode ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => { setShuffleMode(!shuffleMode); saveSetting('gal_shuffle', (!shuffleMode).toString()); }}>
+              {shuffleMode ? 'On' : 'Off'}
             </button>
           </div>
         </div>
@@ -490,9 +515,9 @@ export default function GalleryPage() {
       )}
 
       {/* Picture Frame Portal */}
-      {frameMode && mounted && frameImages.length > 0 && createPortal(
+      {frameMode && mounted && activeFrameImages.length > 0 && createPortal(
         (() => {
-          const img = frameImages[frameIndex];
+          const img = activeFrameImages[frameIndex];
           const currentAlbumPathStr = currentAlbum ? albumPathMap[currentAlbum.id] || '' : '';
           const imgAlbumPathStr = img ? albumPathMap[img.albumId] || '' : '';
           
@@ -510,8 +535,8 @@ export default function GalleryPage() {
           return (
             <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
               onClick={exitFrameMode}>
-              {frameImages.map((imgItem, i) => (
-                <img key={imgItem.src} src={imgItem.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: frameIndex === i ? 1 : 0, transition: 'opacity 1.5s ease-in-out', pointerEvents: 'none' }} />
+              {activeFrameImages.map((imgItem, i) => (
+                <img key={`${imgItem.src}-${i}`} src={imgItem.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: frameIndex === i ? 1 : 0, transition: 'opacity 1.5s ease-in-out', pointerEvents: 'none' }} />
               ))}
               {(img?.caption || relativeAlbumPath) && showCaptions && (
                 <div style={{ position: 'absolute', bottom: '3rem', background: 'rgba(0,0,0,0.6)', padding: '0.75rem 2.5rem', borderRadius: '30px', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>

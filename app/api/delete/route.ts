@@ -26,6 +26,20 @@ function removeAlbumFromTree(albums: any[], id: string): any[] {
     .map(a => ({ ...a, albums: removeAlbumFromTree(a.albums || [], id) }));
 }
 
+async function removeThumbnails(cleanPath: string) {
+  try {
+    const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
+    // Map the relative path to our thumb filename convention: replacement of separators with underscores
+    const thumbPrefix = cleanPath.startsWith('/') ? cleanPath.slice(1).replace(/[/\\:]/g, '_') : cleanPath.replace(/[/\\:]/g, '_');
+    const files = await fs.readdir(thumbDir);
+    for (const f of files) {
+      if (f.startsWith(thumbPrefix)) {
+        await fs.unlink(path.join(thumbDir, f));
+      }
+    }
+  } catch { /* Cache dir might not exist or be empty */ }
+}
+
 function removePhotoFromTree(albums: any[], src: string): any[] {
   return albums.map(a => ({
     ...a,
@@ -58,6 +72,7 @@ export async function POST(request: Request) {
         const cleanId = id.replace('/api/media', '');
         const physicalPath = path.join(process.cwd(), 'public', cleanId);
         await fs.unlink(physicalPath);
+        await removeThumbnails(cleanId);
       } catch (err) {
         console.error('Failed to unlink file:', id, err);
       }
@@ -92,6 +107,7 @@ export async function POST(request: Request) {
             const cleanSrc = src.replace('/api/media', '');
             const physicalPath = path.join(process.cwd(), 'public', cleanSrc);
             await fs.unlink(physicalPath);
+            await removeThumbnails(cleanSrc);
           } catch (err) {
             console.error('Failed to unlink file during album delete:', src, err);
           }

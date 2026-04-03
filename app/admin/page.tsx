@@ -59,28 +59,20 @@ export default function AdminDashboard() {
   }, [activeTab]);
 
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [currentUploadIndex, setCurrentUploadIndex] = useState(0);
+  const [totalUploadCount, setTotalUploadCount] = useState(0);
 
   const handleLogout = async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/'; };
 
-  const handleUploadSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setUploadLoading(true);
-    setUploadProgress(0);
-    setMessage({ text: '', type: '' });
-    const formData = new FormData(e.currentTarget);
-    formData.append('type', activeTab === 'blog-photo' ? 'blog-photo' : activeTab);
-    
-    // Using XMLHttpRequest instead of fetch to track upload progress
-    const xhr = new XMLHttpRequest();
-    
-    const uploadPromise = new Promise((resolve, reject) => {
+  const performUpload = (fd: FormData, onProgress: (p: number) => void): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) {
           const percent = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(percent);
+          onProgress(percent);
         }
       });
-
       xhr.addEventListener('load', () => {
         try {
           const data = JSON.parse(xhr.responseText);
@@ -89,25 +81,83 @@ export default function AdminDashboard() {
           reject(new Error('Invalid response'));
         }
       });
-
       xhr.addEventListener('error', () => reject(new Error('Network error')));
       xhr.open('POST', '/api/upload');
-      xhr.send(formData);
+      xhr.send(fd);
     });
+  };
 
+  const handleUploadSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    setUploadLoading(true);
+    setUploadProgress(0);
+    setMessage({ text: '', type: '' });
+    
+    const formData = new FormData(form);
+    const type = activeTab === 'blog-photo' ? 'blog-photo' : activeTab;
+    
     try {
-      const data: any = await uploadPromise;
-      if (data.success) {
-        setMessage({ text: 'Upload successful!', type: 'success' });
-        (e.target as HTMLFormElement).reset();
+      if (type === 'gallery') {
+        const fileInput = form.querySelector('input[name="image"]') as HTMLInputElement;
+        const files = fileInput?.files;
+        
+        if (files && files.length > 1) {
+          // Bulk Mode
+          setTotalUploadCount(files.length);
+          let successCount = 0;
+          
+          for (let i = 0; i < files.length; i++) {
+            setCurrentUploadIndex(i + 1);
+            setUploadProgress(0);
+            
+            const singleData = new FormData();
+            singleData.append('type', 'gallery');
+            singleData.append('albumId', formData.get('albumId') as string);
+            singleData.append('caption', ''); // Bulk skip individual captions
+            singleData.append('image', files[i]);
+            
+            try {
+              const data = await performUpload(singleData, setUploadProgress);
+              if (data.success) successCount++;
+            } catch (err) {
+              console.error(`Upload ${i+1} failed:`, err);
+            }
+          }
+          
+          setMessage({ text: `Batch upload complete: ${successCount} of ${files.length} images saved.`, type: 'success' });
+          form.reset();
+        } else {
+          // Single Mode
+          setTotalUploadCount(0);
+          formData.set('type', type);
+          const data = await performUpload(formData, setUploadProgress);
+          if (data.success) {
+            setMessage({ text: 'Upload successful!', type: 'success' });
+            form.reset();
+          } else {
+            setMessage({ text: data.message || 'Upload failed', type: 'error' });
+          }
+        }
       } else {
-        setMessage({ text: data.message || 'Upload failed', type: 'error' });
+        // Not Gallery - Single File (Blog, etc)
+        setTotalUploadCount(0);
+        formData.append('type', type);
+        const data = await performUpload(formData, setUploadProgress);
+        if (data.success) {
+          setMessage({ text: 'Upload successful!', type: 'success' });
+          form.reset();
+        } else {
+          setMessage({ text: data.message || 'Upload failed', type: 'error' });
+        }
       }
     } catch (err: any) {
       setMessage({ text: err.message || 'Network error.', type: 'error' });
     } finally {
       setUploadLoading(false);
       setUploadProgress(0);
+      setTotalUploadCount(0);
+      setCurrentUploadIndex(0);
     }
   };
 
@@ -387,7 +437,9 @@ export default function AdminDashboard() {
               {uploadLoading && (
                 <div className="animate-fade-in" style={{ marginTop: '0.5rem', width: '100%', maxWidth: '400px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--muted)' }}>Uploading...</span>
+                    <span style={{ color: 'var(--muted)' }}>
+                      {totalUploadCount > 0 ? `Uploading file ${currentUploadIndex} of ${totalUploadCount}...` : 'Uploading...'}
+                    </span>
                     <span style={{ fontWeight: 600, color: 'var(--accent-light)' }}>{uploadProgress}%</span>
                   </div>
                   <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden', border: '1px solid var(--surface-border)' }}>
