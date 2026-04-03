@@ -58,27 +58,56 @@ export default function AdminDashboard() {
     }
   }, [activeTab]);
 
+  const [uploadProgress, setUploadProgress] = useState(0);
+
   const handleLogout = async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/'; };
 
   const handleUploadSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setUploadLoading(true);
+    setUploadProgress(0);
     setMessage({ text: '', type: '' });
     const formData = new FormData(e.currentTarget);
     formData.append('type', activeTab === 'blog-photo' ? 'blog-photo' : activeTab);
+    
+    // Using XMLHttpRequest instead of fetch to track upload progress
+    const xhr = new XMLHttpRequest();
+    
+    const uploadPromise = new Promise((resolve, reject) => {
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          setUploadProgress(percent);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data);
+        } catch {
+          reject(new Error('Invalid response'));
+        }
+      });
+
+      xhr.addEventListener('error', () => reject(new Error('Network error')));
+      xhr.open('POST', '/api/upload');
+      xhr.send(formData);
+    });
+
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
+      const data: any = await uploadPromise;
       if (data.success) {
         setMessage({ text: 'Upload successful!', type: 'success' });
         (e.target as HTMLFormElement).reset();
       } else {
         setMessage({ text: data.message || 'Upload failed', type: 'error' });
       }
-    } catch {
-      setMessage({ text: 'Network error.', type: 'error' });
+    } catch (err: any) {
+      setMessage({ text: err.message || 'Network error.', type: 'error' });
     } finally {
       setUploadLoading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -353,6 +382,24 @@ export default function AdminDashboard() {
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Category (Optional)</label><input type="text" name="category" disabled={uploadLoading} placeholder="Hardware / Specifications" /></div>
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>PDF Document (Max 30MB)</label><input type="file" name="file" accept=".pdf" required disabled={uploadLoading} style={{ background: 'transparent', padding: '0.5rem 0', border: 'none' }} /></div>
                 </>
+              )}
+
+              {uploadLoading && (
+                <div className="animate-fade-in" style={{ marginTop: '0.5rem', width: '100%', maxWidth: '400px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem' }}>
+                    <span style={{ color: 'var(--muted)' }}>Uploading...</span>
+                    <span style={{ fontWeight: 600, color: 'var(--accent-light)' }}>{uploadProgress}%</span>
+                  </div>
+                  <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden', border: '1px solid var(--surface-border)' }}>
+                    <div style={{ 
+                      width: `${uploadProgress}%`, 
+                      height: '100%', 
+                      background: 'linear-gradient(90deg, var(--accent) 0%, var(--accent-light) 100%)',
+                      transition: 'width 0.2s ease-out',
+                      boxShadow: '0 0 10px var(--accent)'
+                    }} />
+                  </div>
+                </div>
               )}
 
               <button type="submit" className="btn btn-primary" disabled={uploadLoading} style={{ alignSelf: 'flex-start' }}>
