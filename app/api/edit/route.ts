@@ -24,15 +24,32 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     const { type } = body;
 
-    // ── Gallery photo caption ─────────────────────────────────────
+    // ── Gallery photo edit (caption + album move) ─────────────────
     if (type === 'gallery-photo') {
-      const { albumId, src, caption } = body;
+      const { albumId, src, caption, newAlbumId } = body;
       const albumsFile = path.join(base, 'gallery', 'albums.json');
       const albums: any[] = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
-      const album = findAlbum(albums, albumId);
-      if (!album) return NextResponse.json({ success: false, message: 'Album not found' }, { status: 404 });
-      const img = album.images.find((i: any) => i.src === src);
-      if (img) img.caption = caption;
+      
+      const sourceAlbum = findAlbum(albums, albumId);
+      if (!sourceAlbum) return NextResponse.json({ success: false, message: 'Source album not found' }, { status: 404 });
+      
+      const imgIndex = sourceAlbum.images.findIndex((i: any) => i.src === src);
+      if (imgIndex === -1) return NextResponse.json({ success: false, message: 'Image not found in source' }, { status: 404 });
+      
+      const img = sourceAlbum.images[imgIndex];
+      img.caption = caption;
+      
+      // Handle move
+      if (newAlbumId && newAlbumId !== albumId) {
+        const destAlbum = findAlbum(albums, newAlbumId);
+        if (!destAlbum) return NextResponse.json({ success: false, message: 'Destination album not found' }, { status: 404 });
+        
+        // Remove from source
+        sourceAlbum.images.splice(imgIndex, 1);
+        // Add to destination
+        destAlbum.images.push(img);
+      }
+      
       await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
       return NextResponse.json({ success: true });
     }

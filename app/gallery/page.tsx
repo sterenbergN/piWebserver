@@ -38,7 +38,7 @@ export default function GalleryPage() {
   const [albumCreating, setAlbumCreating] = useState(false);
 
   // Admin: inline caption / album rename editing
-  const [editingCaption, setEditingCaption] = useState<{ albumId: string; src: string; value: string } | null>(null);
+  const [editingCaption, setEditingCaption] = useState<{ albumId: string; src: string; value: string; newAlbumId: string } | null>(null);
   const [editingAlbumName, setEditingAlbumName] = useState<{ albumId: string; value: string } | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
 
@@ -108,6 +108,17 @@ export default function GalleryPage() {
     return map;
   }
   const albumPathMap = buildAlbumPathMap(rootAlbums);
+
+  function flattenAlbums(albums: Album[], prefix = ''): { id: string; path: string }[] {
+    let list: { id: string; path: string }[] = [];
+    for (const a of albums) {
+      const p = prefix ? `${prefix} › ${a.name}` : a.name;
+      list.push({ id: a.id, path: p });
+      list.push(...flattenAlbums(a.albums || [], p));
+    }
+    return list;
+  }
+  const flattenedAlbums = flattenAlbums(rootAlbums);
 
   const navigateInto = (album: Album) => {
     setBreadcrumb(prev => [...prev, album]);
@@ -213,9 +224,19 @@ export default function GalleryPage() {
     const res = await fetch('/api/edit', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'gallery-photo', albumId: editingCaption.albumId, src: editingCaption.src, caption: editingCaption.value })
+      body: JSON.stringify({ 
+        type: 'gallery-photo', 
+        albumId: editingCaption.albumId, 
+        src: editingCaption.src, 
+        caption: editingCaption.value,
+        newAlbumId: editingCaption.newAlbumId
+      })
     });
-    if ((await res.json()).success) { await loadAlbums(); setEditingCaption(null); }
+    if ((await res.json()).success) { 
+      await loadAlbums(); 
+      setEditingCaption(null); 
+      setExpandedIndex(null); // Close expansion as album may have changed
+    }
     setEditorSaving(false);
   };
 
@@ -251,7 +272,7 @@ export default function GalleryPage() {
               <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: '0.3rem', zIndex: 10 }}>
                 <a href={`/api/download-album?photo=${encodeURIComponent(img.src)}`} download
                   style={{ background: '#48bb78', color: 'white', border: 'none', borderRadius: '4px', padding: '0.3rem 0.55rem', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center' }}>⬇</a>
-                <button onClick={e => { e.stopPropagation(); setEditingCaption({ albumId: img.albumId, src: img.src, value: img.caption }); }}
+                <button onClick={e => { e.stopPropagation(); setEditingCaption({ albumId: img.albumId, src: img.src, value: img.caption, newAlbumId: img.albumId }); }}
                   style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✏️</button>
                 <button onClick={e => { e.stopPropagation(); handleDeletePhoto(img.src); }}
                   style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
@@ -269,8 +290,20 @@ export default function GalleryPage() {
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontSize: '0.85rem' }}>Caption</label>
                     <input value={editingCaption.value} onChange={e => setEditingCaption({ ...editingCaption, value: e.target.value })} placeholder="Caption..." />
                   </div>
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button className="btn btn-primary" onClick={saveCaptionEdit} disabled={editorSaving}>{editorSaving ? 'Saving...' : 'Save Caption'}</button>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontSize: '0.85rem' }}>Move to Album</label>
+                    <select 
+                      value={editingCaption.newAlbumId} 
+                      onChange={e => setEditingCaption({ ...editingCaption, newAlbumId: e.target.value })}
+                      style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)', width: '100%' }}
+                    >
+                      {flattenedAlbums.map(a => (
+                        <option key={a.id} value={a.id}>{a.path}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                    <button className="btn btn-primary" onClick={saveCaptionEdit} disabled={editorSaving}>{editorSaving ? 'Saving...' : 'Save Changes'}</button>
                     <button className="btn btn-secondary" onClick={() => setEditingCaption(null)}>Cancel</button>
                   </div>
                 </div>
