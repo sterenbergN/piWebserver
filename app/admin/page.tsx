@@ -4,8 +4,9 @@ import { useState, useEffect } from 'react';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; }
 interface Project { id: string; name: string; description: string; category: string; blogSlug: string; }
+interface CADProject { id: string; name: string; description: string; link: string; }
 
-type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects';
+type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -18,12 +19,18 @@ export default function AdminDashboard() {
   const [albums, setAlbums] = useState<{ id: string; name: string }[]>([]);
   // Blog posts for blog-photo selector  
   const [posts, setPosts] = useState<{ slug: string; title: string }[]>([]);
-  // Projects
   const [projects, setProjects] = useState<Project[]>([]);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [addingProject, setAddingProject] = useState(false);
   const [newProject, setNewProject] = useState({ name: '', description: '', category: '', blogSlug: '' });
   const [projectSaving, setProjectSaving] = useState(false);
+
+  // CAD Projects
+  const [cadProjects, setCadProjects] = useState<CADProject[]>([]);
+  const [editingCAD, setEditingCAD] = useState<CADProject | null>(null);
+  const [addingCAD, setAddingCAD] = useState(false);
+  const [newCAD, setNewCAD] = useState({ name: '', description: '', link: '' });
+  const [cadSaving, setCadSaving] = useState(false);
 
   const fetchStats = () => {
     fetch('/api/stats').then(r => r.json()).then(d => { if (d?.success) setStats(d.data); setStatsLoading(false); }).catch(() => setStatsLoading(false));
@@ -45,6 +52,9 @@ export default function AdminDashboard() {
     }
     if (activeTab === 'projects') {
       fetch('/api/projects').then(r => r.json()).then(d => { if (d.success) setProjects(d.projects); });
+    }
+    if (activeTab === 'cad') {
+      fetch('/api/cad').then(r => r.json()).then(d => { if (d.success) setCadProjects(d.projects); });
     }
   }, [activeTab]);
 
@@ -96,6 +106,30 @@ export default function AdminDashboard() {
     setProjects(projects.filter(p => p.id !== id));
   };
 
+  const handleAddCAD = async () => {
+    if (!newCAD.name) return;
+    setCadSaving(true);
+    const res = await fetch('/api/cad', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newCAD) });
+    const data = await res.json();
+    if (data.success) { setCadProjects([...cadProjects, data.project]); setNewCAD({ name: '', description: '', link: '' }); setAddingCAD(false); }
+    setCadSaving(false);
+  };
+
+  const handleUpdateCAD = async () => {
+    if (!editingCAD) return;
+    setCadSaving(true);
+    const res = await fetch('/api/cad', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingCAD) });
+    const data = await res.json();
+    if (data.success) { setCadProjects(cadProjects.map(p => p.id === editingCAD.id ? editingCAD : p)); setEditingCAD(null); }
+    setCadSaving(false);
+  };
+
+  const handleDeleteCAD = async (id: string) => {
+    if (!confirm('Delete this CAD project?')) return;
+    await fetch('/api/cad', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    setCadProjects(cadProjects.filter(p => p.id !== id));
+  };
+
   const msgStyle = (type: string) => ({
     padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
     background: type === 'success' ? 'rgba(72, 187, 120, 0.1)' : 'rgba(245, 101, 101, 0.1)',
@@ -109,6 +143,7 @@ export default function AdminDashboard() {
     { id: 'blog-photo', label: '🖼️ Blog Photos' },
     { id: 'library', label: '📁 Library PDF' },
     { id: 'projects', label: '🔧 Projects' },
+    { id: 'cad', label: '📐 CAD Projects' },
   ];
 
   return (
@@ -208,6 +243,56 @@ export default function AdminDashboard() {
               {projects.length === 0 && <p>No projects yet. Add one above.</p>}
             </div>
           </div>
+        ) : activeTab === 'cad' ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3>Manage CAD Projects</h3>
+              <button className="btn btn-primary" onClick={() => setAddingCAD(!addingCAD)}>
+                {addingCAD ? 'Cancel' : '+ Add CAD Project'}
+              </button>
+            </div>
+
+            {addingCAD && (
+              <div className="glass-panel animate-fade-in" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h4>New CAD Project</h4>
+                <input placeholder="CAD Project Name *" value={newCAD.name} onChange={e => setNewCAD({ ...newCAD, name: e.target.value })} />
+                <textarea placeholder="Description" value={newCAD.description} onChange={e => setNewCAD({ ...newCAD, description: e.target.value })} rows={2} />
+                <input placeholder="External Model/Part Link (e.g. Onshape URL)" value={newCAD.link} onChange={e => setNewCAD({ ...newCAD, link: e.target.value })} />
+                <button className="btn btn-primary" onClick={handleAddCAD} disabled={cadSaving} style={{ alignSelf: 'flex-start' }}>{cadSaving ? 'Saving...' : 'Add CAD Project'}</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {cadProjects.map(p => (
+                <div key={p.id}>
+                  {editingCAD?.id === p.id ? (
+                    <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <input value={editingCAD.name} onChange={e => setEditingCAD({ ...editingCAD, name: e.target.value })} placeholder="Name" />
+                      <textarea value={editingCAD.description} onChange={e => setEditingCAD({ ...editingCAD, description: e.target.value })} rows={2} placeholder="Description" />
+                      <input value={editingCAD.link} onChange={e => setEditingCAD({ ...editingCAD, link: e.target.value })} placeholder="External Link" />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" onClick={handleUpdateCAD} disabled={cadSaving}>{cadSaving ? 'Saving...' : 'Save'}</button>
+                        <button className="btn btn-secondary" onClick={() => setEditingCAD(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1 }}>
+                        <strong>{p.name}</strong>
+                        {p.link && <a href={p.link} target="_blank" rel="noreferrer" style={{ marginLeft: '0.75rem', fontSize: '0.78rem', color: 'var(--accent-light)' }}>→ View Model</a>}
+                        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', opacity: 0.7 }}>{p.description}</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.4rem 0.7rem', fontSize: '0.85rem' }} onClick={() => setEditingCAD(p)}>✏️</button>
+                        <button style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 0.7rem', cursor: 'pointer', fontSize: '0.85rem' }} onClick={() => handleDeleteCAD(p.id)}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {cadProjects.length === 0 && <p>No CAD projects yet. Add one above.</p>}
+            </div>
+          </div>
         ) : (
           /* Upload forms */
           <div className="glass-panel" style={{ padding: '2rem' }}>
@@ -240,6 +325,7 @@ export default function AdminDashboard() {
                 <>
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Title</label><input type="text" name="title" required disabled={uploadLoading} placeholder="My Blog Post" /></div>
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Description</label><input type="text" name="description" required disabled={uploadLoading} placeholder="A short summary..." /></div>
+                  <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Category</label><input type="text" name="category" required disabled={uploadLoading} placeholder="e.g. Infrastructure, Software" /></div>
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Cover Image</label><input type="file" name="image" accept="image/*" required disabled={uploadLoading} style={{ background: 'transparent', padding: '0.5rem 0', border: 'none' }} /></div>
                   <div><label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Markdown File (.md)</label><input type="file" name="markdown" accept=".md" required disabled={uploadLoading} style={{ background: 'transparent', padding: '0.5rem 0', border: 'none' }} /></div>
                 </>

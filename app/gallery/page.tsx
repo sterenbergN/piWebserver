@@ -190,7 +190,6 @@ export default function GalleryPage() {
     if (data.success) { setExpandedIndex(null); await loadAlbums(); }
   };
 
-  // ── Admin edits ───────────────────────────────────────────────────────────
   const saveCaptionEdit = async () => {
     if (!editingCaption) return;
     setEditorSaving(true);
@@ -233,6 +232,8 @@ export default function GalleryPage() {
 
             {isAdmin && !(editingCaption && editingCaption.src === img.src) && (
               <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: '0.3rem', zIndex: 10 }}>
+                <a href={`/api/download-album?photo=${encodeURIComponent(img.src)}`} download
+                  style={{ background: '#48bb78', color: 'white', border: 'none', borderRadius: '4px', padding: '0.3rem 0.55rem', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center' }}>⬇</a>
                 <button onClick={e => { e.stopPropagation(); setEditingCaption({ albumId: img.albumId, src: img.src, value: img.caption }); }}
                   style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✏️</button>
                 <button onClick={e => { e.stopPropagation(); handleDeletePhoto(img.src); }}
@@ -244,7 +245,7 @@ export default function GalleryPage() {
               <div className="glass-panel animate-fade-in" onClick={e => e.stopPropagation()}
                 style={{ display: 'flex', flexDirection: 'row', gap: '2rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <div style={{ flex: '0 0 auto', maxWidth: '360px', width: '100%' }}>
-                  <img src={img.src} alt="" style={{ width: '100%', maxHeight: '260px', objectFit: 'contain', borderRadius: '8px', display: 'block' }} />
+                  <img src={img.src.startsWith('/api') || img.src.startsWith('http') ? img.src : `/api/media${img.src.startsWith('/') ? '' : '/'}${img.src}`} alt="" style={{ width: '100%', maxHeight: '260px', objectFit: 'contain', borderRadius: '8px', display: 'block' }} />
                 </div>
                 <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '1rem', justifyContent: 'center' }}>
                   <div>
@@ -260,7 +261,7 @@ export default function GalleryPage() {
             ) : (
               <div className="glass-panel" style={{ padding: isExpanded ? '2rem' : '0.5rem', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <div style={{ position: 'relative', width: '100%', aspectRatio: isExpanded ? 'auto' : '1/1', height: isExpanded ? '72vh' : 'auto', borderRadius: '8px', overflow: 'hidden' }}>
-                  <img src={img.src} alt={img.caption}
+                  <img src={img.src.startsWith('/api') || img.src.startsWith('http') ? img.src : `/api/media${img.src.startsWith('/') ? '' : '/'}${img.src}`} alt={img.caption}
                     style={{ width: '100%', height: '100%', objectFit: isExpanded ? 'contain' : 'cover', transition: 'transform 0.3s' }}
                     onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.transform = 'scale(1.05)'; }}
                     onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.transform = ''; }} />
@@ -372,14 +373,39 @@ export default function GalleryPage() {
           <h1 style={{ marginBottom: 0 }}>{currentAlbum?.name ?? 'Gallery'}</h1>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {isAdmin && (
-            <button className="btn btn-secondary" onClick={() => setAddingAlbum(!addingAlbum)}>
-              {addingAlbum ? 'Cancel' : '+ New Album'}
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          
+          {/* Admin & Tooling Group */}
+          <div style={{ display: 'flex', background: 'var(--card-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px', padding: '0.25rem', gap: '0.25rem' }}>
+            {isAdmin && (
+              <button 
+                onClick={() => setAddingAlbum(!addingAlbum)}
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem', borderRadius: '6px', border: 'none', background: addingAlbum ? 'var(--accent)' : 'transparent', color: addingAlbum ? 'white' : 'var(--foreground)', cursor: 'pointer', transition: 'all 0.2s' }}>
+                {addingAlbum ? '✕ Cancel' : '+ New Album'}
+              </button>
+            )}
+            {isAdmin && (
+              <button 
+                onClick={() => window.location.href = `/api/download-album?id=${currentAlbum ? currentAlbum.id : 'all'}`} 
+                title="Download Album ZIP"
+                style={{ padding: '0.4rem 0.6rem', fontSize: '1rem', lineHeight: 1, borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--foreground)', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0 }}>
+                ⬇
+              </button>
+            )}
+            <button 
+              onClick={() => setShowSettings(!showSettings)} 
+              title="Display Settings"
+              style={{
+                padding: '0.4rem 0.6rem', fontSize: '1rem', lineHeight: 1, borderRadius: '6px', border: 'none',
+                background: showSettings ? 'var(--accent)' : 'transparent',
+                color: showSettings ? 'white' : 'var(--foreground)',
+                cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0
+              }}>
+              ⚙
             </button>
-          )}
-          <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)}>⚙️ Settings</button>
-          <button className="btn btn-primary" onClick={startFrameMode} disabled={frameImages.length === 0}>Picture Frame</button>
+          </div>
+
+          <button className="btn btn-primary" onClick={startFrameMode} disabled={frameImages.length === 0}>📷 Picture Frame</button>
         </div>
       </div>
 
@@ -465,17 +491,45 @@ export default function GalleryPage() {
 
       {/* Picture Frame Portal */}
       {frameMode && mounted && frameImages.length > 0 && createPortal(
-        <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-          onClick={exitFrameMode}>
-          {frameImages.map((img, i) => (
-            <img key={img.src} src={img.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: frameIndex === i ? 1 : 0, transition: 'opacity 1.5s ease-in-out', pointerEvents: 'none' }} />
-          ))}
-          {frameImages[frameIndex]?.caption && showCaptions && (
-            <div style={{ position: 'absolute', bottom: '3rem', background: 'rgba(0,0,0,0.6)', padding: '0.75rem 2.5rem', borderRadius: '30px', color: 'white', fontSize: '1.4rem', pointerEvents: 'none' }}>
-              {frameImages[frameIndex].caption}
+        (() => {
+          const img = frameImages[frameIndex];
+          const currentAlbumPathStr = currentAlbum ? albumPathMap[currentAlbum.id] || '' : '';
+          const imgAlbumPathStr = img ? albumPathMap[img.albumId] || '' : '';
+          
+          let relativeAlbumPath = '';
+          if (imgAlbumPathStr && imgAlbumPathStr !== currentAlbumPathStr && currentAlbumPathStr) {
+            if (imgAlbumPathStr.startsWith(currentAlbumPathStr + ' › ')) {
+              relativeAlbumPath = imgAlbumPathStr.substring((currentAlbumPathStr + ' › ').length);
+            } else {
+              relativeAlbumPath = imgAlbumPathStr;
+            }
+          } else if (!currentAlbumPathStr) {
+            relativeAlbumPath = imgAlbumPathStr;
+          }
+
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              onClick={exitFrameMode}>
+              {frameImages.map((imgItem, i) => (
+                <img key={imgItem.src} src={imgItem.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: frameIndex === i ? 1 : 0, transition: 'opacity 1.5s ease-in-out', pointerEvents: 'none' }} />
+              ))}
+              {(img?.caption || relativeAlbumPath) && showCaptions && (
+                <div style={{ position: 'absolute', bottom: '3rem', background: 'rgba(0,0,0,0.6)', padding: '0.75rem 2.5rem', borderRadius: '30px', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>
+                  {relativeAlbumPath && (
+                    <div style={{ fontSize: '0.85rem', opacity: 0.7, fontStyle: 'italic', marginBottom: img?.caption ? '0.2rem' : 0 }}>
+                      {relativeAlbumPath}
+                    </div>
+                  )}
+                  {img?.caption && (
+                    <div style={{ fontSize: '1.4rem' }}>
+                      {img.caption}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-        </div>,
+          );
+        })(),
         document.body
       )}
     </div>

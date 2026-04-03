@@ -88,6 +88,7 @@ export async function POST(request: Request) {
     if (type === 'blog') {
       const title = formData.get('title') as string;
       const description = formData.get('description') as string;
+      const category = (formData.get('category') as string) || 'Uncategorized';
       const image = formData.get('image') as File;
       const mdFile = formData.get('markdown') as File;
 
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
       try { posts = JSON.parse(await readFile(postsFile, 'utf-8')); } catch { }
 
       const newPost = {
-        slug, title, description,
+        slug, title, description, category,
         image: `/uploads/blog/${imageFilename}`,
         date: new Date().toISOString(),
         photos: []
@@ -120,10 +121,54 @@ export async function POST(request: Request) {
 
       // Create per-post album nested inside the master "Blog Post Images" album
       const albums = await readAlbums();
-      ensurePostAlbum(albums, slug, title);
+      const postAlbum = ensurePostAlbum(albums, slug, title);
+      postAlbum.images.push({ src: `/api/media/uploads/blog/${imageFilename}`, caption: 'Cover' });
       await saveAlbums(albums);
 
       return NextResponse.json({ success: true, post: newPost });
+    }
+
+    // ── Blog update markdown ──────────────────────────────────────
+    if (type === 'blog-update-md') {
+      const slug = formData.get('slug') as string;
+      const mdFile = formData.get('markdown') as File;
+      if (!slug || !mdFile) return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+
+      const blogDir = path.join(base, 'blog');
+      await writeFile(path.join(blogDir, `${slug}.md`), Buffer.from(await mdFile.arrayBuffer()));
+      return NextResponse.json({ success: true });
+    }
+
+    // ── Blog update image ─────────────────────────────────────────
+    if (type === 'blog-update-image') {
+      const slug = formData.get('slug') as string;
+      const image = formData.get('image') as File;
+      if (!slug || !image) return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+
+      const blogDir = path.join(base, 'blog');
+      const imageExt = path.extname(image.name) || '.jpg';
+      const imageFilename = `${slug}-img-${Date.now()}${imageExt}`;
+      const newImagePath = `/uploads/blog/${imageFilename}`;
+
+      await writeFile(path.join(blogDir, imageFilename), Buffer.from(await image.arrayBuffer()));
+
+      const postsFile = path.join(blogDir, 'posts.json');
+      let posts: any[] = [];
+      try { posts = JSON.parse(await readFile(postsFile, 'utf-8')); } catch { }
+      const postIdx = posts.findIndex((p: any) => p.slug === slug);
+      if (postIdx > -1) {
+        // Option to delete old file here if we want, ignoring for safety
+        posts[postIdx].image = newImagePath;
+        await writeFile(postsFile, JSON.stringify(posts, null, 2));
+
+        // Sync to gallery album
+        const albums = await readAlbums();
+        const postAlbum = ensurePostAlbum(albums, slug, posts[postIdx].title || slug);
+        postAlbum.images.push({ src: `/api/media${newImagePath}`, caption: 'Cover' });
+        await saveAlbums(albums);
+      }
+
+      return NextResponse.json({ success: true, image: newImagePath });
     }
 
     // ── Blog extra photos ─────────────────────────────────────────

@@ -11,6 +11,13 @@ interface Project {
   blogSlug: string;
 }
 
+interface CADProject {
+  id: string;
+  name: string;
+  description: string;
+  link: string;
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   Automation: '#3182ce',
   Infrastructure: '#6b46c1',
@@ -21,6 +28,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [cadProjects, setCadProjects] = useState<CADProject[]>([]);
+  const [cadExpanded, setCadExpanded] = useState(false);
   const [showEmailPopup, setShowEmailPopup] = useState(false);
   const [emailCopied, setEmailCopied] = useState(false);
   const EMAIL = 'NoahSterenberg@gmail.com';
@@ -35,6 +44,9 @@ export default function Home() {
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => {
       if (d.success) setProjects(d.projects);
+    });
+    fetch('/api/cad').then(r => r.json()).then(d => {
+      if (d.success) setCadProjects(d.projects);
     });
   }, []);
 
@@ -66,12 +78,32 @@ export default function Home() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>
             LinkedIn
           </a>
-          <button onClick={() => setShowEmailPopup(true)}
-            className="btn btn-secondary" style={{ gap: '0.5rem', alignItems: 'center', display: 'flex', cursor: 'pointer' }}>
+          <button onClick={() => setShowEmailPopup(!showEmailPopup)}
+            className="btn btn-secondary" style={{ gap: '0.5rem', alignItems: 'center', display: 'flex', cursor: 'pointer', background: showEmailPopup ? 'var(--surface-hover)' : '' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
             Email Me
           </button>
         </div>
+
+        {showEmailPopup && (
+          <div className="glass-panel animate-fade-in" style={{ marginTop: '2rem', maxWidth: '380px', margin: '2rem auto 0', display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
+            <div>
+              <h3 style={{ marginBottom: '0.4rem', fontSize: '1.2rem' }}>Contact Me</h3>
+              <p style={{ margin: 0, fontSize: '0.9rem', opacity: 0.65 }}>Reach out via email</p>
+            </div>
+            <div style={{ background: 'var(--card-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px', padding: '0.85rem', fontFamily: 'monospace', fontSize: '1rem', letterSpacing: '0.03em', wordBreak: 'break-all' }}>
+              {EMAIL}
+            </div>
+            <div style={{ display: 'flex', gap: '0.6rem' }}>
+              <button className="btn btn-primary" onClick={handleCopyEmail} style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem' }}>
+                {emailCopied ? '✅ Copied' : '📋 Copy'}
+              </button>
+              <a href={`mailto:${EMAIL}`} className="btn btn-secondary" style={{ flex: 1, padding: '0.6rem', fontSize: '0.85rem', textAlign: 'center' }}>
+                ✉️ Mail App
+              </a>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Experience & Skills */}
@@ -147,6 +179,60 @@ export default function Home() {
         </div>
       </section>
 
+      {/* CAD Projects */}
+      {cadProjects.length > 0 && (
+        <section className="glass-panel animate-fade-in" style={{ padding: '0' }}>
+          <div style={{ padding: '2rem 2rem 1rem', textAlign: 'center' }}>
+            <h2 style={{ marginBottom: '0.5rem' }}>CAD Models & Designs</h2>
+            <p style={{ margin: 0 }}>View external hosted 3D parts and models.</p>
+          </div>
+          <div style={{
+            padding: '1rem 2rem 2rem',
+            maxHeight: cadExpanded ? '10000px' : '380px',
+            overflow: 'hidden',
+            transition: 'max-height 0.5s ease',
+            position: 'relative'
+          }}>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+              {cadProjects.map(cad => (
+                <div key={cad.id} style={{
+                  background: 'var(--card-bg)', borderRadius: '10px', padding: '1.25rem',
+                  border: '1px solid var(--surface-border)', display: 'flex', flexDirection: 'column', gap: '0.5rem'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontSize: '1.05rem', margin: 0 }}>{cad.name}</h3>
+                    {cad.link && (
+                      <a href={cad.link} target="_blank" rel="noreferrer" title="View Model" style={{ color: 'var(--accent-light)' }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                      </a>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '0.85rem', margin: 0, opacity: 0.8 }}>{cad.description}</p>
+                </div>
+              ))}
+            </div>
+
+            {!cadExpanded && cadProjects.length > 3 && (
+              <div style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0, height: '120px',
+                background: 'linear-gradient(to bottom, transparent, var(--surface-glass) 60%, var(--surface-glass))',
+                display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: '1.5rem',
+                borderBottomLeftRadius: '16px', borderBottomRightRadius: '16px'
+              }}>
+                <button className="btn btn-secondary" onClick={() => setCadExpanded(true)} style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                  Show All CAD Projects
+                </button>
+              </div>
+            )}
+          </div>
+          {cadExpanded && cadProjects.length > 3 && (
+            <div style={{ textAlign: 'center', paddingBottom: '2rem' }}>
+              <button className="btn btn-secondary" onClick={() => setCadExpanded(false)}>Show Less</button>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Philosophy */}
       <section className="glass-panel animate-fade-in" style={{ textAlign: 'center' }}>
         <h2>Self-Hosted Architecture</h2>
@@ -155,36 +241,7 @@ export default function Home() {
         </p>
       </section>
 
-      {/* Email popup modal */}
-      {showEmailPopup && (
-        <div
-          onClick={() => setShowEmailPopup(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div
-            onClick={e => e.stopPropagation()}
-            className="glass-panel animate-fade-in"
-            style={{ width: '100%', maxWidth: '380px', display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
-            <div>
-              <h3 style={{ marginBottom: '0.4rem' }}>Contact Me</h3>
-              <p style={{ margin: 0, fontSize: '0.9rem', opacity: 0.65 }}>Reach out via email</p>
-            </div>
-            <div style={{ background: 'var(--card-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px', padding: '0.85rem 1.25rem', fontFamily: 'monospace', fontSize: '1rem', letterSpacing: '0.03em' }}>
-              {EMAIL}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              <button className="btn btn-primary" onClick={handleCopyEmail} style={{ width: '100%', justifyContent: 'center' }}>
-                {emailCopied ? '✅ Copied!' : '📋 Copy to Clipboard'}
-              </button>
-              <a href={`mailto:${EMAIL}`} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', textAlign: 'center' }}>
-                ✉️ Open Mail App
-              </a>
-              <button className="btn btn-secondary" onClick={() => setShowEmailPopup(false)} style={{ width: '100%', justifyContent: 'center' }}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
     </div>
   );

@@ -53,9 +53,14 @@ export async function POST(request: Request) {
         await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
       } catch { /* albums.json may not exist yet */ }
 
-      // id here is the full `src` string; extract filename for file deletion
-      const filename = id.split('/').pop() || '';
-      try { await fs.unlink(path.join(baseDir, 'gallery', filename)); } catch { }
+      // id here is the full `src` string; map it properly to the public folder
+      try {
+        const cleanId = id.replace('/api/media', '');
+        const physicalPath = path.join(process.cwd(), 'public', cleanId);
+        await fs.unlink(physicalPath);
+      } catch (err) {
+        console.error('Failed to unlink file:', id, err);
+      }
 
       // Also remove from any blog post's photos[] array
       try {
@@ -83,10 +88,12 @@ export async function POST(request: Request) {
       if (target) {
         const srcs = collectAllImages(target);
         for (const src of srcs) {
-          const filename = src.split('/').pop() || '';
-          // Only delete files from gallery uploads dir (not blog photos)
-          if (src.includes('/uploads/gallery/')) {
-            try { await fs.unlink(path.join(baseDir, 'gallery', filename)); } catch { }
+          try {
+            const cleanSrc = src.replace('/api/media', '');
+            const physicalPath = path.join(process.cwd(), 'public', cleanSrc);
+            await fs.unlink(physicalPath);
+          } catch (err) {
+            console.error('Failed to unlink file during album delete:', src, err);
           }
         }
       }
@@ -104,8 +111,29 @@ export async function POST(request: Request) {
       if (target) {
         posts = posts.filter(p => p.slug !== id);
         await fs.writeFile(bFile, JSON.stringify(posts, null, 2));
+        
+        // Unlink markdown and cover
         try { await fs.unlink(path.join(bDir, `${id}.md`)); } catch { }
         try { await fs.unlink(path.join(process.cwd(), 'public', target.image)); } catch { }
+        
+        // Unlink all inline photos
+        if (target.photos && Array.isArray(target.photos)) {
+          for (const ph of target.photos) {
+            try { 
+              const cleanSrc = ph.src.replace('/api/media', '');
+              await fs.unlink(path.join(process.cwd(), 'public', cleanSrc)); 
+            } catch { }
+          }
+        }
+
+        // Remove the synchronized album from albums.json
+        try {
+          const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
+          let albums = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
+          albums = removeAlbumFromTree(albums, id); // id is slug
+          await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
+        } catch { }
+
       }
       return NextResponse.json({ success: true });
     }

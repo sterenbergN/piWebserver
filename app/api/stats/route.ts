@@ -26,7 +26,7 @@ export async function GET() {
     const { stdout: tempOut } = await execAsync('vcgencmd measure_temp || cat /sys/class/thermal/thermal_zone0/temp');
     let tempStr = 'Unknown';
     if (tempOut.includes('temp=')) {
-      tempStr = tempOut.replace('temp=', '').trim();
+      tempStr = tempOut.replace('temp=', '').trim().replace("'", '°');
     } else if (!isNaN(Number(tempOut.trim()))) {
       tempStr = `${(Number(tempOut.trim()) / 1000).toFixed(1)}°C`;
     }

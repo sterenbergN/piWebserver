@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
-interface BlogPost { slug: string; title: string; description: string; image: string; date: string; }
-interface EditState { slug: string; title: string; description: string; }
+interface BlogPost { slug: string; title: string; description: string; image: string; date: string; category?: string; }
+interface EditState { slug: string; title: string; description: string; category?: string; }
 
 const ICON_BTN: React.CSSProperties = {
   padding: '0.4rem 0.55rem', fontSize: '1rem', lineHeight: 1, borderRadius: '8px',
@@ -24,6 +24,7 @@ export default function BlogPage() {
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'name'>('date-desc');
   const [viewMode, setViewMode] = useState<'list' | 'tile'>('list');
   const [tileColumns, setTileColumns] = useState(3);
+  const [groupCategory, setGroupCategory] = useState(false);
 
   const saveSetting = (k: string, v: string) => localStorage.setItem(k, v);
 
@@ -38,9 +39,11 @@ export default function BlogPage() {
     const sv = localStorage.getItem('blog_sort') as typeof sortBy | null;
     const vv = localStorage.getItem('blog_view') as typeof viewMode | null;
     const cv = localStorage.getItem('blog_cols');
+    const gv = localStorage.getItem('blog_group');
     if (sv) setSortBy(sv);
     if (vv) setViewMode(vv);
     if (cv) setTileColumns(Number(cv));
+    if (gv) setGroupCategory(gv === 'true');
     fetchPosts();
   }, []);
 
@@ -61,9 +64,9 @@ export default function BlogPage() {
   const handleSaveEdit = async () => {
     if (!editing) return;
     setSaving(true);
-    const res = await fetch('/api/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blog', slug: editing.slug, title: editing.title, description: editing.description }) });
+    const res = await fetch('/api/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blog', slug: editing.slug, title: editing.title, description: editing.description, category: editing.category || 'Uncategorized' }) });
     if ((await res.json()).success) {
-      setPosts(posts.map(p => p.slug === editing.slug ? { ...p, title: editing.title, description: editing.description } : p));
+      setPosts(posts.map(p => p.slug === editing.slug ? { ...p, title: editing.title, description: editing.description, category: editing.category || 'Uncategorized' } : p));
       setEditing(null);
     }
     setSaving(false);
@@ -83,6 +86,10 @@ export default function BlogPage() {
           <div>
             <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Description</label>
             <input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} placeholder="Brief description" />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Category</label>
+            <input value={editing.category || ''} onChange={e => setEditing({ ...editing, category: e.target.value })} placeholder="e.g. Infrastructure" />
           </div>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <button className="btn btn-primary" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
@@ -116,7 +123,7 @@ export default function BlogPage() {
         </Link>
         {isAdmin && !editing && (
           <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.35rem' }}>
-            <button onClick={e => { e.preventDefault(); setEditing({ slug: post.slug, title: post.title, description: post.description }); }}
+            <button onClick={e => { e.preventDefault(); setEditing({ slug: post.slug, title: post.title, description: post.description, category: post.category }); }}
               style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✏️</button>
             <button onClick={e => { e.preventDefault(); handleDelete(post.slug); }}
               style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
@@ -145,6 +152,13 @@ export default function BlogPage() {
               <option value="date-asc">Date (Oldest First)</option>
               <option value="name">Name (A–Z)</option>
             </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontSize: '0.82rem' }}>Group</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', cursor: 'pointer', padding: '0.5rem 0' }}>
+              <input type="checkbox" checked={groupCategory} onChange={e => { setGroupCategory(e.target.checked); saveSetting('blog_group', String(e.target.checked)); }} />
+              By Category
+            </label>
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontSize: '0.82rem' }}>View</label>
@@ -180,6 +194,30 @@ export default function BlogPage() {
           <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}>
             <h3>No Posts Yet</h3>
             <p>Login and use the Admin panel to publish your first blog post.</p>
+          </div>
+        ) : groupCategory ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3rem' }}>
+            {Object.entries(
+              sortedPosts.reduce((acc, obj) => {
+                const cat = obj.category || 'Uncategorized';
+                acc[cat] = acc[cat] || [];
+                acc[cat].push(obj);
+                return acc;
+              }, {} as Record<string, BlogPost[]>)
+            ).sort(([a], [b]) => a.localeCompare(b)).map(([cat, groupedPosts]) => (
+              <div key={cat}>
+                <h2 style={{ fontSize: '1.4rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--surface-border)', paddingBottom: '0.5rem', display: 'inline-block' }}>{cat}</h2>
+                {viewMode === 'list' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    {groupedPosts.map(renderCard)}
+                  </div>
+                ) : (
+                  <div className="grid" style={{ gridTemplateColumns: `repeat(${tileColumns}, minmax(0, 1fr))`, gap: '1.5rem' }}>
+                    {groupedPosts.map(renderCard)}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         ) : viewMode === 'list' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>

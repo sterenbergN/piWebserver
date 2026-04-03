@@ -19,6 +19,10 @@ export default function BlogPost() {
   const [editingPhoto, setEditingPhoto] = useState<{ src: string; description: string } | null>(null);
   const [savingPhoto, setSavingPhoto] = useState(false);
 
+  // Update files state
+  const [updatingMode, setUpdatingMode] = useState<'md' | 'image' | null>(null);
+  const [updateLoading, setUpdateLoading] = useState(false);
+
   useEffect(() => {
     fetch(`/api/blog/${slug}`)
       .then(res => res.json())
@@ -54,6 +58,35 @@ export default function BlogPost() {
     setSavingPhoto(false);
   };
 
+  const handleUpdateFile = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!updatingMode) return;
+    setUpdateLoading(true);
+    const formData = new FormData(e.currentTarget);
+    formData.append('type', updatingMode === 'md' ? 'blog-update-md' : 'blog-update-image');
+    formData.append('slug', slug);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success) {
+        if (updatingMode === 'md') {
+          // reload the page to get the fresh markdown
+          window.location.reload();
+        } else if (updatingMode === 'image' && data.image) {
+          setPost((prev: any) => ({ ...prev, image: data.image }));
+          setUpdatingMode(null);
+        }
+      } else {
+        alert(data.message || 'Update failed');
+      }
+    } catch {
+      alert('Network error during update.');
+    } finally {
+      setUpdateLoading(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: '4rem', textAlign: 'center' }}>Loading...</div>;
 
   const imageSrc = post?.image
@@ -76,6 +109,29 @@ export default function BlogPost() {
             <p style={{ fontSize: '0.85rem', opacity: 0.5, marginBottom: '2rem' }}>
               {new Date(post.date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
+            {isAdmin && (
+              <div style={{ marginBottom: '2rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                <button className="btn btn-secondary" onClick={() => setUpdatingMode(updatingMode === 'image' ? null : 'image')} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+                  {updatingMode === 'image' ? 'Cancel' : '🖼️ Change Cover'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => setUpdatingMode(updatingMode === 'md' ? null : 'md')} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+                  {updatingMode === 'md' ? 'Cancel' : '📝 Update Markdown'}
+                </button>
+              </div>
+            )}
+
+            {updatingMode && (
+              <div className="glass-panel animate-fade-in" style={{ marginBottom: '2rem', padding: '1.5rem', textAlign: 'left', maxWidth: '400px', margin: '0 auto 2rem' }}>
+                <h4 style={{ marginBottom: '1rem', textAlign: 'center' }}>{updatingMode === 'md' ? 'Upload New Content (.md)' : 'Upload New Cover Image'}</h4>
+                <form onSubmit={handleUpdateFile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <input type="file" name={updatingMode === 'md' ? 'markdown' : 'image'} accept={updatingMode === 'md' ? '.md' : 'image/*'} required disabled={updateLoading} />
+                  <button type="submit" className="btn btn-primary" disabled={updateLoading} style={{ width: '100%', justifyContent: 'center' }}>
+                    {updateLoading ? 'Uploading...' : 'Save Update'}
+                  </button>
+                </form>
+              </div>
+            )}
+
             {imageSrc && (
               <div style={{ width: '100%', maxHeight: '500px', borderRadius: '16px', overflow: 'hidden', marginBottom: '3rem' }}>
                 <img src={imageSrc} alt={post.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

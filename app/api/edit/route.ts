@@ -51,13 +51,14 @@ export async function PATCH(request: Request) {
 
     // ── Blog post metadata ────────────────────────────────────────
     if (type === 'blog') {
-      const { slug, title, description } = body;
+      const { slug, title, description, category } = body;
       const postsFile = path.join(base, 'blog', 'posts.json');
       const posts: any[] = JSON.parse(await fs.readFile(postsFile, 'utf-8'));
       const post = posts.find(p => p.slug === slug);
       if (!post) return NextResponse.json({ success: false, message: 'Post not found' }, { status: 404 });
       if (title !== undefined) post.title = title;
       if (description !== undefined) post.description = description;
+      if (category !== undefined) post.category = category;
       await fs.writeFile(postsFile, JSON.stringify(posts, null, 2));
       return NextResponse.json({ success: true });
     }
