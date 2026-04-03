@@ -1,0 +1,39 @@
+[
+  {
+    "id": "general",
+    "name": "General",
+    "images": [
+      {
+        "src": "/api/media/uploads/gallery/1775160487408-PARA0102.JPG",
+        "caption": "testasdf"
+      },
+      {
+        "src": "/api/media/uploads/gallery/1775077687145-PARA0065.JPG",
+        "caption": "hello"
+      }
+    ],
+    "albums": []
+  },
+  {
+    "id": "blog-post-images",
+    "name": "Blog Post Images",
+    "images": [],
+    "albums": [
+      {
+        "id": "sf",
+        "name": "sf",
+        "images": [
+          {
+            "src": "/api/media/uploads/blog/sf-photo-1775159824449.JPG",
+            "caption": "asdfasd"
+          },
+          {
+            "src": "/api/media/uploads/blog/sf-photo-1775160440296.JPG",
+            "caption": "A Test of the blog by adding the readme"
+          }
+        ],
+        "albums": []
+      }
+    ]
+  }
+]

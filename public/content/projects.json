@@ -1,0 +1,9 @@
+[
+  {
+    "id": "pi-dashboard",
+    "name": "Pi Dashboard",
+    "description": "Self-hosted personal website and system monitor running on a Raspberry Pi, built with Next.js and a custom glassmorphism design system.",
+    "category": "Infrastructure",
+    "blogSlug": "sf"
+  }
+]
