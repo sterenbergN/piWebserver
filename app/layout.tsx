@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Navbar from "@/components/Navbar";
-import { ThemeProvider } from "@/components/ThemeProvider";
+import Navbar from "../components/Navbar";
+import { ThemeProvider } from "../components/ThemeProvider";
 import { cookies } from "next/headers";
 import "./globals.css";
 

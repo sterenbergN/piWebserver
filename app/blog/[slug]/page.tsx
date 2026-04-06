@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import ReactMarkdown from 'react-markdown';
+import Markdown from 'react-markdown';
 
 export default function BlogPost() {
   const params = useParams();
@@ -95,6 +95,7 @@ export default function BlogPost() {
   const photos: any[] = post?.photos || [];
   const currentPhoto = photos[photoIndex];
 
+
   return (
     <div className="animate-fade-in" style={{ padding: '2rem 0' }}>
       <div style={{ maxWidth: '900px', margin: '0 auto', paddingBottom: '4rem' }}>
@@ -142,7 +143,16 @@ export default function BlogPost() {
 
         {/* Markdown Body */}
         <div className="glass-panel markdown-body" style={{ padding: '2.5rem', lineHeight: 1.85 }}>
-          <ReactMarkdown>{markdown}</ReactMarkdown>
+          <Markdown
+            components={{
+              a: ({ node, ...props}) => (
+                <a {...props} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                style={{ color: 'var(--accent)', textDecoration: 'underline' }} />
+              ),
+            }}
+          >{markdown}</Markdown>
         </div>
 
         {/* Photo Gallery Strip */}

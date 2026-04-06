@@ -381,6 +381,37 @@ export default function AdminDashboard() {
               {/* Gallery */}
               {activeTab === 'gallery' && (
                 <>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary" 
+                      style={{ fontSize: '0.85rem', padding: '0.5rem 1rem' }}
+                      onClick={async () => {
+                        if (!confirm('Re-scan disk and repair gallery entries? This will add any orphaned files to General.')) return;
+                        setUploadLoading(true);
+                        try {
+                          const res = await fetch('/api/gallery/repair', { method: 'POST' });
+                          const data = await res.json();
+                          if (data.success) {
+                            setMessage({ text: `Repair complete! Added ${data.added} missing images.`, type: 'success' });
+                            // Reload albums to show changes
+                            const galRes = await fetch('/api/gallery');
+                            const galData = await galRes.json();
+                            if (galData.success) setAlbums(galData.albums);
+                          } else {
+                            setMessage({ text: data.message || 'Repair failed.', type: 'error' });
+                          }
+                        } catch {
+                          setMessage({ text: 'Network error during repair.', type: 'error' });
+                        } finally {
+                          setUploadLoading(false);
+                        }
+                      }}
+                      disabled={uploadLoading}
+                    >
+                      🛠️ Repair & Re-scan
+                    </button>
+                  </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Album</label>
                     <select name="albumId" style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
