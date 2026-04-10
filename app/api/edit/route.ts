@@ -108,13 +108,14 @@ export async function PATCH(request: Request) {
 
     // ── Library document ──────────────────────────────────────────
     if (type === 'library') {
-      const { url, name, category } = body;
+      const { url, name, category, note } = body;
       const libraryFile = path.join(base, 'library', 'library.json');
       const docs: any[] = JSON.parse(await fs.readFile(libraryFile, 'utf-8'));
       const doc = docs.find(d => d.url === url);
       if (!doc) return NextResponse.json({ success: false, message: 'Document not found' }, { status: 404 });
       if (name !== undefined) doc.name = name;
       if (category !== undefined) doc.category = category;
+      if (note !== undefined) doc.note = note;
       await fs.writeFile(libraryFile, JSON.stringify(docs, null, 2));
       return NextResponse.json({ success: true });
     }

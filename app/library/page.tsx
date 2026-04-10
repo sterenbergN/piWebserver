@@ -12,9 +12,10 @@ export default function LibraryPage() {
   const [groupBy, setGroupBy] = useState(true);
   const [displayMode, setDisplayMode] = useState<'compact' | 'detailed'>('detailed');
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
+  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
 
   // Edit state
-  const [editingDoc, setEditingDoc] = useState<{ url: string; name: string; category: string } | null>(null);
+  const [editingDoc, setEditingDoc] = useState<{ url: string; name: string; category: string; note: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -53,10 +54,10 @@ export default function LibraryPage() {
   const handleSaveEdit = async () => {
     if (!editingDoc) return;
     setSaving(true);
-    const res = await fetch('/api/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'library', url: editingDoc.url, name: editingDoc.name, category: editingDoc.category }) });
+    const res = await fetch('/api/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'library', url: editingDoc.url, name: editingDoc.name, category: editingDoc.category, note: editingDoc.note }) });
     const data = await res.json();
     if (data.success) {
-      setDocuments(documents.map(d => d.url === editingDoc.url ? { ...d, name: editingDoc.name, category: editingDoc.category } : d));
+      setDocuments(documents.map(d => d.url === editingDoc.url ? { ...d, name: editingDoc.name, category: editingDoc.category, note: editingDoc.note } : d));
       setEditingDoc(null);
     }
     setSaving(false);
@@ -72,11 +73,15 @@ export default function LibraryPage() {
           <h3 style={{ marginBottom: 0 }}>Edit Document</h3>
           <div>
             <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Title</label>
-            <input value={editingDoc.name} onChange={e => { const d = editingDoc; setEditingDoc({ url: d.url, name: e.target.value, category: d.category }); }} placeholder="Document title" />
+            <input value={editingDoc.name} onChange={e => { const d = editingDoc; setEditingDoc({ url: d.url, name: e.target.value, category: d.category, note: d.note }); }} placeholder="Document title" />
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Category</label>
-            <input value={editingDoc.category} onChange={e => { const d = editingDoc; setEditingDoc({ url: d.url, name: d.name, category: e.target.value }); }} placeholder="e.g. Hardware, Specifications" />
+            <input value={editingDoc.category} onChange={e => { const d = editingDoc; setEditingDoc({ url: d.url, name: d.name, category: e.target.value, note: d.note }); }} placeholder="e.g. Hardware, Specifications" style={{ width: '100%' }} />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Public Note</label>
+            <textarea value={editingDoc.note} onChange={e => { const d = editingDoc; setEditingDoc({ url: d.url, name: d.name, category: d.category, note: e.target.value }); }} placeholder="Optional description or note..." style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontFamily: 'inherit', resize: 'vertical' }} />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button className="btn btn-primary" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
@@ -95,7 +100,7 @@ export default function LibraryPage() {
       >
         {isAdmin && !isCompact && (
           <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.75rem', justifyContent: 'flex-end' }}>
-            <button onClick={e => { e.stopPropagation(); setEditingDoc({ url: doc.url, name: doc.name, category: doc.category || '' }); }}
+            <button onClick={e => { e.stopPropagation(); setEditingDoc({ url: doc.url, name: doc.name, category: doc.category || '', note: doc.note || '' }); }}
               style={{ background: 'transparent', color: 'var(--accent-light)', border: '1px solid var(--surface-border)', borderRadius: '6px', padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>✏️ Edit</button>
             <button onClick={e => { e.stopPropagation(); handleDelete(doc.url); }}
               style={{ background: 'transparent', color: '#fc8181', border: '1px solid #fc8181', borderRadius: '6px', padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' }}>✕ Delete</button>
@@ -131,6 +136,25 @@ export default function LibraryPage() {
                 )}
               </div>
             </div>
+
+            {doc.note && (
+              <div style={{ marginBottom: '1.5rem', background: 'var(--surface-glass)', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: expandedNotes.has(doc.url) ? '0.5rem' : 0 }} onClick={() => {
+                  const next = new Set(expandedNotes);
+                  if (next.has(doc.url)) next.delete(doc.url);
+                  else next.add(doc.url);
+                  setExpandedNotes(next);
+                }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--foreground)' }}>Note</span>
+                  <span style={{ opacity: 0.6, fontSize: '0.75rem', transition: 'transform 0.2s' }}>{expandedNotes.has(doc.url) ? '▲ Less' : '▼ More'}</span>
+                </div>
+                {expandedNotes.has(doc.url) ? (
+                  <p style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'pre-wrap', color: 'var(--muted)', animation: 'fadeIn 0.2s' }}>{doc.note}</p>
+                ) : (
+                  <p style={{ margin: '0.4rem 0 0', fontSize: '0.85rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.note}</p>
+                )}
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '0.75rem', marginTop: 'auto', flexWrap: 'wrap' }}>
               <a href={doc.url} download target="_blank" rel="noreferrer" className="btn btn-primary"

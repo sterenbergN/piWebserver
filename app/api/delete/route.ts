@@ -168,6 +168,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true });
     }
 
+    // ── Download ZIP ───────────────────────────────────────────────
+    if (type === 'download') {
+      const tempDir = path.join(process.cwd(), 'public', 'temp', 'downloads');
+      const safeId = path.basename(id);
+      try {
+        await fs.unlink(path.join(tempDir, safeId));
+      } catch { }
+      return NextResponse.json({ success: true });
+    }
+
     return NextResponse.json({ success: false, message: 'Invalid target type' }, { status: 400 });
   } catch (error) {
     console.error('Delete Error:', error);

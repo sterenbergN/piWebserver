@@ -16,7 +16,8 @@ export default function GalleryPage() {
   const currentAlbum: Album | null = breadcrumb[breadcrumb.length - 1] ?? null;
 
   // View / settings
-  const [viewMode, setViewMode] = useState<'albums' | 'all'>('albums');
+  const [viewMode, setViewMode] = useState<'albums' | 'all' | 'downloads'>('albums');
+  const [availableDownloads, setAvailableDownloads] = useState<any[]>([]);
   const [columns, setColumns] = useState(3);
   const [showCaptions, setShowCaptions] = useState(true);
   const [cycleTime, setCycleTime] = useState(5000);
@@ -43,6 +44,10 @@ export default function GalleryPage() {
   const [editingAlbumName, setEditingAlbumName] = useState<{ albumId: string; value: string } | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
 
+  // Download Job State
+  const [downloadJobId, setDownloadJobId] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{ status: string, progress: number, total: number, url?: string | null, error?: string | null, startTime: number } | null>(null);
+
   const saveSetting = (key: string, val: string) => localStorage.setItem(key, val);
 
   const loadAlbums = useCallback(async () => {
@@ -62,13 +67,29 @@ export default function GalleryPage() {
     const savedCycle = localStorage.getItem('gal_cycle');
     const savedView = localStorage.getItem('gal_view') as 'albums' | 'all' | null;
     const savedShuffle = localStorage.getItem('gal_shuffle');
+    const savedJob = localStorage.getItem('gal_download_job');
+    
     if (savedCols) setColumns(Number(savedCols));
     if (savedCaps) setShowCaptions(savedCaps === 'true');
     if (savedCycle) setCycleTime(Number(savedCycle));
-    if (savedView) setViewMode(savedView);
+    if (savedView === 'albums' || savedView === 'all') setViewMode(savedView);
     if (savedShuffle) setShuffleMode(savedShuffle === 'true');
+    if (savedJob) setDownloadJobId(savedJob);
+    
     loadAlbums();
   }, [loadAlbums]);
+
+  const loadDownloads = useCallback(async () => {
+    const res = await fetch('/api/download-album/list');
+    const data = await res.json();
+    if (data.success) {
+      setAvailableDownloads(data.downloads);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === 'downloads') loadDownloads();
+  }, [viewMode, loadDownloads]);
 
   // Keep breadcrumb in sync when rootAlbums reloads
   useEffect(() => {
@@ -139,11 +160,37 @@ export default function GalleryPage() {
     ? collectAllImages(currentAlbum)
     : rootAlbums.flatMap(a => collectAllImages(a));
 
+  // Picture Frame Preload & Transition Fix
   useEffect(() => {
     if (!frameMode || activeFrameImages.length === 0) return;
-    const interval = setInterval(() => setFrameIndex(p => (p + 1) % activeFrameImages.length), cycleTime);
-    return () => clearInterval(interval);
-  }, [frameMode, activeFrameImages.length, cycleTime]);
+    let isCancelled = false;
+    let timer: NodeJS.Timeout;
+
+    const loadAndNext = () => {
+      const nextIndex = (frameIndex + 1) % activeFrameImages.length;
+      const imgSrc = activeFrameImages[nextIndex].src;
+      
+      const img = new Image();
+      img.onload = () => {
+        if (!isCancelled) setFrameIndex(nextIndex);
+      };
+      img.onerror = () => {
+        if (!isCancelled) setFrameIndex(nextIndex);
+      };
+      // Initiate background load of the upcoming image
+      img.src = imgSrc;
+    };
+
+    // Wait the full cycle time displaying current image, then begin loading the next image
+    // Note: The total time will be cycleTime + network_load_time for the next image,
+    // guaranteeing no halfway-loaded skipping.
+    timer = setTimeout(loadAndNext, cycleTime);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [frameMode, activeFrameImages, frameIndex, cycleTime]);
 
   const startFrameMode = async () => {
     if (frameImages.length === 0) return;
@@ -173,6 +220,55 @@ export default function GalleryPage() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, [frameMode]);
 
+  // ── Download Polling ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!downloadJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/download-album/progress?id=${downloadJobId}`);
+        const data = await res.json();
+        if (data.success && data.data) {
+          setDownloadProgress(data.data);
+          if (data.data.status === 'completed' || data.data.status === 'error') {
+            clearInterval(interval);
+            // Notice: auto redirect removed to prevent crashing and interrupting navigation. 
+            // User explores downloads in Downloads tab.
+            if (data.data.status === 'completed' && viewMode === 'downloads') {
+               loadDownloads(); // refresh list if they happen to be on it
+            }
+          }
+        } else {
+           clearInterval(interval);
+           localStorage.removeItem('gal_download_job');
+           setDownloadJobId(null);
+           setDownloadProgress(null);
+        }
+      } catch { } // Ignore network errors during polling
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [downloadJobId]);
+
+  const handleDownloadAlbum = async () => {
+    const id = currentAlbum ? currentAlbum.id : 'all';
+    const res = await fetch('/api/download-album/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setDownloadJobId(data.jobId);
+      localStorage.setItem('gal_download_job', data.jobId);
+      setDownloadProgress({ status: 'processing', progress: 0, total: 100, startTime: Date.now() });
+    }
+  };
+
+  const closeDownloadModal = () => {
+    setDownloadJobId(null);
+    setDownloadProgress(null);
+    localStorage.removeItem('gal_download_job');
+  };
+
   // ── Album creation ────────────────────────────────────────────────────────
   const handleCreateAlbum = async () => {
     if (!newAlbumName.trim()) return;
@@ -201,9 +297,20 @@ export default function GalleryPage() {
     });
     const data = await res.json();
     if (data.success) {
-      // If we're inside the deleted album, navigate up
       if (breadcrumb.some(b => b.id === albumId)) navigateRoot();
       await loadAlbums();
+    }
+  };
+
+  const handleDeleteDownload = async (filename: string) => {
+    if (!confirm('Delete this download archive?')) return;
+    const res = await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'download', id: filename })
+    });
+    if ((await res.json()).success) {
+      loadDownloads();
     }
   };
 
@@ -427,6 +534,17 @@ export default function GalleryPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        
+          <div style={{ display: 'flex', background: 'var(--surface-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px', padding: '0.25rem', overflow: 'hidden' }}>
+            {['albums', 'all', ...(isAdmin ? ['downloads'] : [])].map(mode => (
+              <button key={mode} onClick={() => { setViewMode(mode as any); saveSetting('gal_view', mode); }} style={{
+                  padding: '0.4rem 0.8rem', fontSize: '0.85rem', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s', textTransform: 'capitalize',
+                  background: viewMode === mode ? 'var(--accent)' : 'transparent',
+                  color: viewMode === mode ? 'white' : 'var(--foreground)',
+                  fontWeight: viewMode === mode ? 600 : 400
+              }}>{mode === 'all' ? 'All Photos' : mode}</button>
+            ))}
+          </div>
 
           {/* Admin & Tooling Group */}
           <div style={{ display: 'flex', background: 'var(--card-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px', padding: '0.25rem', gap: '0.25rem' }}>
@@ -439,7 +557,7 @@ export default function GalleryPage() {
             )}
             {isAdmin && (
               <button
-                onClick={() => window.location.href = `/api/download-album?id=${currentAlbum ? currentAlbum.id : 'all'}`}
+                onClick={handleDownloadAlbum}
                 title="Download Album ZIP"
                 style={{ padding: '0.4rem 0.6rem', fontSize: '1rem', lineHeight: 1, borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--foreground)', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0 }}>
                 ⬇
@@ -480,15 +598,6 @@ export default function GalleryPage() {
       {/* Settings */}
       {showSettings && (
         <div className="glass-panel animate-fade-in" style={{ marginBottom: '2rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-          {breadcrumb.length === 0 && (
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>View Mode:</label>
-              <select value={viewMode} onChange={e => { const v = e.target.value as 'albums' | 'all'; setViewMode(v); saveSetting('gal_view', v); }}
-                style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.5rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
-                <option value="albums">View Albums</option><option value="all">View All Photos</option>
-              </select>
-            </div>
-          )}
           <div>
             <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>Columns:</label>
             <select value={columns} onChange={e => { setColumns(Number(e.target.value)); saveSetting('gal_cols', e.target.value); }}
@@ -520,8 +629,37 @@ export default function GalleryPage() {
 
       {loading ? <p className="animate-fade-in">Loading gallery...</p> : (
         <div className="animate-fade-in">
+          {/* Downloads grid */}
+          {viewMode === 'downloads' && (
+            <div className="animate-fade-in">
+              {availableDownloads.length === 0 ? (
+                  <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}>
+                    <h3>No downloads available</h3>
+                    <p>Generated album ZIP files will appear here.</p>
+                  </div>
+              ) : (
+                  <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                      {availableDownloads.map((dl, i) => (
+                          <div key={i} className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                              <div>
+                                  <h3 style={{ margin: '0 0 0.2rem', fontSize: '1.05rem', wordBreak: 'break-all' }}>{dl.name}</h3>
+                                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--muted)' }}>
+                                    {(dl.sizeBytes / 1024 / 1024).toFixed(2)} MB • {new Date(dl.createdAt).toLocaleDateString()}
+                                  </p>
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                <a href={dl.url} download className="btn btn-primary" style={{ flex: 1, textAlign: 'center', padding: '0.6rem' }}>⬇ Download</a>
+                                <button onClick={() => handleDeleteDownload(dl.filename)} className="btn btn-secondary" style={{ color: '#fc8181', borderColor: 'rgba(252,129,129,0.3)', padding: '0.6rem' }}>🗑 Delete</button>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
+            </div>
+          )}
+
           {/* Album grid (shown when not "view all" mode, always shown inside an album) */}
-          {viewMode !== 'all' && shownAlbums.length > 0 && (
+          {viewMode !== 'all' && viewMode !== 'downloads' && shownAlbums.length > 0 && (
             <div>
               {currentAlbum && <h2 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: 'var(--muted)' }}>Sub-Albums</h2>}
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: shownImages.length > 0 ? '3rem' : 0 }}>
@@ -531,7 +669,7 @@ export default function GalleryPage() {
           )}
 
           {/* Photo grid */}
-          {shownImages.length > 0 && (
+          {viewMode !== 'downloads' && shownImages.length > 0 && (
             <div>
               {currentAlbum && shownAlbums.length > 0 && <h2 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: 'var(--muted)' }}>Photos in this Album</h2>}
               {renderPhotoGrid(shownImages.slice(0, visibleCount))}
@@ -546,13 +684,53 @@ export default function GalleryPage() {
           )}
 
           {/* Empty state */}
-          {shownAlbums.length === 0 && shownImages.length === 0 && (
+          {viewMode !== 'downloads' && shownAlbums.length === 0 && shownImages.length === 0 && (
             <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}>
               <h3>Nothing here yet</h3>
               <p>{isAdmin ? 'Use "+ New Album" to create an album, or upload photos in Admin.' : 'No photos or albums available.'}</p>
             </div>
           )}
         </div>
+      )}
+
+      {/* Download Progress Toast */}
+      {downloadProgress && mounted && createPortal(
+          <div className="glass-panel animate-fade-in" style={{ position: 'fixed', bottom: '2rem', right: '2rem', zIndex: 999999, width: '320px', padding: '1.25rem', boxShadow: '0 10px 30px rgba(0,0,0,0.4)', border: '1px solid var(--surface-border)' }}>
+            <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', display: 'flex', justifyContent: 'space-between', color: 'var(--foreground)' }}>
+               <span>{downloadProgress.status === 'processing' ? 'Generating ZIP...' : downloadProgress.status === 'error' ? 'Error' : 'Ready'}</span>
+               <button onClick={closeDownloadModal} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0 }}>✕</button>
+            </h4>
+            
+            {downloadProgress.status === 'processing' && (
+              <>
+                <div style={{ background: 'var(--input-bg)', borderRadius: '6px', height: '8px', width: '100%', overflow: 'hidden', marginBottom: '0.5rem' }}>
+                  <div style={{ height: '100%', background: 'var(--accent)', width: `${Math.max(2, (downloadProgress.progress / Math.max(downloadProgress.total, 1)) * 100)}%`, transition: 'width 0.4s ease-out' }}></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--muted)', opacity: 0.8 }}>
+                   <span>{downloadProgress.progress} / {downloadProgress.total}</span>
+                   <span>
+                     {(()=>{
+                        const elapsedSeconds = (Date.now() - downloadProgress.startTime) / 1000;
+                        if(elapsedSeconds < 2 || downloadProgress.progress === 0) return 'Estimating...';
+                        const itemsPerSecond = downloadProgress.progress / elapsedSeconds;
+                        const remainingItems = downloadProgress.total - downloadProgress.progress;
+                        const estimatedSecondsRemaining = remainingItems / itemsPerSecond;
+                        return `${Math.max(1, Math.ceil(estimatedSecondsRemaining))}s left`;
+                     })()}
+                   </span>
+                </div>
+              </>
+            )}
+
+            {downloadProgress.status === 'completed' && (
+              <p style={{ fontSize: '0.85rem', margin: '0.25rem 0 0', color: 'var(--accent-light)' }}>The download is now ready in the <strong>Downloads</strong> tab.</p>
+            )}
+
+            {downloadProgress.status === 'error' && (
+              <p style={{ color: '#fc8181', margin: 0, fontSize: '0.85rem' }}>{downloadProgress.error || 'A problem occurred.'}</p>
+            )}
+          </div>,
+        document.body
       )}
 
       {/* Picture Frame Portal */}
