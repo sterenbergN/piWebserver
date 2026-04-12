@@ -1,0 +1,94 @@
+.workout-mobile-container {
+  max-width: 430px; /* Approximates iPhone Max screen */
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  padding: 1rem;
+}
+
+.workout-tile {
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.workout-btn-primary {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+  color: white;
+  font-weight: 700;
+  font-size: 1.1rem;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(var(--accent-rgb), 0.3);
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.workout-input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  color: var(--foreground);
+  margin-bottom: 1rem;
+  font-size: 1rem;
+}
+
+.workout-flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.experience-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent-light);
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: 0.85rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+}
+
+.demo-banner {
+  background: #ff9800;
+  color: #fff;
+  text-align: center;
+  padding: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: bold;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+/* Hide number input spinners for custom tracker inputs */
+.hide-spinners::-webkit-inner-spin-button, 
+.hide-spinners::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+.hide-spinners {
+  -moz-appearance: textfield;
+}
+
+/* Ensure select option elements are readable in dark mode */
+.workout-input option {
+  background: var(--background);
+  color: var(--foreground);
+}

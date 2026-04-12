@@ -5,8 +5,9 @@ import { useState, useEffect } from 'react';
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; }
 interface Project { id: string; name: string; description: string; category: string; blogSlug: string; }
 interface CADProject { id: string; name: string; description: string; link: string; }
+interface WorkoutUser { id: string; username: string; password?: string; birthdate: string; height: string; gender: string; weight: number; }
 
-type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad';
+type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad' | 'workout-users';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -32,6 +33,13 @@ export default function AdminDashboard() {
   const [newCAD, setNewCAD] = useState({ name: '', description: '', link: '' });
   const [cadSaving, setCadSaving] = useState(false);
 
+  // Workout Users
+  const [workoutUsers, setWorkoutUsers] = useState<WorkoutUser[]>([]);
+  const [editingWorkoutUser, setEditingWorkoutUser] = useState<WorkoutUser | null>(null);
+  const [addingWorkoutUser, setAddingWorkoutUser] = useState(false);
+  const [newWorkoutUser, setNewWorkoutUser] = useState<Partial<WorkoutUser>>({ username: '', password: '', birthdate: '', height: '', gender: 'unspecified', weight: 0 });
+  const [workoutUserSaving, setWorkoutUserSaving] = useState(false);
+
   const fetchStats = () => {
     fetch('/api/stats').then(r => r.json()).then(d => { if (d?.success) setStats(d.data); setStatsLoading(false); }).catch(() => setStatsLoading(false));
   };
@@ -55,6 +63,9 @@ export default function AdminDashboard() {
     }
     if (activeTab === 'cad') {
       fetch('/api/cad').then(r => r.json()).then(d => { if (d.success) setCadProjects(d.projects); });
+    }
+    if (activeTab === 'workout-users') {
+      fetch('/api/workout/users').then(r => r.json()).then(d => { if (d.success) setWorkoutUsers(d.users); });
     }
   }, [activeTab]);
 
@@ -209,6 +220,30 @@ export default function AdminDashboard() {
     setCadProjects(cadProjects.filter(p => p.id !== id));
   };
 
+  const handleAddWorkoutUser = async () => {
+    if (!newWorkoutUser.username || !newWorkoutUser.password) return;
+    setWorkoutUserSaving(true);
+    const res = await fetch('/api/workout/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newWorkoutUser) });
+    const data = await res.json();
+    if (data.success) { setWorkoutUsers([...workoutUsers, data.user]); setNewWorkoutUser({ username: '', password: '', birthdate: '', height: '', gender: 'unspecified', weight: 0 }); setAddingWorkoutUser(false); }
+    setWorkoutUserSaving(false);
+  };
+
+  const handleUpdateWorkoutUser = async () => {
+    if (!editingWorkoutUser) return;
+    setWorkoutUserSaving(true);
+    const res = await fetch('/api/workout/users', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingWorkoutUser) });
+    const data = await res.json();
+    if (data.success) { setWorkoutUsers(workoutUsers.map(u => u.id === editingWorkoutUser.id ? data.user : u)); setEditingWorkoutUser(null); }
+    setWorkoutUserSaving(false);
+  };
+
+  const handleDeleteWorkoutUser = async (id: string) => {
+    if (!confirm('Delete this workout user?')) return;
+    await fetch('/api/workout/users?id=' + id, { method: 'DELETE' });
+    setWorkoutUsers(workoutUsers.filter(u => u.id !== id));
+  };
+
   const msgStyle = (type: string) => ({
     padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
     background: type === 'success' ? 'rgba(72, 187, 120, 0.1)' : 'rgba(245, 101, 101, 0.1)',
@@ -223,6 +258,7 @@ export default function AdminDashboard() {
     { id: 'library', label: '📁 Library PDF' },
     { id: 'projects', label: '🔧 Projects' },
     { id: 'cad', label: '📐 CAD Projects' },
+    { id: 'workout-users', label: '🏋️ Workout Users' },
   ];
 
   return (
@@ -370,6 +406,71 @@ export default function AdminDashboard() {
                 </div>
               ))}
               {cadProjects.length === 0 && <p>No CAD projects yet. Add one above.</p>}
+            </div>
+          </div>
+        ) : activeTab === 'workout-users' ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3>Manage Workout Users</h3>
+              <button className="btn btn-primary" onClick={() => setAddingWorkoutUser(!addingWorkoutUser)}>
+                {addingWorkoutUser ? 'Cancel' : '+ Add User'}
+              </button>
+            </div>
+
+            {addingWorkoutUser && (
+              <div className="glass-panel animate-fade-in" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h4>New Workout User</h4>
+                <input placeholder="Username *" value={newWorkoutUser.username} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, username: e.target.value })} />
+                <input type="password" placeholder="Password *" value={newWorkoutUser.password} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, password: e.target.value })} />
+                <input placeholder="Birthdate (YYYY-MM-DD)" value={newWorkoutUser.birthdate} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, birthdate: e.target.value })} />
+                <input placeholder="Height (e.g. 5'10 or 70 inches)" value={newWorkoutUser.height} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, height: e.target.value })} />
+                <select value={newWorkoutUser.gender} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, gender: e.target.value })} style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                  <option value="unspecified">Unspecified gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+                <input type="number" placeholder="Current Weight (lbs)" value={newWorkoutUser.weight || ''} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, weight: parseFloat(e.target.value) || 0 })} />
+                <button className="btn btn-primary" onClick={handleAddWorkoutUser} disabled={workoutUserSaving} style={{ alignSelf: 'flex-start' }}>{workoutUserSaving ? 'Saving...' : 'Add User'}</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {workoutUsers.map(u => (
+                <div key={u.id}>
+                  {editingWorkoutUser?.id === u.id ? (
+                    <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <input value={editingWorkoutUser.username} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, username: e.target.value })} placeholder="Username" />
+                      <input type="password" placeholder="New Password (optional)" value={editingWorkoutUser.password || ''} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, password: e.target.value })} />
+                      <input value={editingWorkoutUser.birthdate} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, birthdate: e.target.value })} placeholder="Birthdate" />
+                      <input value={editingWorkoutUser.height} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, height: e.target.value })} placeholder="Height" />
+                      <select value={editingWorkoutUser.gender} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, gender: e.target.value })} style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                        <option value="unspecified">Unspecified gender</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                      </select>
+                      <input type="number" value={editingWorkoutUser.weight || ''} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, weight: parseFloat(e.target.value) || 0 })} placeholder="Weight" />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" onClick={handleUpdateWorkoutUser} disabled={workoutUserSaving}>{workoutUserSaving ? 'Saving...' : 'Save'}</button>
+                        <button className="btn btn-secondary" onClick={() => setEditingWorkoutUser(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1 }}>
+                        <strong>{u.username}</strong>
+                        <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', opacity: 0.7 }}>
+                          {u.gender !== 'unspecified' ? u.gender : ''} | {u.weight ? `${u.weight} lbs` : ''} | {u.height ? u.height : ''} | {u.birthdate ? `DOB: ${u.birthdate}` : ''}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.4rem 0.7rem', fontSize: '0.85rem' }} onClick={() => setEditingWorkoutUser(u)}>✏️</button>
+                        <button style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 0.7rem', cursor: 'pointer', fontSize: '0.85rem' }} onClick={() => handleDeleteWorkoutUser(u.id)}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {workoutUsers.length === 0 && <p>No workout users yet.</p>}
             </div>
           </div>
         ) : (
