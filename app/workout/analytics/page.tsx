@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
    BarChart, Bar
 } from 'recharts';
 import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore } from '@/lib/workout/analytics';
+import { analyzePerformance, type Session } from '@/lib/workout/progression';
 
 // Intensity label helper
 function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
@@ -14,6 +15,47 @@ function getIntensityLabel(value: number): { label: string; emoji: string; color
     if (value <= 1.1) return { label: 'Standard', emoji: '⚖️', color: '#48bb78' };
     if (value <= 1.3) return { label: 'Push', emoji: '💪', color: '#ed8936' };
     return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
+}
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+function toPerformanceSession(liftId: string, timestamp: string, sets: { reps: number; weight: number }[]): Session {
+   return {
+      liftId,
+      timestamp,
+      sets: sets.map((set) => ({
+         plannedReps: set.reps,
+         actualReps: set.reps,
+         plannedWeight: set.weight,
+         actualWeight: set.weight,
+         completed: true
+      }))
+   };
+}
+
+function computeHistoryTrend(history: Session[]): number {
+   if (history.length < 2) return 1.0;
+
+   const recentSessions = history.slice(-5);
+   const scores = recentSessions.map((session) => analyzePerformance(session).performanceScore);
+   const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+
+   let consecutiveOver = 0;
+   let consecutiveUnder = 0;
+
+   for (let i = scores.length - 1; i >= 0; i--) {
+      if (scores[i] > 1.05) consecutiveOver++;
+      else break;
+   }
+
+   for (let i = scores.length - 1; i >= 0; i--) {
+      if (scores[i] < 0.95) consecutiveUnder++;
+      else break;
+   }
+
+   if (consecutiveOver >= 3) return Math.min(1.15, avgScore);
+   if (consecutiveUnder >= 3) return Math.max(0.85, avgScore);
+   return Math.max(0.9, Math.min(1.1, avgScore));
 }
 
 export default function AnalyticsPage() {
@@ -41,10 +83,14 @@ export default function AnalyticsPage() {
    
    // Advanced Analytics Extensions
    const [rmsPage, setRmsPage] = useState(0);
+   const [overloadPage, setOverloadPage] = useState(0);
    const [expandedRM, setExpandedRM] = useState<string | null>(null);
+   const [expandedOverload, setExpandedOverload] = useState<string | null>(null);
    const [chartSeries, setChartSeries] = useState<'volume' | 'calories' | 'intensity'>('volume');
    const [allLiftsMap, setAllLiftsMap] = useState<Map<string, string>>(new Map());
    const [experience, setExperience] = useState<any>(null);
+   const rmCardRefs = useRef(new Map<string, HTMLDivElement>());
+   const overloadRowRefs = useRef(new Map<string, HTMLDivElement>());
 
    // Intensity Factor Slider (persisted)
    const [intensityFactor, setIntensityFactor] = useState(1.0);
@@ -170,41 +216,101 @@ export default function AnalyticsPage() {
            const mappedTypes = Array.from(typeVols.entries()).map(([k, v]) => ({ name: k, avgVolume: Math.round(v.sum / v.count) }));
            setVolumeType(mappedTypes);
 
-           // Compute per-lift overload tracking across sessions
-           const liftSessions = new Map<string, {weight: number, date: string}[]>();
-           histData.forEach((w: any) => {
-               if (w.type?.name !== 'Cardio' && w.logs) {
-                   const dateStr = new Date(w.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-                   Object.keys(w.logs).forEach(liftId => {
-                       const topSet = w.logs[liftId].reduce((best: any, s: any) => (s.weight > (best?.weight || 0) ? s : best), null);
-                       if (topSet) {
-                           if (!liftSessions.has(liftId)) liftSessions.set(liftId, []);
-                           liftSessions.get(liftId)!.push({ weight: topSet.weight, date: dateStr });
-                       }
-                   });
-               }
-           });
-           const olTracking: any[] = [];
-           liftSessions.forEach((sessions, liftId) => {
-               if (sessions.length >= 2) {
-                   const prev = sessions[sessions.length - 2];
-                   const curr = sessions[sessions.length - 1];
-                   const jumpRatio = prev.weight > 0 ? (curr.weight - prev.weight) / prev.weight : 0;
-                   olTracking.push({
-                       name: liftsMap.get(liftId) || liftId,
-                       prevWeight: prev.weight,
-                       currWeight: curr.weight,
-                       jumpRatio,
-                       date: curr.date
-                   });
-               }
-           });
-           setOverloadTracking(olTracking);
+            // Compute per-lift overload tracking across sessions
+            const liftSessions = new Map<string, { date: string; timestamp: string; sets: { reps: number; weight: number }[] }[]>();
+            histData.forEach((w: any) => {
+                if (w.type?.name !== 'Cardio' && w.logs) {
+                    const dateStr = new Date(w.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    Object.keys(w.logs).forEach((liftId) => {
+                        const sets = (w.logs[liftId] || [])
+                          .map((s: any) => ({ reps: Number(s.reps), weight: Number(s.weight) }))
+                          .filter((s: { reps: number; weight: number }) => s.reps > 0 && s.weight > 0);
+
+                        if (sets.length === 0) return;
+
+                        if (!liftSessions.has(liftId)) liftSessions.set(liftId, []);
+                        liftSessions.get(liftId)!.push({ date: dateStr, timestamp: w.timestamp, sets });
+                    });
+                }
+            });
+
+            const olTracking: any[] = [];
+            liftSessions.forEach((sessions, liftId) => {
+                const sortedSessions = sessions
+                  .slice()
+                  .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+                if (sortedSessions.length < 2) return; // only show lifts completed in at least 2 sessions
+
+                const prev = sortedSessions[sortedSessions.length - 2];
+                const curr = sortedSessions[sortedSessions.length - 1];
+                const prevLastSet = prev.sets[prev.sets.length - 1];
+                const currLastSet = curr.sets[curr.sets.length - 1];
+
+                const prevLoad = prev.sets.reduce((sum, set) => sum + set.weight * set.reps, 0);
+                const currLoad = curr.sets.reduce((sum, set) => sum + set.weight * set.reps, 0);
+                if (!prevLastSet || !currLastSet || prevLoad <= 0 || currLoad <= 0) return;
+
+                const overloadRatio = currLoad / prevLoad;
+                const prevE1RM = calcAverage1RM(prevLastSet.weight, prevLastSet.reps);
+                const currE1RM = calcAverage1RM(currLastSet.weight, currLastSet.reps);
+                const intensityRatio = prevE1RM > 0 ? currE1RM / prevE1RM : 1;
+
+                const historySessions = sortedSessions.map((session) =>
+                  toPerformanceSession(liftId, session.timestamp, session.sets)
+                );
+                const prevSession = historySessions[historySessions.length - 2];
+                const historyForTrend = historySessions.slice(0, -1);
+                const performanceScore = analyzePerformance(prevSession).performanceScore;
+                const historyTrend = computeHistoryTrend(historyForTrend);
+
+                olTracking.push({
+                    name: liftsMap.get(liftId) || liftId,
+                    prevWeight: prevLastSet.weight,
+                    currWeight: currLastSet.weight,
+                    prevReps: prevLastSet.reps,
+                    currReps: currLastSet.reps,
+                    prevSets: prev.sets.length,
+                    currSets: curr.sets.length,
+                    prevLoad,
+                    currLoad,
+                    overloadRatio,
+                    prevE1RM,
+                    currE1RM,
+                    intensityRatio,
+                    performanceScore,
+                    historyTrend,
+                    date: curr.date
+                });
+            });
+            setOverloadTracking(olTracking.sort((a, b) => b.date.localeCompare(a.date)));
 
            setLoading(false);
        }
        fetchData();
    }, []);
+
+   const setRmCardRef = (key: string) => (el: HTMLDivElement | null) => {
+      if (el) rmCardRefs.current.set(key, el);
+      else rmCardRefs.current.delete(key);
+   };
+
+   const setOverloadRowRef = (key: string) => (el: HTMLDivElement | null) => {
+      if (el) overloadRowRefs.current.set(key, el);
+      else overloadRowRefs.current.delete(key);
+   };
+
+   useEffect(() => {
+      if (!expandedRM) return;
+      const el = rmCardRefs.current.get(expandedRM);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+   }, [expandedRM]);
+
+   useEffect(() => {
+      if (!expandedOverload) return;
+      const el = overloadRowRefs.current.get(expandedOverload);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+   }, [expandedOverload]);
 
    const handleDeleteLog = (id: string) => {
       setSystemPopup({ title: 'Delete Workout', message: 'Permanently delete this workout from your history?', onConfirm: async () => {
@@ -262,8 +368,25 @@ export default function AnalyticsPage() {
 
    // Compute average achieved growth for factor analysis
    const avgAchievedGrowth = overloadTracking.length > 0
-      ? overloadTracking.reduce((sum, o) => sum + o.jumpRatio, 0) / overloadTracking.length
+      ? overloadTracking.reduce((sum, o) => {
+         const comparisonRatio = intensityFactor >= 1.2 ? o.intensityRatio : o.overloadRatio;
+         return sum + (comparisonRatio - 1);
+      }, 0) / overloadTracking.length
       : 0;
+   const avgTargetGrowth = overloadTracking.length > 0
+      ? overloadTracking.reduce((sum, o) => {
+         const clampedPerf = clamp(o.performanceScore, 0.9, 1.1);
+         const effectiveIntensity = clamp(intensityFactor * clampedPerf * o.historyTrend, 0.5, 1.5);
+         return sum + (0.05 * effectiveIntensity * o.performanceScore);
+      }, 0) / overloadTracking.length
+      : (0.05 * intensityFactor);
+   const listPageSize = 5;
+   const rmsPageCount = Math.max(1, Math.ceil(oneRMs.length / listPageSize));
+   const safeRmsPage = Math.min(rmsPage, rmsPageCount - 1);
+   const oneRMsPage = oneRMs.slice(safeRmsPage * listPageSize, (safeRmsPage + 1) * listPageSize);
+   const overloadPageCount = Math.max(1, Math.ceil(overloadTracking.length / listPageSize));
+   const safeOverloadPage = Math.min(overloadPage, overloadPageCount - 1);
+   const overloadPageEntries = overloadTracking.slice(safeOverloadPage * listPageSize, (safeOverloadPage + 1) * listPageSize);
 
    return (
        <div className="animate-fade-in" style={{ paddingBottom: '4rem' }}>
@@ -491,22 +614,29 @@ export default function AnalyticsPage() {
                   {oneRMs.length > 0 ? (
                       <div>
                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                            {oneRMs.slice(rmsPage * 5, (rmsPage + 1) * 5).map((rm, i) => (
-                               <div key={i} style={{ background: 'var(--input-bg)', borderRadius: '12px', overflow: 'hidden' }}>
+                            {oneRMsPage.map((rm, i) => (
+                               <div key={i} ref={setRmCardRef(rm.name)} style={{ background: 'var(--input-bg)', borderRadius: '12px', overflow: 'hidden' }}>
                                   <div 
                                     className="workout-flex-between" 
                                     style={{ padding: '0.75rem 1rem', cursor: 'pointer' }}
                                     onClick={() => setExpandedRM(expandedRM === rm.name ? null : rm.name)}
                                   >
                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                        <div style={{ width: '30px', height: '30px', background: 'var(--accent)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--background)' }}>
-                                           {rmsPage * 5 + i + 1}
-                                        </div>
+                                          <div style={{ width: '30px', height: '30px', background: 'var(--accent)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--background)' }}>
+                                           {safeRmsPage * listPageSize + i + 1}
+                                          </div>
                                         <strong style={{ fontSize: '0.9rem' }}>{rm.name}</strong>
                                      </div>
                                      <div style={{ textAlign: 'right' }}>
                                         <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--accent)' }}>{Math.round(rm.avg)} <span style={{ fontSize: '0.7rem', color: 'var(--muted)', fontWeight: 400 }}>lbs</span></div>
-                                        <div style={{ fontSize: '0.65rem', color: 'var(--muted)', marginTop: '-2px' }}>Avg 1RM ▾</div>
+                                        <div style={{ fontSize: '0.65rem', color: 'var(--muted)', marginTop: '-2px' }}>
+                                          Avg 1RM {expandedRM === rm.name ? '▴' : '▾'}
+                                          {expandedRM === rm.name && (
+                                            <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.05rem 0.35rem', borderRadius: '10px' }}>
+                                              Expanded
+                                            </span>
+                                          )}
+                                        </div>
                                      </div>
                                   </div>
                                   
@@ -522,23 +652,22 @@ export default function AnalyticsPage() {
                                </div>
                             ))}
                          </div>
-                         
-                         {oneRMs.length > 5 && (
+                         {oneRMs.length > listPageSize && (
                             <div className="workout-flex-between" style={{ marginTop: '1rem' }}>
-                               <button 
-                                 className="btn btn-secondary" 
-                                 disabled={rmsPage === 0}
-                                 onClick={() => setRmsPage(p => p - 1)}
-                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: rmsPage === 0 ? 0.3 : 1 }}
+                               <button
+                                 className="btn btn-secondary"
+                                 disabled={safeRmsPage === 0}
+                                 onClick={() => setRmsPage(p => Math.max(0, p - 1))}
+                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeRmsPage === 0 ? 0.3 : 1 }}
                                >
                                  ← Prev
                                </button>
-                               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Page {rmsPage + 1} of {Math.ceil(oneRMs.length / 5)}</span>
-                               <button 
-                                 className="btn btn-secondary" 
-                                 disabled={(rmsPage + 1) * 5 >= oneRMs.length}
-                                 onClick={() => setRmsPage(p => p + 1)}
-                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: (rmsPage + 1) * 5 >= oneRMs.length ? 0.3 : 1 }}
+                               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Page {safeRmsPage + 1} of {rmsPageCount}</span>
+                               <button
+                                 className="btn btn-secondary"
+                                 disabled={safeRmsPage >= rmsPageCount - 1}
+                                 onClick={() => setRmsPage(p => Math.min(rmsPageCount - 1, p + 1))}
+                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeRmsPage >= rmsPageCount - 1 ? 0.3 : 1 }}
                                >
                                  Next →
                                </button>
@@ -637,13 +766,12 @@ export default function AnalyticsPage() {
                         <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>How Progressive Overload Works</h4>
                         <p>Your intensity factor of <strong>{intensityFactor.toFixed(2)}</strong> controls how the progression engine selects your next workout:</p>
                         <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
-                           <li><strong>Target Overload:</strong> <code style={{ color: 'var(--accent-light)' }}>target = 0.05 × intensity × perfScore</code></li>
-                           <li><strong>Allowed Jump:</strong> <code style={{ color: 'var(--accent-light)' }}>maxJump = weight × 0.15 × (0.75 + intensity)</code></li>
-                           <li><strong>Scoring:</strong> Candidates closest to the target overload ratio score highest</li>
-                           <li><strong>Adaptive:</strong> History trend amplifies or dampens effective intensity</li>
+                           <li><strong>Target Overload Ratio:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + (0.05 × effectiveIntensity × perfScore)</code></li>
+                           <li><strong>Effective Intensity:</strong> <code style={{ color: 'var(--accent-light)' }}>clamp(intensity × clamp(perfScore) × historyTrend, 0.5, 1.5)</code></li>
+                           <li><strong>Comparison Metric:</strong> intensity ≥ 1.2 compares <strong>e1RM ratio</strong>, otherwise compares <strong>load ratio</strong></li>
+                           <li><strong>Lift Eligibility:</strong> a lift appears only after at least 2 logged sessions with valid sets</li>
                         </ul>
-                        <p>Jump Ratio below shows the actual % weight change achieved session-over-session. 
-                        Green = met/exceeded expectations, yellow = partial progress, red = decreased.</p>
+                        <p>Each lift row shows load ratio and e1RM ratio, then highlights the same ratio mode the progression engine is currently using.</p>
                      </div>
                   )}
 
@@ -658,37 +786,99 @@ export default function AnalyticsPage() {
                                   </div>
                                   <div style={{ fontSize: '0.75rem' }}>Avg Achieved Growth</div>
                                </div>
-                               <div style={{ textAlign: 'right' }}>
-                                  <div style={{ fontSize: '1.2rem', fontWeight: 600, color: intensityInfo.color }}>
-                                    {(5 * intensityFactor).toFixed(1)}%
-                                  </div>
-                                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Target Overload</div>
-                               </div>
+                                <div style={{ textAlign: 'right' }}>
+                                   <div style={{ fontSize: '1.2rem', fontWeight: 600, color: intensityInfo.color }}>
+                                    {(avgTargetGrowth * 100).toFixed(1)}%
+                                   </div>
+                                   <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Target Overload</div>
+                                </div>
                             </div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0.5rem 0 0 0', fontStyle: 'italic' }}>
-                               {avgAchievedGrowth > (0.05 * intensityFactor)
+                               {avgAchievedGrowth > avgTargetGrowth
                                  ? 'You are outperforming your target. Consider increasing intensity if workouts feel too easy.'
                                  : avgAchievedGrowth > 0
-                                   ? 'Progression is steady but below target. This is normal — trust the process.'
+                                    ? 'Progression is steady but below target. This is normal — trust the process.'
                                    : 'Growth is stalling. Consider a deload cycle or reducing intensity.'}
                             </p>
                         </div>
-                        {overloadTracking.map((ol, i) => {
-                           const targetGrowth = 0.05 * intensityFactor;
-                           const status = ol.jumpRatio >= targetGrowth ? '🟢' : ol.jumpRatio > 0 ? '🟡' : '🔴';
-                           return (
-                              <div key={i} style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                 <div>
-                                    <strong style={{ fontSize: '0.85rem' }}>{ol.name}</strong>
-                                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted)' }}>{ol.prevWeight} → {ol.currWeight} lbs</p>
+                        {overloadPageEntries.map((ol, i) => {
+                           const clampedPerf = clamp(ol.performanceScore, 0.9, 1.1);
+                           const effectiveIntensity = clamp(intensityFactor * clampedPerf * ol.historyTrend, 0.5, 1.5);
+                           const targetRatio = 1 + (0.05 * effectiveIntensity * ol.performanceScore);
+                           const comparisonRatio = intensityFactor >= 1.2 ? ol.intensityRatio : ol.overloadRatio;
+                           const comparisonGrowth = comparisonRatio - 1;
+                           const status = comparisonRatio >= targetRatio ? '🟢' : comparisonGrowth > 0 ? '🟡' : '🔴';
+                           const comparisonLabel = intensityFactor >= 1.2 ? 'e1RM' : 'Load';
+                           const rowId = `${ol.name}-${ol.date}-${safeOverloadPage * listPageSize + i}`;
+                           const expanded = expandedOverload === rowId;
+                            return (
+                              <div key={rowId} ref={setOverloadRowRef(rowId)} style={{ background: 'var(--input-bg)', borderRadius: '8px', overflow: 'hidden' }}>
+                                 <div
+                                   className="workout-flex-between"
+                                   style={{ padding: '0.75rem', cursor: 'pointer', alignItems: 'center', gap: '0.75rem' }}
+                                   onClick={() => setExpandedOverload(expanded ? null : rowId)}
+                                 >
+                                    <div style={{ minWidth: 0 }}>
+                                       <strong style={{ fontSize: '0.85rem' }}>{ol.name}</strong>
+                                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                          {ol.prevWeight}×{ol.prevReps}×{ol.prevSets} → {ol.currWeight}×{ol.currReps}×{ol.currSets}
+                                       </p>
+                                    </div>
+                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                       <div style={{ fontSize: '1rem' }}>{status}</div>
+                                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                          {comparisonLabel} {(comparisonGrowth * 100).toFixed(1)}% {expanded ? '▴' : '▾'}
+                                       </p>
+                                    </div>
                                  </div>
-                                 <div style={{ textAlign: 'right' }}>
-                                    <span style={{ fontSize: '1rem' }}>{status}</span>
-                                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted)' }}>{(ol.jumpRatio * 100).toFixed(1)}%</p>
-                                 </div>
+
+                                 {expanded && (
+                                   <div className="animate-fade-in" style={{ borderTop: '1px solid var(--surface-border)', padding: '0.65rem 0.75rem 0.75rem 0.75rem', background: 'rgba(255,255,255,0.02)' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.65rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.05rem 0.35rem', borderRadius: '10px' }}>
+                                          Expanded
+                                        </span>
+                                      </div>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Load Ratio</div>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.overloadRatio - 1) * 100).toFixed(1)}%</div>
+                                         </div>
+                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>e1RM Ratio</div>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.intensityRatio - 1) * 100).toFixed(1)}%</div>
+                                         </div>
+                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Target Ratio</div>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((targetRatio - 1) * 100).toFixed(1)}%</div>
+                                         </div>
+                                      </div>
+                                   </div>
+                                 )}
                               </div>
                            );
                         })}
+                        {overloadTracking.length > listPageSize && (
+                          <div className="workout-flex-between" style={{ marginTop: '0.25rem' }}>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={safeOverloadPage === 0}
+                              onClick={() => setOverloadPage(p => Math.max(0, p - 1))}
+                              style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeOverloadPage === 0 ? 0.3 : 1 }}
+                            >
+                              ← Prev
+                            </button>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Page {safeOverloadPage + 1} of {overloadPageCount}</span>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={safeOverloadPage >= overloadPageCount - 1}
+                              onClick={() => setOverloadPage(p => Math.min(overloadPageCount - 1, p + 1))}
+                              style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeOverloadPage >= overloadPageCount - 1 ? 0.3 : 1 }}
+                            >
+                              Next →
+                            </button>
+                          </div>
+                        )}
                      </div>
                   ) : (
                      <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Need at least 2 sessions per lift to track overload.</p>

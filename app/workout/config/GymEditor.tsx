@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 type StationType = 'plates' | 'stack' | 'cable' | 'dumbbells' | 'bodyweight';
 
@@ -52,10 +52,12 @@ export default function GymEditor() {
   const [newGymEmoji, setNewGymEmoji] = useState('🏋️');
   
   const [addingStation, setAddingStation] = useState(false);
+  const [editingStationId, setEditingStationId] = useState<string | null>(null);
   const [activeStation, setActiveStation] = useState<Station | null>(null);
   const [newStation, setNewStation] = useState<Partial<Station>>({ type: 'plates', lifts: [], attachments: [] });
   
   const [addingLift, setAddingLift] = useState(false);
+  const [editingLiftId, setEditingLiftId] = useState<string | null>(null);
   const [newLift, setNewLift] = useState<Partial<Lift>>({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' });
 
   // Temp string models for array parsing
@@ -68,15 +70,60 @@ export default function GymEditor() {
   const [importPrompt, setImportPrompt] = useState<{ match: Station, target: Station } | null>(null);
   const [importSelectedLifts, setImportSelectedLifts] = useState<Set<string>>(new Set());
   const [systemPopup, setSystemPopup] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
+  const gymFormRef = useRef<HTMLDivElement | null>(null);
+  const stationFormRefs = useRef(new Map<string, HTMLDivElement>());
+  const liftFormRefs = useRef(new Map<string, HTMLDivElement>());
 
   const resetStationEditor = () => {
     setAddingStation(false);
+    setEditingStationId(null);
     setNewStation({ type: 'plates', lifts: [], attachments: [] });
     setTempPlates('');
     setTempDumbbells('');
     setTempBodyWeight('');
     setTempAttachment('');
   };
+
+  const resetLiftEditor = () => {
+    setAddingLift(false);
+    setEditingLiftId(null);
+    setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' });
+  };
+
+  const parseOptionalNumber = (value: string) => {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const setStationFormRef = (key: string) => (el: HTMLDivElement | null) => {
+    if (el) stationFormRefs.current.set(key, el);
+    else stationFormRefs.current.delete(key);
+  };
+
+  const setLiftFormRef = (key: string) => (el: HTMLDivElement | null) => {
+    if (el) liftFormRefs.current.set(key, el);
+    else liftFormRefs.current.delete(key);
+  };
+
+  useEffect(() => {
+    if (addingGym && gymFormRef.current) {
+      gymFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [addingGym, editingGymId]);
+
+  useEffect(() => {
+    if (!addingStation) return;
+    const key = editingStationId ?? 'new';
+    const el = stationFormRefs.current.get(key);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [addingStation, editingStationId]);
+
+  useEffect(() => {
+    if (!addingLift) return;
+    const key = `${activeStation?.id ?? 'none'}:${editingLiftId ?? 'new'}`;
+    const el = liftFormRefs.current.get(key);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [addingLift, editingLiftId, activeStation?.id]);
 
   const applyStationType = (stationType: StationType, sourceStation?: Partial<Station>) => {
     const lifts = sourceStation?.lifts || newStation.lifts || [];
@@ -242,6 +289,9 @@ export default function GymEditor() {
   const handleDeleteStation = (id: string) => {
      if (!activeGym) return;
      setSystemPopup({ title: 'Delete Station', message: 'Delete equipment station?', onConfirm: async () => {
+         if (editingStationId === id) {
+            resetStationEditor();
+         }
          const updatedGym = { ...activeGym, stations: activeGym.stations.filter(s => s.id !== id) };
          await saveGymToAPI(updatedGym);
          setSystemPopup(null);
@@ -274,8 +324,7 @@ export default function GymEditor() {
       const updatedGym = { ...activeGym, stations: updatedStations };
       
       await saveGymToAPI(updatedGym);
-      setAddingLift(false);
-      setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' });
+      resetLiftEditor();
   };
 
   const handleAddAttachment = () => {
@@ -291,6 +340,207 @@ export default function GymEditor() {
   };
 
   const allMuscles = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core', 'None'];
+
+  const renderLiftEditor = (station: Station, inline = false, formKey = 'new') => (
+    <div
+      className="animate-fade-in"
+      style={{
+        background: 'var(--background)',
+        padding: '1rem',
+        borderRadius: '12px',
+        border: inline ? '1px solid var(--accent)' : '1px solid var(--accent)',
+        marginTop: inline ? '0.5rem' : 0
+      }}
+      ref={setLiftFormRef(formKey)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <span style={{ fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
+          {newLift.id ? 'Editing' : 'New'}
+        </span>
+      </div>
+      <h4 style={{ margin: '0 0 1rem 0' }}>{newLift.id ? 'Edit' : 'New'} Lift Details</h4>
+      <input className="workout-input" placeholder="Lift Name (e.g. Bench Press)" value={newLift.name || ''} onChange={e => setNewLift({...newLift, name: e.target.value})} />
+      
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Primary Muscle</label>
+          <select className="workout-input" value={newLift.primaryMuscle} onChange={e => setNewLift({...newLift, primaryMuscle: e.target.value})}>
+            {allMuscles.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Secondary Muscle</label>
+          <select className="workout-input" value={newLift.secondaryMuscle} onChange={e => setNewLift({...newLift, secondaryMuscle: e.target.value})}>
+            {allMuscles.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Cable attachment selector per lift */}
+      {station.type === 'cable' && station.attachments && station.attachments.length > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Attachment</label>
+          <select className="workout-input" value={newLift.attachment || ''} onChange={e => setNewLift({...newLift, attachment: e.target.value})}>
+            <option value="">None</option>
+            {station.attachments.map(att => <option key={att} value={att}>{att}</option>)}
+          </select>
+        </div>
+      )}
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+        <input type="checkbox" checked={newLift.singleArmLeg || false} onChange={e => setNewLift({...newLift, singleArmLeg: e.target.checked})} />
+        Single Arm / Leg variation
+      </label>
+
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSaveLift}>Save Lift</button>
+        <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetLiftEditor}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  const renderStationConfigForm = (inline = false, formKey = 'new') => (
+    <div
+      className="animate-fade-in"
+      style={{
+        background: 'var(--background)',
+        padding: '1rem',
+        borderRadius: '12px',
+        border: inline ? '1px solid var(--accent)' : '1px solid transparent',
+        marginTop: inline ? '0.75rem' : 0
+      }}
+      ref={setStationFormRef(formKey)}
+    >
+      <h4 style={{ margin: '0 0 1rem 0' }}>{newStation.id ? 'Edit Station Config' : 'New Station Config'}</h4>
+
+      <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Station Name</label>
+      <input
+        className="workout-input"
+        placeholder="e.g. Squat Rack"
+        value={newStation.name || ''}
+        onChange={e => setNewStation({ ...newStation, name: e.target.value })}
+      />
+
+      <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Station Type</label>
+      <select className="workout-input" value={newStation.type} onChange={e => applyStationType(e.target.value as StationType, newStation)}>
+        <option value="plates">Barbell / Plate Loaded</option>
+        <option value="stack">Machine Weight Stack</option>
+        <option value="cable">Cable Machine</option>
+        <option value="dumbbells">Dumbbells</option>
+        <option value="bodyweight">Body Weight</option>
+      </select>
+
+      {newStation.type === 'plates' && (
+        <>
+          <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Base Bar Weight (lbs)</label>
+          <input
+            className="workout-input"
+            type="number"
+            placeholder="e.g. 45"
+            value={newStation.baseWeight ?? ''}
+            onChange={e => setNewStation({ ...newStation, baseWeight: parseOptionalNumber(e.target.value) })}
+          />
+          <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Available Plates (comma separated)</label>
+          <input className="workout-input" placeholder="e.g. 45, 45, 25, 10, 5, 2.5" value={tempPlates} onChange={e => setTempPlates(e.target.value)} />
+        </>
+      )}
+
+      {(newStation.type === 'stack' || newStation.type === 'cable') && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Minimum Weight (lbs)</label>
+              <input
+                className="workout-input"
+                type="number"
+                placeholder="Min"
+                value={newStation.minWeight ?? ''}
+                onChange={e => setNewStation({ ...newStation, minWeight: parseOptionalNumber(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Maximum Weight (lbs)</label>
+              <input
+                className="workout-input"
+                type="number"
+                placeholder="Max"
+                value={newStation.maxWeight ?? ''}
+                onChange={e => setNewStation({ ...newStation, maxWeight: parseOptionalNumber(e.target.value) })}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Weight Increment (lbs)</label>
+              <input
+                className="workout-input"
+                type="number"
+                placeholder="Jump Δ"
+                value={newStation.increment ?? ''}
+                onChange={e => setNewStation({ ...newStation, increment: parseOptionalNumber(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Stack Weight (lbs)</label>
+              <input
+                className="workout-input"
+                type="number"
+                placeholder="Optional"
+                value={newStation.additionalWeight ?? ''}
+                onChange={e => setNewStation({ ...newStation, additionalWeight: parseOptionalNumber(e.target.value) })}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {newStation.type === 'cable' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Attachments</label>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <input
+              className="workout-input"
+              style={{ marginBottom: 0, flex: 1 }}
+              placeholder="e.g. Rope, V-Bar"
+              value={tempAttachment}
+              onChange={e => setTempAttachment(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddAttachment(); }}}
+            />
+            <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap' }} onClick={handleAddAttachment}>+ Add</button>
+          </div>
+          {(newStation.attachments || []).length > 0 && (
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+              {(newStation.attachments || []).map(att => (
+                <span key={att} style={{ fontSize: '0.8rem', background: 'rgba(var(--accent-rgb),0.15)', color: 'var(--accent)', padding: '0.2rem 0.6rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {att}
+                  <button onClick={() => handleRemoveAttachment(att)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: 0, fontSize: '0.8rem' }}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {newStation.type === 'dumbbells' && (
+        <>
+          <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Available Dumbbell Pairs (lbs, comma separated)</label>
+          <input className="workout-input" placeholder="e.g. 5, 10, 15, 20" value={tempDumbbells} onChange={e => setTempDumbbells(e.target.value)} />
+        </>
+      )}
+
+      {newStation.type === 'bodyweight' && (
+        <>
+          <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Bodyweight Attachments (lbs)</label>
+          <input className="workout-input" placeholder="e.g. 45, 25, 10" value={tempBodyWeight} onChange={e => setTempBodyWeight(e.target.value)} />
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+        <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={() => handleSaveStation(null)}>{newStation.id ? 'Save Station' : 'Add Station'}</button>
+        <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetStationEditor}>Cancel</button>
+      </div>
+    </div>
+  );
 
   if (loading) return <div style={{ padding: '1.5rem' }}>Loading Gyms...</div>;
 
@@ -324,8 +574,15 @@ export default function GymEditor() {
           {!addingGym ? (
             <button className="workout-btn-primary" onClick={() => { setAddingGym(true); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); }}>+ Create New Gym</button>
           ) : (
-            <div style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent)' }}>
-              <input className="workout-input" placeholder="Gym Name (e.g. Planet Fitness)" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
+            <div ref={gymFormRef} style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent)' }}>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                 {editingGymId && (
+                   <span style={{ fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
+                     Editing
+                   </span>
+                 )}
+               </div>
+               <input className="workout-input" placeholder="Gym Name (e.g. Planet Fitness)" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
               
               <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.5rem' }}>Choose Emoji</label>
               <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -354,49 +611,6 @@ export default function GymEditor() {
                </div>
              </div>
           )}
-        </div>
-      ) : addingLift && activeStation ? (
-        <div className="animate-fade-in">
-             <div style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent)' }}>
-                <h4 style={{ margin: '0 0 1rem 0' }}>{newLift.id ? 'Edit' : 'New'} Lift Details</h4>
-                <input className="workout-input" placeholder="Lift Name (e.g. Bench Press)" value={newLift.name || ''} onChange={e => setNewLift({...newLift, name: e.target.value})} />
-                
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                   <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Primary Muscle</label>
-                      <select className="workout-input" value={newLift.primaryMuscle} onChange={e => setNewLift({...newLift, primaryMuscle: e.target.value})}>
-                         {allMuscles.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                   </div>
-                   <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Secondary Muscle</label>
-                      <select className="workout-input" value={newLift.secondaryMuscle} onChange={e => setNewLift({...newLift, secondaryMuscle: e.target.value})}>
-                         {allMuscles.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                   </div>
-                </div>
-
-                {/* Cable attachment selector per lift */}
-                {activeStation.type === 'cable' && activeStation.attachments && activeStation.attachments.length > 0 && (
-                    <div style={{ marginBottom: '1rem' }}>
-                       <label style={{ fontSize: '0.8rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Attachment</label>
-                       <select className="workout-input" value={newLift.attachment || ''} onChange={e => setNewLift({...newLift, attachment: e.target.value})}>
-                          <option value="">None</option>
-                          {activeStation.attachments.map(att => <option key={att} value={att}>{att}</option>)}
-                       </select>
-                    </div>
-                )}
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-                   <input type="checkbox" checked={newLift.singleArmLeg || false} onChange={e => setNewLift({...newLift, singleArmLeg: e.target.checked})} />
-                   Single Arm / Leg variation
-                </label>
-
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSaveLift}>Save Lift</button>
-                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setAddingLift(false)}>Cancel</button>
-                </div>
-             </div>
         </div>
       ) : importPrompt ? (
         // --- IMPORT STATION PROMPT ---
@@ -435,39 +649,52 @@ export default function GymEditor() {
              <div style={{ display: 'flex', gap: '0.5rem' }}>
                <button
                  className="btn btn-secondary"
-                 onClick={() => {
-                   setAddingGym(true);
-                   setEditingGymId(activeGym.id);
-                   setNewGymName(activeGym.name);
-                   setNewGymEmoji(activeGym.emoji || '🏋️');
-                   setActiveGym(null);
-                 }}
+                  onClick={() => {
+                    setAddingGym(true);
+                    setEditingGymId(activeGym.id);
+                    setNewGymName(activeGym.name);
+                    setNewGymEmoji(activeGym.emoji || '🏋️');
+                    resetStationEditor();
+                    setActiveGym(null);
+                  }}
                  style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}
                >
                  Edit Gym
                </button>
-               <button className="btn btn-secondary" onClick={() => setActiveGym(null)} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Exit Gym</button>
-             </div>
-          </div>
+                <button className="btn btn-secondary" onClick={() => { resetStationEditor(); setActiveGym(null); }} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Exit Gym</button>
+              </div>
+           </div>
 
           <h4 style={{ margin: '0 0 1rem 0', color: 'var(--accent-light)' }}>Stations & Equipment</h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
             {activeGym.stations?.map(st => (
                <div key={st.id} style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--surface-border)', padding: '1rem', borderRadius: '12px' }}>
-                 <div className="workout-flex-between" style={{ marginBottom: '0.5rem', alignItems: 'flex-start', gap: '0.75rem' }}>
-                   <strong style={{ flex: 1 }}>{st.name} <span style={{ opacity: 0.5, fontWeight: 'normal', fontSize: '0.8rem' }}>({st.type})</span></strong>
-                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                     <button
-                       style={{ background: 'none', border: 'none', color: 'var(--accent)' }}
-                       onClick={() => {
-                         setAddingStation(true);
-                         applyStationType(st.type, st);
-                       }}
-                     >
-                       Edit
-                     </button>
-                     <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>✕ Delete Station</button>
-                   </div>
+                  <div className="workout-flex-between" style={{ marginBottom: '0.5rem', alignItems: 'flex-start', gap: '0.75rem' }}>
+                    <strong style={{ flex: 1 }}>
+                      {st.name} <span style={{ opacity: 0.5, fontWeight: 'normal', fontSize: '0.8rem' }}>({st.type})</span>
+                      {addingStation && editingStationId === st.id && (
+                        <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
+                          Editing
+                        </span>
+                      )}
+                    </strong>
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button
+                        style={{ background: 'none', border: 'none', color: 'var(--accent)' }}
+                        onClick={() => {
+                          if (addingStation && editingStationId === st.id) {
+                            resetStationEditor();
+                            return;
+                          }
+                          setAddingStation(true);
+                          setEditingStationId(st.id);
+                          applyStationType(st.type, st);
+                        }}
+                      >
+                        {addingStation && editingStationId === st.id ? 'Close' : 'Edit'}
+                      </button>
+                      <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>✕ Delete Station</button>
+                    </div>
                  </div>
                  
                  {st.type === 'cable' && st.attachments && st.attachments.length > 0 && (
@@ -478,109 +705,62 @@ export default function GymEditor() {
 
                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
                     {st.lifts && st.lifts.map(l => (
-                        <div key={l.id} className="workout-flex-between" style={{ background: 'var(--input-bg)', padding: '0.5rem 0.75rem', borderRadius: '8px' }}>
-                            <div>
-                               <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{l.name}</span>
-                               <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>{l.primaryMuscle} {l.secondaryMuscle !== 'None' && ('/ ' + l.secondaryMuscle)} {l.singleArmLeg && '(Single Limb)'} {l.attachment && ('- ' + l.attachment)}</span>
+                        <div key={l.id} style={{ background: 'var(--input-bg)', padding: '0.5rem 0.75rem', borderRadius: '8px' }}>
+                            <div className="workout-flex-between">
+                              <div>
+                                 <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{l.name}</span>
+                                 {addingLift && editingLiftId === l.id && (
+                                   <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
+                                     Editing
+                                   </span>
+                                 )}
+                                 <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>{l.primaryMuscle} {l.secondaryMuscle !== 'None' && ('/ ' + l.secondaryMuscle)} {l.singleArmLeg && '(Single Limb)'} {l.attachment && ('- ' + l.attachment)}</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                 <button style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem' }} onClick={() => {
+                                   if (addingLift && editingLiftId === l.id) {
+                                     resetLiftEditor();
+                                     return;
+                                   }
+                                   setActiveStation(st);
+                                   setNewLift(l);
+                                   setAddingLift(true);
+                                   setEditingLiftId(l.id);
+                                 }}>{addingLift && editingLiftId === l.id ? 'Close' : 'Edit'}</button>
+                                 <button style={{ background: 'none', border: 'none', color: '#ff6b6b', fontSize: '0.85rem' }} onClick={() => handleDeleteLiftInline(st, l.id)}>Delete</button>
+                              </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                               <button style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem' }} onClick={() => { setActiveStation(st); setNewLift(l); setAddingLift(true); }}>Edit</button>
-                               <button style={{ background: 'none', border: 'none', color: '#ff6b6b', fontSize: '0.85rem' }} onClick={() => handleDeleteLiftInline(st, l.id)}>Delete</button>
-                            </div>
+                            {addingLift && editingLiftId === l.id && activeStation?.id === st.id && renderLiftEditor(st, true, `${st.id}:${l.id}`)}
                         </div>
                     ))}
                     {(!st.lifts || st.lifts.length === 0) && <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0.25rem 0' }}>No lifts configured.</p>}
                  </div>
                  
-                 <button className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem', marginTop: '0.5rem' }} onClick={() => { setActiveStation(st); setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' }); setAddingLift(true); }}>
-                     + Add Lift to {st.name}
+                 <button className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem', marginTop: '0.5rem' }} onClick={() => { setActiveStation(st); setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' }); setAddingLift(true); setEditingLiftId(null); }}>
+                      + Add Lift to {st.name}
                  </button>
-               </div>
-            ))}
+                 {addingLift && editingLiftId === null && activeStation?.id === st.id && (
+                   <div style={{ marginTop: '0.5rem' }}>
+                     {renderLiftEditor(st, true, `${st.id}:new`)}
+                   </div>
+                 )}
+
+                 {addingStation && editingStationId === st.id && renderStationConfigForm(true, st.id)}
+                </div>
+             ))}
             {(!activeGym.stations || activeGym.stations.length === 0) && <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>No equipment configured yet.</p>}
           </div>
 
-          {!addingStation ? (
-               <button className="workout-btn-primary" onClick={() => {
-                    setAddingStation(true);
-                    applyStationType('plates', { type: 'plates', lifts: [], attachments: [] });
-               }} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
-                  + Add Equipment Station
-               </button>
-           ) : (
-             <div className="animate-fade-in" style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px' }}>
-                <h4 style={{ margin: '0 0 1rem 0' }}>{newStation.id ? 'Edit Station Config' : 'New Station Config'}</h4>
-                <input className="workout-input" placeholder="Station Name (e.g. Squat Rack)" value={newStation.name || ''} onChange={e => setNewStation({ ...newStation, name: e.target.value })} />
-                
-                <select className="workout-input" value={newStation.type} onChange={e => applyStationType(e.target.value as StationType, newStation)}>
-                  <option value="plates">Barbell / Plate Loaded</option>
-                  <option value="stack">Machine Weight Stack</option>
-                  <option value="cable">Cable Machine</option>
-                  <option value="dumbbells">Dumbbells</option>
-                  <option value="bodyweight">Body Weight</option>
-                </select>
-
-                {newStation.type === 'plates' && (
-                  <>
-                    <input className="workout-input" type="number" placeholder="Base Bar Weight (lbs) e.g. 45" value={newStation.baseWeight || ''} onChange={e => setNewStation({ ...newStation, baseWeight: parseFloat(e.target.value) })} />
-                    <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>List available plates (comma separated)</label>
-                    <input className="workout-input" placeholder="e.g. 45, 45, 25, 10, 5, 2.5" value={tempPlates} onChange={e => setTempPlates(e.target.value)} />
-                  </>
-                )}
-
-                {(newStation.type === 'stack' || newStation.type === 'cable') && (
-                  <>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <input className="workout-input" type="number" placeholder="Min (lbs)" value={newStation.minWeight || ''} onChange={e => setNewStation({ ...newStation, minWeight: parseFloat(e.target.value) })} />
-                      <input className="workout-input" type="number" placeholder="Max (lbs)" value={newStation.maxWeight || ''} onChange={e => setNewStation({ ...newStation, maxWeight: parseFloat(e.target.value) })} />
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <input className="workout-input" type="number" placeholder="Jump Δ (lbs)" value={newStation.increment || ''} onChange={e => setNewStation({ ...newStation, increment: parseFloat(e.target.value) })} />
-                      <input className="workout-input" type="number" placeholder="+ Stack Addon" value={newStation.additionalWeight || ''} onChange={e => setNewStation({ ...newStation, additionalWeight: parseFloat(e.target.value) })} />
-                    </div>
-                  </>
-                )}
-
-                {newStation.type === 'cable' && (
-                  <div style={{ marginBottom: '1rem' }}>
-                    <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Attachments</label>
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <input className="workout-input" style={{ marginBottom: 0, flex: 1 }} placeholder="e.g. Rope, V-Bar..." value={tempAttachment} onChange={e => setTempAttachment(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddAttachment(); }}} />
-                      <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap' }} onClick={handleAddAttachment}>+ Add</button>
-                    </div>
-                    {(newStation.attachments || []).length > 0 && (
-                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        {(newStation.attachments || []).map(att => (
-                          <span key={att} style={{ fontSize: '0.8rem', background: 'rgba(var(--accent-rgb),0.15)', color: 'var(--accent)', padding: '0.2rem 0.6rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                            {att}
-                            <button onClick={() => handleRemoveAttachment(att)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: 0, fontSize: '0.8rem' }}>✕</button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {newStation.type === 'dumbbells' && (
-                   <>
-                    <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>List available pairs (comma separated)</label>
-                    <input className="workout-input" placeholder="e.g. 5, 10, 15, 20" value={tempDumbbells} onChange={e => setTempDumbbells(e.target.value)} />
-                   </>
-                )}
-
-                {newStation.type === 'bodyweight' && (
-                   <>
-                    <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional attachable weights (Chains/Belts)</label>
-                    <input className="workout-input" placeholder="e.g. 45, 25, 10" value={tempBodyWeight} onChange={e => setTempBodyWeight(e.target.value)} />
-                   </>
-                )}
-
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                  <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={() => handleSaveStation(null)}>{newStation.id ? 'Save Station' : 'Add Station'}</button>
-                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetStationEditor}>Cancel</button>
-                </div>
-            </div>
+          {!addingStation && (
+            <button className="workout-btn-primary" onClick={() => {
+              setAddingStation(true);
+              setEditingStationId(null);
+              applyStationType('plates', { type: 'plates', lifts: [], attachments: [] });
+            }} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
+              + Add Equipment Station
+            </button>
           )}
+          {addingStation && editingStationId === null && renderStationConfigForm(false, 'new')}
         </div>
       )}
 
