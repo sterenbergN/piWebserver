@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore } from '@/lib/workout/analytics';
 import { analyzePerformance, type Session } from '@/lib/workout/progression';
+import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
 
 // Intensity label helper
 function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
@@ -58,6 +59,10 @@ function computeHistoryTrend(history: Session[]): number {
    return Math.max(0.9, Math.min(1.1, avgScore));
 }
 
+function titleCase(value: string): string {
+   return (value || '').replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 export default function AnalyticsPage() {
    const [history, setHistory] = useState<any[]>([]);
    const [user, setUser] = useState<any>(null);
@@ -69,6 +74,7 @@ export default function AnalyticsPage() {
    const [volumeType, setVolumeType] = useState<any[]>([]);
    const [calorieTimeline, setCalorieTimeline] = useState<any[]>([]);
    const [overloadTracking, setOverloadTracking] = useState<any[]>([]);
+   const [calibrations, setCalibrations] = useState<any[]>([]);
 
    // Modals / Expanded states
    const [expand1RM, setExpand1RM] = useState(false);
@@ -88,6 +94,8 @@ export default function AnalyticsPage() {
    const [expandedOverload, setExpandedOverload] = useState<string | null>(null);
    const [chartSeries, setChartSeries] = useState<'volume' | 'calories' | 'intensity'>('volume');
    const [allLiftsMap, setAllLiftsMap] = useState<Map<string, string>>(new Map());
+   const [liftStationTypeMap, setLiftStationTypeMap] = useState<Map<string, string>>(new Map());
+   const [gymNameMap, setGymNameMap] = useState<Map<string, string>>(new Map());
    const [experience, setExperience] = useState<any>(null);
    const rmCardRefs = useRef(new Map<string, HTMLDivElement>());
    const overloadRowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -99,31 +107,41 @@ export default function AnalyticsPage() {
 
    useEffect(() => {
        async function fetchData() {
-           const [authRes, histRes, gymsRes] = await Promise.all([
-               fetch('/api/workout/auth').then(r => r.json()),
-               fetch('/api/workout/history').then(r => r.json()),
-               fetch('/api/workout/gyms').then(r => r.json())
-           ]);
+            const [authRes, histRes, gymsRes, calibRes] = await Promise.all([
+                fetch('/api/workout/auth').then(r => r.json()),
+                fetch('/api/workout/history').then(r => r.json()),
+                fetch('/api/workout/gyms').then(r => r.json()),
+                fetch('/api/workout/calibration').then(r => r.json()).catch(() => ({ success: false }))
+            ]);
            
            let currentUser = null;
            let histData = [];
 
-           const rawLifts: any[] = [];
-           const liftsMap = new Map<string, string>();
-           if (gymsRes.success) {
-               gymsRes.gyms?.forEach((g:any) => g.stations?.forEach((s:any) => s.lifts?.forEach((l:any) => {
-                   liftsMap.set(l.id, l.name);
-                   rawLifts.push(l);
-               })));
-           }
-           setAllLiftsMap(liftsMap);
+            const rawLifts: any[] = [];
+            const liftsMap = new Map<string, string>();
+            const stationTypeMap = new Map<string, string>();
+            if (gymsRes.success) {
+                const gymMap = new Map<string, string>();
+                gymsRes.gyms?.forEach((g:any) => g.stations?.forEach((s:any) => s.lifts?.forEach((l:any) => {
+                    liftsMap.set(l.id, l.name);
+                    stationTypeMap.set(l.id, s.type);
+                    rawLifts.push(l);
+                })));
+                gymsRes.gyms?.forEach((g: any) => {
+                   if (g?.id) gymMap.set(g.id, g.name);
+                });
+                setGymNameMap(gymMap);
+            }
+            setAllLiftsMap(liftsMap);
+            setLiftStationTypeMap(stationTypeMap);
 
-           if (authRes.authenticated) {
-               currentUser = authRes.user;
-               histData = authRes.user.id ? histRes.history || [] : [];
-               setIsDemo(false);
-               setIntensityFactor(authRes.user.intensityFactor ?? 1.0);
-           } else {
+            if (authRes.authenticated) {
+                currentUser = authRes.user;
+                histData = authRes.user.id ? histRes.history || [] : [];
+                setIsDemo(false);
+                setIntensityFactor(authRes.user.intensityFactor ?? 1.0);
+                if (calibRes?.success) setCalibrations(calibRes.calibrations || []);
+            } else {
                // Demo mode mockup data
                setIsDemo(true);
                currentUser = { weight: 175, height: '70', gender: 'male', username: 'Guest Lifter' };
@@ -157,39 +175,60 @@ export default function AnalyticsPage() {
            const exp = calculateExperienceScore(currentUser || { weight: 150 }, histData, rawLifts);
            setExperience(exp);
 
-           const rms = new Map();
-           const raw1RMDetails = new Map();
-           const typeVols = new Map(); // average volume per type
-           const vols: any[] = [];
-           const cals: any[] = [];
+            const rms = new Map();
+            const raw1RMDetails = new Map();
+            const lastScaleByLift = new Map<string, number>();
+            const typeVols = new Map(); // average volume per type
+            const vols: any[] = [];
+            const cals: any[] = [];
 
-           histData.forEach((workout: any) => {
-               const dateStr = new Date(workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-               
-               cals.push({ date: dateStr, calories: workout.calories || 0 });
+            const calibrationMap = new Map<string, number>();
+            calibrations.forEach((c) => {
+               calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
+            });
 
-               if (workout.type?.name !== 'Cardio') {
-                   let workoutVol = 0;
-                   let workoutMaxRM = 0;
-                   Object.keys(workout.logs).forEach(liftId => {
-                       workout.logs[liftId].forEach((set: any) => {
-                           const vol = set.reps * set.weight;
-                           workoutVol += vol;
-                           
-                           const epley = calcEpley(set.weight, set.reps);
-                           const brzycki = calcBrzycki(set.weight, set.reps);
-                           const lombardi = calcLombardi(set.weight, set.reps);
-                           const avg = (epley + brzycki + lombardi) / 3;
+            const getScaleFactorForLift = (workout: any, liftId: string) => {
+               const meta = workout.liftMeta?.[liftId];
+               const liftName = meta?.name || liftsMap.get(liftId) || liftId;
+               const liftKey = normalizeLiftKey(liftName);
+               const stationType = meta?.stationType || liftStationTypeMap.get(liftId);
+               if (!workout.gymId || !liftKey || (stationType !== 'stack' && stationType !== 'cable')) return 1;
+               return calibrationMap.get(`${workout.gymId}|${liftKey}`) || 1;
+            };
 
-                           if (avg > workoutMaxRM) workoutMaxRM = avg;
+            histData.forEach((workout: any) => {
+                const dateStr = new Date(workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                
+                cals.push({ date: dateStr, calories: workout.calories || 0 });
 
-                           const currentMax = rms.get(liftId) || 0;
-                           if (avg > currentMax) {
-                               rms.set(liftId, avg);
-                               raw1RMDetails.set(liftId, { epley, brzycki, lombardi, avg });
-                           }
-                       });
-                   });
+                if (workout.type?.name !== 'Cardio') {
+                    let workoutVol = 0;
+                    let workoutMaxRM = 0;
+                    Object.keys(workout.logs).forEach(liftId => {
+                        const scaleFactor = getScaleFactorForLift(workout, liftId);
+                        if (scaleFactor !== 1) {
+                           const liftName = workout.liftMeta?.[liftId]?.name || liftsMap.get(liftId) || liftId;
+                           lastScaleByLift.set(liftName, scaleFactor);
+                        }
+                        workout.logs[liftId].forEach((set: any) => {
+                            const scaledWeight = set.weight * scaleFactor;
+                            const vol = set.reps * scaledWeight;
+                            workoutVol += vol;
+                            
+                            const epley = calcEpley(scaledWeight, set.reps);
+                            const brzycki = calcBrzycki(scaledWeight, set.reps);
+                            const lombardi = calcLombardi(scaledWeight, set.reps);
+                            const avg = (epley + brzycki + lombardi) / 3;
+
+                            if (avg > workoutMaxRM) workoutMaxRM = avg;
+
+                            const currentMax = rms.get(liftId) || 0;
+                            if (avg > currentMax) {
+                                rms.set(liftId, avg);
+                                raw1RMDetails.set(liftId, { epley, brzycki, lombardi, avg, scaleFactor });
+                            }
+                        });
+                    });
 
                    vols.push({ 
                       date: dateStr, 
@@ -205,7 +244,11 @@ export default function AnalyticsPage() {
                }
            });
 
-           const mappedRms = Array.from(raw1RMDetails.entries()).map(([k, v]) => ({ name: liftsMap.get(k) || k, ...v }));
+            const mappedRms = Array.from(raw1RMDetails.entries()).map(([k, v]) => ({
+               name: liftsMap.get(k) || k,
+               ...v,
+               scaleFactor: v.scaleFactor || lastScaleByLift.get(liftsMap.get(k) || k) || 1
+            }));
            mappedRms.sort((a,b) => b.avg - a.avg);
            
            setOneRMs(mappedRms);
@@ -222,8 +265,9 @@ export default function AnalyticsPage() {
                 if (w.type?.name !== 'Cardio' && w.logs) {
                     const dateStr = new Date(w.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                     Object.keys(w.logs).forEach((liftId) => {
+                        const scaleFactor = getScaleFactorForLift(w, liftId);
                         const sets = (w.logs[liftId] || [])
-                          .map((s: any) => ({ reps: Number(s.reps), weight: Number(s.weight) }))
+                          .map((s: any) => ({ reps: Number(s.reps), weight: Number(s.weight) * scaleFactor }))
                           .filter((s: { reps: number; weight: number }) => s.reps > 0 && s.weight > 0);
 
                         if (sets.length === 0) return;
@@ -380,6 +424,28 @@ export default function AnalyticsPage() {
          return sum + (0.05 * effectiveIntensity * o.performanceScore);
       }, 0) / overloadTracking.length
       : (0.05 * intensityFactor);
+   const calibrationMap = new Map<string, number>();
+   calibrations.forEach((c) => {
+      calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
+   });
+   const getScaleFactorForLiftDisplay = (workout: any, liftId: string) => {
+      const meta = workout.liftMeta?.[liftId];
+      const liftName = meta?.name || allLiftsMap.get(liftId) || liftId;
+      const liftKey = normalizeLiftKey(liftName);
+      const stationType = meta?.stationType || liftStationTypeMap.get(liftId);
+      if (!workout.gymId || !liftKey || (stationType !== 'stack' && stationType !== 'cable')) return 1;
+      return calibrationMap.get(`${workout.gymId}|${liftKey}`) || 1;
+   };
+
+   const calibrationByLift = calibrations.reduce((acc: Record<string, any[]>, entry: any) => {
+      const key = entry.liftKey || 'unknown';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(entry);
+      return acc;
+   }, {});
+   Object.keys(calibrationByLift).forEach((key) => {
+      calibrationByLift[key].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+   });
    const listPageSize = 5;
    const rmsPageCount = Math.max(1, Math.ceil(oneRMs.length / listPageSize));
    const safeRmsPage = Math.min(rmsPage, rmsPageCount - 1);
@@ -640,15 +706,20 @@ export default function AnalyticsPage() {
                                      </div>
                                   </div>
                                   
-                                  {expandedRM === rm.name && (
-                                     <div className="animate-fade-in" style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--surface-border)', background: 'rgba(255,255,255,0.02)' }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center' }}>
-                                           <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Epley</div><div style={{ fontWeight: 600 }}>{Math.round(rm.epley)}</div></div>
-                                           <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Brzycki</div><div style={{ fontWeight: 600 }}>{Math.round(rm.brzycki)}</div></div>
-                                           <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Lombardi</div><div style={{ fontWeight: 600 }}>{Math.round(rm.lombardi)}</div></div>
-                                        </div>
-                                     </div>
-                                  )}
+                                   {expandedRM === rm.name && (
+                                      <div className="animate-fade-in" style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--surface-border)', background: 'rgba(255,255,255,0.02)' }}>
+                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center' }}>
+                                            <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Epley</div><div style={{ fontWeight: 600 }}>{Math.round(rm.epley)}</div></div>
+                                            <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Brzycki</div><div style={{ fontWeight: 600 }}>{Math.round(rm.brzycki)}</div></div>
+                                            <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Lombardi</div><div style={{ fontWeight: 600 }}>{Math.round(rm.lombardi)}</div></div>
+                                         </div>
+                                         {rm.scaleFactor && rm.scaleFactor !== 1 && (
+                                           <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--muted)', textAlign: 'center' }}>
+                                             Scale applied: ×{rm.scaleFactor.toFixed(2)}
+                                           </div>
+                                         )}
+                                      </div>
+                                   )}
                                </div>
                             ))}
                          </div>
@@ -749,8 +820,8 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
 
-               {/* ═══ Progressive Overload Factor Tile ═══ */}
-               <div className="workout-tile" style={{ position: 'relative' }}>
+                {/* ═══ Progressive Overload Factor Tile ═══ */}
+                <div className="workout-tile" style={{ position: 'relative' }}>
                   <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'overload' ? null : 'overload')}>
                     {expandedInfo === 'overload' ? 'Hide ✕' : 'About ⓘ'}
                   </button>
@@ -883,10 +954,50 @@ export default function AnalyticsPage() {
                   ) : (
                      <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Need at least 2 sessions per lift to track overload.</p>
                   )}
-               </div>
+                </div>
 
-               {/* ═══ Raw History Audit Log ═══ */}
-               <div className="workout-tile">
+                {/* ═══ Calibration History ═══ */}
+                <div className="workout-tile">
+                   <h3 style={{ margin: '0 0 1rem 0' }}>Calibration History</h3>
+                   {calibrations.length === 0 ? (
+                     <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No calibration data yet. This appears after you use a stack/cable lift in a new gym.</p>
+                   ) : (
+                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        {Object.keys(calibrationByLift).map((liftKey) => {
+                           const entries = calibrationByLift[liftKey];
+                           return (
+                             <div key={liftKey} style={{ background: 'var(--input-bg)', borderRadius: '10px', padding: '0.75rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                   <strong style={{ fontSize: '0.9rem' }}>{titleCase(liftKey)}</strong>
+                                   <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{entries.length} gyms</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                   {entries.map((entry: any) => {
+                                      const gymName = gymNameMap.get(entry.gymId) || 'Unknown Gym';
+                                      const updatedDate = entry.updatedAt ? new Date(entry.updatedAt).toLocaleDateString() : 'Unknown';
+                                      const confidencePct = entry.confidence ? Math.round(entry.confidence * 100) : 0;
+                                      return (
+                                        <div key={`${entry.gymId}-${entry.updatedAt}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.8rem' }}>
+                                           <span style={{ color: 'var(--muted)' }}>{gymName}</span>
+                                           <span>
+                                              Scale ×{Number(entry.scaleFactor || 1).toFixed(2)}
+                                              <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                                 {entry.stationType || 'station'} • {updatedDate} • {confidencePct}% conf
+                                              </span>
+                                           </span>
+                                        </div>
+                                      );
+                                   })}
+                                </div>
+                             </div>
+                           );
+                        })}
+                     </div>
+                   )}
+                </div>
+
+                {/* ═══ Raw History Audit Log ═══ */}
+                <div className="workout-tile">
                   <h3 style={{ margin: '0 0 1rem 0' }}>Raw Audit Log</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {history.slice().reverse().slice(auditPage * 5, (auditPage + 1) * 5).map((h, i) => (
@@ -904,10 +1015,19 @@ export default function AnalyticsPage() {
                                    {h.logs && Object.keys(h.logs).length > 0 ? (
                                      <>
                                        {/* Per-workout summary */}
-                                       {(() => {
-                                          let totalW = 0, totalR = 0, totalSets = 0, totalVol = 0;
-                                          Object.values(h.logs).forEach((sets: any) => sets.forEach((s: any) => { totalW += s.weight; totalR += s.reps; totalSets++; totalVol += s.weight * s.reps; }));
-                                          return (
+                                        {(() => {
+                                           let totalW = 0, totalR = 0, totalSets = 0, totalVol = 0;
+                                           Object.keys(h.logs).forEach((liftId) => {
+                                              const scaleFactor = getScaleFactorForLiftDisplay(h, liftId);
+                                              h.logs[liftId].forEach((s: any) => {
+                                                 const scaledWeight = s.weight * scaleFactor;
+                                                 totalW += scaledWeight;
+                                                 totalR += s.reps;
+                                                 totalSets++;
+                                                 totalVol += scaledWeight * s.reps;
+                                              });
+                                           });
+                                           return (
                                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.7rem', textAlign: 'center' }}>
                                                 <div style={{ background: 'var(--background)', padding: '0.4rem', borderRadius: '6px' }}><div style={{ fontWeight: 700 }}>{totalSets > 0 ? Math.round(totalW / totalSets) : 0}</div>Avg Weight</div>
                                                 <div style={{ background: 'var(--background)', padding: '0.4rem', borderRadius: '6px' }}><div style={{ fontWeight: 700 }}>{totalSets > 0 ? (totalR / totalSets).toFixed(1) : 0}</div>Avg Reps</div>
@@ -915,24 +1035,27 @@ export default function AnalyticsPage() {
                                              </div>
                                           );
                                        })()}
-                                       {Object.keys(h.logs).map(liftId => {
-                                           const sets = h.logs[liftId];
-                                           const liftName = allLiftsMap.get(liftId) || liftId;
-                                           const topSet = sets.reduce((best: any, s: any) => (s.weight > (best?.weight || 0) ? s : best), null);
-                                           const top1RM = topSet ? Math.round(calcAverage1RM(topSet.weight, topSet.reps)) : 0;
-                                           return (
-                                              <div key={liftId} style={{ marginBottom: '0.75rem' }}>
-                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <strong style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>{liftName}</strong>
-                                                    {top1RM > 0 && <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Est. 1RM: {top1RM}</span>}
-                                                 </div>
-                                                 <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                                                    {sets.length} sets • {sets.reduce((sum: number, s: any) => sum + (s.weight * s.reps), 0)} lbs volume
-                                                    {sets.map((s:any, idx:number) => <div key={idx} style={{ paddingLeft: '0.5rem' }}>{idx+1}. {s.weight} lbs × {s.reps}</div>)}
-                                                 </div>
-                                              </div>
-                                           );
-                                       })}
+                                        {Object.keys(h.logs).map(liftId => {
+                                            const sets = h.logs[liftId];
+                                            const scaleFactor = getScaleFactorForLiftDisplay(h, liftId);
+                                            const liftName = allLiftsMap.get(liftId) || liftId;
+                                            const topSet = sets.reduce((best: any, s: any) => (s.weight > (best?.weight || 0) ? s : best), null);
+                                            const top1RM = topSet ? Math.round(calcAverage1RM(topSet.weight * scaleFactor, topSet.reps)) : 0;
+                                            const scaledVolume = sets.reduce((sum: number, s: any) => sum + ((s.weight * scaleFactor) * s.reps), 0);
+                                            return (
+                                               <div key={liftId} style={{ marginBottom: '0.75rem' }}>
+                                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                     <strong style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>{liftName}</strong>
+                                                     {top1RM > 0 && <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Est. 1RM: {top1RM}</span>}
+                                                  </div>
+                                                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                                     {sets.length} sets • {scaledVolume.toFixed(0)} lbs volume
+                                                     {scaleFactor !== 1 && <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem' }}>Scale ×{scaleFactor.toFixed(2)}</span>}
+                                                     {sets.map((s:any, idx:number) => <div key={idx} style={{ paddingLeft: '0.5rem' }}>{idx+1}. {s.weight} lbs × {s.reps}</div>)}
+                                                  </div>
+                                               </div>
+                                            );
+                                        })}
                                      </>
                                    ) : <p style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>No detailed set logs.</p>}
                                    

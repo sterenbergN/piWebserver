@@ -62,7 +62,7 @@ export default function ActiveWorkoutPage() {
             g.stations?.forEach((station: any) => {
                 if (station.lifts) {
                    station.lifts.forEach((lift: any) => {
-                      availableLifts.push({ ...lift, station, gymName: g.name });
+                      availableLifts.push({ ...lift, station, gymName: g.name, gymId: g.id });
                    });
                 }
             });
@@ -130,6 +130,7 @@ export default function ActiveWorkoutPage() {
                name: `${type.name} @ ${gym.name}`,
                type: type,
                gymName: gym.name,
+               gymId: gym.id,
                lifts: plan
            });
         }

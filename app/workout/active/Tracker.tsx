@@ -96,6 +96,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [showList, setShowList] = useState(false);
    const [showChange, setShowChange] = useState(false);
    const [workoutFinished, setWorkoutFinished] = useState(false);
+   const [calibrationInfo, setCalibrationInfo] = useState<any>(null);
 
    useEffect(() => {
      let previousTick = Date.now();
@@ -157,6 +158,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({
                  liftId: lift.id,
+                 liftName: lift.name,
+                 gymId: localPlan.gymId,
                  station: lift.station,
                  logs: sessionSets,
                  planType: localPlan.type,
@@ -173,6 +176,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                  setScoringBreakdown(res.plan.scoringBreakdown || null);
                  setPerformanceMetrics(res.plan.performanceMetrics || null);
                  setCandidatesEvaluated(res.plan.candidatesEvaluated || 0);
+             }
+             if (res.calibration) {
+                setCalibrationInfo(res.calibration);
+             } else {
+                setCalibrationInfo(null);
              }
           });
 
@@ -201,6 +209,26 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
           setPerformanceMetrics(null);
           setCandidatesEvaluated(0);
           setHistoricStats(null);
+          setCalibrationInfo(null);
+
+          // Still check for cross-gym calibration info
+          fetch('/api/workout/progression', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+                 liftId: lift.id,
+                 liftName: lift.name,
+                 gymId: localPlan.gymId,
+                 station: lift.station,
+                 logs: [],
+                 planType: localPlan.type,
+                 intensity: effectiveIntensity
+             })
+          }).then(r => r.json()).then(res => {
+             if (res.calibration) {
+                setCalibrationInfo(res.calibration);
+             }
+          });
       }
    }, [activeLift, pastHistory, localPlan.type, intensitySlider]);
 
@@ -291,9 +319,17 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const handleSaveWorkout = async () => {
       // Map logs to exact Lift IDs instead of random Plan IDs so history works across workouts
       const exportLogs: Record<string, any[]>  = {};
+      const liftMeta: Record<string, any> = {};
       Object.keys(logs).forEach(uid => {
          const lift = localPlan.lifts.find((l: any) => l.uniquePlanId.toString() === uid.toString());
-         if (lift) exportLogs[lift.id] = logs[uid];
+         if (lift) {
+            exportLogs[lift.id] = logs[uid];
+            liftMeta[lift.id] = {
+              name: lift.name,
+              stationType: lift.station?.type,
+              stationId: lift.station?.id,
+            };
+         }
       });
 
       await fetch('/api/workout/history', { 
@@ -302,6 +338,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
              planId: localPlan.id, name: localPlan.name, type: localPlan.type,
              duration: `${Math.floor(elapsedSecs/60)}:${(elapsedSecs%60).toString().padStart(2,'0')}`,
              timestamp: new Date().toISOString(), logs: exportLogs, calories, volume: totalVol,
+             gymId: localPlan.gymId, gymName: localPlan.gymName, liftMeta,
              isDemo: !user
          }) 
       });
@@ -324,6 +361,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    const intensityInfo = getIntensityLabel(intensitySlider);
    const showExpandedHeaderDetails = !isCompactHeader || showHeaderDetails;
+   const isUsingBaseline = suggestionReason.toLowerCase().includes('baseline');
 
    if (workoutFinished) {
       return (
@@ -357,142 +395,204 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    }
 
    return (
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '90vh' }}>
-         <div className={`workout-tile tracker-topbar${isCompactHeader ? ' tracker-topbar-compact' : ''}`} style={{ padding: '1rem', marginBottom: '0.5rem', borderRadius: '0 0 16px 16px', borderTop: 'none', position: 'sticky', top: 0, zIndex: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
+         <div className={`workout-tile tracker-topbar${isCompactHeader ? ' tracker-topbar-compact' : ''}`} style={{ padding: isCompactHeader ? '0.65rem 0.75rem' : '1rem', marginBottom: isCompactHeader ? '0.35rem' : '0.5rem', borderRadius: '0 0 16px 16px', borderTop: 'none', position: 'sticky', top: 0, zIndex: 10 }}>
             <div className="workout-flex-between tracker-topbar-row">
                <div>
-                 <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.25rem 0' }}>{localPlan.name}</h2>
-                 <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--muted)' }}>Time: {Math.floor(elapsedSecs / 60).toString().padStart(2, '0')}:{(elapsedSecs % 60).toString().padStart(2, '0')}</p>
+                 <h2 style={{ fontSize: isCompactHeader ? '1.02rem' : '1.2rem', margin: '0 0 0.2rem 0' }}>{localPlan.name}</h2>
+                 <p style={{ margin: 0, fontSize: isCompactHeader ? '0.75rem' : '0.85rem', color: 'var(--muted)' }}>Time: {Math.floor(elapsedSecs / 60).toString().padStart(2, '0')}:{(elapsedSecs % 60).toString().padStart(2, '0')}</p>
                </div>
-               <button className="btn btn-secondary tracker-topbar-action" style={{ padding: '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
+               <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
             </div>
          </div>
 
-         <div style={{ flex: 1, padding: '1rem' }}>
-            <div className={`tracker-summary-card${isCompactHeader ? ' compact' : ''}`} style={{ textAlign: 'center', marginBottom: '1rem' }}>
+         <div style={{ flex: 1, padding: isCompactHeader ? '0.65rem' : '1rem', paddingBottom: isCompactHeader ? '1.25rem' : '2rem', overflowY: 'auto' }}>
+            <div className={`tracker-summary-card${isCompactHeader ? ' compact' : ''}`} style={{ textAlign: 'center', marginBottom: isCompactHeader ? '0.6rem' : '1rem' }}>
                 <p style={{ color: 'var(--accent)', textTransform: 'uppercase', fontWeight: 700, fontSize: isCompactHeader ? '0.72rem' : '0.8rem', letterSpacing: isCompactHeader ? '1px' : '2px', margin: '0 0 0.35rem 0' }}>
                    {activeLift.station?.name || 'Equipment'} • Lift {activeLiftIndex + 1}/{localPlan.lifts.length}
                 </p>
-                <h1 style={{ fontSize: isCompactHeader ? '1.55rem' : '2rem', margin: '0 0 0.5rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
-                <div style={{ display: showExpandedHeaderDetails ? 'flex' : 'none', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
-                    <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: 'var(--muted)', padding: '0.2rem 1rem', borderRadius: '20px', fontSize: '0.8rem' }} onClick={() => setShowChange(true)}>Change Lift 🔄</button>
+                <h1 style={{ fontSize: isCompactHeader ? '1.38rem' : '2rem', margin: '0 0 0.35rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
+                <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'center', alignItems: 'center' }}>
+                    <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: 'var(--muted)', padding: isCompactHeader ? '0.16rem 0.7rem' : '0.2rem 1rem', borderRadius: '20px', fontSize: isCompactHeader ? '0.74rem' : '0.8rem' }} onClick={() => setShowChange(true)}>Change Lift 🔄</button>
                 </div>
 
                 {/* System Target Tile */}
-                <div style={{ marginTop: '0.75rem', padding: '0.6rem 1rem', background: 'rgba(var(--accent-rgb), 0.08)', border: '1px solid rgba(var(--accent-rgb), 0.3)', borderRadius: '10px', fontSize: '0.85rem' }}>
+                <div style={{ marginTop: isCompactHeader ? '0.5rem' : '0.75rem', padding: isCompactHeader ? '0.45rem 0.65rem' : '0.6rem 1rem', background: 'rgba(var(--accent-rgb), 0.08)', border: '1px solid rgba(var(--accent-rgb), 0.3)', borderRadius: '10px', fontSize: isCompactHeader ? '0.8rem' : '0.85rem' }}>
                     <span style={{ color: 'var(--muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '1px' }}>System Target</span>
-                    <div style={{ fontWeight: 700, color: 'var(--foreground)', fontSize: '1rem', margin: '0.15rem 0' }}>
+                    <div style={{ fontWeight: 700, color: 'var(--foreground)', fontSize: isCompactHeader ? '0.92rem' : '1rem', margin: isCompactHeader ? '0.1rem 0' : '0.15rem 0' }}>
                         {suggestedWeight} lbs × {suggestedReps} reps × {suggestedSets} sets
                     </div>
-                    {suggestionReason && <div style={{ color: 'var(--accent)', fontSize: '0.75rem', marginTop: '0.2rem' }}>💡 {suggestionReason}</div>}
-                    
-                    {/* Manual Override Badge */}
-                    {isDeviated && (
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'center', marginTop: '0.3rem' }}>
-                           <span style={{ background: '#ed8936', color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Manual Override</span>
-                           <button onClick={() => { setCurrentWeight(suggestedWeight); setCurrentReps(suggestedReps); }} style={{ background: 'none', border: '1px solid var(--accent)', color: 'var(--accent)', padding: '0.1rem 0.5rem', borderRadius: '12px', fontSize: '0.7rem', cursor: 'pointer' }}>
-                               ↩ Reset
-                           </button>
-                        </div>
-                    )}
-
                     {isCompactHeader && (
-                        <button
-                          onClick={() => setShowHeaderDetails((value) => !value)}
-                          style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.78rem', cursor: 'pointer', marginTop: '0.35rem', textDecoration: 'underline' }}
-                        >
-                          {showHeaderDetails ? 'Hide Details ▲' : 'Details ▼'}
-                        </button>
-                    )}
-
-                    {/* Collapsible Scoring Breakdown */}
-                    {showExpandedHeaderDetails && scoringBreakdown && (
-                        <button 
-                          onClick={() => setShowBreakdown(!showBreakdown)} 
-                          style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.7rem', cursor: 'pointer', marginTop: '0.3rem', textDecoration: 'underline' }}
-                        >
-                          {showBreakdown ? 'Hide Details ▴' : 'Show Scoring Details ▾'}
-                        </button>
-                    )}
-
-                    {showExpandedHeaderDetails && showBreakdown && scoringBreakdown && (
-                        <div className="animate-fade-in" style={{ marginTop: '0.5rem', padding: '0.6rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', textAlign: 'left', fontSize: '0.75rem' }}>
-                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 1rem' }}>
-                              <div>
-                                 <span style={{ color: 'var(--muted)' }}>Overload:</span>{' '}
-                                 <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? '#48bb78' : '#fc8181' }}>
-                                    {((scoringBreakdown.overloadRatio - 1) * 100).toFixed(1)}%
-                                 </strong>
-                              </div>
-                              <div>
-                                 <span style={{ color: 'var(--muted)' }}>e1RM:</span>{' '}
-                                 <strong>{Math.round(scoringBreakdown.e1RM)} lbs</strong>
-                              </div>
-                              <div>
-                                 <span style={{ color: 'var(--muted)' }}>Load:</span>{' '}
-                                 <strong>{Math.round(scoringBreakdown.totalLoad).toLocaleString()}</strong>
-                              </div>
-                              <div>
-                                 <span style={{ color: 'var(--muted)' }}>Candidates:</span>{' '}
-                                 <strong>{candidatesEvaluated}</strong>
-                              </div>
-                           </div>
-                           {performanceMetrics && (
-                              <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                 <span style={{ color: 'var(--muted)' }}>Performance:</span>
-                                 <span style={{ 
-                                    color: getScoreColor(performanceMetrics.performanceScore),
-                                    fontWeight: 700 
-                                 }}>
-                                    {performanceMetrics.performanceScore.toFixed(2)}
-                                 </span>
-                                 <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>
-                                    {performanceMetrics.performanceScore > 1.05 ? '(Too Easy)' : 
-                                     performanceMetrics.performanceScore < 0.95 ? '(Too Hard)' : '(Appropriate)'}
-                                 </span>
-                              </div>
-                           )}
-                           {scoringBreakdown.performanceAdjustment && (
-                              <div style={{ marginTop: '0.3rem', color: 'var(--muted)', fontStyle: 'italic', fontSize: '0.7rem' }}>
-                                 {scoringBreakdown.performanceAdjustment}
-                              </div>
-                           )}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem', marginTop: '0.3rem' }}>
+                          <button
+                            onClick={() => setShowHeaderDetails((value) => !value)}
+                            className="btn btn-secondary"
+                            style={{ padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '999px' }}
+                          >
+                            <span style={{ marginRight: '0.35rem' }}>{showHeaderDetails ? 'Hide Details' : 'Details'}</span>
+                            <span style={{ display: 'inline-block', transform: showHeaderDetails ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>▾</span>
+                          </button>
+                          {!showHeaderDetails && (
+                            <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', justifyContent: 'center', fontSize: '0.62rem', color: 'var(--muted)' }}>
+                              {calibrationInfo && calibrationInfo.status === 'calibrating' && (
+                                <span title="Calibration in progress">🧪 Calibrating</span>
+                              )}
+                              {calibrationInfo && calibrationInfo.status === 'calibrated' && (
+                                <span title="Calibration applied">✅ Calibrated</span>
+                              )}
+                              {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && (
+                                <span title="Needs calibration">⚠️ Calibration</span>
+                              )}
+                              {scoringBreakdown && (
+                                <span title="Scoring details available">📊 Scoring</span>
+                              )}
+                              {historicStats && (
+                                <span title="History available">🕒 History</span>
+                              )}
+                              {isUsingBaseline && (
+                                <span title="Using baseline weights">🧱 Baseline</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                     )}
                 </div>
 
                 {/* Intensity Slider */}
-                <div style={{ display: showExpandedHeaderDetails ? 'block' : 'none', marginTop: '0.75rem', padding: '0.6rem 1rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
-                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Workout Intensity</span>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: intensityInfo.color }}>
-                         {intensityInfo.emoji} {intensityInfo.label} ({intensitySlider.toFixed(2)})
-                      </span>
-                   </div>
-                   <input
-                      type="range"
-                      min="0.5"
-                      max="1.5"
-                      step="0.05"
-                      value={intensitySlider}
-                      onChange={(e) => handleIntensityChange(parseFloat(e.target.value))}
-                      style={{
-                         width: '100%',
-                         height: '6px',
-                         WebkitAppearance: 'none',
-                         appearance: 'none' as any,
-                         borderRadius: '3px',
-                         outline: 'none',
-                         cursor: 'pointer',
-                         background: `linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)`,
-                      }}
-                   />
-                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: 'var(--muted)', marginTop: '0.2rem' }}>
-                      <span>🧘 Recovery</span>
-                      <span>⚖️ Standard</span>
-                      <span>🔥 Push</span>
-                   </div>
-                </div>
+                {showExpandedHeaderDetails && (
+                  <div style={{ marginTop: '0.45rem', textAlign: 'left' }}>
+                    {isCompactHeader && (
+                      <div style={{ marginBottom: '0.35rem', padding: '0.35rem 0.45rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', fontSize: '0.66rem', color: 'var(--muted)', lineHeight: 1.25 }}>
+                        {calibrationInfo && calibrationInfo.status === 'calibrating' && <div>🧪 Calibrating: using another gym as temporary reference.</div>}
+                        {calibrationInfo && calibrationInfo.status === 'calibrated' && <div>✅ Calibrated: this gym has a saved scale factor.</div>}
+                        {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && <div>⚠️ Calibration: this lift needs a first calibration here.</div>}
+                        {scoringBreakdown && <div>📊 Scoring: shows overload/e1RM decision metrics.</div>}
+                        {historicStats && <div>🕒 History: previous session stats for this lift.</div>}
+                        {isUsingBaseline && <div>🧱 Baseline: using starter weights until enough lift history is built.</div>}
+                      </div>
+                    )}
+                    {suggestionReason && (
+                      <div style={{ color: 'var(--accent)', fontSize: '0.74rem', marginBottom: '0.25rem' }}>💡 {suggestionReason}</div>
+                    )}
+                    {isDeviated && (
+                      <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+                        <span style={{ background: '#ed8936', color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Manual Override</span>
+                        <button onClick={() => { setCurrentWeight(suggestedWeight); setCurrentReps(suggestedReps); }} style={{ background: 'none', border: '1px solid var(--accent)', color: 'var(--accent)', padding: '0.1rem 0.5rem', borderRadius: '12px', fontSize: '0.7rem', cursor: 'pointer' }}>
+                          Reset
+                        </button>
+                      </div>
+                    )}
+                    {calibrationInfo && calibrationInfo.status === 'calibrating' && (
+                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
+                        <strong style={{ color: 'var(--accent)' }}>Calibrating</strong> - last time you did this at <strong>{calibrationInfo.referenceGymName || 'another gym'}</strong>{' '}
+                        you used <strong>{calibrationInfo.referenceWeight} lbs × {calibrationInfo.referenceReps}</strong>. We'll auto-calibrate after this session.
+                      </div>
+                    )}
+                    {calibrationInfo && calibrationInfo.status === 'calibrated' && (
+                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
+                        <strong style={{ color: 'var(--accent)' }}>Calibration</strong> - scale factor <strong>{calibrationInfo.scaleFactor?.toFixed(2)}</strong> applied for this station.
+                        {typeof calibrationInfo.confidence === 'number' && (
+                          <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--muted)' }}>
+                            {Math.round(calibrationInfo.confidence * 100)}% confidence
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && (
+                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
+                        <strong style={{ color: 'var(--accent)' }}>Calibration Needed</strong> - no prior scale for this lift in <strong>{localPlan.gymName || 'this gym'}</strong> yet.
+                      </div>
+                    )}
+
+                    {/* Collapsible Scoring Breakdown */}
+                    {scoringBreakdown && (
+                      <button 
+                        onClick={() => setShowBreakdown(!showBreakdown)} 
+                        style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.7rem', cursor: 'pointer', marginTop: '0.3rem', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                      >
+                        <span>{showBreakdown ? 'Hide Scoring Details' : 'Show Scoring Details'}</span>
+                        <span style={{ display: 'inline-block', transform: showBreakdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>▾</span>
+                      </button>
+                    )}
+
+                    {showBreakdown && scoringBreakdown && (
+                      <div className="animate-fade-in" style={{ marginTop: '0.4rem', padding: '0.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', textAlign: 'left', fontSize: '0.73rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 1rem' }}>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Overload:</span>{' '}
+                            <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? '#48bb78' : '#fc8181' }}>
+                              {((scoringBreakdown.overloadRatio - 1) * 100).toFixed(1)}%
+                            </strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>e1RM:</span>{' '}
+                            <strong>{Math.round(scoringBreakdown.e1RM)} lbs</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Load:</span>{' '}
+                            <strong>{Math.round(scoringBreakdown.totalLoad).toLocaleString()}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Candidates:</span>{' '}
+                            <strong>{candidatesEvaluated}</strong>
+                          </div>
+                        </div>
+                        {performanceMetrics && (
+                          <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <span style={{ color: 'var(--muted)' }}>Performance:</span>
+                            <span style={{ 
+                              color: getScoreColor(performanceMetrics.performanceScore),
+                              fontWeight: 700 
+                            }}>
+                              {performanceMetrics.performanceScore.toFixed(2)}
+                            </span>
+                            <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>
+                              {performanceMetrics.performanceScore > 1.05 ? '(Too Easy)' : 
+                               performanceMetrics.performanceScore < 0.95 ? '(Too Hard)' : '(Appropriate)'}
+                            </span>
+                          </div>
+                        )}
+                        {scoringBreakdown.performanceAdjustment && (
+                          <div style={{ marginTop: '0.3rem', color: 'var(--muted)', fontStyle: 'italic', fontSize: '0.7rem' }}>
+                            {scoringBreakdown.performanceAdjustment}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: '0.55rem', padding: '0.5rem 0.8rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Workout Intensity</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: intensityInfo.color }}>
+                          {intensityInfo.emoji} {intensityInfo.label} ({intensitySlider.toFixed(2)})
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="1.5"
+                        step="0.05"
+                        value={intensitySlider}
+                        onChange={(e) => handleIntensityChange(parseFloat(e.target.value))}
+                        style={{
+                          width: '100%',
+                          height: '6px',
+                          WebkitAppearance: 'none',
+                          appearance: 'none' as any,
+                          borderRadius: '3px',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          background: `linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)`,
+                        }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: 'var(--muted)', marginTop: '0.2rem' }}>
+                        <span>🧘 Recovery</span>
+                        <span>⚖️ Standard</span>
+                        <span>🔥 Push</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {showExpandedHeaderDetails && historicStats && (
                     <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '0.75rem' }}>
@@ -501,18 +601,18 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     </div>
                 )}
                 
-                <div style={{ display: showExpandedHeaderDetails ? 'flex' : 'none', gap: '1rem', fontSize: '0.75rem', color: 'var(--muted)', justifyContent: 'center', marginTop: '1rem', background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '8px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: isCompactHeader ? '0.5rem' : '0.6rem', fontSize: isCompactHeader ? '0.66rem' : '0.7rem', color: 'var(--muted)', justifyContent: 'center', marginTop: isCompactHeader ? '0.4rem' : '0.6rem', background: 'rgba(0,0,0,0.08)', padding: isCompactHeader ? '0.3rem 0.4rem' : '0.4rem', borderRadius: '8px', flexWrap: 'wrap' }}>
                     <span>Workout: {Math.floor(elapsedSecs / 60)}:{String(elapsedSecs % 60).padStart(2,'0')}</span>
                     <span>Lift: {Math.floor((liftElapsedSecsMap[activeLiftIndex] || 0) / 60)}:{String((liftElapsedSecsMap[activeLiftIndex] || 0) % 60).padStart(2,'0')}</span>
                     <span>Set: {Math.floor((setElapsedSecsMap[activeLiftIndex] || 0) / 60)}:{String((setElapsedSecsMap[activeLiftIndex] || 0) % 60).padStart(2,'0')}</span>
                 </div>
             </div>
 
-            <div className="workout-tile" style={{ background: 'rgba(0,0,0,0.1)' }}>
+            <div className="workout-tile" style={{ background: 'rgba(0,0,0,0.1)', padding: isCompactHeader ? '0.65rem' : undefined }}>
                 {activeLogs.length > 0 ? (
-                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: isCompactHeader ? '0.6rem' : '0.75rem' }}>
                       {activeLogs.map((log: any, i: number) => (
-                         <div key={i} className="workout-flex-between animate-fade-in" style={{ padding: '0.75rem', background: 'var(--surface-glass)', borderRadius: '8px' }}>
+                         <div key={i} className="workout-flex-between animate-fade-in" style={{ padding: isCompactHeader ? '0.42rem 0.5rem' : '0.6rem', background: 'var(--surface-glass)', borderRadius: '8px' }}>
                             <strong style={{ color: 'var(--accent)' }}>Set {i+1}</strong>
                             <span>{log.weight} lbs × {log.reps}</span>
                             <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
@@ -539,7 +639,15 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                        </div>
                     </div>
                 </div>
-                <button className="workout-btn-primary" onClick={handleCompleteSet} style={{ marginTop: '1.5rem', boxShadow: 'none' }}>Complete Set ✓</button>
+                <button className="workout-btn-primary" onClick={handleCompleteSet} style={{ marginTop: isCompactHeader ? '1rem' : '1.5rem', boxShadow: 'none' }}>Complete Set ✓</button>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+                    {activeLiftIndex > 0 && (
+                      <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex((prev: number) => prev - 1)}>Prev</button>
+                    )}
+                    {activeLiftIndex < localPlan.lifts.length - 1 ? (
+                      <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem' }} onClick={() => setActiveLiftIndex((prev: number) => prev + 1)}>Next Lift →</button>
+                    ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem', background: '#48bb78', boxShadow: '0 4px 15px rgba(72,187,120,0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
+                </div>
             </div>
 
             {canDisplayPlates && requiredPlates.length > 0 && (
@@ -570,15 +678,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                    </div>
                 </div>
             )}
-         </div>
-
-         <div style={{ display: 'flex', gap: '0.5rem', padding: '1rem', background: 'var(--surface-glass)', borderTop: '1px solid var(--surface-border)' }}>
-             {activeLiftIndex > 0 && (
-                <button className="btn btn-secondary" style={{ flex: 1, padding: '1rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex((prev: number) => prev - 1)}>Prev</button>
-             )}
-             {activeLiftIndex < localPlan.lifts.length - 1 ? (
-                <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: '1rem' }} onClick={() => setActiveLiftIndex((prev: number) => prev + 1)}>Next Lift →</button>
-             ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: '1rem', background: '#48bb78', boxShadow: '0 4px 15px rgba(72,187,120,0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
          </div>
 
          {showList && (
