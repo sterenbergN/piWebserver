@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { writeFile, readFile, mkdir } from 'fs/promises';
+import { writeFile, readFile, mkdir, unlink, readdir } from 'fs/promises';
 import path from 'path';
 
 const base = path.join(process.cwd(), 'public', 'uploads');
@@ -7,9 +7,54 @@ const base = path.join(process.cwd(), 'public', 'uploads');
 const BLOG_MASTER_ID = 'blog-post-images';
 const BLOG_MASTER_NAME = 'Blog Post Images';
 
-/** Ensures the master "Blog Post Images" album exists at root and returns reference to it */
-function ensureBlogMaster(albums: any[]): any {
-  let master = albums.find(a => a.id === BLOG_MASTER_ID);
+type AlbumImage = { src: string; caption: string };
+type AlbumNode = { id: string; name: string; images: AlbumImage[]; albums: AlbumNode[] };
+type BlogPhoto = { src: string; description?: string };
+type BlogPost = {
+  slug: string;
+  title: string;
+  description: string;
+  category: string;
+  image: string;
+  date: string;
+  photos: BlogPhoto[];
+};
+
+function toMediaSrc(src: string): string {
+  if (!src) return src;
+  if (src.startsWith('/api/media')) return src;
+  return `/api/media${src.startsWith('/') ? '' : '/'}${src}`;
+}
+
+function toPublicPath(src: string): string {
+  const withoutMediaPrefix = src.replace(/^\/api\/media/, '');
+  return withoutMediaPrefix.startsWith('/') ? withoutMediaPrefix : `/${withoutMediaPrefix}`;
+}
+
+async function removeThumbnails(publicPathLike: string) {
+  try {
+    const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
+    const normalized = publicPathLike.startsWith('/') ? publicPathLike.slice(1) : publicPathLike;
+    const thumbPrefix = normalized.replace(/[/\\:]/g, '_');
+    const files = await readdir(thumbDir);
+    for (const file of files) {
+      if (file.startsWith(thumbPrefix)) {
+        await unlink(path.join(thumbDir, file)).catch(() => {});
+      }
+    }
+  } catch {
+    // Ignore thumbnail cleanup errors.
+  }
+}
+
+async function removePhysicalFile(mediaOrPublicPath: string) {
+  const publicPath = toPublicPath(mediaOrPublicPath);
+  await unlink(path.join(process.cwd(), 'public', publicPath)).catch(() => {});
+  await removeThumbnails(publicPath);
+}
+
+function ensureBlogMaster(albums: AlbumNode[]): AlbumNode {
+  let master = albums.find((album) => album.id === BLOG_MASTER_ID);
   if (!master) {
     master = { id: BLOG_MASTER_ID, name: BLOG_MASTER_NAME, images: [], albums: [] };
     albums.push(master);
@@ -18,38 +63,64 @@ function ensureBlogMaster(albums: any[]): any {
   return master;
 }
 
-/** Finds or creates a per-post sub-album inside the master, returns it */
-function ensurePostAlbum(albums: any[], slug: string, title: string): any {
+function ensurePostAlbum(albums: AlbumNode[], slug: string, title: string): AlbumNode {
   const master = ensureBlogMaster(albums);
-  let postAlbum = master.albums.find((a: any) => a.id === slug);
+  let postAlbum = master.albums.find((album) => album.id === slug);
   if (!postAlbum) {
     postAlbum = { id: slug, name: title, images: [], albums: [] };
     master.albums.push(postAlbum);
   }
+  if (!postAlbum.images) postAlbum.images = [];
+  if (!postAlbum.albums) postAlbum.albums = [];
   return postAlbum;
 }
 
-function findAndAddImage(albums: any[], albumId: string, image: any): boolean {
-  for (const a of albums) {
-    if (a.id === albumId) { a.images.unshift(image); return true; }
-    if (findAndAddImage(a.albums || [], albumId, image)) return true;
+function findAndAddImage(albums: AlbumNode[], albumId: string, image: AlbumImage): boolean {
+  for (const album of albums) {
+    if (album.id === albumId) {
+      album.images.unshift(image);
+      return true;
+    }
+    if (findAndAddImage(album.albums || [], albumId, image)) return true;
   }
   return false;
 }
 
-async function readAlbums(): Promise<any[]> {
-  try {
-    const f = path.join(base, 'gallery', 'albums.json');
-    const albums = JSON.parse(await readFile(f, 'utf-8'));
-    const normalise = (a: any): any => ({ ...a, albums: (a.albums || []).map(normalise) });
-    return albums.map(normalise);
-  } catch { return [{ id: 'general', name: 'General', images: [], albums: [] }]; }
+function removeImageFromTree(albums: AlbumNode[], mediaSrc: string): AlbumNode[] {
+  return albums.map((album) => ({
+    ...album,
+    images: (album.images || []).filter((image) => toMediaSrc(image.src) !== mediaSrc),
+    albums: removeImageFromTree(album.albums || [], mediaSrc),
+  }));
 }
 
-async function saveAlbums(albums: any[]) {
+async function readAlbums(): Promise<AlbumNode[]> {
+  try {
+    const file = path.join(base, 'gallery', 'albums.json');
+    const albums = JSON.parse(await readFile(file, 'utf-8')) as AlbumNode[];
+    const normalize = (album: AlbumNode): AlbumNode => ({
+      ...album,
+      images: album.images || [],
+      albums: (album.albums || []).map(normalize),
+    });
+    return albums.map(normalize);
+  } catch {
+    return [{ id: 'general', name: 'General', images: [], albums: [] }];
+  }
+}
+
+async function saveAlbums(albums: AlbumNode[]) {
   const dir = path.join(base, 'gallery');
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, 'albums.json'), JSON.stringify(albums, null, 2));
+}
+
+async function readPosts(postsFile: string): Promise<BlogPost[]> {
+  try {
+    return JSON.parse(await readFile(postsFile, 'utf-8')) as BlogPost[];
+  } catch {
+    return [];
+  }
 }
 
 export async function POST(request: Request) {
@@ -57,12 +128,11 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const type = formData.get('type') as string;
 
-    // ── Gallery image upload (sequential per-file) ───────────────
     if (type === 'gallery') {
       const file = formData.get('image') as File;
       const caption = (formData.get('caption') as string) || '';
       const albumId = (formData.get('albumId') as string) || 'general';
-      
+
       if (!file) return NextResponse.json({ success: false, message: 'No file uploaded' }, { status: 400 });
 
       const bytes = await file.arrayBuffer();
@@ -75,8 +145,7 @@ export async function POST(request: Request) {
       const albums = await readAlbums();
       const added = findAndAddImage(albums, albumId, { src, caption });
       if (!added) {
-        // Album not found — add to General
-        const general = albums.find(a => a.id === 'general');
+        const general = albums.find((album) => album.id === 'general');
         if (general) general.images.unshift({ src, caption });
         else albums.push({ id: 'general', name: 'General', images: [{ src, caption }], albums: [] });
       }
@@ -85,7 +154,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, url: src });
     }
 
-    // ── Blog post upload ──────────────────────────────────────────
     if (type === 'blog') {
       const title = formData.get('title') as string;
       const description = formData.get('description') as string;
@@ -107,72 +175,109 @@ export async function POST(request: Request) {
       await writeFile(path.join(blogDir, `${slug}.md`), Buffer.from(await mdFile.arrayBuffer()));
 
       const postsFile = path.join(blogDir, 'posts.json');
-      let posts: any[] = [];
-      try { posts = JSON.parse(await readFile(postsFile, 'utf-8')); } catch { }
+      let posts = await readPosts(postsFile);
+      const existing = posts.find((post) => post.slug === slug);
 
-      const newPost = {
-        slug, title, description, category,
+      if (existing?.image) {
+        await removePhysicalFile(toMediaSrc(existing.image));
+      }
+      if (Array.isArray(existing?.photos)) {
+        for (const photo of existing.photos) {
+          await removePhysicalFile(toMediaSrc(photo.src));
+        }
+      }
+
+      const newPost: BlogPost = {
+        slug,
+        title,
+        description,
+        category,
         image: `/uploads/blog/${imageFilename}`,
         date: new Date().toISOString(),
-        photos: []
+        photos: [],
       };
-      posts = posts.filter((p: any) => p.slug !== slug);
+
+      posts = posts.filter((post) => post.slug !== slug);
       posts.unshift(newPost);
       await writeFile(postsFile, JSON.stringify(posts, null, 2));
 
-      // Create per-post album nested inside the master "Blog Post Images" album
-      const albums = await readAlbums();
+      let albums = await readAlbums();
+      if (existing) {
+        const staleMedia = new Set<string>();
+        if (existing.image) staleMedia.add(toMediaSrc(existing.image));
+        if (Array.isArray(existing.photos)) {
+          for (const photo of existing.photos) staleMedia.add(toMediaSrc(photo.src));
+        }
+        for (const mediaSrc of staleMedia) {
+          albums = removeImageFromTree(albums, mediaSrc);
+        }
+      }
+
       const postAlbum = ensurePostAlbum(albums, slug, title);
-      postAlbum.images.push({ src: `/api/media/uploads/blog/${imageFilename}`, caption: 'Cover' });
+      const coverSrc = `/api/media/uploads/blog/${imageFilename}`;
+      postAlbum.images = postAlbum.images.filter((imageEntry) => toMediaSrc(imageEntry.src) !== coverSrc);
+      postAlbum.images.push({ src: coverSrc, caption: 'Cover' });
       await saveAlbums(albums);
 
       return NextResponse.json({ success: true, post: newPost });
     }
 
-    // ── Blog update markdown ──────────────────────────────────────
     if (type === 'blog-update-md') {
       const slug = formData.get('slug') as string;
       const mdFile = formData.get('markdown') as File;
-      if (!slug || !mdFile) return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+      if (!slug || !mdFile) {
+        return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+      }
 
       const blogDir = path.join(base, 'blog');
       await writeFile(path.join(blogDir, `${slug}.md`), Buffer.from(await mdFile.arrayBuffer()));
       return NextResponse.json({ success: true });
     }
 
-    // ── Blog update image ─────────────────────────────────────────
     if (type === 'blog-update-image') {
       const slug = formData.get('slug') as string;
       const image = formData.get('image') as File;
-      if (!slug || !image) return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+      if (!slug || !image) {
+        return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
+      }
 
       const blogDir = path.join(base, 'blog');
       const imageExt = path.extname(image.name) || '.jpg';
       const imageFilename = `${slug}-img-${Date.now()}${imageExt}`;
       const newImagePath = `/uploads/blog/${imageFilename}`;
+      const newImageMediaSrc = toMediaSrc(newImagePath);
 
       await writeFile(path.join(blogDir, imageFilename), Buffer.from(await image.arrayBuffer()));
 
       const postsFile = path.join(blogDir, 'posts.json');
-      let posts: any[] = [];
-      try { posts = JSON.parse(await readFile(postsFile, 'utf-8')); } catch { }
-      const postIdx = posts.findIndex((p: any) => p.slug === slug);
+      const posts = await readPosts(postsFile);
+      const postIdx = posts.findIndex((post) => post.slug === slug);
+
       if (postIdx > -1) {
-        // Option to delete old file here if we want, ignoring for safety
+        const oldImagePath = posts[postIdx].image;
+        const oldImageMediaSrc = oldImagePath ? toMediaSrc(oldImagePath) : null;
+
         posts[postIdx].image = newImagePath;
         await writeFile(postsFile, JSON.stringify(posts, null, 2));
 
-        // Sync to gallery album
-        const albums = await readAlbums();
+        if (oldImageMediaSrc && oldImageMediaSrc !== newImageMediaSrc) {
+          await removePhysicalFile(oldImageMediaSrc);
+        }
+
+        let albums = await readAlbums();
+        if (oldImageMediaSrc && oldImageMediaSrc !== newImageMediaSrc) {
+          albums = removeImageFromTree(albums, oldImageMediaSrc);
+        }
+
         const postAlbum = ensurePostAlbum(albums, slug, posts[postIdx].title || slug);
-        postAlbum.images.push({ src: `/api/media${newImagePath}`, caption: 'Cover' });
+        postAlbum.images = postAlbum.images.filter((imageEntry) => toMediaSrc(imageEntry.src) !== newImageMediaSrc);
+        postAlbum.images.push({ src: newImageMediaSrc, caption: 'Cover' });
         await saveAlbums(albums);
       }
 
       return NextResponse.json({ success: true, image: newImagePath });
     }
 
-    // ── Blog extra photos ─────────────────────────────────────────
     if (type === 'blog-photo') {
       const slug = formData.get('slug') as string;
       const description = (formData.get('description') as string) || '';
@@ -189,18 +294,16 @@ export async function POST(request: Request) {
       await writeFile(path.join(blogDir, filename), Buffer.from(bytes));
 
       const mediaSrc = `/api/media/uploads/blog/${filename}`;
-
-      // Append to post.photos
       const postsFile = path.join(blogDir, 'posts.json');
-      let posts: any[] = [];
-      try { posts = JSON.parse(await readFile(postsFile, 'utf-8')); } catch { }
-      const post = posts.find((p: any) => p.slug === slug);
+      const posts = await readPosts(postsFile);
+      const post = posts.find((candidate) => candidate.slug === slug);
+
       if (!post) return NextResponse.json({ success: false, message: 'Post not found' }, { status: 404 });
+
       if (!post.photos) post.photos = [];
       post.photos.push({ src: mediaSrc, description });
       await writeFile(postsFile, JSON.stringify(posts, null, 2));
 
-      // Sync to gallery album (nested inside Blog Post Images master album)
       const albums = await readAlbums();
       const postAlbum = ensurePostAlbum(albums, slug, post.title || slug);
       postAlbum.images.push({ src: mediaSrc, caption: description });
@@ -209,7 +312,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, src: mediaSrc });
     }
 
-    // ── Library PDF upload ────────────────────────────────────────
     if (type === 'library') {
       const file = formData.get('file') as File;
       const docName = formData.get('name') as string;
@@ -225,13 +327,18 @@ export async function POST(request: Request) {
       await writeFile(path.join(saveDir, filename), Buffer.from(bytes));
 
       const libraryFile = path.join(saveDir, 'library.json');
-      let libraryMeta: any[] = [];
-      try { libraryMeta = JSON.parse(await readFile(libraryFile, 'utf-8')); } catch { }
+      let libraryMeta: Array<{ url: string; name: string; category: string; date: string }> = [];
+      try {
+        libraryMeta = JSON.parse(await readFile(libraryFile, 'utf-8'));
+      } catch {
+        libraryMeta = [];
+      }
 
       libraryMeta.unshift({
         url: `/api/media/uploads/library/${filename}`,
-        name: docName, category,
-        date: new Date().toISOString()
+        name: docName,
+        category,
+        date: new Date().toISOString(),
       });
       await writeFile(libraryFile, JSON.stringify(libraryMeta, null, 2));
 

@@ -62,7 +62,7 @@ export default function AnalyticsPage() {
            let currentUser = null;
            let histData = [];
 
-           let rawLifts: any[] = [];
+           const rawLifts: any[] = [];
            const liftsMap = new Map<string, string>();
            if (gymsRes.success) {
                gymsRes.gyms?.forEach((g:any) => g.stations?.forEach((s:any) => s.lifts?.forEach((l:any) => {

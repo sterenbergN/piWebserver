@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSitePopup } from '@/components/SitePopup';
 
 export default function LibraryPage() {
+  const { confirm, popup } = useSitePopup();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -45,7 +47,7 @@ export default function LibraryPage() {
   };
 
   const handleDelete = async (url: string) => {
-    if (!confirm('Delete this document?')) return;
+    if (!(await confirm({ title: 'Delete Document', message: 'Delete this document?', confirmLabel: 'Delete', danger: true }))) return;
     const res = await fetch('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'library', id: url }) });
     const data = await res.json();
     if (data.success) setDocuments(documents.filter(d => d.url !== url));
@@ -242,6 +244,7 @@ export default function LibraryPage() {
             )}
           </>
         )}
+      {popup}
     </div>
   );
 }

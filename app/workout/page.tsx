@@ -106,7 +106,7 @@ export default function WorkoutDashboard() {
                  let sets = 0; let vol = 0;
                  
                  // Preconfigure list of all lifts across the user's gyms for SBD matching
-                 let allLifts: any[] = [];
+                 const allLifts: any[] = [];
                  
                  // Re-fetch gyms locally inside history to ensure we have the lifts
                  fetch('/api/workout/gyms').then(r => r.json()).then(dGym => {

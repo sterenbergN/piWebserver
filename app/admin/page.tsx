@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSitePopup } from '@/components/SitePopup';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; }
 interface Project { id: string; name: string; description: string; category: string; blogSlug: string; }
@@ -10,6 +11,7 @@ interface WorkoutUser { id: string; username: string; password?: string; birthda
 type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad' | 'workout-users';
 
 export default function AdminDashboard() {
+  const { confirm, popup } = useSitePopup();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<UploadTab>('gallery');
@@ -191,7 +193,7 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteProject = async (id: string) => {
-    if (!confirm('Delete this project?')) return;
+    if (!(await confirm({ title: 'Delete Project', message: 'Delete this project?', confirmLabel: 'Delete', danger: true }))) return;
     await fetch('/api/projects', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
     setProjects(projects.filter(p => p.id !== id));
   };
@@ -215,7 +217,7 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteCAD = async (id: string) => {
-    if (!confirm('Delete this CAD project?')) return;
+    if (!(await confirm({ title: 'Delete CAD Project', message: 'Delete this CAD project?', confirmLabel: 'Delete', danger: true }))) return;
     await fetch('/api/cad', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
     setCadProjects(cadProjects.filter(p => p.id !== id));
   };
@@ -239,7 +241,7 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteWorkoutUser = async (id: string) => {
-    if (!confirm('Delete this workout user?')) return;
+    if (!(await confirm({ title: 'Delete Workout User', message: 'Delete this workout user?', confirmLabel: 'Delete', danger: true }))) return;
     await fetch('/api/workout/users?id=' + id, { method: 'DELETE' });
     setWorkoutUsers(workoutUsers.filter(u => u.id !== id));
   };
@@ -488,7 +490,11 @@ export default function AdminDashboard() {
                       className="btn btn-secondary" 
                       style={{ fontSize: '0.85rem', padding: '0.5rem 1rem' }}
                       onClick={async () => {
-                        if (!confirm('Re-scan disk and repair gallery entries? This will add any orphaned files to General.')) return;
+                        if (!(await confirm({
+                          title: 'Repair Gallery Index',
+                          message: 'Re-scan disk and repair gallery entries? This will add any orphaned files to General.',
+                          confirmLabel: 'Run Repair'
+                        }))) return;
                         setUploadLoading(true);
                         try {
                           const res = await fetch('/api/gallery/repair', { method: 'POST' });
@@ -593,6 +599,7 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
+      {popup}
     </div>
   );
 }

@@ -7,8 +7,8 @@ const galleryDir = path.join(process.cwd(), 'public', 'uploads', 'gallery');
 const albumsFile = path.join(galleryDir, 'albums.json');
 const legacyFile = path.join(galleryDir, 'gallery.json');
 
-export interface AlbumImage { src: string; caption: string; }
-export interface Album {
+interface AlbumImage { src: string; caption: string; }
+interface Album {
   id: string;
   name: string;
   images: AlbumImage[];
@@ -16,7 +16,7 @@ export interface Album {
 }
 
 // ── Recursive helpers ─────────────────────────────────────────────────────────
-export function findAlbum(albums: Album[], id: string): Album | null {
+function findAlbum(albums: Album[], id: string): Album | null {
   for (const a of albums) {
     if (a.id === id) return a;
     const found = findAlbum(a.albums || [], id);
@@ -41,20 +41,20 @@ function addSubAlbum(albums: Album[], parentId: string, newAlbum: Album): boolea
   return false;
 }
 
-export function collectAllImages(album: Album): string[] {
+function collectAllImages(album: Album): string[] {
   const srcs = album.images.map(i => i.src);
   for (const sub of (album.albums || [])) srcs.push(...collectAllImages(sub));
   return srcs;
 }
 
-export function removeAlbum(albums: Album[], id: string): Album[] {
+function removeAlbum(albums: Album[], id: string): Album[] {
   return albums
     .filter(a => a.id !== id)
     .map(a => ({ ...a, albums: removeAlbum(a.albums || [], id) }));
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
-export async function readAlbums(): Promise<Album[]> {
+async function readAlbums(): Promise<Album[]> {
   try {
     const raw = await fs.readFile(albumsFile, 'utf-8');
     const albums = JSON.parse(raw);
@@ -79,7 +79,7 @@ export async function readAlbums(): Promise<Album[]> {
   }
 }
 
-export async function saveAlbums(albums: Album[]) {
+async function saveAlbums(albums: Album[]) {
   await fs.mkdir(galleryDir, { recursive: true });
   await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
 }

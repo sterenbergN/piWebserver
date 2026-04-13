@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useSitePopup } from '@/components/SitePopup';
 
 interface AlbumImage { src: string; caption: string; }
 interface Album { id: string; name: string; images: AlbumImage[]; albums: Album[]; }
 
 export default function GalleryPage() {
+  const { confirm, popup } = useSitePopup();
   const [rootAlbums, setRootAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -132,7 +134,7 @@ export default function GalleryPage() {
   const albumPathMap = buildAlbumPathMap(rootAlbums);
 
   function flattenAlbums(albums: Album[], prefix = ''): { id: string; path: string }[] {
-    let list: { id: string; path: string }[] = [];
+    const list: { id: string; path: string }[] = [];
     for (const a of albums) {
       const p = prefix ? `${prefix} › ${a.name}` : a.name;
       list.push({ id: a.id, path: p });
@@ -164,7 +166,6 @@ export default function GalleryPage() {
   useEffect(() => {
     if (!frameMode || activeFrameImages.length === 0) return;
     let isCancelled = false;
-    let timer: NodeJS.Timeout;
 
     const loadAndNext = () => {
       const nextIndex = (frameIndex + 1) % activeFrameImages.length;
@@ -184,7 +185,7 @@ export default function GalleryPage() {
     // Wait the full cycle time displaying current image, then begin loading the next image
     // Note: The total time will be cycleTime + network_load_time for the next image,
     // guaranteeing no halfway-loaded skipping.
-    timer = setTimeout(loadAndNext, cycleTime);
+    const timer: NodeJS.Timeout = setTimeout(loadAndNext, cycleTime);
 
     return () => {
       isCancelled = true;
@@ -289,7 +290,12 @@ export default function GalleryPage() {
 
   // ── Album deletion ────────────────────────────────────────────────────────
   const handleDeleteAlbum = async (albumId: string, albumName: string) => {
-    if (!confirm(`Delete album "${albumName}" and ALL its contents? This cannot be undone.`)) return;
+    if (!(await confirm({
+      title: 'Delete Album',
+      message: `Delete album "${albumName}" and ALL its contents? This cannot be undone.`,
+      confirmLabel: 'Delete Album',
+      danger: true
+    }))) return;
     const res = await fetch('/api/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -303,7 +309,7 @@ export default function GalleryPage() {
   };
 
   const handleDeleteDownload = async (filename: string) => {
-    if (!confirm('Delete this download archive?')) return;
+    if (!(await confirm({ title: 'Delete Download', message: 'Delete this download archive?', confirmLabel: 'Delete', danger: true }))) return;
     const res = await fetch('/api/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -316,7 +322,7 @@ export default function GalleryPage() {
 
   // ── Photo deletion ────────────────────────────────────────────────────────
   const handleDeletePhoto = async (src: string) => {
-    if (!confirm('Delete this photo permanently?')) return;
+    if (!(await confirm({ title: 'Delete Photo', message: 'Delete this photo permanently?', confirmLabel: 'Delete', danger: true }))) return;
     const res = await fetch('/api/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -800,6 +806,7 @@ export default function GalleryPage() {
         })(),
         document.body
       )}
+      {popup}
     </div>
   );
 }

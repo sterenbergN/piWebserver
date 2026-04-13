@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { useSitePopup } from '@/components/SitePopup';
 
 interface BlogPost { slug: string; title: string; description: string; image: string; date: string; category?: string; }
 interface EditState { slug: string; title: string; description: string; category?: string; }
@@ -13,6 +14,7 @@ const ICON_BTN: React.CSSProperties = {
 };
 
 export default function BlogPage() {
+  const { confirm, popup } = useSitePopup();
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -56,7 +58,7 @@ export default function BlogPage() {
   }, [posts, sortBy]);
 
   const handleDelete = async (slug: string) => {
-    if (!confirm(`Delete post: ${slug}?`)) return;
+    if (!(await confirm({ title: 'Delete Blog Post', message: `Delete post: ${slug}?`, confirmLabel: 'Delete', danger: true }))) return;
     const res = await fetch('/api/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blog', id: slug }) });
     if ((await res.json()).success) setPosts(posts.filter(p => p.slug !== slug));
   };
@@ -228,6 +230,7 @@ export default function BlogPage() {
             {sortedPosts.map(renderCard)}
           </div>
         )}
+      {popup}
     </div>
   );
 }

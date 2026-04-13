@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import GymEditor from './GymEditor';
 import WorkoutTypeEditor from './WorkoutTypeEditor';
+import { useSitePopup } from '@/components/SitePopup';
 
 type ConfigTab = 'gyms' | 'types' | 'profile';
 
@@ -16,6 +17,7 @@ function getIntensityLabel(value: number): { label: string; emoji: string; color
 }
 
 export default function ConfigPage() {
+  const { showAlert, popup } = useSitePopup();
   const [activeTab, setActiveTab] = useState<ConfigTab>('gyms');
   const [user, setUser] = useState<any>(null);
   const [weight, setWeight] = useState('');
@@ -38,7 +40,10 @@ export default function ConfigPage() {
   }, []);
 
   const handleSaveProfile = async () => {
-     if (!user) return alert('Must be logged in');
+     if (!user) {
+        await showAlert({ title: 'Authentication Required', message: 'Must be logged in' });
+        return;
+     }
      const res = await fetch('/api/workout/auth', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -49,8 +54,8 @@ export default function ConfigPage() {
            intensityFactor: factor
         })
      });
-     if (res.ok) alert('Profile updated!');
-     else alert('Failed to save profile');
+     if (res.ok) await showAlert({ title: 'Profile Updated', message: 'Profile updated!' });
+     else await showAlert({ title: 'Save Failed', message: 'Failed to save profile' });
   };
 
   const intensityInfo = getIntensityLabel(factor);
@@ -154,6 +159,7 @@ export default function ConfigPage() {
           </div>
         )}
       </div>
+      {popup}
     </div>
   );
 }

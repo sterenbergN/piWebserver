@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Markdown from 'react-markdown';
+import { useSitePopup } from '@/components/SitePopup';
 
 export default function BlogPost() {
+  const { showAlert, popup } = useSitePopup();
   const params = useParams();
   const router = useRouter();
   const slug = params.slug as string;
@@ -78,10 +80,10 @@ export default function BlogPost() {
           setUpdatingMode(null);
         }
       } else {
-        alert(data.message || 'Update failed');
+        await showAlert({ title: 'Update Failed', message: data.message || 'Update failed' });
       }
     } catch {
-      alert('Network error during update.');
+      await showAlert({ title: 'Network Error', message: 'Network error during update.' });
     } finally {
       setUpdateLoading(false);
     }
@@ -215,6 +217,7 @@ export default function BlogPost() {
           </div>
         )}
       </div>
+      {popup}
     </div>
   );
 }

@@ -7,8 +7,8 @@ import { calcEpley, calcAverage1RM } from '@/lib/workout/analytics';
 function calculatePlates(targetWeight: number, baseWeight: number, availablePlatePairs: number[]) {
     let remaining = (targetWeight - baseWeight) / 2;
     if (remaining <= 0) return [];
-    let sortedPlates = [...availablePlatePairs].sort((a,b) => b-a);
-    let usedPlates: number[] = [];
+    const sortedPlates = [...availablePlatePairs].sort((a,b) => b-a);
+    const usedPlates: number[] = [];
     for (let i = 0; i < sortedPlates.length; i++) {
         if (remaining >= sortedPlates[i]) {
             usedPlates.push(sortedPlates[i]);
@@ -22,7 +22,7 @@ function calculatePlates(targetWeight: number, baseWeight: number, availablePlat
 function getPossibleWeights(station: any): number[] {
     if (!station) return [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]; 
     if (station.type === 'stack' || station.type === 'cable') {
-       let possible: number[] = [];
+       const possible: number[] = [];
        const inc = station.increment || 10;
        for (let w = station.minWeight || 10; w <= (station.maxWeight || 300); w += inc) {
            possible.push(w);

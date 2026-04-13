@@ -5,47 +5,162 @@ import path from 'path';
 
 const baseDir = path.join(process.cwd(), 'public', 'uploads');
 
-function collectAllImages(album: any): string[] {
-  const srcs: string[] = album.images?.map((i: any) => i.src) || [];
-  for (const sub of (album.albums || [])) srcs.push(...collectAllImages(sub));
+type AlbumImage = { src: string; caption?: string };
+type AlbumNode = { id: string; name?: string; images: AlbumImage[]; albums?: AlbumNode[] };
+type BlogPhoto = { src: string; description?: string };
+type BlogPost = { slug: string; image?: string; photos?: BlogPhoto[]; [key: string]: unknown };
+type LibraryDoc = { url: string; [key: string]: unknown };
+
+function toMediaSrc(src: string): string {
+  if (!src) return src;
+  if (src.startsWith('/api/media')) return src;
+  return `/api/media${src.startsWith('/') ? '' : '/'}${src}`;
+}
+
+function toPublicPath(src: string): string {
+  const withoutMediaPrefix = src.replace(/^\/api\/media/, '');
+  return withoutMediaPrefix.startsWith('/') ? withoutMediaPrefix : `/${withoutMediaPrefix}`;
+}
+
+function collectAllImages(album: AlbumNode): string[] {
+  const srcs = (album.images || []).map((image) => toMediaSrc(image.src));
+  for (const subAlbum of album.albums || []) {
+    srcs.push(...collectAllImages(subAlbum));
+  }
   return srcs;
 }
 
-function findAlbum(albums: any[], id: string): any | null {
-  for (const a of albums) {
-    if (a.id === id) return a;
-    const found = findAlbum(a.albums || [], id);
+function findAlbum(albums: AlbumNode[], id: string): AlbumNode | null {
+  for (const album of albums) {
+    if (album.id === id) return album;
+    const found = findAlbum(album.albums || [], id);
     if (found) return found;
   }
   return null;
 }
 
-function removeAlbumFromTree(albums: any[], id: string): any[] {
+function removeAlbumFromTree(albums: AlbumNode[], id: string): AlbumNode[] {
   return albums
-    .filter(a => a.id !== id)
-    .map(a => ({ ...a, albums: removeAlbumFromTree(a.albums || [], id) }));
+    .filter((album) => album.id !== id)
+    .map((album) => ({
+      ...album,
+      albums: removeAlbumFromTree(album.albums || [], id),
+    }));
 }
 
-async function removeThumbnails(cleanPath: string) {
+function removePhotoFromTree(albums: AlbumNode[], mediaSrc: string): AlbumNode[] {
+  return albums.map((album) => ({
+    ...album,
+    images: (album.images || []).filter((image) => toMediaSrc(image.src) !== mediaSrc),
+    albums: removePhotoFromTree(album.albums || [], mediaSrc),
+  }));
+}
+
+function removeImagesFromTree(albums: AlbumNode[], mediaSrcs: Set<string>): AlbumNode[] {
+  return albums.map((album) => ({
+    ...album,
+    images: (album.images || []).filter((image) => !mediaSrcs.has(toMediaSrc(image.src))),
+    albums: removeImagesFromTree(album.albums || [], mediaSrcs),
+  }));
+}
+
+async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function removeThumbnails(publicPathLike: string) {
   try {
     const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
-    // Map the relative path to our thumb filename convention: replacement of separators with underscores
-    const thumbPrefix = cleanPath.startsWith('/') ? cleanPath.slice(1).replace(/[/\\:]/g, '_') : cleanPath.replace(/[/\\:]/g, '_');
+    const normalized = publicPathLike.startsWith('/') ? publicPathLike.slice(1) : publicPathLike;
+    const thumbPrefix = normalized.replace(/[/\\:]/g, '_');
     const files = await fs.readdir(thumbDir);
-    for (const f of files) {
-      if (f.startsWith(thumbPrefix)) {
-        await fs.unlink(path.join(thumbDir, f));
+
+    for (const file of files) {
+      if (file.startsWith(thumbPrefix)) {
+        await fs.unlink(path.join(thumbDir, file));
       }
     }
-  } catch { /* Cache dir might not exist or be empty */ }
+  } catch {
+    // Ignore cache cleanup failures.
+  }
 }
 
-function removePhotoFromTree(albums: any[], src: string): any[] {
-  return albums.map(a => ({
-    ...a,
-    images: a.images.filter((i: any) => i.src !== src),
-    albums: removePhotoFromTree(a.albums || [], src)
-  }));
+async function removePhysicalFile(mediaOrPublicPath: string) {
+  const publicPath = toPublicPath(mediaOrPublicPath);
+  const absolutePath = path.join(process.cwd(), 'public', publicPath);
+
+  try {
+    await fs.unlink(absolutePath);
+  } catch {
+    // Ignore missing files.
+  }
+
+  await removeThumbnails(publicPath);
+}
+
+async function cleanupBlogRefsForMedia(mediaSrcs: Set<string>) {
+  if (mediaSrcs.size === 0) return;
+
+  const postsFile = path.join(baseDir, 'blog', 'posts.json');
+  const posts = await readJsonFile<BlogPost[]>(postsFile, []);
+  if (posts.length === 0) return;
+
+  let changed = false;
+  for (const post of posts) {
+    if (post.image && mediaSrcs.has(toMediaSrc(post.image))) {
+      post.image = '';
+      changed = true;
+    }
+
+    if (Array.isArray(post.photos)) {
+      const nextPhotos = post.photos.filter((photo) => !mediaSrcs.has(toMediaSrc(photo.src)));
+      if (nextPhotos.length !== post.photos.length) {
+        post.photos = nextPhotos;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    await fs.writeFile(postsFile, JSON.stringify(posts, null, 2));
+  }
+}
+
+async function cleanupDownloadProgressFiles(tempDir: string, archiveName: string) {
+  const siblingJson = archiveName.replace(/\.zip$/i, '.json');
+  if (siblingJson !== archiveName) {
+    try {
+      await fs.unlink(path.join(tempDir, siblingJson));
+    } catch {
+      // Ignore missing direct sibling JSON file.
+    }
+  }
+
+  let dirEntries: string[] = [];
+  try {
+    dirEntries = await fs.readdir(tempDir);
+  } catch {
+    return;
+  }
+
+  for (const file of dirEntries) {
+    if (!file.endsWith('.json')) continue;
+    const progressPath = path.join(tempDir, file);
+
+    try {
+      const data = JSON.parse(await fs.readFile(progressPath, 'utf-8')) as { url?: string | null };
+      if (typeof data.url === 'string' && data.url.includes(archiveName)) {
+        await fs.unlink(progressPath).catch(() => {});
+      }
+    } catch {
+      // Ignore malformed or unreadable progress files.
+    }
+  }
 }
 
 export async function POST(request: Request) {
@@ -55,126 +170,110 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { type, id } = await request.json();
-    if (!type || !id) return NextResponse.json({ success: false }, { status: 400 });
+    const { type, id } = (await request.json()) as { type?: string; id?: string };
+    if (!type || !id) {
+      return NextResponse.json({ success: false }, { status: 400 });
+    }
 
-    // ── Gallery photo ─────────────────────────────────────────────
     if (type === 'gallery') {
+      const mediaSrc = toMediaSrc(id);
       const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
-      try {
-        let albums = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
-        albums = removePhotoFromTree(albums, id);
-        await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
-      } catch { /* albums.json may not exist yet */ }
 
-      // id here is the full `src` string; map it properly to the public folder
-      try {
-        const cleanId = id.replace('/api/media', '');
-        const physicalPath = path.join(process.cwd(), 'public', cleanId);
-        await fs.unlink(physicalPath);
-        await removeThumbnails(cleanId);
-      } catch (err) {
-        console.error('Failed to unlink file:', id, err);
+      const albums = await readJsonFile<AlbumNode[]>(albumsFile, []);
+      if (albums.length > 0) {
+        const nextAlbums = removePhotoFromTree(albums, mediaSrc);
+        await fs.writeFile(albumsFile, JSON.stringify(nextAlbums, null, 2));
       }
 
-      // Also remove from any blog post's photos[] array
-      try {
-        const postsFile = path.join(baseDir, 'blog', 'posts.json');
-        const posts: any[] = JSON.parse(await fs.readFile(postsFile, 'utf-8'));
-        let changed = false;
-        for (const post of posts) {
-          if (Array.isArray(post.photos)) {
-            const before = post.photos.length;
-            post.photos = post.photos.filter((ph: any) => ph.src !== id);
-            if (post.photos.length !== before) changed = true;
-          }
-        }
-        if (changed) await fs.writeFile(postsFile, JSON.stringify(posts, null, 2));
-      } catch { /* posts.json may not exist */ }
-
+      await removePhysicalFile(mediaSrc);
+      await cleanupBlogRefsForMedia(new Set([mediaSrc]));
       return NextResponse.json({ success: true });
     }
 
-    // ── Gallery album (entire album + sub-albums + their images) ──
     if (type === 'gallery-album') {
       const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
-      let albums = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
+      const albums = await readJsonFile<AlbumNode[]>(albumsFile, []);
+      if (albums.length === 0) return NextResponse.json({ success: true });
+
       const target = findAlbum(albums, id);
-      if (target) {
-        const srcs = collectAllImages(target);
-        for (const src of srcs) {
-          try {
-            const cleanSrc = src.replace('/api/media', '');
-            const physicalPath = path.join(process.cwd(), 'public', cleanSrc);
-            await fs.unlink(physicalPath);
-            await removeThumbnails(cleanSrc);
-          } catch (err) {
-            console.error('Failed to unlink file during album delete:', src, err);
-          }
-        }
+      const mediaSrcs = new Set<string>(target ? collectAllImages(target) : []);
+
+      for (const mediaSrc of mediaSrcs) {
+        await removePhysicalFile(mediaSrc);
       }
-      albums = removeAlbumFromTree(albums, id);
-      await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
+
+      let nextAlbums = removeAlbumFromTree(albums, id);
+      nextAlbums = removeImagesFromTree(nextAlbums, mediaSrcs);
+      await fs.writeFile(albumsFile, JSON.stringify(nextAlbums, null, 2));
+
+      await cleanupBlogRefsForMedia(mediaSrcs);
       return NextResponse.json({ success: true });
     }
 
-    // ── Blog post ─────────────────────────────────────────────────
     if (type === 'blog') {
-      const bDir = path.join(baseDir, 'blog');
-      const bFile = path.join(bDir, 'posts.json');
-      let posts: any[] = JSON.parse(await fs.readFile(bFile, 'utf-8'));
-      const target = posts.find(p => p.slug === id);
+      const blogDir = path.join(baseDir, 'blog');
+      const postsFile = path.join(blogDir, 'posts.json');
+      let posts = await readJsonFile<BlogPost[]>(postsFile, []);
+      const target = posts.find((post) => post.slug === id);
+
       if (target) {
-        posts = posts.filter(p => p.slug !== id);
-        await fs.writeFile(bFile, JSON.stringify(posts, null, 2));
-        
-        // Unlink markdown and cover
-        try { await fs.unlink(path.join(bDir, `${id}.md`)); } catch { }
-        try { await fs.unlink(path.join(process.cwd(), 'public', target.image)); } catch { }
-        
-        // Unlink all inline photos
-        if (target.photos && Array.isArray(target.photos)) {
-          for (const ph of target.photos) {
-            try { 
-              const cleanSrc = ph.src.replace('/api/media', '');
-              await fs.unlink(path.join(process.cwd(), 'public', cleanSrc)); 
-            } catch { }
-          }
+        posts = posts.filter((post) => post.slug !== id);
+        await fs.writeFile(postsFile, JSON.stringify(posts, null, 2));
+
+        const mediaSrcs = new Set<string>();
+        if (target.image) mediaSrcs.add(toMediaSrc(target.image));
+        if (Array.isArray(target.photos)) {
+          for (const photo of target.photos) mediaSrcs.add(toMediaSrc(photo.src));
         }
 
-        // Remove the synchronized album from albums.json
         try {
-          const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
-          let albums = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
-          albums = removeAlbumFromTree(albums, id); // id is slug
-          await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
-        } catch { }
+          await fs.unlink(path.join(blogDir, `${id}.md`));
+        } catch {
+          // Ignore missing markdown file.
+        }
 
+        for (const mediaSrc of mediaSrcs) {
+          await removePhysicalFile(mediaSrc);
+        }
+
+        const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
+        const albums = await readJsonFile<AlbumNode[]>(albumsFile, []);
+        if (albums.length > 0) {
+          const withoutBlogAlbum = removeAlbumFromTree(albums, id);
+          const cleanedAlbums = removeImagesFromTree(withoutBlogAlbum, mediaSrcs);
+          await fs.writeFile(albumsFile, JSON.stringify(cleanedAlbums, null, 2));
+        }
       }
+
       return NextResponse.json({ success: true });
     }
 
-    // ── Library PDF ───────────────────────────────────────────────
     if (type === 'library') {
-      const lDir = path.join(baseDir, 'library');
-      const lFile = path.join(lDir, 'library.json');
-      let docs: any[] = JSON.parse(await fs.readFile(lFile, 'utf-8'));
-      const target = docs.find(d => d.url === id);
+      const libraryDir = path.join(baseDir, 'library');
+      const libraryFile = path.join(libraryDir, 'library.json');
+      let docs = await readJsonFile<LibraryDoc[]>(libraryFile, []);
+      const target = docs.find((doc) => doc.url === id);
+
       if (target) {
-        docs = docs.filter(d => d.url !== id);
-        await fs.writeFile(lFile, JSON.stringify(docs, null, 2));
-        try { await fs.unlink(path.join(lDir, target.url.split('/').pop() || '')); } catch { }
+        docs = docs.filter((doc) => doc.url !== id);
+        await fs.writeFile(libraryFile, JSON.stringify(docs, null, 2));
+        await removePhysicalFile(target.url);
       }
+
       return NextResponse.json({ success: true });
     }
 
-    // ── Download ZIP ───────────────────────────────────────────────
     if (type === 'download') {
       const tempDir = path.join(process.cwd(), 'public', 'temp', 'downloads');
       const safeId = path.basename(id);
+
       try {
         await fs.unlink(path.join(tempDir, safeId));
-      } catch { }
+      } catch {
+        // Ignore missing archive file.
+      }
+
+      await cleanupDownloadProgressFiles(tempDir, safeId);
       return NextResponse.json({ success: true });
     }
 

@@ -15,6 +15,10 @@
 
 # next.js
 /.next/
+/.next-dev/
+/.next-build/
+/.next-build-*/
+/.next-build-dir
 /out/
 
 # production

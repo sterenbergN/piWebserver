@@ -7,7 +7,7 @@ import { cookies } from 'next/headers';
 function getPossibleWeightsForStation(station: any): number[] {
     if (!station) return [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]; 
     if (station.type === 'stack' || station.type === 'cable') {
-       let possible: number[] = [];
+       const possible: number[] = [];
        const inc = station.increment || 10;
        for (let w = station.minWeight || 10; w <= (station.maxWeight || 300); w += inc) {
            possible.push(w);
