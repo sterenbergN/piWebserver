@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { DEMO_GYMS, DEMO_TYPES } from '@/lib/workout/demo-data';
 
 // Interfaces for user representation
 interface UserData {
@@ -151,16 +152,31 @@ export default function WorkoutDashboard() {
             gender: 'male',
             intensityFactor: 1.0,
           });
-          // For demo, no imported gyms - active/page.tsx handles empty state fallback
-          setAvailableGyms([]);
+          setAvailableGyms(DEMO_GYMS);
+          setAvailableTypes(DEMO_TYPES);
         }
       })
       .catch(() => {
         setIsDemo(true);
+        setUser({
+          id: 'demo-user-123',
+          username: 'Guest Lifter',
+          weight: 175,
+          gender: 'male',
+          intensityFactor: 1.0,
+        });
+        setAvailableGyms(DEMO_GYMS);
+        setAvailableTypes(DEMO_TYPES);
       })
       .finally(() => setLoading(false));
 
-    fetch('/api/workout/types?scope=mine').then(r => r.json()).then(d => { if (d.success) setAvailableTypes(d.types); });
+    fetch('/api/workout/types?scope=mine')
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.types?.length > 0) {
+          setAvailableTypes(d.types);
+        }
+      });
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {

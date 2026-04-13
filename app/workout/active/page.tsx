@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
+import { DEMO_GYMS, DEMO_TYPES } from '@/lib/workout/demo-data';
 
 export default function ActiveWorkoutPage() {
   const searchParams = useSearchParams();
   const gymId = searchParams.get('gym');
   const typeId = searchParams.get('type');
+  const isDemoMode = searchParams.get('isDemo') === 'true';
   const liftCountParam = parseInt(searchParams.get('lifts') || '5');
   
   const [loading, setLoading] = useState(true);
@@ -37,12 +39,19 @@ export default function ActiveWorkoutPage() {
       }
 
       try {
-        const [gymRes, typesRes, authRes, histRes] = await Promise.all([
-           fetch('/api/workout/gyms').then(r => r.json()),
-           fetch('/api/workout/types?scope=mine').then(r => r.json()),
-           fetch('/api/workout/auth').then(r => r.json()),
-           fetch('/api/workout/history').then(r => r.json())
-        ]);
+        const [gymRes, typesRes, authRes, histRes] = isDemoMode
+          ? [
+              { gyms: DEMO_GYMS },
+              { types: DEMO_TYPES },
+              { authenticated: false, user: null },
+              { success: true, history: [] },
+            ]
+          : await Promise.all([
+              fetch('/api/workout/gyms').then(r => r.json()),
+              fetch('/api/workout/types?scope=mine').then(r => r.json()),
+              fetch('/api/workout/auth').then(r => r.json()),
+              fetch('/api/workout/history').then(r => r.json())
+            ]);
         
         if (authRes.authenticated) setUser(authRes.user);
         if (histRes.success) setPastHistory(histRes.history || []);
