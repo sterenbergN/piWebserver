@@ -20,6 +20,7 @@ export default function AnalyticsPage() {
    const [history, setHistory] = useState<any[]>([]);
    const [user, setUser] = useState<any>(null);
    const [loading, setLoading] = useState(true);
+   const [isDemo, setIsDemo] = useState(false);
 
    const [oneRMs, setOneRMs] = useState<any[]>([]);
    const [volumeTimeline, setVolumeTimeline] = useState<any[]>([]);
@@ -74,9 +75,11 @@ export default function AnalyticsPage() {
            if (authRes.authenticated) {
                currentUser = authRes.user;
                histData = authRes.user.id ? histRes.history || [] : [];
+               setIsDemo(false);
                setIntensityFactor(authRes.user.intensityFactor ?? 1.0);
            } else {
                // Demo mode mockup data
+               setIsDemo(true);
                currentUser = { weight: 175, height: '70', gender: 'male', username: 'Guest Lifter' };
                histData = [
                   { 
@@ -99,15 +102,6 @@ export default function AnalyticsPage() {
                         'deadlift': [{ reps: 3, weight: 315 }]
                      }
                   },
-                  { 
-                     id: 'demo3',
-                     timestamp: new Date(Date.now() - 4000000).toISOString(), 
-                     type: { name: 'Cardio' },
-                     name: 'Running',
-                     duration: '45',
-                     calories: 320,
-                     logs: {}
-                  }
                ];
            }
 
@@ -237,6 +231,10 @@ export default function AnalyticsPage() {
          }
       } catch { /* silent */ }
       setIntensitySaving(false);
+   };
+
+   const handleDownloadCsv = () => {
+      window.location.href = '/api/workout/export';
    };
 
    if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Crunching numbers...</div>;
@@ -439,12 +437,14 @@ export default function AnalyticsPage() {
 
                {/* ═══ Ranking Tile ═══ */}
                {experience && (
-               <div className="workout-tile" style={{ textAlign: 'center', background: 'linear-gradient(135deg, rgba(var(--accent-rgb),0.1) 0%, rgba(0,0,0,0.2) 100%)', position: 'relative' }}>
-                  <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'rank' ? null : 'rank')}>
+               <div className="workout-tile" style={{ textAlign: 'center', background: 'linear-gradient(135deg, rgba(var(--accent-rgb),0.1) 0%, rgba(0,0,0,0.2) 100%)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem', textAlign: 'left' }}>
+                     <h3 style={{ margin: 0, lineHeight: 1.2, flex: '1 1 160px' }}>Lifter Experience</h3>
+                     <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => setExpandedInfo(expandedInfo === 'rank' ? null : 'rank')}>
                     {expandedInfo === 'rank' ? 'Hide Breakdown ✕' : 'Score Breakdown ⓘ'}
-                  </button>
+                     </button>
+                  </div>
 
-                  <h3 style={{ margin: '0 0 0.5rem 0' }}>Lifter Experience</h3>
                   <div style={{ fontSize: '3rem', margin: '1rem 0' }}>{experience.symbol} {experience.level}</div>
                   <p style={{ color: 'var(--muted)', fontSize: '0.85rem', margin: 0 }}>Experience Score (E): <strong>{experience.score.toFixed(2)}</strong></p>
 
@@ -760,6 +760,18 @@ export default function AnalyticsPage() {
                       {history.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No workouts tracked yet.</p>}
                   </div>
                </div>
+
+               {!isDemo && (
+                  <div className="workout-tile" style={{ textAlign: 'center' }}>
+                     <h3 style={{ margin: '0 0 0.5rem 0' }}>Export User Data</h3>
+                     <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>
+                        Download a CSV with one row per logged set plus placeholder rows for workouts without set data.
+                     </p>
+                     <button className="workout-btn-primary" style={{ marginTop: 0 }} onClick={handleDownloadCsv}>
+                        Download CSV
+                     </button>
+                  </div>
+               )}
            </div>
 
            {systemPopup && (

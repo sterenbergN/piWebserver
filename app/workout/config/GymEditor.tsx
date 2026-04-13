@@ -47,6 +47,7 @@ export default function GymEditor() {
 
   // Active Editors
   const [addingGym, setAddingGym] = useState(false);
+  const [editingGymId, setEditingGymId] = useState<string | null>(null);
   const [newGymName, setNewGymName] = useState('');
   const [newGymEmoji, setNewGymEmoji] = useState('🏋️');
   
@@ -67,6 +68,41 @@ export default function GymEditor() {
   const [importPrompt, setImportPrompt] = useState<{ match: Station, target: Station } | null>(null);
   const [importSelectedLifts, setImportSelectedLifts] = useState<Set<string>>(new Set());
   const [systemPopup, setSystemPopup] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
+
+  const resetStationEditor = () => {
+    setAddingStation(false);
+    setNewStation({ type: 'plates', lifts: [], attachments: [] });
+    setTempPlates('');
+    setTempDumbbells('');
+    setTempBodyWeight('');
+    setTempAttachment('');
+  };
+
+  const applyStationType = (stationType: StationType, sourceStation?: Partial<Station>) => {
+    const lifts = sourceStation?.lifts || newStation.lifts || [];
+    const attachments = stationType === 'cable' ? (sourceStation?.attachments || newStation.attachments || []) : [];
+
+    setNewStation({
+      id: sourceStation?.id,
+      name: sourceStation?.name || newStation.name || '',
+      type: stationType,
+      lifts,
+      attachments,
+      baseWeight: stationType === 'plates' ? sourceStation?.baseWeight : undefined,
+      plateSets: stationType === 'plates' ? sourceStation?.plateSets : undefined,
+      minWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.minWeight : undefined,
+      maxWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.maxWeight : undefined,
+      increment: stationType === 'stack' || stationType === 'cable' ? sourceStation?.increment : undefined,
+      additionalWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.additionalWeight : undefined,
+      dumbbellPairs: stationType === 'dumbbells' ? sourceStation?.dumbbellPairs : undefined,
+      bodyWeightAdditions: stationType === 'bodyweight' ? sourceStation?.bodyWeightAdditions : undefined,
+    });
+
+    setTempPlates(stationType === 'plates' ? (sourceStation?.plateSets || []).join(', ') : '');
+    setTempDumbbells(stationType === 'dumbbells' ? (sourceStation?.dumbbellPairs || []).join(', ') : '');
+    setTempBodyWeight(stationType === 'bodyweight' ? (sourceStation?.bodyWeightAdditions || []).join(', ') : '');
+    setTempAttachment('');
+  };
 
   useEffect(() => {
     Promise.all([
@@ -98,6 +134,32 @@ export default function GymEditor() {
       setNewGymName('');
       setNewGymEmoji('🏋️');
     }
+  };
+
+  const handleSubmitGym = async () => {
+    if (!newGymName) return;
+
+    if (editingGymId) {
+      const gymToUpdate = gyms.find((gym) => gym.id === editingGymId);
+      if (!gymToUpdate) return;
+
+      const res = await fetch('/api/workout/gyms', {
+        method: 'PUT',
+        body: JSON.stringify({ ...gymToUpdate, name: newGymName, emoji: newGymEmoji }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setGyms(gyms.map((gym) => (gym.id === data.gym.id ? data.gym : gym)));
+        if (activeGym?.id === data.gym.id) setActiveGym(data.gym);
+      }
+      setAddingGym(false);
+      setEditingGymId(null);
+      setNewGymName('');
+      setNewGymEmoji('🏋️');
+      return;
+    }
+
+    await handleCreateGym();
   };
 
   const handleDeleteGym = (id: string) => {
@@ -133,9 +195,22 @@ export default function GymEditor() {
         finalizedStation.lifts = [...finalizedStation.lifts, ...applyImportRts.map(l => ({...l, id: Math.random().toString(36).substring(2, 10)}))];
     }
 
-    if (newStation.type === 'plates') finalizedStation.plateSets = tempPlates.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
-    if (newStation.type === 'dumbbells') finalizedStation.dumbbellPairs = tempDumbbells.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
-    if (newStation.type === 'bodyweight') finalizedStation.bodyWeightAdditions = tempBodyWeight.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+    finalizedStation.attachments = finalizedStation.type === 'cable' ? (finalizedStation.attachments || []) : [];
+    finalizedStation.plateSets = finalizedStation.type === 'plates' ? tempPlates.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
+    finalizedStation.baseWeight = finalizedStation.type === 'plates' ? finalizedStation.baseWeight : undefined;
+    finalizedStation.dumbbellPairs = finalizedStation.type === 'dumbbells' ? tempDumbbells.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
+    finalizedStation.bodyWeightAdditions = finalizedStation.type === 'bodyweight' ? tempBodyWeight.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
+
+    if (finalizedStation.type !== 'stack' && finalizedStation.type !== 'cable') {
+      finalizedStation.minWeight = undefined;
+      finalizedStation.maxWeight = undefined;
+      finalizedStation.increment = undefined;
+      finalizedStation.additionalWeight = undefined;
+    }
+
+    if (finalizedStation.type !== 'cable') {
+      finalizedStation.lifts = finalizedStation.lifts.map((lift) => ({ ...lift, attachment: undefined }));
+    }
 
     // Check for similar stations to prompt import if creating NEW
     if (!newStation.id && !applyImportRts) {
@@ -161,8 +236,7 @@ export default function GymEditor() {
 
     const updatedGym = { ...activeGym, stations: updatedStations };
     await saveGymToAPI(updatedGym);
-    setAddingStation(false);
-    setNewStation({ type: 'plates', lifts: [], attachments: [] });
+    resetStationEditor();
   };
 
   const handleDeleteStation = (id: string) => {
@@ -237,13 +311,18 @@ export default function GymEditor() {
                    <strong>{g.emoji || '🏋️'} {g.name}</strong>
                    <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{g.stations?.length || 0} Stations</span>
                  </button>
-                 <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0 1rem' }} onClick={() => handleDeleteGym(g.id)}>✕</button>
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <button className="btn btn-secondary" style={{ padding: '0.65rem 0.9rem', fontSize: '0.8rem', borderRadius: '12px' }} onClick={() => { setAddingGym(true); setEditingGymId(g.id); setNewGymName(g.name); setNewGymEmoji(g.emoji || '🏋️'); }}>
+                      Edit
+                    </button>
+                    <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0.65rem 0.9rem' }} onClick={() => handleDeleteGym(g.id)}>✕</button>
+                 </div>
               </div>
             ))}
           </div>
 
           {!addingGym ? (
-            <button className="workout-btn-primary" onClick={() => setAddingGym(true)}>+ Create New Gym</button>
+            <button className="workout-btn-primary" onClick={() => { setAddingGym(true); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); }}>+ Create New Gym</button>
           ) : (
             <div style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent)' }}>
               <input className="workout-input" placeholder="Gym Name (e.g. Planet Fitness)" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
@@ -256,8 +335,8 @@ export default function GymEditor() {
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleCreateGym}>Create</button>
-                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setAddingGym(false)}>Cancel</button>
+                <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSubmitGym}>{editingGymId ? 'Save Gym' : 'Create'}</button>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setAddingGym(false); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); }}>Cancel</button>
               </div>
             </div>
           )}
@@ -324,7 +403,7 @@ export default function GymEditor() {
         <div className="animate-fade-in workout-tile" style={{ border: '2px solid var(--accent)' }}>
            <h3>Station Found in Other Gym</h3>
            <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
-              We found a similar station named <strong>"{importPrompt.match.name}"</strong> in another gym. It contains {importPrompt.match.lifts.length} configured lifts.
+              We found a similar station named <strong>&quot;{importPrompt.match.name}&quot;</strong> in another gym. It contains {importPrompt.match.lifts.length} configured lifts.
            </p>
            <p style={{ fontSize: '0.9rem', marginBottom: '1.5rem' }}>Would you like to import any of the following lifts?</p>
            
@@ -353,17 +432,42 @@ export default function GymEditor() {
         <div className="animate-fade-in">
           <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
              <h3 style={{ margin: 0 }}>{activeGym.emoji || '📍'} {activeGym.name}</h3>
-             <button className="btn btn-secondary" onClick={() => setActiveGym(null)} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Exit Gym</button>
+             <div style={{ display: 'flex', gap: '0.5rem' }}>
+               <button
+                 className="btn btn-secondary"
+                 onClick={() => {
+                   setAddingGym(true);
+                   setEditingGymId(activeGym.id);
+                   setNewGymName(activeGym.name);
+                   setNewGymEmoji(activeGym.emoji || '🏋️');
+                   setActiveGym(null);
+                 }}
+                 style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}
+               >
+                 Edit Gym
+               </button>
+               <button className="btn btn-secondary" onClick={() => setActiveGym(null)} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Exit Gym</button>
+             </div>
           </div>
 
           <h4 style={{ margin: '0 0 1rem 0', color: 'var(--accent-light)' }}>Stations & Equipment</h4>
-          
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
             {activeGym.stations?.map(st => (
                <div key={st.id} style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--surface-border)', padding: '1rem', borderRadius: '12px' }}>
-                 <div className="workout-flex-between" style={{ marginBottom: '0.5rem' }}>
-                   <strong>{st.name} <span style={{ opacity: 0.5, fontWeight: 'normal', fontSize: '0.8rem' }}>({st.type})</span></strong>
-                   <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>✕ Delete Station</button>
+                 <div className="workout-flex-between" style={{ marginBottom: '0.5rem', alignItems: 'flex-start', gap: '0.75rem' }}>
+                   <strong style={{ flex: 1 }}>{st.name} <span style={{ opacity: 0.5, fontWeight: 'normal', fontSize: '0.8rem' }}>({st.type})</span></strong>
+                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                     <button
+                       style={{ background: 'none', border: 'none', color: 'var(--accent)' }}
+                       onClick={() => {
+                         setAddingStation(true);
+                         applyStationType(st.type, st);
+                       }}
+                     >
+                       Edit
+                     </button>
+                     <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>✕ Delete Station</button>
+                   </div>
                  </div>
                  
                  {st.type === 'cable' && st.attachments && st.attachments.length > 0 && (
@@ -377,7 +481,7 @@ export default function GymEditor() {
                         <div key={l.id} className="workout-flex-between" style={{ background: 'var(--input-bg)', padding: '0.5rem 0.75rem', borderRadius: '8px' }}>
                             <div>
                                <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{l.name}</span>
-                               <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>{l.primaryMuscle} {l.secondaryMuscle !== 'None' && `/ ${l.secondaryMuscle}`} {l.singleArmLeg && '(Single Limb)'} {l.attachment && `• ${l.attachment}`}</span>
+                               <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>{l.primaryMuscle} {l.secondaryMuscle !== 'None' && ('/ ' + l.secondaryMuscle)} {l.singleArmLeg && '(Single Limb)'} {l.attachment && ('- ' + l.attachment)}</span>
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                <button style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem' }} onClick={() => { setActiveStation(st); setNewLift(l); setAddingLift(true); }}>Edit</button>
@@ -397,19 +501,18 @@ export default function GymEditor() {
           </div>
 
           {!addingStation ? (
-              <button className="workout-btn-primary" onClick={() => {
-                   setAddingStation(true); 
-                   setNewStation({ type: 'plates', lifts: [], attachments: [] });
-                   setTempPlates(''); setTempDumbbells(''); setTempBodyWeight(''); setTempAttachment('');
-              }} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
-                 + Add Equipment Station
-              </button>
-          ) : (
-            <div className="animate-fade-in" style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px' }}>
-                <h4 style={{ margin: '0 0 1rem 0' }}>New Station Config</h4>
+               <button className="workout-btn-primary" onClick={() => {
+                    setAddingStation(true);
+                    applyStationType('plates', { type: 'plates', lifts: [], attachments: [] });
+               }} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
+                  + Add Equipment Station
+               </button>
+           ) : (
+             <div className="animate-fade-in" style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px' }}>
+                <h4 style={{ margin: '0 0 1rem 0' }}>{newStation.id ? 'Edit Station Config' : 'New Station Config'}</h4>
                 <input className="workout-input" placeholder="Station Name (e.g. Squat Rack)" value={newStation.name || ''} onChange={e => setNewStation({ ...newStation, name: e.target.value })} />
                 
-                <select className="workout-input" value={newStation.type} onChange={e => setNewStation({ ...newStation, type: e.target.value as StationType })}>
+                <select className="workout-input" value={newStation.type} onChange={e => applyStationType(e.target.value as StationType, newStation)}>
                   <option value="plates">Barbell / Plate Loaded</option>
                   <option value="stack">Machine Weight Stack</option>
                   <option value="cable">Cable Machine</option>
@@ -473,8 +576,8 @@ export default function GymEditor() {
                 )}
 
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                  <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={() => handleSaveStation(null)}>Save Station</button>
-                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setAddingStation(false)}>Cancel</button>
+                  <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={() => handleSaveStation(null)}>{newStation.id ? 'Save Station' : 'Add Station'}</button>
+                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetStationEditor}>Cancel</button>
                 </div>
             </div>
           )}

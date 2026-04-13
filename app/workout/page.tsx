@@ -10,10 +10,18 @@ interface UserData {
   height?: string;
   gender?: string;
   weight?: number;
-  progressionFactor?: number;
+  intensityFactor?: number;
 }
 
-import { calcAverage1RM, calcRelativeStrength, calculateExperienceScore } from '@/lib/workout/analytics';
+import { calculateExperienceScore } from '@/lib/workout/analytics';
+
+function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
+  if (value <= 0.6) return { label: 'Recovery', emoji: '🧘', color: '#63b3ed' };
+  if (value <= 0.8) return { label: 'Light', emoji: '🌿', color: '#68d391' };
+  if (value <= 1.1) return { label: 'Standard', emoji: '⚖️', color: '#48bb78' };
+  if (value <= 1.3) return { label: 'Push', emoji: '💪', color: '#ed8936' };
+  return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
+}
 
 export default function WorkoutDashboard() {
   const [user, setUser] = useState<UserData | null>(null);
@@ -34,7 +42,6 @@ export default function WorkoutDashboard() {
   const [loginError, setLoginError] = useState('');
   // Analytics Expansion
   const [expandAnalytics, setExpandAnalytics] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
 
   // Start Lift Expansion State
   const [showStartMenu, setShowStartMenu] = useState(false);
@@ -44,18 +51,13 @@ export default function WorkoutDashboard() {
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
 
-  // Other Workouts State
-  const [showOtherMenu, setShowOtherMenu] = useState(false);
-  const [otherActivity, setOtherActivity] = useState('Running');
-  const [otherDuration, setOtherDuration] = useState('30');
-
   // Profile Menu State
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [editWeight, setEditWeight] = useState('');
   const [editHeight, setEditHeight] = useState('');
   const [editGender, setEditGender] = useState('male');
-  const [editProgression, setEditProgression] = useState('0.05');
+  const [editIntensityFactor, setEditIntensityFactor] = useState(1.0);
   const [profileSaving, setProfileSaving] = useState(false);
 
   // Pending workout resume state
@@ -92,7 +94,7 @@ export default function WorkoutDashboard() {
           setEditWeight(data.user.weight?.toString() || '');
           setEditHeight(data.user.height || '');
           setEditGender(data.user.gender || 'male');
-          setEditProgression(data.user.progressionFactor?.toString() || '0.05');
+          setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
 
           // Fetch only imported/owned gyms
           fetch('/api/workout/gyms').then(r => r.json()).then(d => { 
@@ -116,7 +118,7 @@ export default function WorkoutDashboard() {
                      }
 
                      pHistory.history.forEach((h: any) => {
-                         if (h.type?.name !== 'Cardio' && h.logs) {
+                         if (h.logs) {
                              Object.keys(h.logs).forEach(liftId => {
                                  h.logs[liftId].forEach((set: any) => {
                                      vol += (set.reps * set.weight);
@@ -126,7 +128,7 @@ export default function WorkoutDashboard() {
                          }
                      });
                      
-                     setTotalLifts(pHistory.history.filter((h: any) => h.type?.name !== 'Cardio').length);
+                     setTotalLifts(pHistory.history.length);
                      setAvgVol(sets > 0 ? vol / sets : 0);
                      
                      if (data.user.weight) {
@@ -147,6 +149,7 @@ export default function WorkoutDashboard() {
             username: 'Guest Lifter',
             weight: 175,
             gender: 'male',
+            intensityFactor: 1.0,
           });
           // For demo, no imported gyms - active/page.tsx handles empty state fallback
           setAvailableGyms([]);
@@ -157,7 +160,7 @@ export default function WorkoutDashboard() {
       })
       .finally(() => setLoading(false));
 
-    fetch('/api/workout/types').then(r => r.json()).then(d => { if (d.success) setAvailableTypes(d.types); });
+    fetch('/api/workout/types?scope=mine').then(r => r.json()).then(d => { if (d.success) setAvailableTypes(d.types); });
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -190,19 +193,22 @@ export default function WorkoutDashboard() {
     if (!user) return;
     setProfileSaving(true);
     try {
-      await fetch('/api/workout/users', {
-        method: 'PUT',
+      const res = await fetch('/api/workout/auth', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: user.id,
           weight: parseFloat(editWeight) || 0,
           height: editHeight,
           gender: editGender,
-          progressionFactor: parseFloat(editProgression) || 0.05
+          intensityFactor: editIntensityFactor
         })
       });
-      setUser({ ...user, weight: parseFloat(editWeight) || 0, height: editHeight, gender: editGender, progressionFactor: parseFloat(editProgression) || 0.05 });
-      setShowProfileEditor(false);
+      const data = await res.json();
+      if (data.success && data.user) {
+        setUser(data.user);
+        setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
+        setShowProfileEditor(false);
+      }
     } catch { /* silent */ }
     setProfileSaving(false);
   };
@@ -302,8 +308,32 @@ export default function WorkoutDashboard() {
                    <option value="female">Female</option>
                 </select>
 
-                <label style={{ fontSize: '0.75rem', color: '#aaa', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Overload Factor</label>
-                <input className="workout-input" type="number" step="0.01" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: '#222', border: '1px solid #444', color: '#fff' }} value={editProgression} onChange={e => setEditProgression(e.target.value)} />
+                <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#222', border: '1px solid #444', borderRadius: '10px' }}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Intensity</span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: getIntensityLabel(editIntensityFactor).color }}>
+                         {getIntensityLabel(editIntensityFactor).emoji} {getIntensityLabel(editIntensityFactor).label} ({editIntensityFactor.toFixed(2)})
+                      </span>
+                   </div>
+                   <input
+                      type="range"
+                      min="0.5"
+                      max="1.5"
+                      step="0.05"
+                      value={editIntensityFactor}
+                      onChange={e => setEditIntensityFactor(parseFloat(e.target.value))}
+                      style={{
+                         width: '100%',
+                         height: '6px',
+                         WebkitAppearance: 'none',
+                         appearance: 'none' as any,
+                         borderRadius: '3px',
+                         outline: 'none',
+                         cursor: 'pointer',
+                         background: 'linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)',
+                      }}
+                   />
+                </div>
 
                 <button className="workout-btn-primary" style={{ padding: '0.75rem', fontSize: '0.9rem', marginTop: '0.5rem', borderRadius: '8px' }} onClick={handleSaveProfile} disabled={profileSaving}>
                    {profileSaving ? 'Saving...' : 'Save Profile Changes'}
@@ -352,8 +382,10 @@ export default function WorkoutDashboard() {
                     <div style={{ fontSize: '1rem', fontWeight: 600 }}>{rankName}</div>
                  </div>
                  <div>
-                    <label style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Overload Ratio</label>
-                    <div style={{ fontSize: '1rem', fontWeight: 600 }}>{((user?.progressionFactor || 0.05) * 100).toFixed(1)}%</div>
+                    <label style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Default Intensity</label>
+                    <div style={{ fontSize: '1rem', fontWeight: 600, color: getIntensityLabel(user?.intensityFactor || 1.0).color }}>
+                      {getIntensityLabel(user?.intensityFactor || 1.0).emoji} {getIntensityLabel(user?.intensityFactor || 1.0).label}
+                    </div>
                  </div>
               </div>
               <button 
@@ -444,54 +476,13 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
-      <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem' }}>
-        <button className="btn btn-secondary" style={{ flex: 1, padding: '1rem', borderRadius: '12px' }} onClick={() => setShowOtherMenu(true)}>
-          Other Workouts
-        </button>
-        <button className="btn btn-secondary" style={{ flex: 1, padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/config'}>
+      <div style={{ marginTop: '2rem' }}>
+        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/config'}>
           Configuration
         </button>
       </div>
 
-      {showOtherMenu && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-           <div className="workout-tile animate-fade-in" style={{ width: '90%', maxWidth: '400px', background: 'rgba(28,28,30,0.98)', border: '1px solid #444' }}>
-              <div className="workout-flex-between">
-                 <h3 style={{ margin: '0 0 1rem 0' }}>Log Cardio/Activity</h3>
-                 <button style={{ background: 'none', border: 'none', color: 'var(--muted)' }} onClick={() => setShowOtherMenu(false)}>✕</button>
-              </div>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: '#aaa', marginBottom: '0.25rem' }}>Activity Type</label>
-              <select className="workout-input" style={{ background: '#222', color: '#fff' }} value={otherActivity} onChange={e => setOtherActivity(e.target.value)}>
-                 <option>Running</option>
-                 <option>Walking</option>
-                 <option>Rowing</option>
-                 <option>Cycling</option>
-                 <option>Pickleball</option>
-                 <option>Basketball</option>
-              </select>
-
-              <label style={{ display: 'block', fontSize: '0.85rem', color: '#aaa', marginBottom: '0.25rem' }}>Duration (minutes)</label>
-              <input type="number" className="workout-input" style={{ background: '#222', color: '#fff' }} value={otherDuration} onChange={e => setOtherDuration(e.target.value)} />
-
-              <button className="workout-btn-primary" onClick={async () => {
-                 await fetch('/api/workout/history', { 
-                    method: 'POST', 
-                    body: JSON.stringify({
-                       name: otherActivity,
-                       type: { name: 'Cardio' },
-                       duration: otherDuration + ':00',
-                       timestamp: new Date().toISOString(),
-                       logs: {},
-                       isDemo,
-                       calories: Math.round(5.0 * (user?.weight ? user.weight * 0.453592 : 75) * (parseInt(otherDuration)/60))
-                    })
-                 });
-                 setShowOtherMenu(false);
-                 window.location.reload();
-              }}>Save Activity</button>
-           </div>
-        </div>
-      )}
+      
 
       <div style={{ marginTop: '2rem', textAlign: 'center' }}>
          <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>

@@ -20,6 +20,7 @@ export default function ConfigPage() {
   const [user, setUser] = useState<any>(null);
   const [weight, setWeight] = useState('');
   const [height, setHeight] = useState('');
+  const [gender, setGender] = useState('male');
   const [factor, setFactor] = useState(1.0);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export default function ConfigPage() {
             setUser(data.user);
             setWeight(data.user.weight || '');
             setHeight(data.user.height || '');
+            setGender(data.user.gender || 'male');
             setFactor(data.user.intensityFactor ?? 1.0);
          }
       });
@@ -43,6 +45,7 @@ export default function ConfigPage() {
         body: JSON.stringify({
            weight: parseFloat(weight as string) || 0,
            height: parseFloat(height as string) || 0,
+           gender,
            intensityFactor: factor
         })
      });
@@ -93,6 +96,11 @@ export default function ConfigPage() {
             <h3 style={{ margin: '0 0 1rem 0' }}>Update Profile</h3>
             <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '1rem' }}>Changing weight accurately tracks relative strength metrics over time.</p>
             <input className="workout-input" type="number" placeholder="Current Body Weight (lbs)" value={weight} onChange={e => setWeight(e.target.value)} />
+            <input className="workout-input" type="number" placeholder="Height (inches)" value={height} onChange={e => setHeight(e.target.value)} />
+            <select className="workout-input" value={gender} onChange={e => setGender(e.target.value)}>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
             
             <div style={{ background: 'var(--input-bg)', padding: '1rem', borderRadius: '12px', marginBottom: '1rem', border: '1px solid var(--surface-border)' }}>
                 <h4 style={{ margin: '0 0 0.5rem 0' }}>Intensity Factor</h4>

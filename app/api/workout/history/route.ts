@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
+import { removeCardioHistoryEntries, isCardioHistoryItem } from '@/lib/workout/history';
 
 export async function GET() {
   const cookieStore = await cookies();
   const userId = cookieStore.get('workout_auth')?.value;
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
-  const data = await getWorkoutData('history.json', { history: [] as any[] });
+  const rawData = await getWorkoutData('history.json', { history: [] as any[] });
+  const { data, changed } = removeCardioHistoryEntries(rawData);
+  if (changed) {
+    await saveWorkoutData('history.json', data);
+  }
   const userHistory = data.history.filter(h => h.userId === userId);
 
   return NextResponse.json({ success: true, history: userHistory });
@@ -27,6 +32,10 @@ export async function POST(request: Request) {
 
   try {
     const payload = await request.json();
+    if (isCardioHistoryItem(payload)) {
+      return NextResponse.json({ success: false, message: "Cardio history is no longer supported" }, { status: 400 });
+    }
+
     const data = await getWorkoutData('history.json', { history: [] as any[] });
 
     data.history.push({
@@ -52,7 +61,8 @@ export async function DELETE(request: Request) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     
-    const data = await getWorkoutData('history.json', { history: [] as any[] });
+    const rawData = await getWorkoutData('history.json', { history: [] as any[] });
+    const { data } = removeCardioHistoryEntries(rawData);
     const log = data.history.find(h => h.id === id);
     if (!log || log.userId !== userId) return NextResponse.json({ success: false, message: "Forbidden" }, { status: 403 });
 

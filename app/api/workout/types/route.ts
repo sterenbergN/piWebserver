@@ -6,8 +6,24 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const data = await getWorkoutData('workout_types.json', { types: [] });
+  const { searchParams } = new URL(request.url);
+  const scope = searchParams.get('scope');
+
+  if (scope === 'mine') {
+    const cookieStore = await cookies();
+    const userId = cookieStore.get('workout_auth')?.value;
+    if (!userId) {
+      return NextResponse.json({ success: true, types: [] });
+    }
+
+    return NextResponse.json({
+      success: true,
+      types: data.types.filter((type: any) => type.ownerId === userId),
+    });
+  }
+
   return NextResponse.json({ success: true, types: data.types });
 }
 

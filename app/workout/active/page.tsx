@@ -39,7 +39,7 @@ export default function ActiveWorkoutPage() {
       try {
         const [gymRes, typesRes, authRes, histRes] = await Promise.all([
            fetch('/api/workout/gyms').then(r => r.json()),
-           fetch('/api/workout/types').then(r => r.json()),
+           fetch('/api/workout/types?scope=mine').then(r => r.json()),
            fetch('/api/workout/auth').then(r => r.json()),
            fetch('/api/workout/history').then(r => r.json())
         ]);

@@ -88,8 +88,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [scoringBreakdown, setScoringBreakdown] = useState<any>(null);
    const [performanceMetrics, setPerformanceMetrics] = useState<any>(null);
    const [candidatesEvaluated, setCandidatesEvaluated] = useState<number>(0);
-   const [intensitySlider, setIntensitySlider] = useState<number>(user?.intensityFactor ?? 1.0);
+   const [intensitySlider, setIntensitySlider] = useState<number>(resumeState?.intensitySlider ?? user?.intensityFactor ?? 1.0);
    const [showBreakdown, setShowBreakdown] = useState(false);
+   const [isCompactHeader, setIsCompactHeader] = useState(false);
+   const [showHeaderDetails, setShowHeaderDetails] = useState(true);
 
    const [showList, setShowList] = useState(false);
    const [showChange, setShowChange] = useState(false);
@@ -111,6 +113,19 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
      }, 1000);
      return () => clearInterval(timer);
    }, [workoutFinished, activeLiftIndex]);
+
+   useEffect(() => {
+      const mediaQuery = window.matchMedia('(max-width: 430px)');
+      const syncHeaderMode = (matches: boolean) => {
+         setIsCompactHeader(matches);
+         setShowHeaderDetails(!matches);
+      };
+
+      syncHeaderMode(mediaQuery.matches);
+      const listener = (event: MediaQueryListEvent) => syncHeaderMode(event.matches);
+      mediaQuery.addEventListener('change', listener);
+      return () => mediaQuery.removeEventListener('change', listener);
+   }, []);
 
    const activeLift = localPlan.lifts[activeLiftIndex];
 
@@ -308,6 +323,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    };
 
    const intensityInfo = getIntensityLabel(intensitySlider);
+   const showExpandedHeaderDetails = !isCompactHeader || showHeaderDetails;
 
    if (workoutFinished) {
       return (
@@ -342,23 +358,23 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    return (
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '90vh' }}>
-         <div className="workout-tile" style={{ padding: '1rem', marginBottom: '0.5rem', borderRadius: '0 0 16px 16px', borderTop: 'none', position: 'sticky', top: 0, zIndex: 10 }}>
-            <div className="workout-flex-between">
+         <div className={`workout-tile tracker-topbar${isCompactHeader ? ' tracker-topbar-compact' : ''}`} style={{ padding: '1rem', marginBottom: '0.5rem', borderRadius: '0 0 16px 16px', borderTop: 'none', position: 'sticky', top: 0, zIndex: 10 }}>
+            <div className="workout-flex-between tracker-topbar-row">
                <div>
                  <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.25rem 0' }}>{localPlan.name}</h2>
                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--muted)' }}>Time: {Math.floor(elapsedSecs / 60).toString().padStart(2, '0')}:{(elapsedSecs % 60).toString().padStart(2, '0')}</p>
                </div>
-               <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={() => setShowList(true)}>📋 List</button>
+               <button className="btn btn-secondary tracker-topbar-action" style={{ padding: '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
             </div>
          </div>
 
          <div style={{ flex: 1, padding: '1rem' }}>
-            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-                <p style={{ color: 'var(--accent)', textTransform: 'uppercase', fontWeight: 700, fontSize: '0.8rem', letterSpacing: '2px', margin: '0 0 0.5rem 0' }}>
+            <div className={`tracker-summary-card${isCompactHeader ? ' compact' : ''}`} style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <p style={{ color: 'var(--accent)', textTransform: 'uppercase', fontWeight: 700, fontSize: isCompactHeader ? '0.72rem' : '0.8rem', letterSpacing: isCompactHeader ? '1px' : '2px', margin: '0 0 0.35rem 0' }}>
                    {activeLift.station?.name || 'Equipment'} • Lift {activeLiftIndex + 1}/{localPlan.lifts.length}
                 </p>
-                <h1 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
-                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
+                <h1 style={{ fontSize: isCompactHeader ? '1.55rem' : '2rem', margin: '0 0 0.5rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
+                <div style={{ display: showExpandedHeaderDetails ? 'flex' : 'none', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
                     <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: 'var(--muted)', padding: '0.2rem 1rem', borderRadius: '20px', fontSize: '0.8rem' }} onClick={() => setShowChange(true)}>Change Lift 🔄</button>
                 </div>
 
@@ -380,8 +396,17 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                         </div>
                     )}
 
+                    {isCompactHeader && (
+                        <button
+                          onClick={() => setShowHeaderDetails((value) => !value)}
+                          style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.78rem', cursor: 'pointer', marginTop: '0.35rem', textDecoration: 'underline' }}
+                        >
+                          {showHeaderDetails ? 'Hide Details ▲' : 'Details ▼'}
+                        </button>
+                    )}
+
                     {/* Collapsible Scoring Breakdown */}
-                    {scoringBreakdown && (
+                    {showExpandedHeaderDetails && scoringBreakdown && (
                         <button 
                           onClick={() => setShowBreakdown(!showBreakdown)} 
                           style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.7rem', cursor: 'pointer', marginTop: '0.3rem', textDecoration: 'underline' }}
@@ -390,7 +415,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                         </button>
                     )}
 
-                    {showBreakdown && scoringBreakdown && (
+                    {showExpandedHeaderDetails && showBreakdown && scoringBreakdown && (
                         <div className="animate-fade-in" style={{ marginTop: '0.5rem', padding: '0.6rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', textAlign: 'left', fontSize: '0.75rem' }}>
                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 1rem' }}>
                               <div>
@@ -437,7 +462,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                 </div>
 
                 {/* Intensity Slider */}
-                <div style={{ marginTop: '0.75rem', padding: '0.6rem 1rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+                <div style={{ display: showExpandedHeaderDetails ? 'block' : 'none', marginTop: '0.75rem', padding: '0.6rem 1rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                       <span style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Workout Intensity</span>
                       <span style={{ fontSize: '0.85rem', fontWeight: 700, color: intensityInfo.color }}>
@@ -469,14 +494,14 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                    </div>
                 </div>
 
-                {historicStats && (
+                {showExpandedHeaderDetails && historicStats && (
                     <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '0.75rem' }}>
                        <span style={{opacity: 0.7}}>Prev:</span> <strong style={{color:'var(--foreground)'}}>{historicStats.prevWeight} lbs × {historicStats.prevReps} ({historicStats.prevSets} sets)</strong> &nbsp;•&nbsp; 
                        <span style={{opacity: 0.7}}>1RM Est:</span> <strong style={{color:'var(--foreground)'}}>{historicStats.est1RM} lbs</strong>
                     </div>
                 )}
                 
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem', color: 'var(--muted)', justifyContent: 'center', marginTop: '1rem', background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '8px' }}>
+                <div style={{ display: showExpandedHeaderDetails ? 'flex' : 'none', gap: '1rem', fontSize: '0.75rem', color: 'var(--muted)', justifyContent: 'center', marginTop: '1rem', background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '8px', flexWrap: 'wrap' }}>
                     <span>Workout: {Math.floor(elapsedSecs / 60)}:{String(elapsedSecs % 60).padStart(2,'0')}</span>
                     <span>Lift: {Math.floor((liftElapsedSecsMap[activeLiftIndex] || 0) / 60)}:{String((liftElapsedSecsMap[activeLiftIndex] || 0) % 60).padStart(2,'0')}</span>
                     <span>Set: {Math.floor((setElapsedSecsMap[activeLiftIndex] || 0) / 60)}:{String((setElapsedSecsMap[activeLiftIndex] || 0) % 60).padStart(2,'0')}</span>
@@ -500,17 +525,17 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     <div style={{ flex: 1 }}>
                        <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.25rem' }}>Weight (lbs)</label>
                        <div style={{ display: 'flex' }}>
-                          <button style={{ width: '40px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => adjustWeight(-1)}>-</button>
-                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: 0, textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} value={currentWeight} onChange={e => setCurrentWeight(parseFloat(e.target.value) || 0)} readOnly />
-                          <button style={{ width: '40px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => adjustWeight(1)}>+</button>
+                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => adjustWeight(-1)}>-</button>
+                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: '60px', textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} value={currentWeight} onChange={e => setCurrentWeight(parseFloat(e.target.value) || 0)} readOnly />
+                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => adjustWeight(1)}>+</button>
                        </div>
                     </div>
                     <div style={{ flex: 1 }}>
                        <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.25rem' }}>Reps</label>
                        <div style={{ display: 'flex' }}>
-                          <button style={{ width: '40px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => setCurrentReps(Math.max(1, currentReps - 1))}>-</button>
-                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: 0, textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} value={currentReps} onChange={e => setCurrentReps(parseFloat(e.target.value) || 0)} />
-                          <button style={{ width: '40px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => setCurrentReps(currentReps + 1)}>+</button>
+                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => setCurrentReps(Math.max(1, currentReps - 1))}>-</button>
+                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: '60px', textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} value={currentReps} onChange={e => setCurrentReps(parseFloat(e.target.value) || 0)} />
+                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => setCurrentReps(currentReps + 1)}>+</button>
                        </div>
                     </div>
                 </div>
