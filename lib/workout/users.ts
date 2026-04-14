@@ -1,5 +1,6 @@
 import { hashPassword, isHashedPassword } from '@/lib/workout/passwords';
 import { normalizeBirthdate } from '@/lib/workout/birthdate';
+import { normalizeCalculatorDefaults } from '@/lib/workout/calculators';
 
 type WorkoutUser = Record<string, any>;
 
@@ -24,6 +25,7 @@ export function normalizeWorkoutUser<T extends WorkoutUser>(user: T): T {
   const normalizedUser = {
     ...user,
     birthdate: normalizeBirthdate(user.birthdate),
+    calculatorDefaults: normalizeCalculatorDefaults(user.calculatorDefaults),
     intensityFactor,
   } as T & { intensityFactor: number; progressionFactor?: number; password?: string };
 

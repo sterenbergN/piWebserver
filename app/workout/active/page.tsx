@@ -24,7 +24,7 @@ export default function ActiveWorkoutPage() {
   useEffect(() => {
     async function init() {
       const isResuming = searchParams.get('resume') === 'true';
-      let saved = null;
+      let saved: any = null;
       if (isResuming) {
          try {
             const stored = localStorage.getItem('pendingWorkout');
@@ -55,6 +55,18 @@ export default function ActiveWorkoutPage() {
         
         if (authRes.authenticated) setUser(authRes.user);
         if (histRes.success) setPastHistory(histRes.history || []);
+        const activeOwnerId = authRes.authenticated && authRes.user?.id ? authRes.user.id : 'demo-user-123';
+
+        if (isResuming && saved) {
+          const savedOwnerId = saved.ownerId || 'demo-user-123';
+          if (savedOwnerId !== activeOwnerId) {
+            saved = null;
+          }
+        }
+        if (isResuming && !saved) {
+          setError('No resumable workout found for this user.');
+          return;
+        }
 
         const gym = gymRes.gyms?.find((g: any) => g.id === gymId);
         const type = typesRes.types?.find((t: any) => t.id === typeId);
@@ -124,15 +136,16 @@ export default function ActiveWorkoutPage() {
 
         if (saved) {
            setWorkoutPlan(saved.plan);
-           setResumingState({
-              activeLiftIndex: saved.activeLiftIndex,
-              logs: saved.logs,
-              startTime: saved.startTime,
-              elapsedSecs: saved.elapsedSecs,
-              liftElapsedSecsMap: saved.liftElapsedSecsMap,
-              setElapsedSecsMap: saved.setElapsedSecsMap,
-              intensitySlider: saved.intensitySlider
-           });
+            setResumingState({
+               activeLiftIndex: saved.activeLiftIndex,
+               logs: saved.logs,
+               startTime: saved.startTime,
+               elapsedSecs: saved.elapsedSecs,
+               liftElapsedSecsMap: saved.liftElapsedSecsMap,
+               setElapsedSecsMap: saved.setElapsedSecsMap,
+               currentRir: saved.currentRir,
+               intensitySlider: saved.intensitySlider
+            });
         } else {
            setWorkoutPlan({
                id: Math.random().toString(36).substring(2, 10),

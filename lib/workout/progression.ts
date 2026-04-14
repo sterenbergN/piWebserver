@@ -8,6 +8,7 @@ export type SetLog = {
   plannedWeight: number;
   actualWeight: number;
   completed: boolean;
+  rir?: number;
 };
 
 export type Session = {
@@ -24,6 +25,10 @@ export type PerformanceMetrics = {
   performanceScore: number;
   weightDropDetected: boolean;   // true if user dropped weight mid-session
   extraSetsDetected: boolean;    // true if user added sets beyond planned
+  avgRir?: number;
+  lastSetRir?: number;
+  rirCoverage?: number;
+  rirAdjustment?: number;
 };
 
 export type ScoringBreakdown = {
@@ -81,6 +86,10 @@ const BASE_INCREASE = 0.05;
 /** Maximum allowed weight jump as fraction of current weight */
 const BASE_JUMP_FRACTION = 0.15;
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 // ─── Performance Analysis ──────────────────────────────────────────────────────
 
 /**
@@ -110,16 +119,20 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
       performanceScore: 0.8,
       weightDropDetected: false,
       extraSetsDetected: false,
+      avgRir: undefined,
+      lastSetRir: undefined,
+      rirCoverage: 0,
+      rirAdjustment: 0,
     };
   }
 
   // ── Completion Ratio ──
-  const totalPlannedReps = session.sets.reduce((sum, s) => sum + s.plannedReps, 0);
+  const totalPlannedReps = session.sets.reduce((sum, s) => sum + (s.plannedReps ?? s.actualReps), 0);
   const totalActualReps = completedSets.reduce((sum, s) => sum + s.actualReps, 0);
   const completionRatio = totalPlannedReps > 0 ? totalActualReps / totalPlannedReps : 1;
 
   // ── Intensity Deviation ──
-  const avgPlannedWeight = completedSets.reduce((sum, s) => sum + s.plannedWeight, 0) / completedSets.length;
+  const avgPlannedWeight = completedSets.reduce((sum, s) => sum + (s.plannedWeight ?? s.actualWeight), 0) / completedSets.length;
   const avgActualWeight = completedSets.reduce((sum, s) => sum + s.actualWeight, 0) / completedSets.length;
   const intensityDeviation = avgPlannedWeight > 0 ? avgActualWeight / avgPlannedWeight : 1;
 
@@ -139,8 +152,19 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
   }
 
   // ── Behavioral Flags ──
-  const weightDropDetected = completedSets.some(s => s.actualWeight < s.plannedWeight);
+  const weightDropDetected = completedSets.some(s => s.actualWeight < (s.plannedWeight ?? s.actualWeight));
   const extraSetsDetected = setDelta > 0;
+
+  // ── Reps In Reserve ──
+  const rirSets = completedSets.filter((set) => typeof set.rir === 'number' && Number.isFinite(set.rir));
+  const avgRir = rirSets.length > 0
+    ? rirSets.reduce((sum, set) => sum + (set.rir as number), 0) / rirSets.length
+    : undefined;
+  const lastSetRir = rirSets.length > 0 ? rirSets[rirSets.length - 1].rir : undefined;
+  const rirCoverage = completedSets.length > 0 ? rirSets.length / completedSets.length : 0;
+  const rirAdjustment = avgRir !== undefined && lastSetRir !== undefined
+    ? clamp(((avgRir - 2) * 0.04) + ((lastSetRir - 2) * 0.02), -0.12, 0.12)
+    : 0;
 
   // ── Performance Score ──
   // Base: weighted combination of completion and intensity
@@ -164,6 +188,8 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
     performanceScore += fatigueSlope * 0.05; // positive slope slightly boosts score
   }
 
+  performanceScore += rirAdjustment;
+
   return {
     completionRatio,
     intensityDeviation,
@@ -172,6 +198,10 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
     performanceScore,
     weightDropDetected,
     extraSetsDetected,
+    avgRir,
+    lastSetRir,
+    rirCoverage,
+    rirAdjustment,
   };
 }
 
@@ -454,6 +484,7 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
     completionRatio: 1, intensityDeviation: 1, setDelta: 0,
     fatigueSlope: 0, performanceScore: 1,
     weightDropDetected: false, extraSetsDetected: false,
+    avgRir: undefined, lastSetRir: undefined, rirCoverage: 0, rirAdjustment: 0,
   };
 
   // Edge case: no previous sets
@@ -577,6 +608,16 @@ function buildReasoning(
     parts.push('• Strong past performance');
   } else if (perf.performanceScore < 0.95) {
     parts.push('• Adjusted for past difficulty');
+  }
+
+  if (typeof perf.lastSetRir === 'number') {
+    if (perf.lastSetRir <= 1) {
+      parts.push('• Last set near failure');
+    } else if (perf.lastSetRir >= 3) {
+      parts.push('• RIR suggests more headroom');
+    } else {
+      parts.push('• RIR landed on target');
+    }
   }
 
   // History trend context

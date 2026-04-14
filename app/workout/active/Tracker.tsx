@@ -78,6 +78,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    const [currentWeight, setCurrentWeight] = useState<number>(0);
    const [currentReps, setCurrentReps] = useState<number>(10);
+   const [currentRir, setCurrentRir] = useState<number | null>(resumeState?.currentRir ?? null);
    const [historicStats, setHistoricStats] = useState<{prevWeight: number, prevReps: number, prevSets: number, est1RM: number} | null>(null);
    const [suggestedWeight, setSuggestedWeight] = useState<number>(0);
    const [suggestedReps, setSuggestedReps] = useState<number>(10);
@@ -95,6 +96,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    const [showList, setShowList] = useState(false);
    const [showChange, setShowChange] = useState(false);
+   const [showSuperset, setShowSuperset] = useState(false);
    const [workoutFinished, setWorkoutFinished] = useState(false);
    const [calibrationInfo, setCalibrationInfo] = useState<any>(null);
 
@@ -129,6 +131,30 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    }, []);
 
    const activeLift = localPlan.lifts[activeLiftIndex];
+   const targetSetCount = localPlan.type?.sets || 4;
+
+   const getLiftLogs = useCallback((lift: any, logsSource = logs) => {
+      if (!lift) return [];
+      return logsSource[lift.uniquePlanId] || [];
+   }, [logs]);
+
+   const getRemainingSets = useCallback((lift: any, logsSource = logs) => {
+      if (!lift) return 0;
+      return Math.max(0, targetSetCount - getLiftLogs(lift, logsSource).length);
+   }, [getLiftLogs, logs, targetSetCount]);
+
+   const getSupersetPartner = useCallback((lift: any, planSource = localPlan) => {
+      if (!lift?.supersetId) return null;
+      return planSource.lifts.find((entry: any) => entry.uniquePlanId !== lift.uniquePlanId && entry.supersetId === lift.supersetId) || null;
+   }, [localPlan]);
+
+   const findNextUnfinishedLiftIndex = useCallback((startIndex: number, logsSource = logs, planSource = localPlan) => {
+      for (let offset = 1; offset <= planSource.lifts.length; offset++) {
+         const idx = (startIndex + offset) % planSource.lifts.length;
+         if (getRemainingSets(planSource.lifts[idx], logsSource) > 0) return idx;
+      }
+      return null;
+   }, [getRemainingSets, localPlan, logs]);
 
    // Lift switch no longer resets timers since they map by activeLiftIndex
    // Timer retains state in Map
@@ -235,18 +261,70 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    // Initial fetch on lift change
    useEffect(() => {
        fetchProgression();
-   }, [activeLiftIndex, localPlan.lifts, pastHistory, user]);
+    }, [activeLiftIndex, localPlan.lifts, pastHistory, user]);
+
+   useEffect(() => {
+      setCurrentRir(null);
+   }, [activeLiftIndex, activeLift?.uniquePlanId]);
 
    if (!activeLift && !workoutFinished) return <div>Invalid Workout State</div>;
 
    const activeLogs = logs[activeLift?.uniquePlanId] || [];
    const isDeviated = currentWeight !== suggestedWeight || currentReps !== suggestedReps;
+   const activePartner = getSupersetPartner(activeLift);
+   const activePartnerIndex = activePartner
+      ? localPlan.lifts.findIndex((lift: any) => lift.uniquePlanId === activePartner.uniquePlanId)
+      : -1;
+   const activeRemainingSets = getRemainingSets(activeLift);
+   const activePartnerRemainingSets = getRemainingSets(activePartner);
+   const eligibleSupersetLifts = localPlan.lifts.filter((lift: any) =>
+      lift.uniquePlanId !== activeLift?.uniquePlanId &&
+      !lift.supersetId &&
+      getRemainingSets(lift) > 0
+   );
 
    const handleCompleteSet = () => {
-      const newLog = { weight: currentWeight, reps: currentReps, completed: true, timestamp: Date.now() };
+      if (currentRir === null) return;
+
+      const newLog = {
+         weight: currentWeight,
+         reps: currentReps,
+         plannedWeight: suggestedWeight,
+         plannedReps: suggestedReps,
+         rir: currentRir,
+         completed: true,
+         timestamp: Date.now(),
+      };
       const updatedLogs = { ...logs, [activeLift.uniquePlanId]: [...activeLogs, newLog] };
       setLogs(updatedLogs);
       setSetElapsedSecsMap((m: Record<number, number>) => ({...m, [activeLiftIndex]: 0}));
+      setCurrentRir(null);
+
+      const partner = getSupersetPartner(activeLift);
+      if (!partner) return;
+
+      const currentRemaining = getRemainingSets(activeLift, updatedLogs);
+      const partnerRemaining = getRemainingSets(partner, updatedLogs);
+      const partnerIndex = localPlan.lifts.findIndex((lift: any) => lift.uniquePlanId === partner.uniquePlanId);
+
+      if (currentRemaining > 0 && partnerRemaining > 0 && partnerIndex >= 0) {
+         setActiveLiftIndex(partnerIndex);
+         return;
+      }
+
+      if (currentRemaining === 0 && partnerRemaining > 0 && partnerIndex >= 0) {
+         setActiveLiftIndex(partnerIndex);
+         return;
+      }
+
+      if (currentRemaining > 0 && partnerRemaining === 0) {
+         return;
+      }
+
+      const nextUnfinished = findNextUnfinishedLiftIndex(activeLiftIndex, updatedLogs);
+      if (nextUnfinished !== null) {
+         setActiveLiftIndex(nextUnfinished);
+      }
    };
 
    // Persistence Logic
@@ -254,17 +332,19 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
      if (!workoutFinished && localPlan) {
         localStorage.setItem('pendingWorkout', JSON.stringify({
            plan: localPlan,
+           ownerId: user?.id || 'demo-user-123',
            activeLiftIndex,
            logs,
            startTime: workoutStartTime,
            elapsedSecs,
            liftElapsedSecsMap,
            setElapsedSecsMap,
+           currentRir,
            intensitySlider,
            timestamp: Date.now()
-        }));
-     }
-   }, [logs, activeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, setElapsedSecsMap, intensitySlider]);
+         }));
+      }
+   }, [logs, activeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, setSetElapsedSecsMap, setElapsedSecsMap, currentRir, intensitySlider]);
 
    const deleteSet = (index: number) => {
       const updated = [...activeLogs];
@@ -293,10 +373,37 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    };
 
    const swapLift = (newLift: any) => {
-       const newPlanLifts = [...localPlan.lifts];
-       newPlanLifts[activeLiftIndex] = { ...newLift, uniquePlanId: Math.random() };
-       setLocalPlan({ ...localPlan, lifts: newPlanLifts });
-       setShowChange(false);
+        const newPlanLifts = [...localPlan.lifts];
+        newPlanLifts[activeLiftIndex] = { ...newLift, uniquePlanId: Math.random(), supersetId: activeLift?.supersetId || null };
+        setLocalPlan({ ...localPlan, lifts: newPlanLifts });
+        setShowChange(false);
+    };
+
+   const handlePairSuperset = (partnerLift: any) => {
+      const supersetId = `ss-${Math.random().toString(36).substring(2, 10)}`;
+      setLocalPlan({
+         ...localPlan,
+         lifts: localPlan.lifts.map((lift: any) =>
+            lift.uniquePlanId === activeLift.uniquePlanId || lift.uniquePlanId === partnerLift.uniquePlanId
+               ? { ...lift, supersetId }
+               : lift
+         ),
+      });
+      setShowSuperset(false);
+   };
+
+   const handleUnpairSuperset = () => {
+      if (!activeLift?.supersetId) return;
+      if (activeRemainingSets === 0 && activePartnerRemainingSets === 0) return;
+      setLocalPlan({
+         ...localPlan,
+         lifts: localPlan.lifts.map((lift: any) =>
+            lift.supersetId === activeLift.supersetId
+               ? { ...lift, supersetId: null }
+               : lift
+         ),
+      });
+      setShowSuperset(false);
    };
 
    // Swap logic: match current gym, match any muscle in the workout type
@@ -323,13 +430,14 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       Object.keys(logs).forEach(uid => {
          const lift = localPlan.lifts.find((l: any) => l.uniquePlanId.toString() === uid.toString());
          if (lift) {
-            exportLogs[lift.id] = logs[uid];
-            liftMeta[lift.id] = {
-              name: lift.name,
-              stationType: lift.station?.type,
-              stationId: lift.station?.id,
-            };
-         }
+             exportLogs[lift.id] = logs[uid];
+             liftMeta[lift.id] = {
+               name: lift.name,
+               stationType: lift.station?.type,
+               stationId: lift.station?.id,
+               supersetId: lift.supersetId || null,
+             };
+          }
       });
 
       await fetch('/api/workout/history', { 
@@ -414,7 +522,26 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                 <h1 style={{ fontSize: isCompactHeader ? '1.38rem' : '2rem', margin: '0 0 0.35rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
                 <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'center', alignItems: 'center' }}>
                     <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: 'var(--muted)', padding: isCompactHeader ? '0.16rem 0.7rem' : '0.2rem 1rem', borderRadius: '20px', fontSize: isCompactHeader ? '0.74rem' : '0.8rem' }} onClick={() => setShowChange(true)}>Change Lift 🔄</button>
+                    <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: activeLift?.supersetId ? 'var(--accent)' : 'var(--muted)', padding: isCompactHeader ? '0.16rem 0.7rem' : '0.2rem 1rem', borderRadius: '20px', fontSize: isCompactHeader ? '0.74rem' : '0.8rem' }} onClick={() => setShowSuperset(true)}>
+                      {activeLift?.supersetId ? 'Superset SS' : 'Superset'}
+                    </button>
                 </div>
+
+                {activePartner && activePartnerRemainingSets > 0 && (
+                    <div style={{ marginTop: '0.55rem', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '10px', border: '1px solid rgba(var(--accent-rgb), 0.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                        <div style={{ minWidth: 0, textAlign: 'left' }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>Superset Partner</div>
+                          <div style={{ fontWeight: 700, fontSize: isCompactHeader ? '0.82rem' : '0.92rem' }}>{activePartner.name}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
+                            {getLiftLogs(activePartner).length}/{targetSetCount} sets logged
+                            {activeRemainingSets > 0 && activePartnerRemainingSets > 0 ? ' • Up next after this set' : ''}
+                          </div>
+                        </div>
+                        <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem', borderRadius: '999px', flexShrink: 0 }} onClick={() => activePartnerIndex >= 0 && setActiveLiftIndex(activePartnerIndex)}>
+                          Switch
+                        </button>
+                    </div>
+                )}
 
                 {/* System Target Tile */}
                 <div style={{ marginTop: isCompactHeader ? '0.5rem' : '0.75rem', padding: isCompactHeader ? '0.45rem 0.65rem' : '0.6rem 1rem', background: 'rgba(var(--accent-rgb), 0.08)', border: '1px solid rgba(var(--accent-rgb), 0.3)', borderRadius: '10px', fontSize: isCompactHeader ? '0.8rem' : '0.85rem' }}>
@@ -613,10 +740,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: isCompactHeader ? '0.6rem' : '0.75rem' }}>
                       {activeLogs.map((log: any, i: number) => (
                          <div key={i} className="workout-flex-between animate-fade-in" style={{ padding: isCompactHeader ? '0.42rem 0.5rem' : '0.6rem', background: 'var(--surface-glass)', borderRadius: '8px' }}>
-                            <strong style={{ color: 'var(--accent)' }}>Set {i+1}</strong>
-                            <span>{log.weight} lbs × {log.reps}</span>
-                            <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
-                         </div>
+                             <strong style={{ color: 'var(--accent)' }}>Set {i+1}</strong>
+                             <span>{log.weight} lbs × {log.reps}{typeof log.rir === 'number' ? ` • RIR ${log.rir >= 5 ? '5+' : log.rir}` : ''}</span>
+                             <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
+                          </div>
                       ))}
                    </div>
                 ) : <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>No sets logged yet.</p>}
@@ -639,7 +766,33 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                        </div>
                     </div>
                 </div>
-                <button className="workout-btn-primary" onClick={handleCompleteSet} style={{ marginTop: isCompactHeader ? '1rem' : '1.5rem', boxShadow: 'none' }}>Complete Set ✓</button>
+                <div style={{ marginTop: '0.65rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.35rem' }}>Reps In Reserve</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '0.35rem' }}>
+                      {[0, 1, 2, 3, 4, 5].map((rir) => {
+                        const isSelected = currentRir === rir;
+                        return (
+                          <button
+                            key={rir}
+                            onClick={() => setCurrentRir(rir)}
+                            style={{
+                              border: isSelected ? '1px solid var(--accent)' : '1px solid var(--surface-border)',
+                              background: isSelected ? 'rgba(var(--accent-rgb), 0.18)' : 'var(--input-bg)',
+                              color: isSelected ? 'var(--foreground)' : 'var(--muted)',
+                              borderRadius: '10px',
+                              padding: '0.55rem 0.2rem',
+                              fontSize: '0.82rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {rir === 5 ? '5+' : rir}
+                          </button>
+                        );
+                      })}
+                    </div>
+                </div>
+                <button className="workout-btn-primary" onClick={handleCompleteSet} disabled={currentRir === null} style={{ marginTop: isCompactHeader ? '1rem' : '1.5rem', boxShadow: 'none', opacity: currentRir === null ? 0.55 : 1 }}>Complete Set ✓</button>
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
                     {activeLiftIndex > 0 && (
                       <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex((prev: number) => prev - 1)}>Prev</button>
@@ -687,15 +840,19 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                   <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowList(false)}>✕</button>
                </div>
                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {localPlan.lifts.map((l: any, i: number) => {
-                     const isDone = logs[l.uniquePlanId] && logs[l.uniquePlanId].length >= localPlan.type.sets;
-                     return (
-                        <button key={i} className="btn btn-secondary" style={{ padding: '1rem', textAlign: 'left', border: i === activeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(72,187,120,0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); }}>
-                           <strong>{i + 1}. {l.name}</strong>
-                           <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>{l.station?.name} • {logs[l.uniquePlanId]?.length || 0}/{localPlan.type.sets} Sets</p>
-                        </button>
-                     )
-                  })}
+                   {localPlan.lifts.map((l: any, i: number) => {
+                      const isDone = getRemainingSets(l) === 0;
+                      const partner = getSupersetPartner(l);
+                      return (
+                         <button key={i} className="btn btn-secondary" style={{ padding: '1rem', textAlign: 'left', border: i === activeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(72,187,120,0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); }}>
+                            <strong>{i + 1}. {l.name} {partner && <span style={{ marginLeft: '0.35rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.05rem 0.35rem', borderRadius: '10px' }}>SS</span>}</strong>
+                            <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
+                              {l.station?.name} • {logs[l.uniquePlanId]?.length || 0}/{targetSetCount} Sets
+                              {partner ? ` • paired with ${partner.name}` : ''}
+                            </p>
+                         </button>
+                      )
+                   })}
                </div>
             </div>
          )}
@@ -722,6 +879,59 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       </button>
                   ))}
                </div>
+            </div>
+          )}
+
+         {showSuperset && (
+             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
+               <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
+                  <h2 style={{ margin: 0 }}>Manage Superset</h2>
+                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowSuperset(false)}>✕</button>
+               </div>
+
+               <div className="workout-tile" style={{ marginBottom: '1rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.35rem' }}>Current Lift</div>
+                  <strong style={{ fontSize: '1rem' }}>{activeLift.name}</strong>
+                  <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>{getLiftLogs(activeLift).length}/{targetSetCount} sets logged</p>
+               </div>
+
+               {activePartner ? (
+                 <div className="workout-tile">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.35rem' }}>Paired With</div>
+                        <strong style={{ fontSize: '1rem' }}>{activePartner.name}</strong>
+                        <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>{getLiftLogs(activePartner).length}/{targetSetCount} sets logged</p>
+                      </div>
+                      <button className="btn btn-secondary" style={{ color: '#ff6b6b', borderColor: 'rgba(255,107,107,0.35)', opacity: activeRemainingSets === 0 && activePartnerRemainingSets === 0 ? 0.5 : 1 }} onClick={handleUnpairSuperset} disabled={activeRemainingSets === 0 && activePartnerRemainingSets === 0}>
+                        Remove Pair
+                      </button>
+                    </div>
+                    <p style={{ margin: '0.75rem 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>This superset alternates between the two lifts after every completed set until one side finishes.</p>
+                 </div>
+               ) : (
+                 <div>
+                   <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 0.75rem 0' }}>Choose one remaining lift to pair with the current lift. The system will never auto-create supersets.</p>
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                     {eligibleSupersetLifts.map((lift: any) => (
+                       <button key={lift.uniquePlanId} className="workout-flex-between" style={{ color: 'var(--foreground)', padding: '0.85rem 1rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '12px', cursor: 'pointer', textAlign: 'left' }} onClick={() => handlePairSuperset(lift)}>
+                          <div>
+                             <strong style={{ fontSize: '1rem' }}>{lift.name}</strong>
+                             <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
+                                {lift.station?.name} • {getLiftLogs(lift).length}/{targetSetCount} sets logged
+                             </p>
+                          </div>
+                          <span style={{ color: 'var(--foreground)', fontSize: '0.8rem', paddingLeft: '1rem', flexShrink: 0 }}>Pair SS</span>
+                       </button>
+                     ))}
+                     {eligibleSupersetLifts.length === 0 && (
+                       <div className="workout-tile" style={{ marginBottom: 0 }}>
+                         <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--muted)' }}>No eligible lifts are available. Only unfinished, unpaired lifts can be added to a superset.</p>
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               )}
             </div>
          )}
       </div>

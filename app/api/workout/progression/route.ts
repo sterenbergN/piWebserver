@@ -71,11 +71,12 @@ function buildHistorySessions(historyData: any[], liftId: string, liftName: stri
                 scaleFactor = entry?.scaleFactor || 1;
             }
             const sets: SetLog[] = rawSets.map((log: any) => ({
-                plannedReps: log.reps,   // prior system didn't track planned distinctly
+                plannedReps: log.plannedReps ?? log.reps,
                 actualReps: log.reps,
-                plannedWeight: log.weight * scaleFactor,
+                plannedWeight: (log.plannedWeight ?? log.weight) * scaleFactor,
                 actualWeight: log.weight * scaleFactor,
                 completed: true,
+                rir: typeof log.rir === 'number' ? log.rir : undefined,
             }));
 
             sessions.push({
@@ -149,11 +150,12 @@ export async function POST(request: Request) {
     }
 
     const sets: SetLog[] = logs.map((log: any) => ({
-       plannedReps: log.reps,   // fallbacks since prior system didn't track planned distinctly
+       plannedReps: log.plannedReps ?? log.reps,
        actualReps: log.reps,
-       plannedWeight: log.weight * currentScaleFactor,
+       plannedWeight: (log.plannedWeight ?? log.weight) * currentScaleFactor,
        actualWeight: log.weight * currentScaleFactor,
        completed: true,
+       rir: typeof log.rir === 'number' ? log.rir : undefined,
     }));
 
     // Fetch real history for this lift to enable trend analysis

@@ -384,7 +384,56 @@ test('16. Empty/single-set edge case: graceful fallback', () => {
      },
    });
 
-   const singlePlan = generateNextWorkout(singleInput);
-   assert.ok(singlePlan.suggestedWeight > 0, 'Should suggest valid weight');
-   assert.ok(singlePlan.candidatesEvaluated > 0, 'Should evaluate candidates');
+  const singlePlan = generateNextWorkout(singleInput);
+  assert.ok(singlePlan.suggestedWeight > 0, 'Should suggest valid weight');
+  assert.ok(singlePlan.candidatesEvaluated > 0, 'Should evaluate candidates');
+});
+
+test('17. Low RIR reduces performance score', () => {
+  const session: Session = {
+    liftId: 'bench',
+    timestamp: new Date().toISOString(),
+    sets: [
+      { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 1 },
+      { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
+    ],
+  };
+
+  const result = analyzePerformance(session);
+  assert.equal(result.rirCoverage, 1);
+  assert.ok((result.rirAdjustment || 0) < 0, `Expected negative RIR adjustment, got ${result.rirAdjustment}`);
+  assert.ok(result.performanceScore < 1, `Expected harder-than-target score, got ${result.performanceScore}`);
+});
+
+test('18. High RIR nudges progression more aggressively', () => {
+  const baseInput = makeInput({
+    lastSession: {
+      liftId: 'bench',
+      timestamp: new Date().toISOString(),
+      sets: [
+        { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 4 },
+        { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 3 },
+      ],
+    },
+    intensity: 1.0,
+  });
+
+  const lowRirInput = makeInput({
+    lastSession: {
+      liftId: 'bench',
+      timestamp: new Date().toISOString(),
+      sets: [
+        { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 1 },
+        { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
+      ],
+    },
+    intensity: 1.0,
+  });
+
+  const highRirPlan = generateNextWorkout(baseInput);
+  const lowRirPlan = generateNextWorkout(lowRirInput);
+  assert.ok(
+    highRirPlan.suggestedWeight >= lowRirPlan.suggestedWeight,
+    `High RIR weight (${highRirPlan.suggestedWeight}) should be >= low RIR weight (${lowRirPlan.suggestedWeight})`
+  );
 });

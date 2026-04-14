@@ -38,3 +38,16 @@ export function normalizeBirthdate(value: unknown): string {
 
   return trimmed;
 }
+
+export function parseBirthdateParts(value: unknown): { month: number; day: number; year: number } | null {
+  const normalized = normalizeBirthdate(value);
+  const match = normalized.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!match) return null;
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+
+  return { month, day, year };
+}

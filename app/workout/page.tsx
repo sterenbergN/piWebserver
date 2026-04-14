@@ -62,23 +62,11 @@ export default function WorkoutDashboard() {
   const [profileSaving, setProfileSaving] = useState(false);
 
   // Pending workout resume state
-  const [pendingWorkout, setPendingWorkout] = useState<{plan?: any, logs?: any, timestamp?: number, startTime?: number, activeLiftIndex?: number} | null>(null);
+  const [pendingWorkout, setPendingWorkout] = useState<{plan?: any, logs?: any, timestamp?: number, startTime?: number, activeLiftIndex?: number, ownerId?: string} | null>(null);
 
-  // Check for pending workout in localStorage on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('pendingWorkout');
-      if (stored) {
-        const data = JSON.parse(stored);
-        const age = Date.now() - (data.timestamp || 0);
-        if (age < 3600000) {
-          setPendingWorkout(data);
-        } else {
-          localStorage.removeItem('pendingWorkout');
-        }
-      }
-    } catch {
-      localStorage.removeItem('pendingWorkout');
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('showLogin') === '1') {
+      setShowLogin(true);
     }
   }, []);
 
@@ -87,9 +75,35 @@ export default function WorkoutDashboard() {
     fetch('/api/workout/auth')
       .then(res => res.json())
       .then(data => {
+        const loadPendingForOwner = (ownerId: string) => {
+          try {
+            const stored = localStorage.getItem('pendingWorkout');
+            if (!stored) {
+              setPendingWorkout(null);
+              return;
+            }
+            const parsed = JSON.parse(stored);
+            const age = Date.now() - (parsed.timestamp || 0);
+            if (age >= 3600000) {
+              localStorage.removeItem('pendingWorkout');
+              setPendingWorkout(null);
+              return;
+            }
+            if ((parsed.ownerId || 'demo-user-123') === ownerId) {
+              setPendingWorkout(parsed);
+              return;
+            }
+            setPendingWorkout(null);
+          } catch {
+            localStorage.removeItem('pendingWorkout');
+            setPendingWorkout(null);
+          }
+        };
+
         if (data.authenticated && data.user) {
           setUser(data.user);
           setIsDemo(false);
+          loadPendingForOwner(data.user.id);
           
           // Populate profile editor fields
           setEditWeight(data.user.weight?.toString() || '');
@@ -154,6 +168,7 @@ export default function WorkoutDashboard() {
           });
           setAvailableGyms(DEMO_GYMS);
           setAvailableTypes(DEMO_TYPES);
+          loadPendingForOwner('demo-user-123');
         }
       })
       .catch(() => {
@@ -167,6 +182,24 @@ export default function WorkoutDashboard() {
         });
         setAvailableGyms(DEMO_GYMS);
         setAvailableTypes(DEMO_TYPES);
+        try {
+          const stored = localStorage.getItem('pendingWorkout');
+          if (!stored) {
+            setPendingWorkout(null);
+            return;
+          }
+          const parsed = JSON.parse(stored);
+          const age = Date.now() - (parsed.timestamp || 0);
+          if (age >= 3600000) {
+            localStorage.removeItem('pendingWorkout');
+            setPendingWorkout(null);
+            return;
+          }
+          setPendingWorkout((parsed.ownerId || 'demo-user-123') === 'demo-user-123' ? parsed : null);
+        } catch {
+          localStorage.removeItem('pendingWorkout');
+          setPendingWorkout(null);
+        }
       })
       .finally(() => setLoading(false));
 
@@ -492,16 +525,24 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
-      <div style={{ marginTop: '2rem' }}>
+      <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
         <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/config'}>
           Configuration
         </button>
-      </div>
-
-      
-
-      <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-         <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>
+        <button
+          className="btn btn-secondary"
+          style={{ width: '100%', padding: '1rem', borderRadius: '12px' }}
+          onClick={() => {
+            if (isDemo) {
+              window.location.href = '/workout/calculators?isDemo=1';
+              return;
+            }
+            window.location.href = '/workout/calculators';
+          }}
+        >
+          Calculators
+        </button>
+        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>
           Advanced Analytics
         </button>
       </div>

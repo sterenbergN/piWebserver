@@ -20,16 +20,21 @@ function getIntensityLabel(value: number): { label: string; emoji: string; color
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-function toPerformanceSession(liftId: string, timestamp: string, sets: { reps: number; weight: number }[]): Session {
+function toPerformanceSession(
+  liftId: string,
+  timestamp: string,
+  sets: { reps: number; weight: number; plannedReps?: number; plannedWeight?: number; rir?: number }[]
+): Session {
    return {
       liftId,
       timestamp,
       sets: sets.map((set) => ({
-         plannedReps: set.reps,
+         plannedReps: set.plannedReps ?? set.reps,
          actualReps: set.reps,
-         plannedWeight: set.weight,
+         plannedWeight: set.plannedWeight ?? set.weight,
          actualWeight: set.weight,
-         completed: true
+         completed: true,
+         rir: typeof set.rir === 'number' ? set.rir : undefined,
       }))
    };
 }
@@ -260,14 +265,18 @@ export default function AnalyticsPage() {
            setVolumeType(mappedTypes);
 
             // Compute per-lift overload tracking across sessions
-            const liftSessions = new Map<string, { date: string; timestamp: string; sets: { reps: number; weight: number }[] }[]>();
+            const liftSessions = new Map<string, { date: string; timestamp: string; sets: { reps: number; weight: number; rir?: number }[] }[]>();
             histData.forEach((w: any) => {
                 if (w.type?.name !== 'Cardio' && w.logs) {
                     const dateStr = new Date(w.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                     Object.keys(w.logs).forEach((liftId) => {
                         const scaleFactor = getScaleFactorForLift(w, liftId);
                         const sets = (w.logs[liftId] || [])
-                          .map((s: any) => ({ reps: Number(s.reps), weight: Number(s.weight) * scaleFactor }))
+                          .map((s: any) => ({
+                            reps: Number(s.reps),
+                            weight: Number(s.weight) * scaleFactor,
+                            rir: typeof s.rir === 'number' ? s.rir : undefined,
+                          }))
                           .filter((s: { reps: number; weight: number }) => s.reps > 0 && s.weight > 0);
 
                         if (sets.length === 0) return;
@@ -305,7 +314,8 @@ export default function AnalyticsPage() {
                 );
                 const prevSession = historySessions[historySessions.length - 2];
                 const historyForTrend = historySessions.slice(0, -1);
-                const performanceScore = analyzePerformance(prevSession).performanceScore;
+                const performanceMetrics = analyzePerformance(prevSession);
+                const performanceScore = performanceMetrics.performanceScore;
                 const historyTrend = computeHistoryTrend(historyForTrend);
 
                 olTracking.push({
@@ -323,6 +333,7 @@ export default function AnalyticsPage() {
                     currE1RM,
                     intensityRatio,
                     performanceScore,
+                    performanceMetrics,
                     historyTrend,
                     date: curr.date
                 });
@@ -553,8 +564,8 @@ export default function AnalyticsPage() {
                          
                          <p style={{ margin: '0 0 0.75rem 0' }}>
                             The system does <strong>NOT</strong> use fixed rules like "add 5 lbs". Instead, it generates many possible next workouts, 
-                            filters out invalid ones, and scores each candidate to find the optimal progression.
-                         </p>
+                             filters out invalid ones, and scores each candidate to find the optimal progression.
+                          </p>
 
                          <h5 style={{ margin: '0 0 0.3rem 0', color: 'var(--foreground)' }}>1. Candidate Generation</h5>
                          <p style={{ margin: '0 0 0.5rem 0' }}>Weight ±2 equipment steps, Reps ±2, Sets ±1 from your last session.</p>
@@ -568,14 +579,16 @@ export default function AnalyticsPage() {
                             <div>e1RM = weight × (1 + reps/30)  <span style={{ color: 'var(--muted)' }}>// Epley</span></div>
                             <div>overloadRatio = currentLoad / lastLoad</div>
                             <div>targetOverload = 0.05 × intensity × perfScore</div>
-                         </div>
+                            <div>rirAdjustment = clamp(((avgRIR - 2)×0.04)+((lastRIR - 2)×0.02))</div>
+                          </div>
 
                          <h5 style={{ margin: '0 0 0.3rem 0', color: 'var(--foreground)' }}>4. Performance Score</h5>
                          <p style={{ margin: '0 0 0.5rem 0' }}>
                             Normalized around <strong>1.0</strong>. Factors: completion ratio (actual vs planned reps), 
                             intensity deviation (actual vs planned weight), fatigue slope (rep drop across sets), 
-                            weight drops, and extra sets.
-                         </p>
+                            weight drops, extra sets, and reps in reserve. An average RIR of <strong>2</strong> is neutral,
+                            <strong>0-1</strong> means the lift ran hard, and <strong>3+</strong> means you likely had more headroom.
+                          </p>
                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem', fontSize: '0.75rem', textAlign: 'center' }}>
                             <div style={{ background: 'rgba(72,187,120,0.15)', padding: '0.3rem', borderRadius: '4px', color: '#48bb78' }}>&gt; 1.05 = Too Easy</div>
                             <div style={{ background: 'rgba(236,201,75,0.15)', padding: '0.3rem', borderRadius: '4px', color: '#ecc94b' }}>0.95–1.05 = Right</div>
@@ -587,7 +600,7 @@ export default function AnalyticsPage() {
                             <strong>High (≥1.2):</strong> Favors weight increases, allows rep drops, amplifies overload target.<br/>
                             <strong>Low (≤0.8):</strong> Favors volume (reps/sets), penalizes weight jumps, conservative progression.<br/>
                             <strong>Adaptive:</strong> Effective intensity = userIntensity × clamp(perfScore, 0.9, 1.1) × historyTrend
-                         </p>
+                          </p>
                       </div>
                    )}
                 </div>
@@ -837,14 +850,15 @@ export default function AnalyticsPage() {
                         <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>How Progressive Overload Works</h4>
                         <p>Your intensity factor of <strong>{intensityFactor.toFixed(2)}</strong> controls how the progression engine selects your next workout:</p>
                         <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
-                           <li><strong>Target Overload Ratio:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + (0.05 × effectiveIntensity × perfScore)</code></li>
-                           <li><strong>Effective Intensity:</strong> <code style={{ color: 'var(--accent-light)' }}>clamp(intensity × clamp(perfScore) × historyTrend, 0.5, 1.5)</code></li>
-                           <li><strong>Comparison Metric:</strong> intensity ≥ 1.2 compares <strong>e1RM ratio</strong>, otherwise compares <strong>load ratio</strong></li>
-                           <li><strong>Lift Eligibility:</strong> a lift appears only after at least 2 logged sessions with valid sets</li>
+                            <li><strong>Target Overload Ratio:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + (0.05 × effectiveIntensity × perfScore)</code></li>
+                            <li><strong>Effective Intensity:</strong> <code style={{ color: 'var(--accent-light)' }}>clamp(intensity × clamp(perfScore) × historyTrend, 0.5, 1.5)</code></li>
+                            <li><strong>Comparison Metric:</strong> intensity ≥ 1.2 compares <strong>e1RM ratio</strong>, otherwise compares <strong>load ratio</strong></li>
+                            <li><strong>RIR Targeting:</strong> average RIR of 2 is neutral, 0-1 lowers the next progression, 3+ allows more aggressive overload</li>
+                            <li><strong>Lift Eligibility:</strong> a lift appears only after at least 2 logged sessions with valid sets</li>
                         </ul>
-                        <p>Each lift row shows load ratio and e1RM ratio, then highlights the same ratio mode the progression engine is currently using.</p>
-                     </div>
-                  )}
+                        <p>Each lift row shows load ratio and e1RM ratio, then highlights the same ratio mode the progression engine is currently using. When RIR is present, that session feedback also nudges the next target up or down.</p>
+                      </div>
+                   )}
 
                   {overloadTracking.length > 0 ? (
                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -910,22 +924,39 @@ export default function AnalyticsPage() {
                                           Expanded
                                         </span>
                                       </div>
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
-                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Load Ratio</div>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.overloadRatio - 1) * 100).toFixed(1)}%</div>
+                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Load Ratio</div>
+                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.overloadRatio - 1) * 100).toFixed(1)}%</div>
                                          </div>
                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>e1RM Ratio</div>
                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.intensityRatio - 1) * 100).toFixed(1)}%</div>
                                          </div>
-                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
-                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Target Ratio</div>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((targetRatio - 1) * 100).toFixed(1)}%</div>
+                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Target Ratio</div>
+                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((targetRatio - 1) * 100).toFixed(1)}%</div>
+                                          </div>
+                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Reps In Reserve</div>
+                                            <div style={{ fontSize: '0.75rem', lineHeight: 1.45 }}>
+                                              <div style={{ fontWeight: 600 }}>
+                                                Last: {typeof ol.performanceMetrics?.lastSetRir === 'number' ? (ol.performanceMetrics.lastSetRir >= 5 ? '5+' : ol.performanceMetrics.lastSetRir) : 'N/A'}
+                                              </div>
+                                              <div style={{ color: 'var(--muted)' }}>
+                                                Avg: {typeof ol.performanceMetrics?.avgRir === 'number' ? ol.performanceMetrics.avgRir.toFixed(1) : 'N/A'}
+                                              </div>
+                                              <div style={{ color: 'var(--muted)' }}>
+                                                Adj: {typeof ol.performanceMetrics?.rirAdjustment === 'number' ? `${ol.performanceMetrics.rirAdjustment >= 0 ? '+' : ''}${ol.performanceMetrics.rirAdjustment.toFixed(2)}` : 'N/A'}
+                                              </div>
+                                              <div style={{ color: 'var(--muted)' }}>
+                                                Coverage: {typeof ol.performanceMetrics?.rirCoverage === 'number' ? `${Math.round(ol.performanceMetrics.rirCoverage * 100)}%` : 'N/A'}
+                                              </div>
+                                            </div>
                                          </div>
-                                      </div>
-                                   </div>
-                                 )}
+                                       </div>
+                                    </div>
+                                  )}
                               </div>
                            );
                         })}
@@ -1051,9 +1082,14 @@ export default function AnalyticsPage() {
                                                   <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
                                                      {sets.length} sets • {scaledVolume.toFixed(0)} lbs volume
                                                      {scaleFactor !== 1 && <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem' }}>Scale ×{scaleFactor.toFixed(2)}</span>}
-                                                     {sets.map((s:any, idx:number) => <div key={idx} style={{ paddingLeft: '0.5rem' }}>{idx+1}. {s.weight} lbs × {s.reps}</div>)}
-                                                  </div>
-                                               </div>
+                                                     {sets.map((s:any, idx:number) => (
+                                                       <div key={idx} style={{ paddingLeft: '0.5rem' }}>
+                                                         {idx+1}. {s.weight} lbs × {s.reps}
+                                                         {typeof s.rir === 'number' ? ` • RIR ${s.rir >= 5 ? '5+' : s.rir}` : ''}
+                                                       </div>
+                                                     ))}
+                                                   </div>
+                                                </div>
                                             );
                                         })}
                                      </>
