@@ -66,7 +66,7 @@ function getScoreColor(score: number): string {
     return '#fc8181'; // red — struggled
 }
 
-export default function Tracker({ plan, allLifts, user, pastHistory, resumeState }: any) {
+export default function Tracker({ plan, allLifts, user, pastHistory, resumeState, sharedSessionId: sharedSessionIdProp }: any) {
    const [localPlan, setLocalPlan] = useState<any>(resumeState?.plan || plan);
    const [activeLiftIndex, setActiveLiftIndex] = useState(resumeState?.activeLiftIndex || 0);
    const [workoutStartTime] = useState(resumeState?.startTime || Date.now());
@@ -97,8 +97,14 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [showList, setShowList] = useState(false);
    const [showChange, setShowChange] = useState(false);
    const [showSuperset, setShowSuperset] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
    const [workoutFinished, setWorkoutFinished] = useState(false);
    const [calibrationInfo, setCalibrationInfo] = useState<any>(null);
+  const [sharedSessionId, setSharedSessionId] = useState<string | null>(sharedSessionIdProp || resumeState?.sharedSessionId || null);
+  const [sharedCode, setSharedCode] = useState<string | null>(resumeState?.sharedCode || null);
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedError, setSharedError] = useState('');
+  const [peerProgress, setPeerProgress] = useState<any>(null);
 
    useEffect(() => {
      let previousTick = Date.now();
@@ -132,6 +138,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    const activeLift = localPlan.lifts[activeLiftIndex];
    const targetSetCount = localPlan.type?.sets || 4;
+
+  useEffect(() => {
+    if (sharedSessionIdProp) setSharedSessionId(sharedSessionIdProp);
+  }, [sharedSessionIdProp]);
 
    const getLiftLogs = useCallback((lift: any, logsSource = logs) => {
       if (!lift) return [];
@@ -267,8 +277,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       setCurrentRir(null);
    }, [activeLiftIndex, activeLift?.uniquePlanId]);
 
-   if (!activeLift && !workoutFinished) return <div>Invalid Workout State</div>;
-
    const activeLogs = logs[activeLift?.uniquePlanId] || [];
    const isDeviated = currentWeight !== suggestedWeight || currentReps !== suggestedReps;
    const activePartner = getSupersetPartner(activeLift);
@@ -283,49 +291,139 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       getRemainingSets(lift) > 0
    );
 
-   const handleCompleteSet = () => {
-      if (currentRir === null) return;
+  const buildProgressPayload = useCallback((statusOverride?: 'active' | 'paused' | 'finished' | 'deleted') => {
+    const totalCompletedSets = Object.values(logs).reduce((sum: number, sets: any) => sum + (sets?.length || 0), 0);
+    const totalSets = (localPlan?.lifts?.length || 0) * targetSetCount;
+    return {
+      activeLiftIndex,
+      currentLiftName: activeLift?.name || '',
+      completedSets: totalCompletedSets,
+      totalSets,
+      status: statusOverride || (workoutFinished ? 'finished' : 'active'),
+    };
+  }, [activeLift?.name, activeLiftIndex, localPlan?.lifts?.length, logs, targetSetCount, workoutFinished]);
 
-      const newLog = {
-         weight: currentWeight,
-         reps: currentReps,
-         plannedWeight: suggestedWeight,
-         plannedReps: suggestedReps,
-         rir: currentRir,
-         completed: true,
-         timestamp: Date.now(),
-      };
-      const updatedLogs = { ...logs, [activeLift.uniquePlanId]: [...activeLogs, newLog] };
-      setLogs(updatedLogs);
-      setSetElapsedSecsMap((m: Record<number, number>) => ({...m, [activeLiftIndex]: 0}));
-      setCurrentRir(null);
+  const pushSharedProgress = useCallback(async (statusOverride?: 'active' | 'paused' | 'finished' | 'deleted') => {
+    if (!sharedSessionId) return;
+    try {
+      await fetch('/api/workout/session', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sharedSessionId,
+          progress: buildProgressPayload(statusOverride),
+        }),
+      });
+    } catch {
+      // silent shared sync failure
+    }
+  }, [buildProgressPayload, sharedSessionId]);
 
-      const partner = getSupersetPartner(activeLift);
-      if (!partner) return;
+  const refreshSharedPeer = useCallback(async () => {
+    if (!sharedSessionId) return;
+    try {
+      const response = await fetch(`/api/workout/session?id=${encodeURIComponent(sharedSessionId)}`);
+      const data = await response.json();
+      if (!data.success) return;
+      setPeerProgress(data.peer?.progress || null);
+      if (data.session?.code) setSharedCode(data.session.code);
+    } catch {
+      // silent shared poll failure
+    }
+  }, [sharedSessionId]);
 
-      const currentRemaining = getRemainingSets(activeLift, updatedLogs);
-      const partnerRemaining = getRemainingSets(partner, updatedLogs);
-      const partnerIndex = localPlan.lifts.findIndex((lift: any) => lift.uniquePlanId === partner.uniquePlanId);
+  const handleEnableSharedMode = async () => {
+    if (!user?.id) {
+      setSharedError('Shared mode requires login.');
+      return;
+    }
+    if (sharedSessionId) {
+      setSharedError('');
+      return;
+    }
 
-      if (currentRemaining > 0 && partnerRemaining > 0 && partnerIndex >= 0) {
-         setActiveLiftIndex(partnerIndex);
-         return;
+    setSharedLoading(true);
+    setSharedError('');
+    try {
+      const response = await fetch('/api/workout/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          planTemplate: {
+            name: localPlan.name,
+            type: localPlan.type,
+            gymId: localPlan.gymId,
+            gymName: localPlan.gymName,
+            lifts: localPlan.lifts.map((lift: any) => ({
+              id: lift.id,
+              name: lift.name,
+              primaryMuscle: lift.primaryMuscle,
+              secondaryMuscle: lift.secondaryMuscle,
+              station: lift.station,
+            })),
+          },
+          progress: buildProgressPayload('active'),
+        }),
+      });
+      const data = await response.json();
+      if (!data.success || !data.sessionId) {
+        setSharedError(data.message || 'Unable to enable shared mode.');
+        return;
       }
+      setSharedSessionId(data.sessionId);
+      setSharedCode(data.code || null);
+    } catch {
+      setSharedError('Network error enabling shared mode.');
+    } finally {
+      setSharedLoading(false);
+    }
+  };
 
-      if (currentRemaining === 0 && partnerRemaining > 0 && partnerIndex >= 0) {
-         setActiveLiftIndex(partnerIndex);
-         return;
-      }
+  const handleCompleteSet = () => {
+    if (currentRir === null) return;
 
-      if (currentRemaining > 0 && partnerRemaining === 0) {
-         return;
-      }
+    const newLog = {
+      weight: currentWeight,
+      reps: currentReps,
+      plannedWeight: suggestedWeight,
+      plannedReps: suggestedReps,
+      rir: currentRir,
+      completed: true,
+      timestamp: Date.now(),
+    };
 
-      const nextUnfinished = findNextUnfinishedLiftIndex(activeLiftIndex, updatedLogs);
-      if (nextUnfinished !== null) {
-         setActiveLiftIndex(nextUnfinished);
-      }
-   };
+    const updatedLogs = { ...logs, [activeLift.uniquePlanId]: [...activeLogs, newLog] };
+    setLogs(updatedLogs);
+    setSetElapsedSecsMap((m: Record<number, number>) => ({ ...m, [activeLiftIndex]: 0 }));
+    setCurrentRir(null);
+
+    const partner = getSupersetPartner(activeLift);
+    if (!partner) return;
+
+    const currentRemaining = getRemainingSets(activeLift, updatedLogs);
+    const partnerRemaining = getRemainingSets(partner, updatedLogs);
+    const partnerIndex = localPlan.lifts.findIndex((lift: any) => lift.uniquePlanId === partner.uniquePlanId);
+
+    if (currentRemaining > 0 && partnerRemaining > 0 && partnerIndex >= 0) {
+      setActiveLiftIndex(partnerIndex);
+      return;
+    }
+
+    if (currentRemaining === 0 && partnerRemaining > 0 && partnerIndex >= 0) {
+      setActiveLiftIndex(partnerIndex);
+      return;
+    }
+
+    if (currentRemaining > 0 && partnerRemaining === 0) {
+      return;
+    }
+
+    const nextUnfinished = findNextUnfinishedLiftIndex(activeLiftIndex, updatedLogs);
+    if (nextUnfinished !== null) {
+      setActiveLiftIndex(nextUnfinished);
+    }
+  };
 
    // Persistence Logic
    useEffect(() => {
@@ -333,6 +431,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
         localStorage.setItem('pendingWorkout', JSON.stringify({
            plan: localPlan,
            ownerId: user?.id || 'demo-user-123',
+           sharedSessionId,
+           sharedCode,
            activeLiftIndex,
            logs,
            startTime: workoutStartTime,
@@ -344,7 +444,18 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
            timestamp: Date.now()
          }));
       }
-   }, [logs, activeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, setSetElapsedSecsMap, setElapsedSecsMap, currentRir, intensitySlider]);
+   }, [logs, activeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, setSetElapsedSecsMap, setElapsedSecsMap, currentRir, intensitySlider, sharedSessionId, sharedCode, user?.id]);
+
+   useEffect(() => {
+      pushSharedProgress('active');
+   }, [activeLiftIndex, logs, pushSharedProgress]);
+
+   useEffect(() => {
+      if (!sharedSessionId) return;
+      refreshSharedPeer();
+      const poller = setInterval(refreshSharedPeer, 2000);
+      return () => clearInterval(poller);
+   }, [refreshSharedPeer, sharedSessionId]);
 
    const deleteSet = (index: number) => {
       const updated = [...activeLogs];
@@ -450,6 +561,18 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
              isDemo: !user
          }) 
       });
+      await pushSharedProgress('finished');
+      localStorage.removeItem('pendingWorkout');
+      window.location.href = '/workout';
+   };
+
+   const handlePauseWorkout = async () => {
+      await pushSharedProgress('paused');
+      window.location.href = '/workout';
+   };
+
+   const handleDeleteWorkout = async () => {
+      await pushSharedProgress('deleted');
       localStorage.removeItem('pendingWorkout');
       window.location.href = '/workout';
    };
@@ -505,12 +628,34 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    return (
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
          <div className={`workout-tile tracker-topbar${isCompactHeader ? ' tracker-topbar-compact' : ''}`} style={{ padding: isCompactHeader ? '0.65rem 0.75rem' : '1rem', marginBottom: isCompactHeader ? '0.35rem' : '0.5rem', borderRadius: '0 0 16px 16px', borderTop: 'none', position: 'sticky', top: 0, zIndex: 10 }}>
+            {sharedSessionId && peerProgress && (
+              <div className="animate-fade-in" style={{ marginBottom: '0.55rem', padding: '0.45rem 0.55rem', borderRadius: '10px', background: 'rgba(var(--accent-rgb), 0.1)', border: '1px solid rgba(var(--accent-rgb), 0.25)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: '0.25rem' }}>
+                  <span style={{ color: 'var(--muted)' }}>Partner: {peerProgress.currentLiftName || 'Starting...'}</span>
+                  <span style={{ fontWeight: 700 }}>
+                    {peerProgress.completedSets || 0}/{peerProgress.totalSets || 0}
+                  </span>
+                </div>
+                <div style={{ height: '6px', borderRadius: '4px', background: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${peerProgress.totalSets > 0 ? Math.min(100, Math.round(((peerProgress.completedSets || 0) / peerProgress.totalSets) * 100)) : 0}%`,
+                      height: '100%',
+                      background: 'var(--accent)',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             <div className="workout-flex-between tracker-topbar-row">
                <div>
                  <h2 style={{ fontSize: isCompactHeader ? '1.02rem' : '1.2rem', margin: '0 0 0.2rem 0' }}>{localPlan.name}</h2>
                  <p style={{ margin: 0, fontSize: isCompactHeader ? '0.75rem' : '0.85rem', color: 'var(--muted)' }}>Time: {Math.floor(elapsedSecs / 60).toString().padStart(2, '0')}:{(elapsedSecs % 60).toString().padStart(2, '0')}</p>
                </div>
-               <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
+               <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
+                  <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowMenu(true)}>Menu</button>
+               </div>
             </div>
          </div>
 
@@ -832,6 +977,30 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                 </div>
             )}
          </div>
+
+         {showMenu && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 120, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
+               <div className="workout-flex-between" style={{ marginBottom: '1.25rem' }}>
+                  <h2 style={{ margin: 0 }}>Workout Menu</h2>
+                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowMenu(false)}>✕</button>
+               </div>
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} onClick={handlePauseWorkout}>Pause Workout</button>
+                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} onClick={() => { setWorkoutFinished(true); setShowMenu(false); }}>Finish Workout</button>
+                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem', color: '#ff6b6b', borderColor: 'rgba(255,107,107,0.35)' }} onClick={handleDeleteWorkout}>Delete Workout</button>
+                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} disabled={sharedLoading} onClick={handleEnableSharedMode}>
+                    {sharedLoading ? 'Creating Invite...' : sharedSessionId ? 'Shared Mode Enabled' : 'Invite To Shared Session'}
+                  </button>
+                  {sharedCode && (
+                    <div className="workout-tile" style={{ marginBottom: 0 }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Share this code</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '0.2rem', color: 'var(--accent)' }}>{sharedCode}</div>
+                    </div>
+                  )}
+                  {sharedError && <p style={{ margin: 0, color: '#ff6b6b', fontSize: '0.85rem' }}>{sharedError}</p>}
+               </div>
+            </div>
+         )}
 
          {showList && (
             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">

@@ -51,6 +51,10 @@ export default function WorkoutDashboard() {
   const [selectedGym, setSelectedGym] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
+  const [showJoinShared, setShowJoinShared] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinError, setJoinError] = useState('');
+  const [joinLoading, setJoinLoading] = useState(false);
 
   // Profile Menu State
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -260,6 +264,38 @@ export default function WorkoutDashboard() {
       }
     } catch { /* silent */ }
     setProfileSaving(false);
+  };
+
+  const handleJoinSharedWorkout = async () => {
+    const normalized = joinCode.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(normalized)) {
+      setJoinError('Enter a valid 3-letter code.');
+      return;
+    }
+    if (isDemo) {
+      setJoinError('Shared mode requires login.');
+      return;
+    }
+
+    setJoinLoading(true);
+    setJoinError('');
+    try {
+      const response = await fetch('/api/workout/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'join', code: normalized }),
+      });
+      const data = await response.json();
+      if (!data.success || !data.sessionId) {
+        setJoinError(data.message || 'Unable to join shared workout.');
+        return;
+      }
+      window.location.href = `/workout/active?sharedSessionId=${encodeURIComponent(data.sessionId)}&sharedMode=join`;
+    } catch {
+      setJoinError('Network error while joining shared workout.');
+    } finally {
+      setJoinLoading(false);
+    }
   };
 
   if (loading) {
@@ -522,6 +558,40 @@ export default function WorkoutDashboard() {
           >
             Build & Start
           </button>
+
+          <div style={{ marginTop: '0.85rem', borderTop: '1px solid var(--surface-border)', paddingTop: '0.85rem' }}>
+            <button
+              className="btn btn-secondary"
+              style={{ width: '100%', borderRadius: '10px' }}
+              onClick={() => {
+                setShowJoinShared((prev) => !prev);
+                setJoinError('');
+              }}
+            >
+              {showJoinShared ? 'Hide Shared Join' : 'Join Shared Workout'}
+            </button>
+            {showJoinShared && (
+              <div className="animate-fade-in" style={{ marginTop: '0.65rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Enter 3-letter code</label>
+                <input
+                  className="workout-input"
+                  value={joinCode}
+                  maxLength={3}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3))}
+                  placeholder="KLF"
+                />
+                {joinError && <p style={{ color: '#ff6b6b', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{joinError}</p>}
+                <button
+                  className="workout-btn-primary"
+                  style={{ marginTop: '0.6rem' }}
+                  disabled={joinLoading}
+                  onClick={handleJoinSharedWorkout}
+                >
+                  {joinLoading ? 'Joining...' : 'Join Session'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

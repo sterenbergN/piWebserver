@@ -3,12 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
-import { DEMO_GYMS, DEMO_TYPES } from '@/lib/workout/demo-data';
+import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES } from '@/lib/workout/demo-data';
 
 export default function ActiveWorkoutPage() {
   const searchParams = useSearchParams();
   const gymId = searchParams.get('gym');
   const typeId = searchParams.get('type');
+  const sharedSessionId = searchParams.get('sharedSessionId');
+  const sharedMode = searchParams.get('sharedMode');
   const isDemoMode = searchParams.get('isDemo') === 'true';
   const liftCountParam = parseInt(searchParams.get('lifts') || '5');
   
@@ -32,7 +34,7 @@ export default function ActiveWorkoutPage() {
          } catch(e) {}
       }
 
-      if (!isResuming && (!gymId || !typeId)) {
+      if (!isResuming && !sharedSessionId && (!gymId || !typeId)) {
         setError('Missing gym or workout type.');
         setLoading(false);
         return;
@@ -44,7 +46,7 @@ export default function ActiveWorkoutPage() {
               { gyms: DEMO_GYMS },
               { types: DEMO_TYPES },
               { authenticated: false, user: null },
-              { success: true, history: [] },
+              { success: true, history: DEMO_HISTORY },
             ]
           : await Promise.all([
               fetch('/api/workout/gyms').then(r => r.json()),
@@ -68,16 +70,17 @@ export default function ActiveWorkoutPage() {
           return;
         }
 
+        const isSharedJoin = !!sharedSessionId && sharedMode === 'join';
         const gym = gymRes.gyms?.find((g: any) => g.id === gymId);
         const type = typesRes.types?.find((t: any) => t.id === typeId);
 
-        if (!isResuming && (!gym || !type)) {
+        if (!isResuming && !sharedSessionId && (!gym || !type)) {
            setError('Gym or Workout Type not found. Go back and check configuration.');
            return;
         }
 
         const availableLifts: any[] = [];
-        const sourceGyms = isResuming ? gymRes.gyms || [] : [gym];
+        const sourceGyms = isResuming || isSharedJoin ? gymRes.gyms || [] : [gym];
         sourceGyms.forEach((g: any) => {
             if (!g) return;
             g.stations?.forEach((station: any) => {
@@ -102,7 +105,7 @@ export default function ActiveWorkoutPage() {
 
         const plan: any[] = [];
 
-        if (!isResuming) {
+        if (!isResuming && !isSharedJoin) {
            const targetMuscles: string[] = type.muscles || [];
            
            // Phase 1: Pick one lift per target muscle
@@ -144,8 +147,45 @@ export default function ActiveWorkoutPage() {
                liftElapsedSecsMap: saved.liftElapsedSecsMap,
                setElapsedSecsMap: saved.setElapsedSecsMap,
                currentRir: saved.currentRir,
-               intensitySlider: saved.intensitySlider
+               intensitySlider: saved.intensitySlider,
+               sharedSessionId: saved.sharedSessionId,
+               sharedCode: saved.sharedCode,
             });
+        } else if (isSharedJoin) {
+           const sessionRes = await fetch(`/api/workout/session?id=${encodeURIComponent(sharedSessionId)}`);
+           const sessionData = await sessionRes.json();
+           if (!sessionData.success || !sessionData.session?.planTemplate?.lifts) {
+             setError(sessionData.message || 'Unable to load shared workout session.');
+             return;
+           }
+           const template = sessionData.session.planTemplate;
+           const templateLifts = (template.lifts || []).map((lift: any) => {
+             const fromGym = availableLifts.find((entry) => entry.id === lift.id);
+             if (fromGym) return { ...fromGym, uniquePlanId: Math.random() };
+             return {
+               ...lift,
+               station: lift.station || null,
+               gymName: template.gymName || 'Shared Session',
+               gymId: template.gymId || '',
+               uniquePlanId: Math.random(),
+             };
+           });
+           const fallbackType = template.type || {
+             name: 'Shared Workout',
+             sets: 4,
+             minReps: 8,
+             maxReps: 12,
+             intensity: 75,
+           };
+           setWorkoutPlan({
+             id: `shared-${Math.random().toString(36).substring(2, 10)}`,
+             name: `${template.name || 'Shared Workout'} (Joined)`,
+             type: fallbackType,
+             gymName: template.gymName || 'Shared Session',
+             gymId: template.gymId || '',
+             lifts: templateLifts,
+             sharedSessionId,
+           });
         } else {
            setWorkoutPlan({
                id: Math.random().toString(36).substring(2, 10),
@@ -153,7 +193,8 @@ export default function ActiveWorkoutPage() {
                type: type,
                gymName: gym.name,
                gymId: gym.id,
-               lifts: plan
+               lifts: plan,
+               sharedSessionId: sharedSessionId || undefined,
            });
         }
       } catch (err) {
@@ -164,7 +205,7 @@ export default function ActiveWorkoutPage() {
     }
     
     init();
-  }, [gymId, typeId, liftCountParam]);
+  }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted)' }} className="animate-fade-in">⚙️ Calibrating optimal workout parameters...</div>;
   if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#ff6b6b' }} className="animate-fade-in">{error}</div>;
@@ -178,6 +219,7 @@ export default function ActiveWorkoutPage() {
          user={user} 
          pastHistory={pastHistory} 
          resumeState={resumingState}
+         sharedSessionId={sharedSessionId || workoutPlan?.sharedSessionId}
        />
     </div>
   );
