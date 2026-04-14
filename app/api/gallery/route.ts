@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const galleryDir = path.join(process.cwd(), 'public', 'uploads', 'gallery');
 const albumsFile = path.join(galleryDir, 'albums.json');
@@ -87,7 +87,7 @@ async function saveAlbums(albums: Album[]) {
 // ── GET: return full album tree ───────────────────────────────────────────────
 export async function GET() {
   try {
-    const isAdmin = (await cookies()).has('pi_auth');
+    const isAdmin = await isAdminAuthenticated();
     const albums = await readAlbums();
     return NextResponse.json({ success: true, albums, isAdmin });
   } catch (error) {
@@ -99,8 +99,7 @@ export async function GET() {
 // ── POST: create a new album (optionally as sub-album) ────────────────────────
 export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) return NextResponse.json({ success: false }, { status: 401 });
+    if (!(await isAdminAuthenticated())) return NextResponse.json({ success: false }, { status: 401 });
 
     const { name, parentId } = await request.json();
     if (!name?.trim()) return NextResponse.json({ success: false, message: 'Album name is required' }, { status: 400 });

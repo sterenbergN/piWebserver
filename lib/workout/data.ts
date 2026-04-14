@@ -1,7 +1,33 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-const getDir = () => path.join(process.cwd(), 'public', 'uploads', 'workouts');
+const privateDir = () => path.join(process.cwd(), '.data', 'workouts');
+const legacyDir = () => path.join(process.cwd(), 'public', 'uploads', 'workouts');
+
+async function migrateLegacyWorkoutData(targetDir: string) {
+  const sourceDir = legacyDir();
+
+  try {
+    const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const sourcePath = path.join(sourceDir, entry.name);
+      const targetPath = path.join(targetDir, entry.name);
+
+      try {
+        await fs.access(targetPath);
+      } catch {
+        await fs.copyFile(sourcePath, targetPath);
+      }
+
+      await fs.unlink(sourcePath).catch(() => {});
+    }
+  } catch {
+    // No legacy directory to migrate from.
+  }
+}
+
+const getDir = () => privateDir();
 
 export async function ensureWorkoutDir() {
   const dir = getDir();
@@ -10,6 +36,8 @@ export async function ensureWorkoutDir() {
   } catch {
     await fs.mkdir(dir, { recursive: true });
   }
+
+  await migrateLegacyWorkoutData(dir);
 }
 
 export async function getWorkoutData<T>(filename: string, defaultData: T): Promise<T> {

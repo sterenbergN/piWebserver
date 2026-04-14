@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET() {
   try {
-    const isAdmin = (await cookies()).has('pi_auth');
+    const isAdmin = await isAdminAuthenticated();
     const libraryDir = path.join(process.cwd(), 'public', 'uploads', 'library');
     
     try {

@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { resolvePublicPath } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await context.params;
-    const isAdmin = (await cookies()).has('pi_auth');
+    const isAdmin = await isAdminAuthenticated();
     const blogDir = path.join(process.cwd(), 'public', 'uploads', 'blog');
     const filePath = path.join(blogDir, `${slug}.md`);
 
@@ -25,8 +26,8 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
         const validPhotos: any[] = [];
         for (const photo of postMeta.photos) {
           // src: /api/media/uploads/blog/... → file: public/uploads/blog/...
-          const relativePath = photo.src.replace(/^\/api\/media/, '');
-          const absolutePath = path.join(process.cwd(), 'public', relativePath);
+          const absolutePath = resolvePublicPath(photo.src);
+          if (!absolutePath) continue;
           try {
             await fs.access(absolutePath);
             validPhotos.push(photo);

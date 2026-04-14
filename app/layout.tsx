@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
-import { cookies } from "next/headers";
+import { isAdminAuthenticated } from "@/lib/security/server-auth";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,8 +15,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = await cookies();
-  const isAdmin = !!cookieStore.get("pi_auth")?.value;
+  const isAdmin = await isAdminAuthenticated();
 
   return (
     <html lang="en" suppressHydrationWarning>

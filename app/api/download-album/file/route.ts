@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
 import path from 'path';
+import { resolvePathInside } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return new NextResponse('Unauthorized', { status: 401 });
     }
 
@@ -18,9 +17,11 @@ export async function GET(request: Request) {
       return new NextResponse('Invalid file request', { status: 400 });
     }
 
-    // Protect against path traversal
     const safeFilename = path.basename(filename);
-    const absolutePath = path.join(process.cwd(), 'public', 'temp', 'downloads', safeFilename);
+    const absolutePath = resolvePathInside(path.join(process.cwd(), 'public', 'temp', 'downloads'), safeFilename);
+    if (!absolutePath) {
+      return new NextResponse('Invalid file request', { status: 400 });
+    }
 
     try {
       await fs.access(absolutePath);

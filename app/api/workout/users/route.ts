@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { hashPassword } from '@/lib/workout/passwords';
+import { normalizeUsersData, normalizeWorkoutUser } from '@/lib/workout/users';
 
 function generateId() {
   return Math.random().toString(36).substring(2, 10);
@@ -8,20 +10,20 @@ function generateId() {
 
 // Only system admins should be able to create, edit, and delete workout users.
 async function isAdmin() {
-  const cookieStore = await cookies();
-  return cookieStore.has('pi_auth');
+  return isAdminAuthenticated();
 }
 
 export async function GET() {
   if (!(await isAdmin())) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
-  const data = await getWorkoutData('users.json', { users: [] });
-  // Strip passwords for safe client-side consumption in the admin panel
+  const rawData = await getWorkoutData('users.json', { users: [] as any[] });
+  const { data, changed } = normalizeUsersData(rawData);
+  if (changed) {
+    await saveWorkoutData('users.json', data);
+  }
   const safeUsers = data.users.map((u: any) => {
     const { password, ...safe } = u;
-    // Actually, admins need to see or edit passwords? 
-    // They might need to reset it. Let's just pass it back for the admin panel, as it's an admin only endpoint.
-    return u;
+    return safe;
   });
 
   return NextResponse.json({ success: true, users: safeUsers });
@@ -36,7 +38,8 @@ export async function POST(request: Request) {
        return NextResponse.json({ success: false, message: "Username and password required" }, { status: 400 });
     }
 
-    const data = await getWorkoutData('users.json', { users: [] as any[] });
+    const rawData = await getWorkoutData('users.json', { users: [] as any[] });
+    const { data } = normalizeUsersData(rawData);
     
     // Check if username already exists
     if (data.users.some(u => u.username.toLowerCase() === newUser.username.toLowerCase())) {
@@ -46,7 +49,7 @@ export async function POST(request: Request) {
     const user = {
       id: generateId(),
       username: newUser.username,
-      password: newUser.password,
+      password: hashPassword(newUser.password),
       birthdate: newUser.birthdate || '',
       height: newUser.height || '', // numeric inches or string
       gender: newUser.gender || 'unspecified',
@@ -57,7 +60,8 @@ export async function POST(request: Request) {
     data.users.push(user);
     await saveWorkoutData('users.json', data);
 
-    return NextResponse.json({ success: true, user });
+    const { password, ...safeUser } = user;
+    return NextResponse.json({ success: true, user: safeUser });
   } catch (error) {
     return NextResponse.json({ success: false, message: "Server error" }, { status: 500 });
   }
@@ -70,15 +74,24 @@ export async function PUT(request: Request) {
     const updatedUser = await request.json();
     if (!updatedUser.id) return NextResponse.json({ success: false, message: "User ID missing" }, { status: 400 });
 
-    const data = await getWorkoutData('users.json', { users: [] as any[] });
+    const rawData = await getWorkoutData('users.json', { users: [] as any[] });
+    const { data } = normalizeUsersData(rawData);
     const userIndex = data.users.findIndex(u => u.id === updatedUser.id);
     
     if (userIndex === -1) return NextResponse.json({ success: false, message: "User not found" }, { status: 404 });
 
-    data.users[userIndex] = { ...data.users[userIndex], ...updatedUser };
+    const existingUser = data.users[userIndex];
+    const mergedUser = normalizeWorkoutUser({
+      ...existingUser,
+      ...updatedUser,
+      password: updatedUser.password ? hashPassword(updatedUser.password) : existingUser.password,
+    });
+
+    data.users[userIndex] = mergedUser;
     await saveWorkoutData('users.json', data);
 
-    return NextResponse.json({ success: true, user: data.users[userIndex] });
+    const { password, ...safeUser } = data.users[userIndex];
+    return NextResponse.json({ success: true, user: safeUser });
   } catch (error) {
     return NextResponse.json({ success: false, message: "Server error" }, { status: 500 });
   }

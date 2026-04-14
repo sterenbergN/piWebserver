@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
+import { resolvePathInside } from '@/lib/security/paths';
 
 export async function GET(request: Request, context: { params: Promise<{ path: string[] }> }) {
   try {
@@ -9,15 +10,15 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
     const safePath = pathArray.join('/');
     const { searchParams } = new URL(request.url);
     const width = searchParams.get('w');
-    
-    // Protect against directory traversal
-    if (safePath.includes('..')) return new NextResponse('Forbidden', { status: 403 });
-    
-    const absolutePath = path.join(process.cwd(), 'public', safePath);
+    const absolutePath = resolvePathInside(path.join(process.cwd(), 'public'), safePath);
+    if (!absolutePath) return new NextResponse('Forbidden', { status: 403 });
     
     // Handle thumbnailing
     if (width && !isNaN(Number(width))) {
       const w = parseInt(width);
+      if (w < 64 || w > 2400) {
+        return new NextResponse('Invalid thumbnail size', { status: 400 });
+      }
       const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
       const thumbName = `${safePath.replace(/[/\\:]/g, '_')}_w${w}${path.extname(safePath)}`;
       const thumbPath = path.join(thumbDir, thumbName);

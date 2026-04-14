@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { resolvePublicPath } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const baseDir = path.join(process.cwd(), 'public', 'uploads');
 const tempDir = path.join(process.cwd(), 'public', 'temp', 'downloads');
@@ -41,8 +42,7 @@ async function cleanupOldZips() {
 
 export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
@@ -100,8 +100,10 @@ export async function POST(request: Request) {
         
         for (let i = 0; i < srcs.length; i++) {
           const src = srcs[i];
-          const relativePath = src.replace(/^\/api\/media/, '');
-          const absolutePath = path.join(process.cwd(), 'public', relativePath);
+          const absolutePath = resolvePublicPath(src);
+          if (!absolutePath) {
+            continue;
+          }
           
           try {
             await fs.access(absolutePath);

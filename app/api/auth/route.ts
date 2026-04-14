@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { createAdminAuthToken } from '@/lib/security/auth';
 
 export async function POST(request: Request) {
   try {
@@ -7,12 +8,13 @@ export async function POST(request: Request) {
 
     const SECRET_PASSWORD = process.env.PI_DASHBOARD_PASSWORD;
 
-    if (password === SECRET_PASSWORD) {
+    if (SECRET_PASSWORD && password === SECRET_PASSWORD) {
       const cookieStore = await cookies();
-      cookieStore.set('pi_auth', 'authenticated', {
+      cookieStore.set('pi_auth', createAdminAuthToken(), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        path: '/',
         maxAge: 60 * 60 * 24 * 7 // 1 week
       });
 

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const projectsFile = path.join(process.cwd(), 'public', 'content', 'projects.json');
 
@@ -20,8 +20,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const cookieStore = await cookies();
-  if (!cookieStore.has('pi_auth')) return NextResponse.json({ success: false }, { status: 401 });
+  if (!(await isAdminAuthenticated())) return NextResponse.json({ success: false }, { status: 401 });
 
   const body = await request.json();
   const projects = await readProjects();
@@ -39,8 +38,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const cookieStore = await cookies();
-  if (!cookieStore.has('pi_auth')) return NextResponse.json({ success: false }, { status: 401 });
+  if (!(await isAdminAuthenticated())) return NextResponse.json({ success: false }, { status: 401 });
 
   const body = await request.json();
   const projects = await readProjects();
@@ -53,8 +51,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const cookieStore = await cookies();
-  if (!cookieStore.has('pi_auth')) return NextResponse.json({ success: false }, { status: 401 });
+  if (!(await isAdminAuthenticated())) return NextResponse.json({ success: false }, { status: 401 });
 
   const { id } = await request.json();
   let projects = await readProjects();

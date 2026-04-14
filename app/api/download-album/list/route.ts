@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 

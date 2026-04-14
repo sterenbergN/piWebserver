@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { resolvePathInside } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
@@ -15,7 +15,10 @@ export async function GET(request: Request) {
 
     if (!id) return NextResponse.json({ success: false }, { status: 400 });
 
-    const progressFile = path.join(process.cwd(), 'public', 'temp', 'downloads', `${id}.json`);
+    const progressFile = resolvePathInside(path.join(process.cwd(), 'public', 'temp', 'downloads'), `${path.basename(id)}.json`);
+    if (!progressFile) {
+      return NextResponse.json({ success: false, message: 'Invalid job id' }, { status: 400 });
+    }
 
     try {
       const data = JSON.parse(await fs.readFile(progressFile, 'utf-8'));

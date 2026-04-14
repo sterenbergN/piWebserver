@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
 import path from 'path';
+import { resolvePathInside, resolvePublicPath } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const baseDir = path.join(process.cwd(), 'public', 'uploads');
 
@@ -92,12 +93,14 @@ async function removeThumbnails(publicPathLike: string) {
 
 async function removePhysicalFile(mediaOrPublicPath: string) {
   const publicPath = toPublicPath(mediaOrPublicPath);
-  const absolutePath = path.join(process.cwd(), 'public', publicPath);
+  const absolutePath = resolvePublicPath(publicPath);
 
-  try {
-    await fs.unlink(absolutePath);
-  } catch {
-    // Ignore missing files.
+  if (absolutePath) {
+    try {
+      await fs.unlink(absolutePath);
+    } catch {
+      // Ignore missing files.
+    }
   }
 
   await removeThumbnails(publicPath);
@@ -165,8 +168,7 @@ async function cleanupDownloadProgressFiles(tempDir: string, archiveName: string
 
 export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
@@ -266,11 +268,14 @@ export async function POST(request: Request) {
     if (type === 'download') {
       const tempDir = path.join(process.cwd(), 'public', 'temp', 'downloads');
       const safeId = path.basename(id);
+      const archivePath = resolvePathInside(tempDir, safeId);
 
-      try {
-        await fs.unlink(path.join(tempDir, safeId));
-      } catch {
-        // Ignore missing archive file.
+      if (archivePath) {
+        try {
+          await fs.unlink(archivePath);
+        } catch {
+          // Ignore missing archive file.
+        }
       }
 
       await cleanupDownloadProgressFiles(tempDir, safeId);

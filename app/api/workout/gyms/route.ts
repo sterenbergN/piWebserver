@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 
 function generateId() {
   return Math.random().toString(36).substring(2, 10);
@@ -8,12 +8,16 @@ function generateId() {
 
 export async function GET() {
   const data = await getWorkoutData('gyms.json', { gyms: [] });
-  return NextResponse.json({ success: true, gyms: data.gyms });
+  const userId = await getAuthenticatedWorkoutUserId();
+  if (!userId) {
+    return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
+  }
+
+  return NextResponse.json({ success: true, gyms: data.gyms.filter((gym: any) => gym.ownerId === userId) });
 }
 
 export async function POST(request: Request) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   try {
@@ -39,8 +43,7 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   try {
@@ -67,8 +70,7 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   try {

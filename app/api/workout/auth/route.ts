@@ -1,26 +1,31 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getWorkoutData } from '@/lib/workout/data';
+import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
+import { createWorkoutAuthToken } from '@/lib/security/auth';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
+import { verifyPassword } from '@/lib/workout/passwords';
 import { normalizeUsersData, normalizeWorkoutUser } from '@/lib/workout/users';
 
 export async function POST(request: Request) {
   try {
     const { username, password } = await request.json();
 
-    const { saveWorkoutData } = await import('@/lib/workout/data');
     const rawUsersData = await getWorkoutData('users.json', { users: [] } as any);
     const { data: usersData, changed } = normalizeUsersData(rawUsersData);
     if (changed) {
       await saveWorkoutData('users.json', usersData);
     }
-    const user = usersData.users.find((u: any) => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
+    const user = usersData.users.find(
+      (u: any) => u.username.toLowerCase() === username.toLowerCase() && verifyPassword(password, u.password)
+    );
 
     if (user) {
       const cookieStore = await cookies();
-      cookieStore.set('workout_auth', user.id, {
+      cookieStore.set('workout_auth', createWorkoutAuthToken(user.id), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        path: '/',
         maxAge: 60 * 60 * 24 * 30 // 30 days
       });
 
@@ -40,14 +45,12 @@ export async function DELETE() {
 }
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   
   if (!userId) {
     return NextResponse.json({ success: false, authenticated: false });
   }
 
-  const { saveWorkoutData } = await import('@/lib/workout/data');
   const rawUsersData = await getWorkoutData('users.json', { users: [] } as any);
   const { data: usersData, changed } = normalizeUsersData(rawUsersData);
   if (changed) {
@@ -66,15 +69,13 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const userId = cookieStore.get('workout_auth')?.value;
+    const userId = await getAuthenticatedWorkoutUserId();
     
     if (!userId) {
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
     }
 
     const updates = await request.json();
-    const { saveWorkoutData } = await import('@/lib/workout/data');
     const rawUsersData = await getWorkoutData('users.json', { users: [] } as any);
     const { data: usersData } = normalizeUsersData(rawUsersData);
     

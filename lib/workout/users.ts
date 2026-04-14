@@ -1,3 +1,5 @@
+import { hashPassword, isHashedPassword } from '@/lib/workout/passwords';
+
 type WorkoutUser = Record<string, any>;
 
 function clamp(value: number, min: number, max: number) {
@@ -21,10 +23,14 @@ export function normalizeWorkoutUser<T extends WorkoutUser>(user: T): T {
   const normalizedUser = {
     ...user,
     intensityFactor,
-  } as T & { intensityFactor: number; progressionFactor?: number };
+  } as T & { intensityFactor: number; progressionFactor?: number; password?: string };
 
   if ('progressionFactor' in normalizedUser) {
     delete normalizedUser.progressionFactor;
+  }
+
+  if (typeof normalizedUser.password === 'string' && normalizedUser.password && !isHashedPassword(normalizedUser.password)) {
+    normalizedUser.password = hashPassword(normalizedUser.password);
   }
 
   return normalizedUser as T;

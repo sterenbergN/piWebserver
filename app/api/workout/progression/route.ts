@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { generateNextWorkout, ProgressionInput, Session, SetLog } from '@/lib/workout/progression';
 import { getWorkoutData } from '@/lib/workout/data';
-import { cookies } from 'next/headers';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore } from '@/lib/workout/calibration';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 
 // Equipment validity mapper based on station type
 function getPossibleWeightsForStation(station: any, scaleFactor = 1): number[] {
@@ -109,8 +109,7 @@ export async function POST(request: Request) {
 
     let userId: string | undefined;
     try {
-        const cookieStore = await cookies();
-        userId = cookieStore.get('workout_auth')?.value;
+        userId = (await getAuthenticatedWorkoutUserId()) || undefined;
     } catch {}
 
     let calibrationConfidence = 0;

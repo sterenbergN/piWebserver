@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
+import { resolvePublicPath } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const baseDir = path.join(process.cwd(), 'public', 'uploads');
 
@@ -24,8 +24,7 @@ function findAlbum(albums: any[], id: string): any | null {
 
 export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    if (!cookieStore.has('pi_auth')) {
+    if (!(await isAdminAuthenticated())) {
       return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
     }
 
@@ -34,9 +33,10 @@ export async function GET(request: Request) {
     const photoSrc = searchParams.get('photo');
 
     if (photoSrc) {
-      // Download single photo
-      const relativePath = photoSrc.replace(/^\/api\/media/, '');
-      const absolutePath = path.join(process.cwd(), 'public', relativePath);
+      const absolutePath = resolvePublicPath(photoSrc);
+      if (!absolutePath) {
+        return NextResponse.json({ success: false, message: 'Invalid photo path' }, { status: 400 });
+      }
       const filename = path.basename(absolutePath);
 
       const fileBuffer = await fs.readFile(absolutePath);
@@ -71,8 +71,10 @@ export async function GET(request: Request) {
 
     for (let i = 0; i < srcs.length; i++) {
         const src = srcs[i];
-        const relativePath = src.replace(/^\/api\/media/, '');
-        const absolutePath = path.join(process.cwd(), 'public', relativePath);
+        const absolutePath = resolvePublicPath(src);
+        if (!absolutePath) {
+          continue;
+        }
         
         try {
             // Check if file exists before adding

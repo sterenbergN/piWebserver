@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
 import { removeCardioHistoryEntries, isCardioHistoryItem } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore, inferScaleFactor, upsertCalibrationEntry } from '@/lib/workout/calibration';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   const rawData = await getWorkoutData('history.json', { history: [] as any[] });
@@ -22,8 +21,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) {
      // Handle demo users smoothly by returning success without saving
      const payload = await request.json();
@@ -134,8 +132,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
   if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   try {

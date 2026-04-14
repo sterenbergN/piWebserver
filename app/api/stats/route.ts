@@ -71,4 +71,3 @@ export async function GET() {
     return NextResponse.json({ success: false, message: "Error reading system stats" }, { status: 500 });
   }
 }
-

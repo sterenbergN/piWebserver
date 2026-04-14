@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { writeFile, readFile, mkdir, unlink, readdir } from 'fs/promises';
 import path from 'path';
+import { isSafeBlogSlug, resolvePathInside } from '@/lib/security/paths';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const base = path.join(process.cwd(), 'public', 'uploads');
 
@@ -49,8 +51,27 @@ async function removeThumbnails(publicPathLike: string) {
 
 async function removePhysicalFile(mediaOrPublicPath: string) {
   const publicPath = toPublicPath(mediaOrPublicPath);
-  await unlink(path.join(process.cwd(), 'public', publicPath)).catch(() => {});
+  const absolutePath = resolvePathInside(path.join(process.cwd(), 'public'), publicPath);
+  if (absolutePath) {
+    await unlink(absolutePath).catch(() => {});
+  }
   await removeThumbnails(publicPath);
+}
+
+function hasAllowedExtension(filename: string, extensions: string[]) {
+  return extensions.includes(path.extname(filename).toLowerCase());
+}
+
+function isAllowedImageFile(file: File | null | undefined) {
+  return !!file && file.size > 0 && file.type.startsWith('image/') && hasAllowedExtension(file.name, ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg']);
+}
+
+function isAllowedMarkdownFile(file: File | null | undefined) {
+  return !!file && file.size > 0 && hasAllowedExtension(file.name, ['.md']);
+}
+
+function isAllowedPdfFile(file: File | null | undefined) {
+  return !!file && file.size > 0 && (file.type === 'application/pdf' || hasAllowedExtension(file.name, ['.pdf']));
 }
 
 function ensureBlogMaster(albums: AlbumNode[]): AlbumNode {
@@ -125,6 +146,10 @@ async function readPosts(postsFile: string): Promise<BlogPost[]> {
 
 export async function POST(request: Request) {
   try {
+    if (!(await isAdminAuthenticated())) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const type = formData.get('type') as string;
 
@@ -133,7 +158,7 @@ export async function POST(request: Request) {
       const caption = (formData.get('caption') as string) || '';
       const albumId = (formData.get('albumId') as string) || 'general';
 
-      if (!file) return NextResponse.json({ success: false, message: 'No file uploaded' }, { status: 400 });
+      if (!isAllowedImageFile(file)) return NextResponse.json({ success: false, message: 'Invalid image upload' }, { status: 400 });
 
       const bytes = await file.arrayBuffer();
       const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
@@ -161,11 +186,14 @@ export async function POST(request: Request) {
       const image = formData.get('image') as File;
       const mdFile = formData.get('markdown') as File;
 
-      if (!title || !description || !image || !mdFile) {
+      if (!title || !description || !isAllowedImageFile(image) || !isAllowedMarkdownFile(mdFile)) {
         return NextResponse.json({ success: false, message: 'Missing blog fields' }, { status: 400 });
       }
 
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      if (!isSafeBlogSlug(slug)) {
+        return NextResponse.json({ success: false, message: 'Invalid blog slug' }, { status: 400 });
+      }
       const blogDir = path.join(base, 'blog');
       await mkdir(blogDir, { recursive: true });
 
@@ -225,7 +253,7 @@ export async function POST(request: Request) {
     if (type === 'blog-update-md') {
       const slug = formData.get('slug') as string;
       const mdFile = formData.get('markdown') as File;
-      if (!slug || !mdFile) {
+      if (!slug || !isSafeBlogSlug(slug) || !isAllowedMarkdownFile(mdFile)) {
         return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
       }
 
@@ -237,7 +265,7 @@ export async function POST(request: Request) {
     if (type === 'blog-update-image') {
       const slug = formData.get('slug') as string;
       const image = formData.get('image') as File;
-      if (!slug || !image) {
+      if (!slug || !isSafeBlogSlug(slug) || !isAllowedImageFile(image)) {
         return NextResponse.json({ success: false, message: 'Missing fields' }, { status: 400 });
       }
 
@@ -282,7 +310,7 @@ export async function POST(request: Request) {
       const slug = formData.get('slug') as string;
       const description = (formData.get('description') as string) || '';
       const imageFile = formData.get('image') as File;
-      if (!slug || !imageFile) {
+      if (!slug || !isSafeBlogSlug(slug) || !isAllowedImageFile(imageFile)) {
         return NextResponse.json({ success: false, message: 'Missing fields for blog photo' }, { status: 400 });
       }
 
@@ -317,7 +345,7 @@ export async function POST(request: Request) {
       const docName = formData.get('name') as string;
       const category = (formData.get('category') as string) || 'Uncategorized';
 
-      if (!file) return NextResponse.json({ success: false, message: 'No file uploaded' }, { status: 400 });
+      if (!isAllowedPdfFile(file)) return NextResponse.json({ success: false, message: 'Invalid PDF upload' }, { status: 400 });
       if (!docName) return NextResponse.json({ success: false, message: 'A document name is required' }, { status: 400 });
 
       const bytes = await file.arrayBuffer();

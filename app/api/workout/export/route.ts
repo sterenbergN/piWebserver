@@ -1,7 +1,7 @@
-import { cookies } from 'next/headers';
 import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
 import { removeCardioHistoryEntries } from '@/lib/workout/history';
 import { normalizeUsersData, normalizeWorkoutUser } from '@/lib/workout/users';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 
 function escapeCsv(value: unknown) {
   if (value === null || value === undefined) return '';
@@ -13,8 +13,7 @@ function escapeCsv(value: unknown) {
 }
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const userId = cookieStore.get('workout_auth')?.value;
+  const userId = await getAuthenticatedWorkoutUserId();
 
   if (!userId) {
     return new Response('Unauthorized', { status: 401 });
