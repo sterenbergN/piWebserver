@@ -34,6 +34,7 @@ interface Gym {
   name: string;
   emoji?: string;
   ownerId: string;
+  isPublic?: boolean;
   stations: Station[];
 }
 
@@ -50,6 +51,7 @@ export default function GymEditor() {
   const [editingGymId, setEditingGymId] = useState<string | null>(null);
   const [newGymName, setNewGymName] = useState('');
   const [newGymEmoji, setNewGymEmoji] = useState('🏋️');
+  const [newGymIsPublic, setNewGymIsPublic] = useState(false);
   
   const [addingStation, setAddingStation] = useState(false);
   const [editingStationId, setEditingStationId] = useState<string | null>(null);
@@ -88,6 +90,14 @@ export default function GymEditor() {
     setAddingLift(false);
     setEditingLiftId(null);
     setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' });
+  };
+
+  const resetGymEditor = () => {
+    setAddingGym(false);
+    setEditingGymId(null);
+    setNewGymName('');
+    setNewGymEmoji('🏋️');
+    setNewGymIsPublic(false);
   };
 
   const parseOptionalNumber = (value: string) => {
@@ -153,7 +163,7 @@ export default function GymEditor() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/workout/gyms').then(r => r.json()),
+      fetch('/api/workout/gyms?scope=all').then(r => r.json()),
       fetch('/api/workout/auth').then(r => r.json())
     ]).then(([dGyms, dAuth]) => {
       if (dGyms.success) setGyms(dGyms.gyms);
@@ -172,14 +182,12 @@ export default function GymEditor() {
 
   const handleCreateGym = async () => {
     if (!newGymName) return;
-    const res = await fetch('/api/workout/gyms', { method: 'POST', body: JSON.stringify({ name: newGymName, emoji: newGymEmoji }) });
+    const res = await fetch('/api/workout/gyms', { method: 'POST', body: JSON.stringify({ name: newGymName, emoji: newGymEmoji, isPublic: newGymIsPublic }) });
     const data = await res.json();
     if (data.success) {
       setGyms([...gyms, data.gym]);
       setActiveGym(data.gym);
-      setAddingGym(false);
-      setNewGymName('');
-      setNewGymEmoji('🏋️');
+      resetGymEditor();
     }
   };
 
@@ -192,17 +200,14 @@ export default function GymEditor() {
 
       const res = await fetch('/api/workout/gyms', {
         method: 'PUT',
-        body: JSON.stringify({ ...gymToUpdate, name: newGymName, emoji: newGymEmoji }),
+        body: JSON.stringify({ ...gymToUpdate, name: newGymName, emoji: newGymEmoji, isPublic: newGymIsPublic }),
       });
       const data = await res.json();
       if (data.success) {
         setGyms(gyms.map((gym) => (gym.id === data.gym.id ? data.gym : gym)));
         if (activeGym?.id === data.gym.id) setActiveGym(data.gym);
       }
-      setAddingGym(false);
-      setEditingGymId(null);
-      setNewGymName('');
-      setNewGymEmoji('🏋️');
+      resetGymEditor();
       return;
     }
 
@@ -224,7 +229,7 @@ export default function GymEditor() {
     setSystemPopup({ title: 'Import Gym', message: `Import all stations & lifts from ${gymToImport.name}?`, onConfirm: async () => {
         const res = await fetch('/api/workout/gyms', { 
             method: 'POST', 
-            body: JSON.stringify({ name: `${gymToImport.name} (Copy)`, emoji: gymToImport.emoji, stations: gymToImport.stations }) 
+            body: JSON.stringify({ name: `${gymToImport.name} (Copy)`, emoji: gymToImport.emoji, stations: gymToImport.stations, isPublic: false }) 
         });
         const data = await res.json();
         if (data.success) setGyms([...gyms, data.gym]);
@@ -475,7 +480,7 @@ export default function GymEditor() {
               <input
                 className="workout-input"
                 type="number"
-                placeholder="Jump Δ"
+                placeholder="Jump Î”"
                 value={newStation.increment ?? ''}
                 onChange={e => setNewStation({ ...newStation, increment: parseOptionalNumber(e.target.value) })}
               />
@@ -513,7 +518,7 @@ export default function GymEditor() {
               {(newStation.attachments || []).map(att => (
                 <span key={att} style={{ fontSize: '0.8rem', background: 'rgba(var(--accent-rgb),0.15)', color: 'var(--accent)', padding: '0.2rem 0.6rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                   {att}
-                  <button onClick={() => handleRemoveAttachment(att)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: 0, fontSize: '0.8rem' }}>✕</button>
+                  <button onClick={() => handleRemoveAttachment(att)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: 0, fontSize: '0.8rem' }}>×</button>
                 </span>
               ))}
             </div>
@@ -559,20 +564,20 @@ export default function GymEditor() {
               <div key={g.id} style={{ display: 'flex', gap: '0.5rem' }}>
                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '1rem', border: '1px solid var(--surface-border)', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }} onClick={() => setActiveGym(g)}>
                    <strong>{g.emoji || '🏋️'} {g.name}</strong>
-                   <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{g.stations?.length || 0} Stations</span>
+                   <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{g.stations?.length || 0} Stations {g.isPublic ? '• Published' : '• Private'}</span>
                  </button>
                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                    <button className="btn btn-secondary" style={{ padding: '0.65rem 0.9rem', fontSize: '0.8rem', borderRadius: '12px' }} onClick={() => { setAddingGym(true); setEditingGymId(g.id); setNewGymName(g.name); setNewGymEmoji(g.emoji || '🏋️'); }}>
+                    <button className="btn btn-secondary" style={{ padding: '0.65rem 0.9rem', fontSize: '0.8rem', borderRadius: '12px' }} onClick={() => { setAddingGym(true); setEditingGymId(g.id); setNewGymName(g.name); setNewGymEmoji(g.emoji || '🏋️'); setNewGymIsPublic(g.isPublic === true); }}>
                       Edit
                     </button>
-                    <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0.65rem 0.9rem' }} onClick={() => handleDeleteGym(g.id)}>✕</button>
+                    <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0.65rem 0.9rem' }} onClick={() => handleDeleteGym(g.id)}>Delete</button>
                  </div>
               </div>
             ))}
           </div>
 
           {!addingGym ? (
-            <button className="workout-btn-primary" onClick={() => { setAddingGym(true); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); }}>+ Create New Gym</button>
+            <button className="workout-btn-primary" onClick={() => { setAddingGym(true); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); setNewGymIsPublic(false); }}>+ Create New Gym</button>
           ) : (
             <div ref={gymFormRef} style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--accent)' }}>
                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -585,17 +590,25 @@ export default function GymEditor() {
                <input className="workout-input" placeholder="Gym Name (e.g. Planet Fitness)" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
               
               <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.5rem' }}>Choose Emoji</label>
-              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-                {GYM_EMOJIS.map(em => (
-                  <button key={em} onClick={() => setNewGymEmoji(em)} style={{ fontSize: '1.5rem', width: '40px', height: '40px', border: newGymEmoji === em ? '2px solid var(--accent)' : '1px solid var(--surface-border)', borderRadius: '8px', background: newGymEmoji === em ? 'rgba(var(--accent-rgb),0.15)' : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{em}</button>
-                ))}
-              </div>
+               <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                 {GYM_EMOJIS.map(em => (
+                   <button key={em} onClick={() => setNewGymEmoji(em)} style={{ fontSize: '1.5rem', width: '40px', height: '40px', border: newGymEmoji === em ? '2px solid var(--accent)' : '1px solid var(--surface-border)', borderRadius: '8px', background: newGymEmoji === em ? 'rgba(var(--accent-rgb),0.15)' : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{em}</button>
+                 ))}
+               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSubmitGym}>{editingGymId ? 'Save Gym' : 'Create'}</button>
-                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => { setAddingGym(false); setEditingGymId(null); setNewGymName(''); setNewGymEmoji('🏋️'); }}>Cancel</button>
-              </div>
-            </div>
+               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer' }}>
+                 <input type="checkbox" checked={newGymIsPublic === true} onChange={(e) => setNewGymIsPublic(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+                 <div>
+                   <div style={{ fontWeight: 600 }}>Publish this gym for others to import</div>
+                   <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Published gyms appear in the public import list. Private gyms are visible only to you.</div>
+                 </div>
+               </label>
+
+               <div style={{ display: 'flex', gap: '0.5rem' }}>
+                 <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSubmitGym}>{editingGymId ? 'Save Gym' : 'Create'}</button>
+                 <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetGymEditor}>Cancel</button>
+               </div>
+             </div>
           )}
 
           {otherGyms.length > 0 && (
@@ -645,15 +658,16 @@ export default function GymEditor() {
         // --- GYM STATIONS VIEW ---
         <div className="animate-fade-in">
           <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
-             <h3 style={{ margin: 0 }}>{activeGym.emoji || '📍'} {activeGym.name}</h3>
+             <h3 style={{ margin: 0 }}>{activeGym.emoji || '🏋️'} {activeGym.name}</h3>
              <div style={{ display: 'flex', gap: '0.5rem' }}>
                <button
                  className="btn btn-secondary"
                   onClick={() => {
-                    setAddingGym(true);
-                    setEditingGymId(activeGym.id);
-                    setNewGymName(activeGym.name);
-                    setNewGymEmoji(activeGym.emoji || '🏋️');
+                     setAddingGym(true);
+                     setEditingGymId(activeGym.id);
+                     setNewGymName(activeGym.name);
+                     setNewGymEmoji(activeGym.emoji || '🏋️');
+                     setNewGymIsPublic(activeGym.isPublic === true);
                     resetStationEditor();
                     setActiveGym(null);
                   }}
@@ -693,7 +707,7 @@ export default function GymEditor() {
                       >
                         {addingStation && editingStationId === st.id ? 'Close' : 'Edit'}
                       </button>
-                      <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>✕ Delete Station</button>
+                      <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>Delete Station</button>
                     </div>
                  </div>
                  
@@ -716,7 +730,7 @@ export default function GymEditor() {
                                  )}
                                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>{l.primaryMuscle} {l.secondaryMuscle !== 'None' && ('/ ' + l.secondaryMuscle)} {l.singleArmLeg && '(Single Limb)'} {l.attachment && ('- ' + l.attachment)}</span>
                               </div>
-                              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
                                  <button style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem' }} onClick={() => {
                                    if (addingLift && editingLiftId === l.id) {
                                      resetLiftEditor();
@@ -769,7 +783,7 @@ export default function GymEditor() {
              <div className="workout-tile animate-fade-in" style={{ width: '90%', maxWidth: '400px' }}>
                  <h3 style={{ margin: '0 0 1rem 0' }}>{systemPopup.title}</h3>
                  <p style={{ fontSize: '0.9rem', color: 'var(--muted)', marginBottom: '1.5rem' }}>{systemPopup.message}</p>
-                 <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button className="workout-btn-primary" style={{ margin: 0, flex: 1, background: '#ff6b6b' }} onClick={systemPopup.onConfirm}>Confirm</button>
                     <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setSystemPopup(null)}>Cancel</button>
                  </div>
@@ -780,3 +794,8 @@ export default function GymEditor() {
     </div>
   );
 }
+
+
+
+
+

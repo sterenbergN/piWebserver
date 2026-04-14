@@ -46,7 +46,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: false, message: "Username already exists" }, { status: 400 });
     }
 
-    const user = {
+    const user = normalizeWorkoutUser({
       id: generateId(),
       username: newUser.username,
       password: hashPassword(newUser.password),
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
       gender: newUser.gender || 'unspecified',
       weight: newUser.weight || 0,
       createdAt: new Date().toISOString()
-    };
+    });
 
     data.users.push(user);
     await saveWorkoutData('users.json', data);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
+import { normalizeBirthdate } from '@/lib/workout/birthdate';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; }
 interface Project { id: string; name: string; description: string; category: string; blogSlug: string; }
@@ -424,7 +425,7 @@ export default function AdminDashboard() {
                 <h4>New Workout User</h4>
                 <input placeholder="Username *" value={newWorkoutUser.username} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, username: e.target.value })} />
                 <input type="password" placeholder="Password *" value={newWorkoutUser.password} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, password: e.target.value })} />
-                <input placeholder="Birthdate (YYYY-MM-DD)" value={newWorkoutUser.birthdate} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, birthdate: e.target.value })} />
+                <input placeholder="Birthdate (MM-DD-YYYY)" value={newWorkoutUser.birthdate} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, birthdate: e.target.value })} />
                 <input placeholder="Height (e.g. 5'10 or 70 inches)" value={newWorkoutUser.height} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, height: e.target.value })} />
                 <select value={newWorkoutUser.gender} onChange={e => setNewWorkoutUser({ ...newWorkoutUser, gender: e.target.value })} style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
                   <option value="unspecified">Unspecified gender</option>
@@ -443,7 +444,7 @@ export default function AdminDashboard() {
                     <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       <input value={editingWorkoutUser.username} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, username: e.target.value })} placeholder="Username" />
                       <input type="password" placeholder="New Password (optional)" value={editingWorkoutUser.password || ''} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, password: e.target.value })} />
-                      <input value={editingWorkoutUser.birthdate} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, birthdate: e.target.value })} placeholder="Birthdate" />
+                      <input value={editingWorkoutUser.birthdate} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, birthdate: e.target.value })} placeholder="Birthdate (MM-DD-YYYY)" />
                       <input value={editingWorkoutUser.height} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, height: e.target.value })} placeholder="Height" />
                       <select value={editingWorkoutUser.gender} onChange={e => setEditingWorkoutUser({ ...editingWorkoutUser, gender: e.target.value })} style={{ background: 'var(--input-bg)', color: 'var(--foreground)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
                         <option value="unspecified">Unspecified gender</option>
@@ -461,7 +462,7 @@ export default function AdminDashboard() {
                       <div style={{ flex: 1 }}>
                         <strong>{u.username}</strong>
                         <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', opacity: 0.7 }}>
-                          {u.gender !== 'unspecified' ? u.gender : ''} | {u.weight ? `${u.weight} lbs` : ''} | {u.height ? u.height : ''} | {u.birthdate ? `DOB: ${u.birthdate}` : ''}
+                          {u.gender !== 'unspecified' ? u.gender : ''} | {u.weight ? `${u.weight} lbs` : ''} | {u.height ? u.height : ''} | {u.birthdate ? `DOB: ${normalizeBirthdate(u.birthdate)}` : ''}
                         </p>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>

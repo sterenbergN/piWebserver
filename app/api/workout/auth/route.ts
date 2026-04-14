@@ -84,13 +84,14 @@ export async function PATCH(request: Request) {
     if (userIndex > -1) {
       // Merge all safe updates
       const user = usersData.users[userIndex];
-      const updatedUser = normalizeWorkoutUser({
-         ...user,
-         weight: updates.weight !== undefined ? Number(updates.weight) : user.weight,
-         height: updates.height !== undefined ? Number(updates.height) : user.height,
-         gender: updates.gender !== undefined ? updates.gender : user.gender,
-         intensityFactor: updates.intensityFactor !== undefined ? Number(updates.intensityFactor) : user.intensityFactor
-      });
+       const updatedUser = normalizeWorkoutUser({
+          ...user,
+          birthdate: updates.birthdate !== undefined ? updates.birthdate : user.birthdate,
+          weight: updates.weight !== undefined ? Number(updates.weight) : user.weight,
+          height: updates.height !== undefined ? Number(updates.height) : user.height,
+          gender: updates.gender !== undefined ? updates.gender : user.gender,
+          intensityFactor: updates.intensityFactor !== undefined ? Number(updates.intensityFactor) : user.intensityFactor
+       });
       
       usersData.users[userIndex] = updatedUser;
       await saveWorkoutData('users.json', usersData);
