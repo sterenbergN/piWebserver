@@ -9,6 +9,7 @@ interface SystemStats {
   storage: string;
   uptime?: string;
   cpu?: string;
+  network?: string;
 }
 
 interface StatHistory {

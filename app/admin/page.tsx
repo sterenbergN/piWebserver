@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { normalizeBirthdate } from '@/lib/workout/birthdate';
 
-interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; }
+interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; network?: string; }
 interface Project { id: string; name: string; description: string; category: string; blogSlug: string; }
 interface CADProject { id: string; name: string; description: string; link: string; }
 interface WorkoutUser { id: string; username: string; password?: string; birthdate: string; height: string; gender: string; weight: number; }
+interface SiteVisit { timestamp: string; path: string; }
 
 type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad' | 'workout-users';
 
@@ -18,6 +19,7 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<UploadTab>('gallery');
   const [uploadLoading, setUploadLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
+  const [analytics, setAnalytics] = useState<SiteVisit[] | null>(null);
 
   // Gallery albums for selector
   const [albums, setAlbums] = useState<{ id: string; name: string }[]>([]);
@@ -45,6 +47,7 @@ export default function AdminDashboard() {
 
   const fetchStats = () => {
     fetch('/api/stats').then(r => r.json()).then(d => { if (d?.success) setStats(d.data); setStatsLoading(false); }).catch(() => setStatsLoading(false));
+    fetch('/api/analytics').then(r => r.json()).then(d => { if (d?.success) setAnalytics(d.visits); }).catch(console.error);
   };
 
   useEffect(() => {
@@ -58,7 +61,7 @@ export default function AdminDashboard() {
     if (activeTab === 'gallery') {
       fetch('/api/gallery').then(r => r.json()).then(d => { if (d.success) setAlbums(d.albums.map((a: any) => ({ id: a.id, name: a.name }))); });
     }
-    if (activeTab === 'blog-photo') {
+    if (activeTab === 'blog-photo' || activeTab === 'blog') {
       fetch('/api/blog').then(r => r.json()).then(d => { if (d.success) setPosts(d.posts.map((p: any) => ({ slug: p.slug, title: p.title }))); });
     }
     if (activeTab === 'projects') {
@@ -283,6 +286,7 @@ export default function AdminDashboard() {
                 { label: 'Storage', value: stats.storage.split('(')[0].trim() },
                 ...(stats.cpu !== undefined ? [{ label: 'CPU Load', value: `${stats.cpu}%` }] : []),
                 ...(stats.uptime ? [{ label: 'Uptime', value: '', sub: stats.uptime }] : []),
+                ...(stats.network ? [{ label: 'Network', value: stats.network.split('|')[0]?.trim() || '', sub: stats.network.split('|')[1]?.trim() || '' }] : []),
               ].map(tile => (
                 <div key={tile.label} className="glass-panel" style={{ textAlign: 'center', padding: '1.5rem 1rem' }}>
                   <h4 style={{ color: 'var(--accent-light)', marginBottom: '0.5rem', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tile.label}</h4>
@@ -292,6 +296,37 @@ export default function AdminDashboard() {
               ))}
             </div>
           ) : <p>Failed to load stats.</p>}
+      </div>
+
+      {/* Site Analytics */}
+      <div style={{ marginBottom: '4rem' }}>
+        <h2 style={{ marginBottom: '1.5rem' }}>Site Visits (Page Views)</h2>
+        {!analytics ? <p>Loading analytics...</p> : (
+          (() => {
+            const now = Date.now();
+            const counts = {
+              day: analytics.filter(v => now - new Date(v.timestamp).getTime() < 86400000).length,
+              week: analytics.filter(v => now - new Date(v.timestamp).getTime() < 86400000 * 7).length,
+              month: analytics.filter(v => now - new Date(v.timestamp).getTime() < 86400000 * 30).length,
+              total: analytics.length
+            };
+            return (
+              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem' }}>
+                {[
+                  { label: 'Last 24 Hours', value: counts.day },
+                  { label: 'Last 7 Days', value: counts.week },
+                  { label: 'Last 30 Days', value: counts.month },
+                  { label: 'All Time', value: counts.total }
+                ].map(tile => (
+                  <div key={tile.label} className="glass-panel" style={{ textAlign: 'center', padding: '1.5rem 1rem' }}>
+                    <h4 style={{ color: 'var(--accent-light)', marginBottom: '0.5rem', fontSize: '0.82rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{tile.label}</h4>
+                    <p style={{ fontSize: '1.6rem', fontWeight: 'bold', margin: 0, fontFamily: 'monospace', color: 'var(--foreground)' }}>{tile.value}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()
+        )}
       </div>
 
       {/* Content Manager */}

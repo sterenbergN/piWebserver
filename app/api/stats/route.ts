@@ -17,7 +17,8 @@ export async function GET() {
           ram: 'Mock: 3.2GB / 8GB',
           storage: 'Mock: 15GB / 64GB (76% Free)',
           uptime: 'up 3 days, 4 hours, 12 minutes',
-          cpu: '12.5'
+          cpu: '12.5',
+          network: '↓ 12.4 GB | ↑ 3.2 GB'
         }
       });
     }
@@ -55,6 +56,23 @@ export async function GET() {
       cpuStr = Math.min(100, (loadAvg / cores) * 100).toFixed(1);
     } catch { /* fallback */ }
 
+    // Network bandwidth (total traffic)
+    let networkStr = 'N/A';
+    try {
+      const { stdout: netOut } = await execAsync("cat /proc/net/dev | awk 'NR>2 {if ($1 !~ /lo:/) {rx+=$2; tx+=$10}} END {print rx \"|\" tx}'");
+      const [rxBytes, txBytes] = netOut.trim().split('|').map(Number);
+      
+      const formatBytes = (bytes: number) => {
+        if (isNaN(bytes)) return '0 B';
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        if (bytes === 0) return '0 B';
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
+      };
+      
+      networkStr = `↓ ${formatBytes(rxBytes)} | ↑ ${formatBytes(txBytes)}`;
+    } catch { /* fallback */ }
+
     return NextResponse.json({
       success: true,
       data: {
@@ -63,7 +81,8 @@ export async function GET() {
         ram: ramOut ? ramOut.trim() : 'N/A',
         storage: diskOut ? diskOut.trim() : 'N/A',
         uptime: uptimeStr,
-        cpu: cpuStr
+        cpu: cpuStr,
+        network: networkStr
       }
     });
   } catch (error) {

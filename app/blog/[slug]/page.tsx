@@ -59,6 +59,17 @@ export default function BlogPost() {
     }
     setSavingPhoto(false);
   };
+  const handleDownloadMarkdown = () => {
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${slug}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleUpdateFile = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -119,6 +130,9 @@ export default function BlogPost() {
                 </button>
                 <button className="btn btn-secondary" onClick={() => setUpdatingMode(updatingMode === 'md' ? null : 'md')} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
                   {updatingMode === 'md' ? 'Cancel' : '📝 Update Markdown'}
+                </button>
+                <button className="btn btn-secondary" onClick={handleDownloadMarkdown} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+                  ⬇️ Download .md
                 </button>
               </div>
             )}

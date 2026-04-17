@@ -3,6 +3,7 @@ import Link from "next/link";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
 import { isAdminAuthenticated } from "@/lib/security/server-auth";
+import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,6 +25,7 @@ export default async function RootLayout({
       </head>
       <body>
         <ThemeProvider>
+          <AnalyticsTracker />
           <Navbar isAdmin={isAdmin} />
           <main className="container">
             {children}
