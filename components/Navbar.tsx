@@ -13,7 +13,7 @@ export default function Navbar({ isAdmin }: { isAdmin: boolean }) {
   const links = [
     { href: '/', label: 'About' },
     { href: '/gallery', label: 'Gallery' },
-    { href: '/blog', label: 'Blog' },
+    { href: '/blog', label: 'Posts' },
     { href: '/library', label: 'Library' },
     { href: '/game', label: 'Play' },
     { href: '/workout', label: 'Workout' },
