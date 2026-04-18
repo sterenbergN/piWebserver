@@ -16,7 +16,9 @@ export default function Navbar({ isAdmin }: { isAdmin: boolean }) {
     { href: '/blog', label: 'Posts' },
     { href: '/library', label: 'Library' },
     { href: '/game', label: 'Play' },
+    { href: '/party', label: 'Party' },
     { href: '/workout', label: 'Workout' },
+    { href: '/tools', label: 'Tools' },
     { href: '/stats', label: 'Stats' },
     ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : [])
   ];

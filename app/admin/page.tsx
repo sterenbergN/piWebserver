@@ -9,8 +9,10 @@ interface Project { id: string; name: string; description: string; category: str
 interface CADProject { id: string; name: string; description: string; link: string; }
 interface WorkoutUser { id: string; username: string; password?: string; birthdate: string; height: string; gender: string; weight: number; }
 interface SiteVisit { timestamp: string; path: string; }
+interface Skill { id: string; name: string; linkedPosts: { title: string; slug: string; }[]; }
+interface ExperienceEntry { id: string; role: string; company: string; period: string; description: string; details: string[]; }
 
-type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad' | 'workout-users';
+type UploadTab = 'gallery' | 'blog' | 'blog-photo' | 'library' | 'projects' | 'cad' | 'workout-users' | 'skills' | 'experience';
 
 export default function AdminDashboard() {
   const { confirm, popup } = useSitePopup();
@@ -44,6 +46,19 @@ export default function AdminDashboard() {
   const [addingWorkoutUser, setAddingWorkoutUser] = useState(false);
   const [newWorkoutUser, setNewWorkoutUser] = useState<Partial<WorkoutUser>>({ username: '', password: '', birthdate: '', height: '', gender: 'unspecified', weight: 0 });
   const [workoutUserSaving, setWorkoutUserSaving] = useState(false);
+  // Skills
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+  const [addingSkill, setAddingSkill] = useState(false);
+  const [newSkill, setNewSkill] = useState({ name: '', linkedPostSlugs: [] as string[] });
+  const [skillSaving, setSkillSaving] = useState(false);
+
+  // Experience
+  const [experience, setExperience] = useState<ExperienceEntry[]>([]);
+  const [editingExperience, setEditingExperience] = useState<ExperienceEntry | null>(null);
+  const [addingExperience, setAddingExperience] = useState(false);
+  const [newExperience, setNewExperience] = useState({ role: '', company: '', period: '', description: '', detailsText: '' });
+  const [experienceSaving, setExperienceSaving] = useState(false);
 
   const fetchStats = () => {
     fetch('/api/stats').then(r => r.json()).then(d => { if (d?.success) setStats(d.data); setStatsLoading(false); }).catch(() => setStatsLoading(false));
@@ -72,6 +87,13 @@ export default function AdminDashboard() {
     }
     if (activeTab === 'workout-users') {
       fetch('/api/workout/users').then(r => r.json()).then(d => { if (d.success) setWorkoutUsers(d.users); });
+    }
+    if (activeTab === 'skills') {
+      fetch('/api/skills').then(r => r.json()).then(d => { if (d.success) setSkills(d.skills); });
+      fetch('/api/blog').then(r => r.json()).then(d => { if (d.success) setPosts(d.posts.map((p: any) => ({ slug: p.slug, title: p.title }))); });
+    }
+    if (activeTab === 'experience') {
+      fetch('/api/experience').then(r => r.json()).then(d => { if (d.success) setExperience(d.experience); });
     }
   }, [activeTab]);
 
@@ -250,6 +272,59 @@ export default function AdminDashboard() {
     setWorkoutUsers(workoutUsers.filter(u => u.id !== id));
   };
 
+  const handleAddSkill = async () => {
+    if (!newSkill.name) return;
+    setSkillSaving(true);
+    const linkedPosts = newSkill.linkedPostSlugs.map(slug => {
+      const p = posts.find(p => p.slug === slug);
+      return { title: p?.title || slug, slug };
+    });
+    const res = await fetch('/api/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newSkill.name, linkedPosts }) });
+    const data = await res.json();
+    if (data.success) { setSkills([...skills, data.skill]); setNewSkill({ name: '', linkedPostSlugs: [] }); setAddingSkill(false); }
+    setSkillSaving(false);
+  };
+
+  const handleUpdateSkill = async () => {
+    if (!editingSkill) return;
+    setSkillSaving(true);
+    const res = await fetch('/api/skills', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingSkill) });
+    const data = await res.json();
+    if (data.success) { setSkills(skills.map(s => s.id === editingSkill.id ? editingSkill : s)); setEditingSkill(null); }
+    setSkillSaving(false);
+  };
+
+  const handleDeleteSkill = async (id: string) => {
+    if (!(await confirm({ title: 'Delete Skill', message: 'Delete this skill?', confirmLabel: 'Delete', danger: true }))) return;
+    await fetch('/api/skills', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    setSkills(skills.filter(s => s.id !== id));
+  };
+
+  const handleAddExperience = async () => {
+    if (!newExperience.role || !newExperience.company) return;
+    setExperienceSaving(true);
+    const details = newExperience.detailsText.split('\n').filter(d => d.trim());
+    const res = await fetch('/api/experience', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newExperience, details }) });
+    const data = await res.json();
+    if (data.success) { setExperience([...experience, data.entry]); setNewExperience({ role: '', company: '', period: '', description: '', detailsText: '' }); setAddingExperience(false); }
+    setExperienceSaving(false);
+  };
+
+  const handleUpdateExperience = async () => {
+    if (!editingExperience) return;
+    setExperienceSaving(true);
+    const res = await fetch('/api/experience', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingExperience) });
+    const data = await res.json();
+    if (data.success) { setExperience(experience.map(e => e.id === editingExperience.id ? editingExperience : e)); setEditingExperience(null); }
+    setExperienceSaving(false);
+  };
+
+  const handleDeleteExperience = async (id: string) => {
+    if (!(await confirm({ title: 'Delete Experience', message: 'Delete this experience entry?', confirmLabel: 'Delete', danger: true }))) return;
+    await fetch('/api/experience', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    setExperience(experience.filter(e => e.id !== id));
+  };
+
   const msgStyle = (type: string) => ({
     padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
     background: type === 'success' ? 'rgba(72, 187, 120, 0.1)' : 'rgba(245, 101, 101, 0.1)',
@@ -264,6 +339,8 @@ export default function AdminDashboard() {
     { id: 'library', label: '📁 Library PDF' },
     { id: 'projects', label: '🔧 Projects' },
     { id: 'cad', label: '📐 CAD Projects' },
+    { id: 'skills', label: '🧠 Skills' },
+    { id: 'experience', label: '⌛ Experience' },
     { id: 'workout-users', label: '🏋️ Workout Users' },
   ];
 
@@ -509,6 +586,138 @@ export default function AdminDashboard() {
                 </div>
               ))}
               {workoutUsers.length === 0 && <p>No workout users yet.</p>}
+            </div>
+          </div>
+        ) : activeTab === 'skills' ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3>Manage Skills</h3>
+              <button className="btn btn-primary" onClick={() => setAddingSkill(!addingSkill)}>{addingSkill ? 'Cancel' : '+ Add Skill'}</button>
+            </div>
+            {addingSkill && (
+              <div className="glass-panel animate-fade-in" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h4>New Skill</h4>
+                <input placeholder="Skill Name (e.g. Python) *" value={newSkill.name} onChange={e => setNewSkill({ ...newSkill, name: e.target.value })} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0.5rem 0 0' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: 0 }}>Link Blog Posts <span style={{ opacity: 0.5 }}>(optional — select multiple or none)</span></p>
+                  {newSkill.linkedPostSlugs.length > 0 && <button type="button" onClick={() => setNewSkill({ ...newSkill, linkedPostSlugs: [] })} style={{ fontSize: '0.75rem', background: 'rgba(235,77,75,0.15)', color: '#eb4d4b', border: '1px solid rgba(235,77,75,0.3)', borderRadius: '6px', padding: '0.2rem 0.6rem', cursor: 'pointer' }}>Clear All</button>}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: 'var(--input-bg)', borderRadius: '8px' }}>
+                  {posts.map(p => (
+                    <label key={p.slug} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', cursor: 'pointer', padding: '0.4rem 0.6rem', borderRadius: '6px', background: newSkill.linkedPostSlugs.includes(p.slug) ? 'rgba(107,70,193,0.15)' : 'transparent', border: newSkill.linkedPostSlugs.includes(p.slug) ? '1px solid var(--accent)' : '1px solid transparent', transition: 'all 0.15s' }}>
+                      <input type="checkbox" checked={newSkill.linkedPostSlugs.includes(p.slug)} onChange={e => {
+                        if (e.target.checked) setNewSkill({ ...newSkill, linkedPostSlugs: [...newSkill.linkedPostSlugs, p.slug] });
+                        else setNewSkill({ ...newSkill, linkedPostSlugs: newSkill.linkedPostSlugs.filter(s => s !== p.slug) });
+                      }} style={{ accentColor: 'var(--accent)', width: '16px', height: '16px', cursor: 'pointer' }} />
+                      {p.title}
+                    </label>
+                  ))}
+                  {posts.length === 0 && <p style={{ fontSize: '0.8rem', opacity: 0.5 }}>No blog posts found.</p>}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--muted)', opacity: 0.6 }}>{newSkill.linkedPostSlugs.length} post{newSkill.linkedPostSlugs.length !== 1 ? 's' : ''} selected</div>
+                <button className="btn btn-primary" onClick={handleAddSkill} disabled={skillSaving} style={{ alignSelf: 'flex-start' }}>{skillSaving ? 'Saving...' : 'Add Skill'}</button>
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {skills.map(s => (
+                <div key={s.id}>
+                  {editingSkill?.id === s.id ? (
+                    <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <input value={editingSkill.name} onChange={e => setEditingSkill({ ...editingSkill, name: e.target.value })} />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0.5rem 0 0' }}>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: 0 }}>Linked Posts <span style={{ opacity: 0.5 }}>(optional)</span></p>
+                        {editingSkill.linkedPosts.length > 0 && <button type="button" onClick={() => setEditingSkill({ ...editingSkill, linkedPosts: [] })} style={{ fontSize: '0.75rem', background: 'rgba(235,77,75,0.15)', color: '#eb4d4b', border: '1px solid rgba(235,77,75,0.3)', borderRadius: '6px', padding: '0.2rem 0.6rem', cursor: 'pointer' }}>Clear All</button>}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: 'var(--input-bg)', borderRadius: '8px' }}>
+                        {posts.map(p => (
+                          <label key={p.slug} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', cursor: 'pointer', padding: '0.4rem 0.6rem', borderRadius: '6px', background: editingSkill.linkedPosts.some(lp => lp.slug === p.slug) ? 'rgba(107,70,193,0.15)' : 'transparent', border: editingSkill.linkedPosts.some(lp => lp.slug === p.slug) ? '1px solid var(--accent)' : '1px solid transparent', transition: 'all 0.15s' }}>
+                            <input type="checkbox" checked={editingSkill.linkedPosts.some(lp => lp.slug === p.slug)} onChange={e => {
+                              if (e.target.checked) setEditingSkill({ ...editingSkill, linkedPosts: [...editingSkill.linkedPosts, { title: p.title, slug: p.slug }] });
+                              else setEditingSkill({ ...editingSkill, linkedPosts: editingSkill.linkedPosts.filter(lp => lp.slug !== p.slug) });
+                            }} style={{ accentColor: 'var(--accent)', width: '16px', height: '16px', cursor: 'pointer' }} />
+                            {p.title}
+                          </label>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--muted)', opacity: 0.6 }}>{editingSkill.linkedPosts.length} post{editingSkill.linkedPosts.length !== 1 ? 's' : ''} selected</div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" onClick={handleUpdateSkill} disabled={skillSaving}>{skillSaving ? 'Saving...' : 'Save'}</button>
+                        <button className="btn btn-secondary" onClick={() => setEditingSkill(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', gap: '1rem' }}>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: '1.1rem' }}>{s.name}</strong>
+                        {s.linkedPosts?.length > 0 && (
+                          <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            {s.linkedPosts.map(lp => <span key={lp.slug} style={{ fontSize: '0.7rem', background: 'rgba(255,255,255,0.05)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>{lp.title}</span>)}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.4rem 0.7rem' }} onClick={() => setEditingSkill(s)}>✏️</button>
+                        <button style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 0.7rem', cursor: 'pointer' }} onClick={() => handleDeleteSkill(s.id)}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {skills.length === 0 && <p>No skills added yet.</p>}
+            </div>
+          </div>
+        ) : activeTab === 'experience' ? (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3>Manage Experience</h3>
+              <button className="btn btn-primary" onClick={() => setAddingExperience(!addingExperience)}>{addingExperience ? 'Cancel' : '+ Add Entry'}</button>
+            </div>
+            {addingExperience && (
+              <div className="glass-panel animate-fade-in" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h4>New Entry</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <input placeholder="Role (e.g. Automation Engineer) *" value={newExperience.role} onChange={e => setNewExperience({ ...newExperience, role: e.target.value })} />
+                  <input placeholder="Company *" value={newExperience.company} onChange={e => setNewExperience({ ...newExperience, company: e.target.value })} />
+                </div>
+                <input placeholder="Period (e.g. 2023 – Present) *" value={newExperience.period} onChange={e => setNewExperience({ ...newExperience, period: e.target.value })} />
+                <textarea placeholder="Brief Summary Description" value={newExperience.description} onChange={e => setNewExperience({ ...newExperience, description: e.target.value })} rows={2} />
+                <textarea placeholder="Detail Bullets (one per line)" value={newExperience.detailsText} onChange={e => setNewExperience({ ...newExperience, detailsText: e.target.value })} rows={4} />
+                <button className="btn btn-primary" onClick={handleAddExperience} disabled={experienceSaving} style={{ alignSelf: 'flex-start' }}>{experienceSaving ? 'Saving...' : 'Add Entry'}</button>
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {experience.map(e => (
+                <div key={e.id}>
+                  {editingExperience?.id === e.id ? (
+                    <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                        <input value={editingExperience.role} onChange={val => setEditingExperience({ ...editingExperience, role: val.target.value })} />
+                        <input value={editingExperience.company} onChange={val => setEditingExperience({ ...editingExperience, company: val.target.value })} />
+                      </div>
+                      <input value={editingExperience.period} onChange={val => setEditingExperience({ ...editingExperience, period: val.target.value })} />
+                      <textarea value={editingExperience.description} onChange={val => setEditingExperience({ ...editingExperience, description: val.target.value })} rows={2} />
+                      <textarea value={editingExperience.details.join('\n')} onChange={val => setEditingExperience({ ...editingExperience, details: val.target.value.split('\n') })} rows={4} />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" onClick={handleUpdateExperience} disabled={experienceSaving}>{experienceSaving ? 'Saving...' : 'Save'}</button>
+                        <button className="btn btn-secondary" onClick={() => setEditingExperience(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', gap: '1rem' }}>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: '1.1rem' }}>{e.role} @ {e.company}</strong>
+                        <div style={{ fontSize: '0.8rem', opacity: 0.6 }}>{e.period}</div>
+                        <p style={{ fontSize: '0.85rem', margin: '0.5rem 0 0', opacity: 0.8 }}>{e.description}</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.4rem 0.7rem' }} onClick={() => setEditingExperience(e)}>✏️</button>
+                        <button style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '6px', padding: '0.4rem 0.7rem', cursor: 'pointer' }} onClick={() => handleDeleteExperience(e.id)}>✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {experience.length === 0 && <p>No experience entries added yet.</p>}
             </div>
           </div>
         ) : (
