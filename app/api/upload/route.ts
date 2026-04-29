@@ -210,9 +210,9 @@ export async function POST(request: Request) {
         await removePhysicalFile(toMediaSrc(existing.image));
       }
       if (Array.isArray(existing?.photos)) {
-        for (const photo of existing.photos) {
-          await removePhysicalFile(toMediaSrc(photo.src));
-        }
+        await Promise.all(
+          existing.photos.map((photo) => removePhysicalFile(toMediaSrc(photo.src)))
+        );
       }
 
       const newPost: BlogPost = {

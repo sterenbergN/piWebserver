@@ -113,7 +113,7 @@ export const readySetBetLogic = {
 
         // Check if race ends (a horse reaches TRACK_LENGTH)
         // If multiple reach at same time (due to bonus), the roll target is 1st.
-        let finishedHorses = Object.keys(state.gameData.positions).filter(k => state.gameData.positions[k] >= TRACK_LENGTH);
+        const finishedHorses = Object.keys(state.gameData.positions).filter(k => state.gameData.positions[k] >= TRACK_LENGTH);
         
         if (finishedHorses.length > 0) {
           // If we have winners, we need 3 finishers.
@@ -240,7 +240,7 @@ function finishRace(state: GameState) {
     for (const bet of bets) {
       const { horse, type } = bet;
       let won = 0;
-      let mults = MULTIPLIERS[horse];
+      const mults = MULTIPLIERS[horse];
       
       if (type === 'win' && horse === first) {
         won = mults.win * 100; 
