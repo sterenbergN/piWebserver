@@ -330,7 +330,7 @@ export default function WorkoutCalculatorsPage() {
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Projection start date</label>
-                <input className="workout-input" type="date" value={calorieForm.startDate || ''} onChange={(e) => setCalorieForm({ ...calorieForm, startDate: e.target.value })} />
+                <input className="workout-input" style={{ width: '100%', boxSizing: 'border-box' }} type="date" value={calorieForm.startDate || ''} onChange={(e) => setCalorieForm({ ...calorieForm, startDate: e.target.value })} />
               </div>
             </div>
           </div>

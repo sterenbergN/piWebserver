@@ -27,6 +27,9 @@ function getPossibleWeights(station: any): number[] {
        for (let w = station.minWeight || 10; w <= (station.maxWeight || 300); w += inc) {
            possible.push(w);
            if (station.additionalWeight) possible.push(w + station.additionalWeight);
+           if (station.additionalWeights) {
+               station.additionalWeights.forEach((addW: number) => possible.push(w + addW));
+           }
        }
        return Array.from(new Set(possible)).sort((a,b) => a-b);
     }
@@ -861,6 +864,12 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                         <span>🧘 Recovery</span>
                         <span>⚖️ Standard</span>
                         <span>🔥 Push</span>
+                      </div>
+                      <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-start' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.75rem', color: intensitySlider <= 0.6 ? '#63b3ed' : 'var(--muted)' }}>
+                           <input type="checkbox" checked={intensitySlider <= 0.6} onChange={(e) => handleIntensityChange(e.target.checked ? 0.6 : (user?.intensityFactor || 1.0))} />
+                           Deload Session (Recovery intensity)
+                        </label>
                       </div>
                     </div>
                   </div>

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-   BarChart, Bar
+   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore } from '@/lib/workout/analytics';
 import { analyzePerformance, type Session } from '@/lib/workout/progression';
@@ -77,6 +77,7 @@ export default function AnalyticsPage() {
    const [oneRMs, setOneRMs] = useState<any[]>([]);
    const [volumeTimeline, setVolumeTimeline] = useState<any[]>([]);
    const [volumeType, setVolumeType] = useState<any[]>([]);
+   const [volumeByMuscle, setVolumeByMuscle] = useState<any[]>([]);
    const [calorieTimeline, setCalorieTimeline] = useState<any[]>([]);
    const [overloadTracking, setOverloadTracking] = useState<any[]>([]);
    const [calibrations, setCalibrations] = useState<any[]>([]);
@@ -201,6 +202,9 @@ export default function AnalyticsPage() {
                return calibrationMap.get(`${workout.gymId}|${liftKey}`) || 1;
             };
 
+
+            const muscleVols = new Map<string, number>();
+
             histData.forEach((workout: any) => {
                 const dateStr = new Date(workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                 
@@ -211,6 +215,9 @@ export default function AnalyticsPage() {
                     let workoutMaxRM = 0;
                     Object.keys(workout.logs).forEach(liftId => {
                         const scaleFactor = getScaleFactorForLift(workout, liftId);
+                        const primaryMuscle = workout.liftMeta?.[liftId]?.primaryMuscle || (rawLifts.find(l => l.id === liftId)?.primaryMuscle) || 'Other';
+                        let liftVol = 0;
+
                         if (scaleFactor !== 1) {
                            const liftName = workout.liftMeta?.[liftId]?.name || liftsMap.get(liftId) || liftId;
                            lastScaleByLift.set(liftName, scaleFactor);
@@ -219,6 +226,7 @@ export default function AnalyticsPage() {
                             const scaledWeight = set.weight * scaleFactor;
                             const vol = set.reps * scaledWeight;
                             workoutVol += vol;
+                            liftVol += vol;
                             
                             const epley = calcEpley(scaledWeight, set.reps);
                             const brzycki = calcBrzycki(scaledWeight, set.reps);
@@ -233,7 +241,10 @@ export default function AnalyticsPage() {
                                 raw1RMDetails.set(liftId, { epley, brzycki, lombardi, avg, scaleFactor });
                             }
                         });
+
+                        muscleVols.set(primaryMuscle, (muscleVols.get(primaryMuscle) || 0) + liftVol);
                     });
+
 
                    vols.push({ 
                       date: dateStr, 
@@ -263,6 +274,11 @@ export default function AnalyticsPage() {
            // Map type avg
            const mappedTypes = Array.from(typeVols.entries()).map(([k, v]) => ({ name: k, avgVolume: Math.round(v.sum / v.count) }));
            setVolumeType(mappedTypes);
+
+           const mappedMuscles = Array.from(muscleVols.entries())
+              .map(([k, v]) => ({ name: k, value: Math.round(v) }))
+              .sort((a, b) => b.value - a.value);
+           setVolumeByMuscle(mappedMuscles);
 
             // Compute per-lift overload tracking across sessions
             const liftSessions = new Map<string, { date: string; timestamp: string; sets: { reps: number; weight: number; rir?: number }[] }[]>();
@@ -534,11 +550,12 @@ export default function AnalyticsPage() {
 
                 {/* ═══ Progression Engine Scoring ═══ */}
                 <div className="workout-tile" style={{ position: 'relative' }}>
-                   <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'scoring' ? null : 'scoring')}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+                   <h3 style={{ margin: '0 0 0.5rem 0' }}>Progression Engine</h3>
+                   <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => setExpandedInfo(expandedInfo === 'scoring' ? null : 'scoring')}>
                      {expandedInfo === 'scoring' ? 'Hide ✕' : 'How It Works ⓘ'}
                    </button>
-
-                   <h3 style={{ margin: '0 0 0.5rem 0' }}>Progression Engine</h3>
+                   </div>
                    <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 0.75rem 0' }}>
                       Constraint-based candidate generation + scoring system
                    </p>
@@ -832,6 +849,35 @@ export default function AnalyticsPage() {
                         </ResponsiveContainer>
                     </div>
                 </div>
+
+
+                {/* ═══ Volume by Muscle Group ═══ */}
+                {volumeByMuscle.length > 0 && (
+                   <div className="workout-tile">
+                      <h3 style={{ margin: '0 0 1rem 0' }}>Volume Distribution by Muscle Group</h3>
+                      <div style={{ width: '100%', height: '250px' }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                  <Pie
+                                      data={volumeByMuscle}
+                                      dataKey="value"
+                                      nameKey="name"
+                                      cx="50%"
+                                      cy="50%"
+                                      outerRadius={80}
+                                      fill="#8884d8"
+                                      label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
+                                  >
+                                      {volumeByMuscle.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={['#63b3ed', '#48bb78', '#ed8936', '#fc8181', '#9f7aea', '#ecc94b', '#f687b3', '#4fd1c5'][index % 8]} />
+                                      ))}
+                                  </Pie>
+                                  <Tooltip formatter={(value: any) => `${Number(value || 0).toLocaleString()} lbs`} contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: '8px', fontSize: '0.8rem' }} />
+                              </PieChart>
+                          </ResponsiveContainer>
+                      </div>
+                   </div>
+                )}
 
                 {/* ═══ Progressive Overload Factor Tile ═══ */}
                 <div className="workout-tile" style={{ position: 'relative' }}>

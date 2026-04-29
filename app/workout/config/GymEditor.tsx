@@ -23,6 +23,7 @@ interface Station {
   maxWeight?: number;
   increment?: number;
   additionalWeight?: number;
+  additionalWeights?: number[];
   attachments?: string[];
   dumbbellPairs?: number[];
   bodyWeightAdditions?: number[]; 
@@ -66,6 +67,7 @@ export default function GymEditor() {
   const [tempPlates, setTempPlates] = useState('');
   const [tempDumbbells, setTempDumbbells] = useState('');
   const [tempBodyWeight, setTempBodyWeight] = useState('');
+  const [tempAdditionalWeights, setTempAdditionalWeights] = useState('');
   const [tempAttachment, setTempAttachment] = useState('');
 
   // Import Station Prompt
@@ -83,6 +85,7 @@ export default function GymEditor() {
     setTempPlates('');
     setTempDumbbells('');
     setTempBodyWeight('');
+    setTempAdditionalWeights('');
     setTempAttachment('');
   };
 
@@ -151,6 +154,7 @@ export default function GymEditor() {
       maxWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.maxWeight : undefined,
       increment: stationType === 'stack' || stationType === 'cable' ? sourceStation?.increment : undefined,
       additionalWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.additionalWeight : undefined,
+      additionalWeights: stationType === 'stack' || stationType === 'cable' ? sourceStation?.additionalWeights : undefined,
       dumbbellPairs: stationType === 'dumbbells' ? sourceStation?.dumbbellPairs : undefined,
       bodyWeightAdditions: stationType === 'bodyweight' ? sourceStation?.bodyWeightAdditions : undefined,
     });
@@ -158,6 +162,7 @@ export default function GymEditor() {
     setTempPlates(stationType === 'plates' ? (sourceStation?.plateSets || []).join(', ') : '');
     setTempDumbbells(stationType === 'dumbbells' ? (sourceStation?.dumbbellPairs || []).join(', ') : '');
     setTempBodyWeight(stationType === 'bodyweight' ? (sourceStation?.bodyWeightAdditions || []).join(', ') : '');
+    setTempAdditionalWeights(stationType === 'stack' || stationType === 'cable' ? (sourceStation?.additionalWeights || []).join(', ') : '');
     setTempAttachment('');
   };
 
@@ -252,12 +257,14 @@ export default function GymEditor() {
     finalizedStation.baseWeight = finalizedStation.type === 'plates' ? finalizedStation.baseWeight : undefined;
     finalizedStation.dumbbellPairs = finalizedStation.type === 'dumbbells' ? tempDumbbells.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
     finalizedStation.bodyWeightAdditions = finalizedStation.type === 'bodyweight' ? tempBodyWeight.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
+    finalizedStation.additionalWeights = (finalizedStation.type === 'stack' || finalizedStation.type === 'cable') && tempAdditionalWeights ? tempAdditionalWeights.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
 
     if (finalizedStation.type !== 'stack' && finalizedStation.type !== 'cable') {
       finalizedStation.minWeight = undefined;
       finalizedStation.maxWeight = undefined;
       finalizedStation.increment = undefined;
       finalizedStation.additionalWeight = undefined;
+      finalizedStation.additionalWeights = undefined;
     }
 
     if (finalizedStation.type !== 'cable') {
@@ -486,13 +493,12 @@ export default function GymEditor() {
               />
             </div>
             <div>
-              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Stack Weight (lbs)</label>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Stack Weights (comma separated)</label>
               <input
                 className="workout-input"
-                type="number"
-                placeholder="Optional"
-                value={newStation.additionalWeight ?? ''}
-                onChange={e => setNewStation({ ...newStation, additionalWeight: parseOptionalNumber(e.target.value) })}
+                placeholder="e.g. 5, 10"
+                value={tempAdditionalWeights}
+                onChange={e => setTempAdditionalWeights(e.target.value)}
               />
             </div>
           </div>

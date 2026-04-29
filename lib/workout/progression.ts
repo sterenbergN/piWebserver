@@ -13,6 +13,7 @@ export type SetLog = {
 
 export type Session = {
   liftId: string;
+  liftPrimaryMuscle?: string;
   sets: SetLog[];
   timestamp: string;
 };
@@ -375,6 +376,13 @@ export function scoreCandidateDetailed(
   // ── Intensity bias scoring ──
   let intensityBias = 0;
   let biasExplanation = '';
+
+  const isHighRepMuscle = ['Calves', 'Core', 'Abs', 'Forearms'].includes(input.lastSession.liftPrimaryMuscle || '');
+  if (isHighRepMuscle) {
+      if (candidate.weight > lastSet.actualWeight && candidate.reps < 15) {
+          return { score: -1000, breakdown: { totalLoad: 0, lastLoad: 0, overloadRatio: 1, e1RM: 0, lastE1RM: 0, intensityRatio: 1, rawScore: -1000, intensityBias: 0, performanceAdjustment: 'High rep isolation movement: requires 15+ reps before increasing weight.' } };
+      }
+  }
 
   if (input.intensity >= 1.2) {
     // High intensity: favor weight increases, allow rep drops

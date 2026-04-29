@@ -15,6 +15,9 @@ function getPossibleWeightsForStation(station: any, scaleFactor = 1): number[] {
        for (let w = station.minWeight || 10; w <= (station.maxWeight || 300); w += inc) {
            possible.push(w * scaleFactor);
            if (station.additionalWeight) possible.push((w + station.additionalWeight) * scaleFactor);
+           if (station.additionalWeights) {
+               station.additionalWeights.forEach((addW: number) => possible.push((w + addW) * scaleFactor));
+           }
        }
        return Array.from(new Set(possible)).sort((a,b) => a-b);
     }
@@ -173,6 +176,7 @@ export async function POST(request: Request) {
     const input: ProgressionInput = {
        lastSession: {
            liftId,
+           liftPrimaryMuscle: planType?.primaryMuscle || station?.lifts?.find((l: any) => l.id === liftId)?.primaryMuscle,
            timestamp: new Date().toISOString(),
            sets
        },
