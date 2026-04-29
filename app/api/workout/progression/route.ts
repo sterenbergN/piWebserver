@@ -45,6 +45,7 @@ function getPossibleWeightsForStation(station: any, scaleFactor = 1): number[] {
 function buildHistorySessions(historyData: any[], liftId: string, liftName: string | undefined, calibrationStore: any, userId: string | undefined): Session[] {
     const sessions: Session[] = [];
     const liftKey = normalizeLiftKey(liftName || '');
+    const nameMatchCache = new Map<string, boolean>();
 
     for (const workout of historyData) {
         if (!workout.logs) continue;
@@ -54,10 +55,17 @@ function buildHistorySessions(historyData: any[], liftId: string, liftName: stri
         const matchedLiftIds: string[] = [];
         if (workout.logs[liftId]) matchedLiftIds.push(liftId);
         if (liftKey && metaMap) {
-            const extraMatches = Object.keys(metaMap).filter((id) => normalizeLiftKey(metaMap[id]?.name || '') === liftKey);
-            extraMatches.forEach((id) => {
-                if (!matchedLiftIds.includes(id)) matchedLiftIds.push(id);
-            });
+            for (const id in metaMap) {
+                const rawName = metaMap[id]?.name || '';
+                let isMatch = nameMatchCache.get(rawName);
+                if (isMatch === undefined) {
+                    isMatch = normalizeLiftKey(rawName) === liftKey;
+                    nameMatchCache.set(rawName, isMatch);
+                }
+                if (isMatch && !matchedLiftIds.includes(id)) {
+                    matchedLiftIds.push(id);
+                }
+            }
         }
         if (matchedLiftIds.length === 0) continue;
 
@@ -132,9 +140,23 @@ export async function POST(request: Request) {
         const otherHistory = userHistory
           .filter((h: any) => h.gymId && h.gymId !== gymId && h.liftMeta)
           .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        const nameMatchCache = new Map<string, boolean>();
         for (const entry of otherHistory) {
             const metaMap = entry.liftMeta || {};
-            const matchedLiftId = Object.keys(metaMap).find((id) => normalizeLiftKey(metaMap[id]?.name || '') === liftKey);
+            let matchedLiftId: string | undefined;
+            for (const id in metaMap) {
+                const rawName = metaMap[id]?.name || '';
+                let isMatch = nameMatchCache.get(rawName);
+                if (isMatch === undefined) {
+                    isMatch = normalizeLiftKey(rawName) === liftKey;
+                    nameMatchCache.set(rawName, isMatch);
+                }
+                if (isMatch) {
+                    matchedLiftId = id;
+                    break;
+                }
+            }
             if (!matchedLiftId) continue;
             const sets = entry.logs?.[matchedLiftId] || [];
             const lastSet = sets[sets.length - 1];
