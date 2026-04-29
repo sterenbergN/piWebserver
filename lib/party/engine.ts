@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { GameState, GameType } from './types';
@@ -55,7 +56,7 @@ export async function createRoom(gameType: GameType): Promise<{ roomCode: string
     roomCode = generateRoomCode();
   }
 
-  const hostId = `HOST_${Math.random().toString(36).substring(2, 9)}`;
+  const hostId = `HOST_${crypto.randomBytes(4).toString('hex')}`;
 
   const initialState: GameState = {
     roomCode,
@@ -90,7 +91,7 @@ export async function joinRoom(roomCode: string, playerName: string): Promise<{ 
     return { error: 'Name already taken' };
   }
 
-  const playerId = `P_${Math.random().toString(36).substring(2, 9)}`;
+  const playerId = `P_${crypto.randomBytes(4).toString('hex')}`;
   const color = COLORS[Object.keys(state.players).length % COLORS.length];
 
   state.players[playerId] = {
