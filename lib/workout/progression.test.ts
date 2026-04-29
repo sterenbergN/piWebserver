@@ -433,7 +433,7 @@ test('18. High RIR nudges progression more aggressively', () => {
   const highRirPlan = generateNextWorkout(baseInput);
   const lowRirPlan = generateNextWorkout(lowRirInput);
   assert.ok(
-    highRirPlan.suggestedWeight >= lowRirPlan.suggestedWeight,
-    `High RIR weight (${highRirPlan.suggestedWeight}) should be >= low RIR weight (${lowRirPlan.suggestedWeight})`
+    highRirPlan.scoringBreakdown.totalLoad >= lowRirPlan.scoringBreakdown.totalLoad,
+    `High RIR totalLoad (${highRirPlan.scoringBreakdown.totalLoad}) should be >= low RIR totalLoad (${lowRirPlan.scoringBreakdown.totalLoad})`
   );
 });
