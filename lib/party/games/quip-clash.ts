@@ -5,8 +5,8 @@ export const quipClashLogic = {
   onStart: async (state: GameState, isNextRound = false) => {
     if (state.playerOrder.length < 3) return;
 
-    let targetRounds = state.gameData?.targetRounds || 1;
-    let currentRound = isNextRound && state.gameData ? state.gameData.currentRound + 1 : 0;
+    const targetRounds = state.gameData?.targetRounds || 1;
+    const currentRound = isNextRound && state.gameData ? state.gameData.currentRound + 1 : 0;
 
 
     // We need 2 prompts per player. 
