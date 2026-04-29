@@ -51,6 +51,8 @@ export async function POST(request: Request) {
       const gymId = payload.gymId;
       const liftMeta = payload.liftMeta || {};
       if (gymId && payload.logs && typeof payload.logs === 'object') {
+        let referenceMap: Map<string, any> | null = null;
+
         for (const liftId of Object.keys(payload.logs)) {
           const meta = liftMeta[liftId];
           const liftName = meta?.name;
@@ -66,29 +68,36 @@ export async function POST(request: Request) {
           if (!currentLastSet) continue;
           const currentE1RM = calcAverage1RM(currentLastSet.weight, currentLastSet.reps);
 
-          const otherHistory = data.history
-            .filter((h: any) => h.userId === userId && h.gymId && h.gymId !== gymId && h.liftMeta)
-            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          if (!referenceMap) {
+            const otherHistory = data.history
+              .filter((h: any) => h.userId === userId && h.gymId && h.gymId !== gymId && h.liftMeta)
+              .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-          let reference: any = null;
-          for (const entry of otherHistory) {
-            const metaMap = entry.liftMeta || {};
-            const matchedLiftId = Object.keys(metaMap).find(key => normalizeLiftKey(metaMap[key]?.name || '') === liftKey);
-            if (!matchedLiftId) continue;
-            const sets = entry.logs?.[matchedLiftId] || [];
-            const lastSet = sets[sets.length - 1];
-            if (!lastSet) continue;
-            reference = {
-              gymId: entry.gymId,
-              gymName: entry.gymName,
-              liftId: matchedLiftId,
-              weight: lastSet.weight,
-              reps: lastSet.reps,
-              e1rm: calcAverage1RM(lastSet.weight, lastSet.reps)
-            };
-            break;
+            referenceMap = new Map<string, any>();
+            for (const entry of otherHistory) {
+              const metaMap = entry.liftMeta || {};
+              for (const key of Object.keys(metaMap)) {
+                const innerLiftKey = normalizeLiftKey(metaMap[key]?.name || '');
+                if (!innerLiftKey) continue;
+                if (!referenceMap.has(innerLiftKey)) {
+                  const sets = entry.logs?.[key] || [];
+                  const lastSet = sets[sets.length - 1];
+                  if (lastSet) {
+                    referenceMap.set(innerLiftKey, {
+                      gymId: entry.gymId,
+                      gymName: entry.gymName,
+                      liftId: key,
+                      weight: lastSet.weight,
+                      reps: lastSet.reps,
+                      e1rm: calcAverage1RM(lastSet.weight, lastSet.reps)
+                    });
+                  }
+                }
+              }
+            }
           }
 
+          const reference = referenceMap.get(liftKey);
           if (!reference) continue;
 
           const prevCalibration = calibrationStore.calibrations.find(c => c.userId === userId && c.gymId === reference.gymId && c.liftKey === liftKey);

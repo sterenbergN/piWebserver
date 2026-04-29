@@ -86,7 +86,7 @@ export default function MoviePickerTool() {
         setTimeout(runTick, getDelay(tick));
       } else {
         const unwatched = pool.map((m, i) => i).filter(i => !watched.includes(pool[i]));
-        let finalIdx = unwatched.length > 0
+        const finalIdx = unwatched.length > 0
           ? unwatched[Math.floor(Math.random() * unwatched.length)]
           : Math.floor(Math.random() * pool.length);
         setDisplayNumber(finalIdx + 1);
