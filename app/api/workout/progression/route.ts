@@ -51,14 +51,16 @@ function buildHistorySessions(historyData: any[], liftId: string, liftName: stri
         if (workout.type?.name === 'Cardio') continue;
 
         const metaMap = workout.liftMeta || {};
-        const matchedLiftIds: string[] = [];
-        if (workout.logs[liftId]) matchedLiftIds.push(liftId);
+        const matchedLiftIdsSet = new Set<string>();
+        if (workout.logs[liftId]) matchedLiftIdsSet.add(liftId);
         if (liftKey && metaMap) {
-            const extraMatches = Object.keys(metaMap).filter((id) => normalizeLiftKey(metaMap[id]?.name || '') === liftKey);
-            extraMatches.forEach((id) => {
-                if (!matchedLiftIds.includes(id)) matchedLiftIds.push(id);
-            });
+            for (const id of Object.keys(metaMap)) {
+                if (normalizeLiftKey(metaMap[id]?.name || '') === liftKey) {
+                    matchedLiftIdsSet.add(id);
+                }
+            }
         }
+        const matchedLiftIds = Array.from(matchedLiftIdsSet);
         if (matchedLiftIds.length === 0) continue;
 
         for (const matchedId of matchedLiftIds) {
