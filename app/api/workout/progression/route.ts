@@ -23,9 +23,12 @@ function getPossibleWeightsForStation(station: any, scaleFactor = 1): number[] {
        if (!station.plateSets || station.plateSets.length === 0) return [station.baseWeight || 45];
        const halfWeights = new Set([0]);
        for (const p of station.plateSets) {
-            const currentPossible = Array.from(halfWeights);
-            for (const w of currentPossible) {
-                 halfWeights.add(w + p);
+            const additions: number[] = [];
+            for (const w of halfWeights) {
+                 additions.push(w + p);
+            }
+            for (const a of additions) {
+                halfWeights.add(a);
             }
        }
        return Array.from(halfWeights).map(hw => (station.baseWeight || 45) + (hw * 2)).sort((a,b) => a-b);
