@@ -406,6 +406,7 @@ test('17. Low RIR reduces performance score', () => {
 });
 
 test('18. High RIR nudges progression more aggressively', () => {
+  const equipment = { getValidWeights: () => [135, 140, 145, 150, 155] };
   const baseInput = makeInput({
     lastSession: {
       liftId: 'bench',
@@ -415,6 +416,7 @@ test('18. High RIR nudges progression more aggressively', () => {
         { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 3 },
       ],
     },
+    equipment,
     intensity: 1.0,
   });
 
@@ -427,6 +429,7 @@ test('18. High RIR nudges progression more aggressively', () => {
         { plannedReps: 8, actualReps: 8, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
       ],
     },
+    equipment,
     intensity: 1.0,
   });
 
