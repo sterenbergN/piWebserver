@@ -72,6 +72,123 @@ export interface ExperienceResult {
   };
 }
 
+// ─── Fatigue Model ─────────────────────────────────────────────────────────────
+
+export type MuscleGroupFatigue = {
+  muscle: string;
+  fatigueScore: number;
+  threshold: number;
+  sessionsSinceStart: number;
+  lastTrainedDate: string;
+  recommendation: 'ok' | 'elevated' | 'deload_recommended';
+};
+
+const FATIGUE_THRESHOLD = 40;
+const DECAY_PER_REST_DAY = 0.15;
+
+/**
+ * Computes per-muscle-group fatigue from workout history.
+ *
+ * Formula: fatigue += (1 - avgRIR/5) * setsCompleted * intensityFactor per session
+ * Decay:   fatigue *= (1 - 0.15)^restDays between sessions
+ * Deload sessions are skipped (no fatigue accumulation).
+ */
+export function computeMuscleFatigue(
+  history: any[],
+  allLifts: any[]
+): MuscleGroupFatigue[] {
+  // Build lift ID → primaryMuscle map
+  const liftMuscleMap = new Map<string, string>();
+  allLifts.forEach((l: any) => {
+    if (l.id && l.primaryMuscle) liftMuscleMap.set(l.id, l.primaryMuscle);
+  });
+
+  // Sort history chronologically
+  const sorted = [...history]
+    .filter((w: any) => w.type?.name !== 'Cardio' && w.logs)
+    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  // muscle → { fatigue, lastDate, sessions }
+  const muscleData = new Map<string, { fatigue: number; lastDate: string; sessions: number }>();
+  let prevDate: Date | null = null;
+
+  for (const workout of sorted) {
+    const workoutDate = new Date(workout.timestamp);
+
+    // Apply rest-day decay between sessions
+    if (prevDate) {
+      const restDays = Math.max(
+        0,
+        (workoutDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24) - 1
+      );
+      if (restDays > 0) {
+        muscleData.forEach(data => {
+          data.fatigue *= Math.pow(1 - DECAY_PER_REST_DAY, restDays);
+        });
+      }
+    }
+    prevDate = workoutDate;
+
+    // Skip deload sessions — they don't accumulate fatigue
+    if (workout.isDeload) continue;
+
+    const intensityFactor = workout.intensitySlider ?? 1.0;
+
+    Object.keys(workout.logs).forEach(liftId => {
+      const meta = workout.liftMeta?.[liftId];
+      const muscle =
+        meta?.primaryMuscle ||
+        liftMuscleMap.get(liftId) ||
+        'Unknown';
+
+      const sets: any[] = workout.logs[liftId] || [];
+      if (sets.length === 0) return;
+
+      const rirSets = sets.filter((s: any) => typeof s.rir === 'number');
+      const avgRir =
+        rirSets.length > 0
+          ? rirSets.reduce((sum: number, s: any) => sum + s.rir, 0) / rirSets.length
+          : 2; // neutral if no RIR recorded
+
+      const fatigueDelta = (1 - avgRir / 5) * sets.length * intensityFactor;
+
+      if (!muscleData.has(muscle)) {
+        muscleData.set(muscle, { fatigue: 0, lastDate: '', sessions: 0 });
+      }
+      const data = muscleData.get(muscle)!;
+      data.fatigue = Math.max(0, data.fatigue + fatigueDelta);
+      data.lastDate = workout.timestamp;
+      data.sessions++;
+    });
+  }
+
+  // Apply decay from the last workout to now
+  if (prevDate) {
+    const restDays = Math.max(
+      0,
+      (Date.now() - prevDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    muscleData.forEach(data => {
+      data.fatigue *= Math.pow(1 - DECAY_PER_REST_DAY, restDays);
+    });
+  }
+
+  return Array.from(muscleData.entries())
+    .map(([muscle, data]) => ({
+      muscle,
+      fatigueScore: Math.round(data.fatigue * 100) / 100,
+      threshold: FATIGUE_THRESHOLD,
+      sessionsSinceStart: data.sessions,
+      lastTrainedDate: data.lastDate,
+      recommendation:
+        data.fatigue >= FATIGUE_THRESHOLD
+          ? 'deload_recommended'
+          : data.fatigue >= FATIGUE_THRESHOLD * 0.75
+          ? 'elevated'
+          : 'ok',
+    } as MuscleGroupFatigue))
+    .sort((a, b) => b.fatigueScore - a.fatigueScore);
+}
 export function calculateExperienceScore(user: { weight?: number }, history: any[], allLifts: any[]): ExperienceResult {
   if (!history || history.length === 0) {
       return { score: 0, level: "Beginner", symbol: "⚪", breakdown: { time: 0, consistency: 0, strength: 0, progression: 0 }};

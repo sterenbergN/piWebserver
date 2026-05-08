@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-   BarChart, Bar
+   BarChart, Bar, PieChart, Pie, Cell
 } from 'recharts';
-import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore } from '@/lib/workout/analytics';
+import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
 import { analyzePerformance, type Session } from '@/lib/workout/progression';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
 
@@ -68,6 +68,15 @@ function titleCase(value: string): string {
    return (value || '').replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+const MUSCLE_COLORS = ['#4fd1c5', '#63b3ed', '#fc8181', '#f6e05e', '#68d391', '#b794f4', '#ed8936', '#e53e3e', '#48bb78', '#4299e1'];
+
+const STRENGTH_STANDARDS: Record<string, { beginner: number; novice: number; intermediate: number; advanced: number; elite: number }> = {
+  'Bench Press': { beginner: 0.5, novice: 0.75, intermediate: 1.0, advanced: 1.5, elite: 2.0 },
+  'Squat': { beginner: 0.75, novice: 1.0, intermediate: 1.5, advanced: 2.0, elite: 2.5 },
+  'Deadlift': { beginner: 1.0, novice: 1.25, intermediate: 1.75, advanced: 2.5, elite: 3.0 },
+  'Overhead Press': { beginner: 0.35, novice: 0.5, intermediate: 0.75, advanced: 1.0, elite: 1.35 },
+};
+
 export default function AnalyticsPage() {
    const [history, setHistory] = useState<any[]>([]);
    const [user, setUser] = useState<any>(null);
@@ -89,6 +98,8 @@ export default function AnalyticsPage() {
 
    const [expandedInfo, setExpandedInfo] = useState<string | null>(null);
    const [auditPage, setAuditPage] = useState(0);
+   const [prPage, setPrPage] = useState(0);
+   const [selectedHeatmapDate, setSelectedHeatmapDate] = useState<string | null>(null);
    const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
    const [systemPopup, setSystemPopup] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
    
@@ -102,6 +113,23 @@ export default function AnalyticsPage() {
    const [liftStationTypeMap, setLiftStationTypeMap] = useState<Map<string, string>>(new Map());
    const [gymNameMap, setGymNameMap] = useState<Map<string, string>>(new Map());
    const [experience, setExperience] = useState<any>(null);
+
+   type AnalyticsTab = 'overview' | 'strength' | 'volume' | 'fatigue' | 'history';
+   const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
+   const [muscleFatigue, setMuscleFatigue] = useState<any[]>([]);
+   const [muscleVolumeData, setMuscleVolumeData] = useState<any[]>([]);
+   const [trainingHeatmap, setTrainingHeatmap] = useState<Map<string, { setCount: number; lifts: string[] }>>(new Map());
+   const [prTimeline, setPrTimeline] = useState<any[]>([]);
+   const [prTimelinePage, setPrTimelinePage] = useState(0);
+   const [expandedPrGroup, setExpandedPrGroup] = useState<string | null>(null);
+   const [recoveryData, setRecoveryData] = useState<any[]>([]);
+
+   // Link Lift Modal (Phase 7)
+   const [linkLiftModal, setLinkLiftModal] = useState<{ gymId: string; liftKey: string; stationType: string } | null>(null);
+   const [linkLiftNewKey, setLinkLiftNewKey] = useState('');
+   const [linkLiftSaving, setLinkLiftSaving] = useState(false);
+   const [linkLiftSaved, setLinkLiftSaved] = useState(false);
+
    const rmCardRefs = useRef(new Map<string, HTMLDivElement>());
    const overloadRowRefs = useRef(new Map<string, HTMLDivElement>());
 
@@ -340,6 +368,89 @@ export default function AnalyticsPage() {
             });
             setOverloadTracking(olTracking.sort((a, b) => b.date.localeCompare(a.date)));
 
+            // --- NEW DATA COMPUTATIONS ---
+            
+            // 1. Muscle Volume Distribution
+            const muscleVolMap = new Map<string, number>();
+            histData.forEach((workout: any) => {
+              if (workout.type?.name === 'Cardio' || !workout.logs) return;
+              Object.keys(workout.logs).forEach(liftId => {
+                const meta = workout.liftMeta?.[liftId];
+                const liftInfo = rawLifts.find((l: any) => l.id === liftId);
+                const muscleName = meta?.primaryMuscle || liftInfo?.primaryMuscle || 'Other';
+                const vol = workout.logs[liftId].reduce((sum: number, s: any) => sum + s.weight * s.reps, 0);
+                muscleVolMap.set(muscleName, (muscleVolMap.get(muscleName) || 0) + vol);
+              });
+            });
+            const mvd = Array.from(muscleVolMap.entries())
+              .map(([name, volume]) => ({ name, volume: Math.round(volume) }))
+              .sort((a, b) => b.volume - a.volume);
+            setMuscleVolumeData(mvd);
+
+            // 2. Training Heatmap
+            const trainingDays = new Map<string, { setCount: number; lifts: string[] }>();
+            histData.forEach((w: any) => {
+              const dateKey = new Date(w.timestamp).toISOString().slice(0, 10);
+              const setCount = w.logs ? Object.values(w.logs).reduce((sum: number, sets: any) => sum + (sets?.length || 0), 0) : 0;
+              if (setCount > 0) {
+                 const current = trainingDays.get(dateKey) || { setCount: 0, lifts: [] };
+                 const dayLifts = w.logs ? Object.keys(w.logs).map(id => w.liftMeta?.[id]?.name || liftsMap.get(id) || id) : [];
+                 trainingDays.set(dateKey, { 
+                     setCount: current.setCount + setCount, 
+                     lifts: Array.from(new Set([...current.lifts, ...dayLifts])) 
+                 });
+              }
+            });
+            setTrainingHeatmap(trainingDays);
+
+            // 3. PR Timeline
+            const prLine: any[] = [];
+            const runningMax = new Map<string, number>();
+            histData.forEach((workout: any) => {
+              Object.keys(workout.logs || {}).forEach(liftId => {
+                const scaleFactor = getScaleFactorForLift(workout, liftId);
+                workout.logs[liftId].forEach((set: any) => {
+                  const scaledWeight = set.weight * scaleFactor;
+                  const rm = calcAverage1RM(scaledWeight, set.reps);
+                  const liftName = workout.liftMeta?.[liftId]?.name || liftsMap.get(liftId) || liftId;
+                  const prevMax = runningMax.get(liftName) || 0;
+                  if (rm > prevMax * 1.01 && rm > 0) { // 1% threshold
+                    prLine.push({
+                      date: new Date(workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                      liftName, rm: Math.round(rm), prevRM: Math.round(prevMax), timestamp: workout.timestamp
+                    });
+                    runningMax.set(liftName, rm);
+                  }
+                });
+              });
+            });
+            setPrTimeline(prLine.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+
+            // 4. Recovery Time Analysis
+            const muscleLastTrained = new Map<string, { date: string, ts: number }>();
+            const rData: any[] = [];
+            
+            // Re-iterate history for recovery (simplified)
+            histData.forEach((w: any) => {
+               if (w.type?.name === 'Cardio' || !w.logs) return;
+               const ts = new Date(w.timestamp).getTime();
+               Object.keys(w.logs).forEach(liftId => {
+                 const liftInfo = rawLifts.find((l: any) => l.id === liftId);
+                 const muscleName = w.liftMeta?.[liftId]?.primaryMuscle || liftInfo?.primaryMuscle || 'Other';
+                 muscleLastTrained.set(muscleName, { date: new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), ts });
+               });
+            });
+            const now = Date.now();
+            muscleLastTrained.forEach((last, muscle) => {
+               const hoursSince = (now - last.ts) / (1000 * 60 * 60);
+               rData.push({ muscle, lastTrained: last.date, hoursSince });
+            });
+            setRecoveryData(rData.sort((a,b) => a.hoursSince - b.hoursSince));
+
+            // 5. Fatigue Dashboard
+            const fatigueData = computeMuscleFatigue(histData, rawLifts);
+            setMuscleFatigue(fatigueData);
+
            setLoading(false);
        }
        fetchData();
@@ -473,6 +584,47 @@ export default function AnalyticsPage() {
            </div>
 
            <div style={{ padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              
+              <div className="workout-tile" style={{ padding: '0.4rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem', position: 'sticky', top: 0, zIndex: 20, marginBottom: '0.5rem' }}>
+                {(['overview', 'strength', 'volume', 'fatigue', 'history'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    className="btn btn-secondary"
+                    style={{
+                      flex: '1 1 auto', padding: '0.55rem 0.5rem', borderRadius: '10px', fontSize: '0.75rem',
+                      textTransform: 'capitalize', whiteSpace: 'nowrap', minWidth: '3.5rem',
+                      borderColor: activeTab === tab ? 'var(--accent)' : 'var(--surface-border)',
+                      color: activeTab === tab ? 'var(--accent)' : 'var(--muted)',
+                      background: activeTab === tab ? 'rgba(var(--accent-rgb), 0.1)' : 'transparent',
+                    }}
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {tab === 'overview' ? '📊 Overview' :
+                     tab === 'strength' ? '💪 Strength' :
+                     tab === 'volume' ? '📈 Volume' :
+                     tab === 'fatigue' ? '🔋 Fatigue' : '📋 History'}
+                  </button>
+                ))}
+              </div>
+
+              {activeTab === 'overview' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                
+                {/* ═══ Experience Rank ═══ */}
+                {experience && (
+                   <div className="workout-tile" style={{ textAlign: 'center', background: 'linear-gradient(135deg, var(--tile-bg), rgba(var(--accent-rgb), 0.1))' }}>
+                      <h3 style={{ margin: '0 0 0.5rem 0' }}>Lifter Rank</h3>
+                      <div style={{ fontSize: '3rem', margin: '0.5rem 0' }}>{experience.symbol}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent)' }}>{experience.level}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '0.5rem' }}>Experience Score: {experience.score.toFixed(0)}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.5rem', marginTop: '1rem', fontSize: '0.75rem' }}>
+                         <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.time * 25).toFixed(0)}</strong><br/>Time</div>
+                         <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.consistency * 25).toFixed(0)}</strong><br/>Consist.</div>
+                         <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.strength * 25).toFixed(0)}</strong><br/>Str</div>
+                         <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.progression * 25).toFixed(0)}</strong><br/>Prog</div>
+                      </div>
+                   </div>
+                )}
 
                 {/* ═══ Training Intensity Profile ═══ */}
                 <div className="workout-tile" style={{ borderLeft: `3px solid ${intensityInfo.color}` }}>
@@ -533,12 +685,13 @@ export default function AnalyticsPage() {
                 </div>
 
                 {/* ═══ Progression Engine Scoring ═══ */}
-                <div className="workout-tile" style={{ position: 'relative' }}>
-                   <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'scoring' ? null : 'scoring')}>
-                     {expandedInfo === 'scoring' ? 'Hide ✕' : 'How It Works ⓘ'}
-                   </button>
-
-                   <h3 style={{ margin: '0 0 0.5rem 0' }}>Progression Engine</h3>
+                <div className="workout-tile">
+                   <div className="workout-flex-between" style={{ marginBottom: '0.5rem' }}>
+                      <h3 style={{ margin: 0 }}>Progression Engine</h3>
+                      <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'scoring' ? null : 'scoring')}>
+                        {expandedInfo === 'scoring' ? 'Hide ✕' : 'How It Works ⓘ'}
+                      </button>
+                   </div>
                    <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 0.75rem 0' }}>
                       Constraint-based candidate generation + scoring system
                    </p>
@@ -603,6 +756,54 @@ export default function AnalyticsPage() {
                           </p>
                       </div>
                    )}
+                </div>
+              </div>
+              )}
+
+              {activeTab === 'strength' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                {/* ═══ Strength Standards Comparison ═══ */}
+                <div className="workout-tile">
+                   <h3 style={{ margin: '0 0 1rem 0' }}>Strength Standards Comparison</h3>
+                   <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>Based on your bodyweight ({user?.weight || '---'} lbs). Values are e1RM multiples of BW.</p>
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      {Object.keys(STRENGTH_STANDARDS).map(liftName => {
+                         const match = oneRMs.find(r => r.name.toLowerCase() === liftName.toLowerCase());
+                         const userRm = match ? match.avg : 0;
+                         const bw = user?.weight || 150;
+                         const userMult = userRm / bw;
+                         const std = STRENGTH_STANDARDS[liftName];
+                         
+                         let progress = 0;
+                         let label = 'Untrained';
+                         let nextTarget = std.beginner * bw;
+                         let nextLabel = 'Beginner';
+                         
+                         if (userMult >= std.elite) { progress = 100; label = 'Elite'; nextTarget = 0; }
+                         else if (userMult >= std.advanced) { progress = 80 + ((userMult - std.advanced) / (std.elite - std.advanced) * 20); label = 'Advanced'; nextTarget = std.elite * bw; nextLabel = 'Elite'; }
+                         else if (userMult >= std.intermediate) { progress = 60 + ((userMult - std.intermediate) / (std.advanced - std.intermediate) * 20); label = 'Intermediate'; nextTarget = std.advanced * bw; nextLabel = 'Advanced'; }
+                         else if (userMult >= std.novice) { progress = 40 + ((userMult - std.novice) / (std.intermediate - std.novice) * 20); label = 'Novice'; nextTarget = std.intermediate * bw; nextLabel = 'Intermediate'; }
+                         else if (userMult >= std.beginner) { progress = 20 + ((userMult - std.beginner) / (std.novice - std.beginner) * 20); label = 'Beginner'; nextTarget = std.novice * bw; nextLabel = 'Novice'; }
+                         else { progress = (userMult / std.beginner) * 20; label = 'Untrained'; }
+
+                         return (
+                            <div key={liftName} style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px' }}>
+                               <div className="workout-flex-between" style={{ marginBottom: '0.5rem' }}>
+                                  <strong style={{ fontSize: '0.9rem' }}>{liftName}</strong>
+                                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent)' }}>{userRm > 0 ? `${userMult.toFixed(2)}x BW` : '---'}</span>
+                               </div>
+                               <div style={{ height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, progress))}%`, background: 'var(--accent)', transition: 'width 0.5s ease' }} />
+                               </div>
+                               <div className="workout-flex-between" style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                  <span>Level: <span style={{ color: 'var(--foreground)' }}>{label}</span></span>
+                                  {nextTarget > 0 && <span>Next: {Math.round(nextTarget)} lbs ({nextLabel})</span>}
+                               </div>
+                            </div>
+                         );
+                      })}
+                   </div>
                 </div>
 
                 {/* ═══ Formula Breakdown Summary ═══ */}
@@ -737,26 +938,26 @@ export default function AnalyticsPage() {
                             ))}
                          </div>
                          {oneRMs.length > listPageSize && (
-                            <div className="workout-flex-between" style={{ marginTop: '1rem' }}>
-                               <button
-                                 className="btn btn-secondary"
-                                 disabled={safeRmsPage === 0}
-                                 onClick={() => setRmsPage(p => Math.max(0, p - 1))}
-                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeRmsPage === 0 ? 0.3 : 1 }}
-                               >
-                                 ← Prev
-                               </button>
-                               <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Page {safeRmsPage + 1} of {rmsPageCount}</span>
-                               <button
-                                 className="btn btn-secondary"
-                                 disabled={safeRmsPage >= rmsPageCount - 1}
-                                 onClick={() => setRmsPage(p => Math.min(rmsPageCount - 1, p + 1))}
-                                 style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', opacity: safeRmsPage >= rmsPageCount - 1 ? 0.3 : 1 }}
-                               >
-                                 Next →
-                               </button>
-                            </div>
-                         )}
+                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem', gap: '0.5rem' }}>
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={safeRmsPage === 0}
+                                  onClick={() => setRmsPage(p => Math.max(0, p - 1))}
+                                  style={{ padding: '0.4rem 0.85rem', fontSize: '0.9rem', opacity: safeRmsPage === 0 ? 0.3 : 1, flexShrink: 0 }}
+                                >
+                                  &larr;
+                                </button>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'center' }}>{safeRmsPage + 1} / {rmsPageCount}</span>
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={safeRmsPage >= rmsPageCount - 1}
+                                  onClick={() => setRmsPage(p => Math.min(rmsPageCount - 1, p + 1))}
+                                  style={{ padding: '0.4rem 0.85rem', fontSize: '0.9rem', opacity: safeRmsPage >= rmsPageCount - 1 ? 0.3 : 1, flexShrink: 0 }}
+                                >
+                                  &rarr;
+                                </button>
+                             </div>
+                          )}
                       </div>
                    ) : <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No lifting history available yet.</p>}
 
@@ -796,7 +997,95 @@ export default function AnalyticsPage() {
                           )}
                       </div>
                   </div>
+
+
+                   {/* A3: Grouped PR Timeline */}
+                   <div className="workout-tile" style={{ marginTop: '1rem' }}>
+                     <h3 style={{ margin: '0 0 1rem 0' }}>PR Timeline</h3>
+                     {prTimeline.length === 0 ? (
+                       <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>No PRs logged yet.</p>
+                     ) : (() => {
+                       const grouped = new Map<string, typeof prTimeline>();
+                       [...prTimeline].forEach(pr => {
+                         if (!grouped.has(pr.liftName)) grouped.set(pr.liftName, []);
+                         grouped.get(pr.liftName)!.push(pr);
+                       });
+                       
+                       const sortedGroups = Array.from(grouped.entries()).sort((a, b) => b[1][0].rm - a[1][0].rm);
+                       const paginatedGroups = sortedGroups.slice(prPage * 5, (prPage + 1) * 5);
+                       
+                       return (
+                         <>
+                           {paginatedGroups.map(([liftName, prs]) => {
+                             const latest = prs[0];
+                             const isExpanded = expandedPrGroup === liftName;
+                             const gain = latest.prevRM > 0 ? Math.round(latest.rm - latest.prevRM) : null;
+                             return (
+                               <div key={liftName} style={{ marginBottom: '0.6rem', border: '1px solid var(--surface-border)', borderRadius: '10px', overflow: 'hidden' }}>
+                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.85rem', background: 'var(--input-bg)' }}>
+                                   <div style={{ flex: 1, minWidth: 0 }}>
+                                     <div style={{ fontWeight: 700, fontSize: '0.9rem', wordWrap: 'break-word', whiteSpace: 'normal', lineHeight: '1.2' }}>{liftName}</div>
+                                     <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.2rem' }}>{latest.date} &bull; {prs.length} PR{prs.length !== 1 ? 's' : ''}</div>
+                                   </div>
+                                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                     <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--accent)' }}>{latest.rm} lbs</div>
+                                     {gain !== null && gain > 0 && (
+                                       <div style={{ fontSize: '0.7rem', color: '#48bb78' }}>+{gain} lbs</div>
+                                     )}
+                                   </div>
+                                   {prs.length > 1 && (
+                                     <button
+                                       style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.8rem', flexShrink: 0, padding: '0.2rem 0.4rem' }}
+                                       onClick={() => setExpandedPrGroup(isExpanded ? null : liftName)}
+                                     >
+                                       {isExpanded ? '▲' : '▼'}
+                                     </button>
+                                   )}
+                                 </div>
+                                 {isExpanded && prs.slice(1).map((pr: any, idx: number) => (
+                                   <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.85rem', borderTop: '1px solid var(--surface-border)', fontSize: '0.8rem' }}>
+                                     <span style={{ color: 'var(--muted)' }}>{pr.date}</span>
+                                     <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                       <span style={{ color: 'var(--muted)', textDecoration: 'line-through' }}>{pr.prevRM}</span>
+                                       <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{pr.rm}</span>
+                                     </span>
+                                   </div>
+                                 ))}
+                               </div>
+                             );
+                           })}
+                           {sortedGroups.length > 5 && (
+                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem', gap: '0.5rem' }}>
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={prPage === 0}
+                                  onClick={() => setPrPage(p => Math.max(0, p - 1))}
+                                  style={{ padding: '0.4rem 0.85rem', fontSize: '0.9rem', opacity: prPage === 0 ? 0.3 : 1, flexShrink: 0 }}
+                                >
+                                  &larr;
+                                </button>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'center' }}>{prPage + 1} / {Math.ceil(sortedGroups.length / 5)}</span>
+                                <button
+                                  className="btn btn-secondary"
+                                  disabled={prPage >= Math.ceil(sortedGroups.length / 5) - 1}
+                                  onClick={() => setPrPage(p => Math.min(Math.ceil(sortedGroups.length / 5) - 1, p + 1))}
+                                  style={{ padding: '0.4rem 0.85rem', fontSize: '0.9rem', opacity: prPage >= Math.ceil(sortedGroups.length / 5) - 1 ? 0.3 : 1, flexShrink: 0 }}
+                                >
+                                  &rarr;
+                                </button>
+                             </div>
+                           )}
+                         </>
+                       );
+                     })()}
+                   </div>
+                 </div>
                </div>
+               )}
+
+
+              {activeTab === 'volume' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
                {/* ═══ Performance Timeline ═══ */}
                <div className="workout-tile">
@@ -833,13 +1122,181 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
 
-                {/* ═══ Progressive Overload Factor Tile ═══ */}
-                <div className="workout-tile" style={{ position: 'relative' }}>
-                  <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'overload' ? null : 'overload')}>
-                    {expandedInfo === 'overload' ? 'Hide ✕' : 'About ⓘ'}
-                  </button>
+                {/* ═══ Muscle Volume Distribution ═══ */}
+                <div className="workout-tile">
+                  <h3 style={{ margin: '0 0 1rem 0' }}>Muscle Volume Distribution</h3>
+                  {muscleVolumeData.length > 0 ? (
+                     <div style={{ width: '100%', height: '250px' }}>
+                       <ResponsiveContainer width="100%" height="100%">
+                         <PieChart>
+                           <Pie data={muscleVolumeData} dataKey="volume" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5}>
+                             {muscleVolumeData.map((entry, index) => (
+                               <Cell key={`cell-${index}`} fill={MUSCLE_COLORS[index % MUSCLE_COLORS.length]} />
+                             ))}
+                           </Pie>
+                           <Tooltip contentStyle={{ background: 'var(--background)', border: '1px solid var(--surface-border)', borderRadius: '8px' }} />
+                         </PieChart>
+                       </ResponsiveContainer>
+                     </div>
+                  ) : <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No data</p>}
+                </div>
 
-                  <h3 style={{ margin: '0 0 1rem 0' }}>Progressive Overload Tracking</h3>
+                {/* A4: Weekly Heatmap — vibrant color scale + legend */}
+                 <div className="workout-tile">
+                   <h3 style={{ margin: '0 0 1rem 0' }}>Training Frequency Heatmap</h3>
+                   {/* Day-of-week header */}
+                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', marginBottom: '4px' }}>
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => (
+                         <div key={`dow-${i}`} style={{ textAlign: 'center', fontSize: '0.6rem', color: 'var(--muted)' }}>{day}</div>
+                      ))}
+                   </div>
+                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+                      {Array.from({length: 28}).map((_, i) => {
+                         const d = new Date();
+                         const dayOffset = d.getDay();
+                         const adjustedDaysAgo = (27 - i) - (6 - dayOffset);
+                         const targetDate = new Date();
+                         targetDate.setDate(d.getDate() - adjustedDaysAgo);
+                         const dKey = targetDate.toISOString().slice(0, 10);
+                         const data = trainingHeatmap.get(dKey) || { setCount: 0, lifts: [] };
+                         const val = data.setCount;
+                         const getHeatColor = (v: number) => {
+                           if (v === 0) return 'var(--input-bg)';
+                           if (v <= 5)  return 'rgba(72, 187, 120, 0.75)';
+                           if (v <= 12) return 'rgba(236, 201, 75, 0.85)';
+                           if (v <= 20) return 'rgba(237, 137, 54, 0.9)';
+                           return 'rgba(252, 129, 129, 1)';
+                         };
+                         const isToday = dKey === new Date().toISOString().slice(0, 10);
+                         return (
+                            <div
+                              key={dKey}
+                              title={`${targetDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}: ${val} sets`}
+                              onClick={() => { if (val > 0) setSelectedHeatmapDate(dKey); }}
+                              style={{
+                                aspectRatio: '1/1',
+                                background: getHeatColor(val),
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.6rem',
+                                fontWeight: val > 0 ? 700 : 400,
+                                color: val > 0 ? 'rgba(0,0,0,0.75)' : 'transparent',
+                                outline: isToday ? '2px solid var(--accent)' : 'none',
+                                outlineOffset: '1px',
+                                cursor: val > 0 ? 'pointer' : 'default',
+                                position: 'relative'
+                              }}
+                            >
+                              {targetDate.getDate() === 1 ? <span style={{fontSize: '0.5rem', color: 'var(--muted)', position: 'absolute', bottom: '-12px'}}>{targetDate.toLocaleDateString(undefined, { month: 'short' })}</span> : null}
+                              {val > 0 ? val : ''}
+                            </div>
+                         );
+                     })}
+                   </div>
+                   {/* Color legend */}
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem', fontSize: '0.65rem', color: 'var(--muted)' }}>
+                     <span>Low</span>
+                     {['rgba(72,187,120,0.75)', 'rgba(236,201,75,0.85)', 'rgba(237,137,54,0.9)', 'rgba(252,129,129,1)'].map((c, i) => (
+                       <div key={i} style={{ width: '18px', height: '12px', background: c, borderRadius: '3px' }} />
+                     ))}
+                     <span>High</span>
+                   </div>
+                   {selectedHeatmapDate && trainingHeatmap.has(selectedHeatmapDate) && (
+                      <div className="animate-fade-in" style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--surface-glass)', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                              <strong style={{ fontSize: '0.9rem' }}>{new Date(selectedHeatmapDate + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</strong>
+                              <button style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer' }} onClick={() => setSelectedHeatmapDate(null)}>✕</button>
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>Total Sets: {trainingHeatmap.get(selectedHeatmapDate)?.setCount}</div>
+                          <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.8rem' }}>
+                              {trainingHeatmap.get(selectedHeatmapDate)?.lifts.map((l: string, i: number) => (
+                                  <li key={i} style={{ padding: '0.15rem 0' }}>{l}</li>
+                              ))}
+                          </ul>
+                      </div>
+                   )}
+                 </div>
+              </div>
+              )}
+
+              {activeTab === 'fatigue' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                {/* ═══ Muscle Fatigue Dashboard ═══ */}
+                <div className="workout-tile">
+                  <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
+                    <h3 style={{ margin: 0 }}>Muscle Fatigue Dashboard</h3>
+                    <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'fatigue' ? null : 'fatigue')}>
+                      {expandedInfo === 'fatigue' ? 'Hide ✕' : 'About ⓘ'}
+                    </button>
+                  </div>
+                  
+                  {expandedInfo === 'fatigue' && (
+                     <div className="animate-fade-in" style={{ marginBottom: '1rem', background: 'var(--input-bg)', padding: '1rem', borderRadius: '8px', fontSize: '0.85rem' }}>
+                        <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>Fatigue Accumulation Math</h4>
+                        <p>Muscle fatigue is an estimate of local fatigue designed to signal when a muscle needs a deload.</p>
+                        <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
+                           <li><strong>Accumulation:</strong> Fatigue grows based on training volume (sets × reps × weight) scaled by the lift's intensity relative to your 1RM.</li>
+                           <li><strong>Threshold:</strong> The baseline limit is <strong>40 points</strong>. If fatigue exceeds this, a deload is recommended.</li>
+                           <li><strong>Decay:</strong> Fatigue naturally decays by approximately <strong>15%</strong> for every day of rest.</li>
+                           <li><strong>Elevated:</strong> Yellow bars indicate that fatigue is high but has not yet crossed the deload threshold.</li>
+                        </ul>
+                     </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {muscleFatigue.map(f => (
+                      <div key={f.muscle} style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px', borderLeft: `3px solid ${f.recommendation === 'deload_recommended' ? '#fc8181' : f.recommendation === 'elevated' ? '#ed8936' : '#48bb78'}` }}>
+                        <div className="workout-flex-between">
+                          <strong style={{ fontSize: '0.9rem' }}>{f.muscle}</strong>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: f.recommendation === 'deload_recommended' ? '#fc8181' : f.recommendation === 'elevated' ? '#ed8936' : '#48bb78' }}>
+                            {f.fatigueScore.toFixed(1)} / {f.threshold}
+                          </span>
+                        </div>
+                        <div style={{ marginTop: '0.4rem', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.min(100, (f.fatigueScore / f.threshold) * 100)}%`,
+                            height: '100%',
+                            background: f.recommendation === 'deload_recommended' ? '#fc8181' : f.recommendation === 'elevated' ? '#ed8936' : '#48bb78',
+                            transition: 'width 0.5s ease',
+                          }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.3rem', fontSize: '0.7rem', color: 'var(--muted)' }}>
+                          <span>{f.sessionsSinceRest} sessions tracked</span>
+                          <span>{f.recommendation === 'deload_recommended' ? '🔴 Deload recommended' : f.recommendation === 'elevated' ? '🟡 Elevated' : '🟢 Normal'}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {muscleFatigue.length === 0 && (
+                      <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No fatigue data yet. Train at least 2 sessions.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* ═══ Recovery Analysis ═══ */}
+                <div className="workout-tile">
+                  <h3 style={{ margin: '0 0 1rem 0' }}>Recovery Analysis</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {recoveryData.slice(0, 5).map(r => (
+                       <div key={r.muscle} className="workout-flex-between" style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '8px' }}>
+                          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.muscle}</span>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                             {r.hoursSince < 48 ? '⚠️ <48h' : r.hoursSince > 168 ? '💤 >7d' : '✅ 48-72h'} ({Math.round(r.hoursSince)}h ago)
+                          </span>
+                       </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ═══ Progressive Overload Factor Tile ═══ */}
+                <div className="workout-tile">
+                  <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
+                    <h3 style={{ margin: 0 }}>Progressive Overload Tracking</h3>
+                    <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', borderRadius: '8px', fontSize: '0.8rem' }} onClick={() => setExpandedInfo(expandedInfo === 'overload' ? null : 'overload')}>
+                      {expandedInfo === 'overload' ? 'Hide ✕' : 'About ⓘ'}
+                    </button>
+                  </div>
                   <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>
                      Intensity Factor: <strong style={{ color: intensityInfo.color }}>{intensityInfo.emoji} {intensityFactor.toFixed(2)}</strong>
                      <span style={{ fontSize: '0.75rem', marginLeft: '0.5rem' }}>({intensityInfo.label})</span>
@@ -860,7 +1317,7 @@ export default function AnalyticsPage() {
                       </div>
                    )}
 
-                  {overloadTracking.length > 0 ? (
+                  {overloadTracking.length > 0 && (
                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                         <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.75rem', borderRadius: '8px', borderLeft: '3px solid var(--accent)' }}>
                             <div style={{ fontSize: '0.75rem', color: 'var(--muted)', textTransform: 'uppercase' }}>Factor Analysis</div>
@@ -982,10 +1439,13 @@ export default function AnalyticsPage() {
                           </div>
                         )}
                      </div>
-                  ) : (
-                     <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Need at least 2 sessions per lift to track overload.</p>
                   )}
                 </div>
+              </div>
+              )}
+
+              {activeTab === 'history' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
                 {/* ═══ Calibration History ═══ */}
                 <div className="workout-tile">
@@ -1000,7 +1460,18 @@ export default function AnalyticsPage() {
                              <div key={liftKey} style={{ background: 'var(--input-bg)', borderRadius: '10px', padding: '0.75rem' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                                    <strong style={{ fontSize: '0.9rem' }}>{titleCase(liftKey)}</strong>
-                                   <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{entries.length} gyms</span>
+                                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{entries.length} gym{entries.length !== 1 ? 's' : ''}</span>
+                                      <button
+                                         className="btn btn-secondary"
+                                         style={{ padding: '0.15rem 0.5rem', fontSize: '0.7rem', borderRadius: '6px' }}
+                                         onClick={() => {
+                                            setLinkLiftModal({ gymId: entries[0]?.gymId || '', liftKey, stationType: entries[0]?.stationType || 'stack' });
+                                            setLinkLiftNewKey(liftKey);
+                                            setLinkLiftSaved(false);
+                                         }}
+                                      >Link Lift</button>
+                                   </div>
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                                    {entries.map((entry: any) => {
@@ -1020,6 +1491,60 @@ export default function AnalyticsPage() {
                                       );
                                    })}
                                 </div>
+                                {/* Inline Link Lift Form */}
+                                {linkLiftModal?.liftKey === liftKey && (
+                                  <div className="animate-fade-in" style={{ marginTop: '1rem', padding: '1rem', background: 'var(--background)', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
+                                    <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
+                                       <h4 style={{ margin: 0, fontSize: '0.9rem' }}>Link Lift Key</h4>
+                                       <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => setLinkLiftModal(null)}>✕</button>
+                                    </div>
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>
+                                       Manually set the lift name that this calibration entry matches. Used for fuzzy-matching when equipment names differ between gyms.
+                                    </p>
+                                    <div style={{ marginBottom: '0.5rem' }}>
+                                       <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>New lift name</label>
+                                       <input
+                                          className="workout-input"
+                                          style={{ marginBottom: 0, fontSize: '0.85rem', padding: '0.5rem' }}
+                                          placeholder="e.g. chest press, lat pulldown..."
+                                          value={linkLiftNewKey}
+                                          onChange={e => setLinkLiftNewKey(e.target.value)}
+                                       />
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                                       <button
+                                          className="workout-btn-primary"
+                                          style={{ margin: 0, flex: 1, opacity: linkLiftSaving ? 0.5 : 1, padding: '0.4rem', fontSize: '0.85rem' }}
+                                          disabled={linkLiftSaving || !linkLiftNewKey.trim()}
+                                          onClick={async () => {
+                                             if (!linkLiftModal || !linkLiftNewKey.trim()) return;
+                                             setLinkLiftSaving(true);
+                                             try {
+                                                const res = await fetch('/api/workout/calibration', {
+                                                   method: 'PATCH',
+                                                   headers: { 'Content-Type': 'application/json' },
+                                                   body: JSON.stringify({
+                                                      gymId: linkLiftModal.gymId,
+                                                      liftKey: linkLiftNewKey.trim(),
+                                                      stationType: linkLiftModal.stationType,
+                                                      scaleFactor: calibrations.find(c => c.gymId === linkLiftModal.gymId && c.liftKey === linkLiftModal.liftKey)?.scaleFactor ?? 1,
+                                                      confidence: calibrations.find(c => c.gymId === linkLiftModal.gymId && c.liftKey === linkLiftModal.liftKey)?.confidence ?? 0.5,
+                                                   }),
+                                                });
+                                                if ((await res.json()).success) {
+                                                   setLinkLiftSaved(true);
+                                                   setTimeout(() => { setLinkLiftModal(null); setLinkLiftSaved(false); window.location.reload(); }, 1200);
+                                                }
+                                             } catch { /* silent */ }
+                                             setLinkLiftSaving(false);
+                                          }}
+                                       >
+                                          {linkLiftSaving ? 'Saving...' : linkLiftSaved ? '✓ Saved!' : 'Save Link'}
+                                       </button>
+                                       <button className="btn btn-secondary" style={{ flex: 1, padding: '0.4rem', fontSize: '0.85rem' }} onClick={() => setLinkLiftModal(null)}>Cancel</button>
+                                    </div>
+                                  </div>
+                                )}
                              </div>
                            );
                         })}
@@ -1109,6 +1634,8 @@ export default function AnalyticsPage() {
                       {history.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No workouts tracked yet.</p>}
                   </div>
                </div>
+               </div>
+               )}
 
                {!isDemo && (
                   <div className="workout-tile" style={{ textAlign: 'center' }}>

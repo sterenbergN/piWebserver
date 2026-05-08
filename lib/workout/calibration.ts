@@ -1,5 +1,6 @@
 import { getWorkoutData, saveWorkoutData } from './data';
-import { clamp, normalizeLiftKey } from './calibration-utils';
+import { clamp, normalizeLiftKey, areLiftKeysSimilar } from './calibration-utils';
+
 
 export type CalibrationReference = {
   fromGymId: string;
@@ -44,8 +45,19 @@ export function inferScaleFactor(prevE1RMNormalized: number, currE1RMRaw: number
 export async function getCalibrationEntry(userId: string, gymId: string, liftName: string): Promise<CalibrationEntry | null> {
   const store = await getCalibrationStore();
   const liftKey = normalizeLiftKey(liftName);
-  return store.calibrations.find(c => c.userId === userId && c.gymId === gymId && c.liftKey === liftKey) || null;
+
+  // Exact match first
+  const exact = store.calibrations.find(
+    c => c.userId === userId && c.gymId === gymId && c.liftKey === liftKey
+  );
+  if (exact) return exact;
+
+  // Fuzzy fallback — handles "Machine Chest Press" ↔ "Chest Press"
+  return store.calibrations.find(
+    c => c.userId === userId && c.gymId === gymId && areLiftKeysSimilar(c.liftKey, liftKey)
+  ) || null;
 }
+
 
 export async function upsertCalibrationEntry(entry: CalibrationEntry): Promise<CalibrationEntry> {
   const store = await getCalibrationStore();

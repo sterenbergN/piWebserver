@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, useRef } from 'react';
 
@@ -33,6 +33,7 @@ export default function WorkoutTypeEditor() {
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [newType, setNewType] = useState<Partial<WorkoutType>>(EMPTY_TYPE);
   const [systemPopup, setSystemPopup] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
   const typeFormRefs = useRef(new Map<string, HTMLDivElement>());
 
   useEffect(() => {
@@ -88,19 +89,13 @@ export default function WorkoutTypeEditor() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [addingType, editingTypeId]);
 
-  const handleDelete = (id: string) => {
-    setSystemPopup({
-      title: 'Delete Workout Type',
-      message: 'Delete this workout type?',
-      onConfirm: async () => {
-        if (editingTypeId === id) resetTypeEditor();
-        const res = await fetch(`/api/workout/types?id=${id}`, { method: 'DELETE' });
-        if ((await res.json()).success) {
-          setTypes(types.filter((type) => type.id !== id));
-        }
-        setSystemPopup(null);
-      },
-    });
+  const handleDelete = async (id: string) => {
+    if (editingTypeId === id) resetTypeEditor();
+    const res = await fetch(`/api/workout/types?id=${id}`, { method: 'DELETE' });
+    if ((await res.json()).success) {
+      setTypes(types.filter((type) => type.id !== id));
+    }
+    setConfirmDeleteTarget(null);
   };
 
   const handleImport = (typeToImport: WorkoutType) => {
@@ -266,9 +261,15 @@ export default function WorkoutTypeEditor() {
                 >
                   Edit
                 </button>
-                <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDelete(type.id)}>
-                  Delete
-                </button>
+                {confirmDeleteTarget === type.id ? (
+                  <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.1rem 0.5rem' }} onClick={() => handleDelete(type.id)}>
+                    Confirm?
+                  </button>
+                ) : (
+                  <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => setConfirmDeleteTarget(type.id)}>
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>

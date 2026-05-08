@@ -41,7 +41,16 @@ export async function GET() {
   }
 
   const normalizedUser = normalizeWorkoutUser(userRecord);
-  const liftMetadata = new Map<string, { liftName: string; stationId: string; stationName: string; stationType: string }>();
+
+  // Build lift metadata map from gym definitions — includes muscle groups
+  const liftMetadata = new Map<string, {
+    liftName: string;
+    stationId: string;
+    stationName: string;
+    stationType: string;
+    primaryMuscle: string;
+    secondaryMuscle: string;
+  }>();
 
   gymsData.gyms.forEach((gym: any) => {
     gym.stations?.forEach((station: any) => {
@@ -51,6 +60,8 @@ export async function GET() {
           stationId: station.id || '',
           stationName: station.name || '',
           stationType: station.type || '',
+          primaryMuscle: lift.primaryMuscle || '',
+          secondaryMuscle: lift.secondaryMuscle || '',
         });
       });
     });
@@ -73,16 +84,25 @@ export async function GET() {
     'duration',
     'calories',
     'volume',
+    'isDeload',
     'liftId',
     'liftName',
     'stationId',
     'stationName',
     'stationType',
+    'primaryMuscle',
+    'secondaryMuscle',
+    'supersetId',
     'setIndex',
     'setWeight',
     'setReps',
     'setCompleted',
     'setTimestamp',
+    'setRir',
+    'setPlannedWeight',
+    'setPlannedReps',
+    'gymId',
+    'gymName',
   ];
 
   const rows = historyData.history
@@ -105,6 +125,9 @@ export async function GET() {
         duration: workout.duration ?? '',
         calories: workout.calories ?? '',
         volume: workout.volume ?? '',
+        isDeload: workout.isDeload ? 'true' : '',
+        gymId: workout.gymId ?? '',
+        gymName: workout.gymName ?? '',
       };
 
       const logEntries = Object.entries(workout.logs ?? {});
@@ -117,42 +140,60 @@ export async function GET() {
             stationId: '',
             stationName: '',
             stationType: '',
+            primaryMuscle: '',
+            secondaryMuscle: '',
+            supersetId: '',
             setIndex: '',
             setWeight: '',
             setReps: '',
             setCompleted: '',
             setTimestamp: '',
+            setRir: '',
+            setPlannedWeight: '',
+            setPlannedReps: '',
           },
         ];
       }
 
       return logEntries.flatMap(([liftId, sets]) => {
-        const metadata = liftMetadata.get(liftId) ?? {
+        const gymMeta = liftMetadata.get(liftId) ?? {
           liftName: '',
           stationId: '',
           stationName: '',
           stationType: '',
+          primaryMuscle: '',
+          secondaryMuscle: '',
         };
+        // Per-workout liftMeta may override gym-level data (e.g. after a station rename)
+        const workoutLiftMeta = (workout.liftMeta ?? {})[liftId] || {};
 
         return (sets as any[]).map((set, index) => ({
           ...baseRow,
           liftId,
-          liftName: metadata.liftName,
-          stationId: metadata.stationId,
-          stationName: metadata.stationName,
-          stationType: metadata.stationType,
+          liftName: workoutLiftMeta.name || gymMeta.liftName,
+          stationId: gymMeta.stationId,
+          stationName: gymMeta.stationName,
+          stationType: workoutLiftMeta.stationType || gymMeta.stationType,
+          primaryMuscle: gymMeta.primaryMuscle,
+          secondaryMuscle: gymMeta.secondaryMuscle,
+          supersetId: workoutLiftMeta.supersetId ?? '',
           setIndex: String(index + 1),
           setWeight: set.weight ?? '',
           setReps: set.reps ?? '',
           setCompleted: set.completed ?? '',
           setTimestamp: set.timestamp ?? '',
+          setRir: set.rir ?? '',
+          setPlannedWeight: set.plannedWeight ?? '',
+          setPlannedReps: set.plannedReps ?? '',
         }));
       });
     });
 
   const csvLines = [
     headers.join(','),
-    ...rows.map((row) => headers.map((header) => escapeCsv((row as Record<string, unknown>)[header])).join(',')),
+    ...rows.map((row) =>
+      headers.map((header) => escapeCsv((row as Record<string, unknown>)[header])).join(',')
+    ),
   ];
 
   const today = new Date().toISOString().slice(0, 10);

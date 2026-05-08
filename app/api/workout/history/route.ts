@@ -43,7 +43,8 @@ export async function POST(request: Request) {
     data.history.push({
       ...payload,
       id: Math.random().toString(36).substring(2, 10),
-      userId
+      userId,
+      isDeload: payload.isDeload === true, // explicitly tag deload sessions
     });
 
     // Auto-infer calibration for stack/cable on first session in a new gym

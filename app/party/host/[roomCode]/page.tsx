@@ -710,7 +710,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   const trackLength = state.hostData.trackLength || 15;
                   const pct = Math.min((pos / trackLength) * 100, 100);
                   const justRolled = state.hostData.lastRollHorse === horse || (horse === '2/3' && (state.hostData.lastRoll === 2 || state.hostData.lastRoll === 3)) || (horse === '11/12' && (state.hostData.lastRoll === 11 || state.hostData.lastRoll === 12));
-                  let hClass = `horse-${horse.replace('/', '-')}`;
+                  const hClass = `horse-${horse.replace('/', '-')}`;
                   
                   const HORSE_NAMES: Record<string, string> = {
                     '2/3': 'Glue Factory', '4': 'Slow Poke', '5': 'Pony Soprano', '6': 'Seabiscuit',

@@ -13,6 +13,7 @@ export default function ActiveWorkoutPage() {
   const sharedMode = searchParams.get('sharedMode');
   const isDemoMode = searchParams.get('isDemo') === 'true';
   const liftCountParam = parseInt(searchParams.get('lifts') || '5');
+  const intensityParam = searchParams.get('intensity');
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -108,8 +109,9 @@ export default function ActiveWorkoutPage() {
         if (!isResuming && !isSharedJoin) {
            const targetMuscles: string[] = type.muscles || [];
            
-           // Phase 1: Pick one lift per target muscle
-           targetMuscles.forEach((muscle: string) => {
+           // Phase 1: Pick one lift per target muscle, capped at liftCountParam (T4 fix)
+           for (const muscle of targetMuscles) {
+              if (plan.length >= liftCountParam) break;
               const matches = availableLifts.filter(l => l.primaryMuscle === muscle || l.secondaryMuscle === muscle);
               if (matches.length > 0) {
                  const selected = matches[Math.floor(Math.random() * matches.length)];
@@ -117,7 +119,7 @@ export default function ActiveWorkoutPage() {
                      plan.push({ ...selected, uniquePlanId: Math.random() });
                  }
               }
-           });
+           }
 
            // Phase 2: Fill up to the user's requested lift count
            const muscleFilteredPool = targetMuscles.length > 0
@@ -218,7 +220,7 @@ export default function ActiveWorkoutPage() {
          allLifts={allLifts} 
          user={user} 
          pastHistory={pastHistory} 
-         resumeState={resumingState}
+         resumeState={resumingState || (intensityParam ? { intensitySlider: parseFloat(intensityParam) } : undefined)}
          sharedSessionId={sharedSessionId || workoutPlan?.sharedSessionId}
        />
     </div>

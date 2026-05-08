@@ -51,6 +51,7 @@ export default function WorkoutDashboard() {
   const [selectedGym, setSelectedGym] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
+  const [isDeload, setIsDeload] = useState(false);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
@@ -547,14 +548,19 @@ export default function WorkoutDashboard() {
              {availableTypes.map(t => <option key={t.id} value={t.id}>{t.name} ({t.intensity}%)</option>)}
           </select>
 
-          <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Number of Lifts</label>
-          <input type="number" className="workout-input" value={liftCount} onChange={e => setLiftCount(e.target.value)} min="1" max="15" />
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer', background: isDeload ? 'rgba(99, 179, 237, 0.1)' : 'transparent' }}>
+            <input type="checkbox" checked={isDeload} onChange={e => setIsDeload(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+            <div>
+              <div style={{ fontWeight: 600, color: isDeload ? '#63b3ed' : 'var(--foreground)' }}>Deload Workout</div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Automatically reduces weight targets and sets to prioritize recovery.</div>
+            </div>
+          </label>
 
           <button 
              className="workout-btn-primary" 
              disabled={!selectedGym || !selectedType}
              style={{ opacity: (!selectedGym || !selectedType) ? 0.5 : 1 }}
-             onClick={() => window.location.href = `/workout/active?gym=${selectedGym}&type=${selectedType}&lifts=${liftCount}&isDemo=${isDemo}`}
+             onClick={() => window.location.href = `/workout/active?gym=${selectedGym}&type=${selectedType}&lifts=${liftCount}&intensity=${isDeload ? 0.5 : 1.0}&isDemo=${isDemo}`}
           >
             Build & Start
           </button>

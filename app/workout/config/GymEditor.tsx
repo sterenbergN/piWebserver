@@ -11,6 +11,7 @@ interface Lift {
   primaryMuscle: string;
   secondaryMuscle: string;
   attachment?: string;
+  progressionProfile?: 'standard' | 'high-rep' | 'endurance';
 }
 
 interface Station {
@@ -22,6 +23,7 @@ interface Station {
   minWeight?: number;
   maxWeight?: number;
   increment?: number;
+  additionalWeights?: number[];
   additionalWeight?: number;
   attachments?: string[];
   dumbbellPairs?: number[];
@@ -67,11 +69,14 @@ export default function GymEditor() {
   const [tempDumbbells, setTempDumbbells] = useState('');
   const [tempBodyWeight, setTempBodyWeight] = useState('');
   const [tempAttachment, setTempAttachment] = useState('');
+  const [tempAdditionalWeights, setTempAdditionalWeights] = useState('');
 
   // Import Station Prompt
+  const [showImportStationPicker, setShowImportStationPicker] = useState(false);
   const [importPrompt, setImportPrompt] = useState<{ match: Station, target: Station } | null>(null);
   const [importSelectedLifts, setImportSelectedLifts] = useState<Set<string>>(new Set());
   const [systemPopup, setSystemPopup] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
   const gymFormRef = useRef<HTMLDivElement | null>(null);
   const stationFormRefs = useRef(new Map<string, HTMLDivElement>());
   const liftFormRefs = useRef(new Map<string, HTMLDivElement>());
@@ -83,13 +88,14 @@ export default function GymEditor() {
     setTempPlates('');
     setTempDumbbells('');
     setTempBodyWeight('');
+    setTempAdditionalWeights('');
     setTempAttachment('');
   };
 
   const resetLiftEditor = () => {
     setAddingLift(false);
     setEditingLiftId(null);
-    setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None' });
+    setNewLift({ singleArmLeg: false, primaryMuscle: 'Chest', secondaryMuscle: 'None', progressionProfile: 'standard' });
   };
 
   const resetGymEditor = () => {
@@ -150,7 +156,7 @@ export default function GymEditor() {
       minWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.minWeight : undefined,
       maxWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.maxWeight : undefined,
       increment: stationType === 'stack' || stationType === 'cable' ? sourceStation?.increment : undefined,
-      additionalWeight: stationType === 'stack' || stationType === 'cable' ? sourceStation?.additionalWeight : undefined,
+      additionalWeights: stationType === 'stack' || stationType === 'cable' ? sourceStation?.additionalWeights : undefined,
       dumbbellPairs: stationType === 'dumbbells' ? sourceStation?.dumbbellPairs : undefined,
       bodyWeightAdditions: stationType === 'bodyweight' ? sourceStation?.bodyWeightAdditions : undefined,
     });
@@ -158,6 +164,7 @@ export default function GymEditor() {
     setTempPlates(stationType === 'plates' ? (sourceStation?.plateSets || []).join(', ') : '');
     setTempDumbbells(stationType === 'dumbbells' ? (sourceStation?.dumbbellPairs || []).join(', ') : '');
     setTempBodyWeight(stationType === 'bodyweight' ? (sourceStation?.bodyWeightAdditions || []).join(', ') : '');
+    setTempAdditionalWeights(stationType === 'stack' || stationType === 'cable' ? (sourceStation?.additionalWeights || []).join(', ') : '');
     setTempAttachment('');
   };
 
@@ -214,15 +221,13 @@ export default function GymEditor() {
     await handleCreateGym();
   };
 
-  const handleDeleteGym = (id: string) => {
-    setSystemPopup({ title: 'Delete Gym', message: 'Delete this Gym entirely?', onConfirm: async () => {
-        const res = await fetch('/api/workout/gyms?id=' + id, { method: 'DELETE' });
-        if((await res.json()).success) {
-           setGyms(gyms.filter(g => g.id !== id));
-           if (activeGym?.id === id) setActiveGym(null);
-        }
-        setSystemPopup(null);
-    }});
+  const handleDeleteGym = async (id: string) => {
+    const res = await fetch('/api/workout/gyms?id=' + id, { method: 'DELETE' });
+    if((await res.json()).success) {
+       setGyms(gyms.filter(g => g.id !== id));
+       if (activeGym?.id === id) setActiveGym(null);
+    }
+    setConfirmDeleteTarget(null);
   };
 
   const handleImportGym = (gymToImport: Gym) => {
@@ -252,6 +257,7 @@ export default function GymEditor() {
     finalizedStation.baseWeight = finalizedStation.type === 'plates' ? finalizedStation.baseWeight : undefined;
     finalizedStation.dumbbellPairs = finalizedStation.type === 'dumbbells' ? tempDumbbells.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
     finalizedStation.bodyWeightAdditions = finalizedStation.type === 'bodyweight' ? tempBodyWeight.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : undefined;
+    finalizedStation.additionalWeights = (finalizedStation.type === 'stack' || finalizedStation.type === 'cable') ? tempAdditionalWeights.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0) : undefined;
 
     if (finalizedStation.type !== 'stack' && finalizedStation.type !== 'cable') {
       finalizedStation.minWeight = undefined;
@@ -262,20 +268,6 @@ export default function GymEditor() {
 
     if (finalizedStation.type !== 'cable') {
       finalizedStation.lifts = finalizedStation.lifts.map((lift) => ({ ...lift, attachment: undefined }));
-    }
-
-    // Check for similar stations to prompt import if creating NEW
-    if (!newStation.id && !applyImportRts) {
-       for (const g of gyms) {
-         if (g.id !== activeGym.id) {
-            const match = g.stations.find(s => s.name.toLowerCase() === finalizedStation.name.toLowerCase() && s.type === finalizedStation.type && s.lifts?.length > 0);
-             if (match) {
-               setImportPrompt({ match, target: finalizedStation });
-               setImportSelectedLifts(new Set(match.lifts.map(l => l.id)));
-               return; // halt save, wait for user prompt
-             }
-         }
-       }
     }
 
     setImportPrompt(null);
@@ -291,26 +283,20 @@ export default function GymEditor() {
     resetStationEditor();
   };
 
-  const handleDeleteStation = (id: string) => {
+  const handleDeleteStation = async (id: string) => {
      if (!activeGym) return;
-     setSystemPopup({ title: 'Delete Station', message: 'Delete equipment station?', onConfirm: async () => {
-         if (editingStationId === id) {
-            resetStationEditor();
-         }
-         const updatedGym = { ...activeGym, stations: activeGym.stations.filter(s => s.id !== id) };
-         await saveGymToAPI(updatedGym);
-         setSystemPopup(null);
-     }});
+     if (editingStationId === id) resetStationEditor();
+     const updatedGym = { ...activeGym, stations: activeGym.stations.filter(s => s.id !== id) };
+     await saveGymToAPI(updatedGym);
+     setConfirmDeleteTarget(null);
   };
 
-  const handleDeleteLiftInline = (station: Station, liftId: string) => {
+  const handleDeleteLiftInline = async (station: Station, liftId: string) => {
       if (!activeGym) return;
-      setSystemPopup({ title: 'Delete Lift', message: 'Delete this lift?', onConfirm: async () => {
-         const updatedStation = { ...station, lifts: station.lifts.filter(l => l.id !== liftId) };
-         const updatedStations = activeGym.stations.map(s => s.id === station.id ? updatedStation : s);
-         await saveGymToAPI({ ...activeGym, stations: updatedStations });
-         setSystemPopup(null);
-      }});
+      const updatedStation = { ...station, lifts: station.lifts.filter(l => l.id !== liftId) };
+      const updatedStations = activeGym.stations.map(s => s.id === station.id ? updatedStation : s);
+      await saveGymToAPI({ ...activeGym, stations: updatedStations });
+      setConfirmDeleteTarget(null);
   };
 
   const handleSaveLift = async () => {
@@ -379,6 +365,15 @@ export default function GymEditor() {
             {allMuscles.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
+      </div>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ fontSize: '0.8rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Progression Profile</label>
+        <select className="workout-input" value={newLift.progressionProfile || 'standard'} onChange={e => setNewLift({...newLift, progressionProfile: e.target.value as any})}>
+          <option value="standard">Standard (weight-first)</option>
+          <option value="high-rep">High-Rep (rep-first, 12–30)</option>
+          <option value="endurance">Endurance (volume-first)</option>
+        </select>
       </div>
 
       {/* Cable attachment selector per lift */}
@@ -486,13 +481,12 @@ export default function GymEditor() {
               />
             </div>
             <div>
-              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Stack Weight (lbs)</label>
+              <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Additional Weights (lbs, comma separated)</label>
               <input
                 className="workout-input"
-                type="number"
-                placeholder="Optional"
-                value={newStation.additionalWeight ?? ''}
-                onChange={e => setNewStation({ ...newStation, additionalWeight: parseOptionalNumber(e.target.value) })}
+                placeholder="e.g. 5, 10"
+                value={tempAdditionalWeights}
+                onChange={e => setTempAdditionalWeights(e.target.value)}
               />
             </div>
           </div>
@@ -552,6 +546,16 @@ export default function GymEditor() {
   const myGyms = gyms.filter(g => g.ownerId === userId);
   const otherGyms = gyms.filter(g => g.ownerId !== userId);
 
+  const importableStations = Array.from(
+    new Map(
+      gyms
+        .filter(g => g.id !== activeGym?.id)
+        .flatMap(g => g.stations)
+        .filter(s => s.lifts && s.lifts.length > 0)
+        .map(s => [s.name.toLowerCase() + s.type, s])
+    ).values()
+  );
+
   return (
     <div style={{ padding: '1.5rem' }}>
       
@@ -570,7 +574,11 @@ export default function GymEditor() {
                     <button className="btn btn-secondary" style={{ padding: '0.65rem 0.9rem', fontSize: '0.8rem', borderRadius: '12px' }} onClick={() => { setAddingGym(true); setEditingGymId(g.id); setNewGymName(g.name); setNewGymEmoji(g.emoji || '🏋️'); setNewGymIsPublic(g.isPublic === true); }}>
                       Edit
                     </button>
-                    <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0.65rem 0.9rem' }} onClick={() => handleDeleteGym(g.id)}>Delete</button>
+                    {confirmDeleteTarget === `gym:${g.id}` ? (
+                       <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '12px', padding: '0.65rem 0.9rem', fontSize: '0.8rem' }} onClick={() => handleDeleteGym(g.id)}>Confirm?</button>
+                    ) : (
+                       <button style={{ background: 'transparent', color: '#ff6b6b', border: '1px solid #ff6b6b', borderRadius: '12px', padding: '0.65rem 0.9rem', fontSize: '0.8rem' }} onClick={() => setConfirmDeleteTarget(`gym:${g.id}`)}>Delete</button>
+                    )}
                  </div>
               </div>
             ))}
@@ -707,7 +715,11 @@ export default function GymEditor() {
                       >
                         {addingStation && editingStationId === st.id ? 'Close' : 'Edit'}
                       </button>
-                      <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => handleDeleteStation(st.id)}>Delete Station</button>
+                      {confirmDeleteTarget === `station:${st.id}` ? (
+                        <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.1rem 0.5rem' }} onClick={() => handleDeleteStation(st.id)}>Confirm Delete?</button>
+                      ) : (
+                        <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => setConfirmDeleteTarget(`station:${st.id}`)}>Delete Station</button>
+                      )}
                     </div>
                  </div>
                  
@@ -741,7 +753,11 @@ export default function GymEditor() {
                                    setAddingLift(true);
                                    setEditingLiftId(l.id);
                                  }}>{addingLift && editingLiftId === l.id ? 'Close' : 'Edit'}</button>
-                                 <button style={{ background: 'none', border: 'none', color: '#ff6b6b', fontSize: '0.85rem' }} onClick={() => handleDeleteLiftInline(st, l.id)}>Delete</button>
+                                 {confirmDeleteTarget === `lift:${st.id}:${l.id}` ? (
+                                    <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.1rem 0.5rem', fontSize: '0.85rem' }} onClick={() => handleDeleteLiftInline(st, l.id)}>Confirm?</button>
+                                 ) : (
+                                    <button style={{ background: 'none', border: 'none', color: '#ff6b6b', fontSize: '0.85rem' }} onClick={() => setConfirmDeleteTarget(`lift:${st.id}:${l.id}`)}>Delete</button>
+                                 )}
                               </div>
                             </div>
                             {addingLift && editingLiftId === l.id && activeStation?.id === st.id && renderLiftEditor(st, true, `${st.id}:${l.id}`)}
@@ -765,15 +781,50 @@ export default function GymEditor() {
             {(!activeGym.stations || activeGym.stations.length === 0) && <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>No equipment configured yet.</p>}
           </div>
 
-          {!addingStation && (
-            <button className="workout-btn-primary" onClick={() => {
-              setAddingStation(true);
-              setEditingStationId(null);
-              applyStationType('plates', { type: 'plates', lifts: [], attachments: [] });
-            }} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
-              + Add Equipment Station
-            </button>
+          {!addingStation && !showImportStationPicker && (
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="workout-btn-primary" onClick={() => {
+                setAddingStation(true);
+                setEditingStationId(null);
+                applyStationType('plates', { type: 'plates', lifts: [], attachments: [] });
+              }} style={{ flex: 1, background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}>
+                + Add Equipment Station
+              </button>
+              <button className="btn btn-secondary" onClick={() => setShowImportStationPicker(true)} style={{ flex: 1 }}>
+                Import Station
+              </button>
+            </div>
           )}
+
+          {showImportStationPicker && (
+            <div className="animate-fade-in workout-tile" style={{ border: '1px solid var(--accent)' }}>
+              <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>Import Station</h3>
+                <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }} onClick={() => setShowImportStationPicker(false)}>Cancel</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '300px', overflowY: 'auto' }}>
+                {importableStations.length === 0 ? (
+                  <p style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>No importable stations found in other gyms.</p>
+                ) : importableStations.map((st: any) => (
+                  <button key={st.id} className="btn btn-secondary workout-flex-between" style={{ padding: '0.75rem 1rem', textAlign: 'left' }} onClick={() => {
+                    setAddingStation(true);
+                    setEditingStationId(null);
+                    applyStationType(st.type, { ...st, id: undefined, lifts: [] });
+                    setImportPrompt({ match: st, target: { ...st, id: undefined, lifts: [] } });
+                    setImportSelectedLifts(new Set(st.lifts.map((l: any) => l.id)));
+                    setShowImportStationPicker(false);
+                  }}>
+                    <div>
+                      <strong style={{ display: 'block' }}>{st.name}</strong>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{st.type} • {st.lifts.length} lifts</span>
+                    </div>
+                    <span>Import →</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {addingStation && editingStationId === null && renderStationConfigForm(false, 'new')}
         </div>
       )}

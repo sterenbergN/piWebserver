@@ -43,6 +43,8 @@ export type ScoringBreakdown = {
   performanceAdjustment: string;  // human-readable explanation
 };
 
+export type ProgressionProfile = 'standard' | 'high-rep' | 'endurance';
+
 export type ProgressionInput = {
   lastSession: Session;
   history: Session[];
@@ -57,6 +59,7 @@ export type ProgressionInput = {
     getValidWeights: (liftId: string) => number[];
   };
   intensity: number; // user-controlled [0.5 – 1.5]
+  profile?: ProgressionProfile; // per-lift progression strategy
 };
 
 export type WorkoutPlan = {
@@ -353,14 +356,25 @@ export function scoreCandidateDetailed(
   const overloadRatio = lastLoad > 0 ? totalLoad / lastLoad : 1;
   const intensityRatio = lastE1RM > 0 ? e1RM / lastE1RM : 1;
 
+  // ── Profile-specific constants ──
+  const profile = input.profile || 'standard';
+  const jumpFraction =
+    profile === 'endurance' ? 0.03 :
+    profile === 'high-rep'  ? 0.05 :
+    BASE_JUMP_FRACTION;
+  const baseIncrease =
+    profile === 'endurance' ? 0.02 :
+    profile === 'high-rep'  ? 0.03 :
+    BASE_INCREASE;
+
   // ── Target overload ──
   // Scale by intensity, performance score, AND history trend
   const effectiveIntensity = input.intensity * historyTrend;
-  const targetOverload = BASE_INCREASE * effectiveIntensity * performanceMetrics.performanceScore;
+  const targetOverload = baseIncrease * effectiveIntensity * performanceMetrics.performanceScore;
   const targetOverloadRatio = 1 + targetOverload;
 
   // ── Allowed jump enforcement ──
-  const allowedJump = lastSet.actualWeight * BASE_JUMP_FRACTION * (0.75 + input.intensity);
+  const allowedJump = lastSet.actualWeight * jumpFraction * (0.75 + input.intensity);
   if ((candidate.weight - lastSet.actualWeight) > allowedJump) {
     return {
       score: -1000,
@@ -372,22 +386,37 @@ export function scoreCandidateDetailed(
     };
   }
 
-  // ── Intensity bias scoring ──
+  // ── Intensity bias scoring (profile-aware) ──
   let intensityBias = 0;
   let biasExplanation = '';
 
-  if (input.intensity >= 1.2) {
-    // High intensity: favor weight increases, allow rep drops
+  if (profile === 'high-rep') {
+    // High-rep: always favor reps first; only permit weight increase when at rep ceiling
+    if (candidate.reps > lastSet.actualReps) {
+      intensityBias += 15;
+    }
+    if (candidate.weight > lastSet.actualWeight && candidate.reps < input.constraints.maxReps) {
+      intensityBias -= 20; // penalize weight bump unless reps are already at ceiling
+    }
+    biasExplanation = 'High-rep profile: favoring rep increases over weight.';
+  } else if (profile === 'endurance') {
+    // Endurance: sets > reps > weight
+    if (candidate.sets > completedSets.length) intensityBias += 20;
+    if (candidate.reps > lastSet.actualReps)   intensityBias += 10;
+    if (candidate.weight > lastSet.actualWeight) intensityBias -= 25;
+    biasExplanation = 'Endurance profile: favoring volume over intensity.';
+  } else if (input.intensity >= 1.2) {
+    // Standard high intensity: favor weight increases, allow rep drops
     intensityBias = (candidate.weight > lastSet.actualWeight) ? 10 : 0;
     if (candidate.reps < lastSet.actualReps) intensityBias += 5;
     biasExplanation = 'High intensity: favoring weight over volume.';
   } else if (input.intensity <= 0.8) {
-    // Low intensity: favor reps/sets, avoid weight jumps
+    // Standard low intensity: favor reps/sets, avoid weight jumps
     intensityBias = (candidate.reps > lastSet.actualReps || candidate.sets > completedSets.length) ? 10 : 0;
     if (candidate.weight > lastSet.actualWeight) intensityBias -= 15;
     biasExplanation = 'Low intensity: favoring volume, limiting weight.';
   } else {
-    // Neutral: balanced scoring
+    // Standard neutral: balanced scoring
     intensityBias = ((intensityRatio + overloadRatio) / 2) * 5;
     biasExplanation = 'Balanced progression targeting moderate overload.';
   }

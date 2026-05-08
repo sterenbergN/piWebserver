@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { calcEpley, calcAverage1RM } from '@/lib/workout/analytics';
+import InlineGymEditor from './InlineGymEditor';
 
 // Plate Math Algorithm
 function calculatePlates(targetWeight: number, baseWeight: number, availablePlatePairs: number[]) {
@@ -82,7 +83,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [historicStats, setHistoricStats] = useState<{prevWeight: number, prevReps: number, prevSets: number, est1RM: number} | null>(null);
    const [suggestedWeight, setSuggestedWeight] = useState<number>(0);
    const [suggestedReps, setSuggestedReps] = useState<number>(10);
-   const [suggestedSets, setSuggestedSets] = useState<number>(localPlan.type?.sets || 4);
+   const [suggestedSets, setSuggestedSets] = useState<number>(localPlan.type?.sets || 5);
+   const [suggestedSetsMap, setSuggestedSetsMap] = useState<Record<string, number>>({});
    const [suggestionReason, setSuggestionReason] = useState<string>('');
 
    // New: scoring breakdown and intensity slider
@@ -95,9 +97,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [showHeaderDetails, setShowHeaderDetails] = useState(true);
 
    const [showList, setShowList] = useState(false);
+   const [showAddLift, setShowAddLift] = useState(false);
    const [showChange, setShowChange] = useState(false);
    const [showSuperset, setShowSuperset] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
+   const [showMenu, setShowMenu] = useState(false);
    const [workoutFinished, setWorkoutFinished] = useState(false);
    const [calibrationInfo, setCalibrationInfo] = useState<any>(null);
   const [sharedSessionId, setSharedSessionId] = useState<string | null>(sharedSessionIdProp || resumeState?.sharedSessionId || null);
@@ -137,7 +140,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    }, []);
 
    const activeLift = localPlan.lifts[activeLiftIndex];
-   const targetSetCount = localPlan.type?.sets || 4;
+   const targetSetCount = localPlan.type?.sets || 5;
 
   useEffect(() => {
     if (sharedSessionIdProp) setSharedSessionId(sharedSessionIdProp);
@@ -208,6 +211,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                  setSuggestedWeight(res.plan.suggestedWeight);
                  setSuggestedReps(res.plan.suggestedReps);
                  setSuggestedSets(res.plan.suggestedSets);
+                 // T3: track per-lift suggested sets so the list view shows per-lift engine targets
+                 if (lift?.uniquePlanId) {
+                    setSuggestedSetsMap(prev => ({ ...prev, [lift.uniquePlanId]: res.plan.suggestedSets }));
+                 }
                  setSuggestionReason(res.plan.reasoning || '');
                  setScoringBreakdown(res.plan.scoringBreakdown || null);
                  setPerformanceMetrics(res.plan.performanceMetrics || null);
@@ -239,7 +246,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
           setCurrentReps(fallbackReps);
           setSuggestedWeight(base);
           setSuggestedReps(fallbackReps);
-          setSuggestedSets(localPlan.type.sets || 4);
+          setSuggestedSets(localPlan.type?.sets || 5);
           setSuggestionReason('Initial baseline weights.');
           setScoringBreakdown(null);
           setPerformanceMetrics(null);
@@ -272,6 +279,44 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    useEffect(() => {
        fetchProgression();
     }, [activeLiftIndex, localPlan.lifts, pastHistory, user]);
+
+   // Pre-fetch suggested sets for all lifts so the itinerary list is completely accurate
+   // even before the user navigates to those lifts.
+   useEffect(() => {
+       if (!pastHistory || !localPlan?.lifts) return;
+       localPlan.lifts.forEach((lift: any) => {
+          if (lift.uniquePlanId === activeLift?.uniquePlanId) return; // Active lift handles itself
+          
+          const historicSets: any[] = [];
+          pastHistory.forEach((workout: any) => {
+              if (workout.logs && workout.logs[lift.id]) historicSets.push(...workout.logs[lift.id]);
+          });
+          historicSets.sort((a: any, b: any) => a.timestamp - b.timestamp);
+          
+          if (historicSets.length >= 1) {
+              const lastSetTimestamp = historicSets[historicSets.length - 1].timestamp;
+              const sessionSets = historicSets.filter((s: any) => Math.abs(s.timestamp - lastSetTimestamp) < 14400000);
+              
+              fetch('/api/workout/progression', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                     liftId: lift.id,
+                     liftName: lift.name,
+                     gymId: localPlan.gymId,
+                     station: lift.station,
+                     logs: sessionSets,
+                     planType: localPlan.type,
+                     intensity: intensitySlider
+                 })
+              }).then(r => r.json()).then(res => {
+                 if (res.success && res.plan && lift.uniquePlanId) {
+                     setSuggestedSetsMap(prev => ({ ...prev, [lift.uniquePlanId]: res.plan.suggestedSets }));
+                 }
+              });
+          }
+       });
+   }, [localPlan.lifts, pastHistory, intensitySlider]);
 
    useEffect(() => {
       setCurrentRir(null);
@@ -1003,41 +1048,96 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          )}
 
          {showList && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
-               <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }} className="animate-fade-in">
+               <div className="workout-flex-between" style={{ marginBottom: '1.25rem' }}>
                   <h2 style={{ margin: 0 }}>Workout Itinerary</h2>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowList(false)}>✕</button>
+                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => { setShowList(false); setShowAddLift(false); }}>✕</button>
                </div>
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
                    {localPlan.lifts.map((l: any, i: number) => {
                       const isDone = getRemainingSets(l) === 0;
                       const partner = getSupersetPartner(l);
+                      const liftSuggestedSets = suggestedSetsMap[l.uniquePlanId] ?? targetSetCount;
                       return (
-                         <button key={i} className="btn btn-secondary" style={{ padding: '1rem', textAlign: 'left', border: i === activeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(72,187,120,0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); }}>
-                            <strong>{i + 1}. {l.name} {partner && <span style={{ marginLeft: '0.35rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.05rem 0.35rem', borderRadius: '10px' }}>SS</span>}</strong>
-                            <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
-                              {l.station?.name} • {logs[l.uniquePlanId]?.length || 0}/{targetSetCount} Sets
-                              {partner ? ` • paired with ${partner.name}` : ''}
-                            </p>
-                         </button>
+                         // T2: min-width: 0 on row prevents horizontal overflow
+                         <div key={i} style={{ display: 'flex', gap: '0.5rem', minWidth: 0 }}>
+                            <button className="btn btn-secondary" style={{ flex: 1, minWidth: 0, padding: '0.85rem 1rem', textAlign: 'left', border: i === activeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(72,187,120,0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); setShowAddLift(false); }}>
+                               {/* Wrap text instead of truncating */}
+                               <strong style={{ display: 'flex', wordWrap: 'break-word', whiteSpace: 'normal', lineHeight: '1.3' }}>
+                                 <span style={{ minWidth: '1.5rem', flexShrink: 0 }}>{i + 1}.</span>
+                                 <span>{l.name} {partner && <span style={{ marginLeft: '0.35rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.05rem 0.35rem', borderRadius: '10px' }}>SS</span>}</span>
+                               </strong>
+                               <p style={{ margin: '0.35rem 0 0 1.5rem', fontSize: '0.8rem', color: 'var(--muted)', wordWrap: 'break-word', whiteSpace: 'normal', lineHeight: '1.3' }}>
+                                 {/* T3: show per-lift engine-suggested set target */}
+                                 {l.station?.name} • {logs[l.uniquePlanId]?.length || 0}/{liftSuggestedSets} sets
+                                 {partner ? ` • SS: ${partner.name}` : ''}
+                               </p>
+                            </button>
+                            {/* T2: fixed-width delete button so it never gets clipped */}
+                            <button className="btn btn-secondary" style={{ flexShrink: 0, width: '3rem', padding: 0, color: '#ff6b6b', border: '1px solid rgba(255,107,107,0.3)', background: 'rgba(255,107,107,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => {
+                               const newLifts = [...localPlan.lifts];
+                               newLifts.splice(i, 1);
+                               setLocalPlan({ ...localPlan, lifts: newLifts });
+                               if (activeLiftIndex >= newLifts.length) setActiveLiftIndex(Math.max(0, newLifts.length - 1));
+                            }}>✕</button>
+                         </div>
                       )
                    })}
                </div>
+               {/* T1: Add Lift button at bottom of list */}
+               {!showAddLift ? (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ width: '100%', padding: '0.85rem', borderRadius: '12px', border: '1px dashed var(--accent)', color: 'var(--accent)', marginBottom: '1rem' }}
+                    onClick={() => setShowAddLift(true)}
+                  >
+                    Manage Equipment & Lifts
+                  </button>
+               ) : (
+                  <div className="animate-fade-in" style={{ marginBottom: '1rem', border: '1px solid var(--accent)', borderRadius: '12px', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'rgba(var(--accent-rgb),0.08)', borderBottom: '1px solid var(--accent)' }}>
+                      <strong style={{ fontSize: '0.9rem' }}>Manage Equipment</strong>
+                      <button style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '1.1rem' }} onClick={() => setShowAddLift(false)}>✕</button>
+                    </div>
+                    <div style={{ padding: '1rem' }}>
+                      <InlineGymEditor
+                        gymId={localPlan.gymId}
+                        onGymUpdated={(updatedGym) => {
+                          const updatedLifts = localPlan.lifts.map((lift: any) => {
+                            const updatedStation = updatedGym.stations.find((s: any) => s.id === lift.station?.id);
+                            if (updatedStation) {
+                              return { ...lift, station: updatedStation };
+                            }
+                            return lift;
+                          });
+                          setLocalPlan({ ...localPlan, lifts: updatedLifts });
+                        }}
+                        onClose={() => setShowAddLift(false)}
+                        onAddLiftToWorkout={(lift, station) => {
+                          const newLiftEntry = { ...lift, station, gymId: localPlan.gymId, gymName: localPlan.gymName, uniquePlanId: Math.random() };
+                          setLocalPlan((prev: any) => ({ ...prev, lifts: [...prev.lifts, newLiftEntry] }));
+                          setShowAddLift(false);
+                        }}
+                      />
+                    </div>
+                  </div>
+               )}
             </div>
          )}
 
          {showChange && (
-             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
+             // T5: use overscroll-behavior: contain so inner scroll doesn't fight the page
+             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any, overscrollBehavior: 'contain' }} className="animate-fade-in">
                <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
                   <h2 style={{ margin: 0 }}>Swap Exercise</h2>
                   <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowChange(false)}>✕</button>
                </div>
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingBottom: '2rem' }}>
                   {alternatives.map((l: any, i: number) => (
                       <button key={i} className="workout-flex-between" style={{ color: 'var(--foreground)', padding: '0.85rem 1rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '12px', cursor: 'pointer', textAlign: 'left' }} onClick={() => swapLift(l)}>
-                         <div>
-                            <strong style={{ fontSize: '1rem' }}>{l.name}</strong>
-                            <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
+                         <div style={{ minWidth: 0, flex: 1 }}>
+                            <strong style={{ fontSize: '1rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</strong>
+                            <p style={{ margin: '0.2rem 0 0', fontSize: '0.85rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                {l.station?.name}
                             </p>
                             <p style={{ margin: '0.15rem 0 0', fontSize: '0.7rem', color: 'var(--accent)' }}>
@@ -1052,7 +1152,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
           )}
 
          {showSuperset && (
-             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
+             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any, overscrollBehavior: 'contain' }} className="animate-fade-in">
                <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
                   <h2 style={{ margin: 0 }}>Manage Superset</h2>
                   <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowSuperset(false)}>✕</button>

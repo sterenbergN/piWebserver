@@ -42,6 +42,9 @@
   color: var(--foreground);
   margin-bottom: 1rem;
   font-size: 1rem;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .workout-flex-between {
@@ -133,5 +136,9 @@
   .tracker-summary-card.compact {
     padding: 0.75rem;
     border-radius: 14px;
+  }
+
+  .calc-timeline-grid {
+    grid-template-columns: 1fr !important;
   }
 }
