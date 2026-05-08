@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
     if (photoSrc) {
       const absolutePath = resolvePublicPath(photoSrc);
-      if (!absolutePath) {
+      if (!absolutePath || !absolutePath.startsWith(baseDir + path.sep)) {
         return NextResponse.json({ success: false, message: 'Invalid photo path' }, { status: 400 });
       }
       const filename = path.basename(absolutePath);
