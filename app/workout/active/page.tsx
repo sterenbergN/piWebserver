@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
-import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES } from '@/lib/workout/demo-data';
+import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER_ID } from '@/lib/workout/demo-data';
 
 function newPlanId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -121,10 +121,10 @@ export default function ActiveWorkoutPage() {
         
         if (authRes.authenticated) setUser(authRes.user);
         if (histRes.success) setPastHistory(histRes.history || []);
-        const activeOwnerId = authRes.authenticated && authRes.user?.id ? authRes.user.id : 'demo-user-123';
+        const activeOwnerId = authRes.authenticated && authRes.user?.id ? authRes.user.id : DEMO_USER_ID;
 
         if (isResuming && saved) {
-          const savedOwnerId = saved.ownerId || 'demo-user-123';
+          const savedOwnerId = saved.ownerId || DEMO_USER_ID;
           if (savedOwnerId !== activeOwnerId) {
             saved = null;
           }
@@ -249,7 +249,7 @@ export default function ActiveWorkoutPage() {
   }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted)' }} className="animate-fade-in">⚙️ Calibrating optimal workout parameters...</div>;
-  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#ff6b6b' }} className="animate-fade-in">{error}</div>;
+  if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--danger)' }} className="animate-fade-in">{error}</div>;
   if (!workoutPlan || workoutPlan.lifts.length === 0) {
     return (
       <div style={{ padding: '2rem', textAlign: 'center' }}>

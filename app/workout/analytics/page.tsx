@@ -6,19 +6,13 @@ import {
    BarChart, Bar, PieChart, Pie, Cell
 } from 'recharts';
 import { calcAverage1RM, calcEpley, calcBrzycki, calcLombardi, calcWilks, calcBoerLBM, calcRelativeStrength, calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
-import { analyzePerformance, type Session } from '@/lib/workout/progression';
+import { analyzePerformance, blendProgressRatio, computeHistoryTrend, computeTargetOverload, getStrengthWeight, type Session } from '@/lib/workout/progression';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { getIntensityLabel } from '@/lib/workout/intensity';
+import { useSitePopup } from '@/components/SitePopup';
+import { DEMO_GYMS, DEMO_HISTORY, DEMO_USER } from '@/lib/workout/demo-data';
+import IntensitySlider from '@/components/workout/IntensitySlider';
 
-// Intensity label helper
-function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
-    if (value <= 0.6) return { label: 'Recovery', emoji: '🧘', color: '#63b3ed' };
-    if (value <= 0.8) return { label: 'Light', emoji: '🌿', color: '#68d391' };
-    if (value <= 1.1) return { label: 'Standard', emoji: '⚖️', color: '#48bb78' };
-    if (value <= 1.3) return { label: 'Push', emoji: '💪', color: '#ed8936' };
-    return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
-}
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 function toPerformanceSession(
   liftId: string,
@@ -37,31 +31,6 @@ function toPerformanceSession(
          rir: typeof set.rir === 'number' ? set.rir : undefined,
       }))
    };
-}
-
-function computeHistoryTrend(history: Session[]): number {
-   if (history.length < 2) return 1.0;
-
-   const recentSessions = history.slice(-5);
-   const scores = recentSessions.map((session) => analyzePerformance(session).performanceScore);
-   const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
-
-   let consecutiveOver = 0;
-   let consecutiveUnder = 0;
-
-   for (let i = scores.length - 1; i >= 0; i--) {
-      if (scores[i] > 1.05) consecutiveOver++;
-      else break;
-   }
-
-   for (let i = scores.length - 1; i >= 0; i--) {
-      if (scores[i] < 0.95) consecutiveUnder++;
-      else break;
-   }
-
-   if (consecutiveOver >= 3) return Math.min(1.15, avgScore);
-   if (consecutiveUnder >= 3) return Math.max(0.85, avgScore);
-   return Math.max(0.9, Math.min(1.1, avgScore));
 }
 
 function titleCase(value: string): string {
@@ -101,7 +70,7 @@ export default function AnalyticsPage() {
    const [prPage, setPrPage] = useState(0);
    const [selectedHeatmapDate, setSelectedHeatmapDate] = useState<string | null>(null);
    const [expandedAudit, setExpandedAudit] = useState<string | null>(null);
-   const [systemPopup, setSystemPopup] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
+   const { confirm, popup } = useSitePopup();
    
    // Advanced Analytics Extensions
    const [rmsPage, setRmsPage] = useState(0);
@@ -176,31 +145,17 @@ export default function AnalyticsPage() {
                 setIntensityFactor(authRes.user.intensityFactor ?? 1.0);
                 if (calibRes?.success) setCalibrations(calibRes.calibrations || []);
             } else {
-               // Demo mode mockup data
+               // Sample mode: same demo data as the rest of the workout pages
                setIsDemo(true);
-               currentUser = { weight: 175, height: '70', gender: 'male', username: 'Guest Lifter' };
-               histData = [
-                  { 
-                     id: 'demo1',
-                     timestamp: new Date(Date.now() - 86400000*3).toISOString(), 
-                     type: { name: 'Upper Power' },
-                     calories: 450,
-                     logs: {
-                        'bench_press': [{ reps: 5, weight: 185 }, { reps: 5, weight: 185 }, { reps: 4, weight: 185 }],
-                        'overhead_press': [{ reps: 8, weight: 115 }, { reps: 8, weight: 115 }]
-                     }
-                  },
-                  { 
-                     id: 'demo2',
-                     timestamp: new Date(Date.now() - 86400000).toISOString(), 
-                     type: { name: 'Lower Power' },
-                     calories: 550,
-                     logs: {
-                        'squat': [{ reps: 5, weight: 225 }, { reps: 5, weight: 235 }, { reps: 5, weight: 245 }],
-                        'deadlift': [{ reps: 3, weight: 315 }]
-                     }
-                  },
-               ];
+               currentUser = DEMO_USER;
+               histData = [...DEMO_HISTORY];
+               DEMO_GYMS.forEach((g: any) => g.stations?.forEach((st: any) => st.lifts?.forEach((l: any) => {
+                  liftsMap.set(l.id, l.name);
+                  stationTypeMap.set(l.id, st.type);
+                  rawLifts.push(l);
+               })));
+               setAllLiftsMap(liftsMap);
+               setLiftStationTypeMap(stationTypeMap);
            }
 
            setUser(currentUser);
@@ -482,15 +437,14 @@ export default function AnalyticsPage() {
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
    }, [expandedOverload]);
 
-   const handleDeleteLog = (id: string) => {
-      setSystemPopup({ title: 'Delete Workout', message: 'Permanently delete this workout from your history?', onConfirm: async () => {
-         const res = await fetch('/api/workout/history?id=' + id, { method: 'DELETE' });
-         if ((await res.json()).success) {
-            setHistory(history.filter(h => h.id !== id));
-         }
-         setSystemPopup(null);
-      }});
-   }
+   const handleDeleteLog = async (id: string) => {
+      const ok = await confirm({ title: 'Delete Workout', message: 'Permanently delete this workout from your history?', confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      const res = await fetch('/api/workout/history?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      if ((await res.json().catch(() => ({}))).success) {
+         setHistory((prev) => prev.filter(h => h.id !== id));
+      }
+   };
 
    const handleSaveIntensity = async () => {
       setIntensitySaving(true);
@@ -536,20 +490,17 @@ export default function AnalyticsPage() {
 
    const intensityInfo = getIntensityLabel(intensityFactor);
 
-   // Compute average achieved growth for factor analysis
+   // Compare achieved progress with what the progression engine targets, using
+   // the engine's own formulas so this view can't drift from its behavior.
+   const strengthWeight = getStrengthWeight(intensityFactor);
+   const achievedRatio = (o: any) => blendProgressRatio(o.intensityRatio, o.overloadRatio, strengthWeight);
+   const targetRatioFor = (o: any) => 1 + computeTargetOverload(intensityFactor, o.performanceScore, o.historyTrend);
    const avgAchievedGrowth = overloadTracking.length > 0
-      ? overloadTracking.reduce((sum, o) => {
-         const comparisonRatio = intensityFactor >= 1.2 ? o.intensityRatio : o.overloadRatio;
-         return sum + (comparisonRatio - 1);
-      }, 0) / overloadTracking.length
+      ? overloadTracking.reduce((sum, o) => sum + (achievedRatio(o) - 1), 0) / overloadTracking.length
       : 0;
    const avgTargetGrowth = overloadTracking.length > 0
-      ? overloadTracking.reduce((sum, o) => {
-         const clampedPerf = clamp(o.performanceScore, 0.9, 1.1);
-         const effectiveIntensity = clamp(intensityFactor * clampedPerf * o.historyTrend, 0.5, 1.5);
-         return sum + (0.05 * effectiveIntensity * o.performanceScore);
-      }, 0) / overloadTracking.length
-      : (0.05 * intensityFactor);
+      ? overloadTracking.reduce((sum, o) => sum + (targetRatioFor(o) - 1), 0) / overloadTracking.length
+      : computeTargetOverload(intensityFactor, 1, 1);
    const calibrationMap = new Map<string, number>();
    calibrations.forEach((c) => {
       calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
@@ -651,36 +602,12 @@ export default function AnalyticsPage() {
                       </div>
                    </div>
 
-                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Default Workout Intensity</span>
-                      <span style={{ fontSize: '1.2rem', fontWeight: 700, color: intensityInfo.color }}>
-                         {intensityInfo.emoji} {intensityInfo.label} ({intensityFactor.toFixed(2)})
-                      </span>
-                   </div>
-
-                   <input
-                      type="range"
-                      min="0.5"
-                      max="1.5"
-                      step="0.05"
+                   <IntensitySlider
+                      title="Default Workout Intensity"
+                      prominent
                       value={intensityFactor}
-                      onChange={(e) => { setIntensityFactor(parseFloat(e.target.value)); setIntensitySaved(false); }}
-                      style={{
-                         width: '100%',
-                         height: '8px',
-                         WebkitAppearance: 'none',
-                         appearance: 'none' as any,
-                         borderRadius: '4px',
-                         outline: 'none',
-                         cursor: 'pointer',
-                         background: `linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)`,
-                      }}
+                      onChange={(value) => { setIntensityFactor(value); setIntensitySaved(false); }}
                    />
-                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--muted)', marginTop: '0.25rem' }}>
-                      <span>🧘 Recovery (0.5)</span>
-                      <span>⚖️ Standard (1.0)</span>
-                      <span>🔥 Max Push (1.5)</span>
-                   </div>
 
                    <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0.75rem 0 0 0', lineHeight: 1.5 }}>
                       This sets the <strong style={{ color: 'var(--foreground)' }}>default intensity</strong> for the progression engine. 
@@ -711,7 +638,7 @@ export default function AnalyticsPage() {
                       </div>
                       <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px', textAlign: 'center' }}>
                          <div style={{ fontSize: '0.65rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Overload Target</div>
-                         <div style={{ fontSize: '1rem', fontWeight: 700, marginTop: '0.15rem' }}>{(5 * intensityFactor).toFixed(1)}%</div>
+                         <div style={{ fontSize: '1rem', fontWeight: 700, marginTop: '0.15rem' }}>{(computeTargetOverload(intensityFactor, 1, 1) * 100).toFixed(1)}%</div>
                       </div>
                    </div>
 
@@ -734,8 +661,9 @@ export default function AnalyticsPage() {
                          <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.6rem', borderRadius: '6px', fontFamily: 'monospace', fontSize: '0.75rem', margin: '0.3rem 0 0.5rem 0' }}>
                             <div>load = Σ(weight × reps) across sets</div>
                             <div>e1RM = weight × (1 + reps/30)  <span style={{ color: 'var(--muted)' }}>// Epley</span></div>
-                            <div>overloadRatio = currentLoad / lastLoad</div>
-                            <div>targetOverload = 0.05 × intensity × perfScore</div>
+                            <div>volumeRatio = (weight × reps) / last session&apos;s per-set load</div>
+                            <div>progress = w × e1RMRatio + (1 − w) × volumeRatio</div>
+                            <div>target = 5% × intensity × trend + (perfScore − 1) × 0.5</div>
                             <div>rirAdjustment = clamp(((avgRIR - 2)×0.04)+((lastRIR - 2)×0.02))</div>
                           </div>
 
@@ -754,9 +682,10 @@ export default function AnalyticsPage() {
 
                          <h5 style={{ margin: '0.75rem 0 0.3rem 0', color: 'var(--foreground)' }}>5. Intensity Factor Effect</h5>
                          <p style={{ margin: '0' }}>
-                            <strong>High (≥1.2):</strong> Favors weight increases, allows rep drops, amplifies overload target.<br/>
-                            <strong>Low (≤0.8):</strong> Favors volume (reps/sets), penalizes weight jumps, conservative progression.<br/>
-                            <strong>Adaptive:</strong> Effective intensity = userIntensity × clamp(perfScore, 0.9, 1.1) × historyTrend
+                            <strong>Higher:</strong> raises the target and the strength weight <code>w</code>, so heavier weight is favored.<br/>
+                            <strong>Lower:</strong> lowers both, so the engine progresses through reps and holds weight steady.<br/>
+                            <strong>Adaptive:</strong> a hard session (perfScore &lt; 1) can make the target negative, which backs the weight off.
+                            Set count only changes with a reason: extra sets done, steep fatigue, or a back-off.
                           </p>
                       </div>
                    )}
@@ -1311,13 +1240,12 @@ export default function AnalyticsPage() {
                         <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>How Progressive Overload Works</h4>
                         <p>Your intensity factor of <strong>{intensityFactor.toFixed(2)}</strong> controls how the progression engine selects your next workout:</p>
                         <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
-                            <li><strong>Target Overload Ratio:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + (0.05 × effectiveIntensity × perfScore)</code></li>
-                            <li><strong>Effective Intensity:</strong> <code style={{ color: 'var(--accent-light)' }}>clamp(intensity × clamp(perfScore) × historyTrend, 0.5, 1.5)</code></li>
-                            <li><strong>Comparison Metric:</strong> intensity ≥ 1.2 compares <strong>e1RM ratio</strong>, otherwise compares <strong>load ratio</strong></li>
+                            <li><strong>Target:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + 5% × intensity × historyTrend + (perfScore − 1) × 0.5</code></li>
+                            <li><strong>Progress:</strong> a blend of e1RM ratio and load ratio; higher intensity weighs e1RM more (currently {Math.round(strengthWeight * 100)}% e1RM)</li>
                             <li><strong>RIR Targeting:</strong> average RIR of 2 is neutral, 0-1 lowers the next progression, 3+ allows more aggressive overload</li>
                             <li><strong>Lift Eligibility:</strong> a lift appears only after at least 2 logged sessions with valid sets</li>
                         </ul>
-                        <p>Each lift row shows load ratio and e1RM ratio, then highlights the same ratio mode the progression engine is currently using. When RIR is present, that session feedback also nudges the next target up or down.</p>
+                        <p>Each lift row shows load ratio and e1RM ratio, and compares their blend against the engine&apos;s target. When RIR is present, that session feedback also nudges the next target up or down.</p>
                       </div>
                    )}
 
@@ -1348,13 +1276,11 @@ export default function AnalyticsPage() {
                             </p>
                         </div>
                         {overloadPageEntries.map((ol, i) => {
-                           const clampedPerf = clamp(ol.performanceScore, 0.9, 1.1);
-                           const effectiveIntensity = clamp(intensityFactor * clampedPerf * ol.historyTrend, 0.5, 1.5);
-                           const targetRatio = 1 + (0.05 * effectiveIntensity * ol.performanceScore);
-                           const comparisonRatio = intensityFactor >= 1.2 ? ol.intensityRatio : ol.overloadRatio;
+                           const targetRatio = targetRatioFor(ol);
+                           const comparisonRatio = achievedRatio(ol);
                            const comparisonGrowth = comparisonRatio - 1;
                            const status = comparisonRatio >= targetRatio ? '🟢' : comparisonGrowth > 0 ? '🟡' : '🔴';
-                           const comparisonLabel = intensityFactor >= 1.2 ? 'e1RM' : 'Load';
+                           const comparisonLabel = 'Progress';
                            const rowId = `${ol.name}-${ol.date}-${safeOverloadPage * listPageSize + i}`;
                            const expanded = expandedOverload === rowId;
                             return (
@@ -1654,18 +1580,7 @@ export default function AnalyticsPage() {
                )}
            </div>
 
-           {systemPopup && (
-               <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <div className="workout-tile animate-fade-in" style={{ width: '90%', maxWidth: '400px' }}>
-                      <h3 style={{ margin: '0 0 1rem 0' }}>{systemPopup.title}</h3>
-                      <p style={{ fontSize: '0.9rem', color: 'var(--muted)', marginBottom: '1.5rem' }}>{systemPopup.message}</p>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                         <button className="workout-btn-primary" style={{ margin: 0, flex: 1, background: '#ff6b6b' }} onClick={systemPopup.onConfirm}>Confirm</button>
-                         <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setSystemPopup(null)}>Cancel</button>
-                      </div>
-                  </div>
-               </div>
-           )}
+           {popup}
        </div>
    );
 }

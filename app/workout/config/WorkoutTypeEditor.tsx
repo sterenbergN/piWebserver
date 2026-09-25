@@ -1,18 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-
-interface WorkoutType {
-  id: string;
-  ownerId?: string;
-  name: string;
-  muscles: string[];
-  intensity: number;
-  minReps: number;
-  maxReps: number;
-  sets: number;
-  isPublic?: boolean;
-}
+import { useSitePopup } from '@/components/SitePopup';
+import { MUSCLE_GROUPS, type WorkoutType } from '@/lib/workout/types';
 
 const EMPTY_TYPE: Partial<WorkoutType> = {
   name: '',
@@ -24,17 +14,41 @@ const EMPTY_TYPE: Partial<WorkoutType> = {
   isPublic: false,
 };
 
+/** Rep/set defaults for a target intensity: heavy → low reps, light → high reps. */
+function schemeForIntensity(intensity: number) {
+  if (intensity >= 85) return { minReps: 3, maxReps: 6, sets: 5 };
+  if (intensity <= 60) return { minReps: 12, maxReps: 20, sets: 3 };
+  return { minReps: 8, maxReps: 12, sets: 4 };
+}
+
+function intensityLabel(intensity: number) {
+  if (intensity > 80) return 'Power';
+  if (intensity > 60) return 'Hypertrophy';
+  return 'Endurance';
+}
+
+const toInt = (value: string) => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+async function requestJson(url: string, init?: RequestInit) {
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) throw new Error(data.message || `Request failed (${res.status})`);
+  return data;
+}
+
 export default function WorkoutTypeEditor() {
+  const { confirm, popup } = useSitePopup();
   const [types, setTypes] = useState<WorkoutType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string>('');
-
-  const [addingType, setAddingType] = useState(false);
-  const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
-  const [newType, setNewType] = useState<Partial<WorkoutType>>(EMPTY_TYPE);
-  const [systemPopup, setSystemPopup] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
-  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
-  const typeFormRefs = useRef(new Map<string, HTMLDivElement>());
+  const [error, setError] = useState('');
+  const [userId, setUserId] = useState('');
+  // null = closed; 'new' = creating; otherwise the id being edited
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
+  const [draft, setDraft] = useState<Partial<WorkoutType>>(EMPTY_TYPE);
+  const formRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -45,124 +59,103 @@ export default function WorkoutTypeEditor() {
         if (dTypes.success) setTypes(dTypes.types);
         if (dAuth.authenticated && dAuth.user) setUserId(dAuth.user.id);
       })
+      .catch(() => setError('Could not load workout types.'))
       .finally(() => setLoading(false));
   }, []);
 
-  const resetTypeEditor = () => {
-    setAddingType(false);
-    setEditingTypeId(null);
-    setNewType(EMPTY_TYPE);
+  useEffect(() => {
+    if (editingId) formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [editingId]);
+
+  const openEditor = (type?: WorkoutType) => {
+    setDraft(type ? { ...type, isPublic: type.isPublic === true } : EMPTY_TYPE);
+    setEditingId(type ? type.id : 'new');
+    setError('');
+  };
+
+  const closeEditor = () => {
+    setEditingId(null);
+    setDraft(EMPTY_TYPE);
   };
 
   const handleSave = async () => {
-    if (!newType.name) return;
-
-    let data: any;
-    if (newType.id) {
-      const res = await fetch('/api/workout/types', { method: 'PUT', body: JSON.stringify(newType) });
-      data = await res.json();
-      if (data.success) {
-        setTypes(types.map((type) => (type.id === data.type.id ? data.type : type)));
+    if (!draft.name?.trim()) return;
+    try {
+      if (draft.id) {
+        const data = await requestJson('/api/workout/types', { method: 'PUT', body: JSON.stringify(draft) });
+        setTypes((prev) => prev.map((type) => (type.id === data.type.id ? data.type : type)));
+      } else {
+        const data = await requestJson('/api/workout/types', { method: 'POST', body: JSON.stringify(draft) });
+        setTypes((prev) => [...prev, data.type]);
       }
-    } else {
-      const res = await fetch('/api/workout/types', { method: 'POST', body: JSON.stringify(newType) });
-      data = await res.json();
-      if (data.success) {
-        setTypes([...types, data.type]);
-      }
-    }
-
-    if (data?.success) {
-      resetTypeEditor();
+      closeEditor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save workout type.');
     }
   };
 
-  const setTypeFormRef = (key: string) => (el: HTMLDivElement | null) => {
-    if (el) typeFormRefs.current.set(key, el);
-    else typeFormRefs.current.delete(key);
-  };
-
-  useEffect(() => {
-    if (!addingType) return;
-    const key = editingTypeId ?? 'new';
-    const el = typeFormRefs.current.get(key);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [addingType, editingTypeId]);
-
-  const handleDelete = async (id: string) => {
-    if (editingTypeId === id) resetTypeEditor();
-    const res = await fetch(`/api/workout/types?id=${id}`, { method: 'DELETE' });
-    if ((await res.json()).success) {
-      setTypes(types.filter((type) => type.id !== id));
+  const handleDelete = async (type: WorkoutType) => {
+    const ok = await confirm({ title: 'Delete Template', message: `Delete "${type.name}"?`, confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    try {
+      await requestJson(`/api/workout/types?id=${encodeURIComponent(type.id)}`, { method: 'DELETE' });
+      setTypes((prev) => prev.filter((entry) => entry.id !== type.id));
+      if (editingId === type.id) closeEditor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete workout type.');
     }
-    setConfirmDeleteTarget(null);
   };
 
-  const handleImport = (typeToImport: WorkoutType) => {
-    setSystemPopup({
-      title: 'Import Template',
-      message: `Import template "${typeToImport.name}"?`,
-      onConfirm: async () => {
-        const res = await fetch('/api/workout/types', {
-          method: 'POST',
-          body: JSON.stringify({
-            ...typeToImport,
-            id: undefined,
-            name: `${typeToImport.name} (Copy)`,
-            isPublic: false,
-          }),
-        });
-        const data = await res.json();
-        if (data.success) setTypes([...types, data.type]);
-        setSystemPopup(null);
-      },
+  const handleImport = async (type: WorkoutType) => {
+    const ok = await confirm({ title: 'Import Template', message: `Import template "${type.name}"?`, confirmLabel: 'Import' });
+    if (!ok) return;
+    try {
+      const data = await requestJson('/api/workout/types', {
+        method: 'POST',
+        body: JSON.stringify({ ...type, id: undefined, name: `${type.name} (Copy)`, isPublic: false }),
+      });
+      setTypes((prev) => [...prev, data.type]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not import workout type.');
+    }
+  };
+
+  const toggleMuscle = (muscle: string) => {
+    const current = draft.muscles || [];
+    setDraft({
+      ...draft,
+      muscles: current.includes(muscle) ? current.filter((entry) => entry !== muscle) : [...current, muscle],
     });
-  };
-
-  const allMuscles = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
-
-  const handleMuscleToggle = (muscle: string) => {
-    const current = newType.muscles || [];
-    if (current.includes(muscle)) {
-      setNewType({ ...newType, muscles: current.filter((entry) => entry !== muscle) });
-    } else {
-      setNewType({ ...newType, muscles: [...current, muscle] });
-    }
   };
 
   if (loading) return <div style={{ padding: '1.5rem' }}>Loading Types...</div>;
 
   const myTypes = types.filter((type) => type.ownerId === userId);
   const otherTypes = types.filter((type) => type.ownerId !== userId);
+  const intensity = draft.intensity ?? 75;
 
-  const renderTypeEditor = (inline = false, formKey = 'new') => (
-    <div
-      ref={setTypeFormRef(formKey)}
-      className="animate-fade-in"
-      style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: inline ? '1px solid var(--accent)' : '1px solid var(--accent)' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <span style={{ fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
-          {newType.id ? 'Editing' : 'New'}
-        </span>
-      </div>
-      <h4 style={{ margin: '0 0 1rem 0' }}>{newType.id ? 'Edit' : 'New'} Workout Type</h4>
-      <input className="workout-input" placeholder="Name (e.g. Upper Hypertrophy)" value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} />
+  const renderEditor = () => (
+    <div ref={formRef} className="workout-form-panel animate-fade-in">
+      <span className="workout-pill">{draft.id ? 'Editing' : 'New'}</span>
+      <h4 style={{ margin: '0.5rem 0 1rem 0' }}>{draft.id ? 'Edit' : 'New'} Workout Type</h4>
+      <input className="workout-input" placeholder="Name (e.g. Upper Hypertrophy)" value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
 
-      <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'block', marginBottom: '0.5rem' }}>Target Muscles</label>
+      <label className="workout-label">Target Muscles</label>
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-        {allMuscles.map((muscle) => {
-          const active = newType.muscles?.includes(muscle);
+        {MUSCLE_GROUPS.map((muscle) => {
+          const active = draft.muscles?.includes(muscle);
           return (
             <button
               key={muscle}
-              onClick={() => handleMuscleToggle(muscle)}
+              onClick={() => toggleMuscle(muscle)}
+              aria-pressed={active}
               style={{
                 padding: '0.4rem 0.8rem',
                 borderRadius: '20px',
                 border: `1px solid ${active ? 'var(--accent)' : 'var(--surface-border)'}`,
                 background: active ? 'rgba(var(--accent-rgb), 0.2)' : 'transparent',
-                color: active ? 'white' : 'var(--muted)',
+                color: active ? 'var(--foreground)' : 'var(--muted)',
+                fontWeight: active ? 600 : 400,
                 cursor: 'pointer',
                 fontSize: '0.85rem',
               }}
@@ -173,60 +166,49 @@ export default function WorkoutTypeEditor() {
         })}
       </div>
 
-      <label style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+      <label className="workout-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span>Target Intensity (%)</span>
-        <span style={{ color: 'var(--accent-light)' }}>
-          {newType.intensity}% ({newType.intensity! > 80 ? 'Power' : newType.intensity! > 60 ? 'Hypertrophy' : 'Endurance'})
-        </span>
+        <span style={{ color: 'var(--accent-light)' }}>{intensity}% ({intensityLabel(intensity)})</span>
       </label>
       <input
         type="range"
         min="30"
         max="100"
         step="5"
-        value={newType.intensity}
+        value={intensity}
         onChange={(e) => {
-          const val = parseInt(e.target.value);
-          let reps = [8, 12];
-          let sets = 4;
-          if (val >= 85) {
-            reps = [3, 6];
-            sets = 5;
-          } else if (val <= 60) {
-            reps = [12, 20];
-            sets = 3;
-          }
-          setNewType({ ...newType, intensity: val, minReps: reps[0], maxReps: reps[1], sets });
+          const value = parseInt(e.target.value, 10);
+          setDraft({ ...draft, intensity: value, ...schemeForIntensity(value) });
         }}
         style={{ width: '100%', marginBottom: '1.5rem', accentColor: 'var(--accent)' }}
       />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
         <div>
-          <label style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Sets Target</label>
-          <input className="workout-input" type="number" value={newType.sets} onChange={(e) => setNewType({ ...newType, sets: parseInt(e.target.value) })} />
+          <label className="workout-label">Sets</label>
+          <input className="workout-input" type="number" min={1} value={draft.sets ?? ''} onChange={(e) => setDraft({ ...draft, sets: toInt(e.target.value) })} />
         </div>
         <div>
-          <label style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Min Reps</label>
-          <input className="workout-input" type="number" value={newType.minReps} onChange={(e) => setNewType({ ...newType, minReps: parseInt(e.target.value) })} />
+          <label className="workout-label">Min Reps</label>
+          <input className="workout-input" type="number" min={1} value={draft.minReps ?? ''} onChange={(e) => setDraft({ ...draft, minReps: toInt(e.target.value) })} />
         </div>
         <div>
-          <label style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Max Reps</label>
-          <input className="workout-input" type="number" value={newType.maxReps} onChange={(e) => setNewType({ ...newType, maxReps: parseInt(e.target.value) })} />
+          <label className="workout-label">Max Reps</label>
+          <input className="workout-input" type="number" min={1} value={draft.maxReps ?? ''} onChange={(e) => setDraft({ ...draft, maxReps: toInt(e.target.value) })} />
         </div>
       </div>
 
-      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginTop: '1rem', marginBottom: '0.5rem', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer' }}>
-        <input type="checkbox" checked={newType.isPublic === true} onChange={(e) => setNewType({ ...newType, isPublic: e.target.checked })} style={{ marginTop: '0.15rem' }} />
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', margin: '0.5rem 0', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={draft.isPublic === true} onChange={(e) => setDraft({ ...draft, isPublic: e.target.checked })} style={{ marginTop: '0.15rem' }} />
         <div>
           <div style={{ fontWeight: 600 }}>Publish this workout type for others to import</div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Published workout types appear in the public import list. Private workout types are visible only to you.</div>
+          <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Published workout types appear in the public import list. Private ones are visible only to you.</div>
         </div>
       </label>
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-        <button className="workout-btn-primary" style={{ margin: 0, flex: 1 }} onClick={handleSave}>Save</button>
-        <button className="btn btn-secondary" style={{ flex: 1 }} onClick={resetTypeEditor}>Cancel</button>
+      <div className="workout-btn-row" style={{ marginTop: '0.5rem' }}>
+        <button className="workout-btn-primary" disabled={!draft.name?.trim()} onClick={handleSave}>Save</button>
+        <button className="btn btn-secondary" onClick={closeEditor}>Cancel</button>
       </div>
     </div>
   );
@@ -234,108 +216,52 @@ export default function WorkoutTypeEditor() {
   return (
     <div style={{ padding: '1.5rem' }}>
       <h3 style={{ margin: '0 0 1.5rem 0' }}>Your Workout Templates</h3>
+      {error && <p className="workout-error" style={{ marginBottom: '1rem' }}>{error}</p>}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
         {myTypes.map((type) => (
           <div key={type.id} style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--surface-border)' }}>
             <div className="workout-flex-between">
-              <strong>
-                {type.name}
-                {addingType && editingTypeId === type.id && (
-                  <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--accent)', border: '1px solid var(--accent)', padding: '0.1rem 0.4rem', borderRadius: '10px' }}>
-                    Editing
-                  </span>
-                )}
-              </strong>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button
-                  style={{ background: 'none', border: 'none', color: 'var(--accent)' }}
-                  onClick={() => {
-                    if (addingType && editingTypeId === type.id) {
-                      resetTypeEditor();
-                      return;
-                    }
-                    setNewType({ ...type, isPublic: type.isPublic === true });
-                    setAddingType(true);
-                    setEditingTypeId(type.id);
-                  }}
-                >
-                  Edit
+              <strong>{type.name}</strong>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button className="workout-text-btn" onClick={() => (editingId === type.id ? closeEditor() : openEditor(type))}>
+                  {editingId === type.id ? 'Close' : 'Edit'}
                 </button>
-                {confirmDeleteTarget === type.id ? (
-                  <button style={{ background: '#ff6b6b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.1rem 0.5rem' }} onClick={() => handleDelete(type.id)}>
-                    Confirm?
-                  </button>
-                ) : (
-                  <button style={{ background: 'none', border: 'none', color: '#ff6b6b' }} onClick={() => setConfirmDeleteTarget(type.id)}>
-                    Delete
-                  </button>
-                )}
+                <button className="workout-text-btn danger" onClick={() => handleDelete(type)}>Delete</button>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-              {type.muscles.map((muscle) => (
-                <span key={muscle} style={{ fontSize: '0.75rem', background: 'var(--surface-glass)', padding: '2px 8px', borderRadius: '12px', border: '1px solid var(--accent)' }}>
-                  {muscle}
-                </span>
-              ))}
+              {type.muscles.map((muscle) => <span key={muscle} className="workout-pill">{muscle}</span>)}
             </div>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
-              Target: {type.sets} Sets • {type.minReps}-{type.maxReps} Reps (Intensity: {type.intensity}%)
+              Target: {type.sets} Sets • {type.minReps}-{type.maxReps} Reps (Intensity: {type.intensity}%) • {type.isPublic ? 'Published' : 'Private'}
             </p>
-            <p style={{ margin: '0.35rem 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>{type.isPublic ? 'Published' : 'Private'}</p>
 
-            {addingType && editingTypeId === type.id && (
-              <div style={{ marginTop: '0.75rem' }}>{renderTypeEditor(true, type.id)}</div>
-            )}
+            {editingId === type.id && <div style={{ marginTop: '0.75rem' }}>{renderEditor()}</div>}
           </div>
         ))}
         {myTypes.length === 0 && <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>No templates created yet.</p>}
       </div>
 
-      {!addingType && (
-        <button
-          className="workout-btn-primary"
-          onClick={() => {
-            setNewType(EMPTY_TYPE);
-            setAddingType(true);
-            setEditingTypeId(null);
-          }}
-        >
-          + Create Template
-        </button>
+      {editingId === 'new' ? renderEditor() : editingId === null && (
+        <button className="workout-btn-primary" onClick={() => openEditor()}>+ Create Template</button>
       )}
-      {addingType && editingTypeId === null && renderTypeEditor(false, 'new')}
 
       {otherTypes.length > 0 && (
         <div style={{ marginTop: '2rem' }}>
           <h3 style={{ margin: '0 0 1rem 0' }}>Import Public Templates</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {otherTypes.map((type) => (
-              <div key={type.id} className="workout-flex-between" style={{ padding: '0.75rem 1rem', background: 'var(--input-bg)', borderRadius: '12px' }}>
-                <span>
-                  {type.name} <small style={{ color: 'var(--muted)' }}>({type.intensity}%)</small>
-                </span>
-                <button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={() => handleImport(type)}>
-                  Import
-                </button>
+              <div key={type.id} className="workout-list-row" style={{ padding: '0.75rem 1rem', borderRadius: '12px' }}>
+                <span>{type.name} <small style={{ color: 'var(--muted)' }}>({type.intensity}%)</small></span>
+                <button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={() => handleImport(type)}>Import</button>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {systemPopup && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="workout-tile animate-fade-in" style={{ width: '90%', maxWidth: '400px' }}>
-            <h3 style={{ margin: '0 0 1rem 0' }}>{systemPopup.title}</h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--muted)', marginBottom: '1.5rem' }}>{systemPopup.message}</p>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="workout-btn-primary" style={{ margin: 0, flex: 1, background: '#ff6b6b' }} onClick={systemPopup.onConfirm}>Confirm</button>
-              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setSystemPopup(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {popup}
     </div>
   );
 }

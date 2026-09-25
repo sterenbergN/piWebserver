@@ -525,3 +525,17 @@ test('24. Bodyweight lifts (0 lbs) still progress via reps', () => {
   assert.equal(plan.suggestedWeight, 0);
   assert.ok(plan.suggestedReps > 8, `expected more reps, got ${plan.suggestedReps}`);
 });
+
+test('25. Deload drops ~15% and one set, keeping reps', () => {
+  const plan = generateNextWorkout({
+    ...makeInput({
+      lastSession: { liftId: 'bench', timestamp: '', sets: threeSets(200, 8, 2) },
+      constraints: { minReps: 6, maxReps: 10, minSets: 2, maxSets: 4 },
+      equipment: { getValidWeights: () => LADDER },
+    }),
+    deload: true,
+  });
+  assert.equal(plan.suggestedWeight, 170);
+  assert.equal(plan.suggestedReps, 8);
+  assert.equal(plan.suggestedSets, 2);
+});

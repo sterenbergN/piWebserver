@@ -63,6 +63,8 @@ export type ProgressionInput = {
   };
   intensity: number; // user-controlled [0.5 – 1.5]
   profile?: ProgressionProfile; // per-lift progression strategy
+  /** Recovery session: lighter weight and one fewer set instead of progressing. */
+  deload?: boolean;
 };
 
 export type WorkoutPlan = {
@@ -114,6 +116,9 @@ const PROFILE_SETTINGS: Record<ProgressionProfile, ProfileSettings> = {
   'high-rep': { baseIncrease: 0.03, jumpFraction: 0.05, strengthWeight: 0.3 },
   endurance: { baseIncrease: 0.02, jumpFraction: 0.03, strengthWeight: 0.15 },
 };
+
+/** Deload sessions drop the working weight by about this fraction. */
+const DELOAD_WEIGHT_REDUCTION = 0.15;
 
 /** How strongly last session's performance moves the target (per 1.0 of score). */
 const PERFORMANCE_SENSITIVITY = 0.5;
@@ -393,6 +398,40 @@ export function generateCandidates(
   return candidates;
 }
 
+/**
+ * Target progress for the next session, e.g. 0.05 = aim for +5%.
+ *
+ * Additive rather than multiplicative, so a poor session produces a
+ * *negative* target (back off) and a strong one pushes harder.
+ */
+export function computeTargetOverload(
+  intensity: number,
+  performanceScore: number,
+  historyTrend = 1.0,
+  profile?: ProgressionProfile,
+): number {
+  const settings = getProfileSettings(profile);
+  const perfDelta = clamp(performanceScore - 1, -0.3, 0.3);
+  return clamp(
+    settings.baseIncrease * clamp(intensity, 0.5, 1.5) * historyTrend + perfDelta * PERFORMANCE_SENSITIVITY,
+    -0.15,
+    0.2,
+  );
+}
+
+/**
+ * 0..1 — how much progress is judged on strength (e1RM) vs. per-set volume.
+ * Higher intensity shifts emphasis toward heavier weight; lower toward reps/sets.
+ */
+export function getStrengthWeight(intensity: number, profile?: ProgressionProfile): number {
+  return clamp(getProfileSettings(profile).strengthWeight + (clamp(intensity, 0.5, 1.5) - 1) * 0.6, 0.1, 0.9);
+}
+
+/** Blend of strength and volume progress, the quantity the engine compares to its target. */
+export function blendProgressRatio(intensityRatio: number, volumeRatio: number, strengthWeight: number): number {
+  return strengthWeight * intensityRatio + (1 - strengthWeight) * volumeRatio;
+}
+
 // ─── Scoring Context ───────────────────────────────────────────────────────────
 
 /**
@@ -410,17 +449,8 @@ export function buildScoringContext(
 ): ScoringContext {
   const settings = getProfileSettings(input.profile);
   const intensity = clamp(Number.isFinite(input.intensity) ? input.intensity : 1, 0.5, 1.5);
-
-  const perfDelta = clamp(performanceMetrics.performanceScore - 1, -0.3, 0.3);
-  const targetOverload = clamp(
-    settings.baseIncrease * intensity * historyTrend + perfDelta * PERFORMANCE_SENSITIVITY,
-    -0.15,
-    0.2,
-  );
-
-  // Higher intensity shifts emphasis toward strength (heavier weight), lower
-  // intensity toward volume (reps/sets). Continuous — no hard mode switches.
-  const strengthWeight = clamp(settings.strengthWeight + (intensity - 1) * 0.6, 0.1, 0.9);
+  const targetOverload = computeTargetOverload(intensity, performanceMetrics.performanceScore, historyTrend, input.profile);
+  const strengthWeight = getStrengthWeight(intensity, input.profile);
 
   const refSet = getReferenceSet(getCompletedSets(input.lastSession));
   const refWeight = refSet?.actualWeight || 0;
@@ -513,7 +543,7 @@ export function scoreCandidateDetailed(
   const perSetRatio = lastPerSetLoad > 0
     ? (candidate.weight * candidate.reps) / lastPerSetLoad
     : candidate.reps / Math.max(1, lastReps);
-  const blendedRatio = context.strengthWeight * intensityRatio + (1 - context.strengthWeight) * perSetRatio;
+  const blendedRatio = blendProgressRatio(intensityRatio, perSetRatio, context.strengthWeight);
   const diffFromTarget = Math.abs(blendedRatio - targetRatio);
   let rawScore = 100 - (diffFromTarget * 100);
 
@@ -683,6 +713,8 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
 
   // Step 1–3
   const perf = analyzePerformance(input.lastSession);
+  if (input.deload) return buildDeloadPlan(input, perf, emptyBreakdown);
+
   const historyTrend = computeHistoryTrend(input.history);
   const context = buildScoringContext(input, perf, historyTrend);
 
@@ -729,6 +761,31 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
     reasoning,
     scoringBreakdown: bestBreakdown,
     candidatesEvaluated: candidates.length,
+    performanceMetrics: perf,
+  };
+}
+
+/**
+ * Deload: same reps, ~15% lighter (snapped down to a valid weight), one fewer
+ * set. Deliberately not scored — the point is to recover, not to progress.
+ */
+function buildDeloadPlan(input: ProgressionInput, perf: PerformanceMetrics, emptyBreakdown: ScoringBreakdown): WorkoutPlan {
+  const completedSets = getCompletedSets(input.lastSession);
+  const refSet = getReferenceSet(completedSets);
+  const refWeight = refSet?.actualWeight || 0;
+  const ladder = [...input.equipment.getValidWeights(input.lastSession.liftId)].sort((a, b) => a - b);
+  const targetWeight = refWeight * (1 - DELOAD_WEIGHT_REDUCTION);
+  const weight = [...ladder].reverse().find(w => w <= targetWeight + 1e-9) ?? ladder[0] ?? 0;
+  const reps = clamp(refSet?.actualReps || input.constraints.minReps, input.constraints.minReps, input.constraints.maxReps);
+  const sets = Math.max(1, input.constraints.minSets, getAnchorSetCount(input.lastSession, input.constraints) - 1);
+
+  return {
+    suggestedWeight: weight,
+    suggestedReps: reps,
+    suggestedSets: sets,
+    reasoning: `Deload: ${refWeight > 0 ? `~${Math.round(DELOAD_WEIGHT_REDUCTION * 100)}% lighter, ` : ''}one fewer set to recover.`,
+    scoringBreakdown: { ...emptyBreakdown, performanceAdjustment: 'Deload session — progression paused.' },
+    candidatesEvaluated: 0,
     performanceMetrics: perf,
   };
 }

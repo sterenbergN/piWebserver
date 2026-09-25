@@ -1,7 +1,19 @@
+/** Id used for the signed-out "sample mode" user and their local, unsaved data. */
+export const DEMO_USER_ID = 'demo-user-123';
+
+export const DEMO_USER = {
+  id: DEMO_USER_ID,
+  username: 'Guest Lifter',
+  weight: 175,
+  height: 70,
+  gender: 'male',
+  intensityFactor: 1.0,
+};
+
 export const DEMO_GYMS = [
   {
     id: 'demo-gym-home',
-    ownerId: 'demo-user-123',
+    ownerId: DEMO_USER_ID,
     name: 'Demo Home Gym',
     emoji: '🏠',
     stations: [
@@ -47,7 +59,7 @@ export const DEMO_GYMS = [
   },
   {
     id: 'demo-gym-commercial',
-    ownerId: 'demo-user-123',
+    ownerId: DEMO_USER_ID,
     name: 'Demo Commercial Gym',
     emoji: '🏢',
     stations: [
@@ -94,7 +106,7 @@ export const DEMO_GYMS = [
 export const DEMO_TYPES = [
   {
     id: 'demo-type-upper',
-    ownerId: 'demo-user-123',
+    ownerId: DEMO_USER_ID,
     name: 'Demo Upper Hypertrophy',
     muscles: ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps'],
     intensity: 75,
@@ -105,7 +117,7 @@ export const DEMO_TYPES = [
   },
   {
     id: 'demo-type-lower',
-    ownerId: 'demo-user-123',
+    ownerId: DEMO_USER_ID,
     name: 'Demo Lower Hypertrophy',
     muscles: ['Quads', 'Hamstrings', 'Glutes'],
     intensity: 75,
@@ -122,7 +134,7 @@ const daysAgo = (days: number) => new Date(NOW - (days * 24 * 60 * 60 * 1000)).t
 export const DEMO_HISTORY = [
   {
     id: 'demo-hist-1',
-    userId: 'demo-user-123',
+    userId: DEMO_USER_ID,
     planId: 'demo-plan-1',
     name: 'Demo Upper Hypertrophy @ Demo Home Gym',
     type: DEMO_TYPES[0],
@@ -151,7 +163,7 @@ export const DEMO_HISTORY = [
   },
   {
     id: 'demo-hist-2',
-    userId: 'demo-user-123',
+    userId: DEMO_USER_ID,
     planId: 'demo-plan-2',
     name: 'Demo Upper Hypertrophy @ Demo Home Gym',
     type: DEMO_TYPES[0],
@@ -184,7 +196,7 @@ export const DEMO_HISTORY = [
   },
   {
     id: 'demo-hist-3',
-    userId: 'demo-user-123',
+    userId: DEMO_USER_ID,
     planId: 'demo-plan-3',
     name: 'Demo Lower Hypertrophy @ Demo Home Gym',
     type: DEMO_TYPES[1],

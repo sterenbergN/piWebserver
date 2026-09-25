@@ -4,21 +4,15 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { calculatePlates, getPossibleWeights, snapToPossibleWeight, stepWeight } from '@/lib/workout/equipment';
 import InlineGymEditor from './InlineGymEditor';
-
-// Intensity label helper
-function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
-    if (value <= 0.6) return { label: 'Recovery', emoji: '🧘', color: '#63b3ed' };
-    if (value <= 0.8) return { label: 'Light', emoji: '🌿', color: '#68d391' };
-    if (value <= 1.1) return { label: 'Standard', emoji: '⚖️', color: '#48bb78' };
-    if (value <= 1.3) return { label: 'Push', emoji: '💪', color: '#ed8936' };
-    return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
-}
+import { useSitePopup } from '@/components/SitePopup';
+import IntensitySlider from '@/components/workout/IntensitySlider';
+import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 
 // Performance score color
 function getScoreColor(score: number): string {
-    if (score > 1.05) return '#48bb78'; // green — too easy / strong
+    if (score > 1.05) return 'var(--success)'; // green — too easy / strong
     if (score >= 0.95) return '#ecc94b'; // yellow — appropriate
-    return '#fc8181'; // red — struggled
+    return 'var(--danger)'; // red — struggled
 }
 
 function formatClock(totalSecs: number) {
@@ -65,6 +59,7 @@ function getBaselineReps(type: any) {
 }
 
 export default function Tracker({ plan, allLifts, user, pastHistory, resumeState, sharedSessionId: sharedSessionIdProp }: any) {
+   const { confirm, popup } = useSitePopup();
    const [localPlan, setLocalPlan] = useState<any>(resumeState?.plan || plan);
    const [activeLiftIndex, setActiveLiftIndex] = useState<number>(resumeState?.activeLiftIndex || 0);
    const [workoutStartTime] = useState(resumeState?.startTime || Date.now());
@@ -214,6 +209,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                planType: localPlan.type,
                intensity,
                progressionProfile: lift.progressionProfile || 'standard',
+               deload: localPlan.isDeload === true,
             }),
          });
          data = await response.json();
@@ -262,7 +258,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          calibration,
          historicStats,
       };
-   }, [pastHistory, localPlan.gymId, localPlan.type, defaultSetCount]);
+   }, [pastHistory, localPlan.gymId, localPlan.type, localPlan.isDeload, defaultSetCount]);
 
    // Fetch suggestions for every lift in the plan (so set targets in the list are
    // accurate), re-fetching when intensity changes. Results are stored per lift,
@@ -467,7 +463,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
      try {
         localStorage.setItem('pendingWorkout', JSON.stringify({
            plan: localPlan,
-           ownerId: user?.id || 'demo-user-123',
+           ownerId: user?.id || DEMO_USER_ID,
            sharedSessionId,
            sharedCode,
            activeLiftIndex: safeLiftIndex,
@@ -524,13 +520,19 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
         setShowChange(false);
     };
 
-   const removeLiftAt = (index: number) => {
+   const removeLiftAt = async (index: number) => {
       if (localPlan.lifts.length <= 1) return;
       const lift = localPlan.lifts[index];
       const uid = uidOf(lift);
       const loggedCount = logs[uid]?.length || 0;
-      if (loggedCount > 0 && !window.confirm(`Remove ${lift.name}? Its ${loggedCount} logged set${loggedCount === 1 ? '' : 's'} will be discarded.`)) {
-         return;
+      if (loggedCount > 0) {
+         const ok = await confirm({
+            title: 'Remove Lift',
+            message: `Remove ${lift.name}? Its ${loggedCount} logged set${loggedCount === 1 ? '' : 's'} will be discarded.`,
+            confirmLabel: 'Remove',
+            danger: true,
+         });
+         if (!ok) return;
       }
 
       const remaining = localPlan.lifts
@@ -661,7 +663,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    };
 
    const handleDeleteWorkout = async () => {
-      if (!window.confirm('Delete this workout? Logged sets will not be saved.')) return;
+      const ok = await confirm({ title: 'Delete Workout', message: 'Delete this workout? Logged sets will not be saved.', confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
       await pushSharedProgress('deleted');
       localStorage.removeItem('pendingWorkout');
       window.location.href = '/workout';
@@ -676,7 +679,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
        setIntensitySlider(newIntensity);
    };
 
-   const intensityInfo = getIntensityLabel(intensitySlider);
    const showExpandedHeaderDetails = !isCompactHeader || showHeaderDetails;
    const isUsingBaseline = suggestionReason.toLowerCase().includes('baseline');
 
@@ -710,7 +712,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                </div>
             </div>
 
-            {saveError && <p style={{ color: '#ff6b6b', fontSize: '0.85rem', margin: '0 0 1rem' }}>{saveError}</p>}
+            {saveError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', margin: '0 0 1rem' }}>{saveError}</p>}
             <button className="workout-btn-primary" style={{ padding: '1.25rem', fontSize: '1.2rem', opacity: saving ? 0.6 : 1 }} onClick={handleSaveWorkout} disabled={saving}>{saving ? 'Saving…' : 'Save & Exit'}</button>
             <button className="btn btn-secondary" style={{ width: '100%', marginTop: '0.75rem', borderRadius: '12px' }} onClick={() => { setWorkoutFinished(false); setSaveError(''); }} disabled={saving}>Back to Workout</button>
          </div>
@@ -840,7 +842,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     )}
                     {isDeviated && (
                       <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-                        <span style={{ background: '#ed8936', color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Manual Override</span>
+                        <span style={{ background: 'var(--warning)', color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Manual Override</span>
                         <button onClick={resetToSuggestion} style={{ background: 'none', border: '1px solid var(--accent)', color: 'var(--accent)', padding: '0.1rem 0.5rem', borderRadius: '12px', fontSize: '0.7rem', cursor: 'pointer' }}>
                           Reset
                         </button>
@@ -884,7 +886,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 1rem' }}>
                           <div>
                             <span style={{ color: 'var(--muted)' }}>Overload:</span>{' '}
-                            <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? '#48bb78' : '#fc8181' }}>
+                            <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? 'var(--success)' : 'var(--danger)' }}>
                               {((scoringBreakdown.overloadRatio - 1) * 100).toFixed(1)}%
                             </strong>
                           </div>
@@ -925,35 +927,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     )}
 
                     <div style={{ marginTop: '0.55rem', padding: '0.5rem 0.8rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Workout Intensity</span>
-                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: intensityInfo.color }}>
-                          {intensityInfo.emoji} {intensityInfo.label} ({intensitySlider.toFixed(2)})
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0.5"
-                        max="1.5"
-                        step="0.05"
-                        value={intensitySlider}
-                        onChange={(e) => handleIntensityChange(parseFloat(e.target.value))}
-                        style={{
-                          width: '100%',
-                          height: '6px',
-                          WebkitAppearance: 'none',
-                          appearance: 'none' as any,
-                          borderRadius: '3px',
-                          outline: 'none',
-                          cursor: 'pointer',
-                          background: `linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)`,
-                        }}
-                      />
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: 'var(--muted)', marginTop: '0.2rem' }}>
-                        <span>🧘 Recovery</span>
-                        <span>⚖️ Standard</span>
-                        <span>🔥 Push</span>
-                      </div>
+                      <IntensitySlider value={intensitySlider} onChange={handleIntensityChange} />
                     </div>
                   </div>
                 )}
@@ -979,7 +953,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                          <div key={i} className="workout-flex-between animate-fade-in" style={{ padding: isCompactHeader ? '0.42rem 0.5rem' : '0.6rem', background: 'var(--surface-glass)', borderRadius: '8px' }}>
                              <strong style={{ color: 'var(--accent)' }}>Set {i+1}</strong>
                              <span>{log.weight} lbs × {log.reps}{typeof log.rir === 'number' ? ` • RIR ${log.rir >= 5 ? '5+' : log.rir}` : ''}</span>
-                             <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: '#ff6b6b', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
+                             <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
                           </div>
                       ))}
                    </div>
@@ -1036,12 +1010,12 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     )}
                     {safeLiftIndex < localPlan.lifts.length - 1 ? (
                       <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem' }} onClick={() => setActiveLiftIndex(safeLiftIndex + 1)}>Next Lift →</button>
-                    ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem', background: '#48bb78', boxShadow: '0 4px 15px rgba(72,187,120,0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
+                    ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem', background: 'var(--success)', boxShadow: '0 4px 15px rgba(var(--success-rgb), 0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
                 </div>
             </div>
 
             {canDisplayPlates && requiredPlates === null && (
-                <p className="animate-fade-in" style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem', color: '#ed8936' }}>
+                <p className="animate-fade-in" style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--warning)' }}>
                    {currentWeight} lbs can&apos;t be loaded exactly with this station&apos;s plates.
                 </p>
             )}
@@ -1076,15 +1050,15 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          </div>
 
          {showMenu && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 120, padding: '1.5rem', overflowY: 'auto' }} className="animate-fade-in">
-               <div className="workout-flex-between" style={{ marginBottom: '1.25rem' }}>
-                  <h2 style={{ margin: 0 }}>Workout Menu</h2>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowMenu(false)}>✕</button>
+            <div className="workout-overlay animate-fade-in" style={{ zIndex: 120 }}>
+               <div className="workout-overlay-header">
+                  <h2>Workout Menu</h2>
+                  <button className="workout-close-btn" aria-label="Close" onClick={() => setShowMenu(false)}>✕</button>
                </div>
                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                   <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} onClick={handlePauseWorkout}>Pause Workout</button>
                   <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} onClick={() => { setWorkoutFinished(true); setShowMenu(false); }}>Finish Workout</button>
-                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem', color: '#ff6b6b', borderColor: 'rgba(255,107,107,0.35)' }} onClick={handleDeleteWorkout}>Delete Workout</button>
+                  <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem', color: 'var(--danger)', borderColor: 'rgba(var(--danger-rgb), 0.35)' }} onClick={handleDeleteWorkout}>Delete Workout</button>
                   <button className="btn btn-secondary" style={{ textAlign: 'left', padding: '0.9rem 1rem' }} disabled={sharedLoading} onClick={handleEnableSharedMode}>
                     {sharedLoading ? 'Creating Invite...' : sharedSessionId ? 'Shared Mode Enabled' : 'Invite To Shared Session'}
                   </button>
@@ -1094,16 +1068,16 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       <div style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '0.2rem', color: 'var(--accent)' }}>{sharedCode}</div>
                     </div>
                   )}
-                  {sharedError && <p style={{ margin: 0, color: '#ff6b6b', fontSize: '0.85rem' }}>{sharedError}</p>}
+                  {sharedError && <p style={{ margin: 0, color: 'var(--danger)', fontSize: '0.85rem' }}>{sharedError}</p>}
                </div>
             </div>
          )}
 
          {showList && (
-            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }} className="animate-fade-in">
-               <div className="workout-flex-between" style={{ marginBottom: '1.25rem' }}>
-                  <h2 style={{ margin: 0 }}>Workout Itinerary</h2>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => { setShowList(false); setShowAddLift(false); }}>✕</button>
+            <div className="workout-overlay animate-fade-in">
+               <div className="workout-overlay-header">
+                  <h2>Workout Itinerary</h2>
+                  <button className="workout-close-btn" aria-label="Close" onClick={() => { setShowList(false); setShowAddLift(false); }}>✕</button>
                </div>
                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
                    {localPlan.lifts.map((l: any, i: number) => {
@@ -1113,7 +1087,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       return (
                          // T2: min-width: 0 on row prevents horizontal overflow
                          <div key={uidOf(l)} style={{ display: 'flex', gap: '0.5rem', minWidth: 0 }}>
-                            <button className="btn btn-secondary" style={{ flex: 1, minWidth: 0, padding: '0.85rem 1rem', textAlign: 'left', border: i === safeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(72,187,120,0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); setShowAddLift(false); }}>
+                            <button className="btn btn-secondary" style={{ flex: 1, minWidth: 0, padding: '0.85rem 1rem', textAlign: 'left', border: i === safeLiftIndex ? '1px solid var(--accent)' : '1px solid var(--surface-border)', background: isDone ? 'rgba(var(--success-rgb), 0.1)' : 'var(--input-bg)' }} onClick={() => { setActiveLiftIndex(i); setShowList(false); setShowAddLift(false); }}>
                                {/* Wrap text instead of truncating */}
                                <strong style={{ display: 'flex', wordWrap: 'break-word', whiteSpace: 'normal', lineHeight: '1.3' }}>
                                  <span style={{ minWidth: '1.5rem', flexShrink: 0 }}>{i + 1}.</span>
@@ -1126,7 +1100,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                                </p>
                             </button>
                             {/* T2: fixed-width delete button so it never gets clipped */}
-                            <button className="btn btn-secondary" aria-label={`Remove ${l.name}`} disabled={localPlan.lifts.length <= 1} style={{ flexShrink: 0, width: '3rem', padding: 0, color: '#ff6b6b', border: '1px solid rgba(255,107,107,0.3)', background: 'rgba(255,107,107,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: localPlan.lifts.length <= 1 ? 0.4 : 1 }} onClick={() => removeLiftAt(i)}>✕</button>
+                            <button className="btn btn-secondary" aria-label={`Remove ${l.name}`} disabled={localPlan.lifts.length <= 1} style={{ flexShrink: 0, width: '3rem', padding: 0, color: 'var(--danger)', border: '1px solid rgba(var(--danger-rgb), 0.3)', background: 'rgba(var(--danger-rgb), 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: localPlan.lifts.length <= 1 ? 0.4 : 1 }} onClick={() => removeLiftAt(i)}>✕</button>
                          </div>
                       )
                    })}
@@ -1182,10 +1156,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
          {showChange && (
              // T5: use overscroll-behavior: contain so inner scroll doesn't fight the page
-             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any, overscrollBehavior: 'contain' }} className="animate-fade-in">
-               <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
-                  <h2 style={{ margin: 0 }}>Swap Exercise</h2>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowChange(false)}>✕</button>
+             <div className="workout-overlay animate-fade-in">
+               <div className="workout-overlay-header">
+                  <h2>Swap Exercise</h2>
+                  <button className="workout-close-btn" aria-label="Close" onClick={() => setShowChange(false)}>✕</button>
                </div>
                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingBottom: '2rem' }}>
                   {alternatives.length === 0 && (
@@ -1210,10 +1184,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
           )}
 
          {showSuperset && (
-             <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'var(--background)', zIndex: 100, padding: '1.5rem', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any, overscrollBehavior: 'contain' }} className="animate-fade-in">
-               <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
-                  <h2 style={{ margin: 0 }}>Manage Superset</h2>
-                  <button style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.5rem' }} onClick={() => setShowSuperset(false)}>✕</button>
+             <div className="workout-overlay animate-fade-in">
+               <div className="workout-overlay-header">
+                  <h2>Manage Superset</h2>
+                  <button className="workout-close-btn" aria-label="Close" onClick={() => setShowSuperset(false)}>✕</button>
                </div>
 
                <div className="workout-tile" style={{ marginBottom: '1rem' }}>
@@ -1230,7 +1204,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                         <strong style={{ fontSize: '1rem' }}>{activePartner.name}</strong>
                         <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>{getLiftLogs(activePartner).length}/{getTargetSets(activePartner)} sets logged</p>
                       </div>
-                      <button className="btn btn-secondary" style={{ color: '#ff6b6b', borderColor: 'rgba(255,107,107,0.35)', opacity: activeRemainingSets === 0 && activePartnerRemainingSets === 0 ? 0.5 : 1 }} onClick={handleUnpairSuperset} disabled={activeRemainingSets === 0 && activePartnerRemainingSets === 0}>
+                      <button className="btn btn-secondary" style={{ color: 'var(--danger)', borderColor: 'rgba(var(--danger-rgb), 0.35)', opacity: activeRemainingSets === 0 && activePartnerRemainingSets === 0 ? 0.5 : 1 }} onClick={handleUnpairSuperset} disabled={activeRemainingSets === 0 && activePartnerRemainingSets === 0}>
                         Remove Pair
                       </button>
                     </div>
@@ -1261,6 +1235,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                )}
             </div>
          )}
+         {popup}
       </div>
    );
 }

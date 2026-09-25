@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
 import { generateNextWorkout, ProgressionInput, ProgressionProfile, Session, SetLog } from '@/lib/workout/progression';
-import { getWorkoutData } from '@/lib/workout/data';
-import { computeMuscleFatigue } from '@/lib/workout/analytics';
 import { CalibrationStore, findCalibration, getCalibrationStore } from '@/lib/workout/calibration';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
 import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipment';
@@ -107,35 +105,12 @@ function findCalibrationReference(userHistory: any[], gymId: string, liftKey: st
   return null;
 }
 
-async function getDeloadRecommendation(userId: string, userHistory: any[]) {
-  if (userHistory.length < 3) return null;
-
-  // Only the user's own gyms are needed to map lift ids → muscles.
-  const gymsData = await getWorkoutData('gyms.json', { gyms: [] as any[] });
-  const userLifts: any[] = [];
-  (gymsData.gyms || [])
-    .filter((g: any) => g.ownerId === userId)
-    .forEach((g: any) => g.stations?.forEach((s: any) => {
-      if (Array.isArray(s.lifts)) userLifts.push(...s.lifts);
-    }));
-
-  const overloaded = computeMuscleFatigue(userHistory, userLifts)
-    .filter(f => f.recommendation === 'deload_recommended');
-  if (overloaded.length === 0) return null;
-
-  return {
-    muscles: overloaded.map(f => f.muscle),
-    topFatigue: overloaded[0].fatigueScore,
-    suggestion: `Consider a deload for: ${overloaded.map(f => f.muscle).join(', ')}. Set intensity to Recovery (0.6) for your next session.`,
-  };
-}
-
 // ─── POST Handler ──────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
   try {
     const payload = await readJsonObject(request);
-    const { liftId, liftName, gymId, station, planType, intensity, timeLimitMinutes, progressionProfile, plannedSets } = payload;
+    const { liftId, liftName, gymId, station, planType, intensity, timeLimitMinutes, progressionProfile, plannedSets, deload } = payload;
     const logs = Array.isArray(payload.logs) ? payload.logs : [];
     if (typeof liftId !== 'string' && typeof liftId !== 'number') {
       throw new ApiError(400, 'liftId is required');
@@ -195,6 +170,7 @@ export async function POST(request: Request) {
       },
       intensity: Number.isFinite(Number(intensity)) ? Number(intensity) : 1.0,
       profile: PROFILES.includes(progressionProfile) ? progressionProfile : 'standard',
+      deload: deload === true,
     };
 
     const plan = generateNextWorkout(input);
@@ -210,15 +186,6 @@ export async function POST(request: Request) {
       }
     }
 
-    let deloadRecommendation = null;
-    if (userId) {
-      try {
-        deloadRecommendation = await getDeloadRecommendation(userId, userHistory);
-      } catch (error) {
-        console.error('Deload check failed:', error); // non-critical
-      }
-    }
-
     return NextResponse.json({
       success: true,
       plan,
@@ -228,7 +195,6 @@ export async function POST(request: Request) {
         confidence: calibrationConfidence,
         ...calibrationReference,
       },
-      deloadRecommendation,
     });
   } catch (error) {
     return handleApiError(error, 'Progression API error');
