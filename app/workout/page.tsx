@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { DEMO_GYMS, DEMO_TYPES } from '@/lib/workout/demo-data';
+import { DEMO_GYMS, DEMO_TYPES, DEMO_USER, DEMO_USER_ID } from '@/lib/workout/demo-data';
 
 // Interfaces for user representation
 interface UserData {
@@ -14,15 +14,29 @@ interface UserData {
   intensityFactor?: number;
 }
 
-import { calculateExperienceScore } from '@/lib/workout/analytics';
+import { calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
+import { getIntensityLabel } from '@/lib/workout/intensity';
+import IntensitySlider from '@/components/workout/IntensitySlider';
 
-function getIntensityLabel(value: number): { label: string; emoji: string; color: string } {
-  if (value <= 0.6) return { label: 'Recovery', emoji: '🧘', color: '#63b3ed' };
-  if (value <= 0.8) return { label: 'Light', emoji: '🌿', color: '#68d391' };
-  if (value <= 1.1) return { label: 'Standard', emoji: '⚖️', color: '#48bb78' };
-  if (value <= 1.3) return { label: 'Push', emoji: '💪', color: '#ed8936' };
-  return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
+// A paused workout stays resumable for this long after its last update.
+const PENDING_WORKOUT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function readPendingWorkout(ownerId: string) {
+  try {
+    const stored = localStorage.getItem('pendingWorkout');
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (Date.now() - (parsed.timestamp || 0) >= PENDING_WORKOUT_MAX_AGE_MS) {
+      localStorage.removeItem('pendingWorkout');
+      return null;
+    }
+    return (parsed.ownerId || DEMO_USER_ID) === ownerId ? parsed : null;
+  } catch {
+    localStorage.removeItem('pendingWorkout');
+    return null;
+  }
 }
+
 
 export default function WorkoutDashboard() {
   const [user, setUser] = useState<UserData | null>(null);
@@ -52,6 +66,7 @@ export default function WorkoutDashboard() {
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
   const [isDeload, setIsDeload] = useState(false);
+  const [fatiguedMuscles, setFatiguedMuscles] = useState<string[]>([]);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
@@ -65,6 +80,7 @@ export default function WorkoutDashboard() {
   const [editGender, setEditGender] = useState('male');
   const [editIntensityFactor, setEditIntensityFactor] = useState(1.0);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState('');
 
   // Pending workout resume state
   const [pendingWorkout, setPendingWorkout] = useState<{plan?: any, logs?: any, timestamp?: number, startTime?: number, activeLiftIndex?: number, ownerId?: string} | null>(null);
@@ -76,145 +92,87 @@ export default function WorkoutDashboard() {
   }, []);
 
   useEffect(() => {
-    // Check if real user is authenticated
-    fetch('/api/workout/auth')
-      .then(res => res.json())
-      .then(data => {
-        const loadPendingForOwner = (ownerId: string) => {
-          try {
-            const stored = localStorage.getItem('pendingWorkout');
-            if (!stored) {
-              setPendingWorkout(null);
-              return;
-            }
-            const parsed = JSON.parse(stored);
-            const age = Date.now() - (parsed.timestamp || 0);
-            if (age >= 3600000) {
-              localStorage.removeItem('pendingWorkout');
-              setPendingWorkout(null);
-              return;
-            }
-            if ((parsed.ownerId || 'demo-user-123') === ownerId) {
-              setPendingWorkout(parsed);
-              return;
-            }
-            setPendingWorkout(null);
-          } catch {
-            localStorage.removeItem('pendingWorkout');
-            setPendingWorkout(null);
-          }
-        };
+    const enterDemoMode = () => {
+      setIsDemo(true);
+      setUser({ ...DEMO_USER, height: String(DEMO_USER.height) });
+      setAvailableGyms(DEMO_GYMS);
+      setAvailableTypes(DEMO_TYPES);
+      setPendingWorkout(readPendingWorkout(DEMO_USER.id));
+    };
 
-        if (data.authenticated && data.user) {
-          setUser(data.user);
-          setIsDemo(false);
-          loadPendingForOwner(data.user.id);
-          
-          // Populate profile editor fields
-          setEditWeight(data.user.weight?.toString() || '');
-          setEditHeight(data.user.height || '');
-          setEditGender(data.user.gender || 'male');
-          setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
-
-          // Fetch only imported/owned gyms
-          fetch('/api/workout/gyms').then(r => r.json()).then(d => { 
-             if (d.success) setAvailableGyms(d.gyms.filter((g: any) => g.ownerId === data.user.id)); 
-          });
-
-          fetch('/api/workout/history').then(r => r.json()).then(pHistory => {
-             if (pHistory.success) {
-                 let sets = 0; let vol = 0;
-                 
-                 // Preconfigure list of all lifts across the user's gyms for SBD matching
-                 const allLifts: any[] = [];
-                 
-                 // Re-fetch gyms locally inside history to ensure we have the lifts
-                 fetch('/api/workout/gyms').then(r => r.json()).then(dGym => {
-                     if (dGym.success) {
-                         const userGyms = dGym.gyms.filter((g: any) => g.ownerId === data.user.id);
-                         userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
-                             if (s.lifts) allLifts.push(...s.lifts);
-                         }));
-                     }
-
-                     pHistory.history.forEach((h: any) => {
-                         if (h.logs) {
-                             Object.keys(h.logs).forEach(liftId => {
-                                 h.logs[liftId].forEach((set: any) => {
-                                     vol += (set.reps * set.weight);
-                                     sets++;
-                                 });
-                             });
-                         }
-                     });
-                     
-                     setTotalLifts(pHistory.history.length);
-                     setAvgVol(sets > 0 ? vol / sets : 0);
-                     
-                     if (data.user.weight) {
-                         const exp = calculateExperienceScore(data.user, pHistory.history, allLifts);
-                         setRankSymbol(exp.symbol);
-                         setRankName(exp.level);
-                         setRankScore(exp.score);
-                     }
-                 });
-             }
-          });
-
-        } else {
-          // If not logged in, activate demo mode
-          setIsDemo(true);
-          setUser({
-            id: 'demo-user-123',
-            username: 'Guest Lifter',
-            weight: 175,
-            gender: 'male',
-            intensityFactor: 1.0,
-          });
-          setAvailableGyms(DEMO_GYMS);
-          setAvailableTypes(DEMO_TYPES);
-          loadPendingForOwner('demo-user-123');
+    async function load() {
+      try {
+        const data = await fetch('/api/workout/auth').then(res => res.json());
+        if (!data.authenticated || !data.user) {
+          enterDemoMode();
+          return;
         }
-      })
-      .catch(() => {
-        setIsDemo(true);
-        setUser({
-          id: 'demo-user-123',
-          username: 'Guest Lifter',
-          weight: 175,
-          gender: 'male',
-          intensityFactor: 1.0,
-        });
-        setAvailableGyms(DEMO_GYMS);
-        setAvailableTypes(DEMO_TYPES);
-        try {
-          const stored = localStorage.getItem('pendingWorkout');
-          if (!stored) {
-            setPendingWorkout(null);
-            return;
-          }
-          const parsed = JSON.parse(stored);
-          const age = Date.now() - (parsed.timestamp || 0);
-          if (age >= 3600000) {
-            localStorage.removeItem('pendingWorkout');
-            setPendingWorkout(null);
-            return;
-          }
-          setPendingWorkout((parsed.ownerId || 'demo-user-123') === 'demo-user-123' ? parsed : null);
-        } catch {
-          localStorage.removeItem('pendingWorkout');
-          setPendingWorkout(null);
-        }
-      })
-      .finally(() => setLoading(false));
 
-    fetch('/api/workout/types?scope=mine')
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.types?.length > 0) {
-          setAvailableTypes(d.types);
+        setUser(data.user);
+        setIsDemo(false);
+        setPendingWorkout(readPendingWorkout(data.user.id));
+
+        // Populate profile editor fields
+        setEditWeight(data.user.weight?.toString() || '');
+        setEditHeight(data.user.height?.toString() || '');
+        setEditGender(data.user.gender || 'male');
+        setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
+
+        const [gymsRes, typesRes, historyRes] = await Promise.all([
+          fetch('/api/workout/gyms').then(r => r.json()).catch(() => null),
+          fetch('/api/workout/types?scope=mine').then(r => r.json()).catch(() => null),
+          fetch('/api/workout/history').then(r => r.json()).catch(() => null),
+        ]);
+
+        const userGyms: any[] = gymsRes?.success ? gymsRes.gyms : [];
+        setAvailableGyms(userGyms);
+        if (typesRes?.success) setAvailableTypes(typesRes.types || []);
+        if (userGyms.length === 1) setSelectedGym(userGyms[0].id);
+        if (typesRes?.success && typesRes.types?.length === 1) setSelectedType(typesRes.types[0].id);
+
+        if (historyRes?.success) {
+          const history: any[] = historyRes.history || [];
+          let sets = 0; let vol = 0;
+          history.forEach((h: any) => {
+            Object.values(h.logs || {}).forEach((liftSets: any) => {
+              (liftSets || []).forEach((set: any) => {
+                vol += (set.reps || 0) * (set.weight || 0);
+                sets++;
+              });
+            });
+          });
+          setTotalLifts(history.length);
+          setAvgVol(sets > 0 ? vol / sets : 0);
+
+          const allLifts: any[] = [];
+          userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
+            if (s.lifts) allLifts.push(...s.lifts);
+          }));
+
+          // Suggest a deload when accumulated fatigue is high for any muscle group.
+          if (history.length >= 3) {
+            setFatiguedMuscles(
+              computeMuscleFatigue(history, allLifts)
+                .filter((f) => f.recommendation === 'deload_recommended')
+                .map((f) => f.muscle)
+            );
+          }
+
+          if (data.user.weight) {
+            const exp = calculateExperienceScore(data.user, history, allLifts);
+            setRankSymbol(exp.symbol);
+            setRankName(exp.level);
+            setRankScore(exp.score);
+          }
         }
-      });
+      } catch {
+        enterDemoMode();
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -246,13 +204,14 @@ export default function WorkoutDashboard() {
   const handleSaveProfile = async () => {
     if (!user) return;
     setProfileSaving(true);
+    setProfileError('');
     try {
       const res = await fetch('/api/workout/auth', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           weight: parseFloat(editWeight) || 0,
-          height: editHeight,
+          height: editHeight === '' ? '' : parseFloat(editHeight) || 0,
           gender: editGender,
           intensityFactor: editIntensityFactor
         })
@@ -262,8 +221,13 @@ export default function WorkoutDashboard() {
         setUser(data.user);
         setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
         setShowProfileEditor(false);
+        setShowProfileMenu(false);
+      } else {
+        setProfileError(data.message || 'Could not save profile.');
       }
-    } catch { /* silent */ }
+    } catch {
+      setProfileError('Network error — profile not saved.');
+    }
     setProfileSaving(false);
   };
 
@@ -322,7 +286,7 @@ export default function WorkoutDashboard() {
             value={loginPassword} 
             onChange={e => setLoginPassword(e.target.value)} 
           />
-          {loginError && <p style={{ color: '#ff6b6b', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'center' }}>{loginError}</p>}
+          {loginError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'center' }}>{loginError}</p>}
           <button type="submit" className="workout-btn-primary">Enter</button>
         </form>
         <button 
@@ -361,7 +325,7 @@ export default function WorkoutDashboard() {
           {showProfileMenu && !isDemo && (
              <div className="animate-fade-in" style={{ 
                 position: 'absolute', top: '50px', right: 0, 
-                background: 'rgba(28,28,30,0.98)', 
+                background: 'var(--background)', 
                 border: '1px solid var(--surface-border)', 
                 borderRadius: showProfileEditor ? '12px 12px 0 0' : '12px', 
                 padding: '0.5rem', width: '220px', zIndex: 50, 
@@ -369,61 +333,39 @@ export default function WorkoutDashboard() {
                 boxShadow: '0 4px 15px rgba(0,0,0,0.3)' 
              }}>
                 <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem' }} onClick={() => setShowProfileEditor(!showProfileEditor)}>✏️ Edit Profile</button>
-                <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem', color: '#ff6b6b' }} onClick={handleLogout}>🚪 Logout</button>
+                <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem', color: 'var(--danger)' }} onClick={handleLogout}>🚪 Logout</button>
              </div>
           )}
 
           {showProfileMenu && showProfileEditor && !isDemo && (
              <div className="animate-fade-in" style={{ 
                 position: 'absolute', top: '138px', right: 0, 
-                background: 'rgba(28,28,30,0.98)', 
+                background: 'var(--background)', 
                 border: '1px solid var(--surface-border)', 
                 borderTop: 'none', borderRadius: '0 0 12px 12px', 
                 padding: '0.75rem', width: '220px', zIndex: 50, 
                 boxShadow: '0 8px 20px rgba(0,0,0,0.4)' 
              }}>
-                <label style={{ fontSize: '0.75rem', color: '#aaa', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Weight (lbs)</label>
-                <input className="workout-input" type="number" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: '#222', border: '1px solid #444', color: '#fff' }} value={editWeight} onChange={e => setEditWeight(e.target.value)} />
+                <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Weight (lbs)</label>
+                <input className="workout-input" type="number" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', color: 'var(--foreground)' }} value={editWeight} onChange={e => setEditWeight(e.target.value)} />
 
-                <label style={{ fontSize: '0.75rem', color: '#aaa', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Height (inches)</label>
-                <input className="workout-input" type="number" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: '#222', border: '1px solid #444', color: '#fff' }} value={editHeight} onChange={e => setEditHeight(e.target.value)} />
+                <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Height (inches)</label>
+                <input className="workout-input" type="number" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', color: 'var(--foreground)' }} value={editHeight} onChange={e => setEditHeight(e.target.value)} />
 
-                <label style={{ fontSize: '0.75rem', color: '#aaa', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Gender</label>
-                <select className="workout-input" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: '#222', border: '1px solid #444', color: '#fff' }} value={editGender} onChange={e => setEditGender(e.target.value)}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Gender</label>
+                <select className="workout-input" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', color: 'var(--foreground)' }} value={editGender} onChange={e => setEditGender(e.target.value)}>
                    <option value="male">Male</option>
                    <option value="female">Female</option>
                 </select>
 
-                <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#222', border: '1px solid #444', borderRadius: '10px' }}>
-                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '1px' }}>Intensity</span>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: getIntensityLabel(editIntensityFactor).color }}>
-                         {getIntensityLabel(editIntensityFactor).emoji} {getIntensityLabel(editIntensityFactor).label} ({editIntensityFactor.toFixed(2)})
-                      </span>
-                   </div>
-                   <input
-                      type="range"
-                      min="0.5"
-                      max="1.5"
-                      step="0.05"
-                      value={editIntensityFactor}
-                      onChange={e => setEditIntensityFactor(parseFloat(e.target.value))}
-                      style={{
-                         width: '100%',
-                         height: '6px',
-                         WebkitAppearance: 'none',
-                         appearance: 'none' as any,
-                         borderRadius: '3px',
-                         outline: 'none',
-                         cursor: 'pointer',
-                         background: 'linear-gradient(to right, #63b3ed 0%, #48bb78 40%, #ed8936 70%, #fc8181 100%)',
-                      }}
-                   />
+                <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '10px' }}>
+                   <IntensitySlider title="Default Intensity" value={editIntensityFactor} onChange={setEditIntensityFactor} />
                 </div>
 
                 <button className="workout-btn-primary" style={{ padding: '0.75rem', fontSize: '0.9rem', marginTop: '0.5rem', borderRadius: '8px' }} onClick={handleSaveProfile} disabled={profileSaving}>
                    {profileSaving ? 'Saving...' : 'Save Profile Changes'}
                 </button>
+                {profileError && <p className="workout-error">{profileError}</p>}
              </div>
           )}
         </div>
@@ -515,7 +457,7 @@ export default function WorkoutDashboard() {
                    </button>
                    <button 
                      className="btn btn-secondary" 
-                     style={{ flex: 1, padding: '0.85rem', borderRadius: '12px', color: '#fc8181', borderColor: 'rgba(252,129,129,0.3)' }}
+                     style={{ flex: 1, padding: '0.85rem', borderRadius: '12px', color: 'var(--danger)', borderColor: 'rgba(var(--danger-rgb), 0.3)' }}
                      onClick={() => { localStorage.removeItem('pendingWorkout'); setPendingWorkout(null); }}
                    >
                      Discard
@@ -548,19 +490,39 @@ export default function WorkoutDashboard() {
              {availableTypes.map(t => <option key={t.id} value={t.id}>{t.name} ({t.intensity}%)</option>)}
           </select>
 
+          <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Number of Lifts</label>
+          <select className="workout-input" value={liftCount} onChange={e => setLiftCount(e.target.value)}>
+            {[3, 4, 5, 6, 7, 8].map(n => <option key={n} value={String(n)}>{n} lifts</option>)}
+          </select>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer', background: isDeload ? 'rgba(99, 179, 237, 0.1)' : 'transparent' }}>
             <input type="checkbox" checked={isDeload} onChange={e => setIsDeload(e.target.checked)} style={{ marginTop: '0.15rem' }} />
             <div>
-              <div style={{ fontWeight: 600, color: isDeload ? '#63b3ed' : 'var(--foreground)' }}>Deload Workout</div>
+              <div style={{ fontWeight: 600, color: isDeload ? 'var(--info)' : 'var(--foreground)' }}>Deload Workout</div>
               <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Automatically reduces weight targets and sets to prioritize recovery.</div>
             </div>
           </label>
+          {fatiguedMuscles.length > 0 && !isDeload && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--warning)', margin: '-0.5rem 0 1rem' }}>
+              High fatigue detected for {fatiguedMuscles.join(', ')} — consider a deload session.
+            </p>
+          )}
 
           <button 
              className="workout-btn-primary" 
              disabled={!selectedGym || !selectedType}
              style={{ opacity: (!selectedGym || !selectedType) ? 0.5 : 1 }}
-             onClick={() => window.location.href = `/workout/active?gym=${selectedGym}&type=${selectedType}&lifts=${liftCount}&intensity=${isDeload ? 0.5 : 1.0}&isDemo=${isDemo}`}
+             onClick={() => {
+               const params = new URLSearchParams({
+                 gym: selectedGym,
+                 type: selectedType,
+                 lifts: liftCount,
+                 intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)),
+                 isDemo: String(isDemo),
+               });
+               if (isDeload) params.set('deload', '1');
+               window.location.href = `/workout/active?${params.toString()}`;
+             }}
           >
             Build & Start
           </button>
@@ -586,7 +548,7 @@ export default function WorkoutDashboard() {
                   onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3))}
                   placeholder="KLF"
                 />
-                {joinError && <p style={{ color: '#ff6b6b', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{joinError}</p>}
+                {joinError && <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: '0.4rem 0 0' }}>{joinError}</p>}
                 <button
                   className="workout-btn-primary"
                   style={{ marginTop: '0.6rem' }}

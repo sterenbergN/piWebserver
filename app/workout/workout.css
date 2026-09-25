@@ -142,3 +142,141 @@
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ── Shared workout UI patterns ─────────────────────────────────────────────── */
+
+.workout-label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.workout-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.workout-btn-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.workout-btn-row > * {
+  flex: 1;
+  margin: 0;
+}
+
+/* Bordered panel used for inline create/edit forms */
+.workout-form-panel {
+  background: var(--background);
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+}
+
+/* Small outlined status tag ("Editing", "SS", station type) */
+.workout-pill {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 0.05rem 0.4rem;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+
+/* Filled removable tag (cable attachments) */
+.workout-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--accent);
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+}
+
+/* Full-screen sheet used by the tracker's list/menu/swap views */
+.workout-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--background);
+  z-index: 100;
+  padding: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.workout-overlay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+.workout-overlay-header h2 {
+  margin: 0;
+}
+
+.workout-close-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Borderless text button */
+.workout-text-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.workout-text-btn.danger,
+.workout-error {
+  color: var(--danger);
+}
+
+.workout-error {
+  font-size: 0.85rem;
+  margin: 0.4rem 0 0;
+}
+
+.workout-btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.workout-btn-danger.solid {
+  background: var(--danger);
+  color: #fff;
+}
+
+.workout-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--input-bg);
+  border-radius: 8px;
+}
+
+.workout-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}

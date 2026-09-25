@@ -1,7 +1,8 @@
+import crypto from 'crypto';
 import { NextResponse } from 'next/server';
-import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
-import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
-import { normalizeUsersData } from '@/lib/workout/users';
+import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
+import { findWorkoutUser } from '@/lib/workout/users';
+import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
 type ParticipantProgress = {
   activeLiftIndex: number;
@@ -41,22 +42,20 @@ type SessionStore = {
   sessions: SharedSession[];
 };
 
-function randomId() {
-  return Math.random().toString(36).slice(2, 10);
-}
+const SESSIONS_FILE = 'workout-sessions.json';
+const MAX_PARTICIPANTS = 2;
+/** Sessions untouched for this long are pruned so the file doesn't grow forever. */
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const PROGRESS_STATUSES = ['active', 'paused', 'finished', 'deleted'] as const;
 
 function generateCode() {
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return Array.from({ length: 3 }, () => letters[Math.floor(Math.random() * letters.length)]).join('');
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O to avoid confusion with 1/0
+  return Array.from({ length: 3 }, () => letters[crypto.randomInt(letters.length)]).join('');
 }
 
-async function getUsernameByUserId(userId: string): Promise<string> {
-  const rawUsersData = await getWorkoutData('users.json', { users: [] } as any);
-  const { data: usersData, changed } = normalizeUsersData(rawUsersData);
-  if (changed) {
-    await saveWorkoutData('users.json', usersData);
-  }
-  return usersData.users.find((user: any) => user.id === userId)?.username || 'User';
+function pruneStaleSessions(store: SessionStore) {
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  store.sessions = (store.sessions || []).filter((entry) => new Date(entry.updatedAt).getTime() >= cutoff);
 }
 
 function defaultProgress(): ParticipantProgress {
@@ -70,150 +69,166 @@ function defaultProgress(): ParticipantProgress {
   };
 }
 
+function mergeProgress(current: ParticipantProgress, progress: any): ParticipantProgress {
+  const nonNegativeInt = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  return {
+    activeLiftIndex: nonNegativeInt(progress?.activeLiftIndex, current.activeLiftIndex),
+    currentLiftName: typeof progress?.currentLiftName === 'string' ? progress.currentLiftName.slice(0, 200) : current.currentLiftName,
+    completedSets: nonNegativeInt(progress?.completedSets, current.completedSets),
+    totalSets: nonNegativeInt(progress?.totalSets, current.totalSets),
+    status: PROGRESS_STATUSES.includes(progress?.status) ? progress.status : current.status,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export async function GET(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  try {
+    const userId = await requireWorkoutUserId();
+    const sessionId = new URL(request.url).searchParams.get('id');
+    if (!sessionId) throw new ApiError(400, 'Missing session id');
 
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('id');
-  if (!sessionId) return NextResponse.json({ success: false, message: 'Missing session id' }, { status: 400 });
+    const store = await getWorkoutData<SessionStore>(SESSIONS_FILE, { sessions: [] });
+    const session = (store.sessions || []).find((entry) => entry.id === sessionId);
+    if (!session) throw new ApiError(404, 'Session not found');
 
-  const store = await getWorkoutData<SessionStore>('workout-sessions.json', { sessions: [] });
-  const session = store.sessions.find((entry) => entry.id === sessionId);
-  if (!session) return NextResponse.json({ success: false, message: 'Session not found' }, { status: 404 });
+    const participant = session.participants.find((entry) => entry.userId === userId);
+    if (!participant) throw new ApiError(403, 'Forbidden');
 
-  const participant = session.participants.find((entry) => entry.userId === userId);
-  if (!participant) return NextResponse.json({ success: false, message: 'Forbidden' }, { status: 403 });
-
-  const peer = session.participants.find((entry) => entry.userId !== userId) || null;
-  return NextResponse.json({
-    success: true,
-    session: {
-      id: session.id,
-      code: session.code,
-      version: session.version,
-      status: session.status,
-      updatedAt: session.updatedAt,
-      planTemplate: session.planTemplate,
-    },
-    self: participant,
-    peer,
-  });
+    const peer = session.participants.find((entry) => entry.userId !== userId) || null;
+    return NextResponse.json({
+      success: true,
+      session: {
+        id: session.id,
+        code: session.code,
+        version: session.version,
+        status: session.status,
+        updatedAt: session.updatedAt,
+        planTemplate: session.planTemplate,
+      },
+      self: participant,
+      peer,
+    });
+  } catch (error) {
+    return handleApiError(error, 'Load shared session failed');
+  }
 }
 
 export async function POST(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: 'Login required for shared mode' }, { status: 401 });
+  try {
+    const userId = await requireWorkoutUserId();
+    const body = await readJsonObject(request);
+    const user = await findWorkoutUser(userId);
+    const username = user?.username || 'User';
 
-  const body = await request.json();
-  const action = body?.action;
-  const username = await getUsernameByUserId(userId);
-  const store = await getWorkoutData<SessionStore>('workout-sessions.json', { sessions: [] });
+    if (body.action === 'create') {
+      const planTemplate = body.planTemplate;
+      if (!planTemplate || !Array.isArray(planTemplate.lifts) || planTemplate.lifts.length === 0) {
+        throw new ApiError(400, 'Invalid plan template');
+      }
 
-  if (action === 'create') {
-    const planTemplate = body?.planTemplate;
-    if (!planTemplate || !Array.isArray(planTemplate.lifts) || planTemplate.lifts.length === 0) {
-      return NextResponse.json({ success: false, message: 'Invalid plan template' }, { status: 400 });
-    }
+      const session = await updateWorkoutData(SESSIONS_FILE, { sessions: [] as SharedSession[] }, (store) => {
+        pruneStaleSessions(store);
 
-    let code = generateCode();
-    let guard = 0;
-    while (store.sessions.some((entry) => entry.code === code && entry.status === 'active') && guard < 30) {
-      code = generateCode();
-      guard += 1;
-    }
+        let code = generateCode();
+        for (let guard = 0; guard < 50 && store.sessions.some((entry) => entry.code === code && entry.status === 'active'); guard++) {
+          code = generateCode();
+        }
+        if (store.sessions.some((entry) => entry.code === code && entry.status === 'active')) {
+          throw new ApiError(503, 'Too many active sessions, try again shortly');
+        }
 
-    const now = new Date().toISOString();
-    const session: SharedSession = {
-      id: `ws-${randomId()}`,
-      code,
-      hostUserId: userId,
-      createdAt: now,
-      updatedAt: now,
-      version: 1,
-      status: 'active',
-      planTemplate: {
-        name: String(planTemplate.name || 'Shared Workout'),
-        type: planTemplate.type || {},
-        gymId: planTemplate.gymId || '',
-        gymName: planTemplate.gymName || '',
-        lifts: planTemplate.lifts,
-      },
-      participants: [
-        {
-          userId,
-          username,
-          joinedAt: now,
-          progress: body?.progress || defaultProgress(),
-        },
-      ],
-    };
-
-    store.sessions.push(session);
-    await saveWorkoutData('workout-sessions.json', store);
-    return NextResponse.json({ success: true, sessionId: session.id, code: session.code, session });
-  }
-
-  if (action === 'join') {
-    const code = String(body?.code || '').trim().toUpperCase();
-    if (!/^[A-Z]{3}$/.test(code)) {
-      return NextResponse.json({ success: false, message: 'Join code must be 3 letters' }, { status: 400 });
-    }
-
-    const session = store.sessions.find((entry) => entry.code === code && entry.status === 'active');
-    if (!session) return NextResponse.json({ success: false, message: 'Session not found' }, { status: 404 });
-
-    const existing = session.participants.find((entry) => entry.userId === userId);
-    if (!existing) {
-      session.participants.push({
-        userId,
-        username,
-        joinedAt: new Date().toISOString(),
-        progress: defaultProgress(),
+        const now = new Date().toISOString();
+        const created: SharedSession = {
+          id: `ws-${generateId()}`,
+          code,
+          hostUserId: userId,
+          createdAt: now,
+          updatedAt: now,
+          version: 1,
+          status: 'active',
+          planTemplate: {
+            name: String(planTemplate.name || 'Shared Workout').slice(0, 200),
+            type: planTemplate.type || {},
+            gymId: planTemplate.gymId || '',
+            gymName: planTemplate.gymName || '',
+            lifts: planTemplate.lifts.slice(0, 50),
+          },
+          participants: [
+            {
+              userId,
+              username,
+              joinedAt: now,
+              progress: mergeProgress(defaultProgress(), body.progress),
+            },
+          ],
+        };
+        store.sessions.push(created);
+        return created;
       });
-      session.version += 1;
-      session.updatedAt = new Date().toISOString();
-      await saveWorkoutData('workout-sessions.json', store);
+
+      return NextResponse.json({ success: true, sessionId: session.id, code: session.code, session });
     }
 
-    return NextResponse.json({ success: true, sessionId: session.id, session });
-  }
+    if (body.action === 'join') {
+      const code = String(body.code || '').trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(code)) throw new ApiError(400, 'Join code must be 3 letters');
 
-  return NextResponse.json({ success: false, message: 'Unsupported action' }, { status: 400 });
+      const session = await updateWorkoutData(SESSIONS_FILE, { sessions: [] as SharedSession[] }, (store) => {
+        pruneStaleSessions(store);
+        const found = store.sessions.find((entry) => entry.code === code && entry.status === 'active');
+        if (!found) throw new ApiError(404, 'Session not found');
+
+        if (!found.participants.some((entry) => entry.userId === userId)) {
+          if (found.participants.length >= MAX_PARTICIPANTS) throw new ApiError(409, 'Session is full');
+          found.participants.push({
+            userId,
+            username,
+            joinedAt: new Date().toISOString(),
+            progress: defaultProgress(),
+          });
+          found.version += 1;
+          found.updatedAt = new Date().toISOString();
+        }
+        return found;
+      });
+
+      return NextResponse.json({ success: true, sessionId: session.id, session });
+    }
+
+    throw new ApiError(400, 'Unsupported action');
+  } catch (error) {
+    return handleApiError(error, 'Shared session action failed');
+  }
 }
 
 export async function PATCH(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  try {
+    const userId = await requireWorkoutUserId();
+    const body = await readJsonObject(request);
+    const sessionId = String(body.sessionId || '');
+    if (!sessionId) throw new ApiError(400, 'Missing session id');
 
-  const body = await request.json();
-  const sessionId = String(body?.sessionId || '');
-  if (!sessionId) return NextResponse.json({ success: false, message: 'Missing session id' }, { status: 400 });
+    const version = await updateWorkoutData(SESSIONS_FILE, { sessions: [] as SharedSession[] }, (store) => {
+      const session = (store.sessions || []).find((entry) => entry.id === sessionId);
+      if (!session) throw new ApiError(404, 'Session not found');
 
-  const store = await getWorkoutData<SessionStore>('workout-sessions.json', { sessions: [] });
-  const session = store.sessions.find((entry) => entry.id === sessionId);
-  if (!session) return NextResponse.json({ success: false, message: 'Session not found' }, { status: 404 });
+      const participant = session.participants.find((entry) => entry.userId === userId);
+      if (!participant) throw new ApiError(403, 'Forbidden');
 
-  const participant = session.participants.find((entry) => entry.userId === userId);
-  if (!participant) return NextResponse.json({ success: false, message: 'Forbidden' }, { status: 403 });
+      participant.progress = mergeProgress(participant.progress, body.progress);
+      session.updatedAt = new Date().toISOString();
+      session.version += 1;
+      // The session closes to new joiners once everyone still in it is done.
+      const remaining = session.participants.filter((entry) => entry.progress.status !== 'deleted');
+      if (remaining.length > 0 && remaining.every((entry) => entry.progress.status === 'finished')) {
+        session.status = 'finished';
+      }
+      return session.version;
+    });
 
-  const progress = body?.progress || {};
-  participant.progress = {
-    ...participant.progress,
-    activeLiftIndex: Number.isFinite(progress.activeLiftIndex) ? progress.activeLiftIndex : participant.progress.activeLiftIndex,
-    currentLiftName: typeof progress.currentLiftName === 'string' ? progress.currentLiftName : participant.progress.currentLiftName,
-    completedSets: Number.isFinite(progress.completedSets) ? progress.completedSets : participant.progress.completedSets,
-    totalSets: Number.isFinite(progress.totalSets) ? progress.totalSets : participant.progress.totalSets,
-    status: ['active', 'paused', 'finished', 'deleted'].includes(progress.status) ? progress.status : participant.progress.status,
-    updatedAt: new Date().toISOString(),
-  };
-
-  session.updatedAt = new Date().toISOString();
-  session.version += 1;
-  if (session.participants.some((entry) => entry.progress.status === 'finished')) {
-    session.status = 'finished';
+    return NextResponse.json({ success: true, version });
+  } catch (error) {
+    return handleApiError(error, 'Update shared session failed');
   }
-  await saveWorkoutData('workout-sessions.json', store);
-
-  return NextResponse.json({ success: true, version: session.version });
 }

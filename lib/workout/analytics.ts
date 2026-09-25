@@ -1,16 +1,25 @@
 // 1 RM Calculators
+// All return 0 for invalid input (0/negative reps or weight) so bad data can't
+// produce NaN or Infinity downstream.
+function isValidSet(weight: number, reps: number) {
+   return Number.isFinite(weight) && Number.isFinite(reps) && weight > 0 && reps > 0;
+}
+
 export function calcEpley(weight: number, reps: number) {
+   if (!isValidSet(weight, reps)) return 0;
    if (reps === 1) return weight;
    return weight * (1 + reps / 30);
 }
 
 export function calcBrzycki(weight: number, reps: number) {
+   if (!isValidSet(weight, reps)) return 0;
    if (reps === 1) return weight;
    if (reps >= 37) return weight; // Formula breaks down
    return weight * (36 / (37 - reps));
 }
 
 export function calcLombardi(weight: number, reps: number) {
+   if (!isValidSet(weight, reps)) return 0;
    if (reps === 1) return weight;
    return weight * Math.pow(reps, 0.10);
 }
@@ -220,7 +229,6 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
   
   const firstMonthEnd = firstDate + (30.44 * 24 * 60 * 60 * 1000);
   const initialMaxes = new Map<string, number>();
-  const currentMaxes = new Map<string, number>();
 
   workouts.forEach((w: any) => {
       const isFirstMonth = new Date(w.timestamp).getTime() <= firstMonthEnd;
@@ -232,32 +240,32 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
                   if (isFirstMonth) {
                       if (rm > (initialMaxes.get(liftId) || 0)) initialMaxes.set(liftId, rm);
                   }
-                  if (rm > (currentMaxes.get(liftId) || 0)) currentMaxes.set(liftId, rm);
               }
           });
       });
   });
 
-  // Find SBD or core compounds
-  let squatMax = 0, benchMax = 0, deadliftMax = 0;
-  let initialSquatMax = 0, initialBenchMax = 0, initialDeadliftMax = 0;
+  // Find SBD or core compounds. Name matches (e.g. "squat") always win over
+  // muscle-group fallbacks (e.g. a Quads leg press), regardless of order.
+  const liftById = new Map<string, any>(allLifts.map((l: any) => [l.id, l]));
+  const pickCompound = (namePattern: RegExp, fallbackMuscle: string) => {
+      let best = { max: 0, initial: 0, byName: false };
+      liftMaxes.forEach((rm, liftId) => {
+          const lift = liftById.get(liftId);
+          if (!lift) return;
+          const byName = namePattern.test(String(lift.name || '').toLowerCase());
+          if (!byName && lift.primaryMuscle !== fallbackMuscle) return;
+          const better = byName !== best.byName ? byName : rm > best.max;
+          if (better) best = { max: rm, initial: initialMaxes.get(liftId) || 0, byName };
+      });
+      return best;
+  };
 
-  liftMaxes.forEach((rm, liftId) => {
-      const lift = allLifts.find(l => l.id === liftId);
-      if (lift) {
-          const name = lift.name.toLowerCase();
-          const pm = lift.primaryMuscle;
-          
-          if (name.includes('squat') && rm > squatMax) { squatMax = rm; initialSquatMax = initialMaxes.get(liftId) || 0; }
-          else if (!squatMax && pm === 'Quads' && rm > squatMax) { squatMax = rm; initialSquatMax = initialMaxes.get(liftId) || 0; }
-
-          if (name.includes('bench press') && rm > benchMax) { benchMax = rm; initialBenchMax = initialMaxes.get(liftId) || 0; }
-          else if (!benchMax && pm === 'Chest' && rm > benchMax) { benchMax = rm; initialBenchMax = initialMaxes.get(liftId) || 0; }
-
-          if (name.includes('deadlift') && rm > deadliftMax) { deadliftMax = rm; initialDeadliftMax = initialMaxes.get(liftId) || 0; }
-          else if (!deadliftMax && pm === 'Hamstrings' && rm > deadliftMax) { deadliftMax = rm; initialDeadliftMax = initialMaxes.get(liftId) || 0; }
-      }
-  });
+  const squat = pickCompound(/squat/, 'Quads');
+  const bench = pickCompound(/bench press/, 'Chest');
+  const deadlift = pickCompound(/deadlift/, 'Hamstrings');
+  const squatMax = squat.max, benchMax = bench.max, deadliftMax = deadlift.max;
+  const initialSquatMax = squat.initial, initialBenchMax = bench.initial, initialDeadliftMax = deadlift.initial;
 
   const bodyweight = user.weight || 150;
   const S_raw = (squatMax + benchMax + deadliftMax) / bodyweight;

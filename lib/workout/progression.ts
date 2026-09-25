@@ -15,6 +15,8 @@ export type Session = {
   liftId: string;
   sets: SetLog[];
   timestamp: string;
+  /** Number of sets that were planned for this lift. Defaults to sets.length. */
+  plannedSets?: number;
 };
 
 export type PerformanceMetrics = {
@@ -38,6 +40,7 @@ export type ScoringBreakdown = {
   e1RM: number;             // candidate's estimated 1RM
   lastE1RM: number;         // previous session's estimated 1RM
   intensityRatio: number;   // e1RM / lastE1RM
+  targetRatio?: number;     // blended progress ratio the engine aimed for
   rawScore: number;         // numeric score before intensity bias
   intensityBias: number;    // score contribution from intensity preference
   performanceAdjustment: string;  // human-readable explanation
@@ -60,6 +63,8 @@ export type ProgressionInput = {
   };
   intensity: number; // user-controlled [0.5 – 1.5]
   profile?: ProgressionProfile; // per-lift progression strategy
+  /** Recovery session: lighter weight and one fewer set instead of progressing. */
+  deload?: boolean;
 };
 
 export type WorkoutPlan = {
@@ -78,19 +83,84 @@ export type Candidate = {
   sets: number;
 };
 
+/**
+ * Pre-computed values shared by every candidate in one engine run. Computing
+ * them once keeps the performance/trend adjustments from being applied twice.
+ */
+export type ScoringContext = {
+  /** Target progress for the blended strength/volume ratio, e.g. 0.05 = +5%. */
+  targetOverload: number;
+  /** 0..1 — how much the score cares about e1RM vs. total volume. */
+  strengthWeight: number;
+  /** Largest weight increase allowed this session, in lbs. */
+  allowedJump: number;
+  historyTrend: number;
+};
+
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 /** Average seconds per set including rest (heuristic for time-limit filtering) */
 const AVG_SET_TIME_SECONDS = 90;
 
-/** Base percentage increase target per session */
-const BASE_INCREASE = 0.05;
+type ProfileSettings = {
+  /** Base percentage increase target per session */
+  baseIncrease: number;
+  /** Maximum allowed weight jump as fraction of current weight */
+  jumpFraction: number;
+  /** Baseline emphasis on strength (e1RM) over volume */
+  strengthWeight: number;
+};
 
-/** Maximum allowed weight jump as fraction of current weight */
-const BASE_JUMP_FRACTION = 0.15;
+const PROFILE_SETTINGS: Record<ProgressionProfile, ProfileSettings> = {
+  standard: { baseIncrease: 0.05, jumpFraction: 0.15, strengthWeight: 0.6 },
+  'high-rep': { baseIncrease: 0.03, jumpFraction: 0.05, strengthWeight: 0.3 },
+  endurance: { baseIncrease: 0.02, jumpFraction: 0.03, strengthWeight: 0.15 },
+};
+
+/** Deload sessions drop the working weight by about this fraction. */
+const DELOAD_WEIGHT_REDUCTION = 0.15;
+
+/** How strongly last session's performance moves the target (per 1.0 of score). */
+const PERFORMANCE_SENSITIVITY = 0.5;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getProfileSettings(profile: ProgressionProfile | undefined): ProfileSettings {
+  return PROFILE_SETTINGS[profile || 'standard'] || PROFILE_SETTINGS.standard;
+}
+
+function getCompletedSets(session: Session) {
+  return session.sets.filter(s => s.completed);
+}
+
+/**
+ * The reference ("top") set of a session — the heaviest completed set, using
+ * reps as the tie-breaker. Using the last set instead made a single back-off or
+ * drop set drag the next suggestion down.
+ */
+function getReferenceSet(completedSets: SetLog[]): SetLog | undefined {
+  let best: SetLog | undefined;
+  let bestE1RM = -Infinity;
+  for (const set of completedSets) {
+    const e1rm = calcAverage1RM(set.actualWeight, set.actualReps);
+    if (!best || set.actualWeight > best.actualWeight || (set.actualWeight === best.actualWeight && e1rm > bestE1RM)) {
+      best = set;
+      bestE1RM = e1rm;
+    }
+  }
+  return best;
+}
+
+/**
+ * The set count a session is anchored on: what was planned (so skipping a set
+ * once doesn't permanently shrink the workout), clamped into the constraints.
+ */
+function getAnchorSetCount(session: Session, constraints: ProgressionInput['constraints']) {
+  const completed = getCompletedSets(session).length;
+  const planned = session.plannedSets && session.plannedSets > 0 ? session.plannedSets : completed;
+  return clamp(planned, constraints.minSets, constraints.maxSets);
 }
 
 // ─── Performance Analysis ──────────────────────────────────────────────────────
@@ -110,14 +180,17 @@ function clamp(value: number, min: number, max: number) {
  *   < 0.95 → session was too hard
  */
 export function analyzePerformance(session: Session): PerformanceMetrics {
-  const completedSets = session.sets.filter(s => s.completed);
+  const completedSets = getCompletedSets(session);
+  const plannedSetCount = session.plannedSets && session.plannedSets > 0
+    ? session.plannedSets
+    : session.sets.length;
 
   // Edge case: no completed sets
   if (completedSets.length === 0) {
     return {
       completionRatio: 0,
       intensityDeviation: 1,
-      setDelta: -session.sets.length,
+      setDelta: -plannedSetCount,
       fatigueSlope: 0,
       performanceScore: 0.8,
       weightDropDetected: false,
@@ -130,8 +203,13 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
   }
 
   // ── Completion Ratio ──
-  const totalPlannedReps = session.sets.reduce((sum, s) => sum + (s.plannedReps ?? s.actualReps), 0);
-  const totalActualReps = completedSets.reduce((sum, s) => sum + s.actualReps, 0);
+  // Only the planned sets count toward the denominator; extra sets are
+  // rewarded separately below instead of inflating completion.
+  const plannedSetsOnly = session.sets.slice(0, plannedSetCount);
+  const totalPlannedReps = plannedSetsOnly.reduce((sum, s) => sum + (s.plannedReps ?? s.actualReps), 0);
+  const totalActualReps = plannedSetsOnly
+    .filter(s => s.completed)
+    .reduce((sum, s) => sum + s.actualReps, 0);
   const completionRatio = totalPlannedReps > 0 ? totalActualReps / totalPlannedReps : 1;
 
   // ── Intensity Deviation ──
@@ -141,7 +219,6 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
 
   // ── Set Delta ──
   // Positive = user did extra sets, negative = user skipped sets
-  const plannedSetCount = session.sets.length;
   const setDelta = completedSets.length - plannedSetCount;
 
   // ── Fatigue Slope ──
@@ -175,7 +252,7 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
 
   // Reward extra sets (user felt strong)
   if (extraSetsDetected) {
-    performanceScore += setDelta * 0.05;
+    performanceScore += Math.min(setDelta, 3) * 0.05;
   }
 
   // Penalize weight drops (user struggled with planned weight)
@@ -215,7 +292,7 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
  * Returns a multiplier: >1.0 means recent sessions trended strong, <1.0 means struggled.
  * Used to bias the effective intensity up or down.
  */
-function computeHistoryTrend(history: Session[]): number {
+export function computeHistoryTrend(history: Session[]): number {
   if (history.length < 2) return 1.0;
 
   // Analyze up to last 5 sessions for trend
@@ -236,10 +313,10 @@ function computeHistoryTrend(history: Session[]): number {
   }
 
   // Amplify trend if consistent across 3+ sessions
-  if (consecutiveOver >= 3) return Math.min(1.15, avgScore);
-  if (consecutiveUnder >= 3) return Math.max(0.85, avgScore);
+  if (consecutiveOver >= 3) return clamp(avgScore, 1.0, 1.15);
+  if (consecutiveUnder >= 3) return clamp(avgScore, 0.85, 1.0);
 
-  return Math.max(0.9, Math.min(1.1, avgScore));
+  return clamp(avgScore, 0.9, 1.1);
 }
 
 // ─── Candidate Generation ──────────────────────────────────────────────────────
@@ -248,7 +325,7 @@ function computeHistoryTrend(history: Session[]): number {
  * Generate nearby workout candidates by varying weight, reps, and sets.
  *
  * Weight: ±2 discrete steps on the equipment weight ladder
- * Reps: ±2 from base
+ * Reps: ±2 from base (down to −4 for heavier weights)
  * Sets: ±1 from base
  *
  * All candidates are pre-filtered against:
@@ -261,32 +338,37 @@ export function generateCandidates(
   constraints: ProgressionInput['constraints'],
   equipment: ProgressionInput['equipment']
 ): Candidate[] {
-  const completedSets = lastSession.sets.filter(s => s.completed);
-  if (completedSets.length === 0) return [];
+  const completedSets = getCompletedSets(lastSession);
+  const refSet = getReferenceSet(completedSets);
+  if (!refSet) return [];
 
-  // Use the last completed set as the reference point for the user's top effort
-  const lastSet = completedSets[completedSets.length - 1];
-  const baseWeight = lastSet.actualWeight;
-  const baseReps = lastSet.actualReps;
-  const baseSets = Math.min(Math.max(completedSets.length, constraints.minSets), constraints.maxSets);
+  const baseWeight = refSet.actualWeight;
+  // Clamp the rep anchor into the allowed range so a session far outside the
+  // rep range still produces candidates instead of an empty list.
+  const baseReps = clamp(refSet.actualReps, constraints.minReps, constraints.maxReps);
+  const baseSets = getAnchorSetCount(lastSession, constraints);
 
   // Get the sorted list of valid weights for this lift's equipment
-  const possibleWeights = equipment.getValidWeights(lastSession.liftId);
+  const possibleWeights = [...equipment.getValidWeights(lastSession.liftId)]
+    .filter(w => Number.isFinite(w))
+    .sort((a, b) => a - b);
   if (possibleWeights.length === 0) return [];
 
-  // Find current position in the weight ladder
-  const currentWeightIdx = possibleWeights.findIndex(w => w >= baseWeight);
-  const safeIdx = currentWeightIdx === -1 ? possibleWeights.length - 1 : currentWeightIdx;
+  // Find the rung closest to the weight actually used (it may not be on the
+  // ladder at all if the equipment changed since last session).
+  let safeIdx = 0;
+  for (let i = 1; i < possibleWeights.length; i++) {
+    if (Math.abs(possibleWeights[i] - baseWeight) < Math.abs(possibleWeights[safeIdx] - baseWeight)) {
+      safeIdx = i;
+    }
+  }
 
   // Generate weight candidates: ±2 steps on the ladder
-  const weightIndices = [
-    Math.max(0, safeIdx - 2),
-    Math.max(0, safeIdx - 1),
-    safeIdx,
-    Math.min(possibleWeights.length - 1, safeIdx + 1),
-    Math.min(possibleWeights.length - 1, safeIdx + 2),
-  ];
-  const uniqueWeights = Array.from(new Set(weightIndices.map(idx => possibleWeights[idx])));
+  const uniqueWeights = new Set<number>();
+  for (let offset = -2; offset <= 2; offset++) {
+    const idx = safeIdx + offset;
+    if (idx >= 0 && idx < possibleWeights.length) uniqueWeights.add(possibleWeights[idx]);
+  }
 
   // Time limit in seconds (if specified)
   const timeLimitSecs = constraints.timeLimit ? constraints.timeLimit * 60 : Infinity;
@@ -294,14 +376,16 @@ export function generateCandidates(
   const candidates: Candidate[] = [];
 
   for (const w of uniqueWeights) {
-    if (w === undefined) continue;
-    for (let rOffset = -2; rOffset <= 2; rOffset++) {
+    // Heavier rungs may need to drop further down the rep range (e.g. 10 lb
+    // → 15 lb dumbbells), so they get a wider downward rep window.
+    const minOffset = w > baseWeight ? -4 : -2;
+    for (let rOffset = minOffset; rOffset <= 2; rOffset++) {
       const r = baseReps + rOffset;
-      if (r < constraints.minReps || r > constraints.maxReps) continue;
+      if (r < constraints.minReps || r > constraints.maxReps || r < 1) continue;
 
       for (let sOffset = -1; sOffset <= 1; sOffset++) {
         const s = baseSets + sOffset;
-        if (s < constraints.minSets || s > constraints.maxSets) continue;
+        if (s < constraints.minSets || s > constraints.maxSets || s < 1) continue;
 
         // Time limit filter: reject if estimated time exceeds limit
         if (s * AVG_SET_TIME_SECONDS > timeLimitSecs) continue;
@@ -314,26 +398,98 @@ export function generateCandidates(
   return candidates;
 }
 
+/**
+ * Target progress for the next session, e.g. 0.05 = aim for +5%.
+ *
+ * Additive rather than multiplicative, so a poor session produces a
+ * *negative* target (back off) and a strong one pushes harder.
+ */
+export function computeTargetOverload(
+  intensity: number,
+  performanceScore: number,
+  historyTrend = 1.0,
+  profile?: ProgressionProfile,
+): number {
+  const settings = getProfileSettings(profile);
+  const perfDelta = clamp(performanceScore - 1, -0.3, 0.3);
+  return clamp(
+    settings.baseIncrease * clamp(intensity, 0.5, 1.5) * historyTrend + perfDelta * PERFORMANCE_SENSITIVITY,
+    -0.15,
+    0.2,
+  );
+}
+
+/**
+ * 0..1 — how much progress is judged on strength (e1RM) vs. per-set volume.
+ * Higher intensity shifts emphasis toward heavier weight; lower toward reps/sets.
+ */
+export function getStrengthWeight(intensity: number, profile?: ProgressionProfile): number {
+  return clamp(getProfileSettings(profile).strengthWeight + (clamp(intensity, 0.5, 1.5) - 1) * 0.6, 0.1, 0.9);
+}
+
+/** Blend of strength and volume progress, the quantity the engine compares to its target. */
+export function blendProgressRatio(intensityRatio: number, volumeRatio: number, strengthWeight: number): number {
+  return strengthWeight * intensityRatio + (1 - strengthWeight) * volumeRatio;
+}
+
+// ─── Scoring Context ───────────────────────────────────────────────────────────
+
+/**
+ * Build the per-run scoring context.
+ *
+ * The target is additive rather than multiplicative so a poor session can
+ * actually produce a *negative* target (back off), while a strong one pushes
+ * harder. Previously the target was baseIncrease × intensity × performance,
+ * which was always positive — the engine kept adding load after failed sessions.
+ */
+export function buildScoringContext(
+  input: ProgressionInput,
+  performanceMetrics: PerformanceMetrics,
+  historyTrend = 1.0,
+): ScoringContext {
+  const settings = getProfileSettings(input.profile);
+  const intensity = clamp(Number.isFinite(input.intensity) ? input.intensity : 1, 0.5, 1.5);
+  const targetOverload = computeTargetOverload(intensity, performanceMetrics.performanceScore, historyTrend, input.profile);
+  const strengthWeight = getStrengthWeight(intensity, input.profile);
+
+  const refSet = getReferenceSet(getCompletedSets(input.lastSession));
+  const refWeight = refSet?.actualWeight || 0;
+  let allowedJump = refWeight * settings.jumpFraction * (0.75 + intensity);
+
+  // Always allow at least one rung up the ladder. Otherwise light dumbbells
+  // (10 → 15 lbs is +50%) or coarse stacks could never progress on weight.
+  const ladder = [...input.equipment.getValidWeights(input.lastSession.liftId)].sort((a, b) => a - b);
+  const nextRung = ladder.find(w => w > refWeight);
+  if (nextRung !== undefined) {
+    allowedJump = Math.max(allowedJump, nextRung - refWeight);
+  }
+
+  return { targetOverload, strengthWeight, allowedJump, historyTrend };
+}
+
 // ─── Candidate Scoring ─────────────────────────────────────────────────────────
 
 /**
  * Score a workout candidate with a full breakdown of contributing factors.
  *
  * Scoring considers:
- * 1. How close the candidate's overload ratio is to the target
- * 2. Intensity bias (high intensity favors weight, low intensity favors volume)
- * 3. Fatigue awareness (steep fatigue → reward fewer sets)
- * 4. Rep scheme continuity (reward staying at current reps if performance was appropriate)
- * 5. Allowed jump limits (penalize unrealistic weight increases)
+ * 1. How close the candidate's blended strength/volume progress is to target
+ * 2. Rep-range (double progression): at the rep ceiling → add weight,
+ *    below the rep floor → drop weight
+ * 3. Profile preferences (high-rep and endurance favor reps/sets over weight)
+ * 4. Fatigue awareness (steep fatigue → reward fewer sets)
+ * 5. Rep scheme continuity (reward staying at current reps if performance was appropriate)
+ * 6. Allowed jump limits (reject unrealistic weight increases)
  */
 export function scoreCandidateDetailed(
   candidate: Candidate,
   input: ProgressionInput,
   performanceMetrics: PerformanceMetrics,
-  historyTrend: number
+  context: ScoringContext = buildScoringContext(input, performanceMetrics),
 ): { score: number; breakdown: ScoringBreakdown } {
-  const completedSets = input.lastSession.sets.filter(s => s.completed);
-  if (completedSets.length === 0) {
+  const completedSets = getCompletedSets(input.lastSession);
+  const refSet = getReferenceSet(completedSets);
+  if (!refSet) {
     return {
       score: 0,
       breakdown: {
@@ -345,108 +501,133 @@ export function scoreCandidateDetailed(
     };
   }
 
-  const lastSet = completedSets[completedSets.length - 1];
+  const profile = input.profile || 'standard';
+  const { minReps, maxReps } = input.constraints;
+  const lastWeight = refSet.actualWeight;
+  const lastReps = refSet.actualReps;
+  const anchorSets = getAnchorSetCount(input.lastSession, input.constraints);
 
   // ── Load & 1RM calculations ──
-  const lastLoad = lastSet.actualWeight * lastSet.actualReps * completedSets.length;
+  const lastLoad = completedSets.reduce((sum, s) => sum + s.actualWeight * s.actualReps, 0);
   const totalLoad = candidate.weight * candidate.reps * candidate.sets;
-  const lastE1RM = calcAverage1RM(lastSet.actualWeight, lastSet.actualReps);
+  const lastE1RM = calcAverage1RM(lastWeight, lastReps);
   const e1RM = calcAverage1RM(candidate.weight, candidate.reps);
 
-  const overloadRatio = lastLoad > 0 ? totalLoad / lastLoad : 1;
-  const intensityRatio = lastE1RM > 0 ? e1RM / lastE1RM : 1;
+  // Bodyweight lifts can have 0 added weight — fall back to rep/set volume.
+  const overloadRatio = lastLoad > 0
+    ? totalLoad / lastLoad
+    : (candidate.reps * candidate.sets) / Math.max(1, completedSets.reduce((sum, s) => sum + s.actualReps, 0));
+  const intensityRatio = lastE1RM > 0
+    ? e1RM / lastE1RM
+    : candidate.reps / Math.max(1, lastReps);
 
-  // ── Profile-specific constants ──
-  const profile = input.profile || 'standard';
-  const jumpFraction =
-    profile === 'endurance' ? 0.03 :
-    profile === 'high-rep'  ? 0.05 :
-    BASE_JUMP_FRACTION;
-  const baseIncrease =
-    profile === 'endurance' ? 0.02 :
-    profile === 'high-rep'  ? 0.03 :
-    BASE_INCREASE;
-
-  // ── Target overload ──
-  // Scale by intensity, performance score, AND history trend
-  const effectiveIntensity = input.intensity * historyTrend;
-  const targetOverload = baseIncrease * effectiveIntensity * performanceMetrics.performanceScore;
-  const targetOverloadRatio = 1 + targetOverload;
+  const targetRatio = 1 + context.targetOverload;
 
   // ── Allowed jump enforcement ──
-  const allowedJump = lastSet.actualWeight * jumpFraction * (0.75 + input.intensity);
-  if ((candidate.weight - lastSet.actualWeight) > allowedJump) {
+  const weightDelta = candidate.weight - lastWeight;
+  if (weightDelta > context.allowedJump + 1e-9) {
     return {
       score: -1000,
       breakdown: {
-        totalLoad, lastLoad, overloadRatio, e1RM, lastE1RM, intensityRatio,
+        totalLoad, lastLoad, overloadRatio, e1RM, lastE1RM, intensityRatio, targetRatio,
         rawScore: -1000, intensityBias: 0,
-        performanceAdjustment: `Weight jump of ${candidate.weight - lastSet.actualWeight} lbs exceeds allowed ${Math.round(allowedJump)} lbs.`,
+        performanceAdjustment: `Weight jump of ${weightDelta} lbs exceeds allowed ${Math.round(context.allowedJump)} lbs.`,
       },
     };
   }
 
-  // ── Intensity bias scoring (profile-aware) ──
-  let intensityBias = 0;
-  let biasExplanation = '';
-
-  if (profile === 'high-rep') {
-    // High-rep: always favor reps first; only permit weight increase when at rep ceiling
-    if (candidate.reps > lastSet.actualReps) {
-      intensityBias += 15;
-    }
-    if (candidate.weight > lastSet.actualWeight && candidate.reps < input.constraints.maxReps) {
-      intensityBias -= 20; // penalize weight bump unless reps are already at ceiling
-    }
-    biasExplanation = 'High-rep profile: favoring rep increases over weight.';
-  } else if (profile === 'endurance') {
-    // Endurance: sets > reps > weight
-    if (candidate.sets > completedSets.length) intensityBias += 20;
-    if (candidate.reps > lastSet.actualReps)   intensityBias += 10;
-    if (candidate.weight > lastSet.actualWeight) intensityBias -= 25;
-    biasExplanation = 'Endurance profile: favoring volume over intensity.';
-  } else if (input.intensity >= 1.2) {
-    // Standard high intensity: favor weight increases, allow rep drops
-    intensityBias = (candidate.weight > lastSet.actualWeight) ? 10 : 0;
-    if (candidate.reps < lastSet.actualReps) intensityBias += 5;
-    biasExplanation = 'High intensity: favoring weight over volume.';
-  } else if (input.intensity <= 0.8) {
-    // Standard low intensity: favor reps/sets, avoid weight jumps
-    intensityBias = (candidate.reps > lastSet.actualReps || candidate.sets > completedSets.length) ? 10 : 0;
-    if (candidate.weight > lastSet.actualWeight) intensityBias -= 15;
-    biasExplanation = 'Low intensity: favoring volume, limiting weight.';
-  } else {
-    // Standard neutral: balanced scoring
-    intensityBias = ((intensityRatio + overloadRatio) / 2) * 5;
-    biasExplanation = 'Balanced progression targeting moderate overload.';
-  }
-
-  // ── Fatigue-aware set adjustment ──
-  // If user showed steep fatigue (reps dropped significantly across sets),
-  // reward candidates that reduce sets to prevent overtraining
-  if (performanceMetrics.fatigueSlope < -0.5 && candidate.sets < completedSets.length) {
-    intensityBias += 5;
-    biasExplanation += ' Fatigue detected: fewer sets preferred.';
-  }
-
-  // ── Core score: closeness to target overload ──
-  const ratioUsed = (input.intensity >= 1.2) ? intensityRatio : overloadRatio;
-  const diffFromTarget = Math.abs(ratioUsed - targetOverloadRatio);
+  // ── Core score: closeness to target progress ──
+  // Volume is compared per set so the set count can't be used to "balance" a
+  // weight/rep choice; set changes are handled by explicit rules below.
+  const lastPerSetLoad = lastLoad / completedSets.length;
+  const perSetRatio = lastPerSetLoad > 0
+    ? (candidate.weight * candidate.reps) / lastPerSetLoad
+    : candidate.reps / Math.max(1, lastReps);
+  const blendedRatio = blendProgressRatio(intensityRatio, perSetRatio, context.strengthWeight);
+  const diffFromTarget = Math.abs(blendedRatio - targetRatio);
   let rawScore = 100 - (diffFromTarget * 100);
+
+  // ── Regression guards ──
+  // When the goal is to progress, a candidate must not quietly trade one
+  // dimension for another (e.g. drop 10 lbs but add a set). Going heavier for
+  // fewer reps is a legitimate progression, so volume dips are only penalized
+  // when the weight didn't go up.
+  if (context.targetOverload >= 0) {
+    if (intensityRatio < 0.995) rawScore -= (1 - intensityRatio) * 150;
+    if (perSetRatio < 0.97 && weightDelta <= 0) rawScore -= (1 - perSetRatio) * 60;
+    // Lighter weight is a step back unless reps fell below the range.
+    if (weightDelta < 0 && lastReps >= minReps) rawScore -= 5;
+  }
+
+  // ── Set stability ──
+  // Changing set count swings volume by 25–50%, so only do it with a reason.
+  const setChange = candidate.sets - anchorSets;
+  if (setChange !== 0) {
+    const justifiedUp = setChange > 0 && (performanceMetrics.extraSetsDetected || profile === 'endurance');
+    const justifiedDown = setChange < 0 && (performanceMetrics.fatigueSlope < -0.5 || context.targetOverload < -0.03);
+    if (justifiedUp || justifiedDown) rawScore += 3;
+    else rawScore -= 12 * Math.abs(setChange);
+  }
 
   // ── Rep scheme continuity bonus ──
   // If performance was appropriate (0.95–1.05), reward staying at current reps
-  // unless high intensity mode where rep drops are acceptable
   if (performanceMetrics.performanceScore >= 0.95 &&
       performanceMetrics.performanceScore <= 1.05 &&
-      input.intensity < 1.2) {
-    if (candidate.reps === lastSet.actualReps) rawScore += 5;
+      context.strengthWeight < 0.8 &&
+      candidate.reps === lastReps) {
+    rawScore += 2;
+  }
+
+  // ── Preference biases ──
+  let intensityBias = 0;
+  const notes: string[] = [];
+
+  // Double progression: once reps hit the top of the range, the next step is
+  // more weight; if reps fell under the floor, the weight was too heavy.
+  if (lastReps >= maxReps && context.targetOverload > 0) {
+    if (weightDelta > 0) intensityBias += 10;
+    notes.push('Top of rep range reached → adding weight.');
+  } else if (lastReps < minReps) {
+    if (weightDelta < 0) intensityBias += 8;
+    if (weightDelta > 0) intensityBias -= 15;
+    notes.push('Below rep range → reducing weight.');
+  }
+
+  if (profile === 'high-rep') {
+    // High-rep: favor reps first; only permit weight increase once near ceiling
+    if (candidate.reps > lastReps) intensityBias += 6;
+    if (weightDelta > 0 && lastReps < maxReps) intensityBias -= 15;
+    notes.push('High-rep profile: favoring rep increases over weight.');
+  } else if (profile === 'endurance') {
+    // Endurance: sets > reps > weight
+    if (setChange > 0) intensityBias += 3;
+    if (candidate.reps > lastReps) intensityBias += 3;
+    if (weightDelta > 0) intensityBias -= 15;
+    notes.push('Endurance profile: favoring volume over intensity.');
+  } else if (context.strengthWeight >= 0.75) {
+    if (weightDelta > 0) intensityBias += 5;
+    notes.push('High intensity: favoring weight over volume.');
+  } else if (context.strengthWeight <= 0.4) {
+    // Low intensity: keep weight steady, progress via reps/sets
+    if (weightDelta > 0) intensityBias -= 10;
+    notes.push('Low intensity: favoring volume, limiting weight.');
+  } else {
+    notes.push('Balanced progression targeting moderate overload.');
+  }
+
+  // A negative target means back off; don't reward adding weight in that case.
+  if (context.targetOverload < 0 && weightDelta > 0) {
+    intensityBias -= 10;
+  }
+
+  if (performanceMetrics.fatigueSlope < -0.5 && setChange < 0) {
+    notes.push('Fatigue detected: fewer sets preferred.');
   }
 
   const score = rawScore + intensityBias;
 
   // ── Build performance adjustment explanation ──
-  let performanceAdjustment = biasExplanation;
+  let performanceAdjustment = notes.join(' ');
   if (performanceMetrics.performanceScore > 1.05) {
     performanceAdjustment = 'Strong past performance → pushing harder. ' + performanceAdjustment;
   } else if (performanceMetrics.performanceScore < 0.95) {
@@ -468,6 +649,7 @@ export function scoreCandidateDetailed(
       e1RM,
       lastE1RM,
       intensityRatio,
+      targetRatio,
       rawScore,
       intensityBias,
       performanceAdjustment,
@@ -484,7 +666,7 @@ export function scoreCandidate(
   input: ProgressionInput,
   performanceMetrics: PerformanceMetrics
 ): number {
-  return scoreCandidateDetailed(candidate, input, performanceMetrics, 1.0).score;
+  return scoreCandidateDetailed(candidate, input, performanceMetrics).score;
 }
 
 // ─── Workout Generation ────────────────────────────────────────────────────────
@@ -495,9 +677,9 @@ export function scoreCandidate(
  * Pipeline:
  * 1. Analyze performance from last session
  * 2. Compute history trend (if history available)
- * 3. Calculate effective intensity (user intensity × performance × trend)
+ * 3. Build a scoring context (target progress, strength/volume emphasis, jump cap)
  * 4. Generate all valid candidates (weight/rep/set combinations)
- * 5. Score each candidate against the target overload profile
+ * 5. Score each candidate against the target
  * 6. Select the highest-scoring candidate
  * 7. Build a rich reasoning string explaining the decision
  */
@@ -529,28 +711,24 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
     };
   }
 
-  // Step 1: Analyze last session
+  // Step 1–3
   const perf = analyzePerformance(input.lastSession);
+  if (input.deload) return buildDeloadPlan(input, perf, emptyBreakdown);
 
-  // Step 2: Compute history trend
   const historyTrend = computeHistoryTrend(input.history);
-
-  // Step 3: Effective intensity = user setting × clamped performance × trend
-  const clampedPerf = Math.max(0.9, Math.min(1.1, perf.performanceScore));
-  const effectiveIntensity = Math.max(0.5, Math.min(1.5, input.intensity * clampedPerf * historyTrend));
+  const context = buildScoringContext(input, perf, historyTrend);
 
   // Step 4: Generate candidates
   const candidates = generateCandidates(input.lastSession, input.constraints, input.equipment);
 
-  // Step 5 & 6: Score and select best
+  // Step 5 & 6: Score and select best. Ties go to the lighter/less-volume
+  // option because candidates are generated in ascending order.
   let bestCandidate: Candidate | null = null;
   let bestScore = -Infinity;
   let bestBreakdown: ScoringBreakdown = emptyBreakdown;
 
-  const adjustedInput = { ...input, intensity: effectiveIntensity };
-
   for (const c of candidates) {
-    const { score, breakdown } = scoreCandidateDetailed(c, adjustedInput, perf, historyTrend);
+    const { score, breakdown } = scoreCandidateDetailed(c, input, perf, context);
     if (score > bestScore) {
       bestScore = score;
       bestCandidate = c;
@@ -558,13 +736,13 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
     }
   }
 
-  // Fallback: if no candidate scored well, repeat last session
-  if (!bestCandidate) {
-    const completedSets = input.lastSession.sets.filter(s => s.completed);
-    const lastSet = completedSets[completedSets.length - 1];
+  // Fallback: if no candidate is viable, repeat last session
+  if (!bestCandidate || bestScore <= -1000) {
+    const completedSets = getCompletedSets(input.lastSession);
+    const refSet = getReferenceSet(completedSets);
     return {
-      suggestedWeight: lastSet?.actualWeight || 0,
-      suggestedReps: lastSet?.actualReps || 10,
+      suggestedWeight: refSet?.actualWeight || 0,
+      suggestedReps: refSet?.actualReps || 10,
       suggestedSets: completedSets.length || 3,
       reasoning: 'No valid candidates found within constraints. Repeating previous session.',
       scoringBreakdown: emptyBreakdown,
@@ -574,7 +752,7 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
   }
 
   // Step 7: Build rich reasoning
-  const reasoning = buildReasoning(bestCandidate, input, perf, bestBreakdown, historyTrend, candidates.length);
+  const reasoning = buildReasoning(bestCandidate, input, perf, bestBreakdown, historyTrend);
 
   return {
     suggestedWeight: bestCandidate.weight,
@@ -583,6 +761,31 @@ export function generateNextWorkout(input: ProgressionInput): WorkoutPlan {
     reasoning,
     scoringBreakdown: bestBreakdown,
     candidatesEvaluated: candidates.length,
+    performanceMetrics: perf,
+  };
+}
+
+/**
+ * Deload: same reps, ~15% lighter (snapped down to a valid weight), one fewer
+ * set. Deliberately not scored — the point is to recover, not to progress.
+ */
+function buildDeloadPlan(input: ProgressionInput, perf: PerformanceMetrics, emptyBreakdown: ScoringBreakdown): WorkoutPlan {
+  const completedSets = getCompletedSets(input.lastSession);
+  const refSet = getReferenceSet(completedSets);
+  const refWeight = refSet?.actualWeight || 0;
+  const ladder = [...input.equipment.getValidWeights(input.lastSession.liftId)].sort((a, b) => a - b);
+  const targetWeight = refWeight * (1 - DELOAD_WEIGHT_REDUCTION);
+  const weight = [...ladder].reverse().find(w => w <= targetWeight + 1e-9) ?? ladder[0] ?? 0;
+  const reps = clamp(refSet?.actualReps || input.constraints.minReps, input.constraints.minReps, input.constraints.maxReps);
+  const sets = Math.max(1, input.constraints.minSets, getAnchorSetCount(input.lastSession, input.constraints) - 1);
+
+  return {
+    suggestedWeight: weight,
+    suggestedReps: reps,
+    suggestedSets: sets,
+    reasoning: `Deload: ${refWeight > 0 ? `~${Math.round(DELOAD_WEIGHT_REDUCTION * 100)}% lighter, ` : ''}one fewer set to recover.`,
+    scoringBreakdown: { ...emptyBreakdown, performanceAdjustment: 'Deload session — progression paused.' },
+    candidatesEvaluated: 0,
     performanceMetrics: perf,
   };
 }
@@ -598,16 +801,15 @@ function buildReasoning(
   perf: PerformanceMetrics,
   breakdown: ScoringBreakdown,
   historyTrend: number,
-  candidateCount: number
 ): string {
   const parts: string[] = [];
 
-  const completedSets = input.lastSession.sets.filter(s => s.completed);
-  const lastSet = completedSets[completedSets.length - 1];
-  if (!lastSet) return 'Adapted based on available data.';
+  const completedSets = getCompletedSets(input.lastSession);
+  const refSet = getReferenceSet(completedSets);
+  if (!refSet) return 'Adapted based on available data.';
 
   // Weight change description
-  const weightDelta = candidate.weight - lastSet.actualWeight;
+  const weightDelta = Number((candidate.weight - refSet.actualWeight).toFixed(2));
   if (weightDelta > 0) {
     parts.push(`↑ Weight +${weightDelta} lbs`);
   } else if (weightDelta < 0) {
@@ -617,7 +819,7 @@ function buildReasoning(
   }
 
   // Rep change description
-  const repDelta = candidate.reps - lastSet.actualReps;
+  const repDelta = candidate.reps - refSet.actualReps;
   if (repDelta > 0) {
     parts.push(`↑ Reps +${repDelta}`);
   } else if (repDelta < 0) {

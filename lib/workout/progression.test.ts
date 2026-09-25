@@ -7,7 +7,7 @@ import {
   generateNextWorkout,
   Session,
   ProgressionInput
-} from './progression.js';
+} from './progression';
 
 // ─── Helper: Build a standard ProgressionInput ─────────────────────────────────
 
@@ -436,4 +436,106 @@ test('18. High RIR nudges progression more aggressively', () => {
     highRirPlan.suggestedWeight >= lowRirPlan.suggestedWeight,
     `High RIR weight (${highRirPlan.suggestedWeight}) should be >= low RIR weight (${lowRirPlan.suggestedWeight})`
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REGRESSION TESTS (engine redesign)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function threeSets(weight: number, reps: number, rir: number, plannedReps = reps) {
+  return [1, 2, 3].map(() => ({ plannedReps, actualReps: reps, plannedWeight: weight, actualWeight: weight, completed: true, rir }));
+}
+
+const LADDER = Array.from({ length: 40 }, (_, i) => 45 + i * 5);
+
+test('19. On-target session never trades weight for extra sets', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: { liftId: 'bench', timestamp: '', sets: threeSets(135, 10, 2) },
+    constraints: { minReps: 8, maxReps: 12, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => LADDER },
+  }));
+  assert.ok(plan.suggestedWeight >= 135, `weight dropped to ${plan.suggestedWeight}`);
+  assert.equal(plan.suggestedSets, 3);
+  assert.ok(
+    plan.suggestedWeight > 135 || plan.suggestedReps > 10,
+    `expected some progression, got ${plan.suggestedWeight}x${plan.suggestedReps}`
+  );
+});
+
+test('20. Failed session backs off instead of adding load', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: {
+      liftId: 'bench', timestamp: '',
+      sets: [
+        { plannedReps: 10, actualReps: 7, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
+        { plannedReps: 10, actualReps: 6, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
+        { plannedReps: 10, actualReps: 5, plannedWeight: 135, actualWeight: 135, completed: true, rir: 0 },
+      ],
+    },
+    constraints: { minReps: 8, maxReps: 12, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => LADDER },
+  }));
+  assert.ok(plan.suggestedWeight < 135, `expected a lighter weight, got ${plan.suggestedWeight}`);
+  assert.ok(plan.scoringBreakdown.overloadRatio < 1, `expected reduced load, got ${plan.scoringBreakdown.overloadRatio}`);
+});
+
+test('21. Top of rep range with coarse dumbbells moves up a rung', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: { liftId: 'curl', timestamp: '', sets: threeSets(10, 12, 3) },
+    constraints: { minReps: 8, maxReps: 12, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => [5, 10, 15, 20, 25] },
+  }));
+  assert.equal(plan.suggestedWeight, 15);
+  assert.equal(plan.suggestedSets, 3);
+});
+
+test('22. Extra sets beyond the plan are detected when plannedSets is known', () => {
+  const session: Session = {
+    liftId: 'row', timestamp: '', plannedSets: 3,
+    sets: [...threeSets(135, 10, 2), { plannedReps: 10, actualReps: 10, plannedWeight: 135, actualWeight: 135, completed: true, rir: 2 }],
+  };
+  const perf = analyzePerformance(session);
+  assert.equal(perf.setDelta, 1);
+  assert.ok(perf.extraSetsDetected);
+  assert.ok(perf.performanceScore > 1);
+});
+
+test('23. A back-off set does not drag the reference weight down', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: {
+      liftId: 'squat', timestamp: '',
+      sets: [
+        { plannedReps: 5, actualReps: 5, plannedWeight: 225, actualWeight: 225, completed: true, rir: 2 },
+        { plannedReps: 5, actualReps: 5, plannedWeight: 225, actualWeight: 225, completed: true, rir: 2 },
+        { plannedReps: 5, actualReps: 8, plannedWeight: 185, actualWeight: 185, completed: true, rir: 2 },
+      ],
+    },
+    constraints: { minReps: 3, maxReps: 8, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => LADDER },
+  }));
+  assert.ok(plan.suggestedWeight >= 225, `expected >= 225, got ${plan.suggestedWeight}`);
+});
+
+test('24. Bodyweight lifts (0 lbs) still progress via reps', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: { liftId: 'pullup', timestamp: '', sets: threeSets(0, 8, 3) },
+    constraints: { minReps: 5, maxReps: 12, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => [0] },
+  }));
+  assert.equal(plan.suggestedWeight, 0);
+  assert.ok(plan.suggestedReps > 8, `expected more reps, got ${plan.suggestedReps}`);
+});
+
+test('25. Deload drops ~15% and one set, keeping reps', () => {
+  const plan = generateNextWorkout({
+    ...makeInput({
+      lastSession: { liftId: 'bench', timestamp: '', sets: threeSets(200, 8, 2) },
+      constraints: { minReps: 6, maxReps: 10, minSets: 2, maxSets: 4 },
+      equipment: { getValidWeights: () => LADDER },
+    }),
+    deload: true,
+  });
+  assert.equal(plan.suggestedWeight, 170);
+  assert.equal(plan.suggestedReps, 8);
+  assert.equal(plan.suggestedSets, 2);
 });

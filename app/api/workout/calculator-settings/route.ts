@@ -1,74 +1,55 @@
 import { NextResponse } from 'next/server';
-import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
-import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { buildSeededCalculatorDefaults, normalizeCalculatorDefaults } from '@/lib/workout/calculators';
-import { normalizeUsersData } from '@/lib/workout/users';
+import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
+import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
 export async function GET() {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) {
-    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-  }
-
-  const rawUsersData = await getWorkoutData('users.json', { users: [] as any[] });
-  const { data: usersData, changed } = normalizeUsersData(rawUsersData);
-  if (changed) {
-    await saveWorkoutData('users.json', usersData);
-  }
-
-  const user = usersData.users.find((entry: any) => entry.id === userId);
-  if (!user) {
-    return NextResponse.json({ success: false, message: 'User not found' }, { status: 404 });
-  }
-
-  return NextResponse.json({
-    success: true,
-    calculatorDefaults: buildSeededCalculatorDefaults(user),
-  });
-}
-
-export async function PATCH(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) {
-    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
-    const payload = await request.json();
-    const rawUsersData = await getWorkoutData('users.json', { users: [] as any[] });
-    const { data: usersData } = normalizeUsersData(rawUsersData);
-    const userIndex = usersData.users.findIndex((entry: any) => entry.id === userId);
-
-    if (userIndex === -1) {
-      return NextResponse.json({ success: false, message: 'User not found' }, { status: 404 });
-    }
-
-    const existingUser = usersData.users[userIndex];
-    const mergedDefaults = normalizeCalculatorDefaults({
-      ...existingUser.calculatorDefaults,
-      ...payload?.calculatorDefaults,
-      calorie: {
-        ...existingUser.calculatorDefaults?.calorie,
-        ...payload?.calculatorDefaults?.calorie,
-      },
-      bodyFat: {
-        ...existingUser.calculatorDefaults?.bodyFat,
-        ...payload?.calculatorDefaults?.bodyFat,
-      },
-    });
-
-    usersData.users[userIndex] = {
-      ...existingUser,
-      calculatorDefaults: mergedDefaults,
-    };
-
-    await saveWorkoutData('users.json', usersData);
+    const userId = await requireWorkoutUserId();
+    const user = await findWorkoutUser(userId);
+    if (!user) throw new ApiError(404, 'User not found');
 
     return NextResponse.json({
       success: true,
-      calculatorDefaults: buildSeededCalculatorDefaults(usersData.users[userIndex]),
+      calculatorDefaults: buildSeededCalculatorDefaults(user),
     });
-  } catch {
-    return NextResponse.json({ success: false, message: 'Server error' }, { status: 500 });
+  } catch (error) {
+    return handleApiError(error, 'Load calculator settings failed');
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const userId = await requireWorkoutUserId();
+    const payload = await readJsonObject(request);
+
+    const updatedUser = await updateUsersData((usersData) => {
+      const userIndex = usersData.users.findIndex((entry) => entry.id === userId);
+      if (userIndex === -1) throw new ApiError(404, 'User not found');
+
+      const existingUser = usersData.users[userIndex];
+      const mergedDefaults = normalizeCalculatorDefaults({
+        ...existingUser.calculatorDefaults,
+        ...payload.calculatorDefaults,
+        calorie: {
+          ...existingUser.calculatorDefaults?.calorie,
+          ...payload.calculatorDefaults?.calorie,
+        },
+        bodyFat: {
+          ...existingUser.calculatorDefaults?.bodyFat,
+          ...payload.calculatorDefaults?.bodyFat,
+        },
+      });
+
+      usersData.users[userIndex] = { ...existingUser, calculatorDefaults: mergedDefaults };
+      return usersData.users[userIndex];
+    });
+
+    return NextResponse.json({
+      success: true,
+      calculatorDefaults: buildSeededCalculatorDefaults(updatedUser),
+    });
+  } catch (error) {
+    return handleApiError(error, 'Save calculator settings failed');
   }
 }
