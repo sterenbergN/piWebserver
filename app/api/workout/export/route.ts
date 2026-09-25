@@ -1,12 +1,16 @@
-import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
-import { removeCardioHistoryEntries } from '@/lib/workout/history';
-import { normalizeUsersData, normalizeWorkoutUser } from '@/lib/workout/users';
+import { getWorkoutData } from '@/lib/workout/data';
+import { loadHistoryData } from '@/lib/workout/history';
+import { loadUsersData, normalizeWorkoutUser } from '@/lib/workout/users';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 
 function escapeCsv(value: unknown) {
   if (value === null || value === undefined) return '';
-  const stringValue = String(value);
-  if (/[",\n]/.test(stringValue)) {
+  let stringValue = String(value);
+  // Neutralize spreadsheet formula injection from user-entered names.
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(stringValue)) {
+    stringValue = `'${stringValue}`;
+  }
+  if (/[",\r\n]/.test(stringValue)) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }
   return stringValue;
@@ -19,21 +23,11 @@ export async function GET() {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const [rawUsersData, rawHistoryData, gymsData] = await Promise.all([
-    getWorkoutData('users.json', { users: [] as any[] }),
-    getWorkoutData('history.json', { history: [] as any[] }),
+  const [usersData, historyData, gymsData] = await Promise.all([
+    loadUsersData(),
+    loadHistoryData(),
     getWorkoutData('gyms.json', { gyms: [] as any[] }),
   ]);
-
-  const { data: usersData, changed: usersChanged } = normalizeUsersData(rawUsersData);
-  const { data: historyData, changed: historyChanged } = removeCardioHistoryEntries(rawHistoryData);
-
-  if (usersChanged) {
-    await saveWorkoutData('users.json', usersData);
-  }
-  if (historyChanged) {
-    await saveWorkoutData('history.json', historyData);
-  }
 
   const userRecord = usersData.users.find((user) => user.id === userId);
   if (!userRecord) {
@@ -174,8 +168,8 @@ export async function GET() {
           stationId: gymMeta.stationId,
           stationName: gymMeta.stationName,
           stationType: workoutLiftMeta.stationType || gymMeta.stationType,
-          primaryMuscle: gymMeta.primaryMuscle,
-          secondaryMuscle: gymMeta.secondaryMuscle,
+          primaryMuscle: workoutLiftMeta.primaryMuscle || gymMeta.primaryMuscle,
+          secondaryMuscle: workoutLiftMeta.secondaryMuscle || gymMeta.secondaryMuscle,
           supersetId: workoutLiftMeta.supersetId ?? '',
           setIndex: String(index + 1),
           setWeight: set.weight ?? '',

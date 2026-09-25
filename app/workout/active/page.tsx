@@ -5,6 +5,68 @@ import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES } from '@/lib/workout/demo-data';
 
+function newPlanId() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+/**
+ * Pick `count` distinct lifts for a workout: at least one per target muscle
+ * first, then fill from the remaining matching lifts. Lifts that weren't done
+ * in the most recent workouts are preferred so sessions rotate exercises.
+ */
+function buildLiftPlan(availableLifts: any[], targetMuscles: string[], count: number, history: any[]) {
+  const recentlyUsed = new Map<string, number>();
+  [...history]
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 3)
+    .forEach((workout, age) => {
+      Object.keys(workout.logs || {}).forEach((liftId) => {
+        if (!recentlyUsed.has(liftId)) recentlyUsed.set(liftId, age);
+      });
+    });
+
+  // Unused lifts first, then the ones done longest ago; random within a tier.
+  const freshness = (lift: any) => (recentlyUsed.has(lift.id) ? recentlyUsed.get(lift.id)! : 99);
+  const ordered = shuffle(availableLifts).sort((a, b) => freshness(b) - freshness(a));
+  const matchesMuscles = (lift: any, muscles: string[]) =>
+    muscles.includes(lift.primaryMuscle) || muscles.includes(lift.secondaryMuscle);
+
+  const plan: any[] = [];
+  const usedIds = new Set<string>();
+  const add = (lift: any) => {
+    usedIds.add(lift.id);
+    plan.push({ ...lift, uniquePlanId: newPlanId() });
+  };
+
+  // Phase 1: one lift per target muscle (primary-muscle matches preferred)
+  for (const muscle of targetMuscles) {
+    if (plan.length >= count) break;
+    const pick = ordered.find((l) => !usedIds.has(l.id) && l.primaryMuscle === muscle)
+      || ordered.find((l) => !usedIds.has(l.id) && l.secondaryMuscle === muscle);
+    if (pick) add(pick);
+  }
+
+  // Phase 2: fill up to the requested lift count
+  const pool = targetMuscles.length > 0 ? ordered.filter((l) => matchesMuscles(l, targetMuscles)) : ordered;
+  for (const lift of pool) {
+    if (plan.length >= count) break;
+    if (!usedIds.has(lift.id)) add(lift);
+  }
+
+  return plan;
+}
+
 export default function ActiveWorkoutPage() {
   const searchParams = useSearchParams();
   const gymId = searchParams.get('gym');
@@ -12,13 +74,14 @@ export default function ActiveWorkoutPage() {
   const sharedSessionId = searchParams.get('sharedSessionId');
   const sharedMode = searchParams.get('sharedMode');
   const isDemoMode = searchParams.get('isDemo') === 'true';
-  const liftCountParam = parseInt(searchParams.get('lifts') || '5');
+  const parsedLiftCount = parseInt(searchParams.get('lifts') || '5', 10);
+  const liftCountParam = Number.isFinite(parsedLiftCount) ? Math.min(12, Math.max(1, parsedLiftCount)) : 5;
   const intensityParam = searchParams.get('intensity');
+  const isDeload = searchParams.get('deload') === '1';
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [workoutPlan, setWorkoutPlan] = useState<any>(null);
-  const [historicStats, setHistoricStats] = useState<{prevWeight: number, prevReps: number, prevSets: number, est1RM: number} | null>(null);
   const [allLifts, setAllLifts] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
   const [pastHistory, setPastHistory] = useState<any[]>([]);
@@ -93,8 +156,8 @@ export default function ActiveWorkoutPage() {
             });
         });
 
-        // For demo/empty states:
-        if (availableLifts.length === 0) {
+        // Sample lifts only for demo mode — never inject fake lifts into a real gym.
+        if (availableLifts.length === 0 && isDemoMode) {
              // Mock some default lifts if none exist so we can demonstrate
              const mockStation = { type: 'plates', baseWeight: 45, plateSets: [45, 45, 25, 10, 5, 2.5] };
              availableLifts.push(
@@ -107,33 +170,7 @@ export default function ActiveWorkoutPage() {
         const plan: any[] = [];
 
         if (!isResuming && !isSharedJoin) {
-           const targetMuscles: string[] = type.muscles || [];
-           
-           // Phase 1: Pick one lift per target muscle, capped at liftCountParam (T4 fix)
-           for (const muscle of targetMuscles) {
-              if (plan.length >= liftCountParam) break;
-              const matches = availableLifts.filter(l => l.primaryMuscle === muscle || l.secondaryMuscle === muscle);
-              if (matches.length > 0) {
-                 const selected = matches[Math.floor(Math.random() * matches.length)];
-                 if (!plan.find(p => p.id === selected.id)) {
-                     plan.push({ ...selected, uniquePlanId: Math.random() });
-                 }
-              }
-           }
-
-           // Phase 2: Fill up to the user's requested lift count
-           const muscleFilteredPool = targetMuscles.length > 0
-             ? availableLifts.filter(l => targetMuscles.includes(l.primaryMuscle) || targetMuscles.includes(l.secondaryMuscle))
-             : availableLifts;
-
-           let tries = 0;
-           while (plan.length < liftCountParam && muscleFilteredPool.length > plan.length && tries < 30) {
-              const selected = muscleFilteredPool[Math.floor(Math.random() * muscleFilteredPool.length)];
-              if (!plan.find(p => p.id === selected.id)) {
-                     plan.push({ ...selected, uniquePlanId: Math.random() });
-              }
-              tries++;
-           }
+           plan.push(...buildLiftPlan(availableLifts, type.muscles || [], liftCountParam, histRes.history || []));
         }
 
         // Maintain full reference list for Tracker Swap Lift UI
@@ -146,6 +183,7 @@ export default function ActiveWorkoutPage() {
                logs: saved.logs,
                startTime: saved.startTime,
                elapsedSecs: saved.elapsedSecs,
+               drafts: saved.drafts,
                liftElapsedSecsMap: saved.liftElapsedSecsMap,
                setElapsedSecsMap: saved.setElapsedSecsMap,
                currentRir: saved.currentRir,
@@ -163,13 +201,13 @@ export default function ActiveWorkoutPage() {
            const template = sessionData.session.planTemplate;
            const templateLifts = (template.lifts || []).map((lift: any) => {
              const fromGym = availableLifts.find((entry) => entry.id === lift.id);
-             if (fromGym) return { ...fromGym, uniquePlanId: Math.random() };
+             if (fromGym) return { ...fromGym, uniquePlanId: newPlanId() };
              return {
                ...lift,
                station: lift.station || null,
                gymName: template.gymName || 'Shared Session',
                gymId: template.gymId || '',
-               uniquePlanId: Math.random(),
+               uniquePlanId: newPlanId(),
              };
            });
            const fallbackType = template.type || {
@@ -180,7 +218,7 @@ export default function ActiveWorkoutPage() {
              intensity: 75,
            };
            setWorkoutPlan({
-             id: `shared-${Math.random().toString(36).substring(2, 10)}`,
+             id: `shared-${newPlanId()}`,
              name: `${template.name || 'Shared Workout'} (Joined)`,
              type: fallbackType,
              gymName: template.gymName || 'Shared Session',
@@ -190,8 +228,9 @@ export default function ActiveWorkoutPage() {
            });
         } else {
            setWorkoutPlan({
-               id: Math.random().toString(36).substring(2, 10),
-               name: `${type.name} @ ${gym.name}`,
+               id: newPlanId(),
+               name: `${isDeload ? 'Deload: ' : ''}${type.name} @ ${gym.name}`,
+               isDeload,
                type: type,
                gymName: gym.name,
                gymId: gym.id,
@@ -207,11 +246,18 @@ export default function ActiveWorkoutPage() {
     }
     
     init();
-  }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId]);
+  }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted)' }} className="animate-fade-in">⚙️ Calibrating optimal workout parameters...</div>;
   if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: '#ff6b6b' }} className="animate-fade-in">{error}</div>;
-  if (!workoutPlan || workoutPlan.lifts.length === 0) return <div style={{ padding: '2rem', textAlign: 'center' }}>No valid exercises found in this gym for this workout. Please add equipment and lifts first.</div>;
+  if (!workoutPlan || workoutPlan.lifts.length === 0) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center' }}>
+        <p>No valid exercises found in this gym for this workout. Please add equipment and lifts first.</p>
+        <a className="btn btn-secondary" href="/workout/config" style={{ display: 'inline-block', marginTop: '1rem' }}>Open Configuration</a>
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '2rem' }}>

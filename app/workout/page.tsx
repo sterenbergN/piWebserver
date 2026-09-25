@@ -24,6 +24,33 @@ function getIntensityLabel(value: number): { label: string; emoji: string; color
   return { label: 'Max Push', emoji: '🔥', color: '#fc8181' };
 }
 
+// A paused workout stays resumable for this long after its last update.
+const PENDING_WORKOUT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function readPendingWorkout(ownerId: string) {
+  try {
+    const stored = localStorage.getItem('pendingWorkout');
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (Date.now() - (parsed.timestamp || 0) >= PENDING_WORKOUT_MAX_AGE_MS) {
+      localStorage.removeItem('pendingWorkout');
+      return null;
+    }
+    return (parsed.ownerId || 'demo-user-123') === ownerId ? parsed : null;
+  } catch {
+    localStorage.removeItem('pendingWorkout');
+    return null;
+  }
+}
+
+const DEMO_USER: UserData = {
+  id: 'demo-user-123',
+  username: 'Guest Lifter',
+  weight: 175,
+  gender: 'male',
+  intensityFactor: 1.0,
+};
+
 export default function WorkoutDashboard() {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,145 +103,77 @@ export default function WorkoutDashboard() {
   }, []);
 
   useEffect(() => {
-    // Check if real user is authenticated
-    fetch('/api/workout/auth')
-      .then(res => res.json())
-      .then(data => {
-        const loadPendingForOwner = (ownerId: string) => {
-          try {
-            const stored = localStorage.getItem('pendingWorkout');
-            if (!stored) {
-              setPendingWorkout(null);
-              return;
-            }
-            const parsed = JSON.parse(stored);
-            const age = Date.now() - (parsed.timestamp || 0);
-            if (age >= 3600000) {
-              localStorage.removeItem('pendingWorkout');
-              setPendingWorkout(null);
-              return;
-            }
-            if ((parsed.ownerId || 'demo-user-123') === ownerId) {
-              setPendingWorkout(parsed);
-              return;
-            }
-            setPendingWorkout(null);
-          } catch {
-            localStorage.removeItem('pendingWorkout');
-            setPendingWorkout(null);
-          }
-        };
+    const enterDemoMode = () => {
+      setIsDemo(true);
+      setUser(DEMO_USER);
+      setAvailableGyms(DEMO_GYMS);
+      setAvailableTypes(DEMO_TYPES);
+      setPendingWorkout(readPendingWorkout(DEMO_USER.id));
+    };
 
-        if (data.authenticated && data.user) {
-          setUser(data.user);
-          setIsDemo(false);
-          loadPendingForOwner(data.user.id);
-          
-          // Populate profile editor fields
-          setEditWeight(data.user.weight?.toString() || '');
-          setEditHeight(data.user.height || '');
-          setEditGender(data.user.gender || 'male');
-          setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
-
-          // Fetch only imported/owned gyms
-          fetch('/api/workout/gyms').then(r => r.json()).then(d => { 
-             if (d.success) setAvailableGyms(d.gyms.filter((g: any) => g.ownerId === data.user.id)); 
-          });
-
-          fetch('/api/workout/history').then(r => r.json()).then(pHistory => {
-             if (pHistory.success) {
-                 let sets = 0; let vol = 0;
-                 
-                 // Preconfigure list of all lifts across the user's gyms for SBD matching
-                 const allLifts: any[] = [];
-                 
-                 // Re-fetch gyms locally inside history to ensure we have the lifts
-                 fetch('/api/workout/gyms').then(r => r.json()).then(dGym => {
-                     if (dGym.success) {
-                         const userGyms = dGym.gyms.filter((g: any) => g.ownerId === data.user.id);
-                         userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
-                             if (s.lifts) allLifts.push(...s.lifts);
-                         }));
-                     }
-
-                     pHistory.history.forEach((h: any) => {
-                         if (h.logs) {
-                             Object.keys(h.logs).forEach(liftId => {
-                                 h.logs[liftId].forEach((set: any) => {
-                                     vol += (set.reps * set.weight);
-                                     sets++;
-                                 });
-                             });
-                         }
-                     });
-                     
-                     setTotalLifts(pHistory.history.length);
-                     setAvgVol(sets > 0 ? vol / sets : 0);
-                     
-                     if (data.user.weight) {
-                         const exp = calculateExperienceScore(data.user, pHistory.history, allLifts);
-                         setRankSymbol(exp.symbol);
-                         setRankName(exp.level);
-                         setRankScore(exp.score);
-                     }
-                 });
-             }
-          });
-
-        } else {
-          // If not logged in, activate demo mode
-          setIsDemo(true);
-          setUser({
-            id: 'demo-user-123',
-            username: 'Guest Lifter',
-            weight: 175,
-            gender: 'male',
-            intensityFactor: 1.0,
-          });
-          setAvailableGyms(DEMO_GYMS);
-          setAvailableTypes(DEMO_TYPES);
-          loadPendingForOwner('demo-user-123');
+    async function load() {
+      try {
+        const data = await fetch('/api/workout/auth').then(res => res.json());
+        if (!data.authenticated || !data.user) {
+          enterDemoMode();
+          return;
         }
-      })
-      .catch(() => {
-        setIsDemo(true);
-        setUser({
-          id: 'demo-user-123',
-          username: 'Guest Lifter',
-          weight: 175,
-          gender: 'male',
-          intensityFactor: 1.0,
-        });
-        setAvailableGyms(DEMO_GYMS);
-        setAvailableTypes(DEMO_TYPES);
-        try {
-          const stored = localStorage.getItem('pendingWorkout');
-          if (!stored) {
-            setPendingWorkout(null);
-            return;
-          }
-          const parsed = JSON.parse(stored);
-          const age = Date.now() - (parsed.timestamp || 0);
-          if (age >= 3600000) {
-            localStorage.removeItem('pendingWorkout');
-            setPendingWorkout(null);
-            return;
-          }
-          setPendingWorkout((parsed.ownerId || 'demo-user-123') === 'demo-user-123' ? parsed : null);
-        } catch {
-          localStorage.removeItem('pendingWorkout');
-          setPendingWorkout(null);
-        }
-      })
-      .finally(() => setLoading(false));
 
-    fetch('/api/workout/types?scope=mine')
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.types?.length > 0) {
-          setAvailableTypes(d.types);
+        setUser(data.user);
+        setIsDemo(false);
+        setPendingWorkout(readPendingWorkout(data.user.id));
+
+        // Populate profile editor fields
+        setEditWeight(data.user.weight?.toString() || '');
+        setEditHeight(data.user.height?.toString() || '');
+        setEditGender(data.user.gender || 'male');
+        setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
+
+        const [gymsRes, typesRes, historyRes] = await Promise.all([
+          fetch('/api/workout/gyms').then(r => r.json()).catch(() => null),
+          fetch('/api/workout/types?scope=mine').then(r => r.json()).catch(() => null),
+          fetch('/api/workout/history').then(r => r.json()).catch(() => null),
+        ]);
+
+        const userGyms: any[] = gymsRes?.success ? gymsRes.gyms : [];
+        setAvailableGyms(userGyms);
+        if (typesRes?.success) setAvailableTypes(typesRes.types || []);
+        if (userGyms.length === 1) setSelectedGym(userGyms[0].id);
+        if (typesRes?.success && typesRes.types?.length === 1) setSelectedType(typesRes.types[0].id);
+
+        if (historyRes?.success) {
+          const history: any[] = historyRes.history || [];
+          let sets = 0; let vol = 0;
+          history.forEach((h: any) => {
+            Object.values(h.logs || {}).forEach((liftSets: any) => {
+              (liftSets || []).forEach((set: any) => {
+                vol += (set.reps || 0) * (set.weight || 0);
+                sets++;
+              });
+            });
+          });
+          setTotalLifts(history.length);
+          setAvgVol(sets > 0 ? vol / sets : 0);
+
+          if (data.user.weight) {
+            const allLifts: any[] = [];
+            userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
+              if (s.lifts) allLifts.push(...s.lifts);
+            }));
+            const exp = calculateExperienceScore(data.user, history, allLifts);
+            setRankSymbol(exp.symbol);
+            setRankName(exp.level);
+            setRankScore(exp.score);
+          }
         }
-      });
+      } catch {
+        enterDemoMode();
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -252,7 +211,7 @@ export default function WorkoutDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           weight: parseFloat(editWeight) || 0,
-          height: editHeight,
+          height: editHeight === '' ? '' : parseFloat(editHeight) || 0,
           gender: editGender,
           intensityFactor: editIntensityFactor
         })
@@ -262,8 +221,13 @@ export default function WorkoutDashboard() {
         setUser(data.user);
         setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
         setShowProfileEditor(false);
+        setShowProfileMenu(false);
+      } else {
+        window.alert(data.message || 'Could not save profile.');
       }
-    } catch { /* silent */ }
+    } catch {
+      window.alert('Network error — profile not saved.');
+    }
     setProfileSaving(false);
   };
 
@@ -548,6 +512,11 @@ export default function WorkoutDashboard() {
              {availableTypes.map(t => <option key={t.id} value={t.id}>{t.name} ({t.intensity}%)</option>)}
           </select>
 
+          <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Number of Lifts</label>
+          <select className="workout-input" value={liftCount} onChange={e => setLiftCount(e.target.value)}>
+            {[3, 4, 5, 6, 7, 8].map(n => <option key={n} value={String(n)}>{n} lifts</option>)}
+          </select>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--surface-border)', borderRadius: '10px', cursor: 'pointer', background: isDeload ? 'rgba(99, 179, 237, 0.1)' : 'transparent' }}>
             <input type="checkbox" checked={isDeload} onChange={e => setIsDeload(e.target.checked)} style={{ marginTop: '0.15rem' }} />
             <div>
@@ -560,7 +529,17 @@ export default function WorkoutDashboard() {
              className="workout-btn-primary" 
              disabled={!selectedGym || !selectedType}
              style={{ opacity: (!selectedGym || !selectedType) ? 0.5 : 1 }}
-             onClick={() => window.location.href = `/workout/active?gym=${selectedGym}&type=${selectedType}&lifts=${liftCount}&intensity=${isDeload ? 0.5 : 1.0}&isDemo=${isDemo}`}
+             onClick={() => {
+               const params = new URLSearchParams({
+                 gym: selectedGym,
+                 type: selectedType,
+                 lifts: liftCount,
+                 intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)),
+                 isDemo: String(isDemo),
+               });
+               if (isDeload) params.set('deload', '1');
+               window.location.href = `/workout/active?${params.toString()}`;
+             }}
           >
             Build & Start
           </button>

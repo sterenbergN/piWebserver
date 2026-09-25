@@ -1,155 +1,91 @@
 import { NextResponse } from 'next/server';
-import { getWorkoutData, saveWorkoutData } from '@/lib/workout/data';
-import { removeCardioHistoryEntries, isCardioHistoryItem } from '@/lib/workout/history';
+import { generateId, updateWorkoutData } from '@/lib/workout/data';
+import { HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
-import { getCalibrationStore, inferScaleFactor, upsertCalibrationEntry } from '@/lib/workout/calibration';
-import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { getCalibrationStore, inferCalibrationsForWorkout, upsertCalibrationEntries } from '@/lib/workout/calibration';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
+import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
 export async function GET() {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
-
-  const rawData = await getWorkoutData('history.json', { history: [] as any[] });
-  const { data, changed } = removeCardioHistoryEntries(rawData);
-  if (changed) {
-    await saveWorkoutData('history.json', data);
+  try {
+    const userId = await requireWorkoutUserId();
+    const userHistory = await loadUserHistory(userId);
+    return NextResponse.json({ success: true, history: userHistory });
+  } catch (error) {
+    return handleApiError(error, 'Load workout history failed');
   }
-  const userHistory = data.history.filter(h => h.userId === userId);
-
-  return NextResponse.json({ success: true, history: userHistory });
 }
 
 export async function POST(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) {
-     // Handle demo users smoothly by returning success without saving
-     const payload = await request.json();
-     if (payload.isDemo) {
-        return NextResponse.json({ success: true });
-     }
-     return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    const payload = await request.json();
+    const payload = await readJsonObject(request);
+    const userId = await getAuthenticatedWorkoutUserId();
+    if (!userId) {
+      // Demo users get a successful no-op so the sample flow completes.
+      if (payload.isDemo) return NextResponse.json({ success: true, demo: true });
+      throw new ApiError(401, 'Unauthorized');
+    }
+
     if (isCardioHistoryItem(payload)) {
-      return NextResponse.json({ success: false, message: "Cardio history is no longer supported" }, { status: 400 });
+      throw new ApiError(400, 'Cardio history is no longer supported');
     }
 
-    const data = await getWorkoutData('history.json', { history: [] as any[] });
-    const calibrationStore = await getCalibrationStore();
+    const workout = sanitizeWorkoutPayload(payload);
+    if (Object.keys(workout.logs).length === 0) {
+      throw new ApiError(400, 'Workout has no logged sets');
+    }
 
-    data.history.push({
-      ...payload,
-      id: Math.random().toString(36).substring(2, 10),
-      userId,
-      isDeload: payload.isDeload === true, // explicitly tag deload sessions
-    });
+    const { entry, previousUserHistory, duplicate } = await updateWorkoutData(
+      HISTORY_FILE,
+      { history: [] as any[] },
+      (data) => {
+        if (!Array.isArray(data.history)) data.history = [];
+        const previousUserHistory = data.history.filter((h: any) => h.userId === userId);
 
-    // Auto-infer calibration for stack/cable on first session in a new gym
-    try {
-      const gymId = payload.gymId;
-      const liftMeta = payload.liftMeta || {};
-      if (gymId && payload.logs && typeof payload.logs === 'object') {
-        for (const liftId of Object.keys(payload.logs)) {
-          const meta = liftMeta[liftId];
-          const liftName = meta?.name;
-          const stationType = meta?.stationType;
-          if (!liftName || (stationType !== 'stack' && stationType !== 'cable')) continue;
-
-          const liftKey = normalizeLiftKey(liftName);
-          const existing = calibrationStore.calibrations.find(c => c.userId === userId && c.gymId === gymId && c.liftKey === liftKey);
-          if (existing) continue;
-
-          const currentSets = payload.logs[liftId] || [];
-          const currentLastSet = currentSets[currentSets.length - 1];
-          if (!currentLastSet) continue;
-          const currentE1RM = calcAverage1RM(currentLastSet.weight, currentLastSet.reps);
-
-          const otherHistory = data.history
-            .filter((h: any) => h.userId === userId && h.gymId && h.gymId !== gymId && h.liftMeta)
-            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-          let reference: any = null;
-          for (const entry of otherHistory) {
-            const metaMap = entry.liftMeta || {};
-            const matchedLiftId = Object.keys(metaMap).find(key => normalizeLiftKey(metaMap[key]?.name || '') === liftKey);
-            if (!matchedLiftId) continue;
-            const sets = entry.logs?.[matchedLiftId] || [];
-            const lastSet = sets[sets.length - 1];
-            if (!lastSet) continue;
-            reference = {
-              gymId: entry.gymId,
-              gymName: entry.gymName,
-              liftId: matchedLiftId,
-              weight: lastSet.weight,
-              reps: lastSet.reps,
-              e1rm: calcAverage1RM(lastSet.weight, lastSet.reps)
-            };
-            break;
-          }
-
-          if (!reference) continue;
-
-          const prevCalibration = calibrationStore.calibrations.find(c => c.userId === userId && c.gymId === reference.gymId && c.liftKey === liftKey);
-          const prevScale = prevCalibration?.scaleFactor || 1;
-          const prevE1RMNormalized = reference.e1rm * prevScale;
-          const scaleFactor = inferScaleFactor(prevE1RMNormalized, currentE1RM);
-          if (!scaleFactor) continue;
-
-          await upsertCalibrationEntry({
-            userId,
-            gymId,
-            liftKey,
-            stationType,
-            scaleFactor,
-            confidence: 0.35,
-            updatedAt: new Date().toISOString(),
-            reference: {
-              fromGymId: reference.gymId,
-              fromGymName: reference.gymName,
-              fromLiftId: reference.liftId,
-              fromWeight: reference.weight,
-              fromReps: reference.reps,
-              fromE1RM: reference.e1rm,
-              currentWeight: currentLastSet.weight,
-              currentReps: currentLastSet.reps,
-              currentE1RM
-            }
-          });
+        // Idempotency: a retried or double-submitted save must not create a duplicate.
+        if (workout.clientId) {
+          const existing = previousUserHistory.find((h: any) => h.clientId === workout.clientId);
+          if (existing) return { entry: existing, previousUserHistory, duplicate: true };
         }
+
+        const entry = { ...workout, id: generateId(), userId };
+        data.history.push(entry);
+        return { entry, previousUserHistory, duplicate: false };
+      },
+    );
+
+    if (!duplicate) {
+      // Calibration is best-effort; a failure here must not fail the save.
+      try {
+        const store = await getCalibrationStore();
+        const inferred = inferCalibrationsForWorkout(userId, entry, previousUserHistory, store, calcAverage1RM);
+        await upsertCalibrationEntries(inferred);
+      } catch (error) {
+        console.error('Calibration inference failed:', error);
       }
-    } catch {
-      // silent calibration failure
     }
 
-    await saveWorkoutData('history.json', data);
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, id: entry.id, duplicate });
   } catch (error) {
-    return NextResponse.json({ success: false, message: "Server error" }, { status: 500 });
+    return handleApiError(error, 'Save workout failed');
   }
 }
 
 export async function DELETE(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
-
   try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    
-    const rawData = await getWorkoutData('history.json', { history: [] as any[] });
-    const { data } = removeCardioHistoryEntries(rawData);
-    const log = data.history.find(h => h.id === id);
-    if (!log || log.userId !== userId) return NextResponse.json({ success: false, message: "Forbidden" }, { status: 403 });
+    const userId = await requireWorkoutUserId();
+    const id = new URL(request.url).searchParams.get('id');
+    if (!id) throw new ApiError(400, 'ID missing');
 
-    data.history = data.history.filter(h => h.id !== id);
-    await saveWorkoutData('history.json', data);
+    await updateWorkoutData(HISTORY_FILE, { history: [] as any[] }, (data) => {
+      const log = (data.history || []).find((h: any) => h.id === id);
+      if (!log) throw new ApiError(404, 'Not found');
+      if (log.userId !== userId) throw new ApiError(403, 'Forbidden');
+      data.history = data.history.filter((h: any) => h.id !== id);
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json({ success: false, message: "Server error" }, { status: 500 });
+    return handleApiError(error, 'Delete workout failed');
   }
 }

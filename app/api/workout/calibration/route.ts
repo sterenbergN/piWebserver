@@ -1,33 +1,33 @@
 import { NextResponse } from 'next/server';
 import { getCalibrationStore, upsertCalibrationEntry } from '@/lib/workout/calibration';
-import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
-import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
+import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
 export async function GET() {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-
-  const store = await getCalibrationStore();
-  const calibrations = store.calibrations.filter(c => c.userId === userId);
-  return NextResponse.json({ success: true, calibrations });
+  try {
+    const userId = await requireWorkoutUserId();
+    const store = await getCalibrationStore();
+    const calibrations = store.calibrations.filter(c => c.userId === userId);
+    return NextResponse.json({ success: true, calibrations });
+  } catch (error) {
+    return handleApiError(error, 'List calibrations failed');
+  }
 }
 
 export async function PATCH(request: Request) {
-  const userId = await getAuthenticatedWorkoutUserId();
-  if (!userId) return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-
   try {
-    const { gymId, liftKey: rawLiftKey, stationType, scaleFactor, confidence } = await request.json();
+    const userId = await requireWorkoutUserId();
+    const { gymId, liftKey, stationType, scaleFactor, confidence } = await readJsonObject(request);
 
-    if (!gymId || !rawLiftKey) {
-      return NextResponse.json({ success: false, message: 'Missing gymId or liftKey' }, { status: 400 });
+    if (typeof gymId !== 'string' || !gymId || typeof liftKey !== 'string' || !liftKey.trim()) {
+      throw new ApiError(400, 'Missing gymId or liftKey');
     }
 
+    // upsertCalibrationEntry normalizes the key and clamps scale/confidence.
     const entry = await upsertCalibrationEntry({
       userId,
       gymId,
-      liftKey: normalizeLiftKey(rawLiftKey),
-      stationType: stationType || 'stack',
+      liftKey,
+      stationType: stationType === 'cable' ? 'cable' : 'stack',
       scaleFactor: typeof scaleFactor === 'number' ? scaleFactor : 1.0,
       confidence: typeof confidence === 'number' ? confidence : 0.5,
       updatedAt: new Date().toISOString(),
@@ -35,6 +35,6 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ success: true, entry });
   } catch (error) {
-    return NextResponse.json({ success: false, message: 'Server error' }, { status: 500 });
+    return handleApiError(error, 'Save calibration failed');
   }
 }

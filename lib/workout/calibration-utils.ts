@@ -6,10 +6,17 @@ const STRIP_PREFIXES = [
 export function normalizeLiftKey(name: string): string {
   let key = (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-  // Strip common prefixes that don't change the core lift identity
-  for (const prefix of STRIP_PREFIXES) {
-    if (key.startsWith(prefix + ' ')) {
-      key = key.slice(prefix.length + 1);
+  // Strip common prefixes that don't change the core lift identity. Repeat
+  // until stable so the result doesn't depend on prefix order
+  // ("incline machine press" and "machine incline press" → "press").
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const prefix of STRIP_PREFIXES) {
+      if (key.startsWith(prefix + ' ')) {
+        key = key.slice(prefix.length + 1);
+        stripped = true;
+      }
     }
   }
 

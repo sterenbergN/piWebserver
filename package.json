@@ -6,7 +6,8 @@
     "dev": "node scripts/run-next.mjs dev --turbo",
     "build": "node scripts/run-next.mjs build --turbo",
     "start": "node scripts/run-next.mjs start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx --test lib/**/*.test.ts"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

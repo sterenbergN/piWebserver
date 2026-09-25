@@ -140,10 +140,11 @@ export default function AnalyticsPage() {
 
    useEffect(() => {
        async function fetchData() {
+            const safeJson = (url: string) => fetch(url).then(r => r.json()).catch(() => ({ success: false }));
             const [authRes, histRes, gymsRes, calibRes] = await Promise.all([
-                fetch('/api/workout/auth').then(r => r.json()),
-                fetch('/api/workout/history').then(r => r.json()),
-                fetch('/api/workout/gyms').then(r => r.json()),
+                safeJson('/api/workout/auth'),
+                safeJson('/api/workout/history'),
+                safeJson('/api/workout/gyms'),
                 fetch('/api/workout/calibration').then(r => r.json()).catch(() => ({ success: false }))
             ]);
            
@@ -216,7 +217,10 @@ export default function AnalyticsPage() {
             const cals: any[] = [];
 
             const calibrationMap = new Map<string, number>();
-            calibrations.forEach((c) => {
+            // Use the freshly fetched list: the `calibrations` state set above
+            // isn't updated until the next render.
+            const fetchedCalibrations: any[] = authRes.authenticated && calibRes?.success ? calibRes.calibrations || [] : [];
+            fetchedCalibrations.forEach((c) => {
                calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
             });
 
@@ -224,7 +228,7 @@ export default function AnalyticsPage() {
                const meta = workout.liftMeta?.[liftId];
                const liftName = meta?.name || liftsMap.get(liftId) || liftId;
                const liftKey = normalizeLiftKey(liftName);
-               const stationType = meta?.stationType || liftStationTypeMap.get(liftId);
+               const stationType = meta?.stationType || stationTypeMap.get(liftId);
                if (!workout.gymId || !liftKey || (stationType !== 'stack' && stationType !== 'cable')) return 1;
                return calibrationMap.get(`${workout.gymId}|${liftKey}`) || 1;
             };
