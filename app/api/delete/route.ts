@@ -81,11 +81,11 @@ async function removeThumbnails(publicPathLike: string) {
     const thumbPrefix = normalized.replace(/[/\\:]/g, '_');
     const files = await fs.readdir(thumbDir);
 
-    for (const file of files) {
-      if (file.startsWith(thumbPrefix)) {
-        await fs.unlink(path.join(thumbDir, file));
-      }
-    }
+    await Promise.all(
+      files
+        .filter((file) => file.startsWith(thumbPrefix))
+        .map((file) => fs.unlink(path.join(thumbDir, file)))
+    );
   } catch {
     // Ignore cache cleanup failures.
   }
