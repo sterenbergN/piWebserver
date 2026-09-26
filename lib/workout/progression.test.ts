@@ -539,3 +539,15 @@ test('25. Deload drops ~15% and one set, keeping reps', () => {
   assert.equal(plan.suggestedReps, 8);
   assert.equal(plan.suggestedSets, 2);
 });
+
+test('26. A normal rep drop-off (10/9/8) keeps the planned set count', () => {
+  const plan = generateNextWorkout(makeInput({
+    lastSession: {
+      liftId: 'ohp', timestamp: '', plannedSets: 3,
+      sets: [10, 9, 8].map((reps) => ({ plannedReps: 10, actualReps: reps, plannedWeight: 95, actualWeight: 95, completed: true, rir: 2 })),
+    },
+    constraints: { minReps: 8, maxReps: 12, minSets: 2, maxSets: 4 },
+    equipment: { getValidWeights: () => LADDER },
+  }));
+  assert.equal(plan.suggestedSets, 3);
+});

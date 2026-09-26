@@ -150,7 +150,7 @@ a:hover { color: var(--accent-light); }
 /* ── Forms ── */
 input, textarea, button, select { font-family: inherit; font-size: 1rem; }
 
-input, textarea, select {
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select {
   width: 100%;
   background: var(--input-bg);
   border: 1px solid var(--surface-border);
@@ -159,6 +159,17 @@ input, textarea, select {
   border-radius: 8px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input[type="checkbox"], input[type="radio"], input[type="range"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
 }
 
 input:focus, textarea:focus, select:focus {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
+import { bestE1RMByLift, findPreviousSameType, restTargetSeconds, warmupSets, workoutVolume } from '@/lib/workout/session-insights';
 import { calculatePlates, getPossibleWeights, snapToPossibleWeight, stepWeight } from '@/lib/workout/equipment';
 import InlineGymEditor from './InlineGymEditor';
 import { useSitePopup } from '@/components/SitePopup';
@@ -67,7 +68,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    // Per-lift timers are keyed by the lift's plan id (not its index) so they
    // stay attached to the right lift when lifts are removed or reordered.
    const [liftElapsedSecsMap, setLiftElapsedSecsMap] = useState<Record<string, number>>(resumeState?.liftElapsedSecsMap || {});
-   const [setElapsedSecsMap, setSetElapsedSecsMap] = useState<Record<string, number>>(resumeState?.setElapsedSecsMap || {});
 
    const [logs, setLogs] = useState<Record<string, any[]>>(resumeState?.logs || {});
    // Manual weight/rep overrides per lift, so bouncing between superset
@@ -96,6 +96,13 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [workoutFinished, setWorkoutFinished] = useState(false);
    const [saving, setSaving] = useState(false);
    const [saveError, setSaveError] = useState('');
+   // Rest timer: counts from the last completed set (any lift, so supersets work).
+   const [lastSetAt, setLastSetAt] = useState<number | null>(resumeState?.lastSetAt ?? null);
+   const restNotifiedFor = useRef<number | null>(null);
+   // Personal records hit this session, keyed by lift id.
+   const [sessionPRs, setSessionPRs] = useState<Record<string, { name: string; e1rm: number; previous: number; weight: number; reps: number }>>(resumeState?.sessionPRs || {});
+   const [prToast, setPrToast] = useState<string | null>(null);
+   const bestBeforeSession = useMemo(() => bestE1RMByLift(pastHistory), [pastHistory]);
   const [sharedSessionId, setSharedSessionId] = useState<string | null>(sharedSessionIdProp || resumeState?.sharedSessionId || null);
   const [sharedCode, setSharedCode] = useState<string | null>(resumeState?.sharedCode || null);
   const [sharedLoading, setSharedLoading] = useState(false);
@@ -122,7 +129,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
            previousTick += delta * 1000;
            setElapsedSecs((e: number) => e + delta);
            setLiftElapsedSecsMap((m) => ({ ...m, [activeUid]: (m[activeUid] || 0) + delta }));
-           setSetElapsedSecsMap((m) => ({ ...m, [activeUid]: (m[activeUid] || 0) + delta }));
         }
      }, 1000);
      return () => clearInterval(timer);
@@ -432,8 +438,18 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
     const updatedLogs = { ...logs, [activeUid]: [...activeLogs, newLog] };
     setLogs(updatedLogs);
-    setSetElapsedSecsMap((m) => ({ ...m, [activeUid]: 0 }));
     setCurrentRir(null);
+    setLastSetAt(newLog.timestamp);
+
+    // Personal record: beat the best estimated 1RM from history (and this session).
+    const e1rm = calcAverage1RM(currentWeight, currentReps);
+    const previousBest = Math.max(bestBeforeSession[activeLift.id] || 0, sessionPRs[activeLift.id]?.e1rm || 0);
+    if (previousBest > 0 && e1rm > previousBest + 0.5) {
+      const baseline = sessionPRs[activeLift.id]?.previous ?? bestBeforeSession[activeLift.id];
+      setSessionPRs((prev) => ({ ...prev, [activeLift.id]: { name: activeLift.name, e1rm, previous: baseline, weight: currentWeight, reps: currentReps } }));
+      setPrToast(`New PR on ${activeLift.name}: ${currentWeight} × ${currentReps} (est. 1RM ${Math.round(e1rm)} lbs, +${Math.round(e1rm - previousBest)})`);
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.([80, 60, 80, 60, 160]);
+    }
 
     const partner = getSupersetPartner(activeLift);
     if (!partner) return;
@@ -472,15 +488,46 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
            startTime: workoutStartTime,
            elapsedSecs,
            liftElapsedSecsMap,
-           setElapsedSecsMap,
            currentRir,
            intensitySlider,
+           lastSetAt,
+           sessionPRs,
            timestamp: Date.now()
         }));
      } catch {
         // Storage full or unavailable — the workout continues, it just can't be resumed.
      }
-   }, [logs, drafts, safeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, setElapsedSecsMap, currentRir, intensitySlider, sharedSessionId, sharedCode, user?.id]);
+   }, [logs, drafts, safeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, currentRir, intensitySlider, sharedSessionId, sharedCode, user?.id, lastSetAt, sessionPRs]);
+
+   // Keep the phone screen on during the workout (where supported).
+   useEffect(() => {
+      if (workoutFinished || typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
+      let lock: { release: () => Promise<void> } | null = null;
+      let cancelled = false;
+      const acquire = async () => {
+         try {
+            const sentinel = await (navigator as any).wakeLock.request('screen');
+            if (cancelled) sentinel.release();
+            else lock = sentinel;
+         } catch {
+            // Denied (e.g. battery saver) — the workout still works.
+         }
+      };
+      const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
+      acquire();
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+         cancelled = true;
+         document.removeEventListener('visibilitychange', onVisible);
+         lock?.release().catch(() => {});
+      };
+   }, [workoutFinished]);
+
+   useEffect(() => {
+      if (!prToast) return;
+      const handle = setTimeout(() => setPrToast(null), 5000);
+      return () => clearTimeout(handle);
+   }, [prToast]);
 
    useEffect(() => {
       // Only sync on actual progress, not on every re-render of the callback.
@@ -670,6 +717,26 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       window.location.href = '/workout';
    };
 
+   const restTarget = restTargetSeconds(suggestedReps);
+   const restElapsed = lastSetAt ? Math.max(0, Math.floor((Date.now() - lastSetAt) / 1000)) : 0;
+   const showRestTimer = !!lastSetAt && totalSets > 0 && restElapsed < 15 * 60;
+   const restDone = restElapsed >= restTarget;
+   useEffect(() => {
+      // Buzz once when the rest target is reached.
+      if (!showRestTimer || !restDone || restNotifiedFor.current === lastSetAt) return;
+      restNotifiedFor.current = lastSetAt;
+      if ('vibrate' in navigator) navigator.vibrate?.([200, 100, 200]);
+   }, [showRestTimer, restDone, lastSetAt]);
+
+   // Finish-screen comparison with the last workout of the same type.
+   const previousSameType = findPreviousSameType(pastHistory, localPlan.type);
+   const previousVolume = previousSameType ? (previousSameType.volume ?? workoutVolume(previousSameType.logs)) : 0;
+   const prList = Object.values(sessionPRs);
+
+   const warmups = activeLogs.length === 0 && activeLift?.station?.type !== 'bodyweight' && !suggestionLoading
+      ? warmupSets(suggestedWeight, activePossibleWeights)
+      : [];
+
    const canDisplayPlates = activeLift?.station?.type === 'plates' && Array.isArray(activeLift?.station?.plateSets);
    const requiredPlates = canDisplayPlates
       ? calculatePlates(currentWeight, activeLift.station.baseWeight ?? 45, activeLift.station.plateSets)
@@ -693,7 +760,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
             <h2 style={{ margin: '0 0 0.5rem 0' }}>Workout Complete</h2>
             <p style={{ color: 'var(--muted)', marginBottom: '2rem' }}>{localPlan.name}</p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem', textAlign: 'left' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginBottom: '2rem', textAlign: 'left' }}>
                <div style={{ background: 'var(--input-bg)', padding: '1rem', borderRadius: '12px' }}>
                   <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Time</label>
                   <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{Math.floor(elapsedSecs/60)}m {(elapsedSecs%60)}s</div>
@@ -710,6 +777,40 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                   <label style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Total Sets</label>
                   <div style={{ fontSize: '1.5rem', fontWeight: 600 }}>{totalSets}</div>
                </div>
+            </div>
+
+            {previousVolume > 0 && (
+               <p style={{ margin: '-1rem 0 1.25rem', fontSize: '0.85rem' }}>
+                  Volume vs last {localPlan.type?.name || 'session'}:{' '}
+                  <strong style={{ color: totalVol >= previousVolume ? 'var(--success)' : 'var(--warning)' }}>
+                     {totalVol >= previousVolume ? '+' : ''}{Math.round(((totalVol - previousVolume) / previousVolume) * 100)}%
+                  </strong>
+               </p>
+            )}
+
+            {prList.length > 0 && (
+               <div style={{ textAlign: 'left', marginBottom: '1.25rem', padding: '0.85rem 1rem', borderRadius: '12px', border: '1px solid rgba(var(--success-rgb), 0.4)', background: 'rgba(var(--success-rgb), 0.08)' }}>
+                  <strong style={{ display: 'block', marginBottom: '0.35rem' }}>🏆 {prList.length} personal record{prList.length === 1 ? '' : 's'}</strong>
+                  {prList.map((pr) => (
+                     <div key={pr.name} className="workout-flex-between" style={{ fontSize: '0.85rem', padding: '0.15rem 0' }}>
+                        <span>{pr.name} — {pr.weight} × {pr.reps}</span>
+                        <span style={{ color: 'var(--success)' }}>+{Math.round(pr.e1rm - pr.previous)} lbs e1RM</span>
+                     </div>
+                  ))}
+               </div>
+            )}
+
+            <div style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
+               {localPlan.lifts.filter((lift: any) => (logs[uidOf(lift)] || []).length > 0).map((lift: any) => {
+                  const sets = logs[uidOf(lift)];
+                  const top = sets.reduce((best: any, set: any) => (!best || set.weight > best.weight || (set.weight === best.weight && set.reps > best.reps) ? set : best), null);
+                  return (
+                     <div key={uidOf(lift)} className="workout-list-row" style={{ marginBottom: '0.35rem' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{lift.name}</span>
+                        <span className="workout-hint">{sets.length} set{sets.length === 1 ? '' : 's'} · best {top.weight} × {top.reps}</span>
+                     </div>
+                  );
+               })}
             </div>
 
             {saveError && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', margin: '0 0 1rem' }}>{saveError}</p>}
@@ -883,7 +984,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
                     {showBreakdown && scoringBreakdown && (
                       <div className="animate-fade-in" style={{ marginTop: '0.4rem', padding: '0.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', textAlign: 'left', fontSize: '0.73rem' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem 1rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.3rem 1rem' }}>
                           <div>
                             <span style={{ color: 'var(--muted)' }}>Overload:</span>{' '}
                             <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? 'var(--success)' : 'var(--danger)' }}>
@@ -939,11 +1040,19 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     </div>
                 )}
                 
-                <div style={{ display: 'flex', gap: isCompactHeader ? '0.5rem' : '0.6rem', fontSize: isCompactHeader ? '0.66rem' : '0.7rem', color: 'var(--muted)', justifyContent: 'center', marginTop: isCompactHeader ? '0.4rem' : '0.6rem', background: 'rgba(0,0,0,0.08)', padding: isCompactHeader ? '0.3rem 0.4rem' : '0.4rem', borderRadius: '8px', flexWrap: 'wrap' }}>
-                    <span>Workout: {formatClock(elapsedSecs)}</span>
-                    <span>Lift: {formatClock(liftElapsedSecsMap[activeUid] || 0)}</span>
-                    <span>Set: {formatClock(setElapsedSecsMap[activeUid] || 0)}</span>
+                <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem', color: 'var(--muted)', justifyContent: 'center', marginTop: isCompactHeader ? '0.4rem' : '0.6rem' }}>
+                    <span>Workout {formatClock(elapsedSecs)}</span>
+                    <span>This lift {formatClock(liftElapsedSecsMap[activeUid] || 0)}</span>
                 </div>
+                {showRestTimer && (
+                  <div className={`tracker-rest${restDone ? ' done' : ''}`} role="timer" aria-live="polite">
+                    <div className="workout-flex-between" style={{ fontSize: '0.8rem' }}>
+                      <span>{restDone ? 'Rested — ready for the next set' : 'Resting'}</span>
+                      <strong>{formatClock(restElapsed)} / {formatClock(restTarget)}</strong>
+                    </div>
+                    <div className="tracker-rest-bar"><div style={{ width: `${Math.min(100, (restElapsed / restTarget) * 100)}%` }} /></div>
+                  </div>
+                )}
             </div>
 
             <div className="workout-tile" style={{ background: 'rgba(0,0,0,0.1)', padding: isCompactHeader ? '0.65rem' : undefined }}>
@@ -957,7 +1066,16 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                           </div>
                       ))}
                    </div>
-                ) : <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>No sets logged yet.</p>}
+                ) : (
+                  <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+                    <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>No sets logged yet.</p>
+                    {warmups.length > 0 && (
+                      <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>
+                        Warm-up: {warmups.map((w) => `${w.weight}×${w.reps}`).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <div style={{ flex: 1 }}>
@@ -978,7 +1096,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     </div>
                 </div>
                 <div style={{ marginTop: '0.65rem' }}>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.35rem' }}>Reps In Reserve</label>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.1rem' }}>Reps In Reserve</label>
+                    <p className="workout-hint" style={{ textAlign: 'center', margin: '0 0 0.35rem' }}>How many more reps could you have done? 0 = failure</p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '0.35rem' }}>
                       {[0, 1, 2, 3, 4, 5].map((rir) => {
                         const isSelected = currentRir === rir;
@@ -1009,7 +1128,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex(safeLiftIndex - 1)}>Prev</button>
                     )}
                     {safeLiftIndex < localPlan.lifts.length - 1 ? (
-                      <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem' }} onClick={() => setActiveLiftIndex(safeLiftIndex + 1)}>Next Lift →</button>
+                      <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex(safeLiftIndex + 1)}>Next Lift →</button>
                     ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem', background: 'var(--success)', boxShadow: '0 4px 15px rgba(var(--success-rgb), 0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
                 </div>
             </div>
@@ -1234,6 +1353,9 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                  </div>
                )}
             </div>
+         )}
+         {prToast && (
+            <div className="tracker-toast animate-fade-in" role="status" onClick={() => setPrToast(null)}>🏆 {prToast}</div>
          )}
          {popup}
       </div>

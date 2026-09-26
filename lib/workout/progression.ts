@@ -120,6 +120,16 @@ const PROFILE_SETTINGS: Record<ProgressionProfile, ProfileSettings> = {
 /** Deload sessions drop the working weight by about this fraction. */
 const DELOAD_WEIGHT_REDUCTION = 0.15;
 
+/**
+ * Reps lost per set that counts as unusually steep fatigue (e.g. 10 → 7 → 4).
+ * A normal drop-off like 10 → 9 → 8 (−1/set) should not cost a set.
+ */
+const STEEP_FATIGUE_SLOPE = -1.5;
+/** Rep drop-off per set that is expected between straight sets. */
+const NORMAL_FATIGUE_SLOPE = -1;
+/** Target below which backing off may also drop a set, not just weight. */
+const SET_CUT_TARGET = -0.08;
+
 /** How strongly last session's performance moves the target (per 1.0 of score). */
 const PERFORMANCE_SENSITIVITY = 0.5;
 
@@ -260,10 +270,10 @@ export function analyzePerformance(session: Session): PerformanceMetrics {
     performanceScore -= 0.08;
   }
 
-  // Factor in fatigue slope: steep negative slope = user fatiguing quickly = harder session
-  // Typical values: -0.5 to +0.5 per set
-  if (fatigueSlope < 0) {
-    performanceScore += fatigueSlope * 0.1; // negative slope reduces score
+  // Factor in fatigue slope. Missed reps are already counted by completionRatio,
+  // so only a drop-off steeper than a normal ~1 rep/set costs extra.
+  if (fatigueSlope < NORMAL_FATIGUE_SLOPE) {
+    performanceScore += (fatigueSlope - NORMAL_FATIGUE_SLOPE) * 0.1;
   } else if (fatigueSlope > 0) {
     performanceScore += fatigueSlope * 0.05; // positive slope slightly boosts score
   }
@@ -564,7 +574,7 @@ export function scoreCandidateDetailed(
   const setChange = candidate.sets - anchorSets;
   if (setChange !== 0) {
     const justifiedUp = setChange > 0 && (performanceMetrics.extraSetsDetected || profile === 'endurance');
-    const justifiedDown = setChange < 0 && (performanceMetrics.fatigueSlope < -0.5 || context.targetOverload < -0.03);
+    const justifiedDown = setChange < 0 && (performanceMetrics.fatigueSlope <= STEEP_FATIGUE_SLOPE || context.targetOverload <= SET_CUT_TARGET);
     if (justifiedUp || justifiedDown) rawScore += 3;
     else rawScore -= 12 * Math.abs(setChange);
   }
@@ -620,7 +630,7 @@ export function scoreCandidateDetailed(
     intensityBias -= 10;
   }
 
-  if (performanceMetrics.fatigueSlope < -0.5 && setChange < 0) {
+  if (performanceMetrics.fatigueSlope <= STEEP_FATIGUE_SLOPE && setChange < 0) {
     notes.push('Fatigue detected: fewer sets preferred.');
   }
 

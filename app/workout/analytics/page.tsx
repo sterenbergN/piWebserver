@@ -572,7 +572,7 @@ export default function AnalyticsPage() {
                       <div style={{ fontSize: '3rem', margin: '0.5rem 0' }}>{experience.symbol}</div>
                       <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--accent)' }}>{experience.level}</div>
                       <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '0.5rem' }}>Experience Score: {experience.score.toFixed(0)}</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0.5rem', marginTop: '1rem', fontSize: '0.75rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.5rem', marginTop: '1rem', fontSize: '0.75rem' }}>
                          <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.time * 25).toFixed(0)}</strong><br/>Time</div>
                          <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.consistency * 25).toFixed(0)}</strong><br/>Consist.</div>
                          <div><strong style={{ color: 'var(--foreground)' }}>{(experience.breakdown.strength * 25).toFixed(0)}</strong><br/>Str</div>
@@ -627,7 +627,7 @@ export default function AnalyticsPage() {
                       Constraint-based candidate generation + scoring system
                    </p>
 
-                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
                       <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px', textAlign: 'center' }}>
                          <div style={{ fontSize: '0.65rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pipeline</div>
                          <div style={{ fontSize: '0.85rem', fontWeight: 700, marginTop: '0.15rem' }}>Generate → Filter → Score</div>
@@ -674,7 +674,7 @@ export default function AnalyticsPage() {
                             weight drops, extra sets, and reps in reserve. An average RIR of <strong>2</strong> is neutral,
                             <strong>0-1</strong> means the lift ran hard, and <strong>3+</strong> means you likely had more headroom.
                           </p>
-                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem', fontSize: '0.75rem', textAlign: 'center' }}>
+                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.3rem', fontSize: '0.75rem', textAlign: 'center' }}>
                             <div style={{ background: 'rgba(72,187,120,0.15)', padding: '0.3rem', borderRadius: '4px', color: '#48bb78' }}>&gt; 1.05 = Too Easy</div>
                             <div style={{ background: 'rgba(236,201,75,0.15)', padding: '0.3rem', borderRadius: '4px', color: '#ecc94b' }}>0.95–1.05 = Right</div>
                             <div style={{ background: 'rgba(252,129,129,0.15)', padding: '0.3rem', borderRadius: '4px', color: '#fc8181' }}>&lt; 0.95 = Too Hard</div>
@@ -702,7 +702,10 @@ export default function AnalyticsPage() {
                    <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>Based on your bodyweight ({user?.weight || '---'} lbs). Values are e1RM multiples of BW.</p>
                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                       {Object.keys(STRENGTH_STANDARDS).map(liftName => {
-                         const match = oneRMs.find(r => r.name.toLowerCase() === liftName.toLowerCase());
+                         // Exact name first, else the strongest lift containing it ("Back Squat" → Squat).
+                         const key = liftName.toLowerCase();
+                         const match = oneRMs.find(r => r.name.toLowerCase() === key)
+                            || oneRMs.filter(r => r.name.toLowerCase().includes(key)).sort((a, b) => b.avg - a.avg)[0];
                          const userRm = match ? match.avg : 0;
                          const bw = user?.weight || 150;
                          const userMult = userRm / bw;
@@ -750,7 +753,7 @@ export default function AnalyticsPage() {
                       const bSum = (oneRMs || []).reduce((s:number, r:any) => s + (r.brzycki||0), 0) / (oneRMs.length || 1);
                       const lSum = (oneRMs || []).reduce((s:number, r:any) => s + (r.lombardi||0), 0) / (oneRMs.length || 1);
                       return (
-                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', textAlign: 'center' }}>
+                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem', textAlign: 'center' }}>
                             <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px' }}>
                                <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>Epley</div>
                                <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{Math.round(eSum)}</div>
@@ -789,7 +792,7 @@ export default function AnalyticsPage() {
                         <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>Score Computation Breakdown</h4>
                         <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '1rem' }}>E = (0.2 × Time) + (0.3 × Consistency) + (0.3 × Strength) + (0.2 × Progression)</p>
                         
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
                            <div style={{ background: 'rgba(0,0,0,0.15)', padding: '0.5rem', borderRadius: '6px' }}>
                               <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Time (T) Weight 20%</div>
                               <div style={{ fontSize: '1rem', fontWeight: 600 }}>{experience.breakdown.time.toFixed(2)}</div>
@@ -855,7 +858,7 @@ export default function AnalyticsPage() {
                                   
                                    {expandedRM === rm.name && (
                                       <div className="animate-fade-in" style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--surface-border)', background: 'rgba(255,255,255,0.02)' }}>
-                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center' }}>
+                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', textAlign: 'center' }}>
                                             <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Epley</div><div style={{ fontWeight: 600 }}>{Math.round(rm.epley)}</div></div>
                                             <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Brzycki</div><div style={{ fontWeight: 600 }}>{Math.round(rm.brzycki)}</div></div>
                                             <div><div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Lombardi</div><div style={{ fontWeight: 600 }}>{Math.round(rm.lombardi)}</div></div>
@@ -895,7 +898,7 @@ export default function AnalyticsPage() {
                    ) : <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No lifting history available yet.</p>}
 
                   {/* Powerlifting Metrics */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginTop: '1rem' }}>
                       <div className="workout-tile" style={{ textAlign: 'center', position: 'relative' }}>
                           <button className="btn btn-secondary" style={{ position:'absolute', top: '10px', right: '10px', padding: '0.2rem', borderRadius: '8px', fontSize: '0.7rem' }} onClick={() => setExpandedInfo(expandedInfo === 'wilks' ? null : 'wilks')}>ⓘ</button>
                           <h4 style={{ margin: '0 0 0.5rem 0' }}>Wilks Score</h4>
@@ -1311,7 +1314,7 @@ export default function AnalyticsPage() {
                                           Expanded
                                         </span>
                                       </div>
-                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
                                           <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
                                              <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Load Ratio</div>
                                              <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.overloadRatio - 1) * 100).toFixed(1)}%</div>
@@ -1514,7 +1517,7 @@ export default function AnalyticsPage() {
                                               });
                                            });
                                            return (
-                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.7rem', textAlign: 'center' }}>
+                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.7rem', textAlign: 'center' }}>
                                                 <div style={{ background: 'var(--background)', padding: '0.4rem', borderRadius: '6px' }}><div style={{ fontWeight: 700 }}>{totalSets > 0 ? Math.round(totalW / totalSets) : 0}</div>Avg Weight</div>
                                                 <div style={{ background: 'var(--background)', padding: '0.4rem', borderRadius: '6px' }}><div style={{ fontWeight: 700 }}>{totalSets > 0 ? (totalR / totalSets).toFixed(1) : 0}</div>Avg Reps</div>
                                                 <div style={{ background: 'var(--background)', padding: '0.4rem', borderRadius: '6px' }}><div style={{ fontWeight: 700 }}>{totalVol.toLocaleString()}</div>Total Vol</div>
