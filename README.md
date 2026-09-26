@@ -69,7 +69,19 @@ attestation and publish it as a GitHub release. The Pi installs releases with
   if it doesn't come up;
 - keeps site data in `shared/`, outside every release, so an update can't touch it.
 
-Needs 64-bit Raspberry Pi OS (`uname -m` → `aarch64`), Node 22, pm2, curl.
+Needs 64-bit Raspberry Pi OS (headless **Lite** is fine), Node 22, pm2, curl.
+Check over SSH:
+
+```sh
+dpkg --print-architecture   # arm64   (armhf = 32-bit OS — reflash with the 64-bit image)
+node -p process.arch        # arm64
+node -v                     # v22.x
+```
+
+Don't go by `uname -m`: a Pi 4 on 32-bit Pi OS still boots a 64-bit kernel and
+reports `aarch64`. `deploy.sh` checks Node's architecture and refuses to install
+on a 32-bit system. Everything else runs over SSH or from the admin page, so no
+screen or desktop is needed on the Pi.
 
 ### Layout on the site USB
 

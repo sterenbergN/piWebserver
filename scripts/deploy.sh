@@ -173,7 +173,13 @@ case "$cmd" in
 esac
 
 # ── Install a release ──────────────────────────────────────────────────────────
-[[ "$(uname -m)" == "aarch64" ]] || log "warning: builds are made for 64-bit Pi OS (aarch64); this is $(uname -m)"
+# Builds are made for 64-bit Pi OS. Ask Node rather than uname: a Pi 4 on 32-bit
+# Pi OS still boots a 64-bit kernel, so uname says aarch64 while Node is armv7l.
+node_arch="$(node -p process.arch 2>/dev/null)" || die "node is not installed"
+[[ "$node_arch" == "arm64" || -n "${ALLOW_ANY_ARCH:-}" ]] \
+  || die "this Node is $node_arch but builds are for arm64 — install 64-bit Raspberry Pi OS (Lite is fine) and a 64-bit Node"
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+(( node_major >= 20 )) || die "Node $(node -v) is too old — Next.js needs Node 20.9 or newer (22 recommended)"
 exec 9>"$APP_DIR/.deploy.lock"; flock -n 9 || die "another deploy is already running"
 
 rm -rf "$TMP"; mkdir -p "$TMP"
