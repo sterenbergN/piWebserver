@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import ProgressBar from './ProgressBar';
 
-interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; network?: string; }
+interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; network?: string; networkTotal?: string; }
 interface SiteVisit { timestamp: string; path: string; }
 
 const DAY = 86_400_000;
@@ -58,9 +58,10 @@ export default function OverviewPanel() {
     { label: 'Temperature', value: stats.temp },
     { label: 'Memory', value: stats.ram.split('/')[0].trim(), sub: stats.ram.split('/')[1] ? `of ${stats.ram.split('/')[1].trim()}` : undefined },
     { label: 'Storage', value: stats.storage.split('(')[0].trim(), sub: stats.storage.includes('(') ? stats.storage.slice(stats.storage.indexOf('(')) : undefined },
-    ...(stats.cpu !== undefined ? [{ label: 'CPU load', value: `${stats.cpu}%` }] : []),
+    ...(stats.cpu !== undefined ? [{ label: 'CPU use', value: `${stats.cpu}%` }] : []),
     ...(stats.uptime ? [{ label: 'Uptime', value: stats.uptime, small: true }] : []),
-    ...(stats.network ? [{ label: 'Network', value: stats.network.split('|')[0]?.trim() || '', sub: stats.network.split('|')[1]?.trim(), small: true }] : []),
+    // network is "↓ download | ↑ upload" (live speed); networkTotal is traffic since boot.
+    ...(stats.network && stats.network !== 'N/A' ? [{ label: 'Network speed', value: stats.network.split('|')[0]?.trim() || '', sub: [stats.network.split('|')[1]?.trim(), stats.networkTotal].filter(Boolean).join(' · '), small: true }] : []),
   ] : [];
 
   return (

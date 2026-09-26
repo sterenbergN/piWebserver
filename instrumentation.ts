@@ -13,6 +13,7 @@ export async function register() {
       const { promisify } = await import('util');
       const fs = await import('fs/promises');
       const path = await import('path');
+      const { getLiveRates } = await import('./lib/system-stats');
 
       const execAsync = promisify(exec);
       // Private runtime data lives in .data (it used to be written into
@@ -61,10 +62,8 @@ export async function register() {
             memTotal = parseHuman(totalRaw);
           }
 
-          const { stdout: loadOut } = await execAsync('uptime || grep -cpu').catch(() => ({ stdout: '' }));
-          let cpuLoad: number | null = null;
-          const match = loadOut.match(/load average:\s+([0-9.]+)/);
-          if (match) cpuLoad = parseFloat(match[1]) * 10; // Approx % for typical quad core
+          // Real CPU use (busy time between readings), not load average scaled by a guess.
+          const cpuLoad: number | null = await getLiveRates().then((r) => Math.round(r.cpuPercent * 10) / 10).catch(() => null);
 
           const newEntry = {
             timestamp: new Date().toISOString(),

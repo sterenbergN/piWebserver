@@ -126,7 +126,7 @@ export default function StatsPage() {
               return <StatTile label="Storage Used" value={used} sub={[total && `of ${total}`, freeText].filter(Boolean).join(' · ') || undefined} />;
             })()}
             {stats.cpu !== undefined && (
-              <StatTile label="CPU Load" value={`${stats.cpu}%`} sub="Current" history={history} type="cpu" />
+              <StatTile label="CPU use" value={`${stats.cpu}%`} sub="Current" history={history} type="cpu" />
             )}
             {stats.uptime && (
               <StatTile label="Uptime" value="" sub={stats.uptime} />
