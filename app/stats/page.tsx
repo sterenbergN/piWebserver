@@ -111,7 +111,13 @@ export default function StatsPage() {
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
             <StatTile label="Core Temperature" value={stats.temp} history={history} type="temp" />
             <StatTile label="Memory Usage" value={stats.ram.split('/')[0].trim()} sub={`of ${stats.ram.split('/')[1]?.trim() || ''}`} history={history} type="ram" />
-            <StatTile label="Storage Used" value={stats.storage.split('(')[0].trim()} sub={stats.storage.includes('(') ? `(${stats.storage.split('(')[1]}` : undefined} />
+            {(() => {
+              // "223.0 GB / 252.0 GB (11% Free)" → value "223.0 GB", sub "of 252.0 GB · 11% free", like memory.
+              const [usage, free] = stats.storage.split('(');
+              const [used, total] = usage.split('/').map((part) => part.trim());
+              const freeText = free ? free.replace(')', '').trim().toLowerCase() : '';
+              return <StatTile label="Storage Used" value={used} sub={[total && `of ${total}`, freeText].filter(Boolean).join(' · ') || undefined} />;
+            })()}
             {stats.cpu !== undefined && (
               <StatTile label="CPU Load" value={`${stats.cpu}%`} sub="Current" history={history} type="cpu" />
             )}
