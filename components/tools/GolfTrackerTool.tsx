@@ -1,288 +1,267 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSitePopup } from '@/components/SitePopup';
+import { MAX_PLAYERS, formatToPar, newGame, nextHole, normalizeGame, scoreName, summarize, type GolfGame } from '@/lib/tools/golf';
 
-interface GolfGame {
-  id: string;
-  date: string;
-  courseName: string;
-  pars: number[];
-  players: { name: string; scores: (number | null)[] }[];
-}
+const LOCAL_KEY = 'golfGames';
+const toParClass = (n: number) => (n < 0 ? 'tl-under' : n > 0 ? 'tl-over' : 'tl-even');
+const CELL_CLASS = { eagle: 'tl-cell-eagle', birdie: 'tl-cell-birdie', par: '', bogey: 'tl-cell-bogey', double: 'tl-cell-double' } as const;
 
-const defaultGame = (): GolfGame => ({
-  id: Date.now().toString(),
-  date: new Date().toISOString(),
-  courseName: 'New Course',
-  pars: Array(18).fill(4),
-  players: [
-    { name: 'Player 1', scores: Array(18).fill(null) },
-    { name: 'Player 2', scores: Array(18).fill(null) },
-    { name: 'Player 3', scores: Array(18).fill(null) },
-    { name: 'Player 4', scores: Array(18).fill(null) }
-  ]
-});
-
-export default function GolfTrackerTool() {
-  const [games, setGames] = useState<GolfGame[]>([]);
-  const [activeGameId, setActiveGameId] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<'admin' | 'local'>('local');
+/** Rounds are saved on the Pi when signed in as admin, otherwise on this device. */
+function useRounds() {
+  const [games, setGames] = useState<GolfGame[] | null>(null);
+  const [mode, setMode] = useState<'server' | 'local'>('local');
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const init = async () => {
+    (async () => {
       try {
         const res = await fetch('/api/tools/golf');
-        if (res.status === 401) throw new Error('not admin');
-        const data = await res.json();
-        if (data.success) { setAuthMode('admin'); setGames(data.games || []); return; }
-      } catch {}
-      setAuthMode('local');
-      try { const l = localStorage.getItem('golfGames'); if (l) setGames(JSON.parse(l)); } catch {}
-    };
-    init();
+        const d = res.ok ? await res.json() : null;
+        if (d?.success) { setMode('server'); setGames((d.games || []).map(normalizeGame).filter(Boolean)); return; }
+      } catch { }
+      try { setGames((JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]') as unknown[]).map(normalizeGame).filter(Boolean) as GolfGame[]); } catch { setGames([]); }
+    })();
   }, []);
 
-  const saveGames = (next: GolfGame[]) => {
+  const save = useCallback((next: GolfGame[]) => {
     setGames(next);
-    if (authMode === 'admin') {
-      fetch('/api/tools/golf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ games: next }) }).catch(console.error);
-    } else {
-      try { localStorage.setItem('golfGames', JSON.stringify(next)); } catch {}
-    }
+    if (mode === 'local') { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(next)); } catch { } return; }
+    // Typing a score shouldn't send a request per tap: save half a second after the last change.
+    setSaveState('saving');
+    if (pending.current) clearTimeout(pending.current);
+    pending.current = setTimeout(() => {
+      fetch('/api/tools/golf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ games: next }) })
+        .then(r => setSaveState(r.ok ? 'saved' : 'error')).catch(() => setSaveState('error'));
+    }, 500);
+  }, [mode]);
+
+  return { games, save, mode, saveState };
+}
+
+function Setup({ onStart, onCancel }: { onStart: (g: GolfGame) => void; onCancel?: () => void }) {
+  const [course, setCourse] = useState('');
+  const [holes, setHoles] = useState<9 | 18>(18);
+  const [names, setNames] = useState<string[]>(() => {
+    try { const last = localStorage.getItem('golfLastPlayers'); if (last) return JSON.parse(last); } catch { }
+    return ['', ''];
+  });
+  const start = () => {
+    try { localStorage.setItem('golfLastPlayers', JSON.stringify(names)); } catch { }
+    onStart(newGame(holes, names, course));
   };
-
-  const createGame = () => {
-    const g = defaultGame();
-    saveGames([...games, g]);
-    setActiveGameId(g.id);
-  };
-
-  const activeGame = games.find(g => g.id === activeGameId);
-  const updateGame = (g: GolfGame) => saveGames(games.map(x => x.id === g.id ? g : x));
-
-  // Totals helpers
-  const sum = (arr: (number | null)[], s: number, e: number) =>
-    arr.slice(s, e).reduce<number>((acc, v) => acc + (v || 0), 0);
-  
-  const relScore = (scores: (number | null)[], pars: number[]) => {
-    let s = 0, p = 0;
-    scores.forEach((v, i) => { if (v) { s += v; p += pars[i]; } });
-    return s - p;
-  };
-
-  const fmtRel = (n: number) => n > 0 ? `+${n}` : n === 0 ? 'E' : `${n}`;
-  const relColor = (n: number) => n > 0 ? '#fc8181' : n < 0 ? '#68d391' : 'var(--muted)';
-
-  // Projected final score: average score-vs-par per played hole × 18
-  const projected = (scores: (number | null)[], pars: number[]) => {
-    const played = scores.map((v, i) => v ? { score: v, par: pars[i] } : null).filter(Boolean) as { score: number; par: number }[];
-    if (played.length === 0) return null;
-    const totalPar18 = pars.reduce((a, b) => a + b, 0);
-    const avgDiffPerHole = played.reduce((a, h) => a + (h.score - h.par), 0) / played.length;
-    const projectedScore = Math.round(totalPar18 + avgDiffPerHole * 18);
-    const projectedRel = Math.round(avgDiffPerHole * 18);
-    return { projectedScore, projectedRel, holesPlayed: played.length };
-  };
-
-  // ── Home screen ────────────────────────────────────────────────────────────
-  if (!activeGame) {
-    return (
-      <div className="glass-panel" style={{ padding: '2rem', maxWidth: '700px', margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ marginBottom: '0.5rem' }}>⛳ Golf Score Tracker</h2>
-        <p style={{ color: 'var(--muted)', marginBottom: '2rem', fontSize: '0.9rem' }}>
-          4 players · 18 holes · auto totals &nbsp;|&nbsp; sync: <span style={{ textTransform: 'uppercase' }}>{authMode}</span>
-        </p>
-        <button className="btn btn-primary" onClick={createGame} style={{ padding: '0.75rem 2rem', fontSize: '1.1rem', marginBottom: '2rem' }}>
-          + New Round
-        </button>
-        {games.length > 0 && (
-          <div style={{ textAlign: 'left' }}>
-            <h3 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--surface-border)', paddingBottom: '0.5rem', fontSize: '1rem', opacity: 0.7 }}>PREVIOUS ROUNDS</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {games.map(g => (
-                <div key={g.id} className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem' }}>
-                  <div>
-                    <strong>{g.courseName}</strong>
-                    <div style={{ fontSize: '0.8rem', opacity: 0.5 }}>{new Date(g.date).toLocaleDateString()}</div>
-                  </div>
-                  <button className="btn btn-secondary" style={{ fontSize: '0.85rem' }} onClick={() => setActiveGameId(g.id)}>Resume →</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+  return (
+    <section className="tl-card animate-fade-in">
+      <h2>New round</h2>
+      <p className="tl-sub">Every hole starts as par 4 — change it on each hole as you play.</p>
+      <span className="tl-label">Course</span>
+      <input value={course} onChange={e => setCourse(e.target.value)} placeholder="e.g. Hermann Park" />
+      <span className="tl-label">Holes</span>
+      <div className="tl-seg" role="group" aria-label="Holes">
+        {([9, 18] as const).map(h => <button key={h} aria-pressed={holes === h} onClick={() => setHoles(h)}>{h} holes</button>)}
       </div>
+      <span className="tl-label">Players</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+        {names.map((n, i) => (
+          <div key={i} className="tl-row">
+            <input value={n} onChange={e => setNames(names.map((x, j) => (j === i ? e.target.value : x)))} placeholder={`Player ${i + 1}`} aria-label={`Player ${i + 1} name`} style={{ flex: 1 }} />
+            <button className="tl-icon-btn" onClick={() => setNames(names.filter((_, j) => j !== i))} disabled={names.length <= 1} aria-label={`Remove player ${i + 1}`}>✕</button>
+          </div>
+        ))}
+        {names.length < MAX_PLAYERS && <button className="btn btn-secondary" onClick={() => setNames([...names, ''])}>+ Add player</button>}
+      </div>
+      <div className="tl-row" style={{ marginTop: '1.25rem' }}>
+        {onCancel && <button className="btn btn-secondary tl-btn" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>}
+        <button className="btn btn-primary tl-btn" style={{ flex: 2 }} onClick={start}>Tee off ⛳</button>
+      </div>
+    </section>
+  );
+}
+
+export default function GolfTrackerTool() {
+  const { confirm, popup } = useSitePopup();
+  const { games, save, mode, saveState } = useRounds();
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [settingUp, setSettingUp] = useState(false);
+  const [hole, setHole] = useState(0);
+  const [view, setView] = useState<'hole' | 'card'>('hole');
+
+  if (!games) return <section className="tl-card"><p className="tl-muted" style={{ margin: 0 }}>Loading rounds…</p>{popup}</section>;
+  const game = games.find(g => g.id === activeId) || null;
+
+  const open = (g: GolfGame) => { setActiveId(g.id); setHole(nextHole(g)); setView('hole'); setSettingUp(false); };
+  const update = (g: GolfGame) => save(games.map(x => (x.id === g.id ? g : x)));
+
+  // ── Rounds list / setup ───────────────────────────────────────────────────
+  if (!game) {
+    if (settingUp || games.length === 0) {
+      return <>{<Setup onStart={g => { save([g, ...games]); open(g); }} onCancel={games.length ? () => setSettingUp(false) : undefined} />}{popup}</>;
+    }
+    return (
+      <section className="tl-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+          <div>
+            <h2>⛳ Golf scores</h2>
+            <div className="tl-muted" style={{ fontSize: '0.85rem' }}>{mode === 'server' ? 'Saved on the server' : 'Saved on this device'}</div>
+          </div>
+          <button className="btn btn-primary tl-btn" onClick={() => setSettingUp(true)}>+ New round</button>
+        </div>
+        {games.map(g => {
+          const leader = g.players.map(p => ({ p, s: summarize(p, g.pars) })).filter(x => x.s.played).sort((a, b) => a.s.toPar - b.s.toPar)[0];
+          return (
+            <button key={g.id} className="tl-round" onClick={() => open(g)}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <strong style={{ display: 'block' }}>{g.courseName}</strong>
+                <span className="tl-muted" style={{ fontSize: '0.82rem' }}>
+                  {new Date(g.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} · {g.pars.length} holes · {g.players.map(p => p.name).join(', ')}
+                </span>
+              </span>
+              {leader && <span className={toParClass(leader.s.toPar)} style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{leader.p.name.split(' ')[0]} {formatToPar(leader.s.toPar)}</span>}
+              <span className="tl-muted" aria-hidden>›</span>
+            </button>
+          );
+        })}
+        {popup}
+      </section>
     );
   }
 
-  // ── Scorecard view ──────────────────────────────────────────────────────────
-  const g = activeGame;
-  const totalPar = sum(g.pars, 0, 18);
-  const frontPar = sum(g.pars, 0, 9);
-  const backPar = sum(g.pars, 9, 18);
+  // ── Round ─────────────────────────────────────────────────────────────────
+  const holes = game.pars.length;
+  const par = game.pars[hole];
+  const setPar = (p: number) => update({ ...game, pars: game.pars.map((x, i) => (i === hole ? p : x)) });
+  const setScore = (pi: number, s: number | null) => update({ ...game, players: game.players.map((p, i) => (i === pi ? { ...p, scores: p.scores.map((x, h) => (h === hole ? s : x)) } : p)) });
+  const bump = (pi: number, delta: number) => {
+    const current = game.players[pi].scores[hole];
+    // First tap starts at par, so most holes take one tap.
+    setScore(pi, current === null ? par + (delta > 0 ? 0 : -1) : Math.min(15, Math.max(1, current + delta)));
+  };
+  const remove = async () => {
+    if (!(await confirm({ title: 'Delete round?', message: `Delete ${game.courseName} (${new Date(game.date).toLocaleDateString()})?`, confirmLabel: 'Delete', danger: true }))) return;
+    save(games.filter(g => g.id !== game.id));
+    setActiveId(null);
+  };
+  const leaderboard = game.players.map((p, i) => ({ p, i, s: summarize(p, game.pars) })).sort((a, b) => (a.s.played ? a.s.toPar : 99) - (b.s.played ? b.s.toPar : 99));
+  const nine = holes === 18 ? [[0, 9, 'Out'], [9, 18, 'In']] as const : [[0, 9, 'Total']] as const;
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto' }}>
-      {/* Header */}
-      <div className="glass-panel" style={{ padding: '1rem 1.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-        <button className="btn btn-secondary" style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem', flexShrink: 0 }} onClick={() => setActiveGameId(null)}>← Back</button>
-        <input
-          value={g.courseName}
-          onChange={e => updateGame({ ...g, courseName: e.target.value })}
-          style={{ flex: 1, minWidth: '120px', background: 'transparent', border: 'none', borderBottom: '2px dashed var(--surface-border)', fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--foreground)', textAlign: 'center', outline: 'none' }}
-        />
-        <div style={{ fontSize: '0.8rem', opacity: 0.5, flexShrink: 0 }}>{new Date(g.date).toLocaleDateString()}</div>
-        <button
-          className="btn btn-secondary"
-          style={{ color: '#fc8181', fontSize: '0.8rem', padding: '0.4rem 0.75rem', flexShrink: 0 }}
-          onClick={() => { if (confirm('Delete this round?')) { saveGames(games.filter(x => x.id !== g.id)); setActiveGameId(null); } }}
-        >Delete</button>
-      </div>
-
-      {/* Player name editors */}
-      <div className="glass-panel" style={{ padding: '1rem 1.5rem', marginBottom: '1rem' }}>
-        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.5, marginBottom: '0.75rem', letterSpacing: '0.05em' }}>Player Names</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.5rem' }}>
-          {g.players.map((p, pi) => (
-            <input
-              key={pi}
-              value={p.name}
-              onChange={e => {
-                const players = g.players.map((pl, i) => i === pi ? { ...pl, name: e.target.value } : pl);
-                updateGame({ ...g, players });
-              }}
-              style={{ background: 'var(--input-bg)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '0.5rem 0.75rem', color: 'var(--foreground)', fontWeight: 600 }}
-            />
-          ))}
+    <>
+      <section className="tl-card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button className="tl-icon-btn" onClick={() => setActiveId(null)} aria-label="All rounds">‹</button>
+          <input value={game.courseName} onChange={e => update({ ...game, courseName: e.target.value })} aria-label="Course name" style={{ flex: 1, fontWeight: 700, fontSize: '1.05rem' }} />
+          <button className="tl-icon-btn" onClick={remove} aria-label="Delete round" style={{ color: 'var(--danger)' }}>🗑</button>
         </div>
-      </div>
+        <div className="tl-muted" style={{ fontSize: '0.78rem', marginTop: '0.4rem', textAlign: 'right' }}>
+          {mode === 'server' ? (saveState === 'saving' ? 'Saving…' : saveState === 'error' ? '⚠️ Not saved — check your connection' : 'Saved') : 'Saved on this device'}
+        </div>
+        <div className="tl-seg" role="group" aria-label="View" style={{ marginTop: '0.6rem' }}>
+          <button aria-pressed={view === 'hole'} onClick={() => setView('hole')}>Hole by hole</button>
+          <button aria-pressed={view === 'card'} onClick={() => setView('card')}>Scorecard</button>
+        </div>
+      </section>
 
-      {/* Scorecard — hole cards stacked vertically, mobile friendly */}
-      {[{ label: 'FRONT 9', holes: [0,1,2,3,4,5,6,7,8], parTotal: frontPar },
-        { label: 'BACK 9', holes: [9,10,11,12,13,14,15,16,17], parTotal: backPar }].map(section => (
-        <div key={section.label} className="glass-panel" style={{ padding: '1rem 1.5rem', marginBottom: '1rem' }}>
-          <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.5, marginBottom: '1rem', letterSpacing: '0.05em' }}>{section.label} — Par {section.parTotal}</div>
-          
-          {/* Table: rows are holes, columns are par + players */}
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-              <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.05)' }}>
-                  <th style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', textAlign: 'left', minWidth: '50px' }}>Hole</th>
-                  <th style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', color: 'var(--accent-light)', minWidth: '60px' }}>Par</th>
-                  {g.players.map((p, pi) => (
-                    <th key={pi} style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', minWidth: '80px' }}>{p.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {section.holes.map(hi => {
-                  const holeNum = hi + 1;
-                  const par = g.pars[hi];
-                  return (
-                    <tr key={hi} style={{ background: hi % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
-                      {/* Hole # */}
-                      <td style={{ padding: '0.4rem 0.75rem', border: '1px solid var(--surface-border)', fontWeight: 600, opacity: 0.7 }}>{holeNum}</td>
-
-                      {/* Par input */}
-                      <td style={{ padding: '0.2rem', border: '1px solid var(--surface-border)' }}>
-                        <input
-                          type="number"
-                          value={par || ''}
-                          onChange={e => {
-                            const pars = [...g.pars]; pars[hi] = parseInt(e.target.value) || 0;
-                            updateGame({ ...g, pars });
-                          }}
-                          style={{ width: '100%', background: 'none', border: 'none', color: 'var(--accent-light)', textAlign: 'center', fontWeight: 'bold', padding: '0.6rem 0', fontSize: '0.95rem' }}
-                        />
-                      </td>
-
-                      {/* Player scores */}
-                      {g.players.map((p, pi) => {
-                        const score = p.scores[hi];
-                        const diff = score && par ? score - par : null;
-                        const bgColor = diff === null ? 'transparent'
-                          : diff <= -2 ? 'rgba(66,153,225,0.25)'  // eagle or better
-                          : diff === -1 ? 'rgba(104,211,145,0.2)' // birdie
-                          : diff === 0 ? 'transparent'             // par
-                          : diff === 1 ? 'rgba(252,129,129,0.2)'  // bogey
-                          : 'rgba(229,62,62,0.25)';               // double+
-                        return (
-                          <td key={pi} style={{ padding: '0.2rem', border: '1px solid var(--surface-border)', background: bgColor }}>
-                            <input
-                              type="number"
-                              value={score || ''}
-                              onChange={e => {
-                                const players = g.players.map((pl, i) => {
-                                  if (i !== pi) return pl;
-                                  const scores = [...pl.scores]; scores[hi] = parseInt(e.target.value) || null;
-                                  return { ...pl, scores };
-                                });
-                                updateGame({ ...g, players });
-                              }}
-                              placeholder="—"
-                              style={{ width: '100%', background: 'none', border: 'none', color: 'var(--foreground)', textAlign: 'center', padding: '0.6rem 0', fontSize: '0.95rem' }}
-                            />
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-
-                {/* Section subtotal row */}
-                <tr style={{ background: 'rgba(255,255,255,0.07)', fontWeight: 'bold' }}>
-                  <td style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', fontSize: '0.8rem', opacity: 0.6 }}>SUBTOTAL</td>
-                  <td style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', color: 'var(--accent-light)', textAlign: 'center' }}>{section.parTotal}</td>
-                  {g.players.map((p, pi) => {
-                    const sub = sum(p.scores, section.holes[0], section.holes[section.holes.length - 1] + 1);
-                    const subPar = sum(g.pars, section.holes[0], section.holes[section.holes.length - 1] + 1);
-                    const rel = sub ? sub - subPar : 0;
-                    return (
-                      <td key={pi} style={{ padding: '0.6rem 0.75rem', border: '1px solid var(--surface-border)', textAlign: 'center' }}>
-                        {sub || '—'}
-                        {sub > 0 && <span style={{ marginLeft: '0.3rem', fontSize: '0.75rem', color: relColor(rel) }}>({fmtRel(rel)})</span>}
-                      </td>
-                    );
-                  })}
-                </tr>
-              </tbody>
-            </table>
+      {view === 'hole' ? (
+        <section className="tl-card">
+          <div className="tl-hole-head">
+            <button className="tl-icon-btn" onClick={() => setHole(h => Math.max(0, h - 1))} disabled={hole === 0} aria-label="Previous hole">‹</button>
+            <div className="tl-hole-num">
+              <span className="tl-muted" style={{ fontSize: '0.8rem' }}>Hole</span>
+              <strong>{hole + 1}<span className="tl-muted" style={{ fontSize: '1rem', fontWeight: 400 }}> / {holes}</span></strong>
+            </div>
+            <button className="tl-icon-btn" onClick={() => setHole(h => Math.min(holes - 1, h + 1))} disabled={hole === holes - 1} aria-label="Next hole">›</button>
           </div>
-        </div>
-      ))}
+          <div className="tl-seg" role="group" aria-label="Par for this hole" style={{ margin: '0.9rem 0 1rem' }}>
+            {[3, 4, 5, 6].map(p => <button key={p} aria-pressed={par === p} onClick={() => setPar(p)}>Par {p}</button>)}
+          </div>
 
-      {/* Grand totals */}
-      <div className="glass-panel" style={{ padding: '1rem 1.5rem', marginBottom: '2rem' }}>
-        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em', marginBottom: '1rem' }}>ROUND TOTALS — Par {totalPar}</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
-          {g.players.map((p, pi) => {
-            const total = sum(p.scores, 0, 18);
-            const rel = relScore(p.scores, g.pars);
-            const proj = projected(p.scores, g.pars);
-            const holesLeft = 18 - (proj?.holesPlayed ?? 0);
+          {game.players.map((p, pi) => {
+            const s = p.scores[hole];
+            const sum = summarize(p, game.pars);
+            const name = scoreName(s, par);
             return (
-              <div key={pi} style={{ background: 'var(--input-bg)', padding: '1rem', borderRadius: '10px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '0.4rem' }}>{p.name}</div>
-                {/* Actual total */}
-                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', fontFamily: 'monospace' }}>{total || '—'}</div>
-                {total > 0 && (
-                  <div style={{ fontSize: '0.9rem', color: relColor(rel), fontWeight: 600 }}>{fmtRel(rel)}</div>
-                )}
-                {/* Projected */}
-                {proj && holesLeft > 0 && (
-                  <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--surface-border)', fontSize: '0.78rem' }}>
-                    <div style={{ opacity: 0.5, marginBottom: '0.2rem' }}>Projected ({holesLeft} left)</div>
-                    <div style={{ fontWeight: 600, fontFamily: 'monospace', color: relColor(proj.projectedRel) }}>
-                      ~{proj.projectedScore} ({fmtRel(proj.projectedRel)})
-                    </div>
-                  </div>
-                )}
+              <div key={pi} className="tl-player">
+                <div className="tl-player-name">
+                  <strong>{p.name}</strong>
+                  <span className={sum.played ? toParClass(sum.toPar) : ''}>{sum.played ? `${formatToPar(sum.toPar)} thru ${sum.played}` : 'No score yet'}</span>
+                </div>
+                <button className="tl-score-btn" onClick={() => bump(pi, -1)} aria-label={`${p.name}: one fewer stroke`}>−</button>
+                <div className="tl-score" aria-live="polite">
+                  <strong>{s ?? '–'}</strong>
+                  <span className={s ? toParClass(s - par) : 'tl-muted'}>{name ? name[0].toUpperCase() + name.slice(1) : 'tap +'}</span>
+                </div>
+                <button className="tl-score-btn" onClick={() => bump(pi, 1)} aria-label={`${p.name}: one more stroke`}>+</button>
               </div>
             );
           })}
-        </div>
-      </div>
-    </div>
+
+          {hole < holes - 1 ? (
+            <button className="btn btn-primary tl-btn tl-btn-block" style={{ marginTop: '1rem' }} onClick={() => setHole(hole + 1)}>Next hole ›</button>
+          ) : (
+            <button className="btn btn-primary tl-btn tl-btn-block" style={{ marginTop: '1rem' }} onClick={() => setView('card')}>See the scorecard</button>
+          )}
+        </section>
+      ) : (
+        <section className="tl-card">
+          <div className="tl-card-scroll">
+            <table className="tl-scorecard">
+              <thead>
+                <tr>
+                  <th scope="col">Hole</th>
+                  {game.pars.map((_, h) => <th key={h} scope="col">{h + 1}</th>)}
+                  {nine.map(([, , label]) => <th key={label} scope="col" className="is-total">{label}</th>)}
+                  {holes === 18 && <th scope="col" className="is-total">Tot</th>}
+                </tr>
+                <tr>
+                  <th scope="row">Par</th>
+                  {game.pars.map((p, h) => <td key={h} className="tl-muted">{p}</td>)}
+                  {nine.map(([from, to, label]) => <td key={label} className="is-total">{game.pars.slice(from, to).reduce((a, b) => a + b, 0)}</td>)}
+                  {holes === 18 && <td className="is-total">{game.pars.reduce((a, b) => a + b, 0)}</td>}
+                </tr>
+              </thead>
+              <tbody>
+                {game.players.map((p, pi) => {
+                  const total = summarize(p, game.pars);
+                  return (
+                    <tr key={pi}>
+                      <th scope="row" title={p.name}>{p.name}</th>
+                      {p.scores.map((s, h) => {
+                        const name = scoreName(s, game.pars[h]);
+                        return (
+                          <td key={h} className={name ? CELL_CLASS[name] : ''}>
+                            <button onClick={() => { setHole(h); setView('hole'); }} aria-label={`${p.name}, hole ${h + 1}: ${s ?? 'no score'}`}>{s ?? '·'}</button>
+                          </td>
+                        );
+                      })}
+                      {nine.map(([from, to, label]) => { const s = summarize(p, game.pars, from, to); return <td key={label} className="is-total">{s.played ? s.strokes : '–'}</td>; })}
+                      {holes === 18 && <td className="is-total">{total.played ? total.strokes : '–'}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="tl-muted" style={{ fontSize: '0.78rem', margin: '0.5rem 0 0' }}>Tap a score to edit that hole. Green = birdie, blue = eagle, red = bogey or worse.</p>
+        </section>
+      )}
+
+      <section className="tl-card">
+        <span className="tl-label">Leaderboard</span>
+        {leaderboard.map(({ p, i, s }, rank) => (
+          <div key={i} className="tl-result" style={{ marginTop: rank ? '0.4rem' : 0 }}>
+            <span>{s.played ? `${rank + 1}. ` : ''}{p.name}</span>
+            <span style={{ textAlign: 'right' }}>
+              <strong className={s.played ? toParClass(s.toPar) : 'tl-muted'}>{s.played ? formatToPar(s.toPar) : '–'}</strong>
+              <span className="tl-muted" style={{ display: 'block', fontSize: '0.78rem' }}>
+                {s.played ? `${s.strokes} strokes · thru ${s.played}${s.projected ? ` · on pace for ${s.projected}` : ''}` : 'not started'}
+              </span>
+            </span>
+          </div>
+        ))}
+      </section>
+      {popup}
+    </>
   );
 }

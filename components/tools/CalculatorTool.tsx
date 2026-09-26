@@ -1,212 +1,144 @@
 'use client';
 
 import { useState } from 'react';
+import { CATEGORIES, convert, formatNumber } from '@/lib/tools/units';
 
-// === calculators/UnitConverter.tsx (Mocked inline for structural simplicity) ===
-const UnitConverter = () => {
-  const [value, setValue] = useState<string>('');
-  const [fromUnit, setFromUnit] = useState<string>('celsius');
-  const [toUnit, setToUnit] = useState<string>('fahrenheit');
+const num = (s: string) => { const n = parseFloat(s.replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+const money = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-  const conversions: Record<string, Record<string, (v: number) => number>> = {
-    // Temperature
-    celsius: {
-      fahrenheit: (c) => (c * 9) / 5 + 32,
-      kelvin: (c) => c + 273.15,
-      celsius: (c) => c
-    },
-    fahrenheit: {
-      celsius: (f) => ((f - 32) * 5) / 9,
-      kelvin: (f) => ((f - 32) * 5) / 9 + 273.15,
-      fahrenheit: (f) => f
-    },
-    kelvin: {
-      celsius: (k) => k - 273.15,
-      fahrenheit: (k) => ((k - 273.15) * 9) / 5 + 32,
-      kelvin: (k) => k
-    },
+/** Enter a value once, see it in every unit of the category. */
+function UnitConverter() {
+  const [catId, setCatId] = useState('length');
+  const category = CATEGORIES.find(c => c.id === catId)!;
+  const [from, setFrom] = useState('ft');
+  const [value, setValue] = useState('1');
+  const unit = category.units.find(u => u.id === from) || category.units[0];
+  const v = num(value);
 
-    // Length
-    meters: {
-      feet: (m) => m * 3.28084,
-      inches: (m) => m * 39.3701,
-      miles: (m) => m * 0.000621371,
-      meters: (m) => m
-    },
-    feet: {
-      meters: (f) => f / 3.28084,
-      inches: (f) => f * 12,
-      miles: (f) => f / 5280,
-      feet: (f) => f
-    },
-    inches: {
-      meters: (i) => i / 39.3701,
-      feet: (i) => i / 12,
-      miles: (i) => i / 63360,
-      inches: (i) => i
-    },
-    miles: {
-      meters: (m) => m / 0.000621371,
-      feet: (m) => m * 5280,
-      inches: (m) => m * 63360,
-      miles: (m) => m
-    },
-
-    // Weight
-    kilograms: {
-      pounds: (kg) => kg * 2.20462,
-      ounces: (kg) => kg * 35.274,
-      kilograms: (kg) => kg
-    },
-    pounds: {
-      kilograms: (lb) => lb / 2.20462,
-      ounces: (lb) => lb * 16,
-      pounds: (lb) => lb
-    },
-    ounces: {
-      kilograms: (oz) => oz / 35.274,
-      pounds: (oz) => oz / 16,
-      ounces: (oz) => oz
-    }
+  const pickCategory = (id: string) => {
+    const next = CATEGORIES.find(c => c.id === id)!;
+    setCatId(id);
+    setFrom(next.units[Math.min(2, next.units.length - 1)].id);
   };
-
-  const getCategories = () => {
-    return [
-      {
-        name: 'Temperature',
-        units: ['celsius', 'fahrenheit', 'kelvin']
-      },
-      {
-        name: 'Length',
-        units: ['meters', 'feet', 'inches', 'miles']
-      },
-      {
-        name: 'Weight / Mass',
-        units: ['kilograms', 'pounds', 'ounces']
-      }
-    ];
-  };
-
-  const handleFromChange = (newFrom: string) => {
-    setFromUnit(newFrom);
-    // Align categories if switching across types
-    const cat = getCategories().find(c => c.units.includes(newFrom));
-    if (cat && !cat.units.includes(toUnit)) {
-      setToUnit(cat.units.find(u => u !== newFrom) || cat.units[0]);
-    }
-  };
-
-  // Convert
-  const numValue = parseFloat(value);
-  let result = '';
-  if (!isNaN(numValue) && conversions[fromUnit]?.[toUnit]) {
-    const val = conversions[fromUnit][toUnit](numValue);
-    // Round to 4 decimal places
-    result = Math.round(val * 10000) / 10000 + '';
-  }
 
   return (
-    <div style={{ padding: '1rem', maxWidth: '600px', margin: '0 auto' }}>
-      <p style={{ textAlign: 'center', marginBottom: '2rem', color: 'var(--muted)' }}>
-        Interactively convert length, weight, and temperature measurements.
-      </p>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <div className="converter-grid">
-          
-          {/* FROM */}
-          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <label style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--accent-light)', letterSpacing: '0.05em', fontWeight: 600 }}>Convert From</label>
-            <input 
-              type="number" 
-              value={value} 
-              onChange={e => setValue(e.target.value)} 
-              placeholder="0"
-              style={{ fontSize: '2rem', background: 'transparent', border: 'none', borderBottom: '2px solid var(--surface-border)', padding: '0.5rem 0', color: 'var(--foreground)', width: '100%' }}
-            />
-            <select 
-              value={fromUnit} 
-              onChange={e => handleFromChange(e.target.value)}
-              style={{ background: 'var(--input-bg)', border: '1px solid var(--surface-border)', padding: '0.75rem', borderRadius: '8px', color: 'var(--foreground)' }}
-            >
-              {getCategories().map(cat => (
-                <optgroup key={cat.name} label={cat.name}>
-                  {cat.units.map(u => <option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>)}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-secondary converter-swap"
-            aria-label="Swap units"
-            title="Swap units"
-            onClick={() => {
-              const from = fromUnit;
-              setFromUnit(toUnit);
-              setToUnit(from);
-              if (result) setValue(result);
-            }}
-          >
-            ⇄
-          </button>
-
-          {/* TO */}
-          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <label style={{ fontSize: '0.85rem', textTransform: 'uppercase', color: 'var(--accent-light)', letterSpacing: '0.05em', fontWeight: 600 }}>Convert To</label>
-            <input 
-              type="text" 
-              value={result} 
-              readOnly 
-              placeholder="0"
-              style={{ fontSize: '2rem', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', padding: '0.5rem 0', color: 'var(--foreground)', width: '100%', opacity: result ? 1 : 0.5 }}
-            />
-            <select 
-              value={toUnit} 
-              onChange={e => setToUnit(e.target.value)}
-              style={{ background: 'var(--input-bg)', border: '1px solid var(--surface-border)', padding: '0.75rem', borderRadius: '8px', color: 'var(--foreground)' }}
-            >
-              {getCategories().find(c => c.units.includes(fromUnit))?.units.map(u => (
-                <option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>
-              )) || <option value="">---</option>}
-            </select>
-          </div>
-
-        </div>
+    <>
+      <div className="tl-chips is-scroll" role="group" aria-label="Measure">
+        {CATEGORIES.map(c => <button key={c.id} className="tl-chip" aria-pressed={c.id === catId} onClick={() => pickCategory(c.id)}>{c.label}</button>)}
       </div>
-    </div>
-  );
-};
 
-// === Main Calculator Sub-Dashboard ===
-export default function CalculatorTool() {
-  const [activeCalc, setActiveCalc] = useState<'unit'>('unit');
+      <span className="tl-label">Convert</span>
+      <div className="tl-row">
+        <input className="tl-big-input" style={{ flex: 1 }} inputMode="decimal" value={value} onChange={e => setValue(e.target.value)} aria-label="Value" />
+        <select value={unit.id} onChange={e => setFrom(e.target.value)} aria-label="From unit" style={{ width: 'auto', maxWidth: '45%' }}>
+          {category.units.map(u => <option key={u.id} value={u.id}>{u.label}</option>)}
+        </select>
+      </div>
 
-  return (
-    <div className="glass-panel tool-panel">
-      <h2 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Calculators</h2>
-      
-      {/* Sub-nav for growing calculators list */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginBottom: '2rem' }}>
-        {[
-          { id: 'unit', label: 'Unit Converter' },
-          // Easily add new calculators here
-        ].map(calc => (
-          <button
-            key={calc.id}
-            className={`btn ${activeCalc === calc.id ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setActiveCalc(calc.id as any)}
-            style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-          >
-            {calc.label}
+      <div className="tl-results" aria-live="polite">
+        {category.units.filter(u => u.id !== unit.id).map(u => (
+          <button key={u.id} className="tl-result" style={{ cursor: 'pointer', font: 'inherit', color: 'inherit', textAlign: 'left' }}
+            title={`Convert from ${u.label} instead`}
+            onClick={() => { if (v !== null) setValue(formatNumber(convert(v, category, unit.id, u.id)).replace(/,/g, '')); setFrom(u.id); }}>
+            <span className="tl-muted">{u.label}</span>
+            <strong>{v === null ? '—' : `${formatNumber(convert(v, category, unit.id, u.id))} ${u.short}`}</strong>
           </button>
         ))}
       </div>
+      <p className="tl-muted" style={{ fontSize: '0.8rem', margin: '0.6rem 0 0' }}>Tap a row to convert from that unit instead.</p>
+    </>
+  );
+}
 
-      <div style={{ minHeight: '350px' }}>
-        {activeCalc === 'unit' && <UnitConverter />}
+/** Bill + tip, split between people. */
+function TipSplit() {
+  const [bill, setBill] = useState('');
+  const [tip, setTip] = useState(20);
+  const [custom, setCustom] = useState('');
+  const [people, setPeople] = useState(2);
+  const [roundUp, setRoundUp] = useState(false);
+  const b = num(bill);
+  const pct = custom !== '' ? num(custom) ?? 0 : tip;
+
+  let perPerson = b !== null ? (b * (1 + pct / 100)) / people : null;
+  if (perPerson !== null && roundUp) perPerson = Math.ceil(perPerson);
+  const total = perPerson !== null ? perPerson * people : null;
+  const tipAmount = total !== null && b !== null ? total - b : null;
+
+  return (
+    <>
+      <span className="tl-label">Bill</span>
+      <input className="tl-big-input" inputMode="decimal" placeholder="$0.00" value={bill} onChange={e => setBill(e.target.value.replace(/[^0-9.,]/g, ''))} aria-label="Bill amount" />
+
+      <span className="tl-label">Tip</span>
+      <div className="tl-chips">
+        {[15, 18, 20, 22, 25].map(p => (
+          <button key={p} className="tl-chip" aria-pressed={custom === '' && tip === p} onClick={() => { setTip(p); setCustom(''); }}>{p}%</button>
+        ))}
+        <input inputMode="decimal" placeholder="Other %" value={custom} onChange={e => setCustom(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="Custom tip percent" style={{ width: '6.5rem', minHeight: 40, borderRadius: 999 }} />
       </div>
+
+      <div className="tl-grid-2" style={{ marginTop: '1rem', alignItems: 'end' }}>
+        <div>
+          <span className="tl-label" style={{ marginTop: 0 }}>People</span>
+          <div className="tl-stepper">
+            <button className="tl-icon-btn" onClick={() => setPeople(p => Math.max(1, p - 1))} disabled={people <= 1} aria-label="Fewer people">−</button>
+            <output aria-live="polite">{people}</output>
+            <button className="tl-icon-btn" onClick={() => setPeople(p => Math.min(50, p + 1))} aria-label="More people">+</button>
+          </div>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minHeight: 44, cursor: 'pointer' }}>
+          <input type="checkbox" checked={roundUp} onChange={e => setRoundUp(e.target.checked)} /> Round up each share
+        </label>
+      </div>
+
+      <div className="tl-results" aria-live="polite">
+        <div className="tl-result is-main"><span>{people > 1 ? 'Each person pays' : 'Total'}</span><strong>{perPerson === null ? '—' : money(perPerson)}</strong></div>
+        {people > 1 && <div className="tl-result"><span className="tl-muted">Total</span><strong>{total === null ? '—' : money(total)}</strong></div>}
+        <div className="tl-result"><span className="tl-muted">Tip{roundUp ? ' (after rounding)' : ''}</span><strong>{tipAmount === null ? '—' : money(tipAmount)}</strong></div>
+      </div>
+    </>
+  );
+}
+
+/** The three percentage questions people actually ask. */
+function Percentages() {
+  const [a, setA] = useState({ x: '15', y: '80' });
+  const [b, setB] = useState({ x: '12', y: '48' });
+  const [c, setC] = useState({ x: '80', y: '100' });
+  const field = (value: string, onChange: (v: string) => void, label: string) => (
+    <input inputMode="decimal" value={value} onChange={e => onChange(e.target.value)} aria-label={label} style={{ width: '5.5rem', textAlign: 'center', fontWeight: 700 }} />
+  );
+  const out = (n: number | null, suffix = '') => <strong style={{ fontSize: '1.2rem' }}>{n === null || !Number.isFinite(n) ? '—' : `${formatNumber(n)}${suffix}`}</strong>;
+  const row: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', padding: '0.8rem 0.9rem', borderRadius: 12, background: 'var(--input-bg)', border: '1px solid var(--surface-border)' };
+  const ax = num(a.x), ay = num(a.y), bx = num(b.x), by = num(b.y), cx = num(c.x), cy = num(c.y);
+  const change = cx !== null && cy !== null && cx !== 0 ? ((cy - cx) / Math.abs(cx)) * 100 : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+      <div style={row}>What is {field(a.x, x => setA({ ...a, x }), 'Percent')} % of {field(a.y, y => setA({ ...a, y }), 'Number')} ? → {out(ax !== null && ay !== null ? (ax / 100) * ay : null)}</div>
+      <div style={row}>{field(b.x, x => setB({ ...b, x }), 'Part')} is what % of {field(b.y, y => setB({ ...b, y }), 'Whole')} ? → {out(bx !== null && by ? (bx / by) * 100 : null, '%')}</div>
+      <div style={row}>From {field(c.x, x => setC({ ...c, x }), 'Old value')} to {field(c.y, y => setC({ ...c, y }), 'New value')} is → {out(change, '%')} {change !== null && Number.isFinite(change) && <span className="tl-muted">{change >= 0 ? 'increase' : 'decrease'}</span>}</div>
     </div>
+  );
+}
+
+const CALCS = [
+  { id: 'units', label: 'Units' },
+  { id: 'tip', label: 'Tip & split' },
+  { id: 'percent', label: 'Percent' },
+] as const;
+
+export default function CalculatorTool() {
+  const [calc, setCalc] = useState<(typeof CALCS)[number]['id']>('units');
+  return (
+    <section className="tl-card">
+      <div className="tl-seg" role="group" aria-label="Calculator" style={{ marginBottom: '1.1rem' }}>
+        {CALCS.map(c => <button key={c.id} aria-pressed={calc === c.id} onClick={() => setCalc(c.id)}>{c.label}</button>)}
+      </div>
+      {calc === 'units' && <UnitConverter />}
+      {calc === 'tip' && <TipSplit />}
+      {calc === 'percent' && <Percentages />}
+    </section>
   );
 }
