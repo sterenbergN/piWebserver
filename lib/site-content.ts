@@ -16,6 +16,42 @@ export async function getPosts(): Promise<PostMeta[]> {
   }
 }
 
+export type GalleryImage = { src: string; caption: string };
+export type GalleryAlbum = { id: string; name: string; images: GalleryImage[]; albums: GalleryAlbum[] };
+
+/** The photo album tree (read-only; the gallery API creates it on first use). */
+export async function getGalleryAlbums(): Promise<GalleryAlbum[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(process.cwd(), 'public', 'uploads', 'gallery', 'albums.json'), 'utf-8'));
+    const normalise = (a: GalleryAlbum): GalleryAlbum => ({ ...a, images: a.images || [], albums: (a.albums || []).map(normalise) });
+    return Array.isArray(raw) ? raw.map(normalise) : [];
+  } catch {
+    return [];
+  }
+}
+
+export type LibraryDocument = { url: string; name: string; category?: string; note?: string; date?: string };
+
+export async function getLibraryDocuments(): Promise<LibraryDocument[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(process.cwd(), 'public', 'uploads', 'library', 'library.json'), 'utf-8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+export type CadProject = { id: string; name: string; description: string; link: string };
+
+export async function getCadProjects(): Promise<CadProject[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(process.cwd(), 'public', 'content', 'cad.json'), 'utf-8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Public URL of a stored image path, served through the media route. */
 export function mediaUrl(src: string | undefined) {
   if (!src) return undefined;
