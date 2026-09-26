@@ -48,3 +48,22 @@ test('suggestedLiftNames uses the matching preset and omits existing lifts', () 
   assert.deepEqual(names, ['Close-Grip Pulldown', 'Straight-Arm Pulldown']);
   assert.ok(suggestedLiftNames({ name: 'My Machine', type: 'stack' }).includes('Leg Extension'));
 });
+
+test('equipmentLibrary dedupes stations across gyms and skips what the gym already has', async () => {
+  const { equipmentLibrary, copyStation } = await import('./equipment-library');
+  const lift = (id: string, name: string) => ({ id, name, primaryMuscle: 'Chest', secondaryMuscle: 'None', singleArmLeg: false });
+  const gyms = [
+    { id: 'a', name: 'A', ownerId: 'u', stations: [{ id: 's1', name: 'Lat Pulldown', type: 'cable' as const, lifts: [lift('l1', 'Lat Pulldown')] }] },
+    { id: 'b', name: 'B', ownerId: 'u', stations: [
+      { id: 's2', name: 'lat  pulldown', type: 'cable' as const, lifts: [lift('l2', 'Lat Pulldown'), lift('l3', 'Straight-Arm Pulldown')] },
+      { id: 's3', name: 'Squat Rack', type: 'plates' as const, lifts: [] },
+    ] },
+    { id: 'c', name: 'New', ownerId: 'u', stations: [{ id: 's4', name: 'Squat Rack', type: 'plates' as const, lifts: [] }] },
+  ];
+  const lib = equipmentLibrary(gyms, gyms[2]);
+  assert.deepEqual(lib.map((s) => s.id), ['s2']);
+  const copy = copyStation(lib[0], ['l3']);
+  assert.notEqual(copy.id, 's2');
+  assert.deepEqual(copy.lifts.map((l) => l.name), ['Straight-Arm Pulldown']);
+  assert.notEqual(copy.lifts[0].id, 'l3');
+});

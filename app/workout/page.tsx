@@ -18,6 +18,7 @@ interface UserData {
 }
 
 import { calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
+import { newRecordId } from '@/lib/workout/stations';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import BodyweightCard from '@/components/workout/BodyweightCard';
@@ -71,6 +72,11 @@ export default function WorkoutDashboard() {
   const [selectedGym, setSelectedGym] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
+  // "➕ New gym…" in the gym picker: name it here, optionally copy another gym's equipment.
+  const [newGymName, setNewGymName] = useState('');
+  const [newGymCopyFrom, setNewGymCopyFrom] = useState('');
+  const [startingFreestyle, setStartingFreestyle] = useState(false);
+  const [startError, setStartError] = useState('');
   const [isDeload, setIsDeload] = useState(false);
   const [fatiguedMuscles, setFatiguedMuscles] = useState<string[]>([]);
   const [showJoinShared, setShowJoinShared] = useState(false);
@@ -559,11 +565,21 @@ export default function WorkoutDashboard() {
           <select className="workout-input" value={selectedGym} onChange={e => setSelectedGym(e.target.value)}>
             <option value="">-- Choose Gym --</option>
             {availableGyms.map(g => <option key={g.id} value={g.id}>{g.emoji ? g.emoji + ' ' : ''}{g.name}</option>)}
+            {!isDemo && <option value="__new__">➕ New gym…</option>}
           </select>
+          {selectedGym === '__new__' && (
+            <div className="animate-fade-in" style={{ marginBottom: '0.75rem' }}>
+              <input className="workout-input" placeholder="Gym name" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
+              <select className="workout-input" value={newGymCopyFrom} onChange={e => setNewGymCopyFrom(e.target.value)}>
+                <option value="">Start empty — add equipment as I go</option>
+                {availableGyms.map(g => <option key={g.id} value={g.id}>Copy equipment from {g.name} (fix weights later)</option>)}
+              </select>
+            </div>
+          )}
 
           <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Select Workout Type</label>
           <select className="workout-input" value={selectedType} onChange={e => setSelectedType(e.target.value)}>
-             <option value="">-- Choose Type --</option>
+             <option value="">-- Choose Type --{selectedGym ? ' (optional for Build as I go)' : ''}</option>
              {availableTypes.map(t => <option key={t.id} value={t.id}>{t.name} ({t.intensity}%)</option>)}
           </select>
 
@@ -587,8 +603,8 @@ export default function WorkoutDashboard() {
 
           <button 
              className="workout-btn-primary" 
-             disabled={!selectedGym || !selectedType}
-             style={{ opacity: (!selectedGym || !selectedType) ? 0.5 : 1 }}
+             disabled={!selectedGym || selectedGym === '__new__' || !selectedType}
+             style={{ opacity: (!selectedGym || selectedGym === '__new__' || !selectedType) ? 0.5 : 1 }}
              onClick={() => {
                const params = new URLSearchParams({
                  gym: selectedGym,
@@ -603,6 +619,39 @@ export default function WorkoutDashboard() {
           >
             Build & Start
           </button>
+
+          {!isDemo && (
+            <button
+              className="btn btn-secondary"
+              style={{ width: '100%', marginTop: '0.6rem', padding: '0.85rem', borderRadius: '12px' }}
+              disabled={startingFreestyle || !selectedGym || (selectedGym === '__new__' && !newGymName.trim())}
+              onClick={async () => {
+                setStartingFreestyle(true);
+                try {
+                  let gymId = selectedGym;
+                  if (gymId === '__new__') {
+                    const source = availableGyms.find(g => g.id === newGymCopyFrom);
+                    const stations = (source?.stations || []).map((st: any) => ({
+                      ...st, id: newRecordId(), lifts: (st.lifts || []).map((l: any) => ({ ...l, id: newRecordId() })),
+                    }));
+                    const res = await fetch('/api/workout/gyms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newGymName.trim(), emoji: '🏋️', stations }) });
+                    const d = await res.json();
+                    if (!d.success) throw new Error(d.message || 'Could not create the gym');
+                    gymId = d.gym.id;
+                  }
+                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(user?.intensityFactor ?? 1.0) });
+                  if (selectedType) params.set('type', selectedType);
+                  window.location.href = `/workout/active?${params.toString()}`;
+                } catch (err) {
+                  setStartError(err instanceof Error ? err.message : 'Could not start');
+                  setStartingFreestyle(false);
+                }
+              }}
+            >
+              🚶 Build as I go — pick machines while I walk around
+            </button>
+          )}
+          {startError && <p className="workout-error" style={{ marginTop: '0.5rem' }}>{startError}</p>}
 
           <div style={{ marginTop: '0.85rem', borderTop: '1px solid var(--surface-border)', paddingTop: '0.85rem' }}>
             <button

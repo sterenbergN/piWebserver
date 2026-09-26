@@ -5,6 +5,7 @@ import { calcAverage1RM } from '@/lib/workout/analytics';
 import { bestE1RMByLift, detectStalledLifts, findPreviousSameType, restTargetSeconds, warmupSets, workoutVolume } from '@/lib/workout/session-insights';
 import { calculatePlates, getPossibleWeights, snapToPossibleWeight, stepWeight } from '@/lib/workout/equipment';
 import InlineGymEditor from './InlineGymEditor';
+import { AddExerciseForGym } from '@/components/workout/AddExerciseFlow';
 import { useSitePopup } from '@/components/SitePopup';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
@@ -104,6 +105,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
 
    const [showList, setShowList] = useState(false);
    const [showAddLift, setShowAddLift] = useState(false);
+   const [showAddExercise, setShowAddExercise] = useState(false);
    const [showChange, setShowChange] = useState(false);
    const [showSuperset, setShowSuperset] = useState(false);
    const [showLiftHistory, setShowLiftHistory] = useState(false);
@@ -931,6 +933,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                </div>
                <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowList(true)}>List</button>
+                  <button className="btn btn-secondary tracker-topbar-action" aria-label="Add an exercise" title="Add an exercise" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => { setShowList(true); setShowAddExercise(true); }}>＋</button>
                   <button className="btn btn-secondary tracker-topbar-action" style={{ padding: isCompactHeader ? '0.35rem 0.7rem' : '0.5rem 1rem' }} onClick={() => setShowMenu(true)}>Menu</button>
                </div>
             </div>
@@ -1263,7 +1266,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
             <div className="workout-overlay animate-fade-in">
                <div className="workout-overlay-header">
                   <h2>Workout Itinerary</h2>
-                  <button className="workout-close-btn" aria-label="Close" onClick={() => { setShowList(false); setShowAddLift(false); }}>✕</button>
+                  <button className="workout-close-btn" aria-label="Close" onClick={() => { setShowList(false); setShowAddLift(false); setShowAddExercise(false); }}>✕</button>
                </div>
                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
                    {localPlan.lifts.map((l: any, i: number) => {
@@ -1291,8 +1294,33 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       )
                    })}
                </div>
+               {/* Walk-around adding: pick the machine you're at, then the lifts. */}
+               {showAddExercise ? (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <AddExerciseForGym
+                      gymId={localPlan.gymId}
+                      inWorkout={new Set(localPlan.lifts.map((l: any) => l.id))}
+                      onAdd={(entries) => {
+                        const added = entries.map(({ lift, station }) => ({ ...lift, station, gymId: localPlan.gymId, gymName: localPlan.gymName, uniquePlanId: newPlanId() }));
+                        setLocalPlan((prev: any) => ({ ...prev, lifts: [...prev.lifts, ...added] }));
+                        setActiveLiftIndex(localPlan.lifts.length);
+                        setShowAddExercise(false);
+                        setShowList(false);
+                      }}
+                      onCancel={() => setShowAddExercise(false)}
+                    />
+                  </div>
+               ) : !showAddLift && (
+                  <button
+                    className="workout-btn-primary"
+                    style={{ marginBottom: '0.6rem' }}
+                    onClick={() => setShowAddExercise(true)}
+                  >
+                    ＋ Add exercise
+                  </button>
+               )}
                {/* T1: Add Lift button at bottom of list */}
-               {!showAddLift ? (
+               {showAddExercise ? null : !showAddLift ? (
                   <button
                     className="btn btn-secondary"
                     style={{ width: '100%', padding: '0.85rem', borderRadius: '12px', border: '1px dashed var(--accent)', color: 'var(--accent)', marginBottom: '1rem' }}
