@@ -27,6 +27,10 @@
 .resume-skills span { border: 1px solid var(--surface-border); border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.85rem; }
 .resume-empty { color: var(--muted); font-style: italic; font-size: 0.9rem; }
 
+.resume-project-links { display: flex; gap: 1rem; font-size: 0.85rem; }
+.resume-project-links a { color: var(--accent-light, var(--accent)); }
+.resume-updated { margin: 2rem 0 0; font-size: 0.75rem; color: var(--muted); text-align: right; }
+
 @media (max-width: 600px) {
   .resume-sheet { padding: 1.25rem; }
   .resume-sheet h1 { font-size: 1.7rem; }
@@ -40,4 +44,5 @@
     background: #fff; border: none; padding: 0; color: #111;
   }
   .resume-contact a { color: #111; }
+  .resume-project-links { display: none; }
 }

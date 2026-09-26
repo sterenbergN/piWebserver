@@ -450,6 +450,28 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Now: what I'm up to lately (edited in the resume editor) */}
+        {profile.now?.length > 0 && (
+          <section className="premium-card animate-fade-in" style={{ padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Now</h2>
+              {profile.updatedAt && (
+                <span style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                  Updated {new Date(profile.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              {profile.now.map((item, i) => (
+                <div key={i} style={{ borderLeft: '3px solid var(--accent)', paddingLeft: '0.9rem' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-light, var(--accent))' }}>{item.label}</div>
+                  <div style={{ color: 'var(--foreground)', lineHeight: 1.5, marginTop: '0.2rem' }}>{item.text}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Experience & Skills */}
         <section className="grid animate-fade-in" style={{ gridTemplateColumns: isExpExpanded ? '1fr' : 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem', transition: 'grid-template-columns 0.5s' }}>
           {/* Experience card — timeline grows from within */}
@@ -589,8 +611,9 @@ export default function Home() {
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
             {projects.map(project => {
               const color = CATEGORY_COLORS[project.category] || CATEGORY_COLORS.Other;
-              const card = (
-                <div className="premium-card" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem', cursor: project.blogSlug ? 'pointer' : 'default', padding: '2rem' }}>
+              const arrow = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>;
+              return (
+                <div key={project.id} className="premium-card" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '0.5rem' }}>
                     <h3 style={{ color: 'var(--foreground)', fontSize: '1.25rem', lineHeight: 1.3, margin: 0 }}>{project.name}</h3>
                     <span style={{
@@ -599,19 +622,22 @@ export default function Home() {
                     }}>{project.category}</span>
                   </div>
                   <p style={{ fontSize: '0.95rem', color: 'var(--muted)', margin: 0, flex: 1, lineHeight: 1.6 }}>{project.description}</p>
-                  {project.blogSlug ? (
-                    <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent)', fontWeight: 600, fontSize: '0.9rem' }}>
-                      Read Post <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+                  {(project.post || project.albumId) && (
+                    <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '1.25rem', fontWeight: 600, fontSize: '0.9rem' }}>
+                      {project.post && (
+                        <Link href={`/blog/${project.post.slug}`} style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+                          Read write-up {arrow}
+                        </Link>
+                      )}
+                      {project.albumId && (
+                        <Link href={`/gallery?album=${encodeURIComponent(project.albumId)}`} style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+                          Photos {arrow}
+                        </Link>
+                      )}
                     </div>
-                  ) : (
-                    <div style={{ marginTop: '1rem', height: '20px' }}></div>
                   )}
                 </div>
               );
-
-              return project.blogSlug
-                ? <Link href={`/blog/${project.blogSlug}`} key={project.id} style={{ display: 'block', height: '100%', textDecoration: 'none' }}>{card}</Link>
-                : <div key={project.id}>{card}</div>;
             })}
           </div>
         </section>

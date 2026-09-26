@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import ResumeView from '@/components/resume/ResumeView';
-import { PROJECT_CATEGORIES, type ExperienceEntry, type Project, type Resume, type Skill } from '@/lib/resume';
+import { NOW_SUGGESTIONS, PROJECT_CATEGORIES, type ExperienceEntry, type Project, type Resume, type Skill } from '@/lib/resume';
 type Section = 'profile' | 'experience' | 'skills' | 'projects';
 
 const newId = () => `new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -113,6 +113,7 @@ export default function ResumeEditor() {
           <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.9rem' }}>
             Edit it like a resume — the home page and the printable <Link href="/resume" target="_blank" style={{ color: 'var(--accent)' }}>/resume</Link> update when you save.
             {dirty && <strong style={{ color: 'var(--warning)' }}> • Unsaved changes</strong>}
+            {!dirty && resume.profile.updatedAt && <span> · Last saved {new Date(resume.profile.updatedAt).toLocaleString()}</span>}
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -178,6 +179,26 @@ export default function ResumeEditor() {
                 </div>
               ))}
               <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem' }} onClick={() => setProfile({ links: [...resume.profile.links, { label: '', url: '' }] })}>+ Add link</button>
+
+              <label style={label}>Now <span style={{ textTransform: 'none', fontWeight: 400 }}>(home page — what you&apos;re up to lately)</span></label>
+              <datalist id="now-labels">{NOW_SUGGESTIONS.map((n) => <option key={n} value={n} />)}</datalist>
+              {(resume.profile.now || []).map((n, i) => (
+                <div key={i} style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
+                  <input style={{ ...input, flex: '0 0 30%' }} list="now-labels" value={n.label} placeholder="Building" aria-label="Now label"
+                    onChange={(e) => setProfile({ now: resume.profile.now.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
+                  <input style={input} value={n.text} placeholder="A robot arm for the garage" aria-label="Now text"
+                    onChange={(e) => setProfile({ now: resume.profile.now.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)) })} />
+                  <RowControls index={i} count={resume.profile.now.length} name={n.label || 'item'}
+                    onMove={(to) => setProfile({ now: move(resume.profile.now, i, to) })}
+                    onDelete={() => setProfile({ now: resume.profile.now.filter((_, j) => j !== i) })} />
+                </div>
+              ))}
+              {(resume.profile.now || []).length < 6 && (
+                <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem' }}
+                  onClick={() => setProfile({ now: [...(resume.profile.now || []), { label: NOW_SUGGESTIONS[(resume.profile.now || []).length % NOW_SUGGESTIONS.length], text: '' }] })}>
+                  + Add “Now” item
+                </button>
+              )}
             </div>
           )}
 
@@ -284,6 +305,12 @@ export default function ResumeEditor() {
                       </select>
                     </div>
                   </div>
+                  {(p.post || p.albumId) && (
+                    <p className="workout-hint" style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0.5rem 0 0' }}>
+                      Linked: {p.post ? `📝 “${p.post.title}”` : ''}{p.post && p.albumId ? ' · ' : ''}{p.albumId ? '📷 photo album' : ''}
+                      {!p.blogSlug && p.post ? ' (matched by name)' : ''}
+                    </p>
+                  )}
                   <label style={label}>Description</label>
                   <textarea style={{ ...input, minHeight: 60 }} value={p.description} onChange={(e) => setProject(i, { description: e.target.value })} />
                 </div>

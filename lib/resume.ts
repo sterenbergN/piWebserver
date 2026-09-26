@@ -12,7 +12,15 @@ export interface Profile {
   summary: string;      // short paragraph for the printable resume
   skillsIntro: string;  // blurb above the skills on the home page
   links: ResumeLink[];
+  /** "Now" page items, e.g. { label: 'Building', text: 'A robot arm' }. */
+  now: NowItem[];
+  /** Set by the server whenever the resume is saved. */
+  updatedAt?: string;
 }
+
+export interface NowItem { label: string; text: string }
+
+export const NOW_SUGGESTIONS = ['Building', 'Learning', 'Reading', 'Training for', 'Listening to', 'Planning'];
 
 export interface ExperienceEntry {
   id: string;
@@ -35,6 +43,9 @@ export interface Project {
   description: string;
   category: string;
   blogSlug: string;
+  /** Filled in when served: the linked write-up and photo album, if they exist. */
+  post?: { slug: string; title: string };
+  albumId?: string;
 }
 
 export interface Resume {
@@ -57,6 +68,7 @@ export const DEFAULT_PROFILE: Profile = {
     { label: 'GitHub', url: 'https://github.com/sterenbergN/' },
     { label: 'LinkedIn', url: 'https://www.linkedin.com/in/noah-sterenberg' },
   ],
+  now: [],
 };
 
 // ─── Validation ────────────────────────────────────────────────────────────────
@@ -106,6 +118,10 @@ export function normalizeProfile(input: any): Profile {
       .map((l: any) => ({ label: text(l?.label, 40), url: safeUrl(l?.url) }))
       .filter((l: ResumeLink) => l.label && l.url)
       .slice(0, 8),
+    now: (Array.isArray(input?.now) ? input.now : [])
+      .map((n: any) => ({ label: text(n?.label, 30), text: text(n?.text, 200) }))
+      .filter((n: NowItem) => n.label && n.text)
+      .slice(0, 6),
   };
 }
 

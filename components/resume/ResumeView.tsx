@@ -60,9 +60,19 @@ export default function ResumeView({ resume }: { resume: Resume }) {
                 <span className="resume-job-period">{p.category}</span>
               </div>
               {p.description && <p>{p.description}</p>}
+              {(p.post || p.albumId) && (
+                <p className="resume-project-links">
+                  {p.post && <a href={`/blog/${p.post.slug}`}>Write-up</a>}
+                  {p.albumId && <a href={`/gallery?album=${encodeURIComponent(p.albumId)}`}>Photos</a>}
+                </p>
+              )}
             </div>
           ))}
         </section>
+      )}
+
+      {profile.updatedAt && (
+        <p className="resume-updated">Updated {new Date(profile.updatedAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</p>
       )}
     </article>
   );
