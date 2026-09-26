@@ -333,3 +333,44 @@
   z-index: 150;
   cursor: pointer;
 }
+
+/* ─── Equipment picker & quick-add lifts ─────────────────────────────────── */
+.workout-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.workout-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.workout-preset-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.workout-preset-card strong { font-size: 0.85rem; line-height: 1.2; }
+.workout-preset-card span { font-size: 0.7rem; color: var(--muted); }
+.workout-toggle-chip {
+  border: 1px solid var(--surface-border);
+  background: transparent;
+  color: var(--foreground);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.workout-toggle-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.18);
+  font-weight: 600;
+}

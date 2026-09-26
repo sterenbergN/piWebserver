@@ -5,6 +5,9 @@ import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { upsertLift } from '@/lib/workout/stations';
 import StationForm from '@/components/workout/StationForm';
 import LiftForm, { describeLift } from '@/components/workout/LiftForm';
+import EquipmentPicker from '@/components/workout/EquipmentPicker';
+import QuickAddLifts from '@/components/workout/QuickAddLifts';
+import type { EquipmentPreset } from '@/lib/workout/catalog';
 
 interface InlineGymEditorProps {
   gymId: string;
@@ -15,7 +18,9 @@ interface InlineGymEditorProps {
 
 /** Which form is open: a station (existing id or 'new'), or a lift on a station. */
 type EditorTarget =
-  | { kind: 'station'; stationId: string | 'new' }
+  | { kind: 'pick-equipment' }
+  | { kind: 'station'; stationId: string | 'new'; preset?: EquipmentPreset }
+  | { kind: 'quick-lifts'; stationId: string }
   | { kind: 'lift'; stationId: string; liftId: string | 'new' }
   | null;
 
@@ -72,6 +77,11 @@ export default function InlineGymEditor({ gymId, onGymUpdated, onAddLiftToWorkou
     saveGym({ ...gym, stations: gym.stations.map(s => (s.id === station.id ? upsertLift(s, lift) : s)) });
   };
 
+  const addLifts = (station: Station, lifts: Lift[]) => {
+    if (!gym || lifts.length === 0) return;
+    saveGym({ ...gym, stations: gym.stations.map(s => (s.id === station.id ? { ...s, lifts: [...s.lifts, ...lifts] } : s)) });
+  };
+
   if (loading) {
     return <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Loading equipment...</div>;
   }
@@ -106,8 +116,8 @@ export default function InlineGymEditor({ gymId, onGymUpdated, onAddLiftToWorkou
                   <button className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }} onClick={() => setTarget({ kind: 'station', stationId: station.id })}>
                     Edit Equipment
                   </button>
-                  <button className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }} onClick={() => setTarget({ kind: 'lift', stationId: station.id, liftId: 'new' })}>
-                    + Add Lift
+                  <button className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }} onClick={() => setTarget({ kind: 'quick-lifts', stationId: station.id })}>
+                    + Add Lifts
                   </button>
                 </div>
               </div>
@@ -139,15 +149,25 @@ export default function InlineGymEditor({ gymId, onGymUpdated, onAddLiftToWorkou
               {target?.kind === 'lift' && target.stationId === station.id && target.liftId === 'new' && (
                 <LiftForm station={station} saving={saving} onSave={(l) => saveLift(station, l)} onCancel={() => setTarget(null)} />
               )}
+              {target?.kind === 'quick-lifts' && target.stationId === station.id && (
+                <QuickAddLifts station={station} saving={saving} onSave={(lifts) => addLifts(station, lifts)} onCancel={() => setTarget(null)}
+                  onCustom={() => setTarget({ kind: 'lift', stationId: station.id, liftId: 'new' })} />
+              )}
             </>
           )}
         </div>
       ))}
 
-      {target?.kind === 'station' && target.stationId === 'new' ? (
-        <StationForm saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} />
+      {target?.kind === 'pick-equipment' ? (
+        <EquipmentPicker
+          existingNames={gym.stations.map(s => s.name)}
+          onPick={(preset) => setTarget({ kind: 'station', stationId: 'new', preset: preset || undefined })}
+          onCancel={() => setTarget(null)}
+        />
+      ) : target?.kind === 'station' && target.stationId === 'new' ? (
+        <StationForm preset={target.preset} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} />
       ) : (
-        <button className="btn btn-secondary" style={{ width: '100%', padding: '0.85rem', borderRadius: '12px' }} onClick={() => setTarget({ kind: 'station', stationId: 'new' })}>
+        <button className="btn btn-secondary" style={{ width: '100%', padding: '0.85rem', borderRadius: '12px' }} onClick={() => setTarget({ kind: 'pick-equipment' })}>
           + Add Equipment Station
         </button>
       )}

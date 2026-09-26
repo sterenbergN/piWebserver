@@ -6,13 +6,18 @@ import { GYM_EMOJIS, type Gym, type Lift, type Station } from '@/lib/workout/typ
 import { newRecordId, upsertLift } from '@/lib/workout/stations';
 import StationForm from '@/components/workout/StationForm';
 import LiftForm, { describeLift } from '@/components/workout/LiftForm';
+import EquipmentPicker from '@/components/workout/EquipmentPicker';
+import QuickAddLifts from '@/components/workout/QuickAddLifts';
+import { GYM_TEMPLATES, stationsFromTemplate, type EquipmentPreset } from '@/lib/workout/catalog';
 
 type GymDraft = { id: string | null; name: string; emoji: string; isPublic: boolean };
 const EMPTY_GYM_DRAFT: GymDraft = { id: null, name: '', emoji: '🏋️', isPublic: false };
 
 /** Which station/lift form is open inside the active gym. */
 type EditorTarget =
-  | { kind: 'station'; stationId: string | 'new' }
+  | { kind: 'pick-equipment' }
+  | { kind: 'station'; stationId: string | 'new'; preset?: EquipmentPreset }
+  | { kind: 'quick-lifts'; stationId: string }
   | { kind: 'lift'; stationId: string; liftId: string | 'new' }
   | null;
 
@@ -129,6 +134,19 @@ export default function GymEditor() {
   const saveLift = (station: Station, lift: Lift) => {
     if (!activeGym) return;
     saveActiveGym(activeGym.stations.map(s => (s.id === station.id ? upsertLift(s, lift) : s)));
+  };
+
+  const addLifts = (station: Station, lifts: Lift[]) => {
+    if (!activeGym || lifts.length === 0) return;
+    saveActiveGym(activeGym.stations.map(s => (s.id === station.id ? { ...s, lifts: [...s.lifts, ...lifts] } : s)));
+  };
+
+  const applyTemplate = async (templateKey: string) => {
+    if (!activeGym) return;
+    const stations = stationsFromTemplate(templateKey, activeGym.stations);
+    const lifts = stations.reduce((n, st) => n + st.lifts.length, 0);
+    const ok = await confirm({ title: 'Add starter equipment', message: `Add ${stations.length} stations with ${lifts} lifts? You can edit or remove any of them afterwards.`, confirmLabel: 'Add' });
+    if (ok) saveActiveGym([...activeGym.stations, ...stations]);
   };
 
   const deleteLift = async (station: Station, lift: Lift) => {
@@ -333,19 +351,41 @@ export default function GymEditor() {
 
                   {target?.kind === 'lift' && target.stationId === st.id && target.liftId === 'new' ? (
                     <LiftForm station={st} saving={saving} onSave={lift => saveLift(st, lift)} onCancel={() => setTarget(null)} />
+                  ) : target?.kind === 'quick-lifts' && target.stationId === st.id ? (
+                    <QuickAddLifts station={st} saving={saving} onSave={lifts => addLifts(st, lifts)} onCancel={() => setTarget(null)}
+                      onCustom={() => setTarget({ kind: 'lift', stationId: st.id, liftId: 'new' })} />
                   ) : (
-                    <button className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem', marginTop: '0.5rem' }} onClick={() => setTarget({ kind: 'lift', stationId: st.id, liftId: 'new' })}>
-                      + Add Lift to {st.name}
+                    <button className="btn btn-secondary" style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem', marginTop: '0.5rem' }} onClick={() => setTarget({ kind: 'quick-lifts', stationId: st.id })}>
+                      + Add Lifts to {st.name}
                     </button>
                   )}
                 </div>
               );
             })}
-            {activeGym.stations.length === 0 && <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>No equipment configured yet.</p>}
+            {activeGym.stations.length === 0 && (
+              <div className="workout-form-panel">
+                <strong>Start from a template</strong>
+                <p className="workout-hint" style={{ margin: '0.25rem 0 0.75rem' }}>Adds typical equipment with its lifts in one go — edit or delete anything afterwards.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {GYM_TEMPLATES.map(t => (
+                    <button key={t.key} className="btn btn-secondary" disabled={saving} style={{ textAlign: 'left', padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.15rem' }} onClick={() => applyTemplate(t.key)}>
+                      <strong>{t.name}</strong>
+                      <span className="workout-hint">{t.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          {target?.kind === 'station' && target.stationId === 'new' ? (
-            <StationForm saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} />
+          {target?.kind === 'pick-equipment' ? (
+            <EquipmentPicker
+              existingNames={activeGym.stations.map(s => s.name)}
+              onPick={preset => setTarget({ kind: 'station', stationId: 'new', preset: preset || undefined })}
+              onCancel={() => setTarget(null)}
+            />
+          ) : target?.kind === 'station' && target.stationId === 'new' ? (
+            <StationForm preset={target.preset} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} />
           ) : showImportStationPicker ? (
             <div className="animate-fade-in workout-tile" style={{ border: '1px solid var(--accent)' }}>
               <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
@@ -372,7 +412,7 @@ export default function GymEditor() {
             </div>
           ) : (
             <div className="workout-btn-row">
-              <button className="workout-btn-primary" onClick={() => setTarget({ kind: 'station', stationId: 'new' })} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none', fontSize: '0.95rem', padding: '0.75rem' }}>
+              <button className="workout-btn-primary" onClick={() => setTarget({ kind: 'pick-equipment' })} style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none', fontSize: '0.95rem', padding: '0.75rem' }}>
                 + Add Equipment Station
               </button>
               <button className="btn btn-secondary" onClick={() => setShowImportStationPicker(true)}>
