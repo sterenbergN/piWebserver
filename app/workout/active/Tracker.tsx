@@ -11,6 +11,7 @@ import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
 import PlateDiagram from '@/components/workout/PlateDiagram';
 import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
+import { takeQueuedLifts } from '@/lib/workout/station-link';
 
 // Performance score color
 function getScoreColor(score: number): string {
@@ -65,6 +66,16 @@ function getBaselineReps(type: any) {
 export default function Tracker({ plan, allLifts, user, pastHistory, resumeState, sharedSessionId: sharedSessionIdProp }: any) {
    const { confirm, popup } = useSitePopup();
    const [localPlan, setLocalPlan] = useState<any>(resumeState?.plan || plan);
+
+   // Lifts picked on a station page (QR sticker) join the workout in progress.
+   useEffect(() => {
+     const queued = takeQueuedLifts();
+     if (queued.length === 0) return;
+     setLocalPlan((prev: any) => prev ? {
+       ...prev,
+       lifts: [...prev.lifts, ...queued.map((q) => ({ ...q.lift, station: q.station, gymId: q.gymId, gymName: q.gymName, uniquePlanId: newPlanId() }))],
+     } : prev);
+   }, []);
    const [activeLiftIndex, setActiveLiftIndex] = useState<number>(resumeState?.activeLiftIndex || 0);
    const [workoutStartTime] = useState(resumeState?.startTime || Date.now());
    const [elapsedSecs, setElapsedSecs] = useState<number>(resumeState?.elapsedSecs || 0);

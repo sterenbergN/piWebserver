@@ -737,6 +737,9 @@ export default function WorkoutDashboard() {
         >
           Calculators
         </button>
+        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/report'}>
+          Weekly Report
+        </button>
         <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>
           Advanced Analytics
         </button>

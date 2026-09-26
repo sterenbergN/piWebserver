@@ -39,6 +39,8 @@ export interface Gym {
   ownerId: string;
   isPublic?: boolean;
   stations: Station[];
+  /** Secret for share links; only present for the gym's owner. */
+  shareToken?: string;
 }
 
 export interface WorkoutType {

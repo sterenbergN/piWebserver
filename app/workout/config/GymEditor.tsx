@@ -42,13 +42,20 @@ export default function GymEditor() {
   const [showImportStationPicker, setShowImportStationPicker] = useState(false);
   const [importCandidate, setImportCandidate] = useState<Station | null>(null);
   const [importSelectedLifts, setImportSelectedLifts] = useState<Set<string>>(new Set());
+  const [shareOpen, setShareOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     Promise.all([
       fetch('/api/workout/gyms?scope=all').then(r => r.json()),
       fetch('/api/workout/auth').then(r => r.json()),
     ]).then(([dGyms, dAuth]) => {
-      if (dGyms.success) setGyms(dGyms.gyms);
+      if (dGyms.success) {
+        setGyms(dGyms.gyms);
+        // Deep link from a station page: /workout/config?gym=ID opens that gym.
+        const wanted = new URLSearchParams(window.location.search).get('gym');
+        if (wanted && dGyms.gyms.some((g: Gym) => g.id === wanted)) setActiveGymId(wanted);
+      }
       if (dAuth.authenticated && dAuth.user) setUserId(dAuth.user.id);
     }).catch(() => setError('Could not load gyms.'))
       .finally(() => setLoading(false));
@@ -147,6 +154,31 @@ export default function GymEditor() {
     const lifts = stations.reduce((n, st) => n + st.lifts.length, 0);
     const ok = await confirm({ title: 'Add starter equipment', message: `Add ${stations.length} stations with ${lifts} lifts? You can edit or remove any of them afterwards.`, confirmLabel: 'Add' });
     if (ok) saveActiveGym([...activeGym.stations, ...stations]);
+  };
+
+  const shareUrl = activeGym?.shareToken ? `${window.location.origin}/workout/shared-gym?token=${activeGym.shareToken}` : '';
+
+  const createShareLink = (regenerate = false) => run(async () => {
+    if (!activeGym) return;
+    const data = await requestJson('/api/workout/gyms/share', { method: 'POST', body: JSON.stringify({ id: activeGym.id, regenerate }) });
+    replaceGym({ ...activeGym, shareToken: data.token });
+  });
+
+  const stopSharing = () => run(async () => {
+    if (!activeGym) return;
+    await requestJson(`/api/workout/gyms/share?id=${encodeURIComponent(activeGym.id)}`, { method: 'DELETE' });
+    const { shareToken: _token, ...rest } = activeGym;
+    replaceGym(rest as Gym);
+  });
+
+  const copyShareLink = async () => {
+    const nav = navigator as Navigator & { share?: (d: { title: string; url: string }) => Promise<void> };
+    if (nav.share) {
+      try { await nav.share({ title: `${activeGym?.name} gym`, url: shareUrl }); return; } catch { /* fall back to copy */ }
+    }
+    await navigator.clipboard.writeText(shareUrl).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const deleteLift = async (station: Station, lift: Lift) => {
@@ -294,10 +326,35 @@ export default function GymEditor() {
                 <button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={() => setGymDraft({ id: activeGym.id, name: activeGym.name, emoji: activeGym.emoji || '🏋️', isPublic: activeGym.isPublic === true })}>
                   Edit Gym
                 </button>
+                <button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={() => { setShareOpen(v => !v); if (!activeGym.shareToken) createShareLink(); }}>
+                  🔗 Share
+                </button>
+                {activeGym.stations.length > 0 && (
+                  <a className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} href={`/workout/config/qr?gym=${encodeURIComponent(activeGym.id)}`} title="Print QR stickers for your equipment">
+                    🖨 QR
+                  </a>
+                )}
                 <button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={() => { setActiveGymId(null); setTarget(null); }}>
                   Exit Gym
                 </button>
               </div>
+            </div>
+          )}
+
+          {shareOpen && (
+            <div className="workout-form-panel" style={{ marginBottom: '1rem' }}>
+              <strong>Share this gym</strong>
+              <p className="workout-hint" style={{ margin: '0.25rem 0 0.5rem' }}>Anyone with the link (and a workout login) can preview it and import their own copy. Your history stays private.</p>
+              {shareUrl ? (
+                <>
+                  <input className="workout-input" readOnly value={shareUrl} onFocus={e => e.target.select()} aria-label="Share link" />
+                  <div className="workout-btn-row">
+                    <button className="workout-btn-primary" onClick={copyShareLink}>{copied ? '✅ Copied' : 'Copy / share link'}</button>
+                    <button className="btn btn-secondary" disabled={saving} onClick={() => createShareLink(true)}>New link</button>
+                    <button className="btn btn-secondary" disabled={saving} onClick={stopSharing}>Turn off</button>
+                  </div>
+                </>
+              ) : <p className="workout-hint">{saving ? 'Creating link…' : 'No link yet.'}</p>}
             </div>
           )}
 

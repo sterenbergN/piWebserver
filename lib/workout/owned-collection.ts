@@ -38,7 +38,9 @@ export function createOwnedCollectionHandlers(config: OwnedCollectionConfig) {
 
       const items = getList(data)
         .map(config.normalize)
-        .filter((item: OwnedRecord) => item.ownerId === userId || (includePublic && item.isPublic));
+        .filter((item: OwnedRecord) => item.ownerId === userId || (includePublic && item.isPublic))
+        // Share links belong to the owner; never hand another user's token out.
+        .map(({ shareToken, ...item }: OwnedRecord) => (item.ownerId === userId && shareToken ? { ...item, shareToken } : item));
 
       return NextResponse.json({ success: true, [config.key]: items });
     } catch (error) {
