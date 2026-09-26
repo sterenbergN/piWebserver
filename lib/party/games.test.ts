@@ -14,6 +14,7 @@ let bracketBattlesLogic: typeof import('./games/bracket-battles').bracketBattles
 let fakerLogic: typeof import('./games/the-faker').fakerLogic;
 let normalizePrompts: typeof Prompts.normalizePrompts;
 let savePrompts: typeof Prompts.savePrompts;
+let engine: typeof import('./engine');
 
 test.before(async () => {
   process.chdir(await fs.mkdtemp(path.join(os.tmpdir(), 'party-')));
@@ -21,6 +22,7 @@ test.before(async () => {
   ({ bracketBattlesLogic } = await import('./games/bracket-battles'));
   ({ fakerLogic } = await import('./games/the-faker'));
   ({ normalizePrompts, savePrompts } = await import('./prompts'));
+  engine = await import('./engine');
 });
 
 function makeState(gameType: GameState['gameType'], count: number): GameState {
@@ -122,4 +124,76 @@ test('normalizePrompts trims, de-duplicates and drops incomplete trivia', () => 
   assert.deepEqual(result.quipClash, ['Hello']);
   assert.deepEqual(result.theFaker, []);
   assert.deepEqual(result.triviaQuestions, [{ question: 'Q1', choices: ['a', 'b', 'c', 'd'], answer: 2, category: 'Sci' }]);
+});
+
+test('audience: full rooms offer the audience, and audience votes only count in open polls', async () => {
+  await savePrompts(normalizePrompts({ quipClash: ['a', 'b', 'c'], theFaker: ['x'], bracketBattles: ['y'] }));
+  const { roomCode, hostId } = await engine.createRoom('quip-clash');
+  for (let i = 0; i < engine.MAX_PLAYERS; i++) {
+    const r = await engine.joinRoom(roomCode, `P${i}`);
+    assert.ok('playerId' in r);
+  }
+  const full = await engine.joinRoom(roomCode, 'Late');
+  assert.ok('error' in full && full.audienceAvailable);
+
+  const seat = await engine.joinRoom(roomCode, 'Late', { asAudience: true });
+  assert.ok('playerId' in seat && seat.audience);
+  const key = (seat as { playerId: string }).playerId;
+
+  // The audience can't act as a player, and can't vote with no poll open.
+  assert.equal((await engine.processAction(roomCode, key, { type: 'SUBMIT_ANSWER', promptIndex: 0, answer: 'hi' })).success, false);
+  assert.equal((await engine.processAction(roomCode, key, { type: 'AUDIENCE_VOTE', choice: 'x' })).success, false);
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'FORCE_VOTING' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING');
+  const owner = state.gameData.promptOwners[0][0];
+  assert.equal((await engine.processAction(roomCode, key, { type: 'AUDIENCE_VOTE', choice: 'nobody' })).success, false);
+  assert.equal((await engine.processAction(roomCode, key, { type: 'AUDIENCE_VOTE', choice: owner })).success, true);
+
+  const before = state.players[owner].score;
+  await engine.processAction(roomCode, hostId, { type: 'FORCE_NEXT_VOTE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.hostData.audienceFavorite, owner);
+  assert.equal(state.players[owner].score, before + 250);
+  assert.equal(state.audienceVote, null);
+  // The host view never exposes keys or who voted for what.
+  const host = engine.hostView(state) as Record<string, unknown>;
+  assert.equal(host.audienceKeys, undefined);
+  assert.equal(host.playerKeys, undefined);
+  assert.equal(host.audienceSize, 1);
+});
+
+test('awards pick the leaders and skip ties that say nothing', async () => {
+  const { computeAwards, bumpStat } = await import('./awards');
+  const state = makeState('quip-clash', 3);
+  state.gameData = {};
+  bumpStat(state, 'votes', 'p0', 5);
+  bumpStat(state, 'votes', 'p1', 2);
+  bumpStat(state, 'quiplash', 'p0');
+  bumpStat(state, 'votes', 'ghost', 99); // not a player: ignored
+  const awards = computeAwards(state);
+  const byTitle = Object.fromEntries(awards.map((a) => [a.title, a.playerIds]));
+  assert.deepEqual(byTitle['Crowd Pleaser'], ['p0']);
+  assert.deepEqual(byTitle['Clean Sweep'], ['p0']);
+  assert.deepEqual(byTitle['Tough Crowd'], ['p2']);
+  assert.equal(byTitle['Audience Darling'], undefined);
+});
+
+test('prompt packs: chosen packs supply the prompts, unknown packs fall back to Classic', async () => {
+  const { getRandomPrompts } = await import('./prompts');
+  await savePrompts(normalizePrompts({
+    quipClash: ['classic prompt'],
+    packs: [{ id: 'fam', name: 'Fam', quipClash: ['family prompt'] }, { name: 'Fam' /* duplicate name → new id */ }],
+  }));
+  const saved = normalizePrompts({ packs: [{ id: 'classic', name: 'Sneaky' }, { name: '' }] });
+  assert.notEqual(saved.packs![0].id, 'classic');
+  assert.equal(saved.packs!.length, 1);
+
+  assert.deepEqual(await getRandomPrompts('quip-clash', 2, ['fam']), ['family prompt', 'family prompt']);
+  assert.deepEqual(await getRandomPrompts('quip-clash', 1), ['classic prompt']);
+  assert.deepEqual(await getRandomPrompts('quip-clash', 1, ['nope']), ['classic prompt']);
+  const both = await getRandomPrompts('quip-clash', 2, ['classic', 'fam']);
+  assert.deepEqual([...both].sort(), ['classic prompt', 'family prompt']);
 });

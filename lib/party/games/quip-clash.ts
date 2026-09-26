@@ -1,5 +1,11 @@
 import { GameState } from '../types';
 import { getRandomPrompts } from '../prompts';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
+
+/** Bonus for the answer the audience liked best. */
+const AUDIENCE_FAVORITE_BONUS = 250;
+const pollKey = (state: GameState) => `quip-${state.gameData.currentRound}-${state.gameData.currentPromptIndex}`;
 
 export const quipClashLogic = {
   onStart: async (state: GameState, isNextRound = false) => {
@@ -12,7 +18,7 @@ export const quipClashLogic = {
     // We need 2 prompts per player. 
     // Usually each prompt goes to exactly 2 players.
     // So we need playerOrder.length prompts total.
-    const prompts = await getRandomPrompts('quip-clash', state.playerOrder.length);
+    const prompts = await getRandomPrompts('quip-clash', state.playerOrder.length, state.settings?.packs);
     
     // Circular assignment: player i answers prompts i and i+1, so every prompt
     // has exactly two authors. Everything is keyed by prompt index (not text)
@@ -175,6 +181,12 @@ function startVotingRound(state: GameState) {
     autoAdvanceAction: 'FORCE_NEXT_VOTE',
   };
 
+  openAudienceVote(state, {
+    key: pollKey(state),
+    prompt: currentPrompt,
+    choices: displayAnswers.map((a: { id: string; answer: string }) => ({ id: a.id, label: a.answer })),
+  });
+
   for (const pid of state.playerOrder) {
     if (owners.includes(pid)) {
       state.playerData[pid] = { phase: 'WAITING', message: 'Your prompt is on screen! Shhh!' };
@@ -207,6 +219,7 @@ function calculateRoundVotes(state: GameState) {
   // Award points (e.g. 500 per vote)
   for (const pid of owners) {
     state.players[pid].score += tally[pid] * 500;
+    bumpStat(state, 'votes', pid, tally[pid]);
   }
 
   // If one got all votes ("Quiplash")
@@ -217,14 +230,23 @@ function calculateRoundVotes(state: GameState) {
           if (tally[pid] === totalVotes && totalVotes >= 3) {
              quipLash = pid;
              state.players[pid].score += 1000; // Bonus
+             bumpStat(state, 'quiplash', pid);
           }
       }
+  }
+
+  const audience = closeAudienceVote(state, pollKey(state));
+  if (audience.winner && state.players[audience.winner]) {
+    state.players[audience.winner].score += AUDIENCE_FAVORITE_BONUS;
+    bumpStat(state, 'audienceFavorite', audience.winner);
   }
 
   // Auto-advance to next prompt after 7s
   state.hostData = {
     prompt: currentPrompt,
     tally,
+    audienceTally: audience.total > 0 ? audience.tally : null,
+    audienceFavorite: audience.winner,
     answers: state.gameData.answers[currentIdx] || {},
     quipLash,
     timerStart: Date.now(),

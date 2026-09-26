@@ -1,4 +1,6 @@
 import { GameState } from '../types';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat, maxStat } from '../awards';
 
 const TOTAL_RACES = 4;
 const TRACK_LENGTH = 15;
@@ -66,6 +68,7 @@ export const readySetBetLogic = {
         if (bets.some((b: any) => b.horse === action.horse && b.type === action.betType)) return;
 
         bets.push({ horse: action.horse, type: action.betType });
+        bumpStat(state, 'bets', playerId);
         state.playerData[playerId] = { ...state.playerData[playerId], bets };
         break;
       }
@@ -208,6 +211,12 @@ function startRace(state: GameState) {
     autoAdvanceAction: 'RACE_TICK',
   };
 
+  openAudienceVote(state, {
+    key: `race-${state.gameData.raceNumber}`,
+    prompt: 'Which horse wins this race?',
+    choices: HORSES.map((h) => ({ id: h, label: `#${h}` })),
+  });
+
   for (const pid of state.playerOrder) {
     state.playerData[pid] = {
       phase: 'RACING',
@@ -228,6 +237,12 @@ function finishRace(state: GameState) {
   const first = finishers[0];
   const second = finishers[1];
   const third = finishers[2];
+
+  const audience = closeAudienceVote(state, `race-${state.gameData.raceNumber}`);
+  for (const [audienceId, choice] of Object.entries(audience.votes)) {
+    const member = state.audience?.[audienceId];
+    if (member && choice === first) member.score++;
+  }
 
   const propBet = state.gameData.propBet;
   let propResult = false;
@@ -263,6 +278,7 @@ function finishRace(state: GameState) {
       if (won > 0) {
         results[pid].won += won;
         results[pid].net += won;
+        if (horse === '2/3' || horse === '11/12') bumpStat(state, 'longshots', pid);
       } else {
         // Punish losing bets on slow horses to balance odds? Let's just deduct a fixed 100 fee per losing bet for simplicity
         results[pid].lost -= 100;
@@ -282,6 +298,7 @@ function finishRace(state: GameState) {
     }
 
     state.gameData.money[pid] += results[pid].net;
+    if (results[pid].net > 0) maxStat(state, 'bigWin', pid, results[pid].net);
     // Don't let money go below 0
     if (state.gameData.money[pid] < 0) state.gameData.money[pid] = 0;
     

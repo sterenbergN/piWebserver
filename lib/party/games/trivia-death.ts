@@ -1,4 +1,6 @@
 import { GameState } from '../types';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
 import { getRandomTriviaQuestions, TriviaQuestion } from '../prompts';
 
 const TOTAL_ROUNDS = 7;
@@ -102,7 +104,7 @@ export const triviaDeathLogic = {
   onStart: async (state: GameState) => {
     if (state.playerOrder.length < 3) return;
 
-    const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20);
+    const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20, state.settings?.packs);
 
     state.gameData = {
       round: 0,
@@ -324,6 +326,12 @@ async function startTriviaRound(state: GameState) {
     autoAdvanceAt: Date.now() + QUESTION_TIME * 1000,
     autoAdvanceAction: 'FORCE_TRIVIA_REVEAL',
   };
+  // The audience plays along for their own leaderboard.
+  openAudienceVote(state, {
+    key: `trivia-${state.gameData.round}`,
+    prompt: q.question,
+    choices: q.choices.map((label, i) => ({ id: String(i), label })),
+  });
 
   for (const pid of state.playerOrder) {
     const status = state.gameData.playerStatuses[pid];
@@ -357,12 +365,19 @@ function revealTriviaAnswers(state: GameState) {
 
   const roundRecord = { round: state.gameData.round, killingFloor: false };
 
+  const audience = closeAudienceVote(state, `trivia-${state.gameData.round}`);
+  for (const [audienceId, choice] of Object.entries(audience.votes)) {
+    const member = state.audience?.[audienceId];
+    if (member && choice === String(correctIdx)) member.score++;
+  }
+
   for (const pid of state.playerOrder) {
     const status = state.gameData.playerStatuses[pid];
     if (status === 'escaped') continue;
 
     const answered = state.gameData.currentAnswers[pid];
     const correct = answered === correctIdx;
+    if (correct) bumpStat(state, 'correct', pid);
 
     if (status === 'alive') {
       if (correct) {
@@ -377,6 +392,7 @@ function revealTriviaAnswers(state: GameState) {
         state.gameData.ghostStreaks[pid]++;
         state.gameData.money[pid] += 200;
         if (state.gameData.ghostStreaks[pid] >= 3) {
+          bumpStat(state, 'resurrected', pid);
           state.gameData.playerStatuses[pid] = 'alive';
           state.gameData.ghostStreaks[pid] = 0;
           state.gameData.money[pid] += 500; // resurrection bonus
@@ -411,6 +427,7 @@ function revealTriviaAnswers(state: GameState) {
     const status = state.gameData.playerStatuses[pid];
     const answered = state.gameData.currentAnswers[pid];
     const correct = answered === correctIdx;
+    if (correct) bumpStat(state, 'correct', pid);
     state.playerData[pid] = {
       phase: 'QUESTION_RESULTS',
       correct,
@@ -713,9 +730,12 @@ function resolveKillingFloor(state: GameState) {
       survives = (bids[pid] ?? 0) > lowestBid;
     }
 
-    if (survives) survived.push(pid);
-    else {
+    if (survives) {
+      survived.push(pid);
+      bumpStat(state, 'survived', pid);
+    } else {
       dead.push(pid);
+      bumpStat(state, 'deaths', pid);
       state.gameData.playerStatuses[pid] = 'ghost';
       state.gameData.ghostStreaks[pid] = 0;
     }

@@ -8,6 +8,23 @@ export interface Player {
   avatarColor: string;
 }
 
+export interface AudienceMember {
+  id: string;
+  name: string;
+  connected: boolean;
+  /** Play-along points (e.g. correct trivia answers). */
+  score: number;
+}
+
+/** A vote the audience can take part in during the current phase. */
+export interface AudienceVote {
+  key: string;
+  phase: string;
+  prompt: string;
+  choices: { id: string; label: string }[];
+  votes: Record<string, string>; // audienceId -> choice id
+}
+
 export interface GameState {
   roomCode: string;
   gameType: GameType;
@@ -18,6 +35,13 @@ export interface GameState {
   // Secret key -> player id. The key is the player's credential (it's in their
   // URL); the id is public (other players vote by it), so the two must differ.
   playerKeys?: Record<string, string>;
+  // Spectators beyond the player limit (or who arrive mid-game). They vote in
+  // an audience poll that the games open and read; they never act as players.
+  audience?: Record<string, AudienceMember>;
+  audienceKeys?: Record<string, string>;
+  audienceVote?: AudienceVote | null;
+  /** Host choices that survive between games in the room. */
+  settings?: { packs?: string[] };
   // Game-specific data for the host
   hostData: any;
   // Game-specific data tailored for players (playerId -> data)

@@ -1,5 +1,7 @@
 import { GameState } from '../types';
 import { getRandomPrompts } from '../prompts';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
 
 const TOTAL_ROUNDS = 3;
 
@@ -64,6 +66,11 @@ export const fakerLogic = {
           autoAdvanceAt: Date.now() + 45_000,
           autoAdvanceAction: 'FORCE_FAKER_RESULTS',
         };
+        openAudienceVote(state, {
+          key: `faker-${state.gameData.round}`,
+          prompt: 'Who is The Faker?',
+          choices: state.gameData.activePlayers.map((pid: string) => ({ id: pid, label: state.players[pid]?.name || '?' })),
+        });
         for (const pid of state.gameData.activePlayers) {
           state.playerData[pid] = {
             ...state.playerData[pid],
@@ -125,7 +132,7 @@ export const fakerLogic = {
 
 async function startNewFakerRound(state: GameState) {
   const activePlayers = state.gameData.activePlayers;
-  const [task] = await getRandomPrompts('the-faker', 1);
+  const [task] = await getRandomPrompts('the-faker', 1, state.settings?.packs);
   // Keep existing faker if possible, otherwise pick new
   let fakerId = state.gameData.fakerId;
   if (!fakerId || !activePlayers.includes(fakerId)) {
@@ -181,6 +188,13 @@ function calculateFakerRoundResult(state: GameState) {
   const votes = state.gameData.votes;
   const activePlayers: string[] = state.gameData.activePlayers;
 
+  // Audience members who spotted the faker get a play-along point.
+  const audience = closeAudienceVote(state, `faker-${state.gameData.round}`);
+  for (const [audienceId, choice] of Object.entries(audience.votes)) {
+    const member = state.audience?.[audienceId];
+    if (member && choice === fakerId) member.score++;
+  }
+
   // Tally votes
   const voteCounts: Record<string, number> = {};
   for (const pid of activePlayers) voteCounts[pid] = 0;
@@ -215,6 +229,11 @@ function calculateFakerRoundResult(state: GameState) {
   } else {
     // Faker escapes: faker gets 1500 pts
     state.players[fakerId].score += 1500;
+    bumpStat(state, 'escapes', fakerId);
+  }
+  for (const [voterId, target] of Object.entries(votes) as [string, string][]) {
+    if (voterId !== fakerId && target === fakerId) bumpStat(state, 'detective', voterId);
+    if (target !== fakerId) bumpStat(state, 'suspected', target);
   }
 
   // Apply elimination

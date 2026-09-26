@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { BUILT_IN_PACKS } from './prompt-packs';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
 const PROMPTS_FILE = path.join(DATA_DIR, 'party-prompts.json');
@@ -11,14 +12,29 @@ export interface TriviaQuestion {
   category?: string;
 }
 
-export interface PromptsData {
+export interface PromptLists {
   quipClash: string[];
   theFaker: string[];
   triviaQuestions: TriviaQuestion[];
   bracketBattles: string[];
 }
 
-const DEFAULT_PROMPTS: PromptsData = {
+/** A themed set of prompts the host can switch on per room. */
+export interface PromptPack extends PromptLists {
+  id: string;
+  name: string;
+  emoji: string;
+}
+
+/** The top-level lists are the "Classic" pack; themed packs sit alongside. */
+export interface PromptsData extends PromptLists {
+  packs?: PromptPack[];
+}
+
+export const CLASSIC_PACK_ID = 'classic';
+const MAX_PACKS = 20;
+
+const DEFAULT_PROMPTS: PromptLists = {
   quipClash: [
     "A bad name for a pet dog",
     "The worst thing to say at a funeral",
@@ -149,8 +165,7 @@ function cleanTrivia(value: unknown): TriviaQuestion[] {
   return out;
 }
 
-/** Trim, de-duplicate and drop incomplete entries so a bad save can't break a game. */
-export function normalizePrompts(input: Partial<Record<keyof PromptsData, unknown>> | null | undefined): PromptsData {
+function cleanLists(input: any): PromptLists {
   return {
     quipClash: cleanList(input?.quipClash),
     theFaker: cleanList(input?.theFaker),
@@ -159,20 +174,66 @@ export function normalizePrompts(input: Partial<Record<keyof PromptsData, unknow
   };
 }
 
+function cleanPacks(value: unknown): PromptPack[] {
+  if (!Array.isArray(value)) return [];
+  const used = new Set([CLASSIC_PACK_ID]);
+  const packs: PromptPack[] = [];
+  for (const raw of value.slice(0, MAX_PACKS)) {
+    const name = cleanText(raw?.name).slice(0, 40);
+    if (!name) continue;
+    let id = (cleanText(raw?.id) || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'pack';
+    const base = id;
+    for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+    used.add(id);
+    const emoji = cleanText(raw?.emoji).slice(0, 8) || '🎲';
+    packs.push({ id, name, emoji, ...cleanLists(raw) });
+  }
+  return packs;
+}
+
+/** Trim, de-duplicate and drop incomplete entries so a bad save can't break a game. */
+export function normalizePrompts(input: (Partial<Record<keyof PromptLists, unknown>> & { packs?: unknown }) | null | undefined): PromptsData {
+  return { ...cleanLists(input), packs: cleanPacks(input?.packs) };
+}
+
+/** Summary of every pack for pickers (no trivia answers). */
+export function listPacks(data: PromptsData) {
+  const count = (l: PromptLists) => ({
+    quipClash: l.quipClash.length, theFaker: l.theFaker.length, bracketBattles: l.bracketBattles.length, triviaQuestions: l.triviaQuestions.length,
+  });
+  return [
+    { id: CLASSIC_PACK_ID, name: 'Classic', emoji: '🎉', counts: count(data) },
+    ...(data.packs || []).map((p) => ({ id: p.id, name: p.name, emoji: p.emoji, counts: count(p) })),
+  ];
+}
+
+/** Union of one list across the chosen packs (Classic if none chosen or all empty). */
+function pool<K extends keyof PromptLists>(data: PromptsData, key: K, packIds?: string[]): PromptLists[K] {
+  const chosen = packIds && packIds.length ? packIds : [CLASSIC_PACK_ID];
+  const sources: PromptLists[] = chosen
+    .map((id) => (id === CLASSIC_PACK_ID ? data : data.packs?.find((p) => p.id === id)))
+    .filter((p): p is PromptLists => !!p);
+  const merged = sources.flatMap((p) => p[key] as unknown[]);
+  if (merged.length > 0) return merged as PromptLists[K];
+  return (data[key].length ? data[key] : DEFAULT_PROMPTS[key]) as PromptLists[K];
+}
+
 export async function getPrompts(): Promise<PromptsData> {
   let parsed: Partial<PromptsData> | null = null;
   try {
     parsed = JSON.parse(await fs.readFile(PROMPTS_FILE, 'utf-8'));
   } catch {
-    await savePrompts(DEFAULT_PROMPTS).catch((err) => console.error('Error saving prompts', err));
-    return DEFAULT_PROMPTS;
+    const fresh = { ...DEFAULT_PROMPTS, packs: BUILT_IN_PACKS };
+    await savePrompts(fresh).catch((err) => console.error('Error saving prompts', err));
+    return fresh;
   }
-  // Back-fill lists missing from older installs.
+  // Back-fill lists (and the themed packs) missing from older installs.
   return {
     quipClash: parsed?.quipClash ?? DEFAULT_PROMPTS.quipClash,
     theFaker: parsed?.theFaker ?? DEFAULT_PROMPTS.theFaker,
     bracketBattles: parsed?.bracketBattles ?? DEFAULT_PROMPTS.bracketBattles,
     triviaQuestions: parsed?.triviaQuestions ?? DEFAULT_PROMPTS.triviaQuestions,
+    packs: parsed?.packs ?? BUILT_IN_PACKS,
   };
 }
 
@@ -199,17 +260,12 @@ function draw<T>(list: T[], count: number): T[] {
   return result;
 }
 
-export async function getRandomPrompts(gameType: 'quip-clash' | 'the-faker' | 'bracket-battles', count: number): Promise<string[]> {
-  const prompts = await getPrompts();
-  let list: string[];
-  if (gameType === 'quip-clash') list = prompts.quipClash;
-  else if (gameType === 'the-faker') list = prompts.theFaker;
-  else list = prompts.bracketBattles;
-  
-  return draw(list.length ? list : DEFAULT_PROMPTS[gameType === 'quip-clash' ? 'quipClash' : gameType === 'the-faker' ? 'theFaker' : 'bracketBattles'], count);
+const LIST_FOR = { 'quip-clash': 'quipClash', 'the-faker': 'theFaker', 'bracket-battles': 'bracketBattles' } as const;
+
+export async function getRandomPrompts(gameType: keyof typeof LIST_FOR, count: number, packIds?: string[]): Promise<string[]> {
+  return draw(pool(await getPrompts(), LIST_FOR[gameType], packIds), count);
 }
 
-export async function getRandomTriviaQuestions(count: number): Promise<TriviaQuestion[]> {
-  const prompts = await getPrompts();
-  return draw(prompts.triviaQuestions.length ? prompts.triviaQuestions : DEFAULT_PROMPTS.triviaQuestions, count);
+export async function getRandomTriviaQuestions(count: number, packIds?: string[]): Promise<TriviaQuestion[]> {
+  return draw(pool(await getPrompts(), 'triviaQuestions', packIds), count);
 }

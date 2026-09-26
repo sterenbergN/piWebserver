@@ -1,13 +1,15 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import type { TriviaQuestion } from '@/lib/party/prompts';
+import type { PromptLists, PromptsData, TriviaQuestion } from '@/lib/party/prompts';
 
 type GameKey = 'quipClash' | 'theFaker' | 'triviaQuestions' | 'bracketBattles';
 
 export default function AdminPage() {
   const router = useRouter();
-  const [prompts, setPrompts] = useState<{ quipClash: string[]; theFaker: string[]; bracketBattles: string[]; triviaQuestions: TriviaQuestion[] }>({ quipClash: [], theFaker: [], bracketBattles: [], triviaQuestions: [] });
+  const [prompts, setPrompts] = useState<PromptsData>({ quipClash: [], theFaker: [], bracketBattles: [], triviaQuestions: [], packs: [] });
+  // 'classic' edits the top-level lists; any other id edits that themed pack.
+  const [activePack, setActivePack] = useState('classic');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
@@ -21,8 +23,34 @@ export default function AdminPage() {
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState('');
 
+  const pack = activePack === 'classic' ? null : prompts.packs?.find(p => p.id === activePack) || null;
+  const lists: PromptLists = pack || prompts;
+
   // Every edit goes through here so the page knows there is something to save.
-  const edit = (updater: (p: typeof prompts) => typeof prompts) => { setPrompts(updater); setDirty(true); };
+  const edit = (updater: (l: PromptLists) => PromptLists) => {
+    setPrompts(p => activePack === 'classic'
+      ? { ...p, ...updater(p) }
+      : { ...p, packs: (p.packs || []).map(pk => pk.id === activePack ? { ...pk, ...updater(pk) } : pk) });
+    setDirty(true);
+  };
+  const editPackMeta = (patch: { name?: string; emoji?: string }) => {
+    setPrompts(p => ({ ...p, packs: (p.packs || []).map(pk => pk.id === activePack ? { ...pk, ...patch } : pk) }));
+    setDirty(true);
+  };
+  const addPack = () => {
+    const id = `pack-${Date.now().toString(36)}`;
+    setPrompts(p => ({ ...p, packs: [...(p.packs || []), { id, name: 'New Pack', emoji: '🎲', quipClash: [], theFaker: [], bracketBattles: [], triviaQuestions: [] }] }));
+    setActivePack(id);
+    setDirty(true);
+  };
+  const deletePack = () => {
+    if (!pack || !window.confirm(`Delete the "${pack.name}" pack and all its prompts?`)) return;
+    setPrompts(p => ({ ...p, packs: (p.packs || []).filter(pk => pk.id !== activePack) }));
+    setActivePack('classic');
+    setDirty(true);
+  };
+  const totalEntries = (d: PromptsData) => [d, ...(d.packs || [])]
+    .reduce((n, l) => n + l.quipClash.length + l.theFaker.length + l.bracketBattles.length + l.triviaQuestions.length, 0);
   const updateTrivia = (i: number, patch: Partial<TriviaQuestion>) =>
     edit(p => ({ ...p, triviaQuestions: p.triviaQuestions.map((q, j) => j === i ? { ...q, ...patch } : q) }));
 
@@ -55,9 +83,11 @@ export default function AdminPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Save failed');
       // The server trims, de-duplicates and drops blank or incomplete entries.
-      const before = prompts.quipClash.length + prompts.theFaker.length + prompts.bracketBattles.length + prompts.triviaQuestions.length;
-      const after = data.prompts.quipClash.length + data.prompts.theFaker.length + data.prompts.bracketBattles.length + data.prompts.triviaQuestions.length;
+      const before = totalEntries(prompts);
+      const after = totalEntries(data.prompts);
       setPrompts(data.prompts);
+      // Pack ids can be normalized on save; fall back to Classic if ours changed.
+      if (!data.prompts.packs?.some((pk: { id: string }) => pk.id === activePack)) setActivePack('classic');
       setDirty(false);
       showToast(before > after ? `✅ Saved — removed ${before - after} blank/duplicate entr${before - after === 1 ? 'y' : 'ies'}` : '✅ All changes saved!');
     } catch (err) {
@@ -177,6 +207,25 @@ export default function AdminPage() {
           </div>
         </div>
 
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <span style={{ fontWeight: 800, color: 'var(--party-text-muted)' }}>Pack:</span>
+          {[{ id: 'classic', name: 'Classic', emoji: '🎉' }, ...(prompts.packs || [])].map(pk => (
+            <button key={pk.id} onClick={() => { setActivePack(pk.id); setFilter(''); }} aria-pressed={activePack === pk.id}
+              className={activePack === pk.id ? 'party-btn party-btn-primary party-btn-inline' : 'party-btn party-btn-outline party-btn-inline'}
+              style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}>
+              {pk.emoji} {pk.name}
+            </button>
+          ))}
+          <button onClick={addPack} className="party-btn party-btn-outline party-btn-inline" style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}>+ New pack</button>
+        </div>
+        {pack && (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            <input className="party-input" style={{ width: '4.5rem', textAlign: 'center' }} value={pack.emoji} maxLength={8} aria-label="Pack emoji" onChange={e => editPackMeta({ emoji: e.target.value })} />
+            <input className="party-input" style={{ flex: 1, minWidth: 180 }} value={pack.name} maxLength={40} aria-label="Pack name" onChange={e => editPackMeta({ name: e.target.value })} />
+            <button onClick={deletePack} className="party-btn party-btn-outline party-btn-inline" style={{ color: 'var(--party-red)', borderColor: 'var(--party-red)' }}>Delete pack</button>
+          </div>
+        )}
+
         <input type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="🔍 Filter prompts and questions…" className="party-input"
           style={{ width: '100%', marginBottom: '1.5rem' }} />
 
@@ -188,12 +237,12 @@ export default function AdminPage() {
                 <div className="admin-section-header">
                   <div className="admin-section-header-left"><span className="admin-section-title">{LabelMap[k]}</span></div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span className="admin-section-count">{prompts[k].length}</span>
+                    <span className="admin-section-count">{lists[k].length}</span>
                     <button onClick={() => setShowImport(k)} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
                   </div>
                 </div>
                 <div className="admin-prompt-list">
-                  {prompts[k].map((p, i) => (!filter || p.toLowerCase().includes(filter.toLowerCase())) && (
+                  {lists[k].map((p, i) => (!filter || p.toLowerCase().includes(filter.toLowerCase())) && (
                     <div key={i} className="admin-prompt-row">
                       <span className="admin-prompt-index">{i + 1}</span>
                       <input type="text" value={p} onChange={e => edit(p => ({ ...p, [k]: p[k].map((x, j) => j === i ? e.target.value : x) }))} className="admin-prompt-input" />
@@ -213,12 +262,12 @@ export default function AdminPage() {
             <div className="admin-section-header">
               <div className="admin-section-header-left"><span className="admin-section-title">{LabelMap.triviaQuestions}</span></div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span className="admin-section-count">{prompts.triviaQuestions.length}</span>
+                <span className="admin-section-count">{lists.triviaQuestions.length}</span>
                 <button onClick={() => setShowImport('triviaQuestions')} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
               </div>
             </div>
             <div className="admin-prompt-list" style={{ maxHeight: '80vh' }}>
-              {prompts.triviaQuestions.map((q, i) => (!filter || [q.question, ...q.choices, q.category || ''].some(t => t.toLowerCase().includes(filter.toLowerCase()))) && (
+              {lists.triviaQuestions.map((q, i) => (!filter || [q.question, ...q.choices, q.category || ''].some(t => t.toLowerCase().includes(filter.toLowerCase()))) && (
                 <div key={i} className="admin-prompt-row" style={{ display: 'flex', flexDirection: 'column', padding: '1rem', gap: '0.5rem', background: 'rgba(0,0,0,0.4)', alignItems: 'stretch' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ fontWeight: 800 }}>Question {i+1}</div>

@@ -1,6 +1,11 @@
 'use client';
 import { useState, useEffect, use } from 'react';
 import Link from 'next/link';
+import { shareResultsCard } from '@/components/party/resultsCard';
+
+const GAME_NAMES: Record<string, string> = {
+  'quip-clash': 'Quip Clash', 'the-faker': 'The Faker', 'trivia-death': 'Trivia Death', 'bracket-battles': 'Bracket Battles', 'ready-set-bet': 'Ready Set Bet',
+};
 
 export default function PlayerPage({ params }: { params: Promise<{ roomCode: string; playerId: string }> }) {
   const { roomCode, playerId } = use(params);
@@ -464,6 +469,18 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 {myRank === 1 ? 'You won! 🥇' : `You finished #${myRank} of ${standings.length}`}
               </p>
             )}
+            {(state.awards || []).filter((a: any) => a.playerIds.includes(me.id)).map((a: any) => (
+              <div key={a.title} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--party-border)', borderRadius: '12px', padding: '0.6rem 1rem', margin: '0.35rem 0', textAlign: 'center' }}>
+                <div style={{ fontWeight: 900 }}>{a.emoji} {a.title}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>{a.detail}</div>
+              </div>
+            ))}
+            <button className="party-btn party-btn-outline" style={{ marginTop: '1rem' }} onClick={() => shareResultsCard({
+              gameName: GAME_NAMES[state.gameType] || 'Party',
+              roomCode: state.roomCode,
+              standings: standings.map((p: any) => ({ name: p.name, score: p.score, color: p.avatarColor })),
+              awards: (state.awards || []).map((a: any) => ({ emoji: a.emoji, title: a.title, detail: a.detail, names: a.playerIds.map((id: string) => state.players[id]?.name || '?') })),
+            })}>📸 Share results</button>
             <p>Look at the TV.</p>
           </div>
         )}

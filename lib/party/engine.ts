@@ -8,6 +8,9 @@ import { quipClashLogic } from './games/quip-clash';
 import { triviaDeathLogic } from './games/trivia-death';
 import { bracketBattlesLogic } from './games/bracket-battles';
 import { readySetBetLogic } from './games/ready-set-bet';
+import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
+import { computeAwards } from './awards';
+import { getPrompts, listPacks } from './prompts';
 
 const DATA_DIR = path.join(process.cwd(), '.data', 'party');
 const ROOM_CODE_RE = /^[A-Z]{4}$/;
@@ -179,7 +182,11 @@ export function sanitizePlayerName(name: unknown): string {
   return typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_LENGTH) : '';
 }
 
-export async function joinRoom(roomCode: string, playerName: string): Promise<{ playerId: string; rejoined?: boolean } | { error: string }> {
+export type JoinResult =
+  | { playerId: string; rejoined?: boolean; audience?: boolean }
+  | { error: string; audienceAvailable?: boolean };
+
+export async function joinRoom(roomCode: string, playerName: string, options: { asAudience?: boolean } = {}): Promise<JoinResult> {
   const code = normalizeRoomCode(roomCode);
   const name = sanitizePlayerName(playerName);
   if (!code) return { error: 'Room codes are 4 letters' };
@@ -201,8 +208,12 @@ export async function joinRoom(roomCode: string, playerName: string): Promise<{ 
       return { error: 'Name already taken' };
     }
 
-    if (state.phase !== 'LOBBY') return { error: 'Game has already started — join from the lobby next round' };
-    if (state.playerOrder.length >= MAX_PLAYERS) return { error: `Room is full (${MAX_PLAYERS} players)` };
+    if (options.asAudience) return joinAudience(state, name);
+    if (state.phase !== 'LOBBY') return { error: 'This game has already started', audienceAvailable: true };
+    if (state.playerOrder.length >= MAX_PLAYERS) return { error: `Room is full (${MAX_PLAYERS} players)`, audienceAvailable: true };
+    if (Object.values(state.audience || {}).some((a) => a.name.toLowerCase() === name.toLowerCase())) {
+      return { error: 'Name already taken' };
+    }
 
     const playerId = `P_${crypto.randomBytes(6).toString('hex')}`;
     const usedColors = new Set(Object.values(state.players).map((p) => p.avatarColor));
@@ -213,6 +224,66 @@ export async function joinRoom(roomCode: string, playerName: string): Promise<{ 
     const key = newPlayerKey(state, playerId);
     await saveGameState(state);
     return { playerId: key };
+  });
+}
+
+async function joinAudience(state: GameState, name: string): Promise<JoinResult> {
+  const audience = (state.audience ||= {});
+  const existing = Object.values(audience).find((a) => a.name.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    if (existing.connected) return { error: 'Name already taken' };
+    existing.connected = true;
+    const key = Object.keys(state.audienceKeys || {}).find((k) => state.audienceKeys![k] === existing.id) || newAudienceKey(state, existing.id);
+    await saveGameState(state);
+    return { playerId: key, rejoined: true, audience: true };
+  }
+  if (Object.keys(audience).length >= MAX_AUDIENCE) return { error: 'The audience is full' };
+  const id = `A_${crypto.randomBytes(6).toString('hex')}`;
+  audience[id] = { id, name, connected: true, score: 0 };
+  const key = newAudienceKey(state, id);
+  await saveGameState(state);
+  return { playerId: key, audience: true };
+}
+
+function newAudienceKey(state: GameState, audienceId: string) {
+  const key = `AK_${crypto.randomBytes(12).toString('hex')}`;
+  state.audienceKeys = { ...(state.audienceKeys || {}), [key]: audienceId };
+  return key;
+}
+
+export function resolveAudienceKey(state: GameState, key: string | null | undefined): string | null {
+  if (!key || !state.audienceKeys) return null;
+  const id = state.audienceKeys[key];
+  return id && state.audience?.[id] ? id : null;
+}
+
+/** What an audience member's phone shows: the open poll (if any) and their own vote. */
+export function audienceView(state: GameState, audienceId: string) {
+  const poll = activeAudienceVote(state);
+  const me = state.audience![audienceId];
+  const members = Object.values(state.audience || {});
+  return {
+    roomCode: state.roomCode,
+    gameType: state.gameType,
+    phase: state.phase,
+    me,
+    players: Object.values(state.players).map(({ id, name, score, avatarColor }) => ({ id, name, score, avatarColor })),
+    audienceSize: members.length,
+    audienceLeaders: members.filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map(({ name, score }) => ({ name, score })),
+    poll: poll ? { key: poll.key, prompt: poll.prompt, choices: poll.choices, myChoice: poll.votes[audienceId] ?? null } : null,
+    updatedAt: state.updatedAt,
+  };
+}
+
+export async function setAudienceConnected(roomCode: string, audienceId: string, connected: boolean) {
+  const code = normalizeRoomCode(roomCode);
+  if (!code) return;
+  await withRoomLock(code, async () => {
+    const state = await getGameState(code);
+    const member = state?.audience?.[audienceId];
+    if (!state || !member || member.connected === connected) return;
+    member.connected = connected;
+    await saveGameState(state);
   });
 }
 
@@ -229,10 +300,17 @@ export function resolvePlayerKey(state: GameState, key: string | null | undefine
   return state.players[key] ? key : null;
 }
 
-/** State as sent to the host screen: everything except player credentials. */
+/** State as sent to the host screen: everything except credentials and who voted for what. */
 export function hostView(state: GameState) {
-  const { playerKeys: _keys, ...rest } = state;
-  return rest;
+  const { playerKeys: _keys, audienceKeys: _audienceKeys, audienceVote: _poll, audience, ...rest } = state;
+  const poll = activeAudienceVote(state);
+  return {
+    ...rest,
+    audienceSize: Object.keys(audience || {}).length,
+    audienceVote: poll ? { prompt: poll.prompt, voteCount: Object.keys(poll.votes).length } : null,
+    audienceLeaders: Object.values(audience || {}).filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 3),
+    awards: state.phase === 'FINAL_RESULTS' ? computeAwards(state) : null,
+  };
 }
 
 /** Mark a player's live connection state (called by the player stream). */
@@ -269,6 +347,7 @@ function resetToLobby(state: GameState, resetScores: boolean) {
   state.hostData = {};
   state.playerData = {};
   state.gameData = { targetRounds: state.gameData?.targetRounds };
+  state.audienceVote = null;
   if (resetScores) for (const pid of state.playerOrder) state.players[pid].score = 0;
 }
 
@@ -286,7 +365,14 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
 
     const isHost = actorKey === state.hostId;
     const playerId = isHost ? state.hostId : resolvePlayerKey(state, actorKey);
-    if (!playerId) return { success: false, error: 'You are not in this room' };
+    if (!playerId) {
+      const audienceId = resolveAudienceKey(state, actorKey);
+      if (!audienceId) return { success: false, error: 'You are not in this room' };
+      if (action.type !== 'AUDIENCE_VOTE') return { success: false, error: 'The audience can only vote' };
+      if (!recordAudienceVote(state, audienceId, action.choice)) return { success: false, error: 'Voting is closed' };
+      await saveGameState(state);
+      return { success: true };
+    }
     if (!isHost && !state.players[playerId]) return { success: false, error: 'Not in this room' };
     if (!isHost && !isPlayerAction(action.type)) return { success: false, error: 'Only the host can do that' };
 
@@ -316,6 +402,13 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         const rounds = Math.round(Number(action.rounds));
         if (!Number.isFinite(rounds) || rounds < 1 || rounds > 5) return { success: false, error: 'Rounds must be 1–5' };
         state.gameData = { ...(state.gameData || {}), targetRounds: rounds };
+        break;
+      }
+      case 'SET_PACKS': {
+        const known = new Set(listPacks(await getPrompts()).map((p) => p.id));
+        const packs = Array.isArray(action.packs) ? [...new Set(action.packs.filter((id: unknown) => typeof id === 'string' && known.has(id)))] as string[] : [];
+        if (packs.length === 0) return { success: false, error: 'Pick at least one pack' };
+        state.settings = { ...(state.settings || {}), packs };
         break;
       }
       case 'KICK_PLAYER': {

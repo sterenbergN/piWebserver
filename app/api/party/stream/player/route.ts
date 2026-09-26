@@ -1,4 +1,5 @@
 import { getGameState, normalizeRoomCode, resolvePlayerKey, setPlayerConnected } from '@/lib/party/engine';
+import { computeAwards } from '@/lib/party/awards';
 import { roomEventStream } from '@/lib/party/sse';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,7 @@ export async function GET(request: Request) {
           players: state.players,
           me: state.players[playerId],
           data: state.playerData[playerId] || null,
+          awards: state.phase === 'FINAL_RESULTS' ? computeAwards(state) : null,
           updatedAt: state.updatedAt,
         },
       };

@@ -12,7 +12,8 @@ export default function PartyLobby() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [lastPlayed, setLastPlayed] = useState<{ roomCode: string; playerId: string } | null>(null);
+  const [lastPlayed, setLastPlayed] = useState<{ roomCode: string; playerId: string; audience?: boolean } | null>(null);
+  const [audienceOffer, setAudienceOffer] = useState(false);
   const [lastHosted, setLastHosted] = useState<{ roomCode: string; hostId: string } | null>(null);
 
   useEffect(() => {
@@ -32,29 +33,36 @@ export default function PartyLobby() {
     } catch { /* storage unavailable */ }
   }, []);
 
-  const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const seatPath = (seat: { roomCode: string; playerId: string; audience?: boolean }) =>
+    seat.audience ? `/party/audience/${seat.roomCode}/${seat.playerId}` : `/party/player/${seat.roomCode}/${seat.playerId}`;
+
+  const join = async (asAudience: boolean) => {
     if (!roomCode || !playerName) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setAudienceOffer(false);
     try {
       const res = await fetch('/api/party/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName }),
+        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName, asAudience }),
       });
       const data = await res.json();
-      if (!res.ok || data.error) { setError(data.error || 'Failed to join room'); }
-      else {
-        const code = roomCode.toUpperCase();
+      if (!res.ok || data.error) {
+        setError(data.error || 'Failed to join room');
+        // Full room or game already running: offer a seat in the audience instead.
+        setAudienceOffer(data.audienceAvailable === true);
+      } else {
+        const seat = { roomCode: roomCode.toUpperCase(), playerId: data.playerId, audience: data.audience === true };
         try {
           localStorage.setItem('partyNickname', playerName.trim());
-          localStorage.setItem('partyLastPlayed', JSON.stringify({ roomCode: code, playerId: data.playerId, at: Date.now() }));
+          localStorage.setItem('partyLastPlayed', JSON.stringify({ ...seat, at: Date.now() }));
         } catch { /* ignore */ }
-        router.push(`/party/player/${code}/${data.playerId}`);
+        router.push(seatPath(seat));
       }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
   };
+
+  const handleJoin = (e: React.FormEvent) => { e.preventDefault(); join(false); };
 
   const handleHost = async (gameType: GameType) => {
     setLoading(true); setError('');
@@ -95,12 +103,17 @@ export default function PartyLobby() {
           </div>
 
           {error && <div className="party-error">⚠️ {error}</div>}
+          {audienceOffer && (
+            <button type="button" className="party-btn party-btn-primary" style={{ marginBottom: '1rem' }} disabled={loading} onClick={() => join(true)}>
+              👀 Join the audience instead
+            </button>
+          )}
 
           {(lastPlayed || lastHosted) && (
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
               {lastPlayed && (
                 <button type="button" className="party-btn party-btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem' }}
-                  onClick={() => router.push(`/party/player/${lastPlayed.roomCode}/${lastPlayed.playerId}`)}>
+                  onClick={() => router.push(seatPath(lastPlayed))}>
                   ↩ Rejoin {lastPlayed.roomCode}
                 </button>
               )}
@@ -130,6 +143,10 @@ export default function PartyLobby() {
               </div>
               <button type="submit" disabled={loading || !roomCode || !playerName} className="party-btn party-btn-primary" style={{ marginTop: '0.5rem' }}>
                 {loading ? 'Joining...' : 'Join Game 🚀'}
+              </button>
+              <button type="button" disabled={loading || !roomCode || !playerName} onClick={() => join(true)}
+                style={{ background: 'none', border: 'none', color: 'var(--party-text-muted)', marginTop: '0.75rem', width: '100%', cursor: 'pointer', fontSize: '0.85rem' }}>
+                or just watch &amp; vote in the audience →
               </button>
             </form>
           ) : (

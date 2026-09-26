@@ -1,5 +1,7 @@
 import { GameState } from '../types';
 import { getRandomPrompts } from '../prompts';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
 
 const BOT_ANSWERS = [
   "A potato", "My mom", "Nothing at all", "Just a guy named Greg",
@@ -27,7 +29,7 @@ export const bracketBattlesLogic = {
 
     const bracketSize = state.playerOrder.length <= 8 ? 8 : 16;
     const promptsNeeded = Math.ceil(bracketSize / 2) + 10;
-    const prompts = await getRandomPrompts('bracket-battles', promptsNeeded);
+    const prompts = await getRandomPrompts('bracket-battles', promptsNeeded, state.settings?.packs);
     
     state.phase = 'PROMPTING';
     const timerDuration = 60;
@@ -293,6 +295,12 @@ function startNextMatch(state: GameState) {
     autoAdvanceAction: 'FORCE_RESOLVE_MATCH',
   };
 
+  openAudienceVote(state, {
+    key: `bracket-${nextMatchIdx}`,
+    prompt: match.prompt,
+    choices: answers.map((a: any) => ({ id: a.id, label: a.answer })),
+  });
+
   const voters = matchVoters(state, match);
   for (const pid of state.playerOrder) {
     if (!voters.includes(pid)) {
@@ -319,6 +327,11 @@ function resolveMatch(state: GameState) {
     if (votes[pid] === match.answer1.id) v1++;
     if (votes[pid] === match.answer2.id) v2++;
   }
+  // The audience's majority counts as one extra vote.
+  const audience = closeAudienceVote(state, `bracket-${matchId}`);
+  if (audience.winner === match.answer1.id) v1++;
+  else if (audience.winner === match.answer2.id) v2++;
+  state.gameData.audienceTally = audience.total > 0 ? audience.tally : null;
 
   if (v1 === v2 && v1 > 0) {
     startTiebreaker(state, match, v1, v2);
@@ -409,7 +422,10 @@ function finalizeMatchWinner(state: GameState, matchId: number, winner: any, los
   // Award points to the AUTHOR of the winning answer (if not a bot)
   if (!winner.isBot && state.players[winner.id]) {
     state.players[winner.id].score += roundValue;
+    bumpStat(state, 'matchWins', winner.id);
   }
+  if (!winner.isBot) bumpStat(state, 'votesReceived', winner.id, winner === bracket[matchId].answer1 ? v1 : v2);
+  if (!loser.isBot) bumpStat(state, 'votesReceived', loser.id, loser === bracket[matchId].answer1 ? v1 : v2);
 
   state.hostData = {
     message: 'Winner Advances!',
@@ -444,6 +460,7 @@ function endBracketGame(state: GameState) {
   for (const pid of state.playerOrder) {
     if (state.gameData.predictions[pid] === championId) {
       state.players[pid].score += 3000;
+      bumpStat(state, 'oracle', pid);
     }
   }
 
