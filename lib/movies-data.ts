@@ -1,6 +1,6 @@
-// Letterboxd Top 500 Films – based on community weighted ratings
-// Source: letterboxd.com official list (as of early 2026)
-export const LETTERBOXD_TOP_500: string[] = [
+// Acclaimed films, best-known first (a critics'-poll style canon, not a live ranking).
+// Each title appears once; the picker spins over the first N of these.
+export const ACCLAIMED_FILMS: string[] = [
   // Top 50
   "Jeanne Dielman, 23 quai du Commerce, 1080 Bruxelles",
   "Mulholland Drive",
@@ -102,7 +102,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Flowers of Shanghai",
   "A City of Sadness",
   "The Terrorizers",
-  "Yi Yi",
   // 101-150
   "Millennium Mambo",
   "The Puppetmaster",
@@ -118,7 +117,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Mekong Hotel",
   "Taste of Cherry",
   "Close-Up",
-  "A Separation",
   "The Wind Will Carry Us",
   "The White Balloon",
   "Ten",
@@ -133,7 +131,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Vampyr",
   "Gertrud",
   "Day of Wrath",
-  "Ordet",
   "Ivan the Terrible Part I",
   "Man with a Movie Camera",
   "Battleship Potemkin",
@@ -198,11 +195,9 @@ export const LETTERBOXD_TOP_500: string[] = [
   "The Silence",
   "Shame",
   "Hour of the Wolf",
-  "Persona",
   "Smiles of a Summer Night",
   "The Virgin Spring",
   "Brink of Life",
-  "Wild Strawberries",
   "Summer Interlude",
   "Summer with Monika",
   // 201-250
@@ -219,7 +214,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Umberto D.",
   "La Terra Trema",
   "Bellissima",
-  "Rocco and His Brothers",
   "The Conformist",
   "Amarcord",
   "Casanova",
@@ -228,9 +222,7 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Last Tango in Paris",
   "1900",
   "The Spider's Stratagem",
-  "The Passenger",
   "Blow-Up",
-  "L'Avventura",
   "Red Desert",
   "Il Deserto Rosso",
   "Chronicle of a Love",
@@ -310,11 +302,9 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Asteroid City",
   // 301-350
   "Phantom Thread",
-  "There Will Be Blood",
   "Inherent Vice",
   "The Master",
   "Punch-Drunk Love",
-  "Magnolia",
   "Hard Eight",
   "Boogie Nights",
   "Uncut Gems",
@@ -324,7 +314,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "My Entire High School Sinking into the Sea",
   "Synecdoche, New York",
   "Eternal Sunshine of the Spotless Mind",
-  "Adaptation",
   "Being John Malkovich",
   "The Truman Show",
   "Pulp Fiction",
@@ -378,7 +367,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Spartacus",
   "Paths of Glory",
   "Lolita",
-  "Barry Lyndon",
   "The Killing",
   "Killer's Kiss",
   "Fear and Desire",
@@ -460,21 +448,15 @@ export const LETTERBOXD_TOP_500: string[] = [
   "Film Socialisme",
   "Goodbye to Language",
   "The Image Book",
-  "Pierrot le Fou",
   // 451-500
-  "Tropical Malady",
   "Apichatpong Weerasethakul films",
   "Mubi collection",
   "The Assassin",
   "Three Times",
-  "Millennium Mambo",
   "Flight of the Red Balloon",
-  "What Time Is It There?",
   "The Hole",
   "Rebels of the Neon God",
   "Goodbye, Dragon Inn",
-  "The River",
-  "Vive l'Amour",
   "I Don't Want to Sleep Alone",
   "Stray Dogs",
   "Visage",
@@ -507,9 +489,6 @@ export const LETTERBOXD_TOP_500: string[] = [
   "La Femme de l'aviateur",
   "Boyfriends and Girlfriends",
   "Four Adventures of Reinette and Mirabelle",
-  "Pauline at the Beach",
   "Conte de Noël",
-  "Wild Grass",
   "How I Got into an Argument",
-  "Late August, Early September",
 ];

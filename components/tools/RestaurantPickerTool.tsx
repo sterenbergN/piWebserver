@@ -1,180 +1,171 @@
 'use client';
 
-import { useState } from 'react';
-import { useSitePopup } from '@/components/SitePopup';
+import { useRef, useState } from 'react';
+import { CUISINE_LABELS } from '@/lib/tools/restaurants';
 
-export default function RestaurantPickerTool() {
-  const { showAlert } = useSitePopup();
-  const [step, setStep] = useState(0); // 0 = Start, 1-5 = Questions, 6 = Loading, 7 = Results
-  
-  // Quiz State
-  const [answers, setAnswers] = useState({
-    price: '',
-    cuisine: '',
-    distance: 5000, // in meters
-    vibe: '',
-    openNow: true
+type Place = {
+  id: string; name: string; kind: string; cuisine: string | null; lat: number; lon: number; distance: number;
+  address: string | null; phone: string | null; website: string | null; hours: string | null; open: boolean | null;
+};
+
+const KINDS = [
+  { id: 'any', label: 'Any' },
+  { id: 'restaurant', label: 'Dining' },
+  { id: 'fast_food', label: 'Quick' },
+  { id: 'cafe', label: 'Café' },
+  { id: 'bar', label: 'Bar' },
+];
+const DISTANCES = [
+  { m: 1000, label: '1 km' },
+  { m: 3000, label: '3 km' },
+  { m: 8000, label: '8 km' },
+  { m: 15000, label: '15 km' },
+];
+const KIND_LABEL: Record<string, string> = { restaurant: 'Restaurant', fast_food: 'Quick bite', cafe: 'Café', bar: 'Bar', pub: 'Pub' };
+
+const distanceLabel = (m: number) => {
+  const miles = m / 1609.344;
+  return `${m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`} · ${miles < 0.1 ? '<0.1' : miles.toFixed(1)} mi`;
+};
+
+function currentPosition(): Promise<{ lat: number; lng: number }> {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) return reject(new Error('This browser can’t share its location — type a place instead.'));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      err => reject(new Error(err.code === err.PERMISSION_DENIED ? 'Location is blocked for this site — allow it, or type a place instead.' : 'Couldn’t get your location — type a place instead.')),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
   });
+}
 
-  const [results, setResults] = useState<any[]>([]);
-  const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
+/** Nearby places to eat from OpenStreetMap, filtered by type, cuisine, distance and opening hours. */
+export default function RestaurantPickerTool() {
+  const [kind, setKind] = useState('any');
+  const [cuisine, setCuisine] = useState('');
+  const [radius, setRadius] = useState(3000);
+  const [openNow, setOpenNow] = useState(true);
+  const [place, setPlace] = useState('');
+  const [status, setStatus] = useState<'idle' | 'locating' | 'searching' | 'done' | 'error'>('idle');
+  const [error, setError] = useState('');
+  const [results, setResults] = useState<Place[]>([]);
+  const [where, setWhere] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  const startQuiz = () => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
-          setStep(1);
-        },
-        async (error) => {
-          await showAlert({ title: "Location Error", message: "Please enable location services to find restaurants near you." });
-        }
-      );
-    } else {
-      showAlert({ title: "Unsupported", message: "Geolocation is not supported by your browser." });
+  const search = async (useTyped: boolean) => {
+    setError('');
+    setPicked(null);
+    let coords: { lat: number; lng: number } | null = null;
+    if (!useTyped) {
+      setStatus('locating');
+      try { coords = await currentPosition(); } catch (err) { setStatus('error'); setError(err instanceof Error ? err.message : 'Location failed'); return; }
     }
-  };
-
-  const handleAnswer = (key: keyof typeof answers, value: any) => {
-    setAnswers(prev => ({ ...prev, [key]: value }));
-    if (step < 5) {
-      setStep(step + 1);
-    } else {
-      submitQuiz({ ...answers, [key]: value });
-    }
-  };
-
-  const submitQuiz = async (finalAnswers: typeof answers) => {
-    setStep(6); // Loading
-
+    setStatus('searching');
+    const now = new Date();
     try {
       const res = await fetch('/api/tools/restaurants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...finalAnswers, radius: finalAnswers.distance, lat: location?.lat, lng: location?.lng })
+        body: JSON.stringify({ ...(coords || { place }), kind, cuisine, radius, openNow, day: now.getDay(), minute: now.getHours() * 60 + now.getMinutes() }),
       });
-      const data = await res.json();
-      if (data.success) {
-        setResults(data.results);
-      } else {
-        await showAlert({ title: "Search Error", message: data.message });
-      }
+      const d = await res.json();
+      if (!d.success) { setStatus('error'); setError(d.message || 'Search failed.'); return; }
+      setResults(d.results);
+      setWhere(d.place || 'you');
+      setStatus('done');
+      setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     } catch {
-      await showAlert({ title: "Network Error", message: "Failed to connect to the restaurant finder." });
+      setStatus('error');
+      setError('Couldn’t reach the search. Check your connection and try again.');
     }
-    
-    setStep(7); // Results
   };
 
-  const reset = () => {
-    setStep(0);
-    setAnswers({ price: '', cuisine: '', distance: 5000, vibe: '', openNow: true });
-    setResults([]);
+  const pickForMe = () => {
+    // Prefer places known to be open; otherwise anything in the list.
+    const pool = results.filter(r => r.open === true);
+    const from = pool.length ? pool : results;
+    const choice = from[Math.floor(Math.random() * from.length)];
+    setPicked(choice.id);
+    setTimeout(() => document.getElementById(`place-${choice.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 30);
   };
+
+  const busy = status === 'locating' || status === 'searching';
 
   return (
-    <div className="glass-panel" style={{ padding: '2.5rem', maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
-      {step === 0 && (
-        <div className="animate-fade-in">
-          <h2 style={{ marginBottom: '1rem', fontSize: '2rem' }}>🍽️ Where to Eat?</h2>
-          <p style={{ color: 'var(--muted)', marginBottom: '2rem', lineHeight: 1.6 }}>
-            Can't decide where to go? Give us access to your location and answer 5 quick questions, and we'll pick the top 5 spots for you!
-          </p>
-          <button className="btn btn-primary" onClick={startQuiz} style={{ fontSize: '1.2rem', padding: '0.75rem 2rem' }}>
-            Find Food Nearby
-          </button>
-        </div>
-      )}
+    <>
+      <section className="tl-card">
+        <h2>🍽️ Where to eat?</h2>
+        <p className="tl-sub">Places near you from OpenStreetMap. Pick what you’re in the mood for.</p>
 
-      {step === 1 && (
-        <div className="animate-fade-in">
-          <h3 style={{ marginBottom: '2rem' }}>1. How much do you want to spend?</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('price', '1')}>$ (Cheap)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('price', '2')}>$$ (Moderate)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('price', '3')}>$$$ (Pricey)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('price', '4')}>$$$$ (Luxury)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('price', '')} style={{ gridColumn: 'span 2' }}>Doesn't Matter</button>
+        <span className="tl-label">Type</span>
+        <div className="tl-seg" role="group" aria-label="Type of place">
+          {KINDS.map(k => <button key={k.id} aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>{k.label}</button>)}
+        </div>
+
+        <span className="tl-label">Cuisine</span>
+        <div className="tl-chips is-scroll" role="group" aria-label="Cuisine">
+          {Object.entries(CUISINE_LABELS).map(([id, label]) => <button key={id || 'any'} className="tl-chip" aria-pressed={cuisine === id} onClick={() => setCuisine(id)}>{label}</button>)}
+        </div>
+
+        <span className="tl-label">How far</span>
+        <div className="tl-seg" role="group" aria-label="Distance">
+          {DISTANCES.map(d => <button key={d.m} aria-pressed={radius === d.m} onClick={() => setRadius(d.m)}>{d.label}</button>)}
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', minHeight: 44, cursor: 'pointer' }}>
+          <input type="checkbox" checked={openNow} onChange={e => setOpenNow(e.target.checked)} />
+          <span>Open right now <span className="tl-muted" style={{ fontSize: '0.85rem' }}>(places with unknown hours still show, last)</span></span>
+        </label>
+
+        <button className="btn btn-primary tl-btn tl-btn-block" style={{ marginTop: '0.75rem' }} disabled={busy} onClick={() => search(false)}>
+          {status === 'locating' ? 'Finding you…' : status === 'searching' ? 'Searching…' : '📍 Search near me'}
+        </button>
+        <div className="tl-row" style={{ marginTop: '0.6rem' }}>
+          <input value={place} onChange={e => setPlace(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && place.trim()) search(true); }} placeholder="…or type a city, area or ZIP" aria-label="Place to search near" style={{ flex: 1 }} />
+          <button className="btn btn-secondary" disabled={busy || !place.trim()} onClick={() => search(true)}>Search</button>
+        </div>
+        {error && <p role="alert" style={{ color: 'var(--danger)', margin: '0.75rem 0 0', fontSize: '0.9rem' }}>{error}</p>}
+      </section>
+
+      {status === 'done' && (
+        <section className="tl-card" ref={listRef} style={{ scrollMarginTop: 80 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.9rem' }}>
+            <div>
+              <h2>{results.length ? `${results.length} place${results.length === 1 ? '' : 's'}` : 'Nothing found'}</h2>
+              <div className="tl-muted" style={{ fontSize: '0.85rem' }}>within {DISTANCES.find(d => d.m === radius)?.label} of {where} · closest first</div>
+            </div>
+            {results.length > 1 && <button className="btn btn-primary" onClick={pickForMe}>🎲 Pick for me</button>}
           </div>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="animate-fade-in">
-          <h3 style={{ marginBottom: '2rem' }}>2. What kind of cuisine?</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            {['Italian', 'Mexican', 'Asian', 'American', 'Seafood', 'Any'].map(c => (
-              <button key={c} className="btn btn-secondary" onClick={() => handleAnswer('cuisine', c === 'Any' ? '' : c)}>{c}</button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 3 && (
-        <div className="animate-fade-in">
-          <h3 style={{ marginBottom: '2rem' }}>3. How far are you willing to go?</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('distance', 1000)}>Walking Distance (&lt; 1km)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('distance', 5000)}>Short Drive (&lt; 5km)</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('distance', 15000)}>Long Drive (&lt; 15km)</button>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <div className="animate-fade-in">
-          <h3 style={{ marginBottom: '2rem' }}>4. What's the vibe?</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            {['Casual', 'Fancy', 'Fast Food', 'Cafe', 'Bar', 'Any'].map(v => (
-              <button key={v} className="btn btn-secondary" onClick={() => handleAnswer('vibe', v === 'Any' ? '' : v)}>{v}</button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 5 && (
-        <div className="animate-fade-in">
-          <h3 style={{ marginBottom: '2rem' }}>5. Must be open right now?</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('openNow', true)}>Yes, I'm hungry!</button>
-            <button className="btn btn-secondary" onClick={() => handleAnswer('openNow', false)}>Doesn't matter</button>
-          </div>
-        </div>
-      )}
-
-      {step === 6 && (
-        <div className="animate-fade-in" style={{ padding: '3rem 0' }}>
-          <h2>Locating Restaurants... 📍</h2>
-        </div>
-      )}
-
-      {step === 7 && (
-        <div className="animate-fade-in">
-          <h2 style={{ marginBottom: '0.5rem', color: 'var(--accent-light)' }}>Top Recommendations</h2>
-          <p style={{ color: 'var(--muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>Results via OpenStreetMap</p>
           {results.length === 0 ? (
-            <p>No restaurants found matching your criteria nearby. Try broadening your search.</p>
+            <p className="tl-muted" style={{ margin: 0 }}>Try a wider distance, “Anything” for cuisine, or turn off “Open right now”.</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'left', marginBottom: '2rem' }}>
-              {results.map((r, i) => (
-                <div key={i} style={{ background: 'var(--input-bg)', padding: '1.25rem', borderRadius: '12px', borderLeft: '3px solid var(--accent)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.05rem' }}>{i + 1}. {r.name}</h3>
-                    {r.cuisine && <span style={{ background: 'var(--surface-border)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{r.cuisine}</span>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+              {results.map(r => (
+                <article key={r.id} id={`place-${r.id}`} className={`tl-place${picked === r.id ? ' is-picked' : ''}`}>
+                  <div className="tl-place-head">
+                    <div style={{ minWidth: 0 }}>
+                      <h3>{picked === r.id && '🎉 '}{r.name}</h3>
+                      <div className="tl-place-meta">{[KIND_LABEL[r.kind] || r.kind, r.cuisine].filter(Boolean).join(' · ')}</div>
+                      <div className="tl-place-meta">{distanceLabel(r.distance)}{r.address ? ` · ${r.address}` : ''}</div>
+                    </div>
+                    <span className={`tl-open ${r.open === true ? 'is-open' : r.open === false ? 'is-closed' : 'is-unknown'}`}>
+                      {r.open === true ? 'Open' : r.open === false ? 'Closed' : 'Hours ?'}
+                    </span>
                   </div>
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', opacity: 0.7, display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                    {r.address && <span>📍 {r.address}</span>}
-                    {r.opening_hours && <span>🕐 {r.opening_hours.split(';')[0]}</span>}
-                    {r.phone && <span>📞 {r.phone}</span>}
-                    {r.website && <a href={r.website} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>🌐 Website</a>}
+                  {r.hours && <div className="tl-place-meta" style={{ marginTop: '0.35rem' }}>🕐 {r.hours}</div>}
+                  <div className="tl-place-links">
+                    <a className="btn btn-secondary" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${r.name} ${r.lat},${r.lon}`)}`} target="_blank" rel="noreferrer">Directions</a>
+                    {r.website && <a className="btn btn-secondary" href={r.website.startsWith('http') ? r.website : `https://${r.website}`} target="_blank" rel="noreferrer">Website</a>}
+                    {r.phone && <a className="btn btn-secondary" href={`tel:${r.phone.replace(/[^+\d]/g, '')}`}>Call</a>}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
-          <button className="btn btn-secondary" onClick={reset}>Start Over</button>
-        </div>
+          <p className="tl-muted" style={{ fontSize: '0.75rem', margin: '0.9rem 0 0' }}>Data © OpenStreetMap contributors. Hours can be out of date.</p>
+        </section>
       )}
-    </div>
+    </>
   );
 }

@@ -1,52 +1,51 @@
 'use client';
 
-import { useState } from 'react';
-import { useSitePopup } from '@/components/SitePopup';
-
+import { useEffect, useState } from 'react';
 import CalculatorTool from '@/components/tools/CalculatorTool';
 import MoviePickerTool from '@/components/tools/MoviePickerTool';
 import RestaurantPickerTool from '@/components/tools/RestaurantPickerTool';
 import GolfTrackerTool from '@/components/tools/GolfTrackerTool';
+import './tools.css';
 
-export default function ToolsDashboard() {
-  const [activeTool, setActiveTool] = useState<'calculators' | 'movies' | 'restaurants' | 'golf'>('calculators');
-  const { popup } = useSitePopup();
+const TOOLS = [
+  { id: 'calculators', icon: '🧮', label: 'Calculators' },
+  { id: 'movies', icon: '🎬', label: 'Movie picker' },
+  { id: 'food', icon: '🍽️', label: 'Where to eat' },
+  { id: 'golf', icon: '⛳', label: 'Golf scores' },
+] as const;
+type ToolId = (typeof TOOLS)[number]['id'];
+
+export default function ToolsPage() {
+  const [tool, setTool] = useState<ToolId>('calculators');
+
+  // The open tool lives in the URL (#golf) so it survives a refresh and can be linked.
+  useEffect(() => {
+    const fromHash = window.location.hash.slice(1);
+    if (TOOLS.some(t => t.id === fromHash)) setTool(fromHash as ToolId);
+  }, []);
+  const choose = (id: ToolId) => { setTool(id); history.replaceState(null, '', `#${id}`); };
 
   return (
-    <div className="animate-fade-in" style={{ padding: '2rem 0', maxWidth: '1000px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '1rem', textAlign: 'center' }}>Utility Tools</h1>
-      <p style={{ textAlign: 'center', color: 'var(--muted)', marginBottom: '2.5rem' }}>
-        Select a tool from the menu below to get started.
-      </p>
+    <div className="tl animate-fade-in">
+      <div className="tl-head">
+        <h1>Tools</h1>
+        <p>Small things that come in handy.</p>
+      </div>
 
-      {/* Tool Navigation */}
-      <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '2.5rem' }}>
-        {[
-          { id: 'calculators', label: '🧮 Calculators' },
-          { id: 'movies', label: '🎬 Movie Picker' },
-          { id: 'restaurants', label: '🍽️ Restaurant Finder' },
-          { id: 'golf', label: '⛳ Golf Score Tracker' }
-        ].map(tool => (
-          <button
-            key={tool.id}
-            className={`btn ${activeTool === tool.id ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setActiveTool(tool.id as any)}
-            style={{ minWidth: '160px', fontWeight: activeTool === tool.id ? 600 : 400 }}
-          >
-            {tool.label}
+      <div className="tl-switch" role="tablist" aria-label="Tools">
+        {TOOLS.map(t => (
+          <button key={t.id} role="tab" aria-selected={tool === t.id} onClick={() => choose(t.id)}>
+            <span aria-hidden>{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
       </div>
 
-      {/* Active Tool Renderer */}
-      <div className="animate-fade-in">
-        {activeTool === 'calculators' && <CalculatorTool />}
-        {activeTool === 'movies' && <MoviePickerTool />}
-        {activeTool === 'restaurants' && <RestaurantPickerTool />}
-        {activeTool === 'golf' && <GolfTrackerTool />}
+      <div role="tabpanel">
+        {tool === 'calculators' && <CalculatorTool />}
+        {tool === 'movies' && <MoviePickerTool />}
+        {tool === 'food' && <RestaurantPickerTool />}
+        {tool === 'golf' && <GolfTrackerTool />}
       </div>
-
-      {popup}
     </div>
   );
 }

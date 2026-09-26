@@ -1,249 +1,156 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-interface MovieDetails {
-  title: string;
-  description: string;
-  poster: string | null;
-}
+interface Details { title: string; description: string; poster: string | null; year: string | null; url: string | null }
+type Pick = { title: string; rank: number };
 
+const POOLS = [25, 50, 100, 250];
+const STORAGE_KEY = 'moviePickerWatched';
+
+/** Spin for a film you haven't seen from a list of acclaimed ones; watched films are remembered on this device. */
 export default function MoviePickerTool() {
-  const [movies, setMovies] = useState<string[]>([]);
+  const [movies, setMovies] = useState<string[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [watched, setWatched] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [poolSize, setPoolSize] = useState<number>(500);
-
-  const [isSpinning, setIsSpinning] = useState(false);
-  const [displayNumber, setDisplayNumber] = useState<number | null>(null);
-  const [selectedMovie, setSelectedMovie] = useState<string | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [movieDetails, setMovieDetails] = useState<MovieDetails | null>(null);
-  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [pool, setPool] = useState(100);
+  const [spinning, setSpinning] = useState(false);
+  const [display, setDisplay] = useState<number | null>(null);
+  const [pick, setPick] = useState<Pick | null>(null);
+  const [details, setDetails] = useState<Details | null>(null);
+  const [detailsState, setDetailsState] = useState<'idle' | 'loading' | 'missing'>('idle');
+  const [filter, setFilter] = useState('');
   const [addInput, setAddInput] = useState('');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Load movie list
-    fetch('/api/tools/movies')
-      .then(r => r.json())
-      .then(d => { if (d.success) setMovies(d.movies); })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-
-    // Load watched from localStorage only
-    try {
-      const saved = localStorage.getItem('moviePickerWatched');
-      if (saved) setWatched(JSON.parse(saved));
-    } catch {}
+    fetch('/api/tools/movies').then(r => r.json()).then(d => { if (d.success) setMovies(d.movies); else setLoadError(true); }).catch(() => setLoadError(true));
+    try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) setWatched(JSON.parse(saved)); } catch { }
+    return () => { if (timer.current) clearTimeout(timer.current); };
   }, []);
 
   const saveWatched = (list: string[]) => {
     setWatched(list);
-    try { localStorage.setItem('moviePickerWatched', JSON.stringify(list)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch { }
   };
+  const isWatched = (t: string) => watched.some(w => w.toLowerCase() === t.toLowerCase());
 
-  const markWatched = (movie: string) => {
-    if (!watched.includes(movie)) saveWatched([...watched, movie]);
-    setSelectedMovie(null);
-    setMovieDetails(null);
-    setDisplayNumber(null);
-    setSelectedIndex(null);
-  };
-
-  const fetchDetails = async (title: string) => {
-    setDetailsLoading(true);
+  const loadDetails = async (title: string) => {
+    setDetails(null);
+    setDetailsState('loading');
     try {
-      const res = await fetch(`/api/tools/movies/details?title=${encodeURIComponent(title)}`);
-      const d = await res.json();
-      if (d.success) {
-        setMovieDetails({ title: d.title, description: d.description, poster: d.poster });
-      } else {
-        setMovieDetails({ title, description: 'No description available.', poster: null });
-      }
+      const d = await fetch(`/api/tools/movies/details?title=${encodeURIComponent(title)}`).then(r => r.json());
+      if (d.success) { setDetails(d); setDetailsState('idle'); } else setDetailsState('missing');
     } catch {
-      setMovieDetails({ title, description: 'Could not load details.', poster: null });
+      setDetailsState('missing');
     }
-    setDetailsLoading(false);
   };
+
+  const list = movies?.slice(0, pool) || [];
+  const unwatched = list.map((t, i) => ({ title: t, rank: i + 1 })).filter(m => !isWatched(m.title));
 
   const spin = () => {
-    if (movies.length === 0 || isSpinning) return;
-    const pool = movies.slice(0, poolSize);
-    setIsSpinning(true);
-    setSelectedMovie(null);
-    setMovieDetails(null);
-    setSelectedIndex(null);
-
+    if (spinning || unwatched.length === 0) return;
+    const final = unwatched[Math.floor(Math.random() * unwatched.length)];
+    setSpinning(true);
+    setPick(null);
+    setDetails(null);
     let tick = 0;
-    const totalTicks = 45;
-    const getDelay = (t: number) => t < 20 ? 40 : t < 35 ? 80 : 150;
-
-    const runTick = () => {
-      const n = Math.floor(Math.random() * pool.length) + 1;
-      setDisplayNumber(n);
+    const run = () => {
       tick++;
-      if (tick < totalTicks) {
-        setTimeout(runTick, getDelay(tick));
-      } else {
-        const unwatched = pool.map((m, i) => i).filter(i => !watched.includes(pool[i]));
-        const finalIdx = unwatched.length > 0
-          ? unwatched[Math.floor(Math.random() * unwatched.length)]
-          : Math.floor(Math.random() * pool.length);
-        setDisplayNumber(finalIdx + 1);
-        setSelectedIndex(finalIdx);
-        setSelectedMovie(pool[finalIdx]);
-        setIsSpinning(false);
-        fetchDetails(pool[finalIdx]);
+      if (tick < 28) {
+        setDisplay(Math.floor(Math.random() * list.length) + 1);
+        timer.current = setTimeout(run, tick < 14 ? 45 : tick < 22 ? 90 : 170);
+        return;
       }
+      setDisplay(final.rank);
+      setPick(final);
+      setSpinning(false);
+      loadDetails(final.title);
     };
-    runTick();
+    // Reduced motion: skip the drum roll.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { tick = 99; }
+    run();
   };
 
-  if (loading) return <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center' }}>Loading film list...</div>;
+  const markWatched = (title: string) => {
+    if (!isWatched(title)) saveWatched([title, ...watched]);
+    setPick(null);
+    setDetails(null);
+    setDisplay(null);
+  };
+  const addManual = () => {
+    const t = addInput.trim();
+    if (t && !isWatched(t)) saveWatched([t, ...watched]);
+    setAddInput('');
+  };
 
-  const unwatchedCount = movies.slice(0, poolSize).filter(m => !watched.includes(m)).length;
-  const POOL_OPTIONS = [10, 25, 50, 100, 250, 500];
+  if (loadError) return <section className="tl-card"><p className="tl-muted" style={{ margin: 0 }}>Couldn’t load the film list. Refresh to try again.</p></section>;
+  if (!movies) return <section className="tl-card"><p className="tl-muted" style={{ margin: 0 }}>Loading films…</p></section>;
+
+  const shownWatched = filter.trim() ? watched.filter(w => w.toLowerCase().includes(filter.trim().toLowerCase())) : watched;
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+    <>
+      <section className="tl-card" style={{ textAlign: 'center' }}>
+        <h2>🎬 What should we watch?</h2>
+        <p className="tl-sub">Spins over acclaimed films you haven’t marked as watched.</p>
 
-      {/* Wheel Panel */}
-      <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', marginBottom: '1.5rem' }}>
-        <h2 style={{ marginBottom: '0.5rem' }}>🎬 Movie Wheel</h2>
-        <p style={{ color: 'var(--muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
-          Spinning across top-rated Letterboxd films &nbsp;|&nbsp; {unwatchedCount} unwatched in pool
-        </p>
-
-        {/* Pool size selector */}
-        <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '1.5rem' }}>
-          {POOL_OPTIONS.map(n => (
-            <button
-              key={n}
-              className={`btn ${poolSize === n ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => { setPoolSize(n); setSelectedMovie(null); setMovieDetails(null); setDisplayNumber(null); }}
-              style={{ fontSize: '0.8rem', padding: '0.3rem 0.65rem', minWidth: '52px' }}
-            >
-              Top {n}
-            </button>
-          ))}
+        <span className="tl-label" style={{ textAlign: 'left' }}>Pick from the top</span>
+        <div className="tl-seg" role="group" aria-label="How many films to pick from">
+          {[...POOLS, movies.length].map(n => <button key={n} aria-pressed={pool === n} disabled={spinning} onClick={() => { setPool(n); setPick(null); setDisplay(null); }}>{n === movies.length ? 'All' : n}</button>)}
         </div>
+        <p className="tl-muted" style={{ fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{unwatched.length} of {list.length} still to watch</p>
 
-        {/* Number display */}
-        <div style={{
-          width: '160px', height: '160px', borderRadius: '50%', margin: '0 auto 1.5rem',
-          border: `4px solid ${isSpinning ? 'var(--accent)' : 'var(--surface-border)'}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '2.5rem', fontWeight: 'bold', fontFamily: 'monospace',
-          background: 'var(--surface-bg)',
-          boxShadow: isSpinning ? '0 0 30px var(--accent), 0 0 60px rgba(var(--accent-rgb),0.3)' : 'none',
-          transition: 'box-shadow 0.3s ease',
-        }}>
-          {displayNumber !== null ? `#${displayNumber}` : '?'}
-        </div>
+        <div className={`tl-wheel${spinning ? ' is-spinning' : ''}`} aria-live="off">{display !== null ? `#${display}` : '?'}</div>
 
-        <button
-          className="btn btn-primary"
-          onClick={spin}
-          disabled={isSpinning}
-          style={{ fontSize: '1.1rem', padding: '0.7rem 2.5rem', letterSpacing: '0.05em' }}
-        >
-          {isSpinning ? 'SPINNING...' : '🎲 SPIN'}
+        <button className="btn btn-primary tl-btn" style={{ minWidth: 200 }} onClick={spin} disabled={spinning || unwatched.length === 0}>
+          {spinning ? 'Spinning…' : unwatched.length === 0 ? 'You’ve seen them all!' : pick ? '🎲 Spin again' : '🎲 Spin'}
         </button>
-      </div>
+      </section>
 
-      {/* Selected Movie Details */}
-      {(selectedMovie || detailsLoading) && (
-        <div className="glass-panel animate-fade-in" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-          {detailsLoading ? (
-            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>
-              Fetching details...
-            </div>
-          ) : movieDetails ? (
-            <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-              {/* Poster */}
-              {movieDetails.poster ? (
-                <img
-                  src={movieDetails.poster}
-                  alt={movieDetails.title}
-                  style={{ width: '140px', height: 'auto', borderRadius: '8px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
-                />
-              ) : (
-                <div style={{ width: '140px', height: '200px', background: 'var(--input-bg)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: '0.8rem', flexShrink: 0 }}>
-                  No Poster
-                </div>
-              )}
-
-              {/* Info */}
-              <div style={{ flex: 1, minWidth: '200px' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--accent-light)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.3rem' }}>
-                  #{selectedIndex !== null ? selectedIndex + 1 : '?'} on Letterboxd
-                </div>
-                <h2 style={{ margin: '0 0 0.75rem', lineHeight: 1.2 }}>{movieDetails.title}</h2>
-                <p style={{ fontSize: '0.9rem', lineHeight: 1.7, opacity: 0.8, marginBottom: '1.25rem' }}>
-                  {movieDetails.description.length > 300
-                    ? movieDetails.description.slice(0, 300) + '...'
-                    : movieDetails.description}
-                </p>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => markWatched(selectedMovie!)}
-                  style={{ fontSize: '0.9rem' }}
-                >
-                  ✅ Mark as Watched
-                </button>
+      {pick && (
+        <section className="tl-card animate-fade-in" aria-live="polite">
+          <div className="tl-film">
+            {details?.poster ? <img src={details.poster} alt="" /> : <div className="tl-poster-empty" aria-hidden>🎞️</div>}
+            <div>
+              <div className="tl-label" style={{ margin: 0 }}>#{pick.rank}{details?.year ? ` · ${details.year}` : ''}</div>
+              <h3>{details?.title || pick.title}</h3>
+              {detailsState === 'loading' && <p>Looking it up…</p>}
+              {detailsState === 'missing' && <p>Couldn’t find a summary for this one.</p>}
+              {details && <p>{details.description.length > 360 ? `${details.description.slice(0, 360).replace(/\s+\S*$/, '')}…` : details.description}</p>}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <button className="btn btn-primary" onClick={() => markWatched(pick.title)}>✓ Seen it</button>
+                {details?.url && <a className="btn btn-secondary" href={details.url} target="_blank" rel="noreferrer">Wikipedia ↗</a>}
               </div>
             </div>
-          ) : null}
-        </div>
+          </div>
+        </section>
       )}
 
-      {/* Watched List */}
-      <div className="glass-panel" style={{ padding: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <h3 style={{ margin: 0 }}>Watched ({watched.length})</h3>
-
-          {/* Manual add */}
-          <div style={{ display: 'flex', gap: '0.5rem', flex: 1, maxWidth: '360px' }}>
-            <input
-              value={addInput}
-              onChange={e => setAddInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && addInput.trim()) { saveWatched([...watched, addInput.trim()]); setAddInput(''); } }}
-              placeholder="Add film manually..."
-              style={{ flex: 1, fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
-            />
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
-              onClick={() => { if (addInput.trim()) { saveWatched([...watched, addInput.trim()]); setAddInput(''); } }}
-            >
-              Add
-            </button>
-          </div>
+      <section className="tl-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <h2>Watched <span className="tl-muted" style={{ fontWeight: 400, fontSize: '1rem' }}>({watched.length})</span></h2>
+          <span className="tl-muted" style={{ fontSize: '0.8rem' }}>Saved on this device</span>
         </div>
-
+        <div className="tl-row" style={{ margin: '0.75rem 0' }}>
+          <input value={addInput} onChange={e => setAddInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addManual(); }} placeholder="Add a film you’ve seen" aria-label="Add a watched film" style={{ flex: 1 }} />
+          <button className="btn btn-secondary" onClick={addManual} disabled={!addInput.trim()}>Add</button>
+        </div>
+        {watched.length > 12 && <input type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search watched films" aria-label="Search watched films" style={{ marginBottom: '0.75rem' }} />}
         {watched.length === 0 ? (
-          <p style={{ color: 'var(--muted)', fontStyle: 'italic', fontSize: '0.9rem' }}>
-            No films marked as watched yet. Spin the wheel and mark films as you go!
-          </p>
+          <p className="tl-muted" style={{ margin: 0 }}>Nothing yet — spin, then tap “Seen it” to skip films you know.</p>
         ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-            {watched.map((film, i) => (
-              <span key={i} style={{
-                background: 'var(--input-bg)', border: '1px solid var(--surface-border)',
-                padding: '0.3rem 0.75rem', borderRadius: '20px', fontSize: '0.82rem',
-                display: 'flex', alignItems: 'center', gap: '0.4rem',
-              }}>
+          <div className="tl-chips">
+            {shownWatched.map(film => (
+              <span key={film} className="tl-tag">
                 {film}
-                <button
-                  onClick={() => saveWatched(watched.filter((_, j) => j !== i))}
-                  style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: '1rem', lineHeight: 1 }}
-                  title="Remove"
-                >×</button>
+                <button onClick={() => saveWatched(watched.filter(w => w !== film))} aria-label={`Remove ${film}`}>✕</button>
               </span>
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
