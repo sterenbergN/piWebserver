@@ -6,6 +6,7 @@ import { liftFromName, suggestedLiftNames, type EquipmentPreset } from '@/lib/wo
 import EquipmentPicker from './EquipmentPicker';
 import StationForm from './StationForm';
 import { describeLift } from './LiftForm';
+import { STATION_TYPE_META } from '@/lib/workout/station-summary';
 import { equipmentLibrary as equipmentLibraryFor } from '@/lib/workout/equipment-library';
 
 type Step =
@@ -157,20 +158,20 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
         {onCancel && <button className="workout-text-btn" onClick={onCancel}>Close</button>}
       </div>
       <input className="workout-input" placeholder="Search machines or lifts…" value={query} onChange={(e) => setQuery(e.target.value)} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '45vh', overflowY: 'auto', marginBottom: '0.75rem' }}>
+      <div className="workout-stack" style={{ maxHeight: '45vh', overflowY: 'auto', marginBottom: '0.75rem' }}>
         {stations.map((s) => (
-          <button key={s.id} className="btn btn-secondary workout-flex-between" style={{ padding: '0.7rem 0.9rem', textAlign: 'left' }} onClick={() => openStation(s)}>
-            <span>
-              <strong style={{ display: 'block', fontSize: '0.9rem' }}>{s.name}</strong>
-              <span className="workout-hint">{s.lifts.length ? s.lifts.map((l) => l.name).slice(0, 3).join(', ') + (s.lifts.length > 3 ? '…' : '') : 'no lifts yet'}</span>
+          <button key={s.id} className="workout-lift-row" onClick={() => openStation(s)}>
+            <span className="workout-avatar is-small" aria-hidden>{STATION_TYPE_META[s.type]?.icon}</span>
+            <span className="workout-card-text">
+              <span className="workout-card-title">{s.name}</span>
+              <span className="workout-card-meta">{s.lifts.length ? s.lifts.map((l) => l.name).slice(0, 3).join(', ') + (s.lifts.length > 3 ? '…' : '') : 'no lifts yet'}</span>
             </span>
-            <span aria-hidden>›</span>
+            <span className="workout-chevron" aria-hidden>›</span>
           </button>
         ))}
         {stations.length === 0 && <p className="workout-hint">No machines match.</p>}
       </div>
-      <button className="workout-btn-primary" style={{ background: 'transparent', border: '1px dashed var(--accent)', color: 'var(--accent)', boxShadow: 'none' }}
-        onClick={() => setStep({ kind: 'pick-new' })}>
+      <button className="workout-button is-dashed is-block" style={{ minHeight: 52 }} onClick={() => setStep({ kind: 'pick-new' })}>
         + New equipment here
       </button>
     </div>

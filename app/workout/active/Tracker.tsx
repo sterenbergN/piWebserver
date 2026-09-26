@@ -1334,7 +1334,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       <strong style={{ fontSize: '0.9rem' }}>Manage Equipment</strong>
                       <button style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '1.1rem' }} onClick={() => setShowAddLift(false)}>✕</button>
                     </div>
-                    <div style={{ padding: '1rem' }}>
+                    <div style={{ padding: '0.75rem' }}>
                       <InlineGymEditor
                         gymId={localPlan.gymId}
                         onGymUpdated={(updatedGym) => {

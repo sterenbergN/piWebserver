@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 type ConfirmOptions = {
   title?: string;
@@ -89,7 +90,9 @@ export function useSitePopup() {
   const popup = useMemo(() => {
     if (!confirmState && !alertState) return null;
 
-    return (
+    // Rendered into <body> so animated (transformed) parents and open sheets
+    // can't trap it underneath or off-screen.
+    return createPortal(
       <>
         {confirmState && (
           <div className="site-popup-backdrop" role="dialog" aria-modal="true" aria-label={confirmState.title}>
@@ -124,7 +127,8 @@ export function useSitePopup() {
             </div>
           </div>
         )}
-      </>
+      </>,
+      document.body,
     );
   }, [alertState, closeAlert, closeConfirm, confirmState]);
 

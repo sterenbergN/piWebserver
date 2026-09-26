@@ -35,10 +35,13 @@ export default function ConfigPage() {
         </button>
       </div>
 
-      <div className="workout-tile" style={{ padding: 0, overflow: 'hidden' }}>
-        {activeTab === 'gyms' && <GymEditor />}
-        {activeTab === 'types' && <WorkoutTypeEditor />}
-      </div>
+      {/* Gyms use full-width cards; workout types still live in a panel. */}
+      {activeTab === 'gyms' && <GymEditor />}
+      {activeTab === 'types' && (
+        <div className="workout-tile" style={{ padding: 0, overflow: 'hidden' }}>
+          <WorkoutTypeEditor />
+        </div>
+      )}
     </div>
   );
 }
