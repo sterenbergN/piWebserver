@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { MAX_SCORE, POINTS_PER_FOOD } from '@/lib/games/snake';
+import { updateJson } from '@/lib/json-store';
 
 const saveDir = path.join(process.cwd(), 'public', 'uploads', 'leaderboard');
 const leaderboardFile = path.join(saveDir, 'leaderboard.json');
@@ -26,22 +27,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: "Invalid name or score." }, { status: 400 });
     }
 
-    await fs.mkdir(saveDir, { recursive: true });
-    
-    let leaderboard = [];
-    try {
-      const raw = await fs.readFile(leaderboardFile, 'utf-8');
-      leaderboard = JSON.parse(raw);
-    } catch { /* brand new leaderboard */ }
+    type Entry = { name: string; score: number; date: string };
+    const leaderboard = await updateJson<Entry[], Entry[]>(leaderboardFile, [], (list) => {
+      list.push({ name, score, date: new Date().toISOString() });
+      // Keep the top 10, highest first.
+      list.sort((a, b) => b.score - a.score);
+      list.splice(10);
+      return list;
+    });
 
-    leaderboard.push({ name, score, date: new Date().toISOString() });
-    
-    // Sort descending and enforce hard 10 retention
-    leaderboard.sort((a: any, b: any) => b.score - a.score);
-    leaderboard = leaderboard.slice(0, 10);
-
-    await fs.writeFile(leaderboardFile, JSON.stringify(leaderboard, null, 2));
-    
     return NextResponse.json({ success: true, leaderboard });
   } catch (err) {
     console.error("Leaderboard Save Error:", err);

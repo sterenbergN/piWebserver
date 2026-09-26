@@ -7,9 +7,14 @@ import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
 
+const siteUrl = process.env.SITE_URL;
+
 export const metadata: Metadata = {
-  title: "Noah Sterenberg",
+  // Section layouts set their own title; this adds the site name after it.
+  title: { default: "Noah Sterenberg", template: "%s · Noah Sterenberg" },
   description: "Personal Website and Server Dashboard",
+  ...(siteUrl ? { metadataBase: new URL(siteUrl) } : {}),
+  openGraph: { type: "website", siteName: "Noah Sterenberg", title: "Noah Sterenberg", description: "Engineer, maker and tinkerer — projects, photos, games and tools, self-hosted on a Raspberry Pi." },
   appleWebApp: { capable: true, title: "Noah Stuf", statusBarStyle: "black-translucent" },
   icons: { apple: "/icons/apple-touch-icon.png" },
 };

@@ -41,10 +41,11 @@ export default function AdminDashboard() {
   const [workoutUserSaving, setWorkoutUserSaving] = useState(false);
   const fetchStats = () => {
     fetch('/api/stats').then(r => r.json()).then(d => { if (d?.success) setStats(d.data); setStatsLoading(false); }).catch(() => setStatsLoading(false));
-    fetch('/api/analytics').then(r => r.json()).then(d => { if (d?.success) setAnalytics(d.visits); }).catch(console.error);
   };
 
   useEffect(() => {
+    // The visit log can be large; load it once rather than with every stats refresh.
+    fetch('/api/analytics').then(r => r.json()).then(d => { if (d?.success) setAnalytics(d.visits); }).catch(console.error);
     fetchStats();
     const interval = setInterval(fetchStats, 10000);
     return () => clearInterval(interval);
@@ -276,7 +277,25 @@ export default function AdminDashboard() {
               month: analytics.filter(v => now - new Date(v.timestamp).getTime() < 86400000 * 30).length,
               total: analytics.length
             };
+            // Daily views for the last 14 days and the most-viewed pages this month.
+            const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+            const days = Array.from({ length: 14 }, (_, i) => {
+              const d = new Date(now - (13 - i) * 86400000);
+              return { key: dayKey(d), label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), weekday: d.toLocaleDateString(undefined, { weekday: 'narrow' }), count: 0 };
+            });
+            const byKey = new Map(days.map(d => [d.key, d]));
+            const pageCounts = new Map<string, number>();
+            for (const v of analytics) {
+              const t = new Date(v.timestamp);
+              const day = byKey.get(dayKey(t));
+              if (day) day.count++;
+              if (now - t.getTime() < 86400000 * 30) pageCounts.set(v.path, (pageCounts.get(v.path) || 0) + 1);
+            }
+            const maxDay = Math.max(1, ...days.map(d => d.count));
+            const topPages = [...pageCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+            const maxPage = topPages[0]?.[1] || 1;
             return (
+              <>
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem' }}>
                 {[
                   { label: 'Last 24 Hours', value: counts.day },
@@ -290,6 +309,32 @@ export default function AdminDashboard() {
                   </div>
                 ))}
               </div>
+              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginTop: '1.5rem' }}>
+                <div>
+                  <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>Views per day · last 14 days</h4>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: 120, borderBottom: '1px solid var(--surface-border)' }}>
+                    {days.map(d => (
+                      <div key={d.key} title={`${d.label}: ${d.count} views`} style={{ flex: 1, height: '100%', display: 'flex', alignItems: 'flex-end', cursor: 'default' }}>
+                        <div style={{ width: '100%', height: `${(d.count / maxDay) * 100}%`, minHeight: d.count ? 2 : 0, background: 'var(--accent)', borderRadius: '4px 4px 0 0' }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '0.3rem' }}>
+                    {days.map(d => <span key={d.key} style={{ flex: 1, textAlign: 'center', fontSize: '0.65rem', color: 'var(--muted)' }}>{d.weekday}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <h4 style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>Top pages · last 30 days</h4>
+                  {topPages.length === 0 ? <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No visits yet.</p> : topPages.map(([page, n]) => (
+                    <div key={page} title={`${page}: ${n} views`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 9rem) minmax(0, 1fr) 3rem', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', marginBottom: '0.35rem' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{page}</span>
+                      <div style={{ height: 8, background: 'var(--input-bg)', borderRadius: 4 }}><div style={{ width: `${(n / maxPage) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: 4 }} /></div>
+                      <span style={{ textAlign: 'right', fontWeight: 700 }}>{n}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              </>
             );
           })()
         )}
