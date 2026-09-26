@@ -14,9 +14,9 @@ interface SystemStats {
 
 interface StatHistory {
   timestamp: string;
-  temp: number;
-  ramUsed: number;
-  cpuLoad: number;
+  temp: number | null;
+  ramUsed: number | null;
+  cpuLoad: number | null;
 }
 
 type StatType = 'temp' | 'ram' | 'cpu';
@@ -27,9 +27,16 @@ const calculateAverages = (history: StatHistory[], type: StatType, mins: number)
   const relevant = history.filter(h => new Date(h.timestamp).getTime() > cutoff);
   if (relevant.length === 0) return null;
   
-  if (type === 'temp') return (relevant.reduce((acc, curr) => acc + curr.temp, 0) / relevant.length).toFixed(1) + '°C';
-  if (type === 'cpu') return (relevant.reduce((acc, curr) => acc + curr.cpuLoad, 0) / relevant.length).toFixed(1) + '%';
-  if (type === 'ram') return (relevant.reduce((acc, curr) => acc + (curr.ramUsed || 0), 0) / relevant.length).toFixed(1) + 'GB';
+  // Readings the collector couldn't take are null; average only real ones.
+  const avg = (pick: (h: StatHistory) => number | null | undefined) => {
+    const values = relevant.map(pick).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  };
+  const value = type === 'temp' ? avg(h => h.temp) : type === 'cpu' ? avg(h => h.cpuLoad) : type === 'ram' ? avg(h => h.ramUsed) : null;
+  if (value === null) return null;
+  if (type === 'temp') return value.toFixed(1) + '°C';
+  if (type === 'cpu') return value.toFixed(1) + '%';
+  if (type === 'ram') return value.toFixed(1) + 'GB';
   return null;
 };
 

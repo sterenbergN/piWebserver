@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { normalizeBirthdate } from '@/lib/workout/birthdate';
+import BackupsPanel from '@/components/admin/BackupsPanel';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; network?: string; }
 interface CADProject { id: string; name: string; description: string; link: string; }
@@ -293,6 +294,8 @@ export default function AdminDashboard() {
           })()
         )}
       </div>
+
+      <BackupsPanel />
 
       {/* Content Manager */}
       <div style={{ background: 'var(--surface-glass)', borderRadius: '16px', border: '1px solid var(--surface-border)', padding: '2rem' }}>

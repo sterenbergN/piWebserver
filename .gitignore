@@ -48,3 +48,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local data backups (see Admin → Backups)
+/backups
+
+# runtime stats (now stored in .data)
+/public/stats-history.json
