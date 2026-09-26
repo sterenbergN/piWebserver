@@ -28,8 +28,16 @@ export type BackupSettings = {
   /** Local hour (0–23) after which the nightly backup runs. */
   hour: number;
   includeMedia: boolean;
+  /**
+   * Only back up when the folder is on a different drive than the site (a
+   * second USB). Stops backups quietly landing on the site drive when the
+   * backup drive is unplugged or didn't mount.
+   */
+  requireSeparateDrive: boolean;
   lastAutoBackup?: string;
 };
+
+export type DriveStatus = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };
 
 export type BackupInfo = { name: string; size: number; createdAt: string; label: string };
 
@@ -40,6 +48,7 @@ export function defaultSettings(): BackupSettings {
     keep: 14,
     hour: 3,
     includeMedia: false,
+    requireSeparateDrive: !!process.env.BACKUP_DIR,
   };
 }
 
@@ -64,7 +73,36 @@ export function normalizeSettings(input: any, current: BackupSettings): BackupSe
     keep: Number.isFinite(keep) ? Math.min(365, Math.max(1, keep)) : current.keep,
     hour: Number.isFinite(hour) ? Math.min(23, Math.max(0, hour)) : current.hour,
     includeMedia: typeof input?.includeMedia === 'boolean' ? input.includeMedia : current.includeMedia,
+    requireSeparateDrive: typeof input?.requireSeparateDrive === 'boolean' ? input.requireSeparateDrive : current.requireSeparateDrive,
   };
+}
+
+/**
+ * Is the backup folder usable right now? With `requireSeparateDrive`, the
+ * folder's parent must already exist (we never create a mount point) and sit
+ * on a different device than the site.
+ */
+export async function checkBackupDrive(settings: BackupSettings): Promise<DriveStatus> {
+  const parent = path.dirname(settings.dir);
+  const target = await fs.stat(settings.dir).catch(() => null);
+  const parentStat = await fs.stat(parent).catch(() => null);
+  if (!target && !parentStat) {
+    return { ok: false, message: `The backup drive isn't connected (${parent} doesn't exist).` };
+  }
+  if (settings.requireSeparateDrive) {
+    const site = await fs.stat(root());
+    const dev = (target || parentStat)!.dev;
+    if (dev === site.dev) {
+      return { ok: false, message: 'The backup folder is on the same drive as the site — is the backup USB plugged in and mounted?' };
+    }
+  }
+  const stats = await fs.statfs(target ? settings.dir : parent).catch(() => null);
+  const freeBytes = stats ? stats.bavail * stats.bsize : undefined;
+  const totalBytes = stats ? stats.blocks * stats.bsize : undefined;
+  if (freeBytes !== undefined && freeBytes < 50 * 1024 * 1024) {
+    return { ok: false, message: 'The backup drive is almost full (under 50 MB free).', freeBytes, totalBytes };
+  }
+  return { ok: true, message: 'Backup drive ready', freeBytes, totalBytes };
 }
 
 export async function saveBackupSettings(settings: BackupSettings) {
@@ -143,6 +181,8 @@ export async function createBackup(label = 'manual'): Promise<BackupInfo> {
     skippedMedia: skippedMedia.length,
   }, null, 2)));
 
+  const drive = await checkBackupDrive(settings);
+  if (!drive.ok) throw new Error(drive.message);
   await fs.mkdir(settings.dir, { recursive: true });
   const target = path.join(settings.dir, name);
   const tmp = `${target}.tmp`;

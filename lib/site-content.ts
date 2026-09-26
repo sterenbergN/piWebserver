@@ -24,9 +24,10 @@ export function mediaUrl(src: string | undefined) {
 
 /** The site's own origin, for absolute URLs in metadata and the sitemap. */
 export function siteOrigin(headers?: Headers) {
+  // SITE_URL wins; otherwise use the address the request came in on.
   const configured = process.env.SITE_URL?.replace(/\/$/, '');
   if (configured) return configured;
   const host = headers?.get('x-forwarded-host') || headers?.get('host');
   const proto = headers?.get('x-forwarded-proto') || 'http';
-  return host ? `${proto}://${host}` : 'http://localhost:3000';
+  return host ? `${proto}://${host}` : 'https://noahstuf.com';
 }

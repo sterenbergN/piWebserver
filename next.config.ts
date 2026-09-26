@@ -2,8 +2,13 @@ import type { NextConfig } from "next";
 
 const distDir = process.env.NEXT_DIST_DIR?.trim();
 
+// Release builds (CI → Raspberry Pi) use a self-contained `server.js` bundle;
+// local `npm run build` / `npm start` keep working as before.
+const standalone = process.env.NEXT_OUTPUT === 'standalone';
+
 const nextConfig: NextConfig = {
   distDir: distDir || ".next",
+  ...(standalone ? { output: 'standalone' as const } : {}),
   serverExternalPackages: [],
   async headers() {
     return [

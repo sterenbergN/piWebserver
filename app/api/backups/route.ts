@@ -3,7 +3,7 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import {
-  createBackup, getBackupSettings, importBackup, listBackups, normalizeSettings, resolveBackup, restoreBackup, saveBackupSettings,
+  checkBackupDrive, createBackup, getBackupSettings, importBackup, listBackups, normalizeSettings, resolveBackup, restoreBackup, saveBackupSettings,
 } from '@/lib/backup';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     }
   }
   const settings = await getBackupSettings();
-  return NextResponse.json({ success: true, settings, backups: await listBackups(settings) });
+  return NextResponse.json({ success: true, settings, drive: await checkBackupDrive(settings), backups: await listBackups(settings) });
 }
 
 export async function POST(request: Request) {
@@ -50,9 +50,11 @@ export async function POST(request: Request) {
       }
       case 'settings': {
         const settings = normalizeSettings(body.settings, await getBackupSettings());
-        await fs.mkdir(settings.dir, { recursive: true });
+        const drive = await checkBackupDrive(settings);
+        // Don't create folders on the site drive by mistake; only once the drive checks out.
+        if (drive.ok) await fs.mkdir(settings.dir, { recursive: true });
         await saveBackupSettings(settings);
-        return NextResponse.json({ success: true, settings, backups: await listBackups(settings) });
+        return NextResponse.json({ success: true, settings, drive, backups: await listBackups(settings) });
       }
       default:
         return fail(new Error('Unknown action'));

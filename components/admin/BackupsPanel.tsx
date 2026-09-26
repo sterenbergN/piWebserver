@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 
-type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; lastAutoBackup?: string };
+type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; requireSeparateDrive: boolean; lastAutoBackup?: string };
+type Drive = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };
 type Backup = { name: string; size: number; createdAt: string; label: string };
 
 const sizeLabel = (bytes: number) =>
-  bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    : bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 /** Admin panel: nightly backup settings, backup list, download, upload and restore. */
 export default function BackupsPanel() {
@@ -15,10 +17,11 @@ export default function BackupsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [backups, setBackups] = useState<Backup[]>([]);
+  const [drive, setDrive] = useState<Drive | null>(null);
   const [busy, setBusy] = useState('');
 
   const load = () => fetch('/api/backups').then((r) => r.json()).then((d) => {
-    if (d.success) { setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); }
+    if (d.success) { setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive); }
   }).catch(() => {});
   useEffect(() => { load(); }, []);
 
@@ -36,7 +39,7 @@ export default function BackupsPanel() {
   const backUpNow = () => run('create', async () => { await post({ action: 'create' }); await load(); });
   const saveSettings = () => run('settings', async () => {
     const d = await post({ action: 'settings', settings: draft });
-    setSettings(d.settings); setDraft(d.settings); setBackups(d.backups);
+    setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive);
   });
   const restore = async (b: Backup) => {
     const ok = await confirm({
@@ -88,9 +91,16 @@ export default function BackupsPanel() {
         </div>
       </div>
 
+      {drive && (
+        <div role="status" style={{ padding: '0.6rem 0.9rem', borderRadius: 10, marginBottom: '1rem', fontSize: '0.9rem', border: `1px solid ${drive.ok ? 'var(--success)' : 'var(--danger)'}`, background: drive.ok ? 'rgba(var(--success-rgb), 0.08)' : 'rgba(var(--danger-rgb), 0.08)' }}>
+          {drive.ok ? '✅' : '⚠️'} {drive.message}
+          {drive.freeBytes !== undefined && drive.totalBytes ? ` · ${sizeLabel(drive.freeBytes)} free of ${sizeLabel(drive.totalBytes)}` : ''}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', alignItems: 'end', marginBottom: '1rem' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', gridColumn: '1 / -1', fontSize: '0.8rem', color: 'var(--muted)' }}>
-          Backup folder (use a USB drive path like /media/pi/USB/backups)
+          Backup folder — on your backup USB, e.g. /mnt/backup/noahstuf
           <input style={field} value={draft.dir} onChange={(e) => setDraft({ ...draft, dir: e.target.value })} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
@@ -106,6 +116,10 @@ export default function BackupsPanel() {
         </label>
         <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem' }}>
           <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (up to 500 MB per backup)
+        </label>
+        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem', gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={draft.requireSeparateDrive} onChange={(e) => setDraft({ ...draft, requireSeparateDrive: e.target.checked })} />
+          Only back up when this folder is on a different drive than the site (recommended for a backup USB)
         </label>
       </div>
       {dirty && <button className="btn btn-primary" disabled={!!busy} onClick={saveSettings} style={{ marginBottom: '1rem' }}>Save backup settings</button>}

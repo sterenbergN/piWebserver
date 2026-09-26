@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { normalizeBirthdate } from '@/lib/workout/birthdate';
 import BackupsPanel from '@/components/admin/BackupsPanel';
+import UpdatesPanel from '@/components/admin/UpdatesPanel';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; network?: string; }
 interface CADProject { id: string; name: string; description: string; link: string; }
@@ -340,6 +341,7 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      <UpdatesPanel />
       <BackupsPanel />
 
       {/* Content Manager */}

@@ -60,3 +60,14 @@ test('create, list and restore a backup round trip', async () => {
     process.chdir(cwd);
   }
 });
+
+test('checkBackupDrive refuses a missing drive and a same-drive folder when a separate drive is required', async () => {
+  const { checkBackupDrive, defaultSettings: d } = await import('./backup');
+  const missing = await checkBackupDrive({ ...d(), dir: '/definitely/not/mounted/backups', requireSeparateDrive: false });
+  assert.equal(missing.ok, false);
+  const sameDrive = await checkBackupDrive({ ...d(), dir: path.join(process.cwd(), 'backups'), requireSeparateDrive: true });
+  assert.equal(sameDrive.ok, false);
+  const allowed = await checkBackupDrive({ ...d(), dir: path.join(process.cwd(), 'backups'), requireSeparateDrive: false });
+  assert.equal(allowed.ok, true);
+  assert.ok((allowed.freeBytes ?? 0) > 0);
+});
