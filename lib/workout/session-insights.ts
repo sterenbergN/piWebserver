@@ -120,3 +120,139 @@ export function warmupSets(workingWeight: number, possibleWeights: number[]): { 
   }
   return ramp;
 }
+
+export type LiftSession = {
+  workoutId?: string;
+  timestamp: string;
+  sets: { weight: number; reps: number; rir?: number }[];
+  topSet: { weight: number; reps: number };
+  e1rm: number;
+  volume: number;
+};
+
+/**
+ * Every past session of a lift, oldest first. Matches by lift id, or by name
+ * via liftMeta so the same exercise at another gym is included.
+ */
+export function liftSessions(
+  history: (HistoryWorkout & { liftMeta?: Record<string, { name?: string }> })[] | undefined,
+  liftId: string,
+  liftName?: string,
+): LiftSession[] {
+  const name = (liftName || '').trim().toLowerCase();
+  const sessions: LiftSession[] = [];
+  for (const workout of history || []) {
+    const ids = Object.keys(workout.logs || {}).filter((id) =>
+      id === liftId || (!!name && (workout.liftMeta?.[id]?.name || '').trim().toLowerCase() === name)
+    );
+    const sets = ids.flatMap((id) => workout.logs?.[id] || []).filter((set) => Number(set.reps) > 0);
+    if (sets.length === 0) continue;
+    let topSet = sets[0];
+    let e1rm = 0;
+    for (const set of sets) {
+      const estimate = calcAverage1RM(Number(set.weight), Number(set.reps));
+      if (estimate > e1rm || (estimate === e1rm && set.weight > topSet.weight)) {
+        e1rm = estimate;
+        topSet = set;
+      }
+    }
+    sessions.push({
+      workoutId: workout.id,
+      timestamp: workout.timestamp || '',
+      sets,
+      topSet: { weight: Number(topSet.weight), reps: Number(topSet.reps) },
+      e1rm,
+      volume: workoutVolume({ x: sets }),
+    });
+  }
+  return sessions.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+type MuscleLookup = Record<string, { primaryMuscle?: string; secondaryMuscle?: string }>;
+
+/**
+ * Working sets per muscle group over the last `days` (default: this week, Monday
+ * onward). A set counts fully toward the lift's primary muscle and half toward
+ * its secondary muscle. Muscles come from the workout's saved liftMeta, falling
+ * back to the current gym configuration.
+ */
+export function muscleSetCounts(
+  history: (HistoryWorkout & { isDeload?: boolean; liftMeta?: MuscleLookup })[] | undefined,
+  liftLookup: MuscleLookup,
+  since: Date,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const add = (muscle: string | undefined, amount: number) => {
+    if (!muscle || muscle === 'None') return;
+    counts[muscle] = (counts[muscle] || 0) + amount;
+  };
+  for (const workout of history || []) {
+    if (new Date(workout.timestamp || 0).getTime() < since.getTime()) continue;
+    for (const [liftId, sets] of Object.entries(workout.logs || {})) {
+      const meta = { ...liftLookup[liftId], ...workout.liftMeta?.[liftId] };
+      const setCount = (sets || []).length;
+      add(meta.primaryMuscle, setCount);
+      if (meta.secondaryMuscle !== meta.primaryMuscle) add(meta.secondaryMuscle, setCount * 0.5);
+    }
+  }
+  return counts;
+}
+
+export function startOfCurrentWeek(now = new Date()) {
+  return startOfWeek(now);
+}
+
+export type StalledLift = { liftId: string; name: string; sessions: number; bestE1RM: number };
+
+const STALL_WINDOW = 3;
+
+/**
+ * Lifts whose best estimated 1RM over the last three sessions hasn't beaten
+ * their best from before that window (within 1%). Needs at least five
+ * non-deload sessions so a new lift isn't flagged.
+ */
+export function detectStalledLifts(
+  history: (HistoryWorkout & { isDeload?: boolean; liftMeta?: Record<string, { name?: string }> })[] | undefined,
+): StalledLift[] {
+  const training = (history || []).filter((workout) => !workout.isDeload);
+  const names = new Map<string, string>();
+  for (const workout of training) {
+    for (const liftId of Object.keys(workout.logs || {})) {
+      const name = workout.liftMeta?.[liftId]?.name;
+      if (name) names.set(liftId, name);
+      else if (!names.has(liftId)) names.set(liftId, liftId);
+    }
+  }
+
+  const stalled: StalledLift[] = [];
+  for (const [liftId, name] of names) {
+    const sessions = liftSessions(training, liftId);
+    if (sessions.length < STALL_WINDOW + 2) continue;
+    const recent = sessions.slice(-STALL_WINDOW);
+    const before = sessions.slice(0, -STALL_WINDOW);
+    const recentBest = Math.max(...recent.map((s) => s.e1rm));
+    const priorBest = Math.max(...before.map((s) => s.e1rm));
+    if (recentBest <= priorBest * 1.01) {
+      stalled.push({ liftId, name, sessions: sessions.length, bestE1RM: Math.round(priorBest) });
+    }
+  }
+  return stalled;
+}
+
+/**
+ * Smoothed bodyweight trend: a 7-entry moving average per point, plus the
+ * change in that average over roughly the last 30 days.
+ */
+export function bodyweightTrend(entries: { weight: number; date: string }[]) {
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const points = sorted.map((entry, index) => {
+    const window = sorted.slice(Math.max(0, index - 6), index + 1);
+    const average = window.reduce((sum, e) => sum + e.weight, 0) / window.length;
+    return { date: entry.date, weight: entry.weight, average: Math.round(average * 10) / 10 };
+  });
+  const last = points[points.length - 1];
+  const cutoff = last ? new Date(new Date(last.date).getTime() - 30 * DAY_MS).toISOString().slice(0, 10) : '';
+  const monthAgo = [...points].reverse().find((p) => p.date <= cutoff) || points[0];
+  const change30 = last && monthAgo && monthAgo !== last ? Math.round((last.average - monthAgo.average) * 10) / 10 : null;
+  return { points, latest: last || null, change30 };
+}

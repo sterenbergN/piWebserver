@@ -87,6 +87,7 @@ export function finalizeLift(draft: Partial<Lift>): Lift {
     secondaryMuscle: draft.secondaryMuscle || 'None',
     progressionProfile: draft.progressionProfile || 'standard',
     attachment: draft.attachment || undefined,
+    notes: draft.notes?.trim().slice(0, 200) || undefined,
   };
 }
 

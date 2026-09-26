@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
-import { MUSCLE_GROUPS, type WorkoutType } from '@/lib/workout/types';
+import { MUSCLE_GROUPS, type FixedLiftRef, type Gym, type WorkoutType } from '@/lib/workout/types';
 
 const EMPTY_TYPE: Partial<WorkoutType> = {
   name: '',
@@ -49,14 +49,23 @@ export default function WorkoutTypeEditor() {
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [draft, setDraft] = useState<Partial<WorkoutType>>(EMPTY_TYPE);
   const formRef = useRef<HTMLDivElement | null>(null);
+  const [liftOptions, setLiftOptions] = useState<{ liftId: string; name: string; label: string }[]>([]);
 
   useEffect(() => {
     Promise.all([
       fetch('/api/workout/types?scope=all').then((r) => r.json()),
       fetch('/api/workout/auth').then((r) => r.json()),
+      fetch('/api/workout/gyms').then((r) => r.json()).catch(() => null),
     ])
-      .then(([dTypes, dAuth]) => {
+      .then(([dTypes, dAuth, dGyms]) => {
         if (dTypes.success) setTypes(dTypes.types);
+        if (dGyms?.success) {
+          setLiftOptions((dGyms.gyms as Gym[]).flatMap((gym) =>
+            gym.stations.flatMap((station) =>
+              station.lifts.map((lift) => ({ liftId: lift.id, name: lift.name, label: `${lift.name} — ${gym.name}` }))
+            )
+          ));
+        }
         if (dAuth.authenticated && dAuth.user) setUserId(dAuth.user.id);
       })
       .catch(() => setError('Could not load workout types.'))
@@ -128,6 +137,16 @@ export default function WorkoutTypeEditor() {
     });
   };
 
+  const pinned: FixedLiftRef[] = draft.fixedLifts || [];
+  const setPinned = (next: FixedLiftRef[]) => setDraft({ ...draft, fixedLifts: next });
+  const movePinned = (index: number, direction: -1 | 1) => {
+    const next = [...pinned];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setPinned(next);
+  };
+
   if (loading) return <div style={{ padding: '1.5rem' }}>Loading Types...</div>;
 
   const myTypes = types.filter((type) => type.ownerId === userId);
@@ -165,6 +184,44 @@ export default function WorkoutTypeEditor() {
           );
         })}
       </div>
+
+      <label className="workout-label">Pinned Lifts (optional)</label>
+      <p className="workout-hint" style={{ margin: '0 0 0.5rem' }}>
+        Pinned lifts always come first, in this order. Any remaining slots are still picked randomly from the target muscles.
+      </p>
+      {pinned.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '0.5rem' }}>
+          {pinned.map((ref, index) => (
+            <div key={`${ref.liftId}-${index}`} className="workout-list-row" style={{ padding: '0.4rem 0.6rem' }}>
+              <span style={{ fontSize: '0.85rem' }}>{index + 1}. {ref.name}</span>
+              <div style={{ display: 'flex', gap: '0.6rem' }}>
+                <button className="workout-text-btn" aria-label={`Move ${ref.name} up`} disabled={index === 0} onClick={() => movePinned(index, -1)}>↑</button>
+                <button className="workout-text-btn" aria-label={`Move ${ref.name} down`} disabled={index === pinned.length - 1} onClick={() => movePinned(index, 1)}>↓</button>
+                <button className="workout-text-btn danger" aria-label={`Unpin ${ref.name}`} onClick={() => setPinned(pinned.filter((_, i) => i !== index))}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {liftOptions.length > 0 ? (
+        <select
+          className="workout-input"
+          value=""
+          onChange={(e) => {
+            const option = liftOptions.find((o) => o.liftId === e.target.value);
+            if (option && !pinned.some((ref) => ref.liftId === option.liftId)) {
+              setPinned([...pinned, { liftId: option.liftId, name: option.name }]);
+            }
+          }}
+        >
+          <option value="">+ Pin a lift…</option>
+          {liftOptions.filter((o) => !pinned.some((ref) => ref.liftId === o.liftId)).map((o) => (
+            <option key={o.liftId} value={o.liftId}>{o.label}</option>
+          ))}
+        </select>
+      ) : (
+        <p className="workout-hint" style={{ marginBottom: '1rem' }}>Add lifts to a gym to pin them here.</p>
+      )}
 
       <label className="workout-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span>Target Intensity (%)</span>
@@ -236,6 +293,9 @@ export default function WorkoutTypeEditor() {
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
               Target: {type.sets} Sets • {type.minReps}-{type.maxReps} Reps (Intensity: {type.intensity}%) • {type.isPublic ? 'Published' : 'Private'}
             </p>
+            {(type.fixedLifts?.length || 0) > 0 && (
+              <p className="workout-hint" style={{ margin: '0.25rem 0 0' }}>📌 {type.fixedLifts!.map((ref) => ref.name).join(', ')} + random fill</p>
+            )}
 
             {editingId === type.id && <div style={{ marginTop: '0.75rem' }}>{renderEditor()}</div>}
           </div>

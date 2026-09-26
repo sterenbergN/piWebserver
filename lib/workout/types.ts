@@ -11,6 +11,8 @@ export interface Lift {
   secondaryMuscle: string;
   attachment?: string;
   progressionProfile?: ProgressionProfile;
+  /** Free-text setup reminder, e.g. "seat 4, pin 3, neutral grip". */
+  notes?: string;
 }
 
 export interface Station {
@@ -49,7 +51,12 @@ export interface WorkoutType {
   maxReps: number;
   sets: number;
   isPublic?: boolean;
+  /** Lifts always included, in order. Remaining slots are filled randomly. */
+  fixedLifts?: FixedLiftRef[];
 }
+
+/** A pinned lift in a template; matched by id first, then by name at other gyms. */
+export type FixedLiftRef = { liftId: string; name: string };
 
 export const MUSCLE_GROUPS = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'] as const;
 /** Muscle options for a lift's secondary muscle, which may be empty. */

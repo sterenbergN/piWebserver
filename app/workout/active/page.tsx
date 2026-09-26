@@ -3,68 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
+import { buildLiftPlan } from '@/lib/workout/plan';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER_ID } from '@/lib/workout/demo-data';
 
 function newPlanId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
-}
-
-function shuffle<T>(items: T[]): T[] {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
-/**
- * Pick `count` distinct lifts for a workout: at least one per target muscle
- * first, then fill from the remaining matching lifts. Lifts that weren't done
- * in the most recent workouts are preferred so sessions rotate exercises.
- */
-function buildLiftPlan(availableLifts: any[], targetMuscles: string[], count: number, history: any[]) {
-  const recentlyUsed = new Map<string, number>();
-  [...history]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    .slice(0, 3)
-    .forEach((workout, age) => {
-      Object.keys(workout.logs || {}).forEach((liftId) => {
-        if (!recentlyUsed.has(liftId)) recentlyUsed.set(liftId, age);
-      });
-    });
-
-  // Unused lifts first, then the ones done longest ago; random within a tier.
-  const freshness = (lift: any) => (recentlyUsed.has(lift.id) ? recentlyUsed.get(lift.id)! : 99);
-  const ordered = shuffle(availableLifts).sort((a, b) => freshness(b) - freshness(a));
-  const matchesMuscles = (lift: any, muscles: string[]) =>
-    muscles.includes(lift.primaryMuscle) || muscles.includes(lift.secondaryMuscle);
-
-  const plan: any[] = [];
-  const usedIds = new Set<string>();
-  const add = (lift: any) => {
-    usedIds.add(lift.id);
-    plan.push({ ...lift, uniquePlanId: newPlanId() });
-  };
-
-  // Phase 1: one lift per target muscle (primary-muscle matches preferred)
-  for (const muscle of targetMuscles) {
-    if (plan.length >= count) break;
-    const pick = ordered.find((l) => !usedIds.has(l.id) && l.primaryMuscle === muscle)
-      || ordered.find((l) => !usedIds.has(l.id) && l.secondaryMuscle === muscle);
-    if (pick) add(pick);
-  }
-
-  // Phase 2: fill up to the requested lift count
-  const pool = targetMuscles.length > 0 ? ordered.filter((l) => matchesMuscles(l, targetMuscles)) : ordered;
-  for (const lift of pool) {
-    if (plan.length >= count) break;
-    if (!usedIds.has(lift.id)) add(lift);
-  }
-
-  return plan;
 }
 
 export default function ActiveWorkoutPage() {
@@ -170,7 +115,7 @@ export default function ActiveWorkoutPage() {
         const plan: any[] = [];
 
         if (!isResuming && !isSharedJoin) {
-           plan.push(...buildLiftPlan(availableLifts, type.muscles || [], liftCountParam, histRes.history || []));
+           plan.push(...buildLiftPlan(availableLifts, type.muscles || [], liftCountParam, histRes.history || [], type.fixedLifts || []).map((lift) => ({ ...lift, uniquePlanId: newPlanId() })));
         }
 
         // Maintain full reference list for Tracker Swap Lift UI

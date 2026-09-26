@@ -66,6 +66,15 @@ export default function LiftForm({ station, initial, saving = false, onSave, onC
         </>
       )}
 
+      <label className="workout-label">Setup Notes (optional)</label>
+      <input
+        className="workout-input"
+        placeholder="e.g. seat 4, pin 3, neutral grip"
+        maxLength={200}
+        value={draft.notes || ''}
+        onChange={(e) => update({ notes: e.target.value })}
+      />
+
       <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', marginBottom: '1rem' }}>
         <input type="checkbox" checked={draft.singleArmLeg === true} onChange={(e) => update({ singleArmLeg: e.target.checked })} />
         Single Arm / Leg variation

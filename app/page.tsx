@@ -463,7 +463,7 @@ export default function Home() {
         <section className="grid animate-fade-in" style={{ gridTemplateColumns: isExpExpanded ? '1fr' : 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem', transition: 'grid-template-columns 0.5s' }}>
           {/* Experience card — timeline grows from within */}
           <div className="premium-card exp-card" style={{ cursor: 'pointer', gridColumn: isExpExpanded ? '1 / -1' : 'auto' }}>
-            <div onClick={() => setIsExpExpanded(!isExpExpanded)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+            <div onClick={() => setIsExpExpanded(!isExpExpanded)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '2rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <div style={{ background: isExpExpanded ? 'linear-gradient(135deg, var(--accent), var(--accent-light))' : 'var(--accent)', padding: '0.5rem', borderRadius: '8px', color: 'white', transition: 'background 0.3s' }}>
                   {isExpExpanded
@@ -587,7 +587,8 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Projects */}
+        {/* Projects (hidden until there is something to feature) */}
+        {projects.length > 0 && (
         <section className="animate-fade-in">
           <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
             <h2 style={{ fontSize: '2rem', letterSpacing: '-0.02em', marginBottom: '0.75rem' }}>Featured Projects</h2>
@@ -623,6 +624,7 @@ export default function Home() {
             })}
           </div>
         </section>
+        )}
 
         {/* CAD Projects */}
         {cadProjects.length > 0 && (

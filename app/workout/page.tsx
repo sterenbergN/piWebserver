@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER, DEMO_USER_ID } from '@/lib/workout/demo-data';
-import { formatRelativeDay, trainingStreak, workoutVolume } from '@/lib/workout/session-insights';
+import { detectStalledLifts, formatRelativeDay, muscleSetCounts, startOfCurrentWeek, trainingStreak, workoutVolume } from '@/lib/workout/session-insights';
+import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 
 // Interfaces for user representation
 interface UserData {
@@ -13,11 +14,13 @@ interface UserData {
   gender?: string;
   weight?: number;
   intensityFactor?: number;
+  weeklySetTarget?: number;
 }
 
 import { calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
+import BodyweightCard from '@/components/workout/BodyweightCard';
 
 // A paused workout stays resumable for this long after its last update.
 const PENDING_WORKOUT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -50,6 +53,9 @@ export default function WorkoutDashboard() {
   const [rankName, setRankName] = useState('Beginner');
   const [rankScore, setRankScore] = useState(0);
   const [history, setHistory] = useState<any[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [liftLookup, setLiftLookup] = useState<Record<string, { primaryMuscle?: string; secondaryMuscle?: string }>>({});
+  const [syncMessage, setSyncMessage] = useState('');
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -139,6 +145,7 @@ export default function WorkoutDashboard() {
           userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
             if (s.lifts) allLifts.push(...s.lifts);
           }));
+          setLiftLookup(Object.fromEntries(allLifts.map((lift) => [lift.id, lift])));
 
           // Suggest a deload when accumulated fatigue is high for any muscle group.
           if (history.length >= 3) {
@@ -165,6 +172,29 @@ export default function WorkoutDashboard() {
 
     load();
   }, []);
+
+  // Upload workouts that were saved offline, now and whenever we reconnect.
+  const syncQueuedWorkouts = async (ownerId: string) => {
+    if (getQueuedWorkouts(ownerId).length === 0) {
+      setQueuedCount(0);
+      return;
+    }
+    const result = await flushWorkoutQueue(ownerId);
+    setQueuedCount(result.remaining);
+    if (result.synced > 0) {
+      setSyncMessage(`Synced ${result.synced} offline workout${result.synced === 1 ? '' : 's'}.`);
+      const historyRes = await fetch('/api/workout/history').then((r) => r.json()).catch(() => null);
+      if (historyRes?.success) setHistory(historyRes.history || []);
+    }
+  };
+
+  useEffect(() => {
+    if (!user || isDemo) return;
+    syncQueuedWorkouts(user.id);
+    const onOnline = () => syncQueuedWorkouts(user.id);
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [user?.id, isDemo]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -302,6 +332,27 @@ export default function WorkoutDashboard() {
   const levelProgress = levelIndex >= LEVELS.length - 1
     ? { percent: 100, next: null as string | null, remaining: 0 }
     : { percent: Math.round(((rankScore - levelIndex * 2) / 2) * 100), next: LEVELS[levelIndex + 1], remaining: (levelIndex + 1) * 2 - rankScore };
+  // Weekly working sets per muscle vs. the user's goal. Muscles trained in the
+  // last four weeks are listed even at zero so gaps are visible.
+  const weeklySetTarget = user?.weeklySetTarget ?? 10;
+  const weekSets = muscleSetCounts(history, liftLookup, startOfCurrentWeek());
+  const recentMuscles = Object.keys(muscleSetCounts(history, liftLookup, new Date(Date.now() - 28 * 24 * 60 * 60 * 1000)));
+  const volumeRows = Array.from(new Set([...recentMuscles, ...Object.keys(weekSets)]))
+    .map((muscle) => ({ muscle, sets: weekSets[muscle] || 0 }))
+    .sort((a, b) => b.sets - a.sets || a.muscle.localeCompare(b.muscle));
+  const updateWeeklyTarget = async (next: number) => {
+    const target = Math.min(30, Math.max(2, next));
+    setUser((prev) => (prev ? { ...prev, weeklySetTarget: target } : prev));
+    if (isDemo) return;
+    await fetch('/api/workout/auth', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weeklySetTarget: target }),
+    }).catch(() => {});
+  };
+
+  const stalledLifts = detectStalledLifts(history).slice(0, 4);
+
   const recentWorkouts = [...history]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 3);
@@ -440,6 +491,19 @@ export default function WorkoutDashboard() {
         )}
       </div>
 
+      {(queuedCount > 0 || syncMessage) && (
+        <div className="workout-tile animate-fade-in" style={{ borderLeft: `3px solid ${queuedCount > 0 ? 'var(--warning)' : 'var(--success)'}`, padding: '0.9rem 1rem' }}>
+          {queuedCount > 0 ? (
+            <div className="workout-flex-between" style={{ gap: '0.75rem' }}>
+              <span style={{ fontSize: '0.9rem' }}>📶 {queuedCount} workout{queuedCount === 1 ? '' : 's'} saved offline — waiting to sync.</span>
+              <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => user && syncQueuedWorkouts(user.id)}>Retry</button>
+            </div>
+          ) : (
+            <span style={{ fontSize: '0.9rem' }}>✅ {syncMessage}</span>
+          )}
+        </div>
+      )}
+
       {pendingWorkout && (() => {
           const age = Date.now() - (pendingWorkout.timestamp || 0);
           const minsAgo = Math.round(age / 60000);
@@ -573,6 +637,54 @@ export default function WorkoutDashboard() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {volumeRows.length > 0 && (
+        <div className="workout-tile" style={{ marginTop: '1rem' }}>
+          <div className="workout-flex-between" style={{ marginBottom: '0.75rem', gap: '0.5rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Sets This Week</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span className="workout-hint">Goal</span>
+              <button className="btn btn-secondary" style={{ padding: '0.1rem 0.55rem' }} aria-label="Lower weekly set goal" onClick={() => updateWeeklyTarget(weeklySetTarget - 2)}>−</button>
+              <strong style={{ minWidth: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>{weeklySetTarget}</strong>
+              <button className="btn btn-secondary" style={{ padding: '0.1rem 0.55rem' }} aria-label="Raise weekly set goal" onClick={() => updateWeeklyTarget(weeklySetTarget + 2)}>+</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            {volumeRows.map(({ muscle, sets }) => {
+              const done = sets >= weeklySetTarget;
+              return (
+                <div key={muscle} style={{ display: 'grid', gridTemplateColumns: '5.5rem minmax(0, 1fr) 3.2rem', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                  <span>{muscle}</span>
+                  <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-border)', overflow: 'hidden' }} role="meter" aria-valuemin={0} aria-valuemax={weeklySetTarget} aria-valuenow={sets} aria-label={`${muscle} sets this week`}>
+                    <div style={{ width: `${Math.min(100, (sets / weeklySetTarget) * 100)}%`, height: '100%', borderRadius: 4, background: done ? 'var(--success)' : 'var(--accent)' }} />
+                  </div>
+                  <span style={{ textAlign: 'right', color: done ? 'var(--success)' : 'var(--muted)' }}>{Number.isInteger(sets) ? sets : sets.toFixed(1)}/{weeklySetTarget}{done ? ' ✓' : ''}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>Secondary muscles count as half a set. Resets Monday.</p>
+        </div>
+      )}
+
+      {!isDemo && (
+        <BodyweightCard onWeightChange={(weight) => { setUser((prev) => (prev ? { ...prev, weight } : prev)); setEditWeight(String(weight)); }} />
+      )}
+
+      {stalledLifts.length > 0 && (
+        <div className="workout-tile" style={{ marginTop: '1rem', borderLeft: '3px solid var(--warning)' }}>
+          <h3 style={{ margin: '0 0 0.35rem', fontSize: '1.05rem' }}>Plateaus</h3>
+          <p className="workout-hint" style={{ margin: '0 0 0.6rem' }}>
+            No new best in the last 3 sessions. Try a lighter week (Deload), a different rep range, or swap to a variation.
+          </p>
+          {stalledLifts.map((lift) => (
+            <div key={lift.liftId} className="workout-list-row" style={{ marginBottom: '0.35rem' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{lift.name}</span>
+              <span className="workout-hint">best e1RM {lift.bestE1RM} lbs · {lift.sessions} sessions</span>
+            </div>
+          ))}
         </div>
       )}
 
