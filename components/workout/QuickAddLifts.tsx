@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import type { Lift, Station } from '@/lib/workout/types';
 import { liftFromName, suggestedLiftNames } from '@/lib/workout/catalog';
+import Sheet from './Sheet';
 
 type QuickAddLiftsProps = {
   station: Station;
@@ -37,48 +38,60 @@ export default function QuickAddLifts({ station, saving = false, onSave, onCance
   });
 
   return (
-    <div className="workout-form-panel animate-fade-in" style={{ marginTop: '0.5rem' }}>
-      <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.95rem' }}>Add lifts to {station.name}</h4>
-      {suggestions.length > 0 && (
-        <>
-          <div className="workout-hint" style={{ marginBottom: '0.4rem' }}>Tap to add:</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.75rem' }}>
-            {suggestions.map((name) => (
-              <button key={name} type="button" className="workout-toggle-chip" aria-pressed={picked.has(name)} onClick={() => toggle(name)}>
-                {picked.has(name) ? '✓ ' : '+ '}{name}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      <input
-        className="workout-input"
-        placeholder="Or type lift names, separated by commas"
-        value={typed}
-        onChange={(e) => setTyped(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && preview.length) { e.preventDefault(); onSave(preview); } }}
-      />
-      {preview.length > 0 && (
-        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          {preview.map((l) => (
-            <li key={l.name} className="workout-hint" style={{ fontSize: '0.8rem' }}>
-              <strong style={{ color: 'var(--foreground)' }}>{l.name}</strong> — {l.primaryMuscle}
-              {l.secondaryMuscle !== 'None' ? ` / ${l.secondaryMuscle}` : ''}{l.singleArmLeg ? ' · single limb' : ''}
-            </li>
+    <Sheet
+      title="Add lifts"
+      subtitle={`On ${station.name}`}
+      onClose={onCancel}
+      footer={
+        <button className="workout-button is-primary" disabled={preview.length === 0 || saving} onClick={() => onSave(preview)}>
+          {saving ? 'Saving…' : preview.length > 1 ? `Add ${preview.length} lifts` : preview.length ? 'Add 1 lift' : 'Pick or type a lift'}
+        </button>
+      }
+    >
+      {suggestions.length > 0 && (<>
+        <div className="workout-section-title">Common lifts here</div>
+        <div className="workout-chip-list" style={{ marginBottom: '1rem' }}>
+          {suggestions.map((name) => (
+            <button key={name} type="button" className="workout-toggle-chip" aria-pressed={picked.has(name)} onClick={() => toggle(name)}>
+              {picked.has(name) ? '✓ ' : '+ '}{name}
+            </button>
           ))}
-        </ul>
-      )}
-      <div className="workout-btn-row">
-        <button className="workout-btn-primary" disabled={preview.length === 0 || saving} onClick={() => onSave(preview)}>
-          {saving ? 'Saving…' : preview.length > 1 ? `Add ${preview.length} Lifts` : 'Add Lift'}
-        </button>
-        <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-      </div>
+        </div>
+      </>)}
+
+      <label className="workout-field" style={{ display: 'block' }}>
+        <span className="workout-label">Or type them, separated by commas</span>
+        <input
+          className="workout-input"
+          placeholder="e.g. Incline Press, Pause Squat"
+          value={typed}
+          autoFocus={suggestions.length === 0}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && preview.length) { e.preventDefault(); onSave(preview); } }}
+        />
+      </label>
+
+      {preview.length > 0 && (<>
+        <div className="workout-section-title">Will add</div>
+        <div className="workout-stack">
+          {preview.map((l) => (
+            <div key={l.name} className="workout-lift-row" style={{ cursor: 'default' }}>
+              <span className="workout-card-text">
+                <span className="workout-card-title">{l.name}</span>
+                <span className="workout-card-meta">
+                  {l.primaryMuscle}{l.secondaryMuscle !== 'None' ? ` · ${l.secondaryMuscle}` : ''}{l.singleArmLeg ? ' · single limb' : ''}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </>)}
+
       {onCustom && (
-        <button className="workout-text-btn" style={{ marginTop: '0.5rem' }} onClick={onCustom}>
-          Set every detail by hand instead →
+        <button type="button" className="workout-button is-block" style={{ marginTop: '1.25rem' }} onClick={onCustom}>
+          Set every detail by hand instead
         </button>
       )}
-    </div>
+    </Sheet>
   );
 }

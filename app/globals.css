@@ -212,7 +212,10 @@ input:focus, textarea:focus, select:focus {
   0% { opacity: 0; transform: scale(0.9); }
   100% { opacity: 1; transform: scale(1); }
 }
-.animate-fade-in { animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+/* `backwards`, not `forwards`: once finished the element drops the transform,
+   so position: fixed overlays inside it stay full-screen instead of being
+   pinned to (and clipped by) this element. */
+.animate-fade-in { animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 
 /* Popups */
 .site-popup-backdrop {
@@ -230,7 +233,8 @@ input:focus, textarea:focus, select:focus {
 
 .site-popup-card {
   width: min(520px, 96vw);
-  background: var(--surface-glass);
+  /* Glass tint on a solid base so text stays readable over busy pages and sheets. */
+  background: linear-gradient(var(--surface-glass), var(--surface-glass)), var(--background);
   border: 1px solid var(--surface-border);
   border-radius: 16px;
   padding: 1.5rem;
