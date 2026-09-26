@@ -1,0 +1,121 @@
+/* ─── Library ──────────────────────────────────────────────────────────────── */
+
+.lib-page { padding: 2rem 0; }
+.lib-header { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; }
+.lib-sub { margin: 0.35rem 0 0; color: var(--muted); }
+
+.lib-view { display: flex; padding: 0.25rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.lib-view button { min-height: 36px; padding: 0 0.9rem; border: none; border-radius: 9px; background: none; color: var(--foreground); font: inherit; font-size: 0.88rem; cursor: pointer; }
+.lib-view button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+
+.lib-search { position: relative; max-width: 560px; margin-bottom: 0.9rem; }
+.lib-search svg { position: absolute; left: 0.9rem; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.lib-search input { min-height: 46px; border-radius: 12px; }
+
+.lib-chips { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.4rem; margin-bottom: 1.5rem; scrollbar-width: none; }
+.lib-chips::-webkit-scrollbar { display: none; }
+.lib-chips button {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.lib-chips button span { opacity: 0.55; margin-left: 0.2rem; font-size: 0.78rem; }
+.lib-chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lib-chips button[aria-pressed="true"] span { opacity: 0.85; }
+
+.lib-shelf { margin-bottom: 2.25rem; }
+.lib-shelf-title { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.9rem; }
+.lib-shelf-title span { color: var(--muted); font-weight: 400; }
+
+.lib-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 0.9rem; }
+.lib-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.lib-doc {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.9rem;
+  padding: 1.1rem;
+  border-radius: 16px;
+  border: 1px solid var(--surface-border);
+  background: var(--card-bg);
+  transition: border-color 0.2s, transform 0.2s;
+}
+.lib-doc:hover { border-color: rgba(var(--accent-rgb), 0.5); }
+.lib-cards .lib-doc { align-content: start; }
+.lib-doc-actions { grid-column: 1 / -1; display: flex; gap: 0.5rem; align-items: center; }
+.lib-list .lib-doc { grid-template-columns: auto 1fr auto; align-items: center; padding: 0.75rem 0.9rem; }
+.lib-list .lib-doc-actions { grid-column: auto; }
+
+.lib-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.lib-doc-body { min-width: 0; }
+.lib-doc-title { display: block; color: var(--foreground); font-weight: 650; font-size: 1.02rem; line-height: 1.3; text-decoration: none; overflow-wrap: anywhere; }
+.lib-doc-title:hover { color: var(--accent-light); }
+.lib-doc-meta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-top: 0.2rem; font-size: 0.8rem; color: var(--muted); }
+.lib-note {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 0.5rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.87rem;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  white-space: pre-wrap;
+}
+.lib-note.is-open { display: block; -webkit-line-clamp: unset; }
+.lib-list .lib-note { -webkit-line-clamp: 1; }
+
+.lib-open {
+  flex: 1;
+  min-height: 42px;
+  padding: 0 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.lib-open:hover { background: rgba(var(--accent-rgb), 0.24); }
+.lib-list .lib-open { flex: none; }
+.lib-icon-btn {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.lib-icon-btn:hover { background: var(--surface-hover); }
+.lib-icon-btn.is-danger { color: var(--danger); }
+
+.lib-editor { display: flex; flex-direction: column; gap: 0.9rem; }
+.lib-editor textarea { width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; resize: vertical; }
+.lib-label { display: block; margin-bottom: 0.35rem; font-size: 0.82rem; color: var(--muted); }
+
+@media (max-width: 600px) {
+  .lib-page { padding-top: 1rem; }
+  /* On phones the list layout stacks its buttons under the title. */
+  .lib-list .lib-doc { grid-template-columns: auto 1fr; }
+  .lib-list .lib-doc-actions { grid-column: 1 / -1; }
+  .lib-list .lib-open { flex: 1; }
+}
