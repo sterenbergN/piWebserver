@@ -67,6 +67,7 @@ export const fakerLogic = {
         for (const pid of state.gameData.activePlayers) {
           state.playerData[pid] = {
             ...state.playerData[pid],
+            showAction: false,
             phase: 'VOTING',
             activePlayers: state.gameData.activePlayers,
           };
@@ -77,6 +78,8 @@ export const fakerLogic = {
         if (state.phase !== 'VOTING') return;
         // Only active non-eliminated players can vote
         if (!state.gameData.activePlayers.includes(playerId)) return;
+        // A vote must name another player who is still in the round.
+        if (action.votedFor === playerId || !state.gameData.activePlayers.includes(action.votedFor)) return;
         state.gameData.votes[playerId] = action.votedFor;
         // Auto-advance when everyone active has voted
         if (Object.keys(state.gameData.votes).length >= state.gameData.activePlayers.length) {
@@ -183,7 +186,7 @@ function calculateFakerRoundResult(state: GameState) {
   for (const pid of activePlayers) voteCounts[pid] = 0;
   for (const voterId in votes) {
     const target = votes[voterId];
-    voteCounts[target] = (voteCounts[target] || 0) + 1;
+    if (target in voteCounts) voteCounts[target]++;
   }
 
   const totalVotes = Object.values(votes).length;

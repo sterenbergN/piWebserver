@@ -12,9 +12,24 @@ export default function PartyLobby() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [lastPlayed, setLastPlayed] = useState<{ roomCode: string; playerId: string } | null>(null);
+  const [lastHosted, setLastHosted] = useState<{ roomCode: string; hostId: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/party/admin-check').then(r => r.json()).then(d => setIsAdmin(d.isAdmin)).catch(() => {});
+    // Prefill from a scanned QR code (?code=ABCD) and remember the last nickname.
+    const code = new URLSearchParams(window.location.search).get('code');
+    if (code) setRoomCode(code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4));
+    try {
+      const savedName = localStorage.getItem('partyNickname');
+      if (savedName) setPlayerName(savedName);
+      const recent = (key: string) => {
+        const raw = JSON.parse(localStorage.getItem(key) || 'null');
+        return raw && Date.now() - raw.at < 6 * 60 * 60 * 1000 ? raw : null;
+      };
+      setLastPlayed(recent('partyLastPlayed'));
+      setLastHosted(recent('partyLastHosted'));
+    } catch { /* storage unavailable */ }
   }, []);
 
   const handleJoin = async (e: React.FormEvent) => {
@@ -29,7 +44,14 @@ export default function PartyLobby() {
       });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error || 'Failed to join room'); }
-      else { router.push(`/party/player/${roomCode.toUpperCase()}/${data.playerId}`); }
+      else {
+        const code = roomCode.toUpperCase();
+        try {
+          localStorage.setItem('partyNickname', playerName.trim());
+          localStorage.setItem('partyLastPlayed', JSON.stringify({ roomCode: code, playerId: data.playerId, at: Date.now() }));
+        } catch { /* ignore */ }
+        router.push(`/party/player/${code}/${data.playerId}`);
+      }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
   };
@@ -44,7 +66,13 @@ export default function PartyLobby() {
       });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error || 'Failed to create room'); setLoading(false); }
-      else { localStorage.setItem(`host_${data.roomCode}`, data.hostId); router.push(`/party/host/${data.roomCode}?hostId=${data.hostId}`); }
+      else {
+        try {
+          localStorage.setItem(`host_${data.roomCode}`, data.hostId);
+          localStorage.setItem('partyLastHosted', JSON.stringify({ roomCode: data.roomCode, hostId: data.hostId, at: Date.now() }));
+        } catch { /* ignore */ }
+        router.push(`/party/host/${data.roomCode}?hostId=${data.hostId}`);
+      }
     } catch { setError('Network error. Please try again.'); setLoading(false); }
   };
 
@@ -68,6 +96,23 @@ export default function PartyLobby() {
 
           {error && <div className="party-error">⚠️ {error}</div>}
 
+          {(lastPlayed || lastHosted) && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+              {lastPlayed && (
+                <button type="button" className="party-btn party-btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem' }}
+                  onClick={() => router.push(`/party/player/${lastPlayed.roomCode}/${lastPlayed.playerId}`)}>
+                  ↩ Rejoin {lastPlayed.roomCode}
+                </button>
+              )}
+              {lastHosted && (
+                <button type="button" className="party-btn party-btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem' }}
+                  onClick={() => router.push(`/party/host/${lastHosted.roomCode}?hostId=${lastHosted.hostId}`)}>
+                  📺 Resume hosting {lastHosted.roomCode}
+                </button>
+              )}
+            </div>
+          )}
+
           {tab === 'join' ? (
             <form onSubmit={handleJoin}>
               <div className="party-form-group">
@@ -78,7 +123,7 @@ export default function PartyLobby() {
               </div>
               <div className="party-form-group">
                 <label className="party-label">Your Nickname</label>
-                <input type="text" autoComplete="off" maxLength={12}
+                <input type="text" autoComplete="off" maxLength={16}
                   value={playerName} onChange={e => setPlayerName(e.target.value)}
                   className="party-input" style={{ fontSize: '1.25rem', fontWeight: 700, textAlign: 'center' }}
                   placeholder="Enter nickname..." required />

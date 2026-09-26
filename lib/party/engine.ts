@@ -10,54 +10,153 @@ import { bracketBattlesLogic } from './games/bracket-battles';
 import { readySetBetLogic } from './games/ready-set-bet';
 
 const DATA_DIR = path.join(process.cwd(), '.data', 'party');
+const ROOM_CODE_RE = /^[A-Z]{4}$/;
+/** Rooms untouched for this long are deleted when a new room is created. */
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+export const MAX_PLAYERS = 16;
+const MAX_NAME_LENGTH = 16;
+/** Free-text answers are capped so one player can't flood everyone's screen. */
+const MAX_TEXT_LENGTH = 120;
 
-// Ensure directory exists
-async function ensureDir() {
+export const GAME_TYPES: GameType[] = ['quip-clash', 'the-faker', 'trivia-death', 'bracket-battles', 'ready-set-bet'];
+
+type GameLogic = {
+  onStart: (state: GameState, ...args: any[]) => Promise<void> | void;
+  processAction: (state: GameState, playerId: string, action: any) => Promise<void> | void;
+};
+
+const LOGIC: Record<GameType, GameLogic> = {
+  'quip-clash': quipClashLogic,
+  'the-faker': fakerLogic,
+  'trivia-death': triviaDeathLogic,
+  'bracket-battles': bracketBattlesLogic,
+  'ready-set-bet': readySetBetLogic,
+};
+
+/** Minimum players needed to start each game. */
+export const MIN_PLAYERS: Record<GameType, number> = {
+  'quip-clash': 3,
+  'the-faker': 3,
+  'trivia-death': 3,
+  'bracket-battles': 3,
+  'ready-set-bet': 1,
+};
+
+export function normalizeRoomCode(roomCode: unknown): string | null {
+  const code = typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
+  return ROOM_CODE_RE.test(code) ? code : null;
+}
+
+function roomPath(roomCode: string) {
+  return path.join(DATA_DIR, `${roomCode}.json`);
+}
+
+// ─── Per-room lock ─────────────────────────────────────────────────────────────
+// Every action is read → modify → write. Players tend to submit at the same
+// moment (the timer runs out, everyone taps), and without serialization those
+// concurrent writes silently drop each other's answers.
+
+const roomLocks = new Map<string, Promise<unknown>>();
+
+async function withRoomLock<R>(roomCode: string, fn: () => Promise<R>): Promise<R> {
+  const previous = roomLocks.get(roomCode) || Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  roomLocks.set(roomCode, tail);
   try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-  } catch (err) {
-    console.error('Error creating party data directory', err);
+    return await run;
+  } finally {
+    if (roomLocks.get(roomCode) === tail) roomLocks.delete(roomCode);
   }
 }
 
-// Generate a random 4-letter room code
-function generateRoomCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  let result = '';
-  for (let i = 0; i < 4; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+// ─── Storage ───────────────────────────────────────────────────────────────────
 
 export async function getGameState(roomCode: string): Promise<GameState | null> {
-  await ensureDir();
-  const filePath = path.join(DATA_DIR, `${roomCode.toUpperCase()}.json`);
+  const code = normalizeRoomCode(roomCode);
+  if (!code) return null;
   try {
-    const data = await fs.readFile(filePath, 'utf-8');
+    const data = await fs.readFile(roomPath(code), 'utf-8');
     return JSON.parse(data);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
 
+async function writeState(state: GameState) {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const file = roomPath(state.roomCode);
+  // Atomic write: live streams read this file constantly and must never see
+  // a half-written JSON document.
+  const tmp = `${file}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(state));
+  await fs.rename(tmp, file);
+}
+
 export async function saveGameState(state: GameState): Promise<void> {
-  await ensureDir();
-  const filePath = path.join(DATA_DIR, `${state.roomCode.toUpperCase()}.json`);
-  await fs.writeFile(filePath, JSON.stringify(state, null, 2));
-  // Emit event so SSE streams know to push state
+  state.updatedAt = Date.now();
+  await writeState(state);
+  scheduleAutoAdvance(state);
   emitStateUpdate(state.roomCode);
 }
 
-export async function createRoom(gameType: GameType): Promise<{ roomCode: string; hostId: string }> {
-  let roomCode = generateRoomCode();
-  // Ensure uniqueness
-  while (await getGameState(roomCode)) {
-    roomCode = generateRoomCode();
+async function pruneStaleRooms() {
+  try {
+    const cutoff = Date.now() - ROOM_TTL_MS;
+    for (const file of await fs.readdir(DATA_DIR)) {
+      if (!file.endsWith('.json')) continue;
+      const full = path.join(DATA_DIR, file);
+      const stat = await fs.stat(full).catch(() => null);
+      if (stat && stat.mtimeMs < cutoff) await fs.unlink(full).catch(() => {});
+    }
+  } catch {
+    // Directory missing — nothing to prune.
   }
+}
 
-  const hostId = `HOST_${crypto.randomBytes(4).toString('hex')}`;
+// ─── Server-side auto-advance ──────────────────────────────────────────────────
+// Timed phases store `autoAdvanceAt` + `autoAdvanceAction`. The server fires
+// them itself so a sleeping host tab can't stall the game; the host page's own
+// timer is only a fallback. Either way the action carries the deadline it was
+// scheduled for, and a stale one (from an earlier round) is ignored.
 
+const autoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleAutoAdvance(state: GameState) {
+  const existing = autoTimers.get(state.roomCode);
+  if (existing) clearTimeout(existing);
+  autoTimers.delete(state.roomCode);
+
+  const at = state.hostData?.autoAdvanceAt;
+  const type = state.hostData?.autoAdvanceAction;
+  if (typeof at !== 'number' || typeof type !== 'string') return;
+
+  const timer = setTimeout(() => {
+    autoTimers.delete(state.roomCode);
+    processAction(state.roomCode, state.hostId, { type, deadline: at }).catch((error) =>
+      console.error('Party auto-advance failed:', error)
+    );
+  }, Math.max(250, at - Date.now()));
+  // Don't keep the process alive just for a party timer.
+  (timer as { unref?: () => void }).unref?.();
+  autoTimers.set(state.roomCode, timer);
+}
+
+// ─── Rooms & players ───────────────────────────────────────────────────────────
+
+function generateRoomCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O, easier to read on a TV
+  return Array.from({ length: 4 }, () => chars[crypto.randomInt(chars.length)]).join('');
+}
+
+export async function createRoom(gameType: GameType): Promise<{ roomCode: string; hostId: string }> {
+  if (!GAME_TYPES.includes(gameType)) throw new Error('Unknown game type');
+  await pruneStaleRooms();
+
+  let roomCode = generateRoomCode();
+  for (let i = 0; i < 20 && (await getGameState(roomCode)); i++) roomCode = generateRoomCode();
+
+  const hostId = `HOST_${crypto.randomBytes(8).toString('hex')}`;
   const initialState: GameState = {
     roomCode,
     gameType,
@@ -74,105 +173,168 @@ export async function createRoom(gameType: GameType): Promise<{ roomCode: string
   return { roomCode, hostId };
 }
 
-const COLORS = ['#FF5733', '#33FF57', '#3357FF', '#F033FF', '#33FFF0', '#FFB533'];
+const COLORS = ['#FF5733', '#33FF57', '#3357FF', '#F033FF', '#33FFF0', '#FFB533', '#FF3380', '#9D4EDD', '#06D6A0', '#FFD60A', '#4CC9F0', '#F77F00'];
 
-export async function joinRoom(roomCode: string, playerName: string): Promise<{ playerId: string } | { error: string }> {
-  const state = await getGameState(roomCode);
-  if (!state) {
-    return { error: 'Room not found' };
-  }
-  if (state.phase !== 'LOBBY') {
-    return { error: 'Game has already started' };
-  }
-
-  // Check if player name already exists (case-insensitive)
-  const nameExists = Object.values(state.players).some(p => p.name.toLowerCase() === playerName.toLowerCase());
-  if (nameExists) {
-    return { error: 'Name already taken' };
-  }
-
-  const playerId = `P_${crypto.randomBytes(4).toString('hex')}`;
-  const color = COLORS[Object.keys(state.players).length % COLORS.length];
-
-  state.players[playerId] = {
-    id: playerId,
-    name: playerName,
-    score: 0,
-    connected: true,
-    avatarColor: color,
-  };
-  state.playerOrder.push(playerId);
-  state.updatedAt = Date.now();
-
-  await saveGameState(state);
-
-  return { playerId };
+export function sanitizePlayerName(name: unknown): string {
+  return typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_LENGTH) : '';
 }
 
-export async function processAction(roomCode: string, playerId: string, action: any): Promise<{ success: boolean; error?: string }> {
-  const state = await getGameState(roomCode);
-  if (!state) return { success: false, error: 'Room not found' };
+export async function joinRoom(roomCode: string, playerName: string): Promise<{ playerId: string; rejoined?: boolean } | { error: string }> {
+  const code = normalizeRoomCode(roomCode);
+  const name = sanitizePlayerName(playerName);
+  if (!code) return { error: 'Room codes are 4 letters' };
+  if (!name) return { error: 'Enter a nickname' };
 
-  if (action.type === 'START_GAME') {
-    if (playerId !== state.hostId) return { success: false, error: 'Only host can start the game' };
-    const minPlayers = state.gameType === 'ready-set-bet' ? 1 : 3;
-    if (state.playerOrder.length < minPlayers) return { success: false, error: `Need at least ${minPlayers} players` };
-    if (state.gameType === 'quip-clash') await quipClashLogic.onStart(state);
-    else if (state.gameType === 'the-faker') await fakerLogic.onStart(state);
-    else if (state.gameType === 'trivia-death') await triviaDeathLogic.onStart(state);
-    else if (state.gameType === 'bracket-battles') await bracketBattlesLogic.onStart(state);
-    else if (state.gameType === 'ready-set-bet') await readySetBetLogic.onStart(state);
-    state.updatedAt = Date.now();
-    await saveGameState(state);
-    return { success: true };
-  }
+  return withRoomLock(code, async () => {
+    const state = await getGameState(code);
+    if (!state) return { error: 'Room not found' };
 
-  // Global actions (work regardless of game type)
-  if (action.type === 'QUIT_GAME') {
-    if (playerId !== state.hostId) return { success: false, error: 'Only host can quit' };
-    state.phase = 'LOBBY';
-    state.hostData = {};
-    state.playerData = {};
-    state.gameData = {};
-    state.updatedAt = Date.now();
-    await saveGameState(state);
-    return { success: true };
-  }
-
-  if (action.type === 'SWITCH_GAME') {
-    if (playerId !== state.hostId) return { success: false, error: 'Only host can switch game' };
-    const newGameType = action.gameType as GameType;
-    state.gameType = newGameType;
-    state.phase = 'LOBBY';
-    state.hostData = {};
-    state.playerData = {};
-    state.gameData = {};
-    // Reset all scores
-    for (const pid of state.playerOrder) {
-      state.players[pid].score = 0;
+    const existing = Object.values(state.players).find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      // Let a player who lost their tab get back in (same name, not currently connected).
+      if (!existing.connected) {
+        existing.connected = true;
+        const key = Object.keys(state.playerKeys || {}).find((k) => state.playerKeys![k] === existing.id) || newPlayerKey(state, existing.id);
+        await saveGameState(state);
+        return { playerId: key, rejoined: true };
+      }
+      return { error: 'Name already taken' };
     }
-    state.updatedAt = Date.now();
+
+    if (state.phase !== 'LOBBY') return { error: 'Game has already started — join from the lobby next round' };
+    if (state.playerOrder.length >= MAX_PLAYERS) return { error: `Room is full (${MAX_PLAYERS} players)` };
+
+    const playerId = `P_${crypto.randomBytes(6).toString('hex')}`;
+    const usedColors = new Set(Object.values(state.players).map((p) => p.avatarColor));
+    const color = COLORS.find((c) => !usedColors.has(c)) || COLORS[state.playerOrder.length % COLORS.length];
+
+    state.players[playerId] = { id: playerId, name, score: 0, connected: true, avatarColor: color };
+    state.playerOrder.push(playerId);
+    const key = newPlayerKey(state, playerId);
+    await saveGameState(state);
+    return { playerId: key };
+  });
+}
+
+function newPlayerKey(state: GameState, playerId: string) {
+  const key = `K_${crypto.randomBytes(12).toString('hex')}`;
+  state.playerKeys = { ...(state.playerKeys || {}), [key]: playerId };
+  return key;
+}
+
+/** The player id a secret key belongs to (rooms from before keys existed used the id itself). */
+export function resolvePlayerKey(state: GameState, key: string | null | undefined): string | null {
+  if (!key) return null;
+  if (state.playerKeys) return state.playerKeys[key] ?? null;
+  return state.players[key] ? key : null;
+}
+
+/** State as sent to the host screen: everything except player credentials. */
+export function hostView(state: GameState) {
+  const { playerKeys: _keys, ...rest } = state;
+  return rest;
+}
+
+/** Mark a player's live connection state (called by the player stream). */
+export async function setPlayerConnected(roomCode: string, playerId: string, connected: boolean) {
+  const code = normalizeRoomCode(roomCode);
+  if (!code) return;
+  await withRoomLock(code, async () => {
+    const state = await getGameState(code);
+    const player = state?.players[playerId];
+    if (!state || !player || player.connected === connected) return;
+    player.connected = connected;
+    await saveGameState(state);
+  });
+}
+
+// ─── Actions ───────────────────────────────────────────────────────────────────
+
+/** Actions a player may send. Everything else (timers, next, force) is host-only. */
+function isPlayerAction(type: string) {
+  return type.startsWith('SUBMIT_') || type === 'PLACE_BET';
+}
+
+/** Trim free-text fields in an action so they stay within display limits. */
+function sanitizeAction(action: Record<string, any>) {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(action)) {
+    clean[key] = typeof value === 'string' ? value.slice(0, MAX_TEXT_LENGTH) : value;
+  }
+  return clean;
+}
+
+function resetToLobby(state: GameState, resetScores: boolean) {
+  state.phase = 'LOBBY';
+  state.hostData = {};
+  state.playerData = {};
+  state.gameData = { targetRounds: state.gameData?.targetRounds };
+  if (resetScores) for (const pid of state.playerOrder) state.players[pid].score = 0;
+}
+
+export async function processAction(roomCode: string, actorKey: string, rawAction: any): Promise<{ success: boolean; error?: string }> {
+  const code = normalizeRoomCode(roomCode);
+  if (!code) return { success: false, error: 'Invalid room code' };
+  if (!rawAction || typeof rawAction !== 'object' || typeof rawAction.type !== 'string') {
+    return { success: false, error: 'Invalid action' };
+  }
+  const action = sanitizeAction(rawAction);
+
+  return withRoomLock(code, async () => {
+    const state = await getGameState(code);
+    if (!state) return { success: false, error: 'Room not found' };
+
+    const isHost = actorKey === state.hostId;
+    const playerId = isHost ? state.hostId : resolvePlayerKey(state, actorKey);
+    if (!playerId) return { success: false, error: 'You are not in this room' };
+    if (!isHost && !state.players[playerId]) return { success: false, error: 'Not in this room' };
+    if (!isHost && !isPlayerAction(action.type)) return { success: false, error: 'Only the host can do that' };
+
+    // Timer-driven actions carry the deadline they were scheduled for; ignore
+    // them if the game has moved on since (e.g. everyone answered early).
+    if (typeof action.deadline === 'number' && state.hostData?.autoAdvanceAt !== action.deadline) {
+      return { success: true };
+    }
+
+    switch (action.type) {
+      case 'START_GAME': {
+        const min = MIN_PLAYERS[state.gameType];
+        if (state.playerOrder.length < min) return { success: false, error: `Need at least ${min} players` };
+        await LOGIC[state.gameType].onStart(state);
+        break;
+      }
+      case 'QUIT_GAME':
+        resetToLobby(state, false);
+        break;
+      case 'SWITCH_GAME': {
+        if (!GAME_TYPES.includes(action.gameType)) return { success: false, error: 'Unknown game' };
+        state.gameType = action.gameType;
+        resetToLobby(state, true);
+        break;
+      }
+      case 'SET_QUIP_ROUNDS': {
+        const rounds = Math.round(Number(action.rounds));
+        if (!Number.isFinite(rounds) || rounds < 1 || rounds > 5) return { success: false, error: 'Rounds must be 1–5' };
+        state.gameData = { ...(state.gameData || {}), targetRounds: rounds };
+        break;
+      }
+      case 'KICK_PLAYER': {
+        if (state.phase !== 'LOBBY') return { success: false, error: 'Players can only be removed in the lobby' };
+        const target = String(action.targetId || '');
+        if (!state.players[target]) return { success: false, error: 'Player not found' };
+        delete state.players[target];
+        delete state.playerData[target];
+        if (state.playerKeys) {
+          for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
+        }
+        state.playerOrder = state.playerOrder.filter((pid) => pid !== target);
+        break;
+      }
+      default:
+        await LOGIC[state.gameType].processAction(state, playerId, action);
+    }
+
     await saveGameState(state);
     return { success: true };
-  }
-
-  if (action.type === 'SET_QUIP_ROUNDS') {
-    if (playerId !== state.hostId) return { success: false, error: 'Only host can change rounds' };
-    if (!state.gameData) state.gameData = {};
-    state.gameData.targetRounds = action.rounds;
-    state.updatedAt = Date.now();
-    await saveGameState(state);
-    return { success: true };
-  }
-
-  // Delegate other actions to respective engines
-  if (state.gameType === 'quip-clash') await quipClashLogic.processAction(state, playerId, action);
-  else if (state.gameType === 'the-faker') await fakerLogic.processAction(state, playerId, action);
-  else if (state.gameType === 'trivia-death') await triviaDeathLogic.processAction(state, playerId, action);
-  else if (state.gameType === 'bracket-battles') await bracketBattlesLogic.processAction(state, playerId, action);
-  else if (state.gameType === 'ready-set-bet') await readySetBetLogic.processAction(state, playerId, action);
-
-  state.updatedAt = Date.now();
-  await saveGameState(state);
-  return { success: true };
+  });
 }

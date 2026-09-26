@@ -15,6 +15,9 @@ export interface GameState {
   players: Record<string, Player>;
   playerOrder: string[]; // Keep track of join order
   hostId: string;
+  // Secret key -> player id. The key is the player's credential (it's in their
+  // URL); the id is public (other players vote by it), so the two must differ.
+  playerKeys?: Record<string, string>;
   // Game-specific data for the host
   hostData: any;
   // Game-specific data tailored for players (playerId -> data)

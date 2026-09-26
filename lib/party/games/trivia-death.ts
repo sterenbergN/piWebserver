@@ -143,6 +143,7 @@ export const triviaDeathLogic = {
       case 'SUBMIT_TRIVIA_ANSWER': {
         if (state.phase !== 'QUESTION') return;
         if (state.gameData.currentAnswers[playerId] !== undefined) return;
+        if (state.gameData.playerStatuses[playerId] === 'escaped' || !Number.isInteger(action.answer)) return;
         state.gameData.currentAnswers[playerId] = action.answer;
         const eligible = state.playerOrder.filter(
           (pid: string) => state.gameData.playerStatuses[pid] !== 'escaped'
@@ -170,6 +171,8 @@ export const triviaDeathLogic = {
 
       case 'SUBMIT_KILLING_FLOOR_ANSWER': {
         if (state.phase !== 'KILLING_FLOOR') return;
+        // Only players on the killing floor take part in its mini-game.
+        if (!state.gameData.killingFloorPlayers.includes(playerId)) return;
         const mg = state.gameData.killingFloorMiniGame as MiniGame;
 
         if (mg === 'hotpotato') {
@@ -206,7 +209,8 @@ export const triviaDeathLogic = {
         if (mg === 'auction') {
           // Store bid amount
           if (state.gameData.auctionBids[playerId] !== undefined) return;
-          const bid = Math.min(action.answer ?? 0, state.gameData.money[playerId]);
+          const raw = Math.floor(Number(action.answer) || 0);
+          const bid = Math.max(0, Math.min(raw, state.gameData.money[playerId] || 0));
           state.gameData.auctionBids[playerId] = bid;
           const allBid = state.gameData.killingFloorPlayers.every(
             (pid: string) => state.gameData.auctionBids[pid] !== undefined
@@ -239,8 +243,8 @@ export const triviaDeathLogic = {
         if (state.phase !== 'FINAL_ESCAPE') return;
         const pid = playerId;
         if (state.gameData.playerStatuses[pid] === 'escaped') return;
-        if (state.gameData.escapeAnswers[pid]) return;
-        state.gameData.escapeAnswers[pid] = { answer: action.answer, doubleDown: action.doubleDown || false };
+        if (state.gameData.escapeAnswers[pid] || !Number.isInteger(action.answer)) return;
+        state.gameData.escapeAnswers[pid] = { answer: action.answer, doubleDown: action.doubleDown === true };
         state.playerData[pid].voted = true;
         break;
       }

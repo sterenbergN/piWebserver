@@ -3,8 +3,8 @@ import { processAction } from '@/lib/party/engine';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { roomCode, playerId, action } = body;
+    const body = await request.json().catch(() => null);
+    const { roomCode, playerId, action } = body || {};
     
     if (!roomCode || !playerId || !action) {
       return NextResponse.json({ error: 'Missing roomCode, playerId, or action' }, { status: 400 });

@@ -14,22 +14,17 @@ export const quipClashLogic = {
     // So we need playerOrder.length prompts total.
     const prompts = await getRandomPrompts('quip-clash', state.playerOrder.length);
     
-    // Assign each player 2 prompts
-    const playerPrompts: Record<string, string[]> = {};
-    const promptOwners: Record<string, string[]> = {}; // prompt -> [] of playerIds
-    
-    // Circular assignment: player 0 gets prompt 0,1. player 1 gets 1,2 ... player N gets N, 0.
-    for (let i = 0; i < state.playerOrder.length; i++) {
+    // Circular assignment: player i answers prompts i and i+1, so every prompt
+    // has exactly two authors. Everything is keyed by prompt index (not text)
+    // so a small prompt pool that repeats a prompt can't merge two matchups.
+    const n = state.playerOrder.length;
+    const playerPromptIdx: Record<string, number[]> = {};
+    const promptOwners: string[][] = prompts.map(() => []);
+    for (let i = 0; i < n; i++) {
       const pid = state.playerOrder[i];
-      const p1 = prompts[i];
-      const p2 = prompts[(i + 1) % prompts.length];
-      
-      playerPrompts[pid] = [p1, p2];
-      
-      if (!promptOwners[p1]) promptOwners[p1] = [];
-      promptOwners[p1].push(pid);
-      if (!promptOwners[p2]) promptOwners[p2] = [];
-      promptOwners[p2].push(pid);
+      const idx = [i, (i + 1) % n];
+      playerPromptIdx[pid] = idx;
+      for (const k of idx) promptOwners[k].push(pid);
     }
 
     state.phase = 'PROMPTING';
@@ -45,7 +40,7 @@ export const quipClashLogic = {
       ...state.gameData, 
       prompts,
       promptOwners,
-      answers: {}, // prompt -> { playerId: answer }
+      answers: {}, // promptIndex -> { playerId: answer }
       currentPromptIndex: 0,
       totalPrompts: prompts.length,
       votes: {}, // promptIndex -> { voterId: votedForPlayerId }
@@ -57,7 +52,8 @@ export const quipClashLogic = {
     for (const pid of state.playerOrder) {
       state.playerData[pid] = {
         phase: 'PROMPTING',
-        prompts: playerPrompts[pid],
+        prompts: playerPromptIdx[pid].map((k) => prompts[k]),
+        promptIdx: playerPromptIdx[pid],
         answers: ['', '']
       };
       if (!isNextRound) {
@@ -68,69 +64,52 @@ export const quipClashLogic = {
 
   processAction: async (state: GameState, playerId: string, action: any) => {
     switch (action.type) {
-      case 'SUBMIT_ANSWER':
+      case 'SUBMIT_ANSWER': {
         if (state.phase !== 'PROMPTING') return;
-        const { promptIndex, answer } = action; // 0 or 1
-        const prompt = state.playerData[playerId].prompts[promptIndex];
-        
-        if (!state.gameData.answers[prompt]) {
-          state.gameData.answers[prompt] = {};
-        }
-        state.gameData.answers[prompt][playerId] = answer;
-        
-        state.playerData[playerId].answers[promptIndex] = answer;
-        
-        // Check if all answers from all players are submitted
-        let complete = true;
+        const { promptIndex } = action; // 0 or 1
+        const answer = typeof action.answer === 'string' ? action.answer.trim() : '';
+        const pd = state.playerData[playerId];
+        if (!pd || (promptIndex !== 0 && promptIndex !== 1) || !answer) return;
+        const k = pd.promptIdx[promptIndex];
+        if (!state.gameData.answers[k]) state.gameData.answers[k] = {};
+        state.gameData.answers[k][playerId] = answer;
+        pd.answers[promptIndex] = answer;
+
+        const complete = state.playerOrder.every(
+          (pid) => state.playerData[pid]?.answers?.[0] && state.playerData[pid]?.answers?.[1],
+        );
+        if (complete) startVotingPhase(state);
+        break;
+      }
+
+      case 'FORCE_VOTING': // Host (or the prompt timer) ends the writing phase
+        if (playerId !== state.hostId || state.phase !== 'PROMPTING') return;
         for (const pid of state.playerOrder) {
-          if (!state.playerData[pid].answers[0] || !state.playerData[pid].answers[1]) {
-            complete = false;
-            break;
+          const pd = state.playerData[pid];
+          for (let i = 0; i < 2; i++) {
+            if (pd.answers[i]) continue;
+            const k = pd.promptIdx[i];
+            if (!state.gameData.answers[k]) state.gameData.answers[k] = {};
+            state.gameData.answers[k][pid] = 'Too slow!';
           }
         }
-        if (complete) {
-          startVotingPhase(state);
-        }
+        startVotingPhase(state);
         break;
 
-      case 'FORCE_VOTING': // Host can force time
-        if (playerId === state.hostId && state.phase === 'PROMPTING') {
-             // Fill missing answers with "Too slow!"
-             for (const pid of state.playerOrder) {
-                 for (let i=0; i<2; i++) {
-                     if (!state.playerData[pid].answers[i]) {
-                         const p = state.playerData[pid].prompts[i];
-                         if (!state.gameData.answers[p]) state.gameData.answers[p] = {};
-                         state.gameData.answers[p][pid] = "Too slow!";
-                     }
-                 }
-             }
-             startVotingPhase(state);
-        }
-        break;
-
-      case 'SUBMIT_VOTE':
+      case 'SUBMIT_VOTE': {
         if (state.phase !== 'VOTING') return;
         const currentIdx = state.gameData.currentPromptIndex;
-        if (!state.gameData.votes[currentIdx]) {
-          state.gameData.votes[currentIdx] = {};
-        }
-        
-        const currentPrompt = state.gameData.prompts[currentIdx];
-        const owners = state.gameData.promptOwners[currentPrompt];
-        
-        // Cannot vote if you are an owner
-        if (owners.includes(playerId)) return;
-        
+        const owners: string[] = state.gameData.promptOwners[currentIdx];
+        // Authors can't vote on their own matchup, and a vote must name one of them.
+        if (owners.includes(playerId) || !owners.includes(action.votedForId)) return;
+        if (!state.gameData.votes[currentIdx]) state.gameData.votes[currentIdx] = {};
         state.gameData.votes[currentIdx][playerId] = action.votedForId;
-        
-        // Check if everyone (except the 2 authors) has voted
+
         const votersCount = Object.keys(state.gameData.votes[currentIdx]).length;
-        if (votersCount >= state.playerOrder.length - 2) {
-          calculateRoundVotes(state);
-        }
+        if (votersCount >= state.playerOrder.length - owners.length) calculateRoundVotes(state);
         break;
-        
+      }
+
       case 'NEXT_PROMPT':
         if (state.phase !== 'ROUND_RESULTS') return;
         state.gameData.currentPromptIndex++;
@@ -172,9 +151,10 @@ function startVotingPhase(state: GameState) {
 
 function startVotingRound(state: GameState) {
   state.phase = 'VOTING';
-  const currentPrompt = state.gameData.prompts[state.gameData.currentPromptIndex];
-  const owners = state.gameData.promptOwners[currentPrompt]; // should be 2 players
-  const answers = state.gameData.answers[currentPrompt];
+  const idx = state.gameData.currentPromptIndex;
+  const currentPrompt = state.gameData.prompts[idx];
+  const owners: string[] = state.gameData.promptOwners[idx];
+  const answers = state.gameData.answers[idx] || {};
   
   // Randomize answer order so we don't know who is who 
   // Normally we'd shuffle, but we can just map it mapping ID -> UI
@@ -212,7 +192,7 @@ function calculateRoundVotes(state: GameState) {
   state.phase = 'ROUND_RESULTS';
   const currentIdx = state.gameData.currentPromptIndex;
   const currentPrompt = state.gameData.prompts[currentIdx];
-  const owners = state.gameData.promptOwners[currentPrompt];
+  const owners: string[] = state.gameData.promptOwners[currentIdx];
   const votes = state.gameData.votes[currentIdx] || {};
 
   // Tally votes
@@ -221,7 +201,7 @@ function calculateRoundVotes(state: GameState) {
   
   for (const voterId in votes) {
     const votedFor = votes[voterId];
-    tally[votedFor] = (tally[votedFor] || 0) + 1;
+    if (votedFor in tally) tally[votedFor]++;
   }
 
   // Award points (e.g. 500 per vote)
@@ -245,7 +225,7 @@ function calculateRoundVotes(state: GameState) {
   state.hostData = {
     prompt: currentPrompt,
     tally,
-    answers: state.gameData.answers[currentPrompt],
+    answers: state.gameData.answers[currentIdx] || {},
     quipLash,
     timerStart: Date.now(),
     timerDuration: 7,

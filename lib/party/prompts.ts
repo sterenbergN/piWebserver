@@ -114,27 +114,89 @@ const DEFAULT_PROMPTS: PromptsData = {
   ]
 };
 
+const MAX_PROMPT_LENGTH = 200;
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, MAX_PROMPT_LENGTH) : '';
+}
+
+function cleanList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    const text = cleanText(item);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function cleanTrivia(value: unknown): TriviaQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const out: TriviaQuestion[] = [];
+  for (const raw of value) {
+    const question = cleanText(raw?.question);
+    const choices = Array.isArray(raw?.choices) ? raw.choices.slice(0, 4).map(cleanText) : [];
+    const answer = Number(raw?.answer);
+    if (!question || choices.length !== 4 || choices.some((c: string) => !c)) continue;
+    if (!Number.isInteger(answer) || answer < 0 || answer > 3) continue;
+    const category = cleanText(raw?.category);
+    out.push({ question, choices: choices as TriviaQuestion['choices'], answer, ...(category ? { category } : {}) });
+  }
+  return out;
+}
+
+/** Trim, de-duplicate and drop incomplete entries so a bad save can't break a game. */
+export function normalizePrompts(input: Partial<Record<keyof PromptsData, unknown>> | null | undefined): PromptsData {
+  return {
+    quipClash: cleanList(input?.quipClash),
+    theFaker: cleanList(input?.theFaker),
+    bracketBattles: cleanList(input?.bracketBattles),
+    triviaQuestions: cleanTrivia(input?.triviaQuestions),
+  };
+}
+
 export async function getPrompts(): Promise<PromptsData> {
+  let parsed: Partial<PromptsData> | null = null;
   try {
-    const data = await fs.readFile(PROMPTS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    // Back-fill if missing (for existing installs)
-    if (!parsed.triviaQuestions) parsed.triviaQuestions = DEFAULT_PROMPTS.triviaQuestions;
-    if (!parsed.bracketBattles) parsed.bracketBattles = DEFAULT_PROMPTS.bracketBattles;
-    return parsed;
-  } catch (err) {
-    await savePrompts(DEFAULT_PROMPTS);
+    parsed = JSON.parse(await fs.readFile(PROMPTS_FILE, 'utf-8'));
+  } catch {
+    await savePrompts(DEFAULT_PROMPTS).catch((err) => console.error('Error saving prompts', err));
     return DEFAULT_PROMPTS;
   }
+  // Back-fill lists missing from older installs.
+  return {
+    quipClash: parsed?.quipClash ?? DEFAULT_PROMPTS.quipClash,
+    theFaker: parsed?.theFaker ?? DEFAULT_PROMPTS.theFaker,
+    bracketBattles: parsed?.bracketBattles ?? DEFAULT_PROMPTS.bracketBattles,
+    triviaQuestions: parsed?.triviaQuestions ?? DEFAULT_PROMPTS.triviaQuestions,
+  };
 }
 
 export async function savePrompts(prompts: PromptsData): Promise<void> {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(PROMPTS_FILE, JSON.stringify(prompts, null, 2));
-  } catch (err) {
-    console.error('Error saving prompts', err);
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const tmp = `${PROMPTS_FILE}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(prompts, null, 2));
+  await fs.rename(tmp, PROMPTS_FILE);
+}
+
+function shuffled<T>(list: T[]): T[] {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
   }
+  return out;
+}
+
+// Draws without repeats until the pool runs out, then reshuffles for the rest.
+function draw<T>(list: T[], count: number): T[] {
+  const result: T[] = [];
+  while (result.length < count && list.length > 0) result.push(...shuffled(list).slice(0, count - result.length));
+  return result;
 }
 
 export async function getRandomPrompts(gameType: 'quip-clash' | 'the-faker' | 'bracket-battles', count: number): Promise<string[]> {
@@ -144,16 +206,10 @@ export async function getRandomPrompts(gameType: 'quip-clash' | 'the-faker' | 'b
   else if (gameType === 'the-faker') list = prompts.theFaker;
   else list = prompts.bracketBattles;
   
-  const shuffled = [...list].sort(() => 0.5 - Math.random());
-  const result = [];
-  for (let i = 0; i < count; i++) result.push(shuffled[i % shuffled.length]);
-  return result;
+  return draw(list.length ? list : DEFAULT_PROMPTS[gameType === 'quip-clash' ? 'quipClash' : gameType === 'the-faker' ? 'theFaker' : 'bracketBattles'], count);
 }
 
 export async function getRandomTriviaQuestions(count: number): Promise<TriviaQuestion[]> {
   const prompts = await getPrompts();
-  const shuffled = [...prompts.triviaQuestions].sort(() => 0.5 - Math.random());
-  const result: TriviaQuestion[] = [];
-  for (let i = 0; i < count; i++) result.push(shuffled[i % shuffled.length]);
-  return result;
+  return draw(prompts.triviaQuestions.length ? prompts.triviaQuestions : DEFAULT_PROMPTS.triviaQuestions, count);
 }

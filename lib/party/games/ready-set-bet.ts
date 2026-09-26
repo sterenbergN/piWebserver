@@ -2,6 +2,11 @@ import { GameState } from '../types';
 
 const TOTAL_RACES = 4;
 const TRACK_LENGTH = 15;
+// The server rolls the dice on this cadence (the first roll waits a little
+// longer so everyone can place opening bets).
+const TICK_MS = 1500;
+const FIRST_TICK_MS = 5000;
+const BET_TYPES = ['win', 'place', 'show'];
 const HORSES = ['2/3', '4', '5', '6', '7', '8', '9', '10', '11/12'];
 
 const MULTIPLIERS: Record<string, { win: number, place: number, show: number }> = {
@@ -53,20 +58,21 @@ export const readySetBetLogic = {
         if (state.phase !== 'RACING') return;
         if (state.gameData.bettingClosed) return; // Cannot bet if closed
         
-        // action.horse, action.betType (win|place|show)
+        if (!HORSES.includes(action.horse) || !BET_TYPES.includes(action.betType)) return;
         const bets = state.gameData.bets[playerId];
-        if (bets.length >= 5) return; // Max 5 bets per race
+        if (!bets || bets.length >= 5) return; // Max 5 bets per race
         
         // Prevent duplicate bet types on same horse by same player
         if (bets.some((b: any) => b.horse === action.horse && b.type === action.betType)) return;
 
         bets.push({ horse: action.horse, type: action.betType });
+        state.playerData[playerId] = { ...state.playerData[playerId], bets };
         break;
       }
 
       case 'SUBMIT_PROP_BET': {
         if (state.phase !== 'RACING') return;
-        if (state.gameData.propBetAnswers[playerId] !== undefined) return;
+        if (state.gameData.propBetAnswers[playerId] !== undefined || typeof action.choice !== 'boolean') return;
         
         state.gameData.propBetAnswers[playerId] = action.choice;
         state.playerData[playerId].propBetAnswered = true;
@@ -135,6 +141,8 @@ export const readySetBetLogic = {
           commentary,
           finishers: state.gameData.finishers,
           bettingClosed: state.gameData.bettingClosed,
+          autoAdvanceAt: Date.now() + TICK_MS,
+          autoAdvanceAction: 'RACE_TICK',
         };
         
         for (const pid of state.playerOrder) {
@@ -196,6 +204,8 @@ function startRace(state: GameState) {
     finishers: [],
     bettingClosed: false,
     lastRoll: null,
+    autoAdvanceAt: Date.now() + FIRST_TICK_MS,
+    autoAdvanceAction: 'RACE_TICK',
   };
 
   for (const pid of state.playerOrder) {

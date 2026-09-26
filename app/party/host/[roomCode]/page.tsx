@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import QRCode from 'qrcode';
 
 function useCountdown(timerStart?: number, timerDuration?: number) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
@@ -48,6 +49,24 @@ function FakerCountdown({ onDone }: { onDone: () => void }) {
   return val === 0
     ? <div className="host-go-text" key={0}>GO!</div>
     : <div className="host-countdown-number" key={val}>{val}</div>;
+}
+
+/** QR code that opens the join page with this room's code filled in. */
+function JoinQrCode({ roomCode }: { roomCode: string }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    const url = `${window.location.origin}/party?code=${roomCode}`;
+    QRCode.toDataURL(url, { margin: 1, width: 220, color: { dark: '#0b0b12', light: '#ffffff' } })
+      .then(setSrc)
+      .catch(() => setSrc(''));
+  }, [roomCode]);
+  if (!src) return null;
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', background: '#fff', padding: '0.75rem', borderRadius: '16px' }}>
+      <img src={src} alt={`Scan to join room ${roomCode}`} width={180} height={180} />
+      <span style={{ color: '#0b0b12', fontWeight: 800, fontSize: '0.85rem' }}>Scan to join</span>
+    </div>
+  );
 }
 
 function QuitDialog({ onQuit, onCancel }: { onQuit: () => void; onCancel: () => void }) {
@@ -111,7 +130,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     const safeDelay = Math.max(delay, 200);
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
     autoTimerRef.current = setTimeout(() => {
-      sendAction({ type: state.hostData.autoAdvanceAction });
+      // The server normally fires this itself; this is a fallback. The deadline
+      // lets the server ignore it if the game already moved on.
+      sendAction({ type: state.hostData.autoAdvanceAction, deadline: state.hostData.autoAdvanceAt });
     }, safeDelay);
     return () => { if (autoTimerRef.current) clearTimeout(autoTimerRef.current); };
   }, [state?.hostData?.autoAdvanceAt, state?.hostData?.autoAdvanceAction, sendAction]);
@@ -131,16 +152,6 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     };
     return () => sse.close();
   }, [roomCode, hostId]);
-
-  // Race Ticker for Ready Set Bet
-  useEffect(() => {
-    if (state?.gameType === 'ready-set-bet' && state?.phase === 'RACING') {
-      const id = setInterval(() => {
-        sendAction({ type: 'RACE_TICK' });
-      }, 1500);
-      return () => clearInterval(id);
-    }
-  }, [state?.gameType, state?.phase]);
 
   const handleQuit = () => { setShowQuitDialog(false); sendAction({ type: 'QUIT_GAME' }); };
   const handleSwitch = (g: string) => sendAction({ type: 'SWITCH_GAME', gameType: g });
@@ -204,13 +215,25 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         {state.phase === 'LOBBY' && (
           <div className="host-lobby phase-enter">
             <div className="host-lobby-title">Waiting for players...</div>
-            <p className="host-lobby-subtitle">{state.playerOrder.length} player(s) connected</p>
+            <p className="host-lobby-subtitle">
+              {state.playerOrder.length}/16 players · join at <strong>{typeof window !== 'undefined' ? window.location.host : ''}/party</strong> with code <strong>{state.roomCode}</strong>
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', margin: '0 0 1.5rem' }}>
+              <JoinQrCode roomCode={state.roomCode} />
+            </div>
             <div className="host-players-grid">
-              {Object.values(state.players).map((p: any) => (
-                <div key={p.id} className="host-player-card">
+              {state.playerOrder.map((pid: string) => state.players[pid]).filter(Boolean).map((p: any) => (
+                <div key={p.id} className="host-player-card" style={{ opacity: p.connected ? 1 : 0.45 }} title={p.connected ? 'Connected' : 'Disconnected'}>
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: p.avatarColor }} />
+                  <button
+                    onClick={() => sendAction({ type: 'KICK_PLAYER', targetId: p.id })}
+                    aria-label={`Remove ${p.name}`}
+                    title={`Remove ${p.name}`}
+                    style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: 'var(--party-text-muted)', cursor: 'pointer', fontSize: '0.9rem' }}
+                  >✕</button>
                   <div className="host-player-avatar" style={{ border: `3px solid ${p.avatarColor}`, color: p.avatarColor }}>{p.name.charAt(0)}</div>
                   <div className="host-player-name">{p.name}</div>
+                  {!p.connected && <div style={{ fontSize: '0.7rem', color: 'var(--party-text-muted)' }}>reconnecting…</div>}
                 </div>
               ))}
             </div>
