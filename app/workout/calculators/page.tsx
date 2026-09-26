@@ -254,7 +254,7 @@ export default function WorkoutCalculatorsPage() {
         </div>
       </div>
 
-      <div className="workout-tile" style={{ padding: '0.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+      <div className="workout-tile" style={{ padding: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
         <button className="btn btn-secondary" style={{ padding: '0.85rem', borderRadius: '12px', borderColor: activeTab === 'calorie' ? 'var(--accent)' : 'var(--surface-border)', color: activeTab === 'calorie' ? 'var(--accent)' : 'var(--foreground)' }} onClick={() => setActiveTab('calorie')}>
           Calories
         </button>
@@ -280,7 +280,7 @@ export default function WorkoutCalculatorsPage() {
                 <div><strong>Projection:</strong> weekly weight change = ((target - maintenance) * 7) / 3500.</div>
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Height (inches)</label>
                 <input className="workout-input" type="number" value={calorieForm.heightInches} onChange={(e) => setCalorieForm({ ...calorieForm, heightInches: e.target.value === '' ? '' : Number(e.target.value) })} />
@@ -319,12 +319,12 @@ export default function WorkoutCalculatorsPage() {
               ))}
             </select>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Timeline (weeks)</label>
                 <select className="workout-input" value={calorieForm.timelineWeeks || 12} onChange={(e) => setCalorieForm({ ...calorieForm, timelineWeeks: Number(e.target.value) })}>
                   {Array.from({ length: 22 }, (_, idx) => 8 + (idx * 2)).map((weeks) => (
-                    <option key={weeks} value={weeks}>{weeks} weeks</option>
+                    <option key={weeks} value={weeks}>{weeks} wk</option>
                   ))}
                 </select>
               </div>
@@ -338,7 +338,7 @@ export default function WorkoutCalculatorsPage() {
           {calorieMetrics ? (
             <>
               <div className="workout-tile">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', textAlign: 'center' }}>
                   <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px' }}>
                     <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>BMR</div>
                     <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>{calorieMetrics.bmr}</div>
@@ -372,7 +372,7 @@ export default function WorkoutCalculatorsPage() {
                         label={{ value: 'Weight (lbs)', angle: -90, position: 'insideLeft', fill: 'var(--muted)', fontSize: 12 }}
                       />
                       <Tooltip
-                        contentStyle={{ background: '#111', border: '1px solid #333', borderRadius: '10px' }}
+                        contentStyle={{ background: 'var(--background)', border: '1px solid var(--surface-border)', borderRadius: '10px', color: 'var(--foreground)' }}
                         labelFormatter={(_, payload) => payload && payload[0]?.payload ? `${payload[0].payload.dateLabel}` : ''}
                         formatter={(value) => [`${Number(value ?? 0).toFixed(1)} lbs`, 'Weight']}
                       />
@@ -380,19 +380,41 @@ export default function WorkoutCalculatorsPage() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                  {calorieMetrics.projection.map((point) => (
-                    <div key={point.week} style={{ background: 'var(--input-bg)', borderRadius: '10px', padding: '0.7rem 0.8rem' }}>
-                      <div className="workout-flex-between" style={{ alignItems: 'baseline' }}>
-                        <strong>Week {point.week}{point.shortDate ? ` (${point.shortDate})` : ''}</strong>
-                        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{point.weightLbs.toFixed(1)} lbs</span>
-                      </div>
-                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--muted)' }}>
-                        Maintenance {point.maintenanceCalories} kcal • Weekly change {point.weeklyChangeLbs > 0 ? '+' : ''}{point.weeklyChangeLbs.toFixed(2)} lbs
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {(() => {
+                  const points = calorieMetrics.projection;
+                  const last = points[points.length - 1];
+                  const totalChange = points.reduce((sum, point) => sum + point.weeklyChangeLbs, 0);
+                  return last ? (
+                    <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>
+                      Ending at <strong style={{ color: 'var(--accent)' }}>{last.weightLbs.toFixed(1)} lbs</strong>
+                      {calorieForm.startDate ? ` by ${last.dateLabel}` : ` after ${points.length} weeks`}
+                      {' '}({totalChange >= 0 ? '+' : ''}{totalChange.toFixed(1)} lbs).
+                    </p>
+                  ) : null;
+                })()}
+                <details>
+                  <summary style={{ cursor: 'pointer', color: 'var(--muted)', fontSize: '0.85rem' }}>Week-by-week breakdown</summary>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--muted)', textAlign: 'left' }}>
+                        <th style={{ padding: '0.35rem 0.25rem', fontWeight: 500 }}>Week</th>
+                        <th style={{ padding: '0.35rem 0.25rem', fontWeight: 500, textAlign: 'right' }}>Weight</th>
+                        <th style={{ padding: '0.35rem 0.25rem', fontWeight: 500, textAlign: 'right' }}>Maint. kcal</th>
+                        <th style={{ padding: '0.35rem 0.25rem', fontWeight: 500, textAlign: 'right' }}>Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {calorieMetrics.projection.map((point) => (
+                        <tr key={point.week} style={{ borderTop: '1px solid var(--surface-border)' }}>
+                          <td style={{ padding: '0.35rem 0.25rem' }}>{point.week}{point.shortDate ? ` · ${point.shortDate}` : ''}</td>
+                          <td style={{ padding: '0.35rem 0.25rem', textAlign: 'right', fontWeight: 600 }}>{point.weightLbs.toFixed(1)}</td>
+                          <td style={{ padding: '0.35rem 0.25rem', textAlign: 'right' }}>{point.maintenanceCalories}</td>
+                          <td style={{ padding: '0.35rem 0.25rem', textAlign: 'right', color: 'var(--muted)' }}>{point.weeklyChangeLbs > 0 ? '+' : ''}{point.weeklyChangeLbs.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
               </div>
             </>
           ) : (
@@ -417,7 +439,7 @@ export default function WorkoutCalculatorsPage() {
                 <div><strong>BMI:</strong> (weight in lbs / height in inches²) * 703.</div>
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Sex</label>
                 <select className="workout-input" value={bodyFatForm.sex} onChange={(e) => setBodyFatForm({ ...bodyFatForm, sex: e.target.value as 'male' | 'female' })}>
@@ -484,7 +506,7 @@ export default function WorkoutCalculatorsPage() {
 
           {bodyFatMetrics ? (
             <div className="workout-tile">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', textAlign: 'center', marginBottom: '0.5rem' }}>
                 <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px' }}>
                   <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Navy Body Fat</div>
                   <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>
@@ -503,7 +525,7 @@ export default function WorkoutCalculatorsPage() {
                 </div>
               </div>
               {bodyFatMetrics.navy && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', textAlign: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem', textAlign: 'center' }}>
                   <div style={{ background: 'var(--input-bg)', padding: '0.75rem', borderRadius: '10px' }}>
                     <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Lean Mass (Navy)</div>
                     <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>{bodyFatMetrics.navy.leanMassLbs.toFixed(1)} lbs</div>

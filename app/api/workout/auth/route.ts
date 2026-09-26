@@ -89,6 +89,9 @@ export async function PATCH(request: Request) {
         intensityFactor: updates.intensityFactor !== undefined && Number.isFinite(Number(updates.intensityFactor))
           ? Number(updates.intensityFactor)
           : user.intensityFactor,
+        weeklySetTarget: Number.isFinite(Number(updates.weeklySetTarget))
+          ? Math.min(30, Math.max(2, Math.round(Number(updates.weeklySetTarget))))
+          : user.weeklySetTarget,
       });
       usersData.users[userIndex] = merged;
       return merged;

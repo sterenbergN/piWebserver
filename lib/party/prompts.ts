@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { BUILT_IN_PACKS } from './prompt-packs';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
 const PROMPTS_FILE = path.join(DATA_DIR, 'party-prompts.json');
@@ -11,14 +12,29 @@ export interface TriviaQuestion {
   category?: string;
 }
 
-export interface PromptsData {
+export interface PromptLists {
   quipClash: string[];
   theFaker: string[];
   triviaQuestions: TriviaQuestion[];
   bracketBattles: string[];
 }
 
-const DEFAULT_PROMPTS: PromptsData = {
+/** A themed set of prompts the host can switch on per room. */
+export interface PromptPack extends PromptLists {
+  id: string;
+  name: string;
+  emoji: string;
+}
+
+/** The top-level lists are the "Classic" pack; themed packs sit alongside. */
+export interface PromptsData extends PromptLists {
+  packs?: PromptPack[];
+}
+
+export const CLASSIC_PACK_ID = 'classic';
+const MAX_PACKS = 20;
+
+const DEFAULT_PROMPTS: PromptLists = {
   quipClash: [
     "A bad name for a pet dog",
     "The worst thing to say at a funeral",
@@ -114,46 +130,142 @@ const DEFAULT_PROMPTS: PromptsData = {
   ]
 };
 
-export async function getPrompts(): Promise<PromptsData> {
-  try {
-    const data = await fs.readFile(PROMPTS_FILE, 'utf-8');
-    const parsed = JSON.parse(data);
-    // Back-fill if missing (for existing installs)
-    if (!parsed.triviaQuestions) parsed.triviaQuestions = DEFAULT_PROMPTS.triviaQuestions;
-    if (!parsed.bracketBattles) parsed.bracketBattles = DEFAULT_PROMPTS.bracketBattles;
-    return parsed;
-  } catch (err) {
-    await savePrompts(DEFAULT_PROMPTS);
-    return DEFAULT_PROMPTS;
+const MAX_PROMPT_LENGTH = 200;
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, MAX_PROMPT_LENGTH) : '';
+}
+
+function cleanList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    const text = cleanText(item);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
   }
+  return out;
+}
+
+function cleanTrivia(value: unknown): TriviaQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const out: TriviaQuestion[] = [];
+  for (const raw of value) {
+    const question = cleanText(raw?.question);
+    const choices = Array.isArray(raw?.choices) ? raw.choices.slice(0, 4).map(cleanText) : [];
+    const answer = Number(raw?.answer);
+    if (!question || choices.length !== 4 || choices.some((c: string) => !c)) continue;
+    if (!Number.isInteger(answer) || answer < 0 || answer > 3) continue;
+    const category = cleanText(raw?.category);
+    out.push({ question, choices: choices as TriviaQuestion['choices'], answer, ...(category ? { category } : {}) });
+  }
+  return out;
+}
+
+function cleanLists(input: any): PromptLists {
+  return {
+    quipClash: cleanList(input?.quipClash),
+    theFaker: cleanList(input?.theFaker),
+    bracketBattles: cleanList(input?.bracketBattles),
+    triviaQuestions: cleanTrivia(input?.triviaQuestions),
+  };
+}
+
+function cleanPacks(value: unknown): PromptPack[] {
+  if (!Array.isArray(value)) return [];
+  const used = new Set([CLASSIC_PACK_ID]);
+  const packs: PromptPack[] = [];
+  for (const raw of value.slice(0, MAX_PACKS)) {
+    const name = cleanText(raw?.name).slice(0, 40);
+    if (!name) continue;
+    let id = (cleanText(raw?.id) || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'pack';
+    const base = id;
+    for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+    used.add(id);
+    const emoji = cleanText(raw?.emoji).slice(0, 8) || '🎲';
+    packs.push({ id, name, emoji, ...cleanLists(raw) });
+  }
+  return packs;
+}
+
+/** Trim, de-duplicate and drop incomplete entries so a bad save can't break a game. */
+export function normalizePrompts(input: (Partial<Record<keyof PromptLists, unknown>> & { packs?: unknown }) | null | undefined): PromptsData {
+  return { ...cleanLists(input), packs: cleanPacks(input?.packs) };
+}
+
+/** Summary of every pack for pickers (no trivia answers). */
+export function listPacks(data: PromptsData) {
+  const count = (l: PromptLists) => ({
+    quipClash: l.quipClash.length, theFaker: l.theFaker.length, bracketBattles: l.bracketBattles.length, triviaQuestions: l.triviaQuestions.length,
+  });
+  return [
+    { id: CLASSIC_PACK_ID, name: 'Classic', emoji: '🎉', counts: count(data) },
+    ...(data.packs || []).map((p) => ({ id: p.id, name: p.name, emoji: p.emoji, counts: count(p) })),
+  ];
+}
+
+/** Union of one list across the chosen packs (Classic if none chosen or all empty). */
+function pool<K extends keyof PromptLists>(data: PromptsData, key: K, packIds?: string[]): PromptLists[K] {
+  const chosen = packIds && packIds.length ? packIds : [CLASSIC_PACK_ID];
+  const sources: PromptLists[] = chosen
+    .map((id) => (id === CLASSIC_PACK_ID ? data : data.packs?.find((p) => p.id === id)))
+    .filter((p): p is PromptLists => !!p);
+  const merged = sources.flatMap((p) => p[key] as unknown[]);
+  if (merged.length > 0) return merged as PromptLists[K];
+  return (data[key].length ? data[key] : DEFAULT_PROMPTS[key]) as PromptLists[K];
+}
+
+export async function getPrompts(): Promise<PromptsData> {
+  let parsed: Partial<PromptsData> | null = null;
+  try {
+    parsed = JSON.parse(await fs.readFile(PROMPTS_FILE, 'utf-8'));
+  } catch {
+    const fresh = { ...DEFAULT_PROMPTS, packs: BUILT_IN_PACKS };
+    await savePrompts(fresh).catch((err) => console.error('Error saving prompts', err));
+    return fresh;
+  }
+  // Back-fill lists (and the themed packs) missing from older installs.
+  return {
+    quipClash: parsed?.quipClash ?? DEFAULT_PROMPTS.quipClash,
+    theFaker: parsed?.theFaker ?? DEFAULT_PROMPTS.theFaker,
+    bracketBattles: parsed?.bracketBattles ?? DEFAULT_PROMPTS.bracketBattles,
+    triviaQuestions: parsed?.triviaQuestions ?? DEFAULT_PROMPTS.triviaQuestions,
+    packs: parsed?.packs ?? BUILT_IN_PACKS,
+  };
 }
 
 export async function savePrompts(prompts: PromptsData): Promise<void> {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(PROMPTS_FILE, JSON.stringify(prompts, null, 2));
-  } catch (err) {
-    console.error('Error saving prompts', err);
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const tmp = `${PROMPTS_FILE}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(prompts, null, 2));
+  await fs.rename(tmp, PROMPTS_FILE);
+}
+
+function shuffled<T>(list: T[]): T[] {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
   }
+  return out;
 }
 
-export async function getRandomPrompts(gameType: 'quip-clash' | 'the-faker' | 'bracket-battles', count: number): Promise<string[]> {
-  const prompts = await getPrompts();
-  let list: string[];
-  if (gameType === 'quip-clash') list = prompts.quipClash;
-  else if (gameType === 'the-faker') list = prompts.theFaker;
-  else list = prompts.bracketBattles;
-  
-  const shuffled = [...list].sort(() => 0.5 - Math.random());
-  const result = [];
-  for (let i = 0; i < count; i++) result.push(shuffled[i % shuffled.length]);
+// Draws without repeats until the pool runs out, then reshuffles for the rest.
+function draw<T>(list: T[], count: number): T[] {
+  const result: T[] = [];
+  while (result.length < count && list.length > 0) result.push(...shuffled(list).slice(0, count - result.length));
   return result;
 }
 
-export async function getRandomTriviaQuestions(count: number): Promise<TriviaQuestion[]> {
-  const prompts = await getPrompts();
-  const shuffled = [...prompts.triviaQuestions].sort(() => 0.5 - Math.random());
-  const result: TriviaQuestion[] = [];
-  for (let i = 0; i < count; i++) result.push(shuffled[i % shuffled.length]);
-  return result;
+const LIST_FOR = { 'quip-clash': 'quipClash', 'the-faker': 'theFaker', 'bracket-battles': 'bracketBattles' } as const;
+
+export async function getRandomPrompts(gameType: keyof typeof LIST_FOR, count: number, packIds?: string[]): Promise<string[]> {
+  return draw(pool(await getPrompts(), LIST_FOR[gameType], packIds), count);
+}
+
+export async function getRandomTriviaQuestions(count: number, packIds?: string[]): Promise<TriviaQuestion[]> {
+  return draw(pool(await getPrompts(), 'triviaQuestions', packIds), count);
 }

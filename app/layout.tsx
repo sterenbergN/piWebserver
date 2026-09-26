@@ -1,14 +1,30 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
 import { isAdminAuthenticated } from "@/lib/security/server-auth";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
 
+const siteUrl = process.env.SITE_URL || "https://noahstuf.com";
+
 export const metadata: Metadata = {
-  title: "Noah Sterenberg",
+  // Section layouts set their own title; this adds the site name after it.
+  title: { default: "Noah Sterenberg", template: "%s · Noah Sterenberg" },
   description: "Personal Website and Server Dashboard",
+  metadataBase: new URL(siteUrl),
+  alternates: { types: { "application/rss+xml": [{ url: "/feed.xml", title: "Posts" }] } },
+  openGraph: { type: "website", siteName: "noahstuf.com", title: "Noah Sterenberg", description: "Engineer, maker and tinkerer — projects, photos, games and tools, self-hosted on a Raspberry Pi." },
+  appleWebApp: { capable: true, title: "Noah Stuf", statusBarStyle: "black-translucent" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0c" },
+    { media: "(prefers-color-scheme: light)", color: "#f0f2f5" },
+  ],
 };
 
 export default async function RootLayout({
@@ -26,6 +42,7 @@ export default async function RootLayout({
       <body>
         <ThemeProvider>
           <AnalyticsTracker />
+          <ServiceWorkerRegistrar />
           <Navbar isAdmin={isAdmin} />
           <main className="container">
             {children}

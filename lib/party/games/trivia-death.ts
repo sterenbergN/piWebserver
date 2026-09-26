@@ -1,4 +1,6 @@
 import { GameState } from '../types';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
 import { getRandomTriviaQuestions, TriviaQuestion } from '../prompts';
 
 const TOTAL_ROUNDS = 7;
@@ -102,7 +104,7 @@ export const triviaDeathLogic = {
   onStart: async (state: GameState) => {
     if (state.playerOrder.length < 3) return;
 
-    const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20);
+    const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20, state.settings?.packs);
 
     state.gameData = {
       round: 0,
@@ -143,6 +145,7 @@ export const triviaDeathLogic = {
       case 'SUBMIT_TRIVIA_ANSWER': {
         if (state.phase !== 'QUESTION') return;
         if (state.gameData.currentAnswers[playerId] !== undefined) return;
+        if (state.gameData.playerStatuses[playerId] === 'escaped' || !Number.isInteger(action.answer)) return;
         state.gameData.currentAnswers[playerId] = action.answer;
         const eligible = state.playerOrder.filter(
           (pid: string) => state.gameData.playerStatuses[pid] !== 'escaped'
@@ -170,6 +173,8 @@ export const triviaDeathLogic = {
 
       case 'SUBMIT_KILLING_FLOOR_ANSWER': {
         if (state.phase !== 'KILLING_FLOOR') return;
+        // Only players on the killing floor take part in its mini-game.
+        if (!state.gameData.killingFloorPlayers.includes(playerId)) return;
         const mg = state.gameData.killingFloorMiniGame as MiniGame;
 
         if (mg === 'hotpotato') {
@@ -206,7 +211,8 @@ export const triviaDeathLogic = {
         if (mg === 'auction') {
           // Store bid amount
           if (state.gameData.auctionBids[playerId] !== undefined) return;
-          const bid = Math.min(action.answer ?? 0, state.gameData.money[playerId]);
+          const raw = Math.floor(Number(action.answer) || 0);
+          const bid = Math.max(0, Math.min(raw, state.gameData.money[playerId] || 0));
           state.gameData.auctionBids[playerId] = bid;
           const allBid = state.gameData.killingFloorPlayers.every(
             (pid: string) => state.gameData.auctionBids[pid] !== undefined
@@ -239,8 +245,8 @@ export const triviaDeathLogic = {
         if (state.phase !== 'FINAL_ESCAPE') return;
         const pid = playerId;
         if (state.gameData.playerStatuses[pid] === 'escaped') return;
-        if (state.gameData.escapeAnswers[pid]) return;
-        state.gameData.escapeAnswers[pid] = { answer: action.answer, doubleDown: action.doubleDown || false };
+        if (state.gameData.escapeAnswers[pid] || !Number.isInteger(action.answer)) return;
+        state.gameData.escapeAnswers[pid] = { answer: action.answer, doubleDown: action.doubleDown === true };
         state.playerData[pid].voted = true;
         break;
       }
@@ -320,6 +326,12 @@ async function startTriviaRound(state: GameState) {
     autoAdvanceAt: Date.now() + QUESTION_TIME * 1000,
     autoAdvanceAction: 'FORCE_TRIVIA_REVEAL',
   };
+  // The audience plays along for their own leaderboard.
+  openAudienceVote(state, {
+    key: `trivia-${state.gameData.round}`,
+    prompt: q.question,
+    choices: q.choices.map((label, i) => ({ id: String(i), label })),
+  });
 
   for (const pid of state.playerOrder) {
     const status = state.gameData.playerStatuses[pid];
@@ -353,12 +365,19 @@ function revealTriviaAnswers(state: GameState) {
 
   const roundRecord = { round: state.gameData.round, killingFloor: false };
 
+  const audience = closeAudienceVote(state, `trivia-${state.gameData.round}`);
+  for (const [audienceId, choice] of Object.entries(audience.votes)) {
+    const member = state.audience?.[audienceId];
+    if (member && choice === String(correctIdx)) member.score++;
+  }
+
   for (const pid of state.playerOrder) {
     const status = state.gameData.playerStatuses[pid];
     if (status === 'escaped') continue;
 
     const answered = state.gameData.currentAnswers[pid];
     const correct = answered === correctIdx;
+    if (correct) bumpStat(state, 'correct', pid);
 
     if (status === 'alive') {
       if (correct) {
@@ -373,6 +392,7 @@ function revealTriviaAnswers(state: GameState) {
         state.gameData.ghostStreaks[pid]++;
         state.gameData.money[pid] += 200;
         if (state.gameData.ghostStreaks[pid] >= 3) {
+          bumpStat(state, 'resurrected', pid);
           state.gameData.playerStatuses[pid] = 'alive';
           state.gameData.ghostStreaks[pid] = 0;
           state.gameData.money[pid] += 500; // resurrection bonus
@@ -407,6 +427,7 @@ function revealTriviaAnswers(state: GameState) {
     const status = state.gameData.playerStatuses[pid];
     const answered = state.gameData.currentAnswers[pid];
     const correct = answered === correctIdx;
+    if (correct) bumpStat(state, 'correct', pid);
     state.playerData[pid] = {
       phase: 'QUESTION_RESULTS',
       correct,
@@ -709,9 +730,12 @@ function resolveKillingFloor(state: GameState) {
       survives = (bids[pid] ?? 0) > lowestBid;
     }
 
-    if (survives) survived.push(pid);
-    else {
+    if (survives) {
+      survived.push(pid);
+      bumpStat(state, 'survived', pid);
+    } else {
       dead.push(pid);
+      bumpStat(state, 'deaths', pid);
       state.gameData.playerStatuses[pid] = 'ghost';
       state.gameData.ghostStreaks[pid] = 0;
     }

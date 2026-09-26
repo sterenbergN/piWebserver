@@ -280,3 +280,97 @@
   font-size: 0.75rem;
   color: var(--muted);
 }
+
+/* ── Tracker: rest timer & toast ───────────────────────────────────────────── */
+
+.tracker-rest {
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.08);
+  text-align: left;
+}
+
+.tracker-rest.done {
+  border-color: rgba(var(--success-rgb), 0.5);
+  background: rgba(var(--success-rgb), 0.1);
+}
+
+.tracker-rest-bar {
+  height: 5px;
+  margin-top: 0.4rem;
+  border-radius: 3px;
+  background: var(--surface-border);
+  overflow: hidden;
+}
+
+.tracker-rest-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 1s linear;
+}
+
+.tracker-rest.done .tracker-rest-bar > div {
+  background: var(--success);
+}
+
+.tracker-toast {
+  position: fixed;
+  /* Centered without transform: the fade-in animation owns transform. */
+  left: 1rem;
+  right: 1rem;
+  bottom: 1.25rem;
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: var(--background);
+  border: 1px solid rgba(var(--success-rgb), 0.6);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  font-size: 0.9rem;
+  font-weight: 600;
+  z-index: 150;
+  cursor: pointer;
+}
+
+/* ─── Equipment picker & quick-add lifts ─────────────────────────────────── */
+.workout-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.workout-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.workout-preset-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.workout-preset-card strong { font-size: 0.85rem; line-height: 1.2; }
+.workout-preset-card span { font-size: 0.7rem; color: var(--muted); }
+.workout-toggle-chip {
+  border: 1px solid var(--surface-border);
+  background: transparent;
+  color: var(--foreground);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.workout-toggle-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.18);
+  font-weight: 600;
+}

@@ -11,6 +11,10 @@ type ParticipantProgress = {
   totalSets: number;
   status: 'active' | 'paused' | 'finished' | 'deleted';
   updatedAt: string;
+  /** Weight × reps the participant has dialed in for their next set. */
+  currentWeight?: number;
+  currentReps?: number;
+  lastSet?: { weight: number; reps: number; at: number } | null;
 };
 
 type SessionParticipant = {
@@ -72,6 +76,8 @@ function defaultProgress(): ParticipantProgress {
 function mergeProgress(current: ParticipantProgress, progress: any): ParticipantProgress {
   const nonNegativeInt = (value: unknown, fallback: number) =>
     typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  const nonNegativeNumber = (value: unknown, fallback: number | undefined) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value * 100) / 100 : fallback;
   return {
     activeLiftIndex: nonNegativeInt(progress?.activeLiftIndex, current.activeLiftIndex),
     currentLiftName: typeof progress?.currentLiftName === 'string' ? progress.currentLiftName.slice(0, 200) : current.currentLiftName,
@@ -79,6 +85,17 @@ function mergeProgress(current: ParticipantProgress, progress: any): Participant
     totalSets: nonNegativeInt(progress?.totalSets, current.totalSets),
     status: PROGRESS_STATUSES.includes(progress?.status) ? progress.status : current.status,
     updatedAt: new Date().toISOString(),
+    currentWeight: nonNegativeNumber(progress?.currentWeight, current.currentWeight),
+    currentReps: nonNegativeInt(progress?.currentReps, current.currentReps ?? 0),
+    lastSet: progress?.lastSet === null
+      ? null
+      : progress?.lastSet && typeof progress.lastSet === 'object'
+        ? {
+            weight: nonNegativeNumber(progress.lastSet.weight, 0) ?? 0,
+            reps: nonNegativeInt(progress.lastSet.reps, 0),
+            at: nonNegativeInt(progress.lastSet.at, Date.now()),
+          }
+        : current.lastSet ?? null,
   };
 }
 

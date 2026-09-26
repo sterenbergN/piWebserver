@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { writeJsonAtomic } from '@/lib/json-store';
 
 const getWatchedPath = () => path.join(process.cwd(), '.data', 'movies-watched.json');
 
@@ -31,9 +32,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'Invalid payload' }, { status: 400 });
     }
 
-    const dataDir = path.join(process.cwd(), '.data');
-    await fs.mkdir(dataDir, { recursive: true }).catch(() => {});
-    await fs.writeFile(getWatchedPath(), JSON.stringify(body.watched));
+    await writeJsonAtomic(getWatchedPath(), body.watched);
 
     return NextResponse.json({ success: true });
   } catch (e) {

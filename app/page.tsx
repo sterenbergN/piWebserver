@@ -2,35 +2,13 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-
-interface Project {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  blogSlug: string;
-}
+import { DEFAULT_PROFILE, type ExperienceEntry, type Profile, type Project, type Skill } from '@/lib/resume';
 
 interface CADProject {
   id: string;
   name: string;
   description: string;
   link: string;
-}
-
-interface Skill {
-  id: string;
-  name: string;
-  linkedPosts: { title: string; slug: string; }[];
-}
-
-interface ExperienceEntry {
-  id: string;
-  role: string;
-  company: string;
-  period: string;
-  description: string;
-  details: string[];
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -41,32 +19,48 @@ const CATEGORY_COLORS: Record<string, string> = {
   Other: '#64748b',
 };
 
+// Brand icons for the two common profile links; anything else gets a link glyph.
+function LinkIcon({ url }: { url: string }) {
+  if (/github\.com/i.test(url)) return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
+  );
+  if (/linkedin\.com/i.test(url)) return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>
+  );
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
+  );
+}
+
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [cadProjects, setCadProjects] = useState<CADProject[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [experience, setExperience] = useState<ExperienceEntry[]>([]);
+  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
+  const [latestPosts, setLatestPosts] = useState<{ slug: string; title: string; description?: string; image?: string; date?: string }[]>([]);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [isExpExpanded, setIsExpExpanded] = useState(false);
   const [cadExpanded, setCadExpanded] = useState(false);
   const [showEmailPopup, setShowEmailPopup] = useState(false);
   const [emailCopied, setEmailCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const EMAIL = 'NoahSterenberg@gmail.com';
+  const EMAIL = profile.email;
 
   useEffect(() => {
     setMounted(true);
-    fetch('/api/projects').then(r => r.json()).then(d => {
-      if (d.success) setProjects(d.projects);
-    });
+    fetch('/api/blog').then(r => r.json()).then(d => {
+      if (d.success) setLatestPosts([...(d.posts || [])].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3));
+    }).catch(() => {});
+    fetch('/api/resume').then(r => r.json()).then(d => {
+      if (!d.success) return;
+      setProfile(d.resume.profile);
+      setProjects(d.resume.projects);
+      setSkills(d.resume.skills);
+      setExperience(d.resume.experience);
+    }).catch(() => {});
     fetch('/api/cad').then(r => r.json()).then(d => {
       if (d.success) setCadProjects(d.projects);
-    });
-    fetch('/api/skills').then(r => r.json()).then(d => {
-      if (d.success) setSkills(d.skills);
-    });
-    fetch('/api/experience').then(r => r.json()).then(d => {
-      if (d.success) setExperience(d.experience);
     });
   }, []);
 
@@ -406,10 +400,10 @@ export default function Home() {
         <section className="hero-gradient animate-fade-in" style={{ textAlign: 'center', padding: '6rem 2rem', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.05)' }}>
           <div style={{ position: 'relative', zIndex: 1 }}>
             <h1 style={{ fontSize: 'clamp(3rem, 8vw, 4.5rem)', fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, marginBottom: '1.5rem', background: 'linear-gradient(to right, var(--foreground), #888)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              Noah Sterenberg
+              {profile.name}
             </h1>
             <p style={{ fontSize: '1.25rem', color: 'var(--muted)', maxWidth: '700px', margin: '0 auto 3rem', lineHeight: 1.6, fontWeight: 400 }}>
-              Mechanical / Automation Engineer, Maker, and Technology Enthusiast weaving software and hardware into seamless solutions.
+              {profile.headline}
             </p>
 
             {/* CTA Buttons */}
@@ -420,21 +414,22 @@ export default function Home() {
 
             {/* Social / Contact Links */}
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <a href="https://github.com/sterenbergN/" target="_blank" rel="noreferrer"
-                className="btn btn-secondary" style={{ gap: '0.6rem', padding: '0.6rem 1.25rem', borderRadius: '20px', background: 'transparent' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
-                GitHub
-              </a>
-              <a href="https://www.linkedin.com/in/noah-sterenberg" target="_blank" rel="noreferrer"
-                className="btn btn-secondary" style={{ gap: '0.6rem', padding: '0.6rem 1.25rem', borderRadius: '20px', background: 'transparent' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" /></svg>
-                LinkedIn
-              </a>
-              <button onClick={() => setShowEmailPopup(!showEmailPopup)}
+              {profile.links.map(link => (
+                <a key={link.url} href={link.url} target="_blank" rel="noreferrer"
+                  className="btn btn-secondary" style={{ gap: '0.6rem', padding: '0.6rem 1.25rem', borderRadius: '20px', background: 'transparent' }}>
+                  <LinkIcon url={link.url} />
+                  {link.label}
+                </a>
+              ))}
+              <Link href="/resume" className="btn btn-secondary" style={{ gap: '0.6rem', padding: '0.6rem 1.25rem', borderRadius: '20px', background: 'transparent' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="16" y2="17" /></svg>
+                Resume
+              </Link>
+              {EMAIL && <button onClick={() => setShowEmailPopup(!showEmailPopup)}
                 className="btn btn-secondary" style={{ gap: '0.6rem', alignItems: 'center', display: 'flex', cursor: 'pointer', background: showEmailPopup ? 'rgba(255,255,255,0.1)' : 'transparent', padding: '0.6rem 1.25rem', borderRadius: '20px' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
                 Email Me
-              </button>
+              </button>}
             </div>
 
             {showEmailPopup && (
@@ -459,11 +454,35 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Now: what I'm up to lately (edited in the resume editor) */}
+        {profile.now?.length > 0 && (
+          <section className="premium-card animate-fade-in" style={{ padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Now</h2>
+              {profile.updatedAt && (
+                <span style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
+                  Updated {new Date(profile.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              {profile.now.map((item, i) => (
+                <div key={i} style={{ borderLeft: '3px solid var(--accent)', paddingLeft: '0.9rem' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent-light, var(--accent))' }}>{item.label}</div>
+                  <div style={{ color: 'var(--foreground)', lineHeight: 1.5, marginTop: '0.2rem' }}>{item.text}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Experience & Skills */}
+        {(experience.length > 0 || skills.length > 0) && (
         <section className="grid animate-fade-in" style={{ gridTemplateColumns: isExpExpanded ? '1fr' : 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem', transition: 'grid-template-columns 0.5s' }}>
           {/* Experience card — timeline grows from within */}
+          {experience.length > 0 && (
           <div className="premium-card exp-card" style={{ cursor: 'pointer', gridColumn: isExpExpanded ? '1 / -1' : 'auto' }}>
-            <div onClick={() => setIsExpExpanded(!isExpExpanded)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+            <div onClick={() => setIsExpExpanded(!isExpExpanded)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '2rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <div style={{ background: isExpExpanded ? 'linear-gradient(135deg, var(--accent), var(--accent-light))' : 'var(--accent)', padding: '0.5rem', borderRadius: '8px', color: 'white', transition: 'background 0.3s' }}>
                   {isExpExpanded
@@ -493,7 +512,6 @@ export default function Home() {
                     <p style={{ fontSize: '0.9rem', color: 'var(--muted)', lineHeight: 1.5 }}>{exp.description}</p>
                   </div>
                 ))}
-                {experience.length === 0 && <p style={{ color: 'var(--muted)' }}>No experience found.</p>}
               </div>
             ) : (
               <div className="htl-scroll animate-fade-in" style={{ margin: '0 -2rem -2rem', borderBottomLeftRadius: '16px', borderBottomRightRadius: '16px' }}>
@@ -535,8 +553,10 @@ export default function Home() {
               </div>
             )}
           </div>
+          )}
 
           {/* Skills card — no-clip so popover isn't hidden */}
+          {skills.length > 0 && (
           <div className="premium-card no-clip">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
               <div style={{ background: 'var(--accent)', padding: '0.5rem', borderRadius: '8px', color: 'white' }}>
@@ -544,7 +564,7 @@ export default function Home() {
               </div>
               <h2 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '-0.02em' }}>Core Skills</h2>
             </div>
-            <p style={{ color: 'var(--muted)', marginBottom: '1.5rem', lineHeight: 1.5 }}>A multidisciplinary toolset spanning hardware control, software development, and modern web infrastructure.</p>
+            {profile.skillsIntro && <p style={{ color: 'var(--muted)', marginBottom: '1.5rem', lineHeight: 1.5 }}>{profile.skillsIntro}</p>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
               {skills.map(skill => (
                 <div key={skill.id} className={`skill-wrapper ${expandedSkillId === skill.id ? 'active' : ''}`}>
@@ -582,13 +602,42 @@ export default function Home() {
                   )}
                 </div>
               ))}
-              {skills.length === 0 && <p style={{ color: 'var(--muted)' }}>No skills found.</p>}
             </div>
           </div>
+          )}
         </section>
+        )}
 
-        {/* Projects */}
-        <section className="animate-fade-in">
+        {/* Latest posts */}
+        {latestPosts.length > 0 && (
+          <section className="animate-fade-in">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontSize: '2rem', letterSpacing: '-0.02em', margin: 0 }}>Latest Posts</h2>
+              <Link href="/blog" style={{ color: 'var(--accent)', fontWeight: 600 }}>All posts →</Link>
+            </div>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.5rem' }}>
+              {latestPosts.map(post => {
+                const img = post.image ? `${post.image.startsWith('/api/media') ? post.image : `/api/media${post.image}`}?w=640` : null;
+                return (
+                  <Link key={post.slug} href={`/blog/${post.slug}`} className="premium-card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', textDecoration: 'none', color: 'var(--foreground)' }}>
+                    {img && (
+                      <img src={img} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />
+                    )}
+                    <div style={{ padding: '1.25rem' }}>
+                      {post.date && <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.3rem' }}>{new Date(post.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>}
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', lineHeight: 1.3 }}>{post.title}</h3>
+                      {post.description && <p style={{ margin: '0.5rem 0 0', color: 'var(--muted)', fontSize: '0.9rem', lineHeight: 1.5 }}>{post.description}</p>}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Projects (hidden until there is something to feature) */}
+        {projects.length > 0 && (
+        <section id="projects" className="animate-fade-in">
           <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
             <h2 style={{ fontSize: '2rem', letterSpacing: '-0.02em', marginBottom: '0.75rem' }}>Featured Projects</h2>
             <p style={{ color: 'var(--muted)', fontSize: '1.1rem' }}>Highlights from my blog and portfolio.</p>
@@ -597,8 +646,9 @@ export default function Home() {
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
             {projects.map(project => {
               const color = CATEGORY_COLORS[project.category] || CATEGORY_COLORS.Other;
-              const card = (
-                <div className="premium-card" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem', cursor: project.blogSlug ? 'pointer' : 'default', padding: '2rem' }}>
+              const arrow = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>;
+              return (
+                <div key={project.id} className="premium-card" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '0.5rem' }}>
                     <h3 style={{ color: 'var(--foreground)', fontSize: '1.25rem', lineHeight: 1.3, margin: 0 }}>{project.name}</h3>
                     <span style={{
@@ -607,22 +657,26 @@ export default function Home() {
                     }}>{project.category}</span>
                   </div>
                   <p style={{ fontSize: '0.95rem', color: 'var(--muted)', margin: 0, flex: 1, lineHeight: 1.6 }}>{project.description}</p>
-                  {project.blogSlug ? (
-                    <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent)', fontWeight: 600, fontSize: '0.9rem' }}>
-                      Read Post <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
+                  {(project.post || project.albumId) && (
+                    <div style={{ marginTop: '1rem', display: 'flex', flexWrap: 'wrap', gap: '1.25rem', fontWeight: 600, fontSize: '0.9rem' }}>
+                      {project.post && (
+                        <Link href={`/blog/${project.post.slug}`} style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+                          Read write-up {arrow}
+                        </Link>
+                      )}
+                      {project.albumId && (
+                        <Link href={`/gallery?album=${encodeURIComponent(project.albumId)}`} style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}>
+                          Photos {arrow}
+                        </Link>
+                      )}
                     </div>
-                  ) : (
-                    <div style={{ marginTop: '1rem', height: '20px' }}></div>
                   )}
                 </div>
               );
-
-              return project.blogSlug
-                ? <Link href={`/blog/${project.blogSlug}`} key={project.id} style={{ display: 'block', height: '100%', textDecoration: 'none' }}>{card}</Link>
-                : <div key={project.id}>{card}</div>;
             })}
           </div>
         </section>
+        )}
 
         {/* CAD Projects */}
         {cadProjects.length > 0 && (

@@ -190,7 +190,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: false, message: 'Missing blog fields' }, { status: 400 });
       }
 
-      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       if (!isSafeBlogSlug(slug)) {
         return NextResponse.json({ success: false, message: 'Invalid blog slug' }, { status: 400 });
       }

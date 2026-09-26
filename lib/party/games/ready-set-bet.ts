@@ -1,7 +1,14 @@
 import { GameState } from '../types';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat, maxStat } from '../awards';
 
 const TOTAL_RACES = 4;
 const TRACK_LENGTH = 15;
+// The server rolls the dice on this cadence (the first roll waits a little
+// longer so everyone can place opening bets).
+const TICK_MS = 1500;
+const FIRST_TICK_MS = 5000;
+const BET_TYPES = ['win', 'place', 'show'];
 const HORSES = ['2/3', '4', '5', '6', '7', '8', '9', '10', '11/12'];
 
 const MULTIPLIERS: Record<string, { win: number, place: number, show: number }> = {
@@ -53,20 +60,22 @@ export const readySetBetLogic = {
         if (state.phase !== 'RACING') return;
         if (state.gameData.bettingClosed) return; // Cannot bet if closed
         
-        // action.horse, action.betType (win|place|show)
+        if (!HORSES.includes(action.horse) || !BET_TYPES.includes(action.betType)) return;
         const bets = state.gameData.bets[playerId];
-        if (bets.length >= 5) return; // Max 5 bets per race
+        if (!bets || bets.length >= 5) return; // Max 5 bets per race
         
         // Prevent duplicate bet types on same horse by same player
         if (bets.some((b: any) => b.horse === action.horse && b.type === action.betType)) return;
 
         bets.push({ horse: action.horse, type: action.betType });
+        bumpStat(state, 'bets', playerId);
+        state.playerData[playerId] = { ...state.playerData[playerId], bets };
         break;
       }
 
       case 'SUBMIT_PROP_BET': {
         if (state.phase !== 'RACING') return;
-        if (state.gameData.propBetAnswers[playerId] !== undefined) return;
+        if (state.gameData.propBetAnswers[playerId] !== undefined || typeof action.choice !== 'boolean') return;
         
         state.gameData.propBetAnswers[playerId] = action.choice;
         state.playerData[playerId].propBetAnswered = true;
@@ -135,6 +144,8 @@ export const readySetBetLogic = {
           commentary,
           finishers: state.gameData.finishers,
           bettingClosed: state.gameData.bettingClosed,
+          autoAdvanceAt: Date.now() + TICK_MS,
+          autoAdvanceAction: 'RACE_TICK',
         };
         
         for (const pid of state.playerOrder) {
@@ -196,7 +207,15 @@ function startRace(state: GameState) {
     finishers: [],
     bettingClosed: false,
     lastRoll: null,
+    autoAdvanceAt: Date.now() + FIRST_TICK_MS,
+    autoAdvanceAction: 'RACE_TICK',
   };
+
+  openAudienceVote(state, {
+    key: `race-${state.gameData.raceNumber}`,
+    prompt: 'Which horse wins this race?',
+    choices: HORSES.map((h) => ({ id: h, label: `#${h}` })),
+  });
 
   for (const pid of state.playerOrder) {
     state.playerData[pid] = {
@@ -218,6 +237,12 @@ function finishRace(state: GameState) {
   const first = finishers[0];
   const second = finishers[1];
   const third = finishers[2];
+
+  const audience = closeAudienceVote(state, `race-${state.gameData.raceNumber}`);
+  for (const [audienceId, choice] of Object.entries(audience.votes)) {
+    const member = state.audience?.[audienceId];
+    if (member && choice === first) member.score++;
+  }
 
   const propBet = state.gameData.propBet;
   let propResult = false;
@@ -253,6 +278,7 @@ function finishRace(state: GameState) {
       if (won > 0) {
         results[pid].won += won;
         results[pid].net += won;
+        if (horse === '2/3' || horse === '11/12') bumpStat(state, 'longshots', pid);
       } else {
         // Punish losing bets on slow horses to balance odds? Let's just deduct a fixed 100 fee per losing bet for simplicity
         results[pid].lost -= 100;
@@ -272,6 +298,7 @@ function finishRace(state: GameState) {
     }
 
     state.gameData.money[pid] += results[pid].net;
+    if (results[pid].net > 0) maxStat(state, 'bigWin', pid, results[pid].net);
     // Don't let money go below 0
     if (state.gameData.money[pid] < 0) state.gameData.money[pid] = 0;
     

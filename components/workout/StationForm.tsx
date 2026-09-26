@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { STATION_TYPE_OPTIONS, isLoadStation, type Station, type StationType } from '@/lib/workout/types';
 import { finalizeStation, listFieldsFromStation, type StationListFields } from '@/lib/workout/stations';
+import { liftFromName, presetLifts, suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
+import { newRecordId } from '@/lib/workout/stations';
 
 const parseOptionalNumber = (value: string) => {
   const parsed = parseFloat(value);
@@ -12,17 +14,29 @@ const parseOptionalNumber = (value: string) => {
 type StationFormProps = {
   /** Existing station to edit, or a partial template for a new one. */
   initial?: Partial<Station>;
+  /** Equipment preset the new station starts from (pre-fills weights and lifts). */
+  preset?: EquipmentPreset;
+  /** One of your stations from another gym to start from (lifts keep their details). */
+  copyFrom?: Station;
   saving?: boolean;
   onSave: (station: Station) => void | Promise<void>;
   onCancel: () => void;
 };
 
 /** Create/edit form for a gym station, shared by the config page and the in-workout editor. */
-export default function StationForm({ initial, saving = false, onSave, onCancel }: StationFormProps) {
-  const [draft, setDraft] = useState<Partial<Station>>(() => ({ type: 'plates', lifts: [], attachments: [], ...initial }));
-  const [lists, setLists] = useState<StationListFields>(() => listFieldsFromStation(initial));
+export default function StationForm({ initial, preset, copyFrom, saving = false, onSave, onCancel }: StationFormProps) {
+  const copied: Partial<Station> = copyFrom ? { ...copyFrom, id: undefined, lifts: [] } : {};
+  const start: Partial<Station> = { type: 'plates', lifts: [], attachments: [], ...(preset ? { ...preset.station, name: preset.name } : {}), ...copied, ...initial };
+  const [draft, setDraft] = useState<Partial<Station>>(() => start);
+  const [lists, setLists] = useState<StationListFields>(() => listFieldsFromStation(start));
   const [attachmentInput, setAttachmentInput] = useState('');
   const isEditing = !!initial?.id;
+  // New stations can bring their lifts along: preset lifts start selected.
+  const [pickedLifts, setPickedLifts] = useState<Set<string>>(() => new Set((copyFrom?.lifts || preset?.lifts || []).map((l) => l.name)));
+  const [typedLifts, setTypedLifts] = useState('');
+  const liftSuggestions = isEditing ? []
+    : copyFrom ? [...new Set([...(copyFrom.lifts || []).map((l) => l.name), ...suggestedLiftNames({ name: copyFrom.name, type: copyFrom.type, lifts: copyFrom.lifts })])]
+    : preset ? preset.lifts.map((l) => l.name) : suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates' });
 
   const update = (patch: Partial<Station>) => setDraft((prev) => ({ ...prev, ...patch }));
   const updateList = (key: keyof StationListFields) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -36,10 +50,29 @@ export default function StationForm({ initial, saving = false, onSave, onCancel 
     setAttachmentInput('');
   };
 
+  const newLifts = () => {
+    if (isEditing) return [];
+    const fromPreset = copyFrom
+      ? (copyFrom.lifts || []).filter((l) => pickedLifts.has(l.name)).map((l) => ({ ...l, id: newRecordId() }))
+      : preset ? presetLifts(preset, [...pickedLifts]) : [];
+    const presetNames = new Set(fromPreset.map((l) => l.name.toLowerCase()));
+    const others = [...[...pickedLifts].filter((n) => liftSuggestions.includes(n)), ...typedLifts.split(',')]
+      .map((n) => n.trim())
+      .filter((n, i, all) => n && !presetNames.has(n.toLowerCase()) && all.findIndex((m) => m.toLowerCase() === n.toLowerCase()) === i)
+      .map((n) => liftFromName(n));
+    return [...fromPreset, ...others];
+  };
+
   const handleSave = () => {
     if (!draft.name?.trim()) return;
-    onSave(finalizeStation(draft, lists));
+    onSave(finalizeStation({ ...draft, lifts: [...(draft.lifts || []), ...newLifts()] }, lists));
   };
+
+  const togglePicked = (name: string) => setPickedLifts((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
 
   return (
     <div className="workout-form-panel animate-fade-in">
@@ -134,9 +167,26 @@ export default function StationForm({ initial, saving = false, onSave, onCancel 
         </>
       )}
 
+      {!isEditing && (
+        <div style={{ marginTop: '0.5rem' }}>
+          <label className="workout-label">Lifts on this station</label>
+          {liftSuggestions.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
+              {liftSuggestions.map((name) => (
+                <button key={name} type="button" className="workout-toggle-chip" aria-pressed={pickedLifts.has(name)} onClick={() => togglePicked(name)}>
+                  {pickedLifts.has(name) ? '✓ ' : '+ '}{name}
+                </button>
+              ))}
+            </div>
+          )}
+          <input className="workout-input" placeholder="Other lifts, separated by commas (optional)" value={typedLifts} onChange={(e) => setTypedLifts(e.target.value)} />
+          <div className="workout-hint">Muscles are filled in from the lift name — you can fine-tune each lift afterwards.</div>
+        </div>
+      )}
+
       <div className="workout-btn-row" style={{ marginTop: '1rem' }}>
         <button className="workout-btn-primary" disabled={!draft.name?.trim() || saving} onClick={handleSave}>
-          {saving ? 'Saving…' : isEditing ? 'Save Station' : 'Add Station'}
+          {saving ? 'Saving…' : isEditing ? 'Save Station' : (() => { const n = newLifts().length; return n ? `Add Station + ${n} Lift${n === 1 ? '' : 's'}` : 'Add Station'; })()}
         </button>
         <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
