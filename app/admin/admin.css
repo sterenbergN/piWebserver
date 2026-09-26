@@ -1,0 +1,150 @@
+/* ─── Admin dashboard ──────────────────────────────────────────────────────── */
+
+.adm { max-width: 1000px; margin: 0 auto; padding: 1.5rem 0 3rem; }
+.adm-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem; }
+.adm-top h1 { margin: 0; }
+
+/* Section tabs: one row that scrolls sideways on phones. */
+.adm-tabs {
+  position: sticky;
+  top: 64px;
+  z-index: 20;
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.35rem;
+  margin-bottom: 1.5rem;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: var(--nav-bg);
+  backdrop-filter: blur(12px);
+}
+.adm-tabs::-webkit-scrollbar { display: none; }
+.adm-tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 40px;
+  padding: 0 0.95rem;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.adm-tab:hover { color: var(--foreground); background: var(--surface-hover); }
+.adm-tab[aria-selected="true"] { background: var(--accent); color: #fff; }
+.adm-tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+
+.adm-card {
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  background: var(--surface-glass);
+  padding: clamp(1rem, 3vw, 1.5rem);
+  margin-bottom: 1.25rem;
+}
+.adm-card-head { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+.adm-card-head h2 { margin: 0; font-size: 1.25rem; }
+.adm-card-head p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.88rem; line-height: 1.45; }
+.adm-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.adm-muted { color: var(--muted); font-size: 0.88rem; }
+.adm-h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 0.75rem; }
+
+/* Stat tiles */
+.adm-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 0.6rem; }
+.adm-stat { padding: 0.9rem 1rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); }
+.adm-stat-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-light); }
+.adm-stat-value { font-family: ui-monospace, monospace; font-size: 1.4rem; font-weight: 700; line-height: 1.3; margin-top: 0.15rem; overflow-wrap: anywhere; }
+.adm-stat-value.is-small { font-size: 0.9rem; word-break: break-word; overflow-wrap: anywhere; }
+.adm-stat-sub { font-size: 0.75rem; color: var(--muted); }
+
+/* List rows (CAD projects, workout users, backups) */
+.adm-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.adm-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 0.9rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); }
+.adm-row-main { flex: 1; min-width: 0; }
+.adm-row-main strong { display: block; overflow-wrap: anywhere; }
+.adm-row-sub { font-size: 0.82rem; color: var(--muted); margin-top: 0.1rem; overflow-wrap: anywhere; }
+.adm-icon-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.adm-icon-btn:hover { background: var(--surface-hover); }
+.adm-icon-btn.is-danger { color: var(--danger); }
+.adm-icon-btn:disabled { opacity: 0.45; cursor: default; }
+.adm-small-btn { padding: 0.35rem 0.8rem; font-size: 0.82rem; min-height: 36px; }
+
+/* Forms */
+.adm-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0.9rem 1rem; }
+.adm-form .is-wide { grid-column: 1 / -1; }
+.adm-field { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; color: var(--muted); }
+.adm-check { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--foreground); cursor: pointer; }
+.adm-file { padding: 0.9rem; border: 1px dashed var(--surface-border); border-radius: 12px; background: var(--input-bg); }
+.adm-file input { background: transparent !important; border: none !important; padding: 0 !important; }
+.adm-editor { padding: 1rem; border-radius: 12px; border: 1px solid rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.05); }
+
+/* Segmented control (upload type) */
+.adm-seg { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 1.25rem; }
+.adm-seg button { min-height: 38px; padding: 0 0.85rem; border-radius: 999px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); font: inherit; font-size: 0.86rem; cursor: pointer; }
+.adm-seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Notices */
+.adm-notice { padding: 0.7rem 0.9rem; border-radius: 10px; font-size: 0.9rem; margin-bottom: 1rem; border: 1px solid; }
+.adm-notice.is-success { color: var(--success-light); border-color: rgba(var(--success-rgb), 0.6); background: rgba(var(--success-rgb), 0.08); }
+.adm-notice.is-error { color: var(--danger); border-color: rgba(var(--danger-rgb), 0.6); background: rgba(var(--danger-rgb), 0.08); }
+.adm-notice.is-info { color: var(--foreground); border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.08); }
+
+.adm-badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.65rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; border: 1px solid; }
+.adm-badge.is-good { color: var(--success-light); border-color: rgba(var(--success-rgb), 0.5); background: rgba(var(--success-rgb), 0.1); }
+.adm-badge.is-new { color: #fff; border-color: var(--accent); background: var(--accent); }
+.adm-badge.is-warn { color: var(--warning); border-color: var(--warning); background: rgba(237, 137, 54, 0.1); }
+
+/* Progress bars: `is-indeterminate` slides while the length of the job is unknown. */
+.adm-progress { height: 8px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; position: relative; }
+.adm-progress > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-light)); transition: width 0.4s ease; }
+.adm-progress.is-indeterminate > div { position: absolute; width: 35%; animation: admSlide 1.2s ease-in-out infinite; }
+@keyframes admSlide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .adm-progress.is-indeterminate > div { animation-duration: 3s; } }
+.adm-progress-label { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 0.4rem; }
+.adm-progress-label span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Update steps */
+.adm-steps { display: flex; gap: 0.35rem; margin-top: 0.75rem; }
+.adm-step { flex: 1; font-size: 0.75rem; color: var(--muted); text-align: center; }
+.adm-step::before { content: ''; display: block; height: 4px; border-radius: 4px; margin-bottom: 0.35rem; background: var(--surface-border); }
+.adm-step.is-done { color: var(--foreground); }
+.adm-step.is-done::before { background: var(--success); }
+.adm-step.is-active { color: var(--foreground); font-weight: 600; }
+.adm-step.is-active::before { background: var(--accent); }
+
+/* Visits chart */
+.adm-bars { display: flex; align-items: flex-end; gap: 4px; height: 120px; border-bottom: 1px solid var(--surface-border); }
+.adm-bars > div { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.adm-bars > div > div { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+.adm-pages > div { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; align-items: center; font-size: 0.8rem; margin-bottom: 0.35rem; }
+
+pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; overflow: auto; padding: 0.75rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); margin: 0.5rem 0 0; }
+
+@media (max-width: 600px) {
+  .adm-tabs { top: 58px; margin-left: -0.25rem; margin-right: -0.25rem; }
+  .adm-row { flex-wrap: wrap; }
+  /* Text gets its own line when the buttons would squeeze it. */
+  .adm-row-main { min-width: min(100%, 11rem); }
+  .adm-stat-value { font-size: 1.15rem; }
+}

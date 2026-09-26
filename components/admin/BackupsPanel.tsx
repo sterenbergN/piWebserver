@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
+import ProgressBar from './ProgressBar';
 
 type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; requireSeparateDrive: boolean; lastAutoBackup?: string };
 type Drive = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };
@@ -11,6 +12,14 @@ const sizeLabel = (bytes: number) =>
   bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
     : bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
+const BUSY_LABELS: Record<string, string> = {
+  create: 'Making a backup…',
+  settings: 'Saving settings…',
+  restore: 'Restoring (a safety backup is made first)…',
+  delete: 'Deleting…',
+  upload: 'Uploading backup…',
+};
+
 /** Admin panel: nightly backup settings, backup list, download, upload and restore. */
 export default function BackupsPanel() {
   const { confirm, showAlert, popup } = useSitePopup();
@@ -19,10 +28,11 @@ export default function BackupsPanel() {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [drive, setDrive] = useState<Drive | null>(null);
   const [busy, setBusy] = useState('');
+  const [loadError, setLoadError] = useState(false);
 
   const load = () => fetch('/api/backups').then((r) => r.json()).then((d) => {
-    if (d.success) { setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive); }
-  }).catch(() => {});
+    if (d.success) { setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive); setLoadError(false); } else setLoadError(true);
+  }).catch(() => setLoadError(true));
   useEffect(() => { load(); }, []);
 
   const post = async (body: Record<string, unknown>) => {
@@ -67,80 +77,97 @@ export default function BackupsPanel() {
     await load();
   });
 
-  if (!settings || !draft) return null;
+  if (!settings || !draft) {
+    return (
+      <section className="adm-card">
+        <div className="adm-card-head"><h2>💾 Backups</h2></div>
+        {loadError ? <div className="adm-notice is-error">Could not load backup settings.</div> : <ProgressBar label="Loading backups…" />}
+      </section>
+    );
+  }
   const dirty = JSON.stringify(settings) !== JSON.stringify(draft);
-  const field: React.CSSProperties = { padding: '0.5rem 0.7rem', borderRadius: 8, border: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', font: 'inherit' };
 
   return (
-    <div style={{ background: 'var(--surface-glass)', borderRadius: '16px', border: '1px solid var(--surface-border)', padding: '2rem', marginBottom: '2rem' }}>
+    <section className="adm-card" aria-labelledby="backups-title">
       {popup}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+      <div className="adm-card-head">
         <div>
-          <h2 style={{ margin: 0 }}>💾 Backups</h2>
-          <p style={{ margin: '0.25rem 0 0', color: 'var(--muted)', fontSize: '0.9rem' }}>
+          <h2 id="backups-title">💾 Backups</h2>
+          <p>
             Workouts, home page, blog, gallery lists and party prompts.{' '}
             {settings.lastAutoBackup ? `Last nightly backup ${new Date(settings.lastAutoBackup).toLocaleString()}.` : 'No nightly backup yet.'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+        <div className="adm-actions">
+          <label className="btn btn-secondary" style={{ cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
             ⬆ Upload
-            <input type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => upload(e.target.files?.[0])} />
+            <input type="file" accept=".zip" disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
           <button className="btn btn-primary" disabled={!!busy} onClick={backUpNow}>{busy === 'create' ? 'Backing up…' : 'Back up now'}</button>
         </div>
       </div>
 
+      {busy && <div style={{ marginBottom: '1rem' }}><ProgressBar label={BUSY_LABELS[busy] || 'Working…'} /></div>}
+
       {drive && (
-        <div role="status" style={{ padding: '0.6rem 0.9rem', borderRadius: 10, marginBottom: '1rem', fontSize: '0.9rem', border: `1px solid ${drive.ok ? 'var(--success)' : 'var(--danger)'}`, background: drive.ok ? 'rgba(var(--success-rgb), 0.08)' : 'rgba(var(--danger-rgb), 0.08)' }}>
+        <div role="status" className={`adm-notice ${drive.ok ? 'is-success' : 'is-error'}`}>
           {drive.ok ? '✅' : '⚠️'} {drive.message}
           {drive.freeBytes !== undefined && drive.totalBytes ? ` · ${sizeLabel(drive.freeBytes)} free of ${sizeLabel(drive.totalBytes)}` : ''}
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', alignItems: 'end', marginBottom: '1rem' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', gridColumn: '1 / -1', fontSize: '0.8rem', color: 'var(--muted)' }}>
-          Backup folder — on your backup USB, e.g. /mnt/backup/noahstuf
-          <input style={field} value={draft.dir} onChange={(e) => setDraft({ ...draft, dir: e.target.value })} />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
-          Nightly at (hour, 0–23)
-          <input style={field} type="number" min={0} max={23} value={draft.hour} onChange={(e) => setDraft({ ...draft, hour: Number(e.target.value) })} />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.8rem', color: 'var(--muted)' }}>
-          Keep this many
-          <input style={field} type="number" min={1} max={365} value={draft.keep} onChange={(e) => setDraft({ ...draft, keep: Number(e.target.value) })} />
-        </label>
-        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem' }}>
-          <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> Nightly backups on
-        </label>
-        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem' }}>
-          <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (up to 500 MB per backup)
-        </label>
-        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem', gridColumn: '1 / -1' }}>
-          <input type="checkbox" checked={draft.requireSeparateDrive} onChange={(e) => setDraft({ ...draft, requireSeparateDrive: e.target.checked })} />
-          Only back up when this folder is on a different drive than the site (recommended for a backup USB)
-        </label>
-      </div>
-      {dirty && <button className="btn btn-primary" disabled={!!busy} onClick={saveSettings} style={{ marginBottom: '1rem' }}>Save backup settings</button>}
+      <details open={dirty || backups.length === 0} style={{ marginBottom: '1.25rem' }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.75rem' }}>Settings</summary>
+        <div className="adm-form">
+          <label className="adm-field is-wide">
+            Backup folder — on your backup USB, e.g. /mnt/backup/noahstuf
+            <input value={draft.dir} onChange={(e) => setDraft({ ...draft, dir: e.target.value })} />
+          </label>
+          <label className="adm-field">
+            Nightly at (hour, 0–23)
+            <input type="number" min={0} max={23} value={draft.hour} onChange={(e) => setDraft({ ...draft, hour: Number(e.target.value) })} />
+          </label>
+          <label className="adm-field">
+            Keep this many
+            <input type="number" min={1} max={365} value={draft.keep} onChange={(e) => setDraft({ ...draft, keep: Number(e.target.value) })} />
+          </label>
+          <label className="adm-check">
+            <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> Nightly backups on
+          </label>
+          <label className="adm-check">
+            <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (up to 500 MB)
+          </label>
+          <label className="adm-check is-wide">
+            <input type="checkbox" checked={draft.requireSeparateDrive} onChange={(e) => setDraft({ ...draft, requireSeparateDrive: e.target.checked })} />
+            Only back up when this folder is on a different drive than the site (recommended for a backup USB)
+          </label>
+        </div>
+        {dirty && (
+          <div className="adm-actions" style={{ marginTop: '0.9rem' }}>
+            <button className="btn btn-primary" disabled={!!busy} onClick={saveSettings}>Save settings</button>
+            <button className="btn btn-secondary" disabled={!!busy} onClick={() => setDraft(settings)}>Undo</button>
+          </div>
+        )}
+      </details>
 
-      {backups.length === 0 ? <p style={{ color: 'var(--muted)' }}>No backups in this folder yet.</p> : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      <h3 className="adm-h3">Saved backups ({backups.length})</h3>
+      {backups.length === 0 ? <p className="adm-muted">No backups in this folder yet.</p> : (
+        <div className="adm-list">
           {backups.map((b) => (
-            <div key={b.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.6rem 0.9rem', borderRadius: 10, border: '1px solid var(--surface-border)' }}>
-              <div>
-                <strong style={{ fontSize: '0.9rem' }}>{new Date(b.createdAt).toLocaleString()}</strong>
-                <span style={{ color: 'var(--muted)', fontSize: '0.8rem' }}> · {b.label} · {sizeLabel(b.size)}</span>
+            <div key={b.name} className="adm-row">
+              <div className="adm-row-main">
+                <strong style={{ fontSize: '0.92rem' }}>{new Date(b.createdAt).toLocaleString()}</strong>
+                <div className="adm-row-sub">{b.label} · {sizeLabel(b.size)}</div>
               </div>
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
-                <a className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }} href={`/api/backups?download=${encodeURIComponent(b.name)}`}>Download</a>
-                <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }} disabled={!!busy} onClick={() => restore(b)}>Restore</button>
-                <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem', color: 'var(--danger)' }} disabled={!!busy} onClick={() => remove(b)} aria-label={`Delete ${b.name}`}>✕</button>
+              <div className="adm-actions">
+                <a className="btn btn-secondary adm-small-btn" href={`/api/backups?download=${encodeURIComponent(b.name)}`}>Download</a>
+                <button className="btn btn-secondary adm-small-btn" disabled={!!busy} onClick={() => restore(b)}>Restore</button>
+                <button className="adm-icon-btn is-danger" disabled={!!busy} onClick={() => remove(b)} aria-label={`Delete ${b.name}`} title="Delete">✕</button>
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
