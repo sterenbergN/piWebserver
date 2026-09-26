@@ -2,10 +2,14 @@
 // connection. Static build assets are cached forever (their names are hashed);
 // pages are network-first with a cached fallback. API calls are never cached —
 // offline workout saves are handled by the app's own save queue.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `static-${VERSION}`;
 const PAGE_CACHE = `pages-${VERSION}`;
 const PRECACHE_PAGES = ['/workout', '/workout/active'];
+const OFFLINE_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Offline</title><body style="font-family:system-ui,sans-serif;background:#0a0a0c;color:#ededed;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center">
+<div><div style="font-size:3rem">📡</div><h1>You're offline</h1><p style="color:#a0aec0">This page needs a connection. Your workout log still works offline.</p>
+<p><a href="/workout" style="color:#9f7aea">Open Workout</a> · <a href="" onclick="location.reload();return false" style="color:#9f7aea">Try again</a></p></div></body>`;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -54,7 +58,11 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => {
           const cache = await caches.open(PAGE_CACHE);
-          return (await cache.match(url.pathname)) || (await cache.match('/workout')) || Response.error();
+          const cached = await cache.match(url.pathname);
+          if (cached) return cached;
+          // The workout app works offline; other pages get a short notice.
+          if (url.pathname.startsWith('/workout')) return (await cache.match('/workout')) || Response.error();
+          return new Response(OFFLINE_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         })
     );
   }

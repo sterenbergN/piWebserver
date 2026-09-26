@@ -2,7 +2,7 @@ import type { Resume } from '@/lib/resume';
 import './resume.css';
 
 /** Resume layout: header, summary, experience, skills and projects. */
-export default function ResumeView({ resume }: { resume: Resume }) {
+export default function ResumeView({ resume, showEmpty = false }: { resume: Resume; /** Editor preview: show placeholders for empty sections. */ showEmpty?: boolean }) {
   const { profile, experience, skills, projects } = resume;
   return (
     <article className="resume-sheet">
@@ -25,7 +25,7 @@ export default function ResumeView({ resume }: { resume: Resume }) {
         </section>
       )}
 
-      <section className="resume-section">
+      {(experience.length > 0 || showEmpty) && <section className="resume-section">
         <h2>Experience</h2>
         {experience.length === 0 && <p className="resume-empty">No experience added yet.</p>}
         {experience.map((job) => (
@@ -41,7 +41,7 @@ export default function ResumeView({ resume }: { resume: Resume }) {
             )}
           </div>
         ))}
-      </section>
+      </section>}
 
       {skills.length > 0 && (
         <section className="resume-section">

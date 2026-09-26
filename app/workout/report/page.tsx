@@ -39,13 +39,12 @@ export default function ReportPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/workout/auth').then((r) => r.json()).catch(() => ({})),
-      fetch('/api/workout/history').then((r) => r.json()).catch(() => ({})),
-    ]).then(([auth, hist]) => {
-      if (auth.authenticated) setHistory(hist.history || []);
-      else { setIsDemo(true); setHistory(DEMO_HISTORY as unknown as ReportWorkout[]); }
-    });
+    (async () => {
+      const auth = await fetch('/api/workout/auth').then((r) => r.json()).catch(() => ({}));
+      if (!auth.authenticated) { setIsDemo(true); setHistory(DEMO_HISTORY as unknown as ReportWorkout[]); return; }
+      const hist = await fetch('/api/workout/history').then((r) => r.json()).catch(() => ({}));
+      setHistory(hist.history || []);
+    })();
   }, []);
 
   const anchor = useMemo(() => {

@@ -320,7 +320,7 @@ export default function ResumeEditor() {
         </div>
 
         <div className="resume-editor-preview">
-          <ResumeView resume={{
+          <ResumeView showEmpty resume={{
             ...resume,
             experience: resume.experience.map((e) => ({ ...e, details: e.details.map((d) => d.trim()).filter(Boolean) })),
           }} />
