@@ -1,6 +1,9 @@
 'use client';
 import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import QRCode from 'qrcode';
+import { shareResultsCard } from '@/components/party/resultsCard';
+import { GAME_TITLES, ReactionLayer, ScoreTicker, SoundBar, TitleCard, VoterFaces, useImmersive, useShowDirector } from '@/components/party/HostShow';
 
 function useCountdown(timerStart?: number, timerDuration?: number) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
@@ -50,6 +53,24 @@ function FakerCountdown({ onDone }: { onDone: () => void }) {
     : <div className="host-countdown-number" key={val}>{val}</div>;
 }
 
+/** QR code that opens the join page with this room's code filled in. */
+function JoinQrCode({ roomCode }: { roomCode: string }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    const url = `${window.location.origin}/party?code=${roomCode}`;
+    QRCode.toDataURL(url, { margin: 1, width: 220, color: { dark: '#0b0b12', light: '#ffffff' } })
+      .then(setSrc)
+      .catch(() => setSrc(''));
+  }, [roomCode]);
+  if (!src) return null;
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', background: '#fff', padding: '0.75rem', borderRadius: '16px' }}>
+      <img src={src} alt={`Scan to join room ${roomCode}`} width={180} height={180} />
+      <span style={{ color: '#0b0b12', fontWeight: 800, fontSize: '0.85rem' }}>Scan to join</span>
+    </div>
+  );
+}
+
 function QuitDialog({ onQuit, onCancel }: { onQuit: () => void; onCancel: () => void }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', backdropFilter: 'blur(8px)' }}>
@@ -96,6 +117,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration);
+  useImmersive('party-tv');
+  const show = useShowDirector(state, secondsLeft);
 
   const sendAction = useCallback(async (action: any) => {
     await fetch('/api/party/action', {
@@ -111,7 +134,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     const safeDelay = Math.max(delay, 200);
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
     autoTimerRef.current = setTimeout(() => {
-      sendAction({ type: state.hostData.autoAdvanceAction });
+      // The server normally fires this itself; this is a fallback. The deadline
+      // lets the server ignore it if the game already moved on.
+      sendAction({ type: state.hostData.autoAdvanceAction, deadline: state.hostData.autoAdvanceAt });
     }, safeDelay);
     return () => { if (autoTimerRef.current) clearTimeout(autoTimerRef.current); };
   }, [state?.hostData?.autoAdvanceAt, state?.hostData?.autoAdvanceAction, sendAction]);
@@ -132,20 +157,22 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     return () => sse.close();
   }, [roomCode, hostId]);
 
-  // Race Ticker for Ready Set Bet
-  useEffect(() => {
-    if (state?.gameType === 'ready-set-bet' && state?.phase === 'RACING') {
-      const id = setInterval(() => {
-        sendAction({ type: 'RACE_TICK' });
-      }, 1500);
-      return () => clearInterval(id);
-    }
-  }, [state?.gameType, state?.phase]);
-
   const handleQuit = () => { setShowQuitDialog(false); sendAction({ type: 'QUIT_GAME' }); };
   const handleSwitch = (g: string) => sendAction({ type: 'SWITCH_GAME', gameType: g });
   const handlePlayAgain = () => sendAction({ type: 'PLAY_AGAIN' });
   const handleSetQuipRounds = (rs: number) => sendAction({ type: 'SET_QUIP_ROUNDS', rounds: rs });
+
+  // Themed prompt packs (Ready Set Bet has no prompts, so it doesn't show them).
+  const [packs, setPacks] = useState<{ id: string; name: string; emoji: string; counts: Record<string, number> }[]>([]);
+  useEffect(() => {
+    fetch('/api/party/packs').then(r => r.json()).then(d => { if (d.success) setPacks(d.packs); }).catch(() => {});
+  }, []);
+  const activePacks: string[] = state?.settings?.packs?.length ? state.settings.packs : ['classic'];
+  const togglePack = (id: string) => {
+    const next = activePacks.includes(id) ? activePacks.filter(p => p !== id) : [...activePacks, id];
+    if (next.length) sendAction({ type: 'SET_PACKS', packs: next });
+  };
+  const PACK_LIST_KEY: Record<string, string> = { 'quip-clash': 'quipClash', 'the-faker': 'theFaker', 'bracket-battles': 'bracketBattles', 'trivia-death': 'triviaQuestions' };
 
   const isPlaying = state && state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';
   const gameColor = state?.gameType === 'quip-clash' ? 'yellow' : state?.gameType === 'trivia-death' ? 'purple-lt' : state?.gameType === 'bracket-battles' ? 'cyan' : state?.gameType === 'ready-set-bet' ? 'green' : 'red';
@@ -168,6 +195,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
       <div className="party-bg"><div className="party-bg-orb party-bg-orb-1" /><div className="party-bg-orb party-bg-orb-2" /></div>
 
       {showQuitDialog && <QuitDialog onQuit={handleQuit} onCancel={() => setShowQuitDialog(false)} />}
+      {show.card && <TitleCard card={show.card} color={GAME_TITLES[state.gameType]?.color} />}
+      <ReactionLayer reactions={state.reactions} players={state.players} />
+      {isPlaying && <ScoreTicker players={state.players} order={state.playerOrder} />}
 
       {/* Top bar */}
       <div className="host-topbar party-content">
@@ -186,8 +216,12 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
           <div className="host-room-code-label" style={{ marginTop: '0.3rem' }}>
             {typeof window !== 'undefined' ? window.location.host : ''}/party
           </div>
+          {state.audienceSize > 0 && (
+            <div style={{ fontSize: '0.8rem', color: 'var(--party-cyan)', fontWeight: 800, marginTop: '0.3rem' }}>👀 {state.audienceSize} in the audience</div>
+          )}
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
         {isPlaying ? (
           <button onClick={() => setShowQuitDialog(true)} style={{ background: 'rgba(239,68,68,0.15)', border: '2px solid rgba(239,68,68,0.4)', borderRadius: '12px', color: 'var(--party-red)', fontWeight: 800, padding: '0.6rem 1.25rem', cursor: 'pointer' }}>
             🚪 End Game
@@ -197,6 +231,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             ← Home
           </button>
         )}
+          <SoundBar prefs={show.prefs} setPrefs={show.setPrefs} soundOn={show.soundOn} enableSound={show.enableSound} />
+        </div>
       </div>
 
       <div className="host-stage party-content">
@@ -204,13 +240,25 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         {state.phase === 'LOBBY' && (
           <div className="host-lobby phase-enter">
             <div className="host-lobby-title">Waiting for players...</div>
-            <p className="host-lobby-subtitle">{state.playerOrder.length} player(s) connected</p>
+            <p className="host-lobby-subtitle">
+              {state.playerOrder.length}/16 players{state.playerOrder.length >= 16 ? ' (full — others can join the audience)' : ''} · join at <strong>{typeof window !== 'undefined' ? window.location.host : ''}/party</strong> with code <strong>{state.roomCode}</strong>
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', margin: '0 0 1.5rem' }}>
+              <JoinQrCode roomCode={state.roomCode} />
+            </div>
             <div className="host-players-grid">
-              {Object.values(state.players).map((p: any) => (
-                <div key={p.id} className="host-player-card">
+              {state.playerOrder.map((pid: string) => state.players[pid]).filter(Boolean).map((p: any) => (
+                <div key={p.id} className="host-player-card" style={{ opacity: p.connected ? 1 : 0.45 }} title={p.connected ? 'Connected' : 'Disconnected'}>
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: p.avatarColor }} />
-                  <div className="host-player-avatar" style={{ border: `3px solid ${p.avatarColor}`, color: p.avatarColor }}>{p.name.charAt(0)}</div>
+                  <button
+                    onClick={() => sendAction({ type: 'KICK_PLAYER', targetId: p.id })}
+                    aria-label={`Remove ${p.name}`}
+                    title={`Remove ${p.name}`}
+                    style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: 'var(--party-text-muted)', cursor: 'pointer', fontSize: '0.9rem' }}
+                  >✕</button>
+                  <div className="host-player-avatar" style={{ border: `3px solid ${p.avatarColor}`, color: p.avatarColor, fontSize: p.avatar ? '2.2rem' : undefined }}>{p.avatar || p.name.charAt(0)}</div>
                   <div className="host-player-name">{p.name}</div>
+                  {!p.connected && <div style={{ fontSize: '0.7rem', color: 'var(--party-text-muted)' }}>reconnecting…</div>}
                 </div>
               ))}
             </div>
@@ -225,6 +273,23 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                     {r}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {packs.length > 1 && PACK_LIST_KEY[state.gameType] && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center', alignItems: 'center', margin: '1rem 0' }}>
+                <span style={{ fontWeight: 'bold' }}>Prompt packs:</span>
+                {packs.map(p => {
+                  const on = activePacks.includes(p.id);
+                  const size = p.counts[PACK_LIST_KEY[state.gameType]] || 0;
+                  return (
+                    <button key={p.id} onClick={() => togglePack(p.id)} aria-pressed={on} disabled={size === 0 && !on}
+                      title={`${size} prompts for this game`}
+                      style={{ background: on ? 'var(--party-purple, #7c3aed)' : 'transparent', color: '#fff', border: '2px solid var(--party-purple-lt)', padding: '0.4rem 0.9rem', borderRadius: '999px', fontWeight: 'bold', cursor: 'pointer', opacity: size === 0 && !on ? 0.4 : 1 }}>
+                      {on ? '✓ ' : ''}{p.emoji} {p.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>({size})</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -304,6 +369,12 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   <div className="host-result-card-by">{state.players[pid]?.name}</div>
                   <div className="host-result-answer">{state.hostData.answers?.[pid]}</div>
                   <div className="host-result-votes"><div className="host-result-votes-num">{state.hostData.tally[pid]}</div></div>
+                  <VoterFaces ids={state.hostData.voters?.[pid]} players={state.players} />
+                  {state.hostData.audienceTally && (
+                    <div style={{ fontSize: '0.85rem', color: 'var(--party-cyan)', fontWeight: 800, marginTop: '0.5rem' }}>
+                      👀 {state.hostData.audienceTally[pid] || 0} audience{state.hostData.audienceFavorite === pid ? ' · favorite +250' : ''}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -351,6 +422,17 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </div>
             ) : (
               <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>No majority vote.</div>
+            )}
+            {state.hostData.voters && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'center', marginBottom: '1.5rem' }}>
+                {Object.entries(state.hostData.voters as Record<string, string[]>).filter(([, ids]) => ids.length > 0).map(([target, ids]) => (
+                  <div key={target} className="party-card" style={{ padding: '0.75rem 1rem', minWidth: 160, textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.8rem' }}>{state.players[target]?.avatar}</div>
+                    <div style={{ fontWeight: 900 }}>{state.players[target]?.name}</div>
+                    <VoterFaces ids={ids} players={state.players} />
+                  </div>
+                ))}
+              </div>
             )}
             <div className="host-faker-revealed" style={{ width: '100%', maxWidth: '700px' }}>
               <div>
@@ -657,7 +739,10 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   }}>
                     <div style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '1rem' }}>{ans.answer}</div>
                     {state.phase === 'MATCH_RESULT' && (
-                       <div style={{ fontSize: '1.5rem', color: isWinner ? 'var(--party-green)' : 'var(--party-text-muted)' }}>{votes} Votes</div>
+                       <>
+                         <div style={{ fontSize: '1.5rem', color: isWinner ? 'var(--party-green)' : 'var(--party-text-muted)' }}>{votes} Votes</div>
+                         <VoterFaces ids={state.hostData.voters?.[ans.id]} players={state.players} />
+                       </>
                     )}
                   </div>
                 );
@@ -755,19 +840,64 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
            </div>
         )}
 
+        {state.audienceVote && (
+          <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 5, background: 'rgba(6,182,212,0.15)', border: '2px solid var(--party-cyan)', borderRadius: '999px', padding: '0.4rem 1rem', color: 'var(--party-cyan)', fontWeight: 800, fontSize: '0.9rem' }}>
+            👀 Audience voting · {state.audienceVote.voteCount} vote{state.audienceVote.voteCount === 1 ? '' : 's'}
+          </div>
+        )}
+
         {/* ===== FINAL LEADERBOARD ===== */}
         {state.phase === 'FINAL_RESULTS' && (
           <div className="center-stack phase-enter">
-            <div className="host-leaderboard" style={{ marginBottom: '2rem' }}>
-              <div className="host-leaderboard-title">🏆 Final Scores</div>
-              {Object.values(state.players).sort((a: any, b: any) => b.score - a.score).map((p: any, idx: number) => (
-                <div key={p.id} className={`host-leaderboard-row ${idx === 0 ? 'first' : ''}`}>
-                  <div className="host-leaderboard-rank">{idx === 0 ? '🥇' : `#${idx + 1}`}</div>
-                  <div className="host-leaderboard-name">{p.name}</div>
-                  <div className="host-leaderboard-score">{p.score}</div>
-                </div>
-              ))}
-            </div>
+            {(() => {
+              const standings = Object.values(state.players).sort((a: any, b: any) => b.score - a.score) as any[];
+              const podium = [standings[1], standings[0], standings[2]];
+              const nameOf = (pid: string) => state.players[pid]?.name || '?';
+              return (
+                <>
+                  <div className="host-leaderboard-title" style={{ marginBottom: '1.5rem' }}>🏆 Final Results</div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                    {podium.map((p: any, i: number) => p && (
+                      <div key={p.id} style={{ textAlign: 'center', width: 170 }}>
+                        <div style={{ fontSize: '2.5rem' }}>{['🥈', '🥇', '🥉'][i]}</div>
+                        <div style={{ fontWeight: 900, fontSize: '1.2rem', color: p.avatarColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                        <div style={{ height: [130, 180, 100][i], background: p.avatarColor, opacity: 0.85, borderRadius: '12px 12px 0 0', marginTop: '0.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '0.75rem', color: '#0b0b12', fontWeight: 900, fontSize: '1.4rem' }}>
+                          {p.score}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {standings.length > 3 && (
+                    <div style={{ color: 'var(--party-text-muted)', marginBottom: '1.5rem', textAlign: 'center' }}>
+                      {standings.slice(3).map((p: any, i: number) => `${i + 4}. ${p.name} (${p.score})`).join('  ·  ')}
+                    </div>
+                  )}
+                  {state.awards?.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0.75rem', width: '100%', maxWidth: 900, marginBottom: '1.5rem' }}>
+                      {state.awards.map((a: any) => (
+                        <div key={a.title} className="host-player-card" style={{ textAlign: 'left', padding: '1rem' }}>
+                          <div style={{ fontSize: '1.8rem' }}>{a.emoji}</div>
+                          <div style={{ fontWeight: 900 }}>{a.title}</div>
+                          <div style={{ color: 'var(--party-yellow)', fontWeight: 800 }}>{a.playerIds.map(nameOf).join(' & ')}</div>
+                          <div style={{ fontSize: '0.85rem', color: 'var(--party-text-muted)' }}>{a.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {state.audienceLeaders?.length > 0 && (
+                    <div style={{ color: 'var(--party-cyan)', fontWeight: 800, marginBottom: '1.5rem' }}>
+                      👀 Audience MVP: {state.audienceLeaders.map((a: any) => `${a.name} (${a.score})`).join(', ')}
+                    </div>
+                  )}
+                  <button className="party-btn party-btn-outline party-btn-inline" style={{ marginBottom: '1.5rem' }} onClick={() => shareResultsCard({
+                    gameName: gameName.replace(/^\S+\s/, ''),
+                    roomCode: state.roomCode,
+                    standings: standings.map((p: any) => ({ name: p.name, score: p.score, color: p.avatarColor })),
+                    awards: (state.awards || []).map((a: any) => ({ emoji: a.emoji, title: a.title, detail: a.detail, names: a.playerIds.map(nameOf) })),
+                  })}>📸 Save results image</button>
+                </>
+              );
+            })()}
             <PostGameOptions gameType={state.gameType} onPlayAgain={handlePlayAgain} onSwitch={handleSwitch} onQuit={() => router.push('/party')} />
           </div>
         )}

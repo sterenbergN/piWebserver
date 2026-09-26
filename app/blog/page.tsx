@@ -195,7 +195,7 @@ export default function BlogPage() {
         : sortedPosts.length === 0 ? (
           <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}>
             <h3>No Posts Yet</h3>
-            <p>Login and use the Admin panel to publish your first post.</p>
+            <p>{isAdmin ? 'Use the Admin panel to publish your first post.' : 'Check back soon — new write-ups are on the way.'}</p>
           </div>
         ) : groupCategory ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3rem' }}>

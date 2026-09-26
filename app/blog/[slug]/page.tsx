@@ -1,17 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Markdown from 'react-markdown';
+import Link from 'next/link';
 import { useSitePopup } from '@/components/SitePopup';
 
 export default function BlogPost() {
   const { showAlert, popup } = useSitePopup();
   const params = useParams();
-  const router = useRouter();
   const slug = params.slug as string;
 
   const [markdown, setMarkdown] = useState('');
+  const [neighbors, setNeighbors] = useState<{ newer?: { slug: string; title: string }; older?: { slug: string; title: string } }>({});
+  const [linkCopied, setLinkCopied] = useState(false);
   const [post, setPost] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -39,7 +41,24 @@ export default function BlogPost() {
         setLoading(false);
       })
       .catch(() => { setMarkdown('# Error\n\nFailed to load.'); setLoading(false); });
+    // Previous/next posts by date for the footer links.
+    fetch('/api/blog').then(r => r.json()).then(d => {
+      const posts: { slug: string; title: string; date?: string }[] = (d.posts || []).slice().sort((a: any, b: any) => (b.date || '').localeCompare(a.date || ''));
+      const i = posts.findIndex(p => p.slug === slug);
+      if (i >= 0) setNeighbors({ newer: posts[i - 1], older: posts[i + 1] });
+    }).catch(() => {});
   }, [slug]);
+
+  const sharePost = async () => {
+    const url = window.location.href;
+    const nav = navigator as Navigator & { share?: (d: { title?: string; url: string }) => Promise<void> };
+    if (nav.share) { try { await nav.share({ title: post?.title, url }); return; } catch { /* fall back to copy */ } }
+    await navigator.clipboard.writeText(url).catch(() => {});
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+  // ~220 words a minute, ignoring markdown syntax.
+  const readingMinutes = Math.max(1, Math.round(markdown.replace(/[#*_`>\[\]()!-]/g, ' ').split(/\s+/).filter(Boolean).length / 220));
 
   const handleSavePhotoEdit = async () => {
     if (!editingPhoto) return;
@@ -112,9 +131,9 @@ export default function BlogPost() {
   return (
     <div className="animate-fade-in" style={{ padding: '2rem 0' }}>
       <div style={{ maxWidth: '900px', margin: '0 auto', paddingBottom: '4rem' }}>
-        <button className="btn btn-secondary" onClick={() => router.back()} style={{ marginBottom: '2rem' }}>
-          ← Back to Blog
-        </button>
+        <Link className="btn btn-secondary" href="/blog" style={{ marginBottom: '2rem', display: 'inline-flex' }}>
+          ← All posts
+        </Link>
 
         {post && (
           <div style={{ marginBottom: '3rem', textAlign: 'center' }}>
@@ -122,6 +141,11 @@ export default function BlogPost() {
             <p style={{ fontSize: '1.1rem', color: 'var(--accent-light)', marginBottom: '1.5rem' }}>{post.description}</p>
             <p style={{ fontSize: '0.85rem', opacity: 0.5, marginBottom: '2rem' }}>
               {new Date(post.date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+              {!loading && <> · {readingMinutes} min read</>}
+              {' · '}
+              <button onClick={sharePost} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', font: 'inherit', padding: 0 }}>
+                {linkCopied ? 'Link copied' : 'Share'}
+              </button>
             </p>
             {isAdmin && (
               <div style={{ marginBottom: '2rem', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
@@ -229,6 +253,22 @@ export default function BlogPost() {
               </div>
             </div>
           </div>
+        )}
+        {(neighbors.newer || neighbors.older) && (
+          <nav aria-label="More posts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginTop: '3rem' }}>
+            {neighbors.older ? (
+              <Link href={`/blog/${neighbors.older.slug}`} className="glass-panel" style={{ padding: '1rem 1.25rem', textDecoration: 'none', color: 'var(--foreground)' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>← Older</span>
+                <strong style={{ display: 'block' }}>{neighbors.older.title}</strong>
+              </Link>
+            ) : <span />}
+            {neighbors.newer && (
+              <Link href={`/blog/${neighbors.newer.slug}`} className="glass-panel" style={{ padding: '1rem 1.25rem', textDecoration: 'none', color: 'var(--foreground)', textAlign: 'right' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Newer →</span>
+                <strong style={{ display: 'block' }}>{neighbors.newer.title}</strong>
+              </Link>
+            )}
+          </nav>
         )}
       </div>
       {popup}

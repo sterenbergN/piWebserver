@@ -93,6 +93,25 @@ export default function GalleryPage() {
     if (viewMode === 'downloads') loadDownloads();
   }, [viewMode, loadDownloads]);
 
+  // Deep link: /gallery?album=ID opens that album (e.g. from a project card).
+  const [deepLinked, setDeepLinked] = useState(false);
+  useEffect(() => {
+    if (deepLinked || rootAlbums.length === 0) return;
+    setDeepLinked(true);
+    const wanted = new URLSearchParams(window.location.search).get('album');
+    if (!wanted) return;
+    const pathTo = (albums: Album[], trail: Album[]): Album[] | null => {
+      for (const a of albums) {
+        if (a.id === wanted) return [...trail, a];
+        const found = pathTo(a.albums || [], [...trail, a]);
+        if (found) return found;
+      }
+      return null;
+    };
+    const path = pathTo(rootAlbums, []);
+    if (path) { setViewMode('albums'); setBreadcrumb(path); }
+  }, [rootAlbums, deepLinked]);
+
   // Keep breadcrumb in sync when rootAlbums reloads
   useEffect(() => {
     if (breadcrumb.length === 0) return;

@@ -1,5 +1,7 @@
 import { GameState } from '../types';
 import { getRandomPrompts } from '../prompts';
+import { closeAudienceVote, openAudienceVote } from '../audience';
+import { bumpStat } from '../awards';
 
 const BOT_ANSWERS = [
   "A potato", "My mom", "Nothing at all", "Just a guy named Greg",
@@ -8,7 +10,17 @@ const BOT_ANSWERS = [
 ];
 
 function shuffle<T>(array: T[]): T[] {
-  return array.sort(() => Math.random() - 0.5);
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+// Players who wrote an answer in this match sit it out; everyone else votes.
+function matchVoters(state: GameState, match: any): string[] {
+  const ids = [match.answer1?.id, match.answer2?.id];
+  return state.playerOrder.filter((pid) => !ids.includes(pid));
 }
 
 export const bracketBattlesLogic = {
@@ -17,7 +29,7 @@ export const bracketBattlesLogic = {
 
     const bracketSize = state.playerOrder.length <= 8 ? 8 : 16;
     const promptsNeeded = Math.ceil(bracketSize / 2) + 10;
-    const prompts = await getRandomPrompts('bracket-battles', promptsNeeded);
+    const prompts = await getRandomPrompts('bracket-battles', promptsNeeded, state.settings?.packs);
     
     state.phase = 'PROMPTING';
     const timerDuration = 60;
@@ -43,6 +55,8 @@ export const bracketBattlesLogic = {
       prompts,
       nextPromptIndex: Math.ceil(bracketSize / 2),
       playerPrompts,
+      // Players are paired in this order: the two who share a prompt meet in round one.
+      pairOrder: shuffledPlayers,
       answers: {}, // playerId -> answer
       predictions: {}, // playerId -> matchNodeId
       bracketSize,
@@ -64,7 +78,9 @@ export const bracketBattlesLogic = {
     switch (action.type) {
       case 'SUBMIT_ANSWER': {
         if (state.phase !== 'PROMPTING') return;
-        state.gameData.answers[playerId] = action.answer;
+        const answer = typeof action.answer === 'string' ? action.answer.trim() : '';
+        if (!answer || state.gameData.answers[playerId]) return;
+        state.gameData.answers[playerId] = answer;
         state.playerData[playerId].phase = 'WAITING';
         
         // Check if all players answered
@@ -88,6 +104,8 @@ export const bracketBattlesLogic = {
 
       case 'SUBMIT_PREDICTION': {
         if (state.phase !== 'PREDICTION') return;
+        const entryIds = (state.hostData.entries || []).map((e: any) => e.id);
+        if (!entryIds.includes(action.predictionId)) return;
         state.gameData.predictions[playerId] = action.predictionId;
         state.playerData[playerId].phase = 'WAITING';
         
@@ -105,9 +123,12 @@ export const bracketBattlesLogic = {
 
       case 'SUBMIT_VOTE': {
         if (state.phase !== 'MATCHUP') return;
+        const match = state.gameData.bracket[state.gameData.currentMatchId];
+        const voters = matchVoters(state, match);
+        if (!voters.includes(playerId)) return;
+        if (action.voteId !== match.answer1.id && action.voteId !== match.answer2.id) return;
         state.gameData.votes[playerId] = action.voteId;
-        // Check if everyone voted
-        if (Object.keys(state.gameData.votes).length >= state.playerOrder.length) {
+        if (voters.every((pid) => state.gameData.votes[pid])) {
           resolveMatch(state);
         }
         break;
@@ -120,8 +141,7 @@ export const bracketBattlesLogic = {
       }
 
       case 'SUBMIT_TIEBREAKER': {
-        if (state.phase !== 'TIEBREAKER') return;
-        // the action carries how many clicks they did
+        if (state.phase !== 'TIEBREAKER' || !state.gameData.votes[playerId]) return;
         state.gameData.tiebreakerTaps = state.gameData.tiebreakerTaps || {};
         state.gameData.tiebreakerTaps[playerId] = (state.gameData.tiebreakerTaps[playerId] || 0) + 1;
         break;
@@ -156,26 +176,24 @@ function setupBracketAndPredictions(state: GameState) {
   state.phase = 'PREDICTION';
   const size = state.gameData.bracketSize; // 8 or 16
   
-  let entries = Object.keys(state.gameData.answers).map(pid => ({
-    id: pid,
-    answer: state.gameData.answers[pid],
-    isBot: false,
-  }));
-
-  // Pad with bots
-  let botIdx = 0;
+  // Round one pairs the two players who answered the same prompt; an odd
+  // player out and the remaining slots are filled with bot answers.
   const shuffledBots = shuffle([...BOT_ANSWERS]);
-  while (entries.length < size) {
-    entries.push({
-      id: `bot-${botIdx}`,
-      answer: shuffledBots[botIdx % shuffledBots.length],
-      isBot: true,
-    });
+  let botIdx = 0;
+  const bot = () => {
+    const entry = { id: `bot-${botIdx}`, answer: shuffledBots[botIdx % shuffledBots.length], isBot: true };
     botIdx++;
-  }
-
-  // Shuffle entries to randomize bracket
-  entries = shuffle(entries);
+    return entry;
+  };
+  const order: string[] = (state.gameData.pairOrder || state.playerOrder).filter((pid: string) => state.players[pid]);
+  const player = (pid: string | undefined) =>
+    pid ? { id: pid, answer: state.gameData.answers[pid] || 'Too slow!', isBot: false } : bot();
+  const pairs = Array.from({ length: size / 2 }, (_, i) => ({
+    entries: [player(order[i * 2]), player(order[i * 2 + 1])],
+    prompt: state.gameData.prompts[i] as string,
+  }));
+  shuffle(pairs);
+  const entries = pairs.flatMap((p) => p.entries);
 
   // Build bracket tree. 
   // Node IDs:
@@ -200,11 +218,8 @@ function setupBracketAndPredictions(state: GameState) {
 
   // Populate first round
   for (let i = 0; i < size / 2; i++) {
-    bracket[i].answer1 = entries[i * 2];
-    bracket[i].answer2 = entries[i * 2 + 1];
-    const pid1 = entries[i * 2].id;
-    const pid2 = entries[i * 2 + 1].id;
-    bracket[i].prompt = state.gameData.playerPrompts[pid1] || state.gameData.playerPrompts[pid2] || state.gameData.prompts[0];
+    [bracket[i].answer1, bracket[i].answer2] = pairs[i].entries;
+    bracket[i].prompt = pairs[i].prompt;
   }
 
   state.gameData.bracket = bracket;
@@ -280,7 +295,18 @@ function startNextMatch(state: GameState) {
     autoAdvanceAction: 'FORCE_RESOLVE_MATCH',
   };
 
+  openAudienceVote(state, {
+    key: `bracket-${nextMatchIdx}`,
+    prompt: match.prompt,
+    choices: answers.map((a: any) => ({ id: a.id, label: a.answer })),
+  });
+
+  const voters = matchVoters(state, match);
   for (const pid of state.playerOrder) {
+    if (!voters.includes(pid)) {
+      state.playerData[pid] = { phase: 'WAITING', message: 'Your answer is on screen! Let the crowd decide.' };
+      continue;
+    }
     state.playerData[pid] = {
       phase: 'MATCHUP',
       matchId: nextMatchIdx,
@@ -301,9 +327,20 @@ function resolveMatch(state: GameState) {
     if (votes[pid] === match.answer1.id) v1++;
     if (votes[pid] === match.answer2.id) v2++;
   }
+  // The audience's majority counts as one extra vote.
+  const audience = closeAudienceVote(state, `bracket-${matchId}`);
+  if (audience.winner === match.answer1.id) v1++;
+  else if (audience.winner === match.answer2.id) v2++;
+  state.gameData.audienceTally = audience.total > 0 ? audience.tally : null;
 
-  if (v1 === v2) {
+  if (v1 === v2 && v1 > 0) {
     startTiebreaker(state, match, v1, v2);
+    return;
+  }
+  if (v1 === v2) {
+    // Nobody voted: coin flip.
+    const [winner, loser] = shuffle([match.answer1, match.answer2]);
+    finalizeMatchWinner(state, matchId, winner, loser, votes, 0, 0);
     return;
   }
 
@@ -328,10 +365,9 @@ function startTiebreaker(state: GameState, match: any, v1: number, v2: number) {
   };
 
   for (const pid of state.playerOrder) {
-    state.playerData[pid] = {
-      phase: 'TIEBREAKER',
-      answers: [match.answer1, match.answer2]
-    };
+    state.playerData[pid] = state.gameData.votes[pid]
+      ? { phase: 'TIEBREAKER', answers: [match.answer1, match.answer2] }
+      : { phase: 'WAITING', message: 'Tiebreaker! The voters are mashing…' };
   }
 }
 
@@ -386,15 +422,26 @@ function finalizeMatchWinner(state: GameState, matchId: number, winner: any, los
   // Award points to the AUTHOR of the winning answer (if not a bot)
   if (!winner.isBot && state.players[winner.id]) {
     state.players[winner.id].score += roundValue;
+    bumpStat(state, 'matchWins', winner.id);
   }
+  if (!winner.isBot) bumpStat(state, 'votesReceived', winner.id, winner === bracket[matchId].answer1 ? v1 : v2);
+  if (!loser.isBot) bumpStat(state, 'votesReceived', loser.id, loser === bracket[matchId].answer1 ? v1 : v2);
 
   state.hostData = {
     message: 'Winner Advances!',
+    // Keep both answers on screen for the result (in the order they were shown).
+    answers: [bracket[matchId].answer1, bracket[matchId].answer2],
+    prompt: bracket[matchId].prompt,
+    matchId,
     winner,
     loser,
     votes: {
       [winner.id]: winner === bracket[matchId].answer1 ? v1 : v2,
       [loser.id]: loser === bracket[matchId].answer1 ? v1 : v2
+    },
+    voters: {
+      [winner.id]: Object.keys(votes || {}).filter((pid) => votes[pid] === winner.id),
+      [loser.id]: Object.keys(votes || {}).filter((pid) => votes[pid] === loser.id),
     },
     timerStart: Date.now(),
     timerDuration: 6,
@@ -421,6 +468,7 @@ function endBracketGame(state: GameState) {
   for (const pid of state.playerOrder) {
     if (state.gameData.predictions[pid] === championId) {
       state.players[pid].score += 3000;
+      bumpStat(state, 'oracle', pid);
     }
   }
 

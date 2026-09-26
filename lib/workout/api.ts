@@ -42,7 +42,8 @@ export async function readJsonObject(request: Request): Promise<Record<string, a
 }
 
 /** Remove fields a client must never be able to set on an owned record. */
-export function stripProtectedFields<T extends Record<string, any>>(value: T): Omit<T, 'id' | 'ownerId' | 'createdAt'> {
-  const { id, ownerId, createdAt, ...rest } = value;
+export function stripProtectedFields<T extends Record<string, any>>(value: T): Omit<T, 'id' | 'ownerId' | 'createdAt' | 'shareToken'> {
+  // shareToken is only ever set by the share endpoint, never by a client PUT.
+  const { id, ownerId, createdAt, shareToken, ...rest } = value;
   return rest;
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { GameType } from '@/lib/party/types';
+import { AVATARS } from '@/lib/party/avatars';
 
 export default function PartyLobby() {
   const router = useRouter();
@@ -12,27 +13,61 @@ export default function PartyLobby() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [lastPlayed, setLastPlayed] = useState<{ roomCode: string; playerId: string; audience?: boolean } | null>(null);
+  const [audienceOffer, setAudienceOffer] = useState(false);
+  const [avatar, setAvatar] = useState<string>(AVATARS[0]);
+  const [lastHosted, setLastHosted] = useState<{ roomCode: string; hostId: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/party/admin-check').then(r => r.json()).then(d => setIsAdmin(d.isAdmin)).catch(() => {});
+    // Prefill from a scanned QR code (?code=ABCD) and remember the last nickname.
+    const code = new URLSearchParams(window.location.search).get('code');
+    if (code) setRoomCode(code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4));
+    try {
+      const savedName = localStorage.getItem('partyNickname');
+      if (savedName) setPlayerName(savedName);
+      const savedAvatar = localStorage.getItem('partyAvatar');
+      setAvatar(savedAvatar && (AVATARS as readonly string[]).includes(savedAvatar) ? savedAvatar : AVATARS[Math.floor(Math.random() * AVATARS.length)]);
+      const recent = (key: string) => {
+        const raw = JSON.parse(localStorage.getItem(key) || 'null');
+        return raw && Date.now() - raw.at < 6 * 60 * 60 * 1000 ? raw : null;
+      };
+      setLastPlayed(recent('partyLastPlayed'));
+      setLastHosted(recent('partyLastHosted'));
+    } catch { /* storage unavailable */ }
   }, []);
 
-  const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const seatPath = (seat: { roomCode: string; playerId: string; audience?: boolean }) =>
+    seat.audience ? `/party/audience/${seat.roomCode}/${seat.playerId}` : `/party/player/${seat.roomCode}/${seat.playerId}`;
+
+  const join = async (asAudience: boolean) => {
     if (!roomCode || !playerName) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setAudienceOffer(false);
     try {
       const res = await fetch('/api/party/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName }),
+        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName, asAudience, avatar }),
       });
       const data = await res.json();
-      if (!res.ok || data.error) { setError(data.error || 'Failed to join room'); }
-      else { router.push(`/party/player/${roomCode.toUpperCase()}/${data.playerId}`); }
+      if (!res.ok || data.error) {
+        setError(data.error || 'Failed to join room');
+        // Full room or game already running: offer a seat in the audience instead.
+        setAudienceOffer(data.audienceAvailable === true);
+      } else {
+        const seat = { roomCode: roomCode.toUpperCase(), playerId: data.playerId, audience: data.audience === true };
+        try {
+          localStorage.setItem('partyNickname', playerName.trim());
+          localStorage.setItem('partyAvatar', avatar);
+          localStorage.setItem('partyLastPlayed', JSON.stringify({ ...seat, at: Date.now() }));
+        } catch { /* ignore */ }
+        router.push(seatPath(seat));
+      }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
   };
+
+  const handleJoin = (e: React.FormEvent) => { e.preventDefault(); join(false); };
 
   const handleHost = async (gameType: GameType) => {
     setLoading(true); setError('');
@@ -44,7 +79,13 @@ export default function PartyLobby() {
       });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error || 'Failed to create room'); setLoading(false); }
-      else { localStorage.setItem(`host_${data.roomCode}`, data.hostId); router.push(`/party/host/${data.roomCode}?hostId=${data.hostId}`); }
+      else {
+        try {
+          localStorage.setItem(`host_${data.roomCode}`, data.hostId);
+          localStorage.setItem('partyLastHosted', JSON.stringify({ roomCode: data.roomCode, hostId: data.hostId, at: Date.now() }));
+        } catch { /* ignore */ }
+        router.push(`/party/host/${data.roomCode}?hostId=${data.hostId}`);
+      }
     } catch { setError('Network error. Please try again.'); setLoading(false); }
   };
 
@@ -67,6 +108,28 @@ export default function PartyLobby() {
           </div>
 
           {error && <div className="party-error">⚠️ {error}</div>}
+          {audienceOffer && (
+            <button type="button" className="party-btn party-btn-primary" style={{ marginBottom: '1rem' }} disabled={loading} onClick={() => join(true)}>
+              👀 Join the audience instead
+            </button>
+          )}
+
+          {(lastPlayed || lastHosted) && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+              {lastPlayed && (
+                <button type="button" className="party-btn party-btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem' }}
+                  onClick={() => router.push(seatPath(lastPlayed))}>
+                  ↩ Rejoin {lastPlayed.roomCode}
+                </button>
+              )}
+              {lastHosted && (
+                <button type="button" className="party-btn party-btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem' }}
+                  onClick={() => router.push(`/party/host/${lastHosted.roomCode}?hostId=${lastHosted.hostId}`)}>
+                  📺 Resume hosting {lastHosted.roomCode}
+                </button>
+              )}
+            </div>
+          )}
 
           {tab === 'join' ? (
             <form onSubmit={handleJoin}>
@@ -78,13 +141,25 @@ export default function PartyLobby() {
               </div>
               <div className="party-form-group">
                 <label className="party-label">Your Nickname</label>
-                <input type="text" autoComplete="off" maxLength={12}
+                <input type="text" autoComplete="off" maxLength={16}
                   value={playerName} onChange={e => setPlayerName(e.target.value)}
                   className="party-input" style={{ fontSize: '1.25rem', fontWeight: 700, textAlign: 'center' }}
                   placeholder="Enter nickname..." required />
               </div>
+              <div className="party-form-group">
+                <label className="party-label">Pick your character {avatar}</label>
+                <div className="party-avatar-grid" role="radiogroup" aria-label="Character">
+                  {AVATARS.map(a => (
+                    <button key={a} type="button" role="radio" aria-checked={avatar === a} aria-pressed={avatar === a} className="party-avatar-option" onClick={() => setAvatar(a)}>{a}</button>
+                  ))}
+                </div>
+              </div>
               <button type="submit" disabled={loading || !roomCode || !playerName} className="party-btn party-btn-primary" style={{ marginTop: '0.5rem' }}>
                 {loading ? 'Joining...' : 'Join Game 🚀'}
+              </button>
+              <button type="button" disabled={loading || !roomCode || !playerName} onClick={() => join(true)}
+                style={{ background: 'none', border: 'none', color: 'var(--party-text-muted)', marginTop: '0.75rem', width: '100%', cursor: 'pointer', fontSize: '0.85rem' }}>
+                or just watch &amp; vote in the audience →
               </button>
             </form>
           ) : (

@@ -17,6 +17,12 @@ function normalizeType(type: any) {
     maxReps: toInt(type?.maxReps, 12, 1, 100),
     sets: toInt(type?.sets, 4, 1, 20),
     isPublic: type?.isPublic === true,
+    fixedLifts: Array.isArray(type?.fixedLifts)
+      ? type.fixedLifts
+          .filter((ref: any) => ref && typeof ref.liftId === 'string' && typeof ref.name === 'string')
+          .slice(0, 20)
+          .map((ref: any) => ({ liftId: ref.liftId.slice(0, 80), name: ref.name.slice(0, 120) }))
+      : [],
   };
 }
 
@@ -32,6 +38,7 @@ export const { GET, POST, PUT, DELETE } = createOwnedCollectionHandlers({
     minReps: payload.minReps,
     maxReps: payload.maxReps,
     sets: payload.sets,
+    fixedLifts: payload.fixedLifts,
   }),
   validate: (type) => {
     if (!type.name) throw new ApiError(400, 'Workout type name is required');

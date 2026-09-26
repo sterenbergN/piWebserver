@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { DEMO_GYMS, DEMO_TYPES, DEMO_USER, DEMO_USER_ID } from '@/lib/workout/demo-data';
+import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER, DEMO_USER_ID } from '@/lib/workout/demo-data';
+import { detectStalledLifts, formatRelativeDay, muscleSetCounts, startOfCurrentWeek, trainingStreak, workoutVolume } from '@/lib/workout/session-insights';
+import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 
 // Interfaces for user representation
 interface UserData {
@@ -12,11 +14,14 @@ interface UserData {
   gender?: string;
   weight?: number;
   intensityFactor?: number;
+  weeklySetTarget?: number;
 }
 
 import { calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
+import { newRecordId } from '@/lib/workout/stations';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
+import BodyweightCard from '@/components/workout/BodyweightCard';
 
 // A paused workout stays resumable for this long after its last update.
 const PENDING_WORKOUT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -48,8 +53,10 @@ export default function WorkoutDashboard() {
   const [rankSymbol, setRankSymbol] = useState('⚪');
   const [rankName, setRankName] = useState('Beginner');
   const [rankScore, setRankScore] = useState(0);
-  const [totalLifts, setTotalLifts] = useState(0);
-  const [avgVol, setAvgVol] = useState(0);
+  const [history, setHistory] = useState<any[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [liftLookup, setLiftLookup] = useState<Record<string, { primaryMuscle?: string; secondaryMuscle?: string }>>({});
+  const [syncMessage, setSyncMessage] = useState('');
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -65,6 +72,11 @@ export default function WorkoutDashboard() {
   const [selectedGym, setSelectedGym] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [liftCount, setLiftCount] = useState('5');
+  // "➕ New gym…" in the gym picker: name it here, optionally copy another gym's equipment.
+  const [newGymName, setNewGymName] = useState('');
+  const [newGymCopyFrom, setNewGymCopyFrom] = useState('');
+  const [startingFreestyle, setStartingFreestyle] = useState(false);
+  const [startError, setStartError] = useState('');
   const [isDeload, setIsDeload] = useState(false);
   const [fatiguedMuscles, setFatiguedMuscles] = useState<string[]>([]);
   const [showJoinShared, setShowJoinShared] = useState(false);
@@ -98,6 +110,7 @@ export default function WorkoutDashboard() {
       setAvailableGyms(DEMO_GYMS);
       setAvailableTypes(DEMO_TYPES);
       setPendingWorkout(readPendingWorkout(DEMO_USER.id));
+      setHistory(DEMO_HISTORY);
     };
 
     async function load() {
@@ -132,22 +145,13 @@ export default function WorkoutDashboard() {
 
         if (historyRes?.success) {
           const history: any[] = historyRes.history || [];
-          let sets = 0; let vol = 0;
-          history.forEach((h: any) => {
-            Object.values(h.logs || {}).forEach((liftSets: any) => {
-              (liftSets || []).forEach((set: any) => {
-                vol += (set.reps || 0) * (set.weight || 0);
-                sets++;
-              });
-            });
-          });
-          setTotalLifts(history.length);
-          setAvgVol(sets > 0 ? vol / sets : 0);
+          setHistory(history);
 
           const allLifts: any[] = [];
           userGyms.forEach((g: any) => g.stations?.forEach((s: any) => {
             if (s.lifts) allLifts.push(...s.lifts);
           }));
+          setLiftLookup(Object.fromEntries(allLifts.map((lift) => [lift.id, lift])));
 
           // Suggest a deload when accumulated fatigue is high for any muscle group.
           if (history.length >= 3) {
@@ -174,6 +178,29 @@ export default function WorkoutDashboard() {
 
     load();
   }, []);
+
+  // Upload workouts that were saved offline, now and whenever we reconnect.
+  const syncQueuedWorkouts = async (ownerId: string) => {
+    if (getQueuedWorkouts(ownerId).length === 0) {
+      setQueuedCount(0);
+      return;
+    }
+    const result = await flushWorkoutQueue(ownerId);
+    setQueuedCount(result.remaining);
+    if (result.synced > 0) {
+      setSyncMessage(`Synced ${result.synced} offline workout${result.synced === 1 ? '' : 's'}.`);
+      const historyRes = await fetch('/api/workout/history').then((r) => r.json()).catch(() => null);
+      if (historyRes?.success) setHistory(historyRes.history || []);
+    }
+  };
+
+  useEffect(() => {
+    if (!user || isDemo) return;
+    syncQueuedWorkouts(user.id);
+    const onOnline = () => syncQueuedWorkouts(user.id);
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [user?.id, isDemo]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -305,6 +332,49 @@ export default function WorkoutDashboard() {
   const dateStr = now.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   const timeStr = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
+  const streak = trainingStreak(history);
+  const LEVELS = ['Beginner', 'Novice', 'Intermediate', 'Advanced', 'Elite'];
+  const levelIndex = Math.min(LEVELS.length - 1, Math.floor(Math.max(0, rankScore) / 2));
+  const levelProgress = levelIndex >= LEVELS.length - 1
+    ? { percent: 100, next: null as string | null, remaining: 0 }
+    : { percent: Math.round(((rankScore - levelIndex * 2) / 2) * 100), next: LEVELS[levelIndex + 1], remaining: (levelIndex + 1) * 2 - rankScore };
+  // Weekly working sets per muscle vs. the user's goal. Muscles trained in the
+  // last four weeks are listed even at zero so gaps are visible.
+  const weeklySetTarget = user?.weeklySetTarget ?? 10;
+  const weekSets = muscleSetCounts(history, liftLookup, startOfCurrentWeek());
+  const recentMuscles = Object.keys(muscleSetCounts(history, liftLookup, new Date(Date.now() - 28 * 24 * 60 * 60 * 1000)));
+  const volumeRows = Array.from(new Set([...recentMuscles, ...Object.keys(weekSets)]))
+    .map((muscle) => ({ muscle, sets: weekSets[muscle] || 0 }))
+    .sort((a, b) => b.sets - a.sets || a.muscle.localeCompare(b.muscle));
+  const updateWeeklyTarget = async (next: number) => {
+    const target = Math.min(30, Math.max(2, next));
+    setUser((prev) => (prev ? { ...prev, weeklySetTarget: target } : prev));
+    if (isDemo) return;
+    await fetch('/api/workout/auth', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weeklySetTarget: target }),
+    }).catch(() => {});
+  };
+
+  const stalledLifts = detectStalledLifts(history).slice(0, 4);
+
+  const recentWorkouts = [...history]
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 3);
+  const canRepeat = (workout: any) =>
+    availableGyms.some((g) => g.id === workout.gymId) && availableTypes.some((t) => t.id === workout.type?.id);
+  const repeatWorkout = (workout: any) => {
+    const params = new URLSearchParams({
+      gym: workout.gymId,
+      type: workout.type.id,
+      lifts: String(Math.max(1, Object.keys(workout.logs || {}).length)),
+      intensity: String(user?.intensityFactor ?? 1.0),
+      isDemo: String(isDemo),
+    });
+    window.location.href = `/workout/active?${params.toString()}`;
+  };
+
   return (
     <div className="animate-fade-in">
       {isDemo && <div className="demo-banner">SAMPLE MODE - PROGRESS WILL NOT BE SAVED</div>}
@@ -375,36 +445,36 @@ export default function WorkoutDashboard() {
         <div className="workout-flex-between">
           <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Experience Profile</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-             <span className="experience-badge">{rankSymbol} {rankName} ({rankScore.toFixed(2)})</span>
+             <span className="experience-badge" title={`Experience score ${rankScore.toFixed(2)}`}>{rankSymbol} {rankName}</span>
              <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>{expandAnalytics ? '▲' : '▼'}</span>
           </div>
         </div>
 
-        {/* Experience Progress Mini-Bar */}
-        <div style={{ marginTop: '0.75rem', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-           <div style={{ 
-              width: `${Math.min(100, (rankScore % 2) / 2 * 100)}%`, 
-              height: '100%', 
-              background: 'var(--accent)',
-              boxShadow: '0 0 6px var(--accent)'
-           }} />
+        {/* Progress toward the next experience level (levels every 2 points) */}
+        <div style={{ marginTop: '0.75rem', height: '4px', background: 'var(--surface-border)', borderRadius: '2px', overflow: 'hidden' }}>
+           <div style={{ width: `${levelProgress.percent}%`, height: '100%', background: 'var(--accent)' }} />
         </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
-          <div style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', textAlign: 'center' }}>
-            <p style={{ fontSize: '1.8rem', fontWeight: 'bold', margin: '0 0 0.25rem 0' }}>{totalLifts}</p>
-            <p style={{ color: 'var(--muted)', fontSize: '0.75rem', margin: 0, textTransform: 'uppercase' }}>Lifts Logged</p>
-          </div>
-          <div style={{ background: 'var(--background)', padding: '1rem', borderRadius: '12px', textAlign: 'center' }}>
-            <p style={{ fontSize: '1.8rem', fontWeight: 'bold', margin: '0 0 0.25rem 0' }}>{Math.round(avgVol)}</p>
-            <p style={{ color: 'var(--muted)', fontSize: '0.75rem', margin: 0, textTransform: 'uppercase' }}>Avg Vol (lbs)</p>
-          </div>
+        {levelProgress.next && (
+          <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>Score {rankScore.toFixed(1)} · {levelProgress.remaining.toFixed(1)} to {levelProgress.next}</p>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', marginTop: '1rem' }}>
+          {[
+            { value: streak.workoutsThisWeek, label: 'This week' },
+            { value: streak.weekStreak, label: 'Week streak' },
+            { value: streak.daysSinceLast === null ? '—' : streak.daysSinceLast === 0 ? 'Today' : `${streak.daysSinceLast}d`, label: 'Last workout' },
+          ].map((stat) => (
+            <div key={stat.label} style={{ background: 'var(--background)', padding: '0.85rem 0.5rem', borderRadius: '12px', textAlign: 'center' }}>
+              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: '0 0 0.2rem 0', color: 'var(--foreground)' }}>{stat.value}</p>
+              <p style={{ color: 'var(--muted)', fontSize: '0.68rem', margin: 0, textTransform: 'uppercase' }}>{stat.label}</p>
+            </div>
+          ))}
         </div>
 
         {expandAnalytics && (
            <div className="animate-fade-in" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--surface-border)' }}>
               <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>Recent Performance Breakdown</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem' }}>
                  <div>
                     <label style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Est. Strength Rank</label>
                     <div style={{ fontSize: '1rem', fontWeight: 600 }}>{rankName}</div>
@@ -426,6 +496,19 @@ export default function WorkoutDashboard() {
            </div>
         )}
       </div>
+
+      {(queuedCount > 0 || syncMessage) && (
+        <div className="workout-tile animate-fade-in" style={{ borderLeft: `3px solid ${queuedCount > 0 ? 'var(--warning)' : 'var(--success)'}`, padding: '0.9rem 1rem' }}>
+          {queuedCount > 0 ? (
+            <div className="workout-flex-between" style={{ gap: '0.75rem' }}>
+              <span style={{ fontSize: '0.9rem' }}>📶 {queuedCount} workout{queuedCount === 1 ? '' : 's'} saved offline — waiting to sync.</span>
+              <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => user && syncQueuedWorkouts(user.id)}>Retry</button>
+            </div>
+          ) : (
+            <span style={{ fontSize: '0.9rem' }}>✅ {syncMessage}</span>
+          )}
+        </div>
+      )}
 
       {pendingWorkout && (() => {
           const age = Date.now() - (pendingWorkout.timestamp || 0);
@@ -482,11 +565,21 @@ export default function WorkoutDashboard() {
           <select className="workout-input" value={selectedGym} onChange={e => setSelectedGym(e.target.value)}>
             <option value="">-- Choose Gym --</option>
             {availableGyms.map(g => <option key={g.id} value={g.id}>{g.emoji ? g.emoji + ' ' : ''}{g.name}</option>)}
+            {!isDemo && <option value="__new__">➕ New gym…</option>}
           </select>
+          {selectedGym === '__new__' && (
+            <div className="animate-fade-in" style={{ marginBottom: '0.75rem' }}>
+              <input className="workout-input" placeholder="Gym name" value={newGymName} onChange={e => setNewGymName(e.target.value)} />
+              <select className="workout-input" value={newGymCopyFrom} onChange={e => setNewGymCopyFrom(e.target.value)}>
+                <option value="">Start empty — add equipment as I go</option>
+                {availableGyms.map(g => <option key={g.id} value={g.id}>Copy equipment from {g.name} (fix weights later)</option>)}
+              </select>
+            </div>
+          )}
 
           <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', color: 'var(--muted)' }}>Select Workout Type</label>
           <select className="workout-input" value={selectedType} onChange={e => setSelectedType(e.target.value)}>
-             <option value="">-- Choose Type --</option>
+             <option value="">-- Choose Type --{selectedGym ? ' (optional for Build as I go)' : ''}</option>
              {availableTypes.map(t => <option key={t.id} value={t.id}>{t.name} ({t.intensity}%)</option>)}
           </select>
 
@@ -510,8 +603,8 @@ export default function WorkoutDashboard() {
 
           <button 
              className="workout-btn-primary" 
-             disabled={!selectedGym || !selectedType}
-             style={{ opacity: (!selectedGym || !selectedType) ? 0.5 : 1 }}
+             disabled={!selectedGym || selectedGym === '__new__' || !selectedType}
+             style={{ opacity: (!selectedGym || selectedGym === '__new__' || !selectedType) ? 0.5 : 1 }}
              onClick={() => {
                const params = new URLSearchParams({
                  gym: selectedGym,
@@ -526,6 +619,39 @@ export default function WorkoutDashboard() {
           >
             Build & Start
           </button>
+
+          {!isDemo && (
+            <button
+              className="btn btn-secondary"
+              style={{ width: '100%', marginTop: '0.6rem', padding: '0.85rem', borderRadius: '12px' }}
+              disabled={startingFreestyle || !selectedGym || (selectedGym === '__new__' && !newGymName.trim())}
+              onClick={async () => {
+                setStartingFreestyle(true);
+                try {
+                  let gymId = selectedGym;
+                  if (gymId === '__new__') {
+                    const source = availableGyms.find(g => g.id === newGymCopyFrom);
+                    const stations = (source?.stations || []).map((st: any) => ({
+                      ...st, id: newRecordId(), lifts: (st.lifts || []).map((l: any) => ({ ...l, id: newRecordId() })),
+                    }));
+                    const res = await fetch('/api/workout/gyms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newGymName.trim(), emoji: '🏋️', stations }) });
+                    const d = await res.json();
+                    if (!d.success) throw new Error(d.message || 'Could not create the gym');
+                    gymId = d.gym.id;
+                  }
+                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(user?.intensityFactor ?? 1.0) });
+                  if (selectedType) params.set('type', selectedType);
+                  window.location.href = `/workout/active?${params.toString()}`;
+                } catch (err) {
+                  setStartError(err instanceof Error ? err.message : 'Could not start');
+                  setStartingFreestyle(false);
+                }
+              }}
+            >
+              🚶 Build as I go — pick machines while I walk around
+            </button>
+          )}
+          {startError && <p className="workout-error" style={{ marginTop: '0.5rem' }}>{startError}</p>}
 
           <div style={{ marginTop: '0.85rem', borderTop: '1px solid var(--surface-border)', paddingTop: '0.85rem' }}>
             <button
@@ -563,6 +689,86 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
+      {volumeRows.length > 0 && (
+        <div className="workout-tile" style={{ marginTop: '1rem' }}>
+          <div className="workout-flex-between" style={{ marginBottom: '0.75rem', gap: '0.5rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Sets This Week</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span className="workout-hint">Goal</span>
+              <button className="btn btn-secondary" style={{ padding: '0.1rem 0.55rem' }} aria-label="Lower weekly set goal" onClick={() => updateWeeklyTarget(weeklySetTarget - 2)}>−</button>
+              <strong style={{ minWidth: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>{weeklySetTarget}</strong>
+              <button className="btn btn-secondary" style={{ padding: '0.1rem 0.55rem' }} aria-label="Raise weekly set goal" onClick={() => updateWeeklyTarget(weeklySetTarget + 2)}>+</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            {volumeRows.map(({ muscle, sets }) => {
+              const done = sets >= weeklySetTarget;
+              return (
+                <div key={muscle} style={{ display: 'grid', gridTemplateColumns: '5.5rem minmax(0, 1fr) 3.2rem', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                  <span>{muscle}</span>
+                  <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-border)', overflow: 'hidden' }} role="meter" aria-valuemin={0} aria-valuemax={weeklySetTarget} aria-valuenow={sets} aria-label={`${muscle} sets this week`}>
+                    <div style={{ width: `${Math.min(100, (sets / weeklySetTarget) * 100)}%`, height: '100%', borderRadius: 4, background: done ? 'var(--success)' : 'var(--accent)' }} />
+                  </div>
+                  <span style={{ textAlign: 'right', color: done ? 'var(--success)' : 'var(--muted)' }}>{Number.isInteger(sets) ? sets : sets.toFixed(1)}/{weeklySetTarget}{done ? ' ✓' : ''}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>Secondary muscles count as half a set. Resets Monday.</p>
+        </div>
+      )}
+
+      {!isDemo && (
+        <BodyweightCard onWeightChange={(weight) => { setUser((prev) => (prev ? { ...prev, weight } : prev)); setEditWeight(String(weight)); }} />
+      )}
+
+      {stalledLifts.length > 0 && (
+        <div className="workout-tile" style={{ marginTop: '1rem', borderLeft: '3px solid var(--warning)' }}>
+          <h3 style={{ margin: '0 0 0.35rem', fontSize: '1.05rem' }}>Plateaus</h3>
+          <p className="workout-hint" style={{ margin: '0 0 0.6rem' }}>
+            No new best in the last 3 sessions. Try a lighter week (Deload), a different rep range, or swap to a variation.
+          </p>
+          {stalledLifts.map((lift) => (
+            <div key={lift.liftId} className="workout-list-row" style={{ marginBottom: '0.35rem' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{lift.name}</span>
+              <span className="workout-hint">best e1RM {lift.bestE1RM} lbs · {lift.sessions} sessions</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {recentWorkouts.length > 0 && (
+        <div className="workout-tile" style={{ marginTop: '1rem' }}>
+          <div className="workout-flex-between" style={{ marginBottom: '0.75rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Recent Workouts</h3>
+            <a href="/workout/analytics" className="workout-text-btn">All history →</a>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {recentWorkouts.map((workout) => {
+              const setCount = Object.values(workout.logs || {}).reduce((sum: number, sets: any) => sum + (sets?.length || 0), 0);
+              const volume = workout.volume ?? workoutVolume(workout.logs);
+              return (
+                <div key={workout.id} className="workout-list-row" style={{ padding: '0.65rem 0.75rem' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {workout.isDeload ? '🧘 ' : ''}{workout.type?.name || workout.name}
+                    </div>
+                    <div className="workout-hint">
+                      {formatRelativeDay(workout.timestamp)} · {setCount} sets · {Math.round(volume).toLocaleString()} lbs{workout.duration ? ` · ${workout.duration}` : ''}
+                    </div>
+                  </div>
+                  {canRepeat(workout) && (
+                    <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem', borderRadius: '999px', flexShrink: 0 }} onClick={() => repeatWorkout(workout)}>
+                      Repeat
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
         <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/config'}>
           Configuration
@@ -579,6 +785,9 @@ export default function WorkoutDashboard() {
           }}
         >
           Calculators
+        </button>
+        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/report'}>
+          Weekly Report
         </button>
         <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>
           Advanced Analytics

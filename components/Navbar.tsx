@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import SiteSearch from './SiteSearch';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { useTheme } from './ThemeProvider';
@@ -41,6 +42,11 @@ export default function Navbar({ isAdmin }: { isAdmin: boolean }) {
       <Link href="/" style={{ fontWeight: 'bold', fontSize: '1.1rem', color: 'var(--foreground)', flexShrink: 0 }}>
         🐾 Noah Stuf
       </Link>
+
+      {/* One search for desktop and mobile; the auto margin keeps it beside the links. */}
+      <div style={{ marginLeft: 'auto', marginRight: '0.5rem', display: 'flex' }}>
+        <SiteSearch />
+      </div>
 
       {/* Desktop Links */}
       <div className="nav-links">

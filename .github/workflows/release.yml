@@ -1,0 +1,74 @@
+# Build a Raspberry Pi release on every push to master (or on demand) and
+# publish it as a GitHub release. The Pi installs it with scripts/deploy.sh.
+name: Release for Raspberry Pi
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write      # create the release
+  id-token: write      # sign the build attestation
+  attestations: write
+
+jobs:
+  release:
+    # Native 64-bit ARM, same as the Pi, so sharp's prebuilt binary matches.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npx eslint . --quiet
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_OUTPUT: standalone
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Package
+        run: RELEASE_ID="build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" node scripts/package-release.mjs --tar
+
+      - name: Smoke test the packaged build
+        run: |
+          mkdir -p /tmp/smoke && tar -xzf dist/*.tar.gz -C /tmp/smoke
+          cd /tmp/smoke && PORT=3999 node server.js > /tmp/smoke.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:3999/api/health && exit 0; sleep 1; done
+          cat /tmp/smoke.log; exit 1
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Passed through the environment, never pasted into the script.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          tag="$(cat dist/release-id)"
+          printf 'Automatic build of %s\n\n%s\n' "${GITHUB_SHA::7}" "${COMMIT_MESSAGE:-manual run}" > notes.md
+          gh release create "$tag" dist/*.tar.gz dist/*.tar.gz.sha256 \
+            --target "$GITHUB_SHA" --title "$tag" --latest --notes-file notes.md
+
+      - name: Keep the 10 newest builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+            | grep '^build-' | xargs -r -n1 gh release delete --cleanup-tag --yes

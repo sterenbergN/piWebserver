@@ -112,7 +112,7 @@ const UnitConverter = () => {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)', gap: '1rem', alignItems: 'center' }}>
+        <div className="converter-grid">
           
           {/* FROM */}
           <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -137,7 +137,20 @@ const UnitConverter = () => {
             </select>
           </div>
 
-          <div style={{ fontSize: '1.5rem', opacity: 0.5 }}>=</div>
+          <button
+            type="button"
+            className="btn btn-secondary converter-swap"
+            aria-label="Swap units"
+            title="Swap units"
+            onClick={() => {
+              const from = fromUnit;
+              setFromUnit(toUnit);
+              setToUnit(from);
+              if (result) setValue(result);
+            }}
+          >
+            ⇄
+          </button>
 
           {/* TO */}
           <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -171,7 +184,7 @@ export default function CalculatorTool() {
   const [activeCalc, setActiveCalc] = useState<'unit'>('unit');
 
   return (
-    <div className="glass-panel" style={{ padding: '2rem' }}>
+    <div className="glass-panel tool-panel">
       <h2 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Calculators</h2>
       
       {/* Sub-nav for growing calculators list */}

@@ -15,6 +15,7 @@ export default function LibraryPage() {
   const [displayMode, setDisplayMode] = useState<'compact' | 'detailed'>('detailed');
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
 
   // Edit state
   const [editingDoc, setEditingDoc] = useState<{ url: string; name: string; category: string; note: string } | null>(null);
@@ -36,9 +37,15 @@ export default function LibraryPage() {
 
   const saveSetting = (key: string, val: string) => localStorage.setItem(key, val);
 
+  // Search across title, category and note.
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleDocs = normalizedQuery
+    ? documents.filter(doc => [doc.name, doc.category, doc.note].some(field => String(field || '').toLowerCase().includes(normalizedQuery)))
+    : documents;
+
   const groupDocsByCategory = () => {
     const map: Record<string, any[]> = {};
-    documents.forEach(doc => {
+    visibleDocs.forEach(doc => {
       const cat = doc.category || 'Uncategorized';
       if (!map[cat]) map[cat] = [];
       map[cat].push(doc);
@@ -105,7 +112,7 @@ export default function LibraryPage() {
             <button onClick={e => { e.stopPropagation(); setEditingDoc({ url: doc.url, name: doc.name, category: doc.category || '', note: doc.note || '' }); }}
               style={{ background: 'transparent', color: 'var(--accent-light)', border: '1px solid var(--surface-border)', borderRadius: '6px', padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>✏️ Edit</button>
             <button onClick={e => { e.stopPropagation(); handleDelete(doc.url); }}
-              style={{ background: 'transparent', color: '#fc8181', border: '1px solid #fc8181', borderRadius: '6px', padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' }}>✕ Delete</button>
+              style={{ background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: '6px', padding: '0.2rem 0.55rem', cursor: 'pointer', fontSize: '0.78rem' }}>✕ Delete</button>
           </div>
         )}
 
@@ -120,7 +127,7 @@ export default function LibraryPage() {
         ) : (
           <>
             <div className="animate-fade-in" style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginBottom: '2rem' }}>
-              <div style={{ background: 'rgba(255,255,255,0.04)', padding: '1.25rem', borderRadius: '12px', color: 'var(--accent)', flexShrink: 0 }}>
+              <div style={{ background: 'var(--surface-hover)', padding: '1.25rem', borderRadius: '12px', color: 'var(--accent)', flexShrink: 0 }}>
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
@@ -159,9 +166,14 @@ export default function LibraryPage() {
             )}
 
             <div style={{ display: 'flex', gap: '0.75rem', marginTop: 'auto', flexWrap: 'wrap' }}>
-              <a href={doc.url} download target="_blank" rel="noreferrer" className="btn btn-primary"
+              <a href={doc.url} target="_blank" rel="noreferrer" className="btn btn-secondary"
                 onClick={e => e.stopPropagation()}
-                style={{ flex: 1, textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '0.5rem', alignItems: 'center', minWidth: '140px' }}>
+                style={{ flex: 1, textAlign: 'center', display: 'flex', justifyContent: 'center', alignItems: 'center', minWidth: '110px' }}>
+                Open
+              </a>
+              <a href={doc.url} download className="btn btn-primary"
+                onClick={e => e.stopPropagation()}
+                style={{ flex: 1, textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '0.5rem', alignItems: 'center', minWidth: '110px' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                 Download
               </a>
@@ -220,14 +232,38 @@ export default function LibraryPage() {
         </div>
       )}
 
+      {documents.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap' }}>
+          <input
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search manuals by name, category or note…"
+            aria-label="Search library"
+            style={{ flex: '1 1 260px', maxWidth: '520px' }}
+          />
+          <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+            {normalizedQuery ? `${visibleDocs.length} of ${documents.length}` : `${documents.length}`} document{documents.length === 1 ? '' : 's'}
+          </span>
+        </div>
+      )}
+
       {loading ? <p>Loading library assets...</p>
         : documents.length === 0 ? (
-          <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}><h3>No PDF Documents Available</h3></div>
+          <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
+            <h3>No documents yet</h3>
+            <p style={{ margin: '0.5rem 0 0' }}>{isAdmin ? 'Upload PDFs from the admin dashboard to see them here.' : 'Manuals and reference files will appear here once they are added.'}</p>
+          </div>
+        ) : visibleDocs.length === 0 ? (
+          <div className="glass-panel" style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}>
+            <h3>No matches for “{query.trim()}”</h3>
+            <button className="btn btn-secondary" style={{ marginTop: '1rem' }} onClick={() => setQuery('')}>Clear search</button>
+          </div>
         ) : (
           <>
             {!groupBy && (
-              <div className="grid animate-fade-in" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '2rem' }}>
-                {documents.map((doc, i) => renderDocumentCard(doc, i))}
+              <div className="grid library-grid animate-fade-in" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '2rem' }}>
+                {visibleDocs.map((doc, i) => renderDocumentCard(doc, i))}
               </div>
             )}
             {groupBy && (
@@ -235,7 +271,7 @@ export default function LibraryPage() {
                 {Object.entries(groupDocsByCategory()).map(([cat, docs]) => (
                   <div key={cat} style={{ marginBottom: '4rem' }}>
                     <h2 style={{ borderBottom: '1px solid var(--surface-border)', paddingBottom: '0.75rem', marginBottom: '2rem', color: 'var(--accent-light)', fontSize: '1.4rem', letterSpacing: '0.5px' }}>{cat}</h2>
-                    <div className="grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '2rem' }}>
+                    <div className="grid library-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: '2rem' }}>
                       {docs.map((doc, i) => renderDocumentCard(doc, i))}
                     </div>
                   </div>

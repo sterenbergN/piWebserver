@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { resolvePublicPath } from '@/lib/security/paths';
+import { isSafeBlogSlug, resolvePublicPath } from '@/lib/security/paths';
+import { writeJsonAtomic } from '@/lib/json-store';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await context.params;
+    // The slug becomes a file name; anything else (e.g. ../) must not reach the filesystem.
+    if (!isSafeBlogSlug(slug)) {
+      return NextResponse.json({ success: false, message: 'Post not found' }, { status: 404 });
+    }
     const isAdmin = await isAdminAuthenticated();
     const blogDir = path.join(process.cwd(), 'public', 'uploads', 'blog');
     const filePath = path.join(blogDir, `${slug}.md`);
@@ -43,7 +48,7 @@ export async function GET(request: Request, context: { params: Promise<{ slug: s
           const updatedPosts = posts.map((p: any) =>
             p.slug === slug ? { ...p, photos: validPhotos } : p
           );
-          await fs.writeFile(postsFile, JSON.stringify(updatedPosts, null, 2));
+          await writeJsonAtomic(postsFile, updatedPosts, true);
         }
       }
     } catch { /* ignore — no posts.json yet */ }
