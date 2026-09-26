@@ -44,10 +44,18 @@ jobs:
         run: RELEASE_ID="build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" node scripts/package-release.mjs --tar
 
       - name: Smoke test the packaged build
+        # Remove the build folders first so nothing can quietly depend on
+        # paths that only exist on this machine (the Pi won't have them).
         run: |
+          rm -rf .next-build release
           mkdir -p /tmp/smoke && tar -xzf dist/*.tar.gz -C /tmp/smoke
+          if find /tmp/smoke -type l -lname '/*' | grep .; then echo "absolute symlinks in release"; exit 1; fi
+          if find /tmp/smoke -xtype l | grep .; then echo "broken symlinks in release"; exit 1; fi
           cd /tmp/smoke && PORT=3999 node server.js > /tmp/smoke.log 2>&1 &
-          for i in $(seq 1 30); do curl -fs http://127.0.0.1:3999/api/health && exit 0; sleep 1; done
+          up=
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:3999/api/health && up=1 && break; sleep 1; done
+          # /api/media loads sharp (native): a thumbnail proves photos and PDFs will serve.
+          [ -n "$up" ] && curl -fsS -o /dev/null -w 'thumbnail %{http_code} %{content_type}\n' 'http://127.0.0.1:3999/api/media/icons/icon-192.png?w=128' && exit 0
           cat /tmp/smoke.log; exit 1
 
       - name: Attest build provenance

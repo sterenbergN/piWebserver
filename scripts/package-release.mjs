@@ -7,7 +7,7 @@
 // defaults for new installs are shipped in seed/ and never overwrite data.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, rm, writeFile, readdir } from 'node:fs/promises';
+import { cp, mkdir, readFile, readlink, rm, symlink, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -30,6 +30,27 @@ await cp(path.join(standalone, 'node_modules'), path.join(out, 'node_modules'), 
 await cp(path.join(standalone, path.basename(dist)), path.join(out, path.basename(dist)), { recursive: true });
 // Hashed static assets (not copied into standalone by Next).
 await cp(path.join(dist, 'static'), path.join(out, path.basename(dist), 'static'), { recursive: true });
+
+// Turbopack links external packages (e.g. .next-build/node_modules/sharp-<hash>)
+// with absolute paths into this build machine's standalone folder, which don't
+// exist on the Pi. Point them at the same place inside the release instead.
+async function relinkAbsoluteSymlinks(dir) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) { await relinkAbsoluteSymlinks(file); continue; }
+    if (!entry.isSymbolicLink()) continue;
+    const target = await readlink(file);
+    if (!path.isAbsolute(target)) continue;
+    const inside = path.relative(standalone, target);
+    if (inside.startsWith('..') || path.isAbsolute(inside)) {
+      throw new Error(`${path.relative(out, file)} links outside the build: ${target}`);
+    }
+    await rm(file);
+    await symlink(path.relative(dir, path.join(out, inside)), file);
+    console.log(`relinked ${path.relative(out, file)} -> ${path.relative(dir, path.join(out, inside))}`);
+  }
+}
+await relinkAbsoluteSymlinks(out);
 
 // Public assets minus site data.
 await mkdir(path.join(out, 'public'), { recursive: true });
