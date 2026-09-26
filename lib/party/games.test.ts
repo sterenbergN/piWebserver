@@ -197,3 +197,21 @@ test('prompt packs: chosen packs supply the prompts, unknown packs fall back to 
   const both = await getRandomPrompts('quip-clash', 2, ['classic', 'fam']);
   assert.deepEqual([...both].sort(), ['classic prompt', 'family prompt']);
 });
+
+test('avatars are unique per room and reactions are validated and rate-limited', async () => {
+  const { roomCode } = await engine.createRoom('quip-clash');
+  const a = await engine.joinRoom(roomCode, 'Ann', { avatar: '🦊' });
+  const b = await engine.joinRoom(roomCode, 'Bob', { avatar: '🦊' });
+  await engine.joinRoom(roomCode, 'Cy', { avatar: 'not-an-avatar' });
+  let state = (await engine.getGameState(roomCode))!;
+  const avatars = Object.values(state.players).map((p) => p.avatar);
+  assert.equal(avatars[0], '🦊');
+  assert.equal(new Set(avatars).size, 3);
+
+  const keyA = (a as { playerId: string }).playerId;
+  await engine.processAction(roomCode, keyA, { type: 'SUBMIT_REACTION', emoji: '😂' });
+  await engine.processAction(roomCode, keyA, { type: 'SUBMIT_REACTION', emoji: '🔥' }); // too soon: dropped
+  await engine.processAction(roomCode, (b as { playerId: string }).playerId, { type: 'SUBMIT_REACTION', emoji: '<script>' }); // not allowed
+  state = (await engine.getGameState(roomCode))!;
+  assert.deepEqual(state.reactions?.map((r) => r.emoji), ['😂']);
+});

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { GameType } from '@/lib/party/types';
+import { AVATARS } from '@/lib/party/avatars';
 
 export default function PartyLobby() {
   const router = useRouter();
@@ -14,6 +15,7 @@ export default function PartyLobby() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [lastPlayed, setLastPlayed] = useState<{ roomCode: string; playerId: string; audience?: boolean } | null>(null);
   const [audienceOffer, setAudienceOffer] = useState(false);
+  const [avatar, setAvatar] = useState<string>(AVATARS[0]);
   const [lastHosted, setLastHosted] = useState<{ roomCode: string; hostId: string } | null>(null);
 
   useEffect(() => {
@@ -24,6 +26,8 @@ export default function PartyLobby() {
     try {
       const savedName = localStorage.getItem('partyNickname');
       if (savedName) setPlayerName(savedName);
+      const savedAvatar = localStorage.getItem('partyAvatar');
+      setAvatar(savedAvatar && (AVATARS as readonly string[]).includes(savedAvatar) ? savedAvatar : AVATARS[Math.floor(Math.random() * AVATARS.length)]);
       const recent = (key: string) => {
         const raw = JSON.parse(localStorage.getItem(key) || 'null');
         return raw && Date.now() - raw.at < 6 * 60 * 60 * 1000 ? raw : null;
@@ -43,7 +47,7 @@ export default function PartyLobby() {
       const res = await fetch('/api/party/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName, asAudience }),
+        body: JSON.stringify({ roomCode: roomCode.toUpperCase(), playerName, asAudience, avatar }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -54,6 +58,7 @@ export default function PartyLobby() {
         const seat = { roomCode: roomCode.toUpperCase(), playerId: data.playerId, audience: data.audience === true };
         try {
           localStorage.setItem('partyNickname', playerName.trim());
+          localStorage.setItem('partyAvatar', avatar);
           localStorage.setItem('partyLastPlayed', JSON.stringify({ ...seat, at: Date.now() }));
         } catch { /* ignore */ }
         router.push(seatPath(seat));
@@ -140,6 +145,14 @@ export default function PartyLobby() {
                   value={playerName} onChange={e => setPlayerName(e.target.value)}
                   className="party-input" style={{ fontSize: '1.25rem', fontWeight: 700, textAlign: 'center' }}
                   placeholder="Enter nickname..." required />
+              </div>
+              <div className="party-form-group">
+                <label className="party-label">Pick your character {avatar}</label>
+                <div className="party-avatar-grid" role="radiogroup" aria-label="Character">
+                  {AVATARS.map(a => (
+                    <button key={a} type="button" role="radio" aria-checked={avatar === a} aria-pressed={avatar === a} className="party-avatar-option" onClick={() => setAvatar(a)}>{a}</button>
+                  ))}
+                </div>
               </div>
               <button type="submit" disabled={loading || !roomCode || !playerName} className="party-btn party-btn-primary" style={{ marginTop: '0.5rem' }}>
                 {loading ? 'Joining...' : 'Join Game 🚀'}

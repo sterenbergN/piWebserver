@@ -6,7 +6,12 @@ export interface Player {
   score: number;
   connected: boolean;
   avatarColor: string;
+  /** Character emoji picked on joining (see AVATARS). */
+  avatar?: string;
 }
+
+/** An emoji a phone threw at the TV. */
+export interface Reaction { id: number; from: string; emoji: string; at: number }
 
 export interface AudienceMember {
   id: string;
@@ -40,6 +45,8 @@ export interface GameState {
   audience?: Record<string, AudienceMember>;
   audienceKeys?: Record<string, string>;
   audienceVote?: AudienceVote | null;
+  /** Recent reactions for the TV to animate (newest last, capped). */
+  reactions?: Reaction[];
   /** Host choices that survive between games in the room. */
   settings?: { packs?: string[] };
   // Game-specific data for the host

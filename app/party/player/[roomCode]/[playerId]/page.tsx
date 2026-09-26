@@ -2,6 +2,8 @@
 import { useState, useEffect, use } from 'react';
 import Link from 'next/link';
 import { shareResultsCard } from '@/components/party/resultsCard';
+import { useImmersive } from '@/components/party/HostShow';
+import { ReactionBar, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
 
 const GAME_NAMES: Record<string, string> = {
   'quip-clash': 'Quip Clash', 'the-faker': 'The Faker', 'trivia-death': 'Trivia Death', 'bracket-battles': 'Bracket Battles', 'ready-set-bet': 'Ready Set Bet',
@@ -17,6 +19,11 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const [inputValue, setInputValue] = useState('');
   const [reconnecting, setReconnecting] = useState(false);
   const [sendError, setSendError] = useState('');
+  useImmersive('party-phone');
+  // Vibrate when a new screen asks for input.
+  const inputPhases = ['PROMPTING', 'VOTING', 'QUESTION', 'FINAL_ESCAPE', 'PREDICTION', 'MATCHUP', 'TIEBREAKER', 'RACING', 'TASK_DELIVERY'];
+  useTurnBuzz(state ? `${state.phase}|${state.data?.phase}|${state.data?.prompt || state.data?.question || ''}|${state.data?.isOnFloor ? 'floor' : ''}` : null,
+    !!state && (inputPhases.includes(state.data?.phase) || (state.data?.phase === 'KILLING_FLOOR' && state.data?.isOnFloor)));
 
   useEffect(() => {
     const sse = new EventSource(`/api/party/stream/player?roomCode=${roomCode}&playerId=${playerId}`);
@@ -85,7 +92,10 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--party-bg)' }}>
       <div className="player-header party-content" style={{ borderBottomColor: me.avatarColor }}>
-        <div><div className="player-header-name" style={{ color: me.avatarColor }}>{me.name} {pd?.status === 'ghost' ? '👻' : ''}</div></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {me.avatar && <span style={{ fontSize: '1.8rem' }}>{me.avatar}</span>}
+          <div className="player-header-name" style={{ color: me.avatarColor }}>{me.name} {pd?.status === 'ghost' ? '👻' : ''}</div>
+        </div>
         <div style={{ textAlign: 'right' }}>
           <div className="player-header-score-label">{pd?.money !== undefined ? 'Money' : 'Score'}</div>
           <div className="player-header-score">{pd?.money !== undefined ? '$'+myScore : myScore}</div>
@@ -106,14 +116,14 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       <div className="player-body party-content">
         {state.phase === 'LOBBY' && (
           <div className="player-waiting">
-            <div className="player-avatar-big" style={{ color: me.avatarColor, borderColor: me.avatarColor }}>{me.name.charAt(0)}</div>
+            <div className="player-avatar-big" style={{ color: me.avatarColor, borderColor: me.avatarColor, fontSize: me.avatar ? '3.5rem' : undefined }}>{me.avatar || me.name.charAt(0)}</div>
             <div className="player-waiting-title">You're in!</div>
             <p className="player-waiting-sub">Waiting for the host to start. Look at the TV.</p>
             {others.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center', marginTop: '1rem' }}>
                 {others.map((p) => (
                   <span key={p.id} style={{ border: `2px solid ${p.avatarColor}`, color: p.avatarColor, borderRadius: '999px', padding: '0.2rem 0.7rem', fontWeight: 700, fontSize: '0.85rem', opacity: p.connected ? 1 : 0.45 }}>
-                    {p.name}
+                    {p.avatar} {p.name}
                   </span>
                 ))}
               </div>
@@ -133,6 +143,9 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                       onChange={e => { const c=[...answers]; c[i]=e.target.value; setAnswers(c); }} />
                     <button type="submit" disabled={!answers[i].trim()} className="party-btn party-btn-primary party-btn-inline">Send</button>
                   </form>
+                )}
+                {!pd.answers?.[i] && (
+                  <button type="button" className="party-safety-btn" onClick={() => { const c = [...answers]; c[i] = safetyQuip(); setAnswers(c); }}>🛟 Safety quip</button>
                 )}
               </div>
             ))}
@@ -351,6 +364,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   style={{ textAlign: 'center', fontSize: '1.1rem', padding: '1rem' }} />
                 <button type="submit" disabled={!inputValue.trim()} className="party-btn party-btn-primary"
                   style={{ padding: '1rem', fontSize: '1.1rem' }}>SUBMIT</button>
+                <button type="button" className="party-safety-btn" onClick={() => setInputValue(safetyQuip())}>🛟 Safety answer</button>
               </form>
             )}
           </div>
@@ -485,6 +499,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           </div>
         )}
       </div>
+      <ReactionBar onReact={(emoji) => { sendAction({ type: 'SUBMIT_REACTION', emoji }); }} />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useState, useEffect, use, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
 import { shareResultsCard } from '@/components/party/resultsCard';
+import { GAME_TITLES, ReactionLayer, ScoreTicker, SoundBar, TitleCard, VoterFaces, useImmersive, useShowDirector } from '@/components/party/HostShow';
 
 function useCountdown(timerStart?: number, timerDuration?: number) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
@@ -116,6 +117,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration);
+  useImmersive('party-tv');
+  const show = useShowDirector(state, secondsLeft);
 
   const sendAction = useCallback(async (action: any) => {
     await fetch('/api/party/action', {
@@ -192,6 +195,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
       <div className="party-bg"><div className="party-bg-orb party-bg-orb-1" /><div className="party-bg-orb party-bg-orb-2" /></div>
 
       {showQuitDialog && <QuitDialog onQuit={handleQuit} onCancel={() => setShowQuitDialog(false)} />}
+      {show.card && <TitleCard card={show.card} color={GAME_TITLES[state.gameType]?.color} />}
+      <ReactionLayer reactions={state.reactions} players={state.players} />
+      {isPlaying && <ScoreTicker players={state.players} order={state.playerOrder} />}
 
       {/* Top bar */}
       <div className="host-topbar party-content">
@@ -215,6 +221,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
           )}
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
         {isPlaying ? (
           <button onClick={() => setShowQuitDialog(true)} style={{ background: 'rgba(239,68,68,0.15)', border: '2px solid rgba(239,68,68,0.4)', borderRadius: '12px', color: 'var(--party-red)', fontWeight: 800, padding: '0.6rem 1.25rem', cursor: 'pointer' }}>
             🚪 End Game
@@ -224,6 +231,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             ← Home
           </button>
         )}
+          <SoundBar prefs={show.prefs} setPrefs={show.setPrefs} soundOn={show.soundOn} enableSound={show.enableSound} />
+        </div>
       </div>
 
       <div className="host-stage party-content">
@@ -247,7 +256,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                     title={`Remove ${p.name}`}
                     style={{ position: 'absolute', top: 8, right: 8, background: 'transparent', border: 'none', color: 'var(--party-text-muted)', cursor: 'pointer', fontSize: '0.9rem' }}
                   >✕</button>
-                  <div className="host-player-avatar" style={{ border: `3px solid ${p.avatarColor}`, color: p.avatarColor }}>{p.name.charAt(0)}</div>
+                  <div className="host-player-avatar" style={{ border: `3px solid ${p.avatarColor}`, color: p.avatarColor, fontSize: p.avatar ? '2.2rem' : undefined }}>{p.avatar || p.name.charAt(0)}</div>
                   <div className="host-player-name">{p.name}</div>
                   {!p.connected && <div style={{ fontSize: '0.7rem', color: 'var(--party-text-muted)' }}>reconnecting…</div>}
                 </div>
@@ -360,6 +369,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   <div className="host-result-card-by">{state.players[pid]?.name}</div>
                   <div className="host-result-answer">{state.hostData.answers?.[pid]}</div>
                   <div className="host-result-votes"><div className="host-result-votes-num">{state.hostData.tally[pid]}</div></div>
+                  <VoterFaces ids={state.hostData.voters?.[pid]} players={state.players} />
                   {state.hostData.audienceTally && (
                     <div style={{ fontSize: '0.85rem', color: 'var(--party-cyan)', fontWeight: 800, marginTop: '0.5rem' }}>
                       👀 {state.hostData.audienceTally[pid] || 0} audience{state.hostData.audienceFavorite === pid ? ' · favorite +250' : ''}
@@ -412,6 +422,17 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </div>
             ) : (
               <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>No majority vote.</div>
+            )}
+            {state.hostData.voters && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'center', marginBottom: '1.5rem' }}>
+                {Object.entries(state.hostData.voters as Record<string, string[]>).filter(([, ids]) => ids.length > 0).map(([target, ids]) => (
+                  <div key={target} className="party-card" style={{ padding: '0.75rem 1rem', minWidth: 160, textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.8rem' }}>{state.players[target]?.avatar}</div>
+                    <div style={{ fontWeight: 900 }}>{state.players[target]?.name}</div>
+                    <VoterFaces ids={ids} players={state.players} />
+                  </div>
+                ))}
+              </div>
             )}
             <div className="host-faker-revealed" style={{ width: '100%', maxWidth: '700px' }}>
               <div>
@@ -718,7 +739,10 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   }}>
                     <div style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '1rem' }}>{ans.answer}</div>
                     {state.phase === 'MATCH_RESULT' && (
-                       <div style={{ fontSize: '1.5rem', color: isWinner ? 'var(--party-green)' : 'var(--party-text-muted)' }}>{votes} Votes</div>
+                       <>
+                         <div style={{ fontSize: '1.5rem', color: isWinner ? 'var(--party-green)' : 'var(--party-text-muted)' }}>{votes} Votes</div>
+                         <VoterFaces ids={state.hostData.voters?.[ans.id]} players={state.players} />
+                       </>
                     )}
                   </div>
                 );

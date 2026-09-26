@@ -4,7 +4,7 @@ import { joinRoom } from '@/lib/party/engine';
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    const result = await joinRoom(body?.roomCode, body?.playerName, { asAudience: body?.asAudience === true });
+    const result = await joinRoom(body?.roomCode, body?.playerName, { asAudience: body?.asAudience === true, avatar: body?.avatar });
     if ('error' in result) {
       return NextResponse.json({ error: result.error, audienceAvailable: result.audienceAvailable === true }, { status: 400 });
     }

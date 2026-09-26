@@ -246,6 +246,8 @@ function calculateRoundVotes(state: GameState) {
     prompt: currentPrompt,
     tally,
     audienceTally: audience.total > 0 ? audience.tally : null,
+    // Who voted for which answer, so the TV can show their faces on it.
+    voters: Object.fromEntries(owners.map((pid: string) => [pid, Object.keys(votes).filter((v) => votes[v] === pid)])),
     audienceFavorite: audience.winner,
     answers: state.gameData.answers[currentIdx] || {},
     quipLash,

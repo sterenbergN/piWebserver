@@ -10,6 +10,7 @@ import { bracketBattlesLogic } from './games/bracket-battles';
 import { readySetBetLogic } from './games/ready-set-bet';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
+import { AVATARS, isAvatar, isReaction } from './avatars';
 import { getPrompts, listPacks } from './prompts';
 
 const DATA_DIR = path.join(process.cwd(), '.data', 'party');
@@ -186,7 +187,7 @@ export type JoinResult =
   | { playerId: string; rejoined?: boolean; audience?: boolean }
   | { error: string; audienceAvailable?: boolean };
 
-export async function joinRoom(roomCode: string, playerName: string, options: { asAudience?: boolean } = {}): Promise<JoinResult> {
+export async function joinRoom(roomCode: string, playerName: string, options: { asAudience?: boolean; avatar?: unknown } = {}): Promise<JoinResult> {
   const code = normalizeRoomCode(roomCode);
   const name = sanitizePlayerName(playerName);
   if (!code) return { error: 'Room codes are 4 letters' };
@@ -219,7 +220,12 @@ export async function joinRoom(roomCode: string, playerName: string, options: { 
     const usedColors = new Set(Object.values(state.players).map((p) => p.avatarColor));
     const color = COLORS.find((c) => !usedColors.has(c)) || COLORS[state.playerOrder.length % COLORS.length];
 
-    state.players[playerId] = { id: playerId, name, score: 0, connected: true, avatarColor: color };
+    // Characters are unique per room: take the one asked for if it's free.
+    const usedAvatars = new Set(Object.values(state.players).map((p) => p.avatar));
+    const avatar = isAvatar(options.avatar) && !usedAvatars.has(options.avatar)
+      ? options.avatar
+      : AVATARS.find((a) => !usedAvatars.has(a)) || AVATARS[state.playerOrder.length % AVATARS.length];
+    state.players[playerId] = { id: playerId, name, score: 0, connected: true, avatarColor: color, avatar };
     state.playerOrder.push(playerId);
     const key = newPlayerKey(state, playerId);
     await saveGameState(state);
@@ -342,6 +348,20 @@ function sanitizeAction(action: Record<string, any>) {
   return clean;
 }
 
+const REACTION_GAP_MS = 600;
+const MAX_REACTIONS = 30;
+
+function addReaction(state: GameState, from: string, emoji: unknown): boolean {
+  if (!isReaction(emoji)) return false;
+  const list = (state.reactions ||= []);
+  const now = Date.now();
+  const last = [...list].reverse().find((r) => r.from === from);
+  if (last && now - last.at < REACTION_GAP_MS) return false;
+  list.push({ id: (list[list.length - 1]?.id || 0) + 1, from, emoji, at: now });
+  if (list.length > MAX_REACTIONS) list.splice(0, list.length - MAX_REACTIONS);
+  return true;
+}
+
 function resetToLobby(state: GameState, resetScores: boolean) {
   state.phase = 'LOBBY';
   state.hostData = {};
@@ -368,6 +388,11 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
     if (!playerId) {
       const audienceId = resolveAudienceKey(state, actorKey);
       if (!audienceId) return { success: false, error: 'You are not in this room' };
+      if (action.type === 'SUBMIT_REACTION') {
+        if (!addReaction(state, audienceId, action.emoji)) return { success: true };
+        await saveGameState(state);
+        return { success: true };
+      }
       if (action.type !== 'AUDIENCE_VOTE') return { success: false, error: 'The audience can only vote' };
       if (!recordAudienceVote(state, audienceId, action.choice)) return { success: false, error: 'Voting is closed' };
       await saveGameState(state);
@@ -383,6 +408,10 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
     }
 
     switch (action.type) {
+      case 'SUBMIT_REACTION':
+        // Rate-limited; a dropped reaction isn't an error worth showing.
+        if (!addReaction(state, playerId, action.emoji)) return { success: true };
+        break;
       case 'START_GAME': {
         const min = MIN_PLAYERS[state.gameType];
         if (state.playerOrder.length < min) return { success: false, error: `Need at least ${min} players` };

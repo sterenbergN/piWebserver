@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
+import { useImmersive } from '@/components/party/HostShow';
+import { ReactionBar } from '@/components/party/PhoneExtras';
 
 type Poll = { key: string; prompt: string; choices: { id: string; label: string }[]; myChoice: string | null };
 type AudienceState = {
@@ -28,6 +30,7 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
   const [error, setError] = useState('');
   const [reconnecting, setReconnecting] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  useImmersive('party-phone');
 
   useEffect(() => {
     const sse = new EventSource(`/api/party/stream/audience?roomCode=${roomCode}&key=${key}`);
@@ -139,6 +142,7 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
           </div>
         )}
       </div>
+      <ReactionBar onReact={(emoji) => { fetch('/api/party/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomCode, playerId: key, action: { type: 'SUBMIT_REACTION', emoji } }) }).catch(() => {}); }} />
     </div>
   );
 }

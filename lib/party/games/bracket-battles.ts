@@ -429,11 +429,19 @@ function finalizeMatchWinner(state: GameState, matchId: number, winner: any, los
 
   state.hostData = {
     message: 'Winner Advances!',
+    // Keep both answers on screen for the result (in the order they were shown).
+    answers: [bracket[matchId].answer1, bracket[matchId].answer2],
+    prompt: bracket[matchId].prompt,
+    matchId,
     winner,
     loser,
     votes: {
       [winner.id]: winner === bracket[matchId].answer1 ? v1 : v2,
       [loser.id]: loser === bracket[matchId].answer1 ? v1 : v2
+    },
+    voters: {
+      [winner.id]: Object.keys(votes || {}).filter((pid) => votes[pid] === winner.id),
+      [loser.id]: Object.keys(votes || {}).filter((pid) => votes[pid] === loser.id),
     },
     timerStart: Date.now(),
     timerDuration: 6,

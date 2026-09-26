@@ -266,6 +266,7 @@ function calculateFakerRoundResult(state: GameState) {
     fakerCaught,
     fakerEliminated,
     voteCounts,
+    voters: Object.fromEntries(activePlayers.map((pid) => [pid, Object.keys(votes).filter((v) => votes[v] === pid)])),
     eliminatedPlayers: state.gameData.eliminatedPlayers,
     isGameOver,
     timerStart: Date.now(),
