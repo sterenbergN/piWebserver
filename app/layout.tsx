@@ -14,6 +14,7 @@ export const metadata: Metadata = {
   title: { default: "Noah Sterenberg", template: "%s · Noah Sterenberg" },
   description: "Personal Website and Server Dashboard",
   ...(siteUrl ? { metadataBase: new URL(siteUrl) } : {}),
+  alternates: { types: { "application/rss+xml": [{ url: "/feed.xml", title: "Posts" }] } },
   openGraph: { type: "website", siteName: "Noah Sterenberg", title: "Noah Sterenberg", description: "Engineer, maker and tinkerer — projects, photos, games and tools, self-hosted on a Raspberry Pi." },
   appleWebApp: { capable: true, title: "Noah Stuf", statusBarStyle: "black-translucent" },
   icons: { apple: "/icons/apple-touch-icon.png" },

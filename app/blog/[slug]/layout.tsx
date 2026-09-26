@@ -10,7 +10,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const origin = siteOrigin(await headers());
   const image = mediaUrl(post.image);
   return {
-    title: post.title,
+    // Absolute: the /blog layout's own title would otherwise drop the site-name suffix.
+    title: { absolute: `${post.title} · Noah Sterenberg` },
     description: post.description,
     openGraph: {
       type: 'article',

@@ -38,6 +38,7 @@ export default function Home() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [experience, setExperience] = useState<ExperienceEntry[]>([]);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
+  const [latestPosts, setLatestPosts] = useState<{ slug: string; title: string; description?: string; image?: string; date?: string }[]>([]);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [isExpExpanded, setIsExpExpanded] = useState(false);
   const [cadExpanded, setCadExpanded] = useState(false);
@@ -48,6 +49,9 @@ export default function Home() {
 
   useEffect(() => {
     setMounted(true);
+    fetch('/api/blog').then(r => r.json()).then(d => {
+      if (d.success) setLatestPosts([...(d.posts || [])].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3));
+    }).catch(() => {});
     fetch('/api/resume').then(r => r.json()).then(d => {
       if (!d.success) return;
       setProfile(d.resume.profile);
@@ -473,8 +477,10 @@ export default function Home() {
         )}
 
         {/* Experience & Skills */}
+        {(experience.length > 0 || skills.length > 0) && (
         <section className="grid animate-fade-in" style={{ gridTemplateColumns: isExpExpanded ? '1fr' : 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem', transition: 'grid-template-columns 0.5s' }}>
           {/* Experience card — timeline grows from within */}
+          {experience.length > 0 && (
           <div className="premium-card exp-card" style={{ cursor: 'pointer', gridColumn: isExpExpanded ? '1 / -1' : 'auto' }}>
             <div onClick={() => setIsExpExpanded(!isExpExpanded)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '2rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -506,7 +512,6 @@ export default function Home() {
                     <p style={{ fontSize: '0.9rem', color: 'var(--muted)', lineHeight: 1.5 }}>{exp.description}</p>
                   </div>
                 ))}
-                {experience.length === 0 && <p style={{ color: 'var(--muted)' }}>No experience found.</p>}
               </div>
             ) : (
               <div className="htl-scroll animate-fade-in" style={{ margin: '0 -2rem -2rem', borderBottomLeftRadius: '16px', borderBottomRightRadius: '16px' }}>
@@ -548,8 +553,10 @@ export default function Home() {
               </div>
             )}
           </div>
+          )}
 
           {/* Skills card — no-clip so popover isn't hidden */}
+          {skills.length > 0 && (
           <div className="premium-card no-clip">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
               <div style={{ background: 'var(--accent)', padding: '0.5rem', borderRadius: '8px', color: 'white' }}>
@@ -595,14 +602,42 @@ export default function Home() {
                   )}
                 </div>
               ))}
-              {skills.length === 0 && <p style={{ color: 'var(--muted)' }}>No skills found.</p>}
             </div>
           </div>
+          )}
         </section>
+        )}
+
+        {/* Latest posts */}
+        {latestPosts.length > 0 && (
+          <section className="animate-fade-in">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontSize: '2rem', letterSpacing: '-0.02em', margin: 0 }}>Latest Posts</h2>
+              <Link href="/blog" style={{ color: 'var(--accent)', fontWeight: 600 }}>All posts →</Link>
+            </div>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.5rem' }}>
+              {latestPosts.map(post => {
+                const img = post.image ? `${post.image.startsWith('/api/media') ? post.image : `/api/media${post.image}`}?w=640` : null;
+                return (
+                  <Link key={post.slug} href={`/blog/${post.slug}`} className="premium-card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', textDecoration: 'none', color: 'var(--foreground)' }}>
+                    {img && (
+                      <img src={img} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />
+                    )}
+                    <div style={{ padding: '1.25rem' }}>
+                      {post.date && <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.3rem' }}>{new Date(post.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>}
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', lineHeight: 1.3 }}>{post.title}</h3>
+                      {post.description && <p style={{ margin: '0.5rem 0 0', color: 'var(--muted)', fontSize: '0.9rem', lineHeight: 1.5 }}>{post.description}</p>}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Projects (hidden until there is something to feature) */}
         {projects.length > 0 && (
-        <section className="animate-fade-in">
+        <section id="projects" className="animate-fade-in">
           <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
             <h2 style={{ fontSize: '2rem', letterSpacing: '-0.02em', marginBottom: '0.75rem' }}>Featured Projects</h2>
             <p style={{ color: 'var(--muted)', fontSize: '1.1rem' }}>Highlights from my blog and portfolio.</p>
