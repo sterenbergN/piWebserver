@@ -105,7 +105,7 @@ export default function BackupsPanel() {
           <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> Nightly backups on
         </label>
         <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.9rem' }}>
-          <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (large)
+          <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (up to 500 MB per backup)
         </label>
       </div>
       {dirty && <button className="btn btn-primary" disabled={!!busy} onClick={saveSettings} style={{ marginBottom: '1rem' }}>Save backup settings</button>}

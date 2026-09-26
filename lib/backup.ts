@@ -11,6 +11,11 @@ const root = () => process.cwd();
 const SETTINGS_FILE = () => path.join(root(), '.data', 'backup-settings.json');
 const NAME_RE = /^backup-\d{4}-\d{2}-\d{2}-\d{6}(-[a-z0-9-]{1,30})?\.zip$/;
 const DATA_EXTENSIONS = new Set(['.json', '.md', '.txt']);
+/**
+ * Zips are built in memory, so photos/PDFs are included only up to this much
+ * per backup (a Pi can run out of RAM otherwise). Data files always go in.
+ */
+export const MEDIA_BUDGET_BYTES = 512 * 1024 * 1024;
 /** Where restores may write, relative to the project root. */
 const RESTORE_PREFIXES = ['.data/', 'public/content/', 'public/uploads/'];
 
@@ -116,15 +121,26 @@ export async function createBackup(label = 'manual'): Promise<BackupInfo> {
   const files = await collectBackupFiles(settings.includeMedia);
 
   const zip = new AdmZip();
+  let mediaBytes = 0;
+  let added = 0;
+  const skippedMedia: string[] = [];
   for (const file of files) {
+    const isMedia = file.startsWith('public/uploads/') && !DATA_EXTENSIONS.has(path.extname(file).toLowerCase());
+    if (isMedia) {
+      const size = (await fs.stat(path.join(root(), file)).catch(() => null))?.size ?? 0;
+      if (mediaBytes + size > MEDIA_BUDGET_BYTES) { skippedMedia.push(file); continue; }
+      mediaBytes += size;
+    }
     const buffer = await fs.readFile(path.join(root(), file)).catch(() => null);
-    if (buffer) zip.addFile(file, buffer);
+    if (buffer) { zip.addFile(file, buffer); added++; }
   }
+  if (skippedMedia.length) console.warn(`Backup ${name}: left out ${skippedMedia.length} media files over the ${MEDIA_BUDGET_BYTES / 1024 / 1024} MB limit`);
   zip.addFile('backup-manifest.json', Buffer.from(JSON.stringify({
     createdAt: new Date().toISOString(),
     label: safeLabel,
-    files: files.length,
+    files: added,
     includeMedia: settings.includeMedia,
+    skippedMedia: skippedMedia.length,
   }, null, 2)));
 
   await fs.mkdir(settings.dir, { recursive: true });
