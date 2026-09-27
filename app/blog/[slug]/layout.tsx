@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
-import { getPosts, mediaUrl, siteOrigin } from '@/lib/site-content';
+import { getPosts, siteOrigin } from '@/lib/site-content';
+import { mediaSrc } from '@/lib/media-url';
 
 // Title, description and preview image for shared blog links.
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -8,7 +9,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const post = (await getPosts()).find((p) => p.slug === slug);
   if (!post) return { title: 'Post not found' };
   const origin = siteOrigin(await headers());
-  const image = mediaUrl(post.image);
+  // A 1280px copy: quick for link-preview crawlers, sharp enough for large cards.
+  const image = post.image ? mediaSrc(post.image, 1280) : undefined;
   return {
     // Absolute: the /blog layout's own title would otherwise drop the site-name suffix.
     title: { absolute: `${post.title} · Noah Sterenberg` },

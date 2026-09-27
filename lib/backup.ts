@@ -7,7 +7,8 @@ import AdmZip from 'adm-zip';
 // and markdown, library index). Photos/PDFs are optional because they're big.
 // Backups are zip files in a configurable folder — point it at a USB drive.
 
-const root = () => process.cwd();
+// Data lives next to the running app; tell the bundler not to trace it as code.
+const root = () => path.resolve(/*turbopackIgnore: true*/ process.cwd());
 const SETTINGS_FILE = () => path.join(root(), '.data', 'backup-settings.json');
 const NAME_RE = /^backup-\d{4}-\d{2}-\d{2}-\d{6}(-[a-z0-9-]{1,30})?\.zip$/;
 const DATA_EXTENSIONS = new Set(['.json', '.md', '.txt']);

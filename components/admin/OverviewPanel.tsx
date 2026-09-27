@@ -46,7 +46,8 @@ export default function OverviewPanel() {
         { label: 'Last 24 hours', value: visits.filter(v => age(v) < DAY).length },
         { label: 'Last 7 days', value: visits.filter(v => age(v) < 7 * DAY).length },
         { label: 'Last 30 days', value: visits.filter(v => age(v) < 30 * DAY).length },
-        { label: 'All time', value: visits.length },
+        // The log keeps the newest 10,000 visits, so this is "since the oldest one kept".
+        { label: visits.length >= 10000 ? 'Last 10,000' : 'All time', value: visits.length },
       ],
       days,
       maxDay: Math.max(1, ...days.map(d => d.count)),
@@ -92,7 +93,7 @@ export default function OverviewPanel() {
         <div className="adm-card-head">
           <div>
             <h2 id="visits-title">📈 Visits</h2>
-            <p>Page views on the site.</p>
+            <p>Page views by people — bots and your own admin browsing aren’t counted.</p>
           </div>
         </div>
         {!summary ? <ProgressBar label="Loading visits…" /> : (

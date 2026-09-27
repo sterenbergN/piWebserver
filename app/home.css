@@ -70,6 +70,31 @@
 .home-email { max-width: 380px; margin: 1.75rem auto 0; display: flex; flex-direction: column; gap: 1rem; }
 .home-email-address { background: var(--background); border: 1px solid var(--surface-border); border-radius: 12px; padding: 0.9rem; font-family: monospace; font-size: 1rem; word-break: break-all; }
 
+/* Live Pi badge (top of the hero) */
+.home-pi {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem 0.55rem;
+  margin-bottom: 1.5rem;
+  padding: 0.4rem 0.95rem;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--success-rgb), 0.35);
+  background: rgba(var(--success-rgb), 0.08);
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.home-pi:hover { border-color: rgba(var(--success-rgb), 0.7); background: rgba(var(--success-rgb), 0.14); }
+.home-pi-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 0 rgba(var(--success-rgb), 0.6); animation: homePiPulse 2s ease-out infinite; }
+@keyframes homePiPulse { 70% { box-shadow: 0 0 0 7px rgba(var(--success-rgb), 0); } 100% { box-shadow: 0 0 0 0 rgba(var(--success-rgb), 0); } }
+.home-pi-part { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.home-pi-part::before { content: '·'; margin-right: 0.55rem; opacity: 0.6; }
+@media (prefers-reduced-motion: reduce) { .home-pi-dot { animation: none; } }
+
 /* Explore tiles */
 .home-explore { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 0.75rem; }
 .home-explore-item {

@@ -16,6 +16,25 @@ export async function getPosts(): Promise<PostMeta[]> {
   }
 }
 
+export type PostPhoto = { src: string; description?: string };
+export type FullPost = PostMeta & { photos: PostPhoto[]; content: string };
+
+/** One post with its markdown, or null if it doesn't exist. Photos whose files are gone are left out. */
+export async function getPost(slug: string): Promise<FullPost | null> {
+  if (!/^[a-z0-9-]+$/.test(slug)) return null; // the slug becomes a file name
+  const blogDir = path.join(process.cwd(), 'public', 'uploads', 'blog');
+  const meta = (await getPosts()).find((p) => p.slug === slug) as (PostMeta & { photos?: PostPhoto[] }) | undefined;
+  const content = await fs.readFile(path.join(blogDir, `${slug}.md`), 'utf-8').catch(() => null);
+  if (!meta || content === null) return null;
+  const photos: PostPhoto[] = [];
+  for (const photo of Array.isArray(meta.photos) ? meta.photos : []) {
+    const rel = String(photo.src || '').replace(/^\/api\/media\//, '').replace(/^\//, '');
+    if (!rel || rel.includes('..')) continue;
+    if (await fs.access(path.join(process.cwd(), 'public', rel)).then(() => true, () => false)) photos.push(photo);
+  }
+  return { ...meta, photos, content };
+}
+
 export type GalleryImage = { src: string; caption: string };
 export type GalleryAlbum = { id: string; name: string; images: GalleryImage[]; albums: GalleryAlbum[] };
 
