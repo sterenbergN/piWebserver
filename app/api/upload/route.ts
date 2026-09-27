@@ -20,6 +20,8 @@ type BlogPost = {
   category: string;
   image: string;
   date: string;
+  /** Set when the post is edited after publishing. */
+  updatedAt?: string;
   photos: BlogPhoto[];
 };
 
@@ -238,6 +240,95 @@ export async function POST(request: Request) {
       await saveAlbums(albums);
 
       return NextResponse.json({ success: true, post: newPost });
+    }
+
+    // In-browser post editor: create or update a post from text fields, with an optional cover.
+    if (type === 'blog-editor') {
+      const requestedSlug = String(formData.get('slug') || '').trim();
+      const title = String(formData.get('title') || '').trim().slice(0, 160);
+      const description = String(formData.get('description') || '').trim().slice(0, 400);
+      const category = String(formData.get('category') || '').trim().slice(0, 60) || 'Uncategorized';
+      const markdown = String(formData.get('markdown') || '');
+      const cover = formData.get('cover') as File | null;
+      if (!title || !markdown.trim()) {
+        return NextResponse.json({ success: false, message: 'A post needs a title and some text.' }, { status: 400 });
+      }
+      if (markdown.length > 300_000) {
+        return NextResponse.json({ success: false, message: 'That post is too long.' }, { status: 400 });
+      }
+      if (cover && cover.size > 0 && !isAllowedImageFile(cover)) {
+        return NextResponse.json({ success: false, message: 'The cover must be an image.' }, { status: 400 });
+      }
+
+      const blogDir = path.join(base, 'blog');
+      await mkdir(blogDir, { recursive: true });
+      const postsFile = path.join(blogDir, 'posts.json');
+      const posts = await readPosts(postsFile);
+
+      let slug = requestedSlug;
+      if (slug) {
+        if (!isSafeBlogSlug(slug) || !posts.some((p) => p.slug === slug)) {
+          return NextResponse.json({ success: false, message: 'Post not found' }, { status: 404 });
+        }
+      } else {
+        // New post: a slug from the title that no other post (or leftover file) uses.
+        const stem = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'post';
+        const taken = async (s: string) => posts.some((p) => p.slug === s) || (await readFile(path.join(blogDir, `${s}.md`)).then(() => true, () => false));
+        slug = stem;
+        for (let n = 2; await taken(slug); n++) slug = `${stem}-${n}`;
+      }
+
+      await writeFile(path.join(blogDir, `${slug}.md`), markdown.replace(/\r\n/g, '\n'));
+
+      let coverPath: string | null = null;
+      if (cover && cover.size > 0) {
+        const coverFile = `${slug}-img-${Date.now()}${path.extname(cover.name).toLowerCase() || '.jpg'}`;
+        await writeFile(path.join(blogDir, coverFile), Buffer.from(await cover.arrayBuffer()));
+        coverPath = `/uploads/blog/${coverFile}`;
+      }
+
+      const index = posts.findIndex((p) => p.slug === slug);
+      const previous = index > -1 ? posts[index] : null;
+      const saved: BlogPost = previous
+        ? { ...previous, title, description, category, ...(coverPath ? { image: coverPath } : {}), updatedAt: new Date().toISOString() }
+        : { slug, title, description, category, image: coverPath || '', date: new Date().toISOString(), photos: [] };
+      if (previous) posts[index] = saved; else posts.unshift(saved);
+      await writeFile(postsFile, JSON.stringify(posts, null, 2));
+
+      // Keep the post's gallery album (under Blog Post Images) in step: its name and cover.
+      let albums = await readAlbums();
+      const oldCover = previous?.image ? toMediaSrc(previous.image) : null;
+      if (coverPath && oldCover && oldCover !== toMediaSrc(coverPath)) {
+        await removePhysicalFile(oldCover);
+        albums = removeImageFromTree(albums, oldCover);
+      }
+      // Only make an album once there's a picture for it (a text-only post shouldn't add an empty one).
+      const hasAlbum = albums.some((a) => a.id === BLOG_MASTER_ID && (a.albums || []).some((sub) => sub.id === slug));
+      if (coverPath || hasAlbum) {
+        const postAlbum = ensurePostAlbum(albums, slug, title);
+        postAlbum.name = title;
+        if (coverPath) {
+          const src = toMediaSrc(coverPath);
+          postAlbum.images = postAlbum.images.filter((img) => toMediaSrc(img.src) !== src);
+          postAlbum.images.push({ src, caption: 'Cover' });
+        }
+        await saveAlbums(albums);
+      }
+
+      return NextResponse.json({ success: true, slug, post: saved });
+    }
+
+    // A picture to embed in a post's text (the editor inserts the Markdown for it).
+    if (type === 'blog-inline-image') {
+      const image = formData.get('image') as File;
+      if (!isAllowedImageFile(image)) {
+        return NextResponse.json({ success: false, message: 'Not an image' }, { status: 400 });
+      }
+      const dir = path.join(base, 'blog', 'inline');
+      await mkdir(dir, { recursive: true });
+      const name = `${Date.now()}-${image.name.replace(/[^a-zA-Z0-9.]/g, '').slice(-60) || 'image.jpg'}`;
+      await writeFile(path.join(dir, name), Buffer.from(await image.arrayBuffer()));
+      return NextResponse.json({ success: true, src: `/api/media/uploads/blog/inline/${name}` });
     }
 
     if (type === 'blog-update-md') {

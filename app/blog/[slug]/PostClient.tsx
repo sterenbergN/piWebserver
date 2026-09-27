@@ -16,7 +16,7 @@ type PostClientProps = {
 };
 
 export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin, neighbors }: PostClientProps) {
-  const { showAlert, popup } = useSitePopup();
+  const { popup } = useSitePopup();
   const markdown = initialMarkdown;
   const [linkCopied, setLinkCopied] = useState(false);
   const [post, setPost] = useState<any>(initialPost);
@@ -26,9 +26,6 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
   const [editingPhoto, setEditingPhoto] = useState<{ src: string; description: string } | null>(null);
   const [savingPhoto, setSavingPhoto] = useState(false);
 
-  // Update files state
-  const [updatingMode, setUpdatingMode] = useState<'md' | 'image' | null>(null);
-  const [updateLoading, setUpdateLoading] = useState(false);
 
 
   const sharePost = async () => {
@@ -72,35 +69,6 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
     URL.revokeObjectURL(url);
   };
 
-  const handleUpdateFile = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!updatingMode) return;
-    setUpdateLoading(true);
-    const formData = new FormData(e.currentTarget);
-    formData.append('type', updatingMode === 'md' ? 'blog-update-md' : 'blog-update-image');
-    formData.append('slug', slug);
-
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.success) {
-        if (updatingMode === 'md') {
-          // reload the page to get the fresh markdown
-          window.location.reload();
-        } else if (updatingMode === 'image' && data.image) {
-          setPost((prev: any) => ({ ...prev, image: data.image }));
-          setUpdatingMode(null);
-        }
-      } else {
-        await showAlert({ title: 'Update Failed', message: data.message || 'Update failed' });
-      }
-    } catch {
-      await showAlert({ title: 'Network Error', message: 'Network error during update.' });
-    } finally {
-      setUpdateLoading(false);
-    }
-  };
-
   const cover = post?.image || null;
   const photos: any[] = post?.photos || [];
   const currentPhoto = photos[photoIndex];
@@ -127,27 +95,13 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
             </p>
             {isAdmin && (
               <div style={{ marginBottom: '2rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center' }}>
-                <button className="btn btn-secondary" onClick={() => setUpdatingMode(updatingMode === 'image' ? null : 'image')} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
-                  {updatingMode === 'image' ? 'Cancel' : '🖼️ Change Cover'}
-                </button>
-                <button className="btn btn-secondary" onClick={() => setUpdatingMode(updatingMode === 'md' ? null : 'md')} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
-                  {updatingMode === 'md' ? 'Cancel' : '📝 Update Markdown'}
-                </button>
-                <button className="btn btn-secondary" onClick={handleDownloadMarkdown} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+                {/* The editor covers the text, title, summary, category and cover. */}
+                <Link className="btn btn-primary" href={`/admin/posts/${slug}`} style={{ fontSize: '0.85rem', padding: '0.45rem 0.9rem' }}>
+                  ✏️ Edit post
+                </Link>
+                <button className="btn btn-secondary" onClick={handleDownloadMarkdown} style={{ fontSize: '0.85rem', padding: '0.45rem 0.9rem' }}>
                   ⬇️ Download .md
                 </button>
-              </div>
-            )}
-
-            {updatingMode && (
-              <div className="glass-panel animate-fade-in" style={{ marginBottom: '2rem', padding: '1.5rem', textAlign: 'left', maxWidth: '400px', margin: '0 auto 2rem' }}>
-                <h4 style={{ marginBottom: '1rem', textAlign: 'center' }}>{updatingMode === 'md' ? 'Upload New Content (.md)' : 'Upload New Cover Image'}</h4>
-                <form onSubmit={handleUpdateFile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <input type="file" name={updatingMode === 'md' ? 'markdown' : 'image'} accept={updatingMode === 'md' ? '.md' : 'image/*'} required disabled={updateLoading} />
-                  <button type="submit" className="btn btn-primary" disabled={updateLoading} style={{ width: '100%', justifyContent: 'center' }}>
-                    {updateLoading ? 'Uploading...' : 'Save Update'}
-                  </button>
-                </form>
               </div>
             )}
 
@@ -166,11 +120,15 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
           <Markdown
             components={{
               a: ({ node, ...props}) => (
-                <a {...props} 
-                target="_blank" 
+                <a {...props}
+                target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: 'var(--accent)', textDecoration: 'underline' }} />
               ),
+              // Pictures in the text: a screen-sized copy, loaded as they scroll into view.
+              img: ({ node: _node, src, alt }) => typeof src === 'string' && src.startsWith('/api/media') ? (
+                <img src={mediaSrc(src, 1280)} srcSet={mediaSrcSet(src, [640, 960, 1280, 1920])} sizes="(max-width: 900px) 100vw, 860px" alt={alt || ''} loading="lazy" decoding="async" />
+              ) : <img src={typeof src === 'string' ? src : undefined} alt={alt || ''} loading="lazy" />,
             }}
           >{markdown}</Markdown>
         </div>

@@ -6,7 +6,6 @@ import { useSitePopup } from '@/components/SitePopup';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 
 interface BlogPost { slug: string; title: string; description: string; image: string; date: string; category?: string; }
-interface EditState { slug: string; title: string; description: string; category?: string; }
 
 const ICON_BTN: React.CSSProperties = {
   padding: '0.4rem 0.55rem', fontSize: '1rem', lineHeight: 1, borderRadius: '8px',
@@ -18,8 +17,6 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
   const { confirm, popup } = useSitePopup();
   const [posts, setPosts] = useState<BlogPost[]>(initialPosts);
   const isAdmin = initialIsAdmin;
-  const [editing, setEditing] = useState<EditState | null>(null);
-  const [saving, setSaving] = useState(false);
 
   // Display settings
   const [showSettings, setShowSettings] = useState(false);
@@ -55,43 +52,7 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
     if ((await res.json()).success) setPosts(posts.filter(p => p.slug !== slug));
   };
 
-  const handleSaveEdit = async () => {
-    if (!editing) return;
-    setSaving(true);
-    const res = await fetch('/api/edit', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'blog', slug: editing.slug, title: editing.title, description: editing.description, category: editing.category || 'Uncategorized' }) });
-    if ((await res.json()).success) {
-      setPosts(posts.map(p => p.slug === editing.slug ? { ...p, title: editing.title, description: editing.description, category: editing.category || 'Uncategorized' } : p));
-      setEditing(null);
-    }
-    setSaving(false);
-  };
-
-
   const renderCard = (post: BlogPost) => {
-    if (editing?.slug === post.slug) {
-      return (
-        <div key={post.slug} className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h3 style={{ marginBottom: 0 }}>Editing Post</h3>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Title</label>
-            <input value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="Post title" />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Description</label>
-            <input value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} placeholder="Brief description" />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>Category</label>
-            <input value={editing.category || ''} onChange={e => setEditing({ ...editing, category: e.target.value })} placeholder="e.g. Infrastructure" />
-          </div>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button className="btn btn-primary" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
-            <button className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button>
-          </div>
-        </div>
-      );
-    }
-
     const isTile = viewMode === 'tile';
     return (
       <div key={post.slug} style={{ position: 'relative' }}>
@@ -114,10 +75,10 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
             </div>
           </div>
         </Link>
-        {isAdmin && !editing && (
+        {isAdmin && (
           <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.35rem' }}>
-            <button onClick={e => { e.preventDefault(); setEditing({ slug: post.slug, title: post.title, description: post.description, category: post.category }); }}
-              style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✏️</button>
+            <Link href={`/admin/posts/${post.slug}`} title="Edit post" aria-label={`Edit ${post.title}`}
+              style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'none' }}>✏️</Link>
             <button onClick={e => { e.preventDefault(); handleDelete(post.slug); }}
               style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
           </div>
@@ -131,7 +92,10 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <h1>Posts</h1>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        {isAdmin && <Link href="/admin/posts/new" className="btn btn-primary">✍️ Write a post</Link>}
         <button onClick={() => setShowSettings(!showSettings)} title="Display Settings" style={{ ...ICON_BTN, background: showSettings ? 'var(--accent)' : 'var(--surface-glass)', color: showSettings ? 'white' : 'var(--foreground)' }}>⚙</button>
+        </div>
       </div>
 
       {/* Settings panel */}
