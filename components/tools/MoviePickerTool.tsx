@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 
 interface Details { title: string; description: string; poster: string | null; year: string | null; url: string | null }
-type Pick = { title: string; rank: number };
+type Film = { id: string; title: string; year: number | null; rating: number };
+type Pick = Film & { rank: number };
 
-const POOLS = [25, 50, 100, 250];
+const POOLS = [25, 50, 100]; // plus "All"
 const STORAGE_KEY = 'moviePickerWatched';
 
-/** Spin for a film you haven't seen from a list of acclaimed ones; watched films are remembered on this device. */
+/** Spin for a film you haven't seen from IMDb's top 250; watched films are remembered on this device. */
 export default function MoviePickerTool() {
-  const [movies, setMovies] = useState<string[] | null>(null);
+  const [movies, setMovies] = useState<Film[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [watched, setWatched] = useState<string[]>([]);
   const [pool, setPool] = useState(100);
@@ -35,11 +36,13 @@ export default function MoviePickerTool() {
   };
   const isWatched = (t: string) => watched.some(w => w.toLowerCase() === t.toLowerCase());
 
-  const loadDetails = async (title: string) => {
+  const loadDetails = async (film: Film) => {
     setDetails(null);
     setDetailsState('loading');
     try {
-      const d = await fetch(`/api/tools/movies/details?title=${encodeURIComponent(title)}`).then(r => r.json());
+      // The IMDb id lets the server find the exact Wikipedia page.
+      const q = new URLSearchParams({ title: film.title, id: film.id, ...(film.year ? { year: String(film.year) } : {}) });
+      const d = await fetch(`/api/tools/movies/details?${q}`).then(r => r.json());
       if (d.success) { setDetails(d); setDetailsState('idle'); } else setDetailsState('missing');
     } catch {
       setDetailsState('missing');
@@ -47,7 +50,7 @@ export default function MoviePickerTool() {
   };
 
   const list = movies?.slice(0, pool) || [];
-  const unwatched = list.map((t, i) => ({ title: t, rank: i + 1 })).filter(m => !isWatched(m.title));
+  const unwatched = list.map((film, i) => ({ ...film, rank: i + 1 })).filter(m => !isWatched(m.title));
 
   const spin = () => {
     if (spinning || unwatched.length === 0) return;
@@ -66,7 +69,7 @@ export default function MoviePickerTool() {
       setDisplay(final.rank);
       setPick(final);
       setSpinning(false);
-      loadDetails(final.title);
+      loadDetails(final);
     };
     // Reduced motion: skip the drum roll.
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { tick = 99; }
@@ -94,11 +97,11 @@ export default function MoviePickerTool() {
     <>
       <section className="tl-card" style={{ textAlign: 'center' }}>
         <h2>🎬 What should we watch?</h2>
-        <p className="tl-sub">Spins over acclaimed films you haven’t marked as watched.</p>
+        <p className="tl-sub">Spins over IMDb’s top-rated films you haven’t marked as watched.</p>
 
         <span className="tl-label" style={{ textAlign: 'left' }}>Pick from the top</span>
         <div className="tl-seg" role="group" aria-label="How many films to pick from">
-          {[...POOLS, movies.length].map(n => <button key={n} aria-pressed={pool === n} disabled={spinning} onClick={() => { setPool(n); setPick(null); setDisplay(null); }}>{n === movies.length ? 'All' : n}</button>)}
+          {[...POOLS, movies.length].map(n => <button key={n} aria-pressed={pool === n} disabled={spinning} onClick={() => { setPool(n); setPick(null); setDisplay(null); }}>{n === movies.length ? `All ${n}` : `Top ${n}`}</button>)}
         </div>
         <p className="tl-muted" style={{ fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{unwatched.length} of {list.length} still to watch</p>
 
@@ -114,13 +117,14 @@ export default function MoviePickerTool() {
           <div className="tl-film">
             {details?.poster ? <img src={details.poster} alt="" /> : <div className="tl-poster-empty" aria-hidden>🎞️</div>}
             <div>
-              <div className="tl-label" style={{ margin: 0 }}>#{pick.rank}{details?.year ? ` · ${details.year}` : ''}</div>
+              <div className="tl-label" style={{ margin: 0 }}>#{pick.rank} on IMDb{pick.year ? ` · ${pick.year}` : ''} · ★ {pick.rating.toFixed(1)}</div>
               <h3>{details?.title || pick.title}</h3>
               {detailsState === 'loading' && <p>Looking it up…</p>}
               {detailsState === 'missing' && <p>Couldn’t find a summary for this one.</p>}
               {details && <p>{details.description.length > 360 ? `${details.description.slice(0, 360).replace(/\s+\S*$/, '')}…` : details.description}</p>}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <button className="btn btn-primary" onClick={() => markWatched(pick.title)}>✓ Seen it</button>
+                <a className="btn btn-secondary" href={`https://www.imdb.com/title/${pick.id}/`} target="_blank" rel="noreferrer">IMDb ↗</a>
                 {details?.url && <a className="btn btn-secondary" href={details.url} target="_blank" rel="noreferrer">Wikipedia ↗</a>}
               </div>
             </div>
