@@ -6,6 +6,7 @@ import ContactLinks from '@/components/home/ContactLinks';
 import ExperienceCard from '@/components/home/ExperienceCard';
 import SkillsCard from '@/components/home/SkillsCard';
 import CadSection from '@/components/home/CadSection';
+import PiBadge from '@/components/home/PiBadge';
 import './home.css';
 
 // Rendered on the server from the content files, so the page arrives complete
@@ -48,6 +49,7 @@ export default async function Home() {
       {/* Hero */}
       <section className="hero-gradient home-hero">
         <div style={{ position: 'relative', zIndex: 1 }}>
+          <PiBadge />
           <h1 className="home-name">{profile.name}</h1>
           <p className="home-headline">{profile.headline}</p>
           {profile.location && <p className="home-location">📍 {profile.location}</p>}

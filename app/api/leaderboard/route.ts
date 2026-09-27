@@ -3,6 +3,10 @@ import path from 'path';
 import { MAX_SCORE, POINTS_PER_FOOD } from '@/lib/games/snake';
 import { MAX_2048_SCORE } from '@/lib/games/g2048';
 import { readJson, updateJson } from '@/lib/json-store';
+import { clientAddress, createLimiter } from '@/lib/security/rate-limit';
+
+// A real game takes a while; more than a few scores a minute from one address is a script.
+const submissions = createLimiter({ max: 5, windowMs: 10 * 60_000 });
 
 const saveDir = path.join(process.cwd(), 'public', 'uploads', 'leaderboard');
 type Entry = { name: string; score: number; date: string };
@@ -32,6 +36,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const ip = clientAddress(request);
+    if (submissions.retryAfter(ip)) {
+      return NextResponse.json({ success: false, message: 'Too many scores from here — try again in a few minutes.' }, { status: 429 });
+    }
+    submissions.hit(ip);
     const data = await request.json().catch(() => null);
     const game = GAMES[gameFrom(data?.game)];
     const name = typeof data?.name === 'string' ? data.name.trim().substring(0, 20) : '';

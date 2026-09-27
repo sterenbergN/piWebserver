@@ -10,6 +10,7 @@ interface SystemStats {
   uptime?: string;
   cpu?: string;
   network?: string;
+  networkTotal?: string;
 }
 
 interface StatHistory {
@@ -46,7 +47,7 @@ const StatTile = ({ label, value, sub, history, type }: { label: string; value: 
   return (
     <div className="glass-panel" 
       onClick={() => history && type && setExpanded(!expanded)}
-      style={{ textAlign: 'center', padding: '2.5rem 1.5rem', cursor: history && type ? 'pointer' : 'default', transition: 'all 0.2s ease', position: 'relative' }}>
+      style={{ textAlign: 'center', padding: 'clamp(1rem, 4vw, 2rem) 1rem', cursor: history && type ? 'pointer' : 'default', transition: 'all 0.2s ease', position: 'relative', gridColumn: expanded ? '1 / -1' : undefined }}>
       
       {history && type && (
         <div style={{ position: 'absolute', top: '10px', right: '12px', opacity: 0.4, fontSize: '0.8rem' }}>
@@ -54,8 +55,8 @@ const StatTile = ({ label, value, sub, history, type }: { label: string; value: 
         </div>
       )}
 
-      <h3 style={{ color: 'var(--accent-light)', marginBottom: '0.75rem', fontSize: '0.95rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{label}</h3>
-      <p style={{ fontSize: '2.5rem', fontWeight: 'bold', margin: 0, fontFamily: 'monospace', color: 'var(--foreground)' }}>{value}</p>
+      <h3 style={{ color: 'var(--accent-light)', marginBottom: '0.5rem', fontSize: '0.78rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{label}</h3>
+      <p style={{ fontSize: 'clamp(1.35rem, 5vw, 2.2rem)', fontWeight: 'bold', margin: 0, fontFamily: 'monospace', color: 'var(--foreground)', overflowWrap: 'anywhere' }}>{value}</p>
       {sub && <p style={{ fontSize: '0.9rem', marginTop: '0.25rem', opacity: 0.6, marginBottom: 0 }}>{sub}</p>}
 
       {expanded && history && type && (
@@ -83,22 +84,17 @@ export default function StatsPage() {
   const [loading, setLoading] = useState(true);
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
-  const fetchStats = () => {
-    setLoading(true);
-    Promise.all([
-      fetch('/api/stats').then(res => res.json()),
-      fetch('/api/stats-history').then(res => res.json())
-    ]).then(([statsData, historyData]) => {
-      if (statsData?.success) setStats(statsData.data);
-      if (historyData?.success) setHistory(historyData.history);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  };
-
   useEffect(() => {
+    const fetchStats = () => fetch('/api/stats').then(res => res.json())
+      .then(d => { if (d?.success) setStats(d.data); }).catch(() => {}).finally(() => setLoading(false));
+    // The history only gains a point a minute, so don't re-download it every 10 s.
+    const fetchHistory = () => fetch('/api/stats-history').then(res => res.json())
+      .then(d => { if (d?.success) setHistory(d.history); }).catch(() => {});
     fetchStats();
-    const interval = setInterval(fetchStats, 10000);
-    return () => clearInterval(interval);
+    fetchHistory();
+    const live = setInterval(fetchStats, 10_000);
+    const slow = setInterval(fetchHistory, 60_000);
+    return () => { clearInterval(live); clearInterval(slow); };
   }, []);
 
   return (
@@ -115,7 +111,7 @@ export default function StatsPage() {
         <p>Connecting to system services...</p>
       ) : stats ? (
         <>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(46%, 200px), 1fr))', gap: '0.75rem' }}>
             <StatTile label="Core Temperature" value={stats.temp} history={history} type="temp" />
             <StatTile label="Memory Usage" value={stats.ram.split('/')[0].trim()} sub={`of ${stats.ram.split('/')[1]?.trim() || ''}`} history={history} type="ram" />
             {(() => {
@@ -128,9 +124,16 @@ export default function StatsPage() {
             {stats.cpu !== undefined && (
               <StatTile label="CPU use" value={`${stats.cpu}%`} sub="Current" history={history} type="cpu" />
             )}
-            {stats.uptime && (
-              <StatTile label="Uptime" value="" sub={stats.uptime} />
-            )}
+            {stats.network && stats.network !== 'N/A' && (() => {
+              // "↓ 2.40 Mbit/s | ↑ 310 kbit/s" (live speed) plus traffic since boot.
+              const [down, up] = stats.network.split('|').map(s => s.trim());
+              return <StatTile label="Network" value={down} sub={[up, stats.networkTotal].filter(Boolean).join(' · ')} />;
+            })()}
+            {stats.uptime && (() => {
+              // "up 3 days, 4 hours, 12 minutes" → "3d 4h" with the full text underneath.
+              const short = stats.uptime.replace(/^up /, '').replace(/ days?/, 'd').replace(/ hours?/, 'h').replace(/ minutes?/, 'm').split(', ').slice(0, 2).join(' ');
+              return <StatTile label="Uptime" value={short} sub={stats.uptime.replace(/^up /, 'Up ')} />;
+            })()}
           </div>
 
           <div style={{ marginTop: '3rem', textAlign: 'center', opacity: 0.4, fontSize: '0.85rem' }}>

@@ -128,7 +128,9 @@
 
 @media (max-width: 600px) {
   .gal-page { padding-top: 1rem; }
-  .gal-toolbar { width: 100%; flex-wrap: nowrap; }
+  /* Wraps when the admin buttons join the row, instead of running off-screen. */
+  .gal-toolbar { width: 100%; }
+  .gal-segmented { min-width: min(100%, 220px); }
   .gal-frame-btn { width: 44px; padding: 0; flex-shrink: 0; }
   .gal-frame-label { display: none; }
   .gal-segmented { flex: 1; }
