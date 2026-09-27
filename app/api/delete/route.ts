@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { resolvePathInside, resolvePublicPath } from '@/lib/security/paths';
+import { removeThumbnails } from '@/lib/media/thumbnails';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 
 const baseDir = path.join(process.cwd(), 'public', 'uploads');
@@ -71,23 +72,6 @@ async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
-  }
-}
-
-async function removeThumbnails(publicPathLike: string) {
-  try {
-    const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
-    const normalized = publicPathLike.startsWith('/') ? publicPathLike.slice(1) : publicPathLike;
-    const thumbPrefix = normalized.replace(/[/\\:]/g, '_');
-    const files = await fs.readdir(thumbDir);
-
-    await Promise.all(
-      files
-        .filter((file) => file.startsWith(thumbPrefix))
-        .map((file) => fs.unlink(path.join(thumbDir, file)))
-    );
-  } catch {
-    // Ignore cache cleanup failures.
   }
 }
 
@@ -179,6 +163,10 @@ export async function POST(request: Request) {
 
     if (type === 'gallery') {
       const mediaSrc = toMediaSrc(id);
+      // Only ever a photo: never a data file like albums.json or posts.json.
+      if (!/^\/api\/media\/uploads\/(gallery|blog)\/[^/]+\.(jpe?g|png|webp|gif|heic|avif)$/i.test(mediaSrc)) {
+        return NextResponse.json({ success: false, message: 'Not a photo' }, { status: 400 });
+      }
       const albumsFile = path.join(baseDir, 'gallery', 'albums.json');
 
       const albums = await readJsonFile<AlbumNode[]>(albumsFile, []);

@@ -3,6 +3,7 @@ import { writeFile, readFile, mkdir, unlink, readdir } from 'fs/promises';
 import path from 'path';
 import { isSafeBlogSlug, resolvePathInside } from '@/lib/security/paths';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { queueThumbnails, removeThumbnails } from '@/lib/media/thumbnails';
 
 const base = path.join(process.cwd(), 'public', 'uploads');
 
@@ -31,22 +32,6 @@ function toMediaSrc(src: string): string {
 function toPublicPath(src: string): string {
   const withoutMediaPrefix = src.replace(/^\/api\/media/, '');
   return withoutMediaPrefix.startsWith('/') ? withoutMediaPrefix : `/${withoutMediaPrefix}`;
-}
-
-async function removeThumbnails(publicPathLike: string) {
-  try {
-    const thumbDir = path.join(process.cwd(), '.cache', 'thumbs');
-    const normalized = publicPathLike.startsWith('/') ? publicPathLike.slice(1) : publicPathLike;
-    const thumbPrefix = normalized.replace(/[/\\:]/g, '_');
-    const files = await readdir(thumbDir);
-    for (const file of files) {
-      if (file.startsWith(thumbPrefix)) {
-        await unlink(path.join(thumbDir, file)).catch(() => {});
-      }
-    }
-  } catch {
-    // Ignore thumbnail cleanup errors.
-  }
 }
 
 async function removePhysicalFile(mediaOrPublicPath: string) {
@@ -165,6 +150,8 @@ export async function POST(request: Request) {
       const saveDir = path.join(base, 'gallery');
       await mkdir(saveDir, { recursive: true });
       await writeFile(path.join(saveDir, filename), Buffer.from(bytes));
+      // Make the common sizes now, in the background, so the first visitor doesn't wait.
+      queueThumbnails(`uploads/gallery/${filename}`);
 
       const src = `/api/media/uploads/gallery/${filename}`;
       const albums = await readAlbums();
@@ -201,6 +188,9 @@ export async function POST(request: Request) {
       const imageFilename = `${slug}-img${imageExt}`;
       await writeFile(path.join(blogDir, imageFilename), Buffer.from(await image.arrayBuffer()));
       await writeFile(path.join(blogDir, `${slug}.md`), Buffer.from(await mdFile.arrayBuffer()));
+      // The cover's file name is reused if a post is published again, so drop old resized copies first.
+      await removeThumbnails(`uploads/blog/${imageFilename}`);
+      queueThumbnails(`uploads/blog/${imageFilename}`);
 
       const postsFile = path.join(blogDir, 'posts.json');
       let posts = await readPosts(postsFile);
@@ -276,6 +266,7 @@ export async function POST(request: Request) {
       const newImageMediaSrc = toMediaSrc(newImagePath);
 
       await writeFile(path.join(blogDir, imageFilename), Buffer.from(await image.arrayBuffer()));
+      queueThumbnails(`uploads/blog/${imageFilename}`);
 
       const postsFile = path.join(blogDir, 'posts.json');
       const posts = await readPosts(postsFile);
@@ -320,6 +311,7 @@ export async function POST(request: Request) {
       const blogDir = path.join(base, 'blog');
       await mkdir(blogDir, { recursive: true });
       await writeFile(path.join(blogDir, filename), Buffer.from(bytes));
+      queueThumbnails(`uploads/blog/${filename}`);
 
       const mediaSrc = `/api/media/uploads/blog/${filename}`;
       const postsFile = path.join(blogDir, 'posts.json');
