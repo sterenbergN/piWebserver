@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import ProgressBar from './ProgressBar';
@@ -124,6 +125,7 @@ export default function UploadsPanel() {
           <p>{current.hint}</p>
         </div>
         {type === 'gallery' && <button type="button" className="btn btn-secondary adm-small-btn" onClick={repair} disabled={disabled}>🛠️ Repair gallery index</button>}
+        {type === 'blog' && <Link href="/admin/posts/new" className="btn btn-primary adm-small-btn">✍️ Write in the browser instead</Link>}
       </div>
 
       <div className="adm-seg" role="group" aria-label="What to upload">
