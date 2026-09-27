@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
 import fs from 'fs/promises';
+import { formatBitRate, formatBytes, getLiveRates } from '@/lib/system-stats';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
@@ -16,18 +19,11 @@ export async function GET() {
           storage: 'Mock: 15GB / 64GB (76% Free)',
           uptime: 'up 3 days, 4 hours, 12 minutes',
           cpu: '12.5',
-          network: '↓ 12.4 GB | ↑ 3.2 GB'
+          network: '↓ 2.40 Mbit/s | ↑ 310 kbit/s',
+          networkTotal: '↓ 12.4 GB · ↑ 3.2 GB since boot'
         }
       });
     }
-
-    // Helper for formatting bytes
-    const formatBytes = (bytes: number) => {
-      if (isNaN(bytes) || bytes === 0) return '0 B';
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(1024));
-      return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
-    };
 
     // Temp
     let tempStr = 'Unknown';
@@ -92,33 +88,17 @@ export async function GET() {
     if (minutes > 0) upParts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
     const uptimeStr = upParts.length > 0 ? `up ${upParts.join(', ')}` : 'up less than a minute';
 
-    // CPU load (1-minute average)
+    // CPU use and network speed, measured between this reading and the last one.
     let cpuStr = 'N/A';
-    try {
-      const cores = os.cpus().length;
-      const loadAvg = os.loadavg()[0];
-      cpuStr = Math.min(100, (loadAvg / cores) * 100).toFixed(1);
-    } catch { /* fallback */ }
-
-    // Network bandwidth (total traffic)
     let networkStr = 'N/A';
+    let networkTotalStr = '';
     try {
-      const netOut = await fs.readFile('/proc/net/dev', 'utf8');
-      const lines = netOut.split('\n');
-      let rxBytes = 0;
-      let txBytes = 0;
-      for (let i = 2; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line || line.startsWith('lo:')) continue;
-        const parts = line.split(/[:\s]+/);
-        if (parts.length >= 10) {
-          const rx = parseInt(parts[1], 10);
-          const tx = parseInt(parts[9], 10);
-          if (!isNaN(rx)) rxBytes += rx;
-          if (!isNaN(tx)) txBytes += tx;
-        }
+      const rates = await getLiveRates();
+      cpuStr = rates.cpuPercent.toFixed(1);
+      if (rates.since) {
+        networkStr = `↓ ${formatBitRate(rates.rxPerSec)} | ↑ ${formatBitRate(rates.txPerSec)}`;
+        networkTotalStr = `↓ ${formatBytes(rates.since.rx)} · ↑ ${formatBytes(rates.since.tx)} since boot`;
       }
-      networkStr = `↓ ${formatBytes(rxBytes)} | ↑ ${formatBytes(txBytes)}`;
     } catch { /* fallback */ }
 
     return NextResponse.json({
@@ -130,7 +110,8 @@ export async function GET() {
         storage: diskOutStr,
         uptime: uptimeStr,
         cpu: cpuStr,
-        network: networkStr
+        network: networkStr,
+        networkTotal: networkTotalStr
       }
     });
   } catch (error) {
