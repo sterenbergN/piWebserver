@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { ACCLAIMED_FILMS } from '@/lib/movies-data';
+import { TOP_FILMS } from '@/lib/movies-data';
 
 export async function GET() {
-  return NextResponse.json({ success: true, movies: ACCLAIMED_FILMS });
+  return NextResponse.json({ success: true, movies: TOP_FILMS }, { headers: { 'Cache-Control': 'public, max-age=3600' } });
 }
