@@ -10,6 +10,10 @@ import { useSitePopup } from '@/components/SitePopup';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
 import PlateDiagram from '@/components/workout/PlateDiagram';
+import StepperInput from '@/components/workout/StepperInput';
+import SetEditSheet, { RIR_OPTIONS, rirLabel, type LoggedSet } from '@/components/workout/SetEditSheet';
+import ActiveLiftEditor from '@/components/workout/ActiveLiftEditor';
+import type { Gym } from '@/lib/workout/types';
 import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
@@ -88,7 +92,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    // Manual weight/rep overrides per lift, so bouncing between superset
    // partners doesn't reset what the user dialed in.
    const [drafts, setDrafts] = useState<Record<string, { weight: number; reps: number }>>(resumeState?.drafts || {});
-   const [currentRir, setCurrentRir] = useState<number | null>(resumeState?.currentRir ?? null);
 
    // Engine suggestions for every lift in the plan, keyed by plan id.
    const [suggestions, setSuggestions] = useState<Record<string, Suggestion>>({});
@@ -118,7 +121,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const restNotifiedFor = useRef<number | null>(null);
    // Personal records hit this session, keyed by lift id.
    const [sessionPRs, setSessionPRs] = useState<Record<string, { name: string; e1rm: number; previous: number; weight: number; reps: number }>>(resumeState?.sessionPRs || {});
-   const [prToast, setPrToast] = useState<string | null>(null);
+   // "Logged … · Undo" after each set; `undo` restores the state from before it.
+   const [toast, setToast] = useState<{ text: string; pr: boolean; undo?: () => void } | null>(null);
+   const [editingSetIndex, setEditingSetIndex] = useState<number | null>(null);
+   const [editTarget, setEditTarget] = useState<'lift' | 'station' | null>(null);
    const [templateState, setTemplateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
    const bestBeforeSession = useMemo(() => bestE1RMByLift(pastHistory), [pastHistory]);
    const stalledLiftIds = useMemo(() => new Set(detectStalledLifts(pastHistory).map((lift) => lift.liftId)), [pastHistory]);
@@ -307,7 +313,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    }, [localPlan.lifts, intensitySlider, requestSuggestion]);
 
    useEffect(() => {
-      setCurrentRir(null);
+      setEditingSetIndex(null);
    }, [activeUid]);
 
    const activeSuggestion: Suggestion | undefined = suggestions[activeUid];
@@ -451,23 +457,33 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
     }
   };
 
-  const handleCompleteSet = () => {
-    if (currentRir === null || !activeLift) return;
+  /** Log a set at the current weight × reps. One tap: the effort button is the log button. */
+  const handleCompleteSet = (rir: number) => {
+    if (!activeLift) return;
 
     const newLog = {
       weight: currentWeight,
       reps: currentReps,
       plannedWeight: suggestedWeight,
       plannedReps: suggestedReps,
-      rir: currentRir,
+      rir,
       completed: true,
       timestamp: Date.now(),
     };
 
+    const before = { logs, lastSetAt, sessionPRs, index: safeLiftIndex };
+    const undo = () => {
+      setLogs(before.logs);
+      setLastSetAt(before.lastSetAt);
+      setSessionPRs(before.sessionPRs);
+      setActiveLiftIndex(before.index);
+      setToast(null);
+    };
+
     const updatedLogs = { ...logs, [activeUid]: [...activeLogs, newLog] };
     setLogs(updatedLogs);
-    setCurrentRir(null);
     setLastSetAt(newLog.timestamp);
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(30);
 
     // Personal record: beat the best estimated 1RM from history (and this session).
     const e1rm = calcAverage1RM(currentWeight, currentReps);
@@ -475,8 +491,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
     if (previousBest > 0 && e1rm > previousBest + 0.5) {
       const baseline = sessionPRs[activeLift.id]?.previous ?? bestBeforeSession[activeLift.id];
       setSessionPRs((prev) => ({ ...prev, [activeLift.id]: { name: activeLift.name, e1rm, previous: baseline, weight: currentWeight, reps: currentReps } }));
-      setPrToast(`New PR on ${activeLift.name}: ${currentWeight} × ${currentReps} (est. 1RM ${Math.round(e1rm)} lbs, +${Math.round(e1rm - previousBest)})`);
+      setToast({ pr: true, undo, text: `🏆 New PR on ${activeLift.name}: ${currentWeight} × ${currentReps} (est. 1RM ${Math.round(e1rm)} lbs, +${Math.round(e1rm - previousBest)})` });
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.([80, 60, 80, 60, 160]);
+    } else {
+      setToast({ pr: false, undo, text: `Set ${activeLogs.length + 1} logged: ${currentWeight} × ${currentReps}` });
     }
 
     const partner = getSupersetPartner(activeLift);
@@ -501,6 +519,35 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
     }
   };
 
+  const updateSet = (index: number, set: LoggedSet) => {
+    setLogs((prev) => ({ ...prev, [activeUid]: (prev[activeUid] || []).map((s, i) => (i === index ? set : s)) }));
+    setEditingSetIndex(null);
+  };
+
+  /**
+   * Equipment or lift details were edited (here or in the equipment panel):
+   * refresh every planned lift on a changed station, keeping its plan state.
+   */
+  const applyGymUpdate = (updatedGym: Gym) => {
+    const stationIds = new Set(updatedGym.stations.map((s) => s.id));
+    const changedUids: string[] = localPlan.lifts.filter((lift: any) => stationIds.has(lift.station?.id)).map(uidOf);
+    setLocalPlan((prev: any) => ({
+      ...prev,
+      lifts: prev.lifts.map((lift: any) => {
+        const station = updatedGym.stations.find((s) => s.id === lift.station?.id);
+        if (!station) return lift;
+        const saved = station.lifts.find((l) => l.id === lift.id);
+        return { ...lift, ...(saved || {}), station, uniquePlanId: lift.uniquePlanId, supersetId: lift.supersetId };
+      }),
+    }));
+    // Equipment changed → the weight ladder may differ, so re-suggest.
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      changedUids.forEach((uid) => delete next[uid]);
+      return next;
+    });
+  };
+
    // Persistence Logic
    useEffect(() => {
      if (workoutFinished || !localPlan) return;
@@ -516,7 +563,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
            startTime: workoutStartTime,
            elapsedSecs,
            liftElapsedSecsMap,
-           currentRir,
            intensitySlider,
            lastSetAt,
            sessionPRs,
@@ -525,7 +571,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
      } catch {
         // Storage full or unavailable — the workout continues, it just can't be resumed.
      }
-   }, [logs, drafts, safeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, currentRir, intensitySlider, sharedSessionId, sharedCode, user?.id, lastSetAt, sessionPRs]);
+   }, [logs, drafts, safeLiftIndex, localPlan, workoutStartTime, workoutFinished, elapsedSecs, liftElapsedSecsMap, intensitySlider, sharedSessionId, sharedCode, user?.id, lastSetAt, sessionPRs]);
 
    // Keep the phone screen on during the workout (where supported).
    useEffect(() => {
@@ -552,10 +598,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    }, [workoutFinished]);
 
    useEffect(() => {
-      if (!prToast) return;
-      const handle = setTimeout(() => setPrToast(null), 5000);
+      if (!toast) return;
+      const handle = setTimeout(() => setToast(null), 8000);
       return () => clearTimeout(handle);
-   }, [prToast]);
+   }, [toast]);
 
    useEffect(() => {
       // Sync on real progress; weight/rep tweaks are debounced so +/- taps
@@ -576,6 +622,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       const updated = [...activeLogs];
       updated.splice(index, 1);
       setLogs({ ...logs, [activeUid]: updated });
+      setEditingSetIndex(null);
    };
 
    const adjustWeight = (direction: 1 | -1) => {
@@ -807,6 +854,13 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       ? warmupSets(suggestedWeight, activePossibleWeights)
       : [];
 
+   // What you did on this lift last time, set by set — the easiest thing to beat.
+   const lastSession = useMemo(() => (activeLift?.id ? findLastSessionForLift(pastHistory, activeLift) : null), [pastHistory, activeLift?.id]);
+   const lastSets: any[] = lastSession?.logs?.[activeLift?.id] || [];
+   const liftDone = activeLogs.length > 0 && activeRemainingSets === 0 && !(activePartner && activePartnerRemainingSets > 0);
+   const nextLiftIndex = liftDone ? findNextUnfinishedLiftIndex(safeLiftIndex) : null;
+   const canEditEquipment = !!user && !!activeLift?.station?.id;
+
    const canDisplayPlates = activeLift?.station?.type === 'plates' && Array.isArray(activeLift?.station?.plateSets);
    const requiredPlates = canDisplayPlates
       ? calculatePlates(currentWeight, activeLift.station.baseWeight ?? 45, activeLift.station.plateSets)
@@ -942,17 +996,30 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          <div style={{ flex: 1, padding: isCompactHeader ? '0.65rem' : '1rem', paddingBottom: isCompactHeader ? '1.25rem' : '2rem', overflowY: 'auto' }}>
             <div className={`tracker-summary-card${isCompactHeader ? ' compact' : ''}`} style={{ textAlign: 'center', marginBottom: isCompactHeader ? '0.6rem' : '1rem' }}>
                 <p style={{ color: 'var(--accent)', textTransform: 'uppercase', fontWeight: 700, fontSize: isCompactHeader ? '0.72rem' : '0.8rem', letterSpacing: isCompactHeader ? '1px' : '2px', margin: '0 0 0.35rem 0' }}>
-                   {activeLift.station?.name || 'Equipment'} • Lift {safeLiftIndex + 1}/{localPlan.lifts.length}
+                   {canEditEquipment ? (
+                     <button type="button" className="tracker-station-link" title="Edit this equipment's weights and lifts" onClick={() => setEditTarget('station')}>
+                       {activeLift.station?.name || 'Equipment'} <span aria-hidden>⚙️</span>
+                     </button>
+                   ) : (activeLift.station?.name || 'Equipment')} • Lift {safeLiftIndex + 1}/{localPlan.lifts.length}
                 </p>
-                <h1 style={{ fontSize: isCompactHeader ? '1.38rem' : '2rem', margin: '0 0 0.35rem 0', lineHeight: 1.1 }}>{activeLift.name}</h1>
+                <h1 style={{ fontSize: isCompactHeader ? '1.38rem' : '2rem', margin: '0 0 0.35rem 0', lineHeight: 1.1 }}>
+                  {activeLift.name}
+                  {canEditEquipment && (
+                    <button type="button" className="tracker-title-edit" aria-label={`Edit ${activeLift.name}`} title="Edit lift details" onClick={() => setEditTarget('lift')}>✏️</button>
+                  )}
+                </h1>
                 {stalledLiftIds.has(activeLift.id) && !localPlan.isDeload && (
                   <p style={{ fontSize: '0.75rem', color: 'var(--warning)', margin: '0 0 0.4rem' }}>
                     ⚠️ Plateau: no new best in 3 sessions. Consider fewer reps at a heavier weight, or{' '}
                     <button className="workout-text-btn" style={{ fontSize: '0.75rem', textDecoration: 'underline' }} onClick={() => setShowChange(true)}>swap to a variation</button>.
                   </p>
                 )}
-                {activeLift.notes && (
-                  <p className="workout-hint" style={{ margin: '-0.15rem 0 0.4rem' }}>📝 {activeLift.notes}</p>
+                {activeLift.notes ? (
+                  canEditEquipment
+                    ? <button type="button" className="workout-text-btn workout-hint" style={{ margin: '-0.15rem 0 0.4rem' }} onClick={() => setEditTarget('lift')}>📝 {activeLift.notes}</button>
+                    : <p className="workout-hint" style={{ margin: '-0.15rem 0 0.4rem' }}>📝 {activeLift.notes}</p>
+                ) : canEditEquipment && (
+                  <button type="button" className="workout-text-btn workout-hint" style={{ margin: '-0.15rem 0 0.4rem' }} onClick={() => setEditTarget('lift')}>+ Setup note (seat, pin, grip…)</button>
                 )}
                 <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'center', alignItems: 'center' }}>
                     <button style={{ background: 'none', border: '1px solid var(--surface-border)', color: 'var(--muted)', padding: isCompactHeader ? '0.16rem 0.7rem' : '0.2rem 1rem', borderRadius: '20px', fontSize: isCompactHeader ? '0.74rem' : '0.8rem' }} onClick={() => setShowChange(true)}>Change Lift 🔄</button>
@@ -1154,15 +1221,15 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                 {activeLogs.length > 0 ? (
                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: isCompactHeader ? '0.6rem' : '0.75rem' }}>
                       {activeLogs.map((log: any, i: number) => (
-                         <div key={i} className="workout-flex-between animate-fade-in" style={{ padding: isCompactHeader ? '0.42rem 0.5rem' : '0.6rem', background: 'var(--surface-glass)', borderRadius: '8px' }}>
-                             <strong style={{ color: 'var(--accent)' }}>Set {i+1}</strong>
-                             <span>{log.weight} lbs × {log.reps}{typeof log.rir === 'number' ? ` • RIR ${log.rir >= 5 ? '5+' : log.rir}` : ''}</span>
-                             <button onClick={() => deleteSet(i)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 0.5rem' }}>✕</button>
-                          </div>
+                         <button key={log.timestamp ?? i} type="button" className="tracker-set-row animate-fade-in" aria-label={`Edit set ${i + 1}`} onClick={() => setEditingSetIndex(i)}>
+                             <strong style={{ color: 'var(--accent)' }}>Set {i + 1}</strong>
+                             <span>{log.weight} lbs × {log.reps}{typeof log.rir === 'number' ? ` • RIR ${rirLabel(log.rir)}` : ''}</span>
+                             <span aria-hidden style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>✏️</span>
+                          </button>
                       ))}
                    </div>
                 ) : (
-                  <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+                  <div style={{ textAlign: 'center', marginBottom: '0.9rem' }}>
                     <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: 0 }}>No sets logged yet.</p>
                     {warmups.length > 0 && (
                       <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>
@@ -1171,58 +1238,53 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     )}
                   </div>
                 )}
+                {lastSets.length > 0 && (
+                  <p className="workout-hint" style={{ textAlign: 'center', margin: '0 0 0.75rem' }}>
+                    Last time{lastSession?.timestamp ? ` (${new Date(lastSession.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})` : ''}:{' '}
+                    {lastSets.map((s: any) => `${s.weight}×${s.reps}`).join(' · ')}
+                  </p>
+                )}
 
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <div style={{ flex: 1 }}>
-                       <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.25rem' }}>Weight (lbs)</label>
-                       <div style={{ display: 'flex' }}>
-                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => adjustWeight(-1)}>-</button>
-                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: '60px', textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} value={currentWeight} readOnly aria-label="Weight in pounds" />
-                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => adjustWeight(1)}>+</button>
-                       </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                       <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.25rem' }}>Reps</label>
-                       <div style={{ display: 'flex' }}>
-                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderRight: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '8px 0 0 8px' }} onClick={() => setCurrentReps(Math.max(0, currentReps - 1))}>-</button>
-                          <input className="hide-spinners" type="number" style={{ flex: 1, minWidth: '60px', textAlign: 'center', border: 'none', background: 'var(--input-bg)', color: 'var(--foreground)' }} inputMode="numeric" value={currentReps} onChange={e => setCurrentReps(Math.max(0, Math.round(Number(e.target.value)) || 0))} aria-label="Reps" />
-                          <button style={{ width: '36px', padding: '0.5rem', border: 'none', borderLeft: '1px solid var(--surface-border)', background: 'var(--input-bg)', color: 'var(--foreground)', borderRadius: '0 8px 8px 0' }} onClick={() => setCurrentReps(currentReps + 1)}>+</button>
-                       </div>
+                {liftDone && (
+                  <div className="tracker-done animate-fade-in">
+                    <strong>✓ All {activeLogs.length} sets done</strong>
+                    {nextLiftIndex !== null ? (
+                      <button type="button" className="workout-btn-primary" style={{ margin: '0.5rem 0 0' }} onClick={() => setActiveLiftIndex(nextLiftIndex)}>
+                        Next: {localPlan.lifts[nextLiftIndex].name} →
+                      </button>
+                    ) : (
+                      <button type="button" className="workout-btn-primary" style={{ margin: '0.5rem 0 0', background: 'var(--success)' }} onClick={() => setWorkoutFinished(true)}>
+                        Finish workout 🏆
+                      </button>
+                    )}
+                    <span className="workout-hint" style={{ display: 'block', marginTop: '0.4rem' }}>Or log an extra set below.</span>
+                  </div>
+                )}
+
+                <div className="tracker-steppers">
+                    <StepperInput label="Weight (lbs)" decimal value={currentWeight} onChange={setCurrentWeight} onStep={adjustWeight} />
+                    <StepperInput label="Reps" value={currentReps} onChange={setCurrentReps} onStep={(d) => setCurrentReps(Math.max(0, currentReps + d))} />
+                </div>
+                <div style={{ marginTop: '0.8rem' }}>
+                    <p style={{ fontSize: '0.8rem', fontWeight: 700, textAlign: 'center', margin: '0 0 0.1rem' }}>
+                      {liftDone ? 'Log an extra set' : `Log set ${activeLogs.length + 1}`} — tap how many more reps you had left
+                    </p>
+                    <p className="workout-hint" style={{ textAlign: 'center', margin: '0 0 0.4rem' }}>0 = couldn&apos;t do another rep</p>
+                    <div className="tracker-log-grid">
+                      {RIR_OPTIONS.map((rir) => (
+                        <button key={rir} type="button" className="tracker-log-btn" aria-label={`Log set with ${rirLabel(rir)} reps in reserve`} onClick={() => handleCompleteSet(rir)}>
+                          {rirLabel(rir)}
+                          {rir === 0 && <small>failure</small>}
+                          {rir === 5 && <small>easy</small>}
+                        </button>
+                      ))}
                     </div>
                 </div>
-                <div style={{ marginTop: '0.65rem' }}>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', textAlign: 'center', marginBottom: '0.1rem' }}>Reps In Reserve</label>
-                    <p className="workout-hint" style={{ textAlign: 'center', margin: '0 0 0.35rem' }}>How many more reps could you have done? 0 = failure</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '0.35rem' }}>
-                      {[0, 1, 2, 3, 4, 5].map((rir) => {
-                        const isSelected = currentRir === rir;
-                        return (
-                          <button
-                            key={rir}
-                            onClick={() => setCurrentRir(rir)}
-                            style={{
-                              border: isSelected ? '1px solid var(--accent)' : '1px solid var(--surface-border)',
-                              background: isSelected ? 'rgba(var(--accent-rgb), 0.18)' : 'var(--input-bg)',
-                              color: isSelected ? 'var(--foreground)' : 'var(--muted)',
-                              borderRadius: '10px',
-                              padding: '0.55rem 0.2rem',
-                              fontSize: '0.82rem',
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {rir === 5 ? '5+' : rir}
-                          </button>
-                        );
-                      })}
-                    </div>
-                </div>
-                <button className="workout-btn-primary" onClick={handleCompleteSet} disabled={currentRir === null} style={{ marginTop: isCompactHeader ? '1rem' : '1.5rem', boxShadow: 'none', opacity: currentRir === null ? 0.55 : 1 }}>Complete Set ✓</button>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
                     {safeLiftIndex > 0 && (
                       <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex(safeLiftIndex - 1)}>Prev</button>
                     )}
-                    {safeLiftIndex < localPlan.lifts.length - 1 ? (
+                    {liftDone ? null : safeLiftIndex < localPlan.lifts.length - 1 ? (
                       <button className="btn btn-secondary" style={{ flex: 1, padding: isCompactHeader ? '0.7rem' : '0.9rem', borderRadius: '12px' }} onClick={() => setActiveLiftIndex(safeLiftIndex + 1)}>Next Lift →</button>
                     ) : <button className="workout-btn-primary" style={{ flex: 1, margin: 0, padding: isCompactHeader ? '0.7rem' : '0.9rem', background: 'var(--success)', boxShadow: '0 4px 15px rgba(var(--success-rgb), 0.3)' }} onClick={() => setWorkoutFinished(true)}>Finish 🏆</button>}
                 </div>
@@ -1299,6 +1361,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                   <div style={{ marginBottom: '1rem' }}>
                     <AddExerciseForGym
                       gymId={localPlan.gymId}
+                      onGymUpdated={applyGymUpdate}
                       inWorkout={new Set(localPlan.lifts.map((l: any) => l.id))}
                       onAdd={(entries) => {
                         const added = entries.map(({ lift, station }) => ({ ...lift, station, gymId: localPlan.gymId, gymName: localPlan.gymName, uniquePlanId: newPlanId() }));
@@ -1337,24 +1400,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     <div style={{ padding: '0.75rem' }}>
                       <InlineGymEditor
                         gymId={localPlan.gymId}
-                        onGymUpdated={(updatedGym) => {
-                          const changedUids: string[] = [];
-                          const updatedLifts = localPlan.lifts.map((lift: any) => {
-                            const updatedStation = updatedGym.stations.find((s: any) => s.id === lift.station?.id);
-                            if (updatedStation) {
-                              changedUids.push(uidOf(lift));
-                              return { ...lift, station: updatedStation };
-                            }
-                            return lift;
-                          });
-                          // Equipment changed → the weight ladder may differ, so re-suggest.
-                          setSuggestions((prev) => {
-                            const next = { ...prev };
-                            changedUids.forEach((uid) => delete next[uid]);
-                            return next;
-                          });
-                          setLocalPlan({ ...localPlan, lifts: updatedLifts });
-                        }}
+                        onGymUpdated={applyGymUpdate}
                         onClose={() => setShowAddLift(false)}
                         onAddLiftToWorkout={(lift, station) => {
                           const newLiftEntry = { ...lift, station, gymId: localPlan.gymId, gymName: localPlan.gymName, uniquePlanId: newPlanId() };
@@ -1452,8 +1498,32 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          {showLiftHistory && (
             <LiftHistorySheet liftId={activeLift.id} liftName={activeLift.name} history={pastHistory || []} onClose={() => setShowLiftHistory(false)} />
          )}
-         {prToast && (
-            <div className="tracker-toast animate-fade-in" role="status" onClick={() => setPrToast(null)}>🏆 {prToast}</div>
+         {editingSetIndex !== null && activeLogs[editingSetIndex] && (
+            <SetEditSheet
+               key={editingSetIndex}
+               set={activeLogs[editingSetIndex]}
+               setNumber={editingSetIndex + 1}
+               liftName={activeLift.name}
+               possibleWeights={activePossibleWeights}
+               onSave={(set) => updateSet(editingSetIndex, set)}
+               onDelete={() => deleteSet(editingSetIndex)}
+               onClose={() => setEditingSetIndex(null)}
+            />
+         )}
+         {editTarget && activeLift.station?.id && (
+            <ActiveLiftEditor
+               mode={editTarget}
+               stationId={activeLift.station.id}
+               liftId={activeLift.id}
+               onSaved={applyGymUpdate}
+               onClose={() => setEditTarget(null)}
+            />
+         )}
+         {toast && (
+            <div className={`tracker-toast animate-fade-in${toast.pr ? '' : ' is-quiet'}`} role="status">
+               <span style={{ flex: 1, minWidth: 0 }} onClick={() => setToast(null)}>{toast.text}</span>
+               {toast.undo && <button type="button" className="tracker-toast-action" onClick={toast.undo}>Undo</button>}
+            </div>
          )}
          {popup}
       </div>

@@ -13,7 +13,8 @@ type Step =
   | { kind: 'station' }
   | { kind: 'pick-new' }
   | { kind: 'new-station'; preset?: EquipmentPreset; copyFrom?: Station }
-  | { kind: 'lifts'; stationId: string };
+  | { kind: 'lifts'; stationId: string }
+  | { kind: 'edit-station'; stationId: string };
 
 type AddExerciseFlowProps = {
   gym: Gym;
@@ -39,7 +40,7 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const station = step.kind === 'lifts' ? gym.stations.find((s) => s.id === step.stationId) : undefined;
+  const station = step.kind === 'lifts' || step.kind === 'edit-station' ? gym.stations.find((s) => s.id === step.stationId) : undefined;
   const q = query.trim().toLowerCase();
   const stations = useMemo(() => gym.stations.filter((s) =>
     !q || s.name.toLowerCase().includes(q) || s.lifts.some((l) => l.name.toLowerCase().includes(q))), [gym.stations, q]);
@@ -108,6 +109,19 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
     );
   }
 
+  if (step.kind === 'edit-station' && station) {
+    const saveEdited = (edited: Station) => run(async () => {
+      await saveGym({ ...gym, stations: gym.stations.map((s) => (s.id === edited.id ? edited : s)) });
+      setStep({ kind: 'lifts', stationId: edited.id });
+    });
+    return (
+      <>
+        {error && <p className="workout-error">{error}</p>}
+        <StationForm initial={station} saving={saving} onSave={saveEdited} onCancel={() => setStep({ kind: 'lifts', stationId: station.id })} />
+      </>
+    );
+  }
+
   if (step.kind === 'lifts' && station) {
     const suggestions = suggestedLiftNames(station).slice(0, 8);
     const typedCount = typed.split(',').map((n) => n.trim()).filter(Boolean).length;
@@ -116,7 +130,10 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
       <div className="workout-form-panel animate-fade-in">
         <div className="workout-flex-between" style={{ marginBottom: '0.5rem' }}>
           <h4 style={{ margin: 0 }}>{station.name}</h4>
-          <button className="workout-text-btn" onClick={() => setStep({ kind: 'station' })}>← Machines</button>
+          <span style={{ display: 'flex', gap: '0.75rem' }}>
+            <button className="workout-text-btn" onClick={() => setStep({ kind: 'edit-station', stationId: station.id })}>✏️ Edit</button>
+            <button className="workout-text-btn" onClick={() => setStep({ kind: 'station' })}>← Machines</button>
+          </span>
         </div>
         {error && <p className="workout-error">{error}</p>}
         {station.lifts.length === 0 && <p className="workout-hint">No lifts here yet — type what you&apos;re doing below.</p>}

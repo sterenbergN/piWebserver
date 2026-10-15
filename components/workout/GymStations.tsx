@@ -127,15 +127,18 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
             const meta = STATION_TYPE_META[st.type];
             return (
               <div key={st.id} className={`workout-station${isOpen ? ' is-open' : ''}`}>
-                <button type="button" className="workout-station-head" aria-expanded={isOpen} onClick={() => toggleOpen(st.id)}>
-                  <span className="workout-avatar is-small" aria-hidden title={meta?.label}>{meta?.icon}</span>
-                  <span className="workout-card-text">
-                    <span className="workout-card-title">{st.name}</span>
-                    <span className="workout-card-meta">{describeStationWeights(st)}</span>
-                    <span className="workout-card-meta">{st.lifts.length ? plural(st.lifts.length, 'lift') : 'No lifts yet'}{st.attachments?.length ? ` · ${st.attachments.join(', ')}` : ''}</span>
-                  </span>
-                  <span className={`workout-chevron${isOpen ? ' is-open' : ''}`} aria-hidden>›</span>
-                </button>
+                <div className="workout-station-top">
+                  <button type="button" className="workout-station-head" aria-expanded={isOpen} onClick={() => toggleOpen(st.id)}>
+                    <span className="workout-avatar is-small" aria-hidden title={meta?.label}>{meta?.icon}</span>
+                    <span className="workout-card-text">
+                      <span className="workout-card-title">{st.name}</span>
+                      <span className="workout-card-meta">{describeStationWeights(st)}</span>
+                      <span className="workout-card-meta">{st.lifts.length ? plural(st.lifts.length, 'lift') : 'No lifts yet'}{st.attachments?.length ? ` · ${st.attachments.join(', ')}` : ''}</span>
+                    </span>
+                    <span className={`workout-chevron${isOpen ? ' is-open' : ''}`} aria-hidden>›</span>
+                  </button>
+                  <button type="button" className="workout-icon-btn" aria-label={`Edit ${st.name}`} title="Edit weights and lifts" onClick={() => setTarget({ kind: 'station', stationId: st.id })}>✏️</button>
+                </div>
 
                 {isOpen && (
                   <div className="workout-station-body">

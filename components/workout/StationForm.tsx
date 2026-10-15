@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { STATION_TYPE_OPTIONS, type Station, type StationType } from '@/lib/workout/types';
-import { finalizeStation, listFieldsFromStation, newRecordId } from '@/lib/workout/stations';
+import { STATION_TYPE_OPTIONS, type Lift, type Station, type StationType } from '@/lib/workout/types';
+import { finalizeStation, listFieldsFromStation, newRecordId, upsertLift } from '@/lib/workout/stations';
 import { liftFromName, presetLifts, suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
 import { STATION_TYPE_META } from '@/lib/workout/station-summary';
 import Sheet from './Sheet';
+import LiftForm, { describeLift } from './LiftForm';
 import { StationWeightFields } from './WeightFields';
 
 const COMMON_ATTACHMENTS = ['Rope', 'Straight Bar', 'V-Bar', 'D-Handle', 'Wide Bar', 'Ankle Strap'];
@@ -47,7 +48,10 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
   // New stations can bring their lifts along: preset / copied lifts start selected.
   const [pickedLifts, setPickedLifts] = useState<Set<string>>(() => new Set((copyFrom?.lifts || preset?.lifts || []).map((l) => l.name)));
   const [typedLifts, setTypedLifts] = useState('');
-  const liftSuggestions = isEditing ? []
+  // A lift on this station open in the stacked lift sheet ('new' = a blank one).
+  const [editingLift, setEditingLift] = useState<string | null>(null);
+  const currentLifts = draft.lifts || [];
+  const liftSuggestions = isEditing ? suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates', lifts: currentLifts })
     : copyFrom ? [...new Set([...(copyFrom.lifts || []).map((l) => l.name), ...suggestedLiftNames({ name: copyFrom.name, type: copyFrom.type, lifts: copyFrom.lifts })])]
     : preset ? preset.lifts.map((l) => l.name) : suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates' });
 
@@ -65,17 +69,28 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
     setAttachmentInput('');
   };
 
+  /** Lifts picked or typed in this sheet that the station doesn't have yet. */
   const newLifts = () => {
-    if (isEditing) return [];
-    const fromSource = copyFrom
-      ? (copyFrom.lifts || []).filter((l) => pickedLifts.has(l.name)).map((l) => ({ ...l, id: newRecordId() }))
+    const fromSource = isEditing ? []
+      : copyFrom ? (copyFrom.lifts || []).filter((l) => pickedLifts.has(l.name)).map((l) => ({ ...l, id: newRecordId() }))
       : preset ? presetLifts(preset, [...pickedLifts]) : [];
-    const sourceNames = new Set(fromSource.map((l) => l.name.toLowerCase()));
+    const taken = new Set([...currentLifts, ...fromSource].map((l) => l.name.toLowerCase()));
+    // A cable station with a single handle: new lifts use it.
+    const attachment = draft.type === 'cable' && attachments.length === 1 ? attachments[0] : undefined;
     const others = [...[...pickedLifts].filter((n) => liftSuggestions.includes(n)), ...typedLifts.split(',')]
       .map((n) => n.trim())
-      .filter((n, i, all) => n && !sourceNames.has(n.toLowerCase()) && all.findIndex((m) => m.toLowerCase() === n.toLowerCase()) === i)
-      .map((n) => liftFromName(n));
+      .filter((n, i, all) => n && !taken.has(n.toLowerCase()) && all.findIndex((m) => m.toLowerCase() === n.toLowerCase()) === i)
+      .map((n) => liftFromName(n, attachment ? { attachment } : {}));
     return [...fromSource, ...others];
+  };
+
+  const saveLift = (lift: Lift) => {
+    update({ lifts: upsertLift({ ...draft, lifts: currentLifts } as Station, lift).lifts });
+    setEditingLift(null);
+  };
+  const removeLift = (id: string) => {
+    update({ lifts: currentLifts.filter((l) => l.id !== id) });
+    setEditingLift(null);
   };
 
   const handleSave = () => {
@@ -90,7 +105,12 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
   });
 
   const liftCount = newLifts().length;
-  const saveLabel = saving ? 'Saving…' : isEditing ? 'Save changes' : liftCount ? `Add with ${liftCount} lift${liftCount === 1 ? '' : 's'}` : 'Add equipment';
+  const liftsLabel = `${liftCount} lift${liftCount === 1 ? '' : 's'}`;
+  const saveLabel = saving ? 'Saving…'
+    : isEditing ? (liftCount ? `Save and add ${liftsLabel}` : 'Save changes')
+    : liftCount ? `Add with ${liftsLabel}` : 'Add equipment';
+  const removedCount = (initial?.lifts || []).filter((l) => !currentLifts.some((c) => c.id === l.id)).length;
+  const liftBeingEdited = editingLift && editingLift !== 'new' ? currentLifts.find((l) => l.id === editingLift) : undefined;
 
   return (
     <Sheet
@@ -142,10 +162,34 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
         </div>
       </>)}
 
-      {!isEditing && (<>
-        <div className="workout-section-title">
-          Lifts on it <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>{pickedLifts.size ? `${pickedLifts.size} picked` : 'tap to pick'}</span>
+      <div className="workout-section-title">
+        Lifts on it
+        <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+          {isEditing ? `${currentLifts.length} · tap one to edit` : pickedLifts.size ? `${pickedLifts.size} picked` : 'tap to pick'}
+        </span>
+      </div>
+      {currentLifts.length > 0 && (
+        <div className="workout-stack" style={{ marginBottom: '0.75rem' }}>
+          {currentLifts.map((l) => (
+            <div key={l.id} style={{ display: 'flex', gap: '0.4rem' }}>
+              <button type="button" className="workout-lift-row" onClick={() => setEditingLift(l.id)}>
+                <span className="workout-card-text">
+                  <span className="workout-card-title">{l.name}</span>
+                  <span className="workout-card-meta">{describeLift(l)}{l.notes ? ` · ${l.notes}` : ''}</span>
+                </span>
+                <span className="workout-chevron" aria-hidden>›</span>
+              </button>
+              <button type="button" className="workout-icon-btn" style={{ alignSelf: 'center' }} aria-label={`Remove ${l.name}`} onClick={() => removeLift(l.id)}>✕</button>
+            </div>
+          ))}
         </div>
+      )}
+      {removedCount > 0 && (
+        <p className="workout-hint" style={{ margin: '-0.35rem 0 0.75rem' }}>
+          {removedCount} lift{removedCount === 1 ? '' : 's'} will be removed when you save. Past workouts keep their history.
+        </p>
+      )}
+      <>
         {liftSuggestions.length > 0 && (
           <div className="workout-chip-list" style={{ marginBottom: '0.6rem' }}>
             {liftSuggestions.map((name) => (
@@ -155,14 +199,28 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
             ))}
           </div>
         )}
-        <input className="workout-input" style={{ marginBottom: '0.35rem' }} placeholder="Other lifts, separated by commas" value={typedLifts} onChange={(e) => setTypedLifts(e.target.value)} />
-        <div className="workout-hint">Muscles are filled in from each lift&apos;s name. You can fine-tune any lift afterwards.</div>
-      </>)}
+        <input className="workout-input" style={{ marginBottom: '0.35rem' }} placeholder={isEditing ? 'Add lifts, separated by commas' : 'Other lifts, separated by commas'} value={typedLifts} onChange={(e) => setTypedLifts(e.target.value)} />
+        <div className="workout-hint">
+          Muscles are filled in from each lift&apos;s name.{' '}
+          <button type="button" className="workout-text-btn" style={{ fontSize: 'inherit', textDecoration: 'underline' }} onClick={() => setEditingLift('new')}>Set every detail by hand</button>
+        </div>
+      </>
 
       {isEditing && onDelete && (
         <button type="button" className="workout-button is-danger is-block" style={{ marginTop: '1.5rem' }} onClick={onDelete}>
           Delete this equipment{initial?.lifts?.length ? ` and its ${initial.lifts.length} lift${initial.lifts.length === 1 ? '' : 's'}` : ''}
         </button>
+      )}
+
+      {/* Lift details are edited in a sheet on top; nothing is saved until this sheet is. */}
+      {editingLift && (
+        <LiftForm
+          station={{ ...draft, name: draft.name || 'this equipment', lifts: currentLifts } as Station}
+          initial={liftBeingEdited}
+          onSave={saveLift}
+          onCancel={() => setEditingLift(null)}
+          onDelete={liftBeingEdited ? () => removeLift(liftBeingEdited.id) : undefined}
+        />
       )}
     </Sheet>
   );

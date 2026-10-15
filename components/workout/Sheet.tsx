@@ -12,9 +12,11 @@ type SheetProps = {
   footer?: ReactNode;
 };
 
-// Sheets can stack (e.g. a lift form over the gym editor); only the first
-// one open should lock page scrolling and the last one closed unlock it.
+// Sheets can stack (e.g. a lift form over the equipment form); only the first
+// one open should lock page scrolling, the last one closed unlock it, and
+// Escape should close just the one on top.
 let openSheets = 0;
+const sheetStack: object[] = [];
 
 /**
  * Full-height panel for forms on a phone (a centred card on wider screens).
@@ -22,23 +24,28 @@ let openSheets = 0;
  */
 export default function Sheet({ title, subtitle, onClose, children, footer }: SheetProps) {
   const [mounted, setMounted] = useState(false);
+  const [token] = useState(() => ({}));
 
   useEffect(() => {
     setMounted(true);
     openSheets += 1;
+    sheetStack.push(token);
     if (openSheets === 1) document.body.style.overflow = 'hidden';
     return () => {
       openSheets -= 1;
+      sheetStack.splice(sheetStack.indexOf(token), 1);
       if (openSheets === 0) document.body.style.overflow = '';
     };
-  }, []);
+  }, [token]);
 
   useEffect(() => {
-    // Escape closes the sheet, unless a confirm popup on top of it is taking that key.
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.site-popup-backdrop')) onClose(); };
+    // Escape closes the top sheet, unless a confirm popup on top of it is taking that key.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && sheetStack[sheetStack.length - 1] === token && !document.querySelector('.site-popup-backdrop')) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, token]);
 
   if (!mounted) return null;
 
