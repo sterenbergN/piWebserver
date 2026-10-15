@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { calcWilks, calcBoerLBM, calculateExperienceScore } from '@/lib/workout/analytics';
 import { blendProgressRatio, computeTargetOverload, getStrengthWeight } from '@/lib/workout/progression';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { exerciseName } from '@/lib/workout/exercises';
 import { buildAnalyticsData } from '@/lib/workout/analytics-data';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import { useSitePopup } from '@/components/SitePopup';
@@ -202,7 +203,7 @@ export default function AnalyticsPage() {
    });
    const getScaleFactorForLiftDisplay = (workout: any, liftId: string) => {
       const meta = workout.liftMeta?.[liftId];
-      const liftName = meta?.name || allLiftsMap.get(liftId) || liftId;
+      const liftName = exerciseName(meta) || allLiftsMap.get(liftId) || liftId;
       const liftKey = normalizeLiftKey(liftName);
       const stationType = meta?.stationType || liftStationTypeMap.get(liftId);
       if (!workout.gymId || !liftKey || (stationType !== 'stack' && stationType !== 'cable')) return 1;

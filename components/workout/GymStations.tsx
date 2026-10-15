@@ -6,6 +6,7 @@ import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { upsertLift } from '@/lib/workout/stations';
 import { GYM_TEMPLATES, stationFromPreset, stationsFromTemplate, type EquipmentPreset } from '@/lib/workout/catalog';
 import { copyStation } from '@/lib/workout/equipment-library';
+import type { Exercise } from '@/lib/workout/exercises';
 import { STATION_TYPE_META, describeStationWeights } from '@/lib/workout/station-summary';
 import StationForm from './StationForm';
 import LiftForm, { describeLift } from './LiftForm';
@@ -33,8 +34,8 @@ type GymStationsProps = {
   saveStations: (stations: Station[]) => Promise<boolean>;
   weightsCheck: WeightsCheck | null;
   setWeightsCheck: (check: WeightsCheck | null) => void;
-  /** In a workout: show "+ Workout" on each lift. */
-  onAddLiftToWorkout?: (lift: Lift, station: Station) => void;
+  /** Your exercises from all your gyms (see exerciseLibrary). */
+  exercises?: Exercise[];
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -44,7 +45,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  * adding/editing equipment and lifts. Shared by the gym settings page and the
  * "manage equipment" panel inside a workout.
  */
-export default function GymStations({ gym, library = [], saving = false, saveStations, weightsCheck, setWeightsCheck, onAddLiftToWorkout }: GymStationsProps) {
+export default function GymStations({ gym, library = [], saving = false, saveStations, weightsCheck, setWeightsCheck, exercises = [] }: GymStationsProps) {
   const { confirm, popup } = useSitePopup();
   const [target, setTarget] = useState<Target>(null);
   const [open, setOpen] = useState<Set<string>>(() => new Set(gym.stations.length <= 2 ? gym.stations.map((s) => s.id) : []));
@@ -145,21 +146,13 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
                     {st.lifts.length > 0 ? (
                       <div className="workout-stack" style={{ marginBottom: '0.6rem' }}>
                         {st.lifts.map((l) => (
-                          <div key={l.id} style={{ display: 'flex', gap: '0.4rem' }}>
-                            <button type="button" className="workout-lift-row" onClick={() => setTarget({ kind: 'lift', stationId: st.id, liftId: l.id })}>
-                              <span className="workout-card-text">
-                                <span className="workout-card-title">{l.name}</span>
-                                <span className="workout-card-meta">{describeLift(l)}{l.notes ? ` · ${l.notes}` : ''}</span>
-                              </span>
-                              {!onAddLiftToWorkout && <span className="workout-chevron" aria-hidden>›</span>}
-                            </button>
-                            {onAddLiftToWorkout && (
-                              <button type="button" className="workout-button is-primary is-small" style={{ flexShrink: 0, alignSelf: 'center', whiteSpace: 'nowrap' }}
-                                aria-label={`Add ${l.name} to this workout`} onClick={() => onAddLiftToWorkout(l, st)}>
-                                + Add
-                              </button>
-                            )}
-                          </div>
+                          <button key={l.id} type="button" className="workout-lift-row" onClick={() => setTarget({ kind: 'lift', stationId: st.id, liftId: l.id })}>
+                            <span className="workout-card-text">
+                              <span className="workout-card-title">{l.name}</span>
+                              <span className="workout-card-meta">{describeLift(l)}{l.notes ? ` · ${l.notes}` : ''}</span>
+                            </span>
+                            <span className="workout-chevron" aria-hidden>›</span>
+                          </button>
                         ))}
                       </div>
                     ) : (
@@ -167,7 +160,7 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
                     )}
                     <div className="workout-grid-2">
                       <button type="button" className="workout-button is-small" onClick={() => setTarget({ kind: 'quick-lifts', stationId: st.id })}>+ Add lifts</button>
-                      <button type="button" className="workout-button is-small" onClick={() => setTarget({ kind: 'station', stationId: st.id })}>Edit equipment</button>
+                      <button type="button" className="workout-button is-small" onClick={() => setTarget({ kind: 'station', stationId: st.id })}>Edit weights & lifts</button>
                     </div>
                   </div>
                 )}
@@ -193,20 +186,20 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
         />
       )}
       {target?.kind === 'station' && target.stationId === 'new' && (
-        <StationForm preset={target.preset} copyFrom={target.copyFrom} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} />
+        <StationForm preset={target.preset} copyFrom={target.copyFrom} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} exercises={exercises} />
       )}
       {target?.kind === 'station' && targetStation && (
-        <StationForm initial={targetStation} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} onDelete={() => deleteStation(targetStation)} />
+        <StationForm initial={targetStation} saving={saving} onSave={saveStation} onCancel={() => setTarget(null)} onDelete={() => deleteStation(targetStation)} exercises={exercises} />
       )}
       {target?.kind === 'quick-lifts' && targetStation && (
-        <QuickAddLifts station={targetStation} saving={saving} onSave={(lifts) => addLifts(targetStation, lifts)} onCancel={() => setTarget(null)}
+        <QuickAddLifts station={targetStation} saving={saving} onSave={(lifts) => addLifts(targetStation, lifts)} onCancel={() => setTarget(null)} exercises={exercises}
           onCustom={() => setTarget({ kind: 'lift', stationId: targetStation.id, liftId: 'new' })} />
       )}
       {target?.kind === 'lift' && targetStation && (() => {
         const lift = target.liftId === 'new' ? undefined : targetStation.lifts.find((l) => l.id === target.liftId);
         return (
           <LiftForm station={targetStation} initial={lift} saving={saving} onSave={(l) => saveLift(targetStation, l)} onCancel={() => setTarget(null)}
-            onDelete={lift ? () => deleteLift(targetStation, lift) : undefined} />
+            onDelete={lift ? () => deleteLift(targetStation, lift) : undefined} exercises={exercises} />
         );
       })()}
       {weightsCheck && (

@@ -1,4 +1,5 @@
 import { calcAverage1RM } from './analytics';
+import { exerciseKey, exerciseName } from './exercises';
 
 // Weekly training report and monthly strength summary, computed from saved
 // workouts. Pure functions so they're easy to test and reuse (page, export).
@@ -13,7 +14,7 @@ export type ReportWorkout = {
   calories?: number;
   isDeload?: boolean;
   logs?: Record<string, Set[]>;
-  liftMeta?: Record<string, { name?: string; primaryMuscle?: string }>;
+  liftMeta?: Record<string, { name?: string; exercise?: string; primaryMuscle?: string }>;
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -30,9 +31,9 @@ export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-const liftKey = (w: ReportWorkout, liftId: string) =>
-  (w.liftMeta?.[liftId]?.name || liftId).trim().toLowerCase();
-const liftLabel = (w: ReportWorkout, liftId: string) => w.liftMeta?.[liftId]?.name || liftId;
+// The same exercise at different gyms (or after a rename) counts as one lift.
+const liftKey = (w: ReportWorkout, liftId: string) => exerciseKey(w.liftMeta?.[liftId]) || liftId;
+const liftLabel = (w: ReportWorkout, liftId: string) => exerciseName(w.liftMeta?.[liftId]) || liftId;
 const validSets = (sets: Set[] | undefined) => (sets || []).filter((s) => Number(s.reps) > 0);
 
 function inRange(workouts: ReportWorkout[], from: Date, to: Date) {

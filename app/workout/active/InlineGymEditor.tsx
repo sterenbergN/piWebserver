@@ -1,19 +1,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { Gym, Lift, Station } from '@/lib/workout/types';
+import type { Gym, Station } from '@/lib/workout/types';
 import { equipmentLibrary } from '@/lib/workout/equipment-library';
+import { exerciseLibrary } from '@/lib/workout/exercises';
 import GymStations, { type WeightsCheck } from '@/components/workout/GymStations';
 
 interface InlineGymEditorProps {
   gymId: string;
   onGymUpdated: (gym: Gym) => void;
-  onClose: () => void;
-  onAddLiftToWorkout?: (lift: Lift, station: Station) => void;
 }
 
 /** The gym's equipment editor, shown inside an active workout. */
-export default function InlineGymEditor({ gymId, onGymUpdated, onAddLiftToWorkout }: InlineGymEditorProps) {
+export default function InlineGymEditor({ gymId, onGymUpdated }: InlineGymEditorProps) {
   const [gyms, setGyms] = useState<Gym[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -77,7 +76,7 @@ export default function InlineGymEditor({ gymId, onGymUpdated, onAddLiftToWorkou
         saveStations={saveStations}
         weightsCheck={weightsCheck}
         setWeightsCheck={setWeightsCheck}
-        onAddLiftToWorkout={onAddLiftToWorkout}
+        exercises={exerciseLibrary((gyms || []).filter(g => g.ownerId === gym.ownerId))}
       />
     </div>
   );

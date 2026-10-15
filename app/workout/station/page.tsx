@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { formatRelativeDay, liftSessions } from '@/lib/workout/session-insights';
+import { exerciseName } from '@/lib/workout/exercises';
 import { describeLift } from '@/components/workout/LiftForm';
 import { hasPendingWorkout, queueLiftsForWorkout } from '@/lib/workout/station-link';
 
@@ -57,7 +58,7 @@ export default function StationPage() {
   const stats = useMemo(() => {
     const out: Record<string, { last?: string; best?: string }> = {};
     for (const lift of station?.lifts || []) {
-      const sessions = liftSessions(history, lift.id, lift.name);
+      const sessions = liftSessions(history, lift.id, exerciseName(lift));
       if (sessions.length === 0) continue;
       const latest = [...sessions].sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
       const best = sessions.reduce((a, b) => (b.e1rm > a.e1rm ? b : a));

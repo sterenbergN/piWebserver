@@ -10,6 +10,7 @@ import {
 } from '@/lib/workout/types';
 import { finalizeLift } from '@/lib/workout/stations';
 import { CATALOG_LIFT_NAMES, inferLiftDetails } from '@/lib/workout/catalog';
+import { exerciseKeyFromName, type Exercise } from '@/lib/workout/exercises';
 import Sheet from './Sheet';
 
 const PROFILES: { value: ProgressionProfile; label: string; hint: string }[] = [
@@ -27,21 +28,46 @@ type LiftFormProps = {
   onCancel: () => void;
   /** Shown as a delete button when editing. */
   onDelete?: () => void;
+  /** Your exercises (from all your gyms), for "counts as" and name suggestions. */
+  exercises?: Exercise[];
 };
 
 /** Create/edit sheet for a lift on a station, shared by the config page and the in-workout editor. */
-export default function LiftForm({ station, initial, saving = false, onSave, onCancel, onDelete }: LiftFormProps) {
+export default function LiftForm({ station, initial, saving = false, onSave, onCancel, onDelete, exercises = [] }: LiftFormProps) {
   const [draft, setDraft] = useState<Partial<Lift>>(() => ({ ...EMPTY_LIFT, ...initial }));
   // Once the muscles/profile are picked by hand, stop overwriting them from the name.
   const [detailsTouched, setDetailsTouched] = useState(!!initial);
+  // Once "counts as" is picked by hand, renaming no longer changes it.
+  const [exerciseTouched, setExerciseTouched] = useState(false);
   const update = (patch: Partial<Lift>) => setDraft((prev) => ({ ...prev, ...patch }));
   const updateDetail = (patch: Partial<Lift>) => { setDetailsTouched(true); update(patch); };
   const updateName = (name: string) => {
-    const inferred = detailsTouched ? undefined : inferLiftDetails(name);
-    if (!inferred) return update({ name });
-    const { known: _known, ...details } = inferred;
-    update({ name, ...details });
+    // Renaming keeps the lift's history: it still counts as the exercise it was.
+    const keepHistory = initial && !initial.exercise && !exerciseTouched ? { exercise: initial.name } : {};
+    const own = exercises.find((e) => e.key === exerciseKeyFromName(name));
+    const inferred = detailsTouched ? undefined : own
+      ? { primaryMuscle: own.primaryMuscle, secondaryMuscle: own.secondaryMuscle, singleArmLeg: own.singleArmLeg, progressionProfile: own.progressionProfile }
+      : inferLiftDetails(name);
+    if (!inferred) return update({ name, ...keepHistory });
+    const { known: _known, ...details } = inferred as Partial<Lift> & { known?: boolean };
+    update({ name, ...keepHistory, ...details });
   };
+  const chooseExercise = (value: string) => {
+    setExerciseTouched(true);
+    const picked = exercises.find((e) => e.name === value);
+    // A new lift takes on your details for that exercise unless you've set them.
+    const details = picked && !detailsTouched
+      ? { primaryMuscle: picked.primaryMuscle, secondaryMuscle: picked.secondaryMuscle, singleArmLeg: picked.singleArmLeg, progressionProfile: picked.progressionProfile }
+      : {};
+    update({ exercise: value || undefined, ...details });
+  };
+  const nameKey = exerciseKeyFromName(draft.name || '');
+  const exerciseOptions = exercises.filter((e) => e.key !== nameKey && !(initial && e.uses.length === 1 && e.uses[0].liftId === initial.id));
+  if (draft.exercise && !exerciseOptions.some((e) => e.name === draft.exercise) && exerciseKeyFromName(draft.exercise) !== nameKey) {
+    exerciseOptions.unshift({ key: exerciseKeyFromName(draft.exercise), name: draft.exercise, uses: [] } as unknown as Exercise);
+  }
+  const ownMatch = exercises.find((e) => e.key === nameKey && !(initial && e.uses.every((u) => u.liftId === initial.id)));
+  const countsAs = draft.exercise && exerciseKeyFromName(draft.exercise) !== nameKey ? draft.exercise : '';
   const attachments = station.type === 'cable' ? station.attachments || [] : [];
   const profile = draft.progressionProfile || 'standard';
 
@@ -62,9 +88,31 @@ export default function LiftForm({ station, initial, saving = false, onSave, onC
         <input className="workout-input" placeholder="e.g. Bench Press" list="lift-catalog-names" autoComplete="off" autoFocus={!initial}
           value={draft.name || ''} onChange={(e) => updateName(e.target.value)} />
         <datalist id="lift-catalog-names">
-          {CATALOG_LIFT_NAMES.map((n) => <option key={n} value={n} />)}
+          {[...new Set([...exercises.map((e) => e.name), ...CATALOG_LIFT_NAMES])].map((n) => <option key={n} value={n} />)}
         </datalist>
       </label>
+
+      {(exerciseOptions.length > 0 || countsAs) && (
+        <label className="workout-field" style={{ display: 'block' }}>
+          <span className="workout-label">Counts as</span>
+          <select className="workout-input" value={countsAs} onChange={(e) => chooseExercise(e.target.value)}>
+            <option value="">{draft.name?.trim() ? `Its own exercise (${draft.name.trim()})` : 'Its own exercise'}</option>
+            {exerciseOptions.map((e) => (
+              <option key={e.key} value={e.name}>
+                {e.name}{e.uses.length ? ` — ${e.uses.map((u) => u.gymName).filter((g, i, all) => all.indexOf(g) === i).join(', ')}` : initial ? ' — keeps its history' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="workout-hint" style={{ display: 'block', marginTop: '0.3rem' }}>
+            Lifts that count as the same exercise share history, PRs and plateau checks across your gyms.
+          </span>
+        </label>
+      )}
+      {!countsAs && ownMatch && (
+        <p className="workout-hint" style={{ margin: '-0.4rem 0 0.9rem' }}>
+          🔗 Shares history with {ownMatch.name} at {[...new Set(ownMatch.uses.map((u) => u.gymName))].join(', ')}.
+        </p>
+      )}
 
       <div className="workout-grid-2 workout-field">
         <label>

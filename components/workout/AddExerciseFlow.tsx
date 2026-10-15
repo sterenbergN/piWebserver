@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { Gym, Lift, Station } from '@/lib/workout/types';
-import { liftFromName, suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
+import { suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
+import { exerciseKeyFromName, exerciseLibrary, libraryExercisesFor, liftFromNameOrLibrary, type Exercise } from '@/lib/workout/exercises';
 import EquipmentPicker from './EquipmentPicker';
 import StationForm from './StationForm';
 import { describeLift } from './LiftForm';
@@ -23,6 +24,8 @@ type AddExerciseFlowProps = {
   /** Lift ids already in the workout (shown as added). */
   inWorkout?: Set<string>;
   saveGym: (gym: Gym) => Promise<Gym>;
+  /** Your exercises from all your gyms: offered first, and their details reused. */
+  exercises?: Exercise[];
   onAdd: (entries: { lift: Lift; station: Station }[]) => void;
   onCancel?: () => void;
 };
@@ -32,7 +35,7 @@ type AddExerciseFlowProps = {
  * up new equipment on the spot), then the lifts. New stations and lifts are
  * saved to the gym so they're there next time.
  */
-export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set(), saveGym, onAdd, onCancel }: AddExerciseFlowProps) {
+export default function AddExerciseFlow({ gym, library = [], exercises = [], inWorkout = new Set(), saveGym, onAdd, onCancel }: AddExerciseFlowProps) {
   const [step, setStep] = useState<Step>(gym.stations.length ? { kind: 'station' } : { kind: 'pick-new' });
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -67,7 +70,7 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
     if (!station) return;
     // Typed names become new lifts on this station first.
     const have = new Set(station.lifts.map((l) => l.name.toLowerCase()));
-    const newLifts = typed.split(',').map((n) => n.trim()).filter((n) => n && !have.has(n.toLowerCase())).map((n) => liftFromName(n));
+    const newLifts = typed.split(',').map((n) => n.trim()).filter((n) => n && !have.has(n.toLowerCase())).map((n) => liftFromNameOrLibrary(n, exercises));
     let target = station;
     if (newLifts.length) {
       const saved = await saveGym({ ...gym, stations: gym.stations.map((s) => (s.id === station.id ? { ...s, lifts: [...s.lifts, ...newLifts] } : s)) });
@@ -104,7 +107,7 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
     return (
       <>
         {error && <p className="workout-error">{error}</p>}
-        <StationForm preset={step.preset} copyFrom={step.copyFrom} saving={saving} onSave={saveNewStation} onCancel={() => setStep({ kind: 'pick-new' })} />
+        <StationForm preset={step.preset} copyFrom={step.copyFrom} saving={saving} onSave={saveNewStation} onCancel={() => setStep({ kind: 'pick-new' })} exercises={exercises} />
       </>
     );
   }
@@ -117,13 +120,15 @@ export default function AddExerciseFlow({ gym, library = [], inWorkout = new Set
     return (
       <>
         {error && <p className="workout-error">{error}</p>}
-        <StationForm initial={station} saving={saving} onSave={saveEdited} onCancel={() => setStep({ kind: 'lifts', stationId: station.id })} />
+        <StationForm initial={station} saving={saving} onSave={saveEdited} onCancel={() => setStep({ kind: 'lifts', stationId: station.id })} exercises={exercises} />
       </>
     );
   }
 
   if (step.kind === 'lifts' && station) {
-    const suggestions = suggestedLiftNames(station).slice(0, 8);
+    const suggestions = [...libraryExercisesFor(station, exercises).map((e) => e.name), ...suggestedLiftNames(station)]
+      .filter((n, i, all) => all.findIndex((m) => exerciseKeyFromName(m) === exerciseKeyFromName(n)) === i)
+      .slice(0, 8);
     const typedCount = typed.split(',').map((n) => n.trim()).filter(Boolean).length;
     const total = picked.size + typedCount;
     return (
@@ -214,6 +219,7 @@ export function AddExerciseForGym({ gymId, onGymUpdated, ...rest }: AddExerciseF
 
   const gym = gyms?.find((g) => g.id === gymId);
   const library = useMemo(() => (gyms && gym ? equipmentLibraryFor(gyms, gym) : []), [gyms, gym]);
+  const exercises = useMemo(() => (gyms && gym ? exerciseLibrary(gyms.filter((g) => g.ownerId === gym.ownerId)) : []), [gyms, gym]);
 
   if (error) return <p className="workout-error">{error}</p>;
   if (!gyms) return <p className="workout-hint">Loading equipment…</p>;
@@ -228,5 +234,5 @@ export function AddExerciseForGym({ gymId, onGymUpdated, ...rest }: AddExerciseF
     return d.gym as Gym;
   };
 
-  return <AddExerciseFlow gym={gym} library={library} saveGym={saveGym} {...rest} />;
+  return <AddExerciseFlow gym={gym} library={library} exercises={exercises} saveGym={saveGym} {...rest} />;
 }

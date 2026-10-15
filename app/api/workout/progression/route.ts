@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { generateNextWorkout, ProgressionInput, ProgressionProfile, Session, SetLog } from '@/lib/workout/progression';
 import { CalibrationStore, findCalibration, getCalibrationStore } from '@/lib/workout/calibration';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { exerciseName } from '@/lib/workout/exercises';
 import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipment';
 import { loadUserHistory } from '@/lib/workout/history';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
@@ -57,7 +58,7 @@ function buildHistorySessions(
     if (workout.logs[liftId]) matchedLiftIds.add(liftId);
     if (liftKey) {
       Object.keys(metaMap)
-        .filter(id => normalizeLiftKey(metaMap[id]?.name || '') === liftKey)
+        .filter(id => normalizeLiftKey(exerciseName(metaMap[id])) === liftKey)
         .forEach(id => matchedLiftIds.add(id));
     }
 
@@ -90,7 +91,7 @@ function findCalibrationReference(userHistory: any[], gymId: string, liftKey: st
   for (const entry of otherHistory) {
     const metaMap = entry.liftMeta || {};
     const matchedLiftId = Object.keys(metaMap).find(
-      id => normalizeLiftKey(metaMap[id]?.name || '') === liftKey
+      id => normalizeLiftKey(exerciseName(metaMap[id])) === liftKey
     );
     if (!matchedLiftId) continue;
     const sets = entry.logs?.[matchedLiftId] || [];

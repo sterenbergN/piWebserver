@@ -358,6 +358,66 @@
   cursor: pointer;
 }
 
+.tracker-rest-controls { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; }
+.tracker-rest-controls strong { white-space: nowrap; }
+.tracker-rest-controls button {
+  min-width: 36px;
+  min-height: 30px;
+  padding: 0 0.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+/* ── Tracker: target line & details ─────────────────────────────────────────── */
+
+.tracker-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+.tracker-target-label {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.tracker-target strong { font-size: 1rem; }
+.tracker-target-toggle {
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.tracker-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.tracker-details strong { color: var(--foreground); }
+
 /* ── Tracker: logging controls ──────────────────────────────────────────────── */
 
 .tracker-steppers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
@@ -705,6 +765,31 @@
   text-decoration: none;
 }
 .workout-action-tile span:first-child { font-size: 1.15rem; line-height: 1; }
+
+/* Home: more pages as a compact grid instead of a stack of full-width buttons */
+.workout-link-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; margin-top: 1.5rem; }
+@media (max-width: 360px) { .workout-link-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Home: one-tap "repeat a recent workout" buttons under Start */
+.workout-quick-starts { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0 0.25rem; }
+.workout-quick-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  min-height: 52px;
+  padding: 0.55rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workout-quick-start:hover { border-color: var(--accent); }
+.workout-quick-start strong { font-size: 0.92rem; }
+.workout-quick-start span { font-size: 0.75rem; color: var(--muted); }
 .workout-action-tile:disabled { opacity: 0.45; cursor: default; }
 
 /* Station card */
@@ -877,3 +962,8 @@
 /* Multi-select equipment picker */
 .workout-preset-card { min-height: 64px; }
 .workout-preset-card[aria-pressed="true"] { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.16); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* Gyms page: your exercise library */
+.workout-exercise-list { margin-top: 2rem; }
+.workout-exercise-list > summary { cursor: pointer; list-style: none; }
+.workout-exercise-list > summary::-webkit-details-marker { display: none; }

@@ -88,8 +88,15 @@ export function finalizeLift(draft: Partial<Lift>): Lift {
     progressionProfile: draft.progressionProfile || 'standard',
     attachment: draft.attachment || undefined,
     notes: draft.notes?.trim().slice(0, 200) || undefined,
+    // Only kept when it differs from the name; otherwise the name is the exercise.
+    exercise: draft.exercise?.trim() && sameName(draft.exercise, draft.name || '') === false ? draft.exercise.trim().slice(0, 120) : undefined,
   };
 }
+
+const sameName = (a: string, b: string) => {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return key(a) === key(b);
+};
 
 /** Insert or replace a lift within a station. */
 export function upsertLift(station: Station, lift: Lift): Station {

@@ -92,6 +92,7 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
       if (!meta || typeof meta !== 'object') continue;
       liftMeta[liftId] = {
         name: optionalString(meta.name),
+        exercise: optionalString(meta.exercise, 120),
         stationType: optionalString(meta.stationType, 40),
         stationId: optionalString(meta.stationId, 80),
         primaryMuscle: optionalString(meta.primaryMuscle, 40),

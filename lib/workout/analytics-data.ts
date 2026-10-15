@@ -1,6 +1,7 @@
 import { calcAverage1RM, calcBrzycki, calcEpley, calcLombardi, computeMuscleFatigue, type MuscleGroupFatigue } from './analytics';
 import { analyzePerformance, computeHistoryTrend, type PerformanceMetrics, type Session } from './progression';
 import { normalizeLiftKey } from './calibration-utils';
+import { exerciseKeyFromName, exerciseName } from './exercises';
 
 // Everything the analytics page shows, derived from the user's history in one
 // pure pass so the page component only renders.
@@ -13,7 +14,7 @@ type Workout = {
   calories?: number;
   gymId?: string;
   logs?: Record<string, SetEntry[]>;
-  liftMeta?: Record<string, { name?: string; stationType?: string; primaryMuscle?: string }>;
+  liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string; primaryMuscle?: string }>;
 };
 type LiftInfo = { id: string; name: string; primaryMuscle?: string; stationType?: string };
 type Calibration = { gymId: string; liftKey: string; scaleFactor?: number };
@@ -75,9 +76,11 @@ export function buildAnalyticsData(
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const liftById = new Map(lifts.map((lift) => [lift.id, lift]));
 
-  // Name recorded with the workout first (survives lift renames/deletion), then gym config.
+  // Exercise recorded with the workout first (survives renames/deletion), then gym config.
+  // Lifts that are the same exercise (at any gym) are grouped under one key.
   const liftName = (workout: Workout, liftId: string) =>
-    workout.liftMeta?.[liftId]?.name || liftById.get(liftId)?.name || liftId;
+    exerciseName(workout.liftMeta?.[liftId]) || liftById.get(liftId)?.name || liftId;
+  const groupKey = (workout: Workout, liftId: string) => exerciseKeyFromName(liftName(workout, liftId)) || liftId;
   const liftMuscle = (workout: Workout, liftId: string) =>
     workout.liftMeta?.[liftId]?.primaryMuscle || liftById.get(liftId)?.primaryMuscle || 'Other';
 
@@ -113,6 +116,7 @@ export function buildAnalyticsData(
     for (const [liftId, rawSets] of Object.entries(workout.logs || {})) {
       const scale = scaleFor(workout, liftId);
       const name = liftName(workout, liftId);
+      const group = groupKey(workout, liftId);
       const muscle = liftMuscle(workout, liftId);
       const sets = (rawSets || [])
         .map((s) => ({ ...s, weight: Number(s.weight) * scale, reps: Number(s.reps) }))
@@ -132,8 +136,8 @@ export function buildAnalyticsData(
         const avg = (epley + brzycki + lombardi) / 3;
         workoutMaxRM = Math.max(workoutMaxRM, avg);
 
-        if (avg > (bestRM.get(liftId)?.avg || 0)) {
-          bestRM.set(liftId, { liftId, name, epley, brzycki, lombardi, avg, scaleFactor: scale });
+        if (avg > (bestRM.get(group)?.avg || 0)) {
+          bestRM.set(group, { liftId, name, epley, brzycki, lombardi, avg, scaleFactor: scale });
         }
         const prevMax = runningMax.get(name) || 0;
         if (avg > 0 && avg > prevMax * 1.01) {
@@ -146,8 +150,8 @@ export function buildAnalyticsData(
 
       const weighted = sets.filter((s) => s.weight > 0);
       if (weighted.length > 0) {
-        if (!sessionsByLift.has(liftId)) sessionsByLift.set(liftId, []);
-        sessionsByLift.get(liftId)!.push({ date, timestamp: workout.timestamp, sets: weighted, name });
+        if (!sessionsByLift.has(group)) sessionsByLift.set(group, []);
+        sessionsByLift.get(group)!.push({ date, timestamp: workout.timestamp, sets: weighted, name });
       }
     }
 

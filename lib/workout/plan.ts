@@ -1,5 +1,6 @@
 import type { FixedLiftRef } from './types';
 import { normalizeLiftKey } from './calibration-utils';
+import { exerciseName } from './exercises';
 
 type PlanLift = { id: string; name: string; primaryMuscle?: string; secondaryMuscle?: string; [key: string]: any };
 
@@ -55,7 +56,7 @@ export function buildLiftPlan(
   for (const ref of fixedLifts) {
     const key = normalizeLiftKey(ref.name);
     const match = availableLifts.find((l) => l.id === ref.liftId)
-      || availableLifts.find((l) => !usedIds.has(l.id) && normalizeLiftKey(l.name) === key);
+      || availableLifts.find((l) => !usedIds.has(l.id) && (normalizeLiftKey(l.name) === key || normalizeLiftKey(exerciseName(l)) === key));
     if (match && !usedIds.has(match.id)) add(match);
   }
 

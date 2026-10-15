@@ -1,5 +1,7 @@
-// Local test data for the workout tracker: a login, a gym built from the
-// commercial template, two workout types and a few weeks of history.
+// Local test data for the workout tracker: a login, a commercial gym and a
+// home gym, two workout types and a few weeks of history. The home gym's bench
+// lift is named "Flat Bench" (not linked to "Bench Press") so exercise linking
+// can be tried out.
 //
 //   npm run seed:workout            (refuses to touch existing data)
 //   npm run seed:workout -- --force (replaces .data/workouts/*.json)
@@ -17,6 +19,7 @@ const dir = path.join(process.cwd(), '.data', 'workouts');
 const force = process.argv.includes('--force');
 const USER_ID = 'dev-tester';
 const GYM_ID = 'dev-gym';
+const HOME_ID = 'dev-home';
 
 async function main() {
   const files = ['users.json', 'gyms.json', 'workout_types.json', 'history.json'];
@@ -32,6 +35,9 @@ async function main() {
   }
 
   const stations = stationsFromTemplate('commercial');
+  const homeStations = stationsFromTemplate('home');
+  const homeBench = homeStations.flatMap((s) => s.lifts).find((l) => l.name === 'Bench Press')!;
+  homeBench.name = 'Flat Bench';
   const users = {
     users: [{
       id: USER_ID,
@@ -46,7 +52,10 @@ async function main() {
     }],
   };
   const gyms = {
-    gyms: [{ id: GYM_ID, ownerId: USER_ID, name: 'Dev Commercial Gym', emoji: '🏢', isPublic: false, stations, createdAt: new Date().toISOString() }],
+    gyms: [
+      { id: GYM_ID, ownerId: USER_ID, name: 'Dev Commercial Gym', emoji: '🏢', isPublic: false, stations, createdAt: new Date().toISOString() },
+      { id: HOME_ID, ownerId: USER_ID, name: 'Dev Home Gym', emoji: '🏠', isPublic: false, stations: homeStations, createdAt: new Date().toISOString() },
+    ],
   };
   const types = {
     types: [
@@ -107,9 +116,21 @@ async function main() {
     });
   }
 
+  // One session at home, a week ago, on the differently named bench lift.
+  const homeRack = homeStations.find((s) => s.lifts.some((l) => l.id === homeBench.id))!;
+  const homeWhen = new Date(Date.now() - 7 * 86_400_000);
+  history.push({
+    id: 'dev-history-home', userId: USER_ID, clientId: 'dev-client-home', planId: 'dev-plan-home',
+    name: 'Push @ Dev Home Gym', type: history[0].type, duration: '30:00', durationSecs: 1800,
+    timestamp: homeWhen.toISOString(),
+    logs: { [homeBench.id]: [8, 8, 7].map((reps, i) => ({ weight: 155, reps, plannedWeight: 155, plannedReps: 8, rir: 1, completed: true, timestamp: homeWhen.getTime() + i * 150_000 })) },
+    liftMeta: { [homeBench.id]: liftMetaFor(homeBench, homeRack) },
+    calories: 150, volume: 155 * 23, gymId: HOME_ID, gymName: 'Dev Home Gym', isDeload: false, intensitySlider: 1,
+  });
+
   const write = (file: string, data: unknown) => fs.writeFile(path.join(dir, file), JSON.stringify(data, null, 2));
   await Promise.all([write('users.json', users), write('gyms.json', gyms), write('workout_types.json', types), write('history.json', { history })]);
-  console.log(`Seeded ${path.relative(process.cwd(), dir)}: user "tester" / "tester-pass", ${stations.length} stations, ${history.length} workouts.`);
+  console.log(`Seeded ${path.relative(process.cwd(), dir)}: user "tester" / "tester-pass", ${stations.length + homeStations.length} stations in 2 gyms, ${history.length} workouts.`);
 }
 
 function liftMetaFor(lift: Lift, station: Station) {

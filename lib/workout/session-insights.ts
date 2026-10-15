@@ -1,4 +1,5 @@
 import { calcAverage1RM } from './analytics';
+import { exerciseKey, exerciseKeyFromName, exerciseName } from './exercises';
 
 /**
  * Suggested rest between sets for a rep target: heavy, low-rep work needs
@@ -18,6 +19,21 @@ type HistoryWorkout = {
   logs?: Record<string, { weight: number; reps: number }[]>;
   volume?: number;
 };
+
+/** Best estimated 1RM ever logged for each exercise (see exercises.ts), across gyms. */
+export function bestE1RMByExercise(history: (HistoryWorkout & { liftMeta?: Record<string, { name?: string; exercise?: string }> })[] | undefined): Record<string, number> {
+  const best: Record<string, number> = {};
+  for (const workout of history || []) {
+    for (const [liftId, sets] of Object.entries(workout.logs || {})) {
+      const key = exerciseKey(workout.liftMeta?.[liftId]) || liftId;
+      for (const set of sets || []) {
+        const e1rm = calcAverage1RM(Number(set.weight), Number(set.reps));
+        if (e1rm > (best[key] || 0)) best[key] = e1rm;
+      }
+    }
+  }
+  return best;
+}
 
 /** Best estimated 1RM ever logged for each lift id. */
 export function bestE1RMByLift(history: HistoryWorkout[] | undefined): Record<string, number> {
@@ -131,19 +147,20 @@ export type LiftSession = {
 };
 
 /**
- * Every past session of a lift, oldest first. Matches by lift id, or by name
- * via liftMeta so the same exercise at another gym is included.
+ * Every past session of a lift, oldest first. Matches by lift id, or by
+ * exercise via liftMeta so the same exercise at another gym is included.
+ * Pass the lift's exercise name (exerciseName(lift)) as `liftName`.
  */
 export function liftSessions(
-  history: (HistoryWorkout & { liftMeta?: Record<string, { name?: string }> })[] | undefined,
+  history: (HistoryWorkout & { liftMeta?: Record<string, { name?: string; exercise?: string }> })[] | undefined,
   liftId: string,
   liftName?: string,
 ): LiftSession[] {
-  const name = (liftName || '').trim().toLowerCase();
+  const key = exerciseKeyFromName(liftName || '');
   const sessions: LiftSession[] = [];
   for (const workout of history || []) {
     const ids = Object.keys(workout.logs || {}).filter((id) =>
-      id === liftId || (!!name && (workout.liftMeta?.[id]?.name || '').trim().toLowerCase() === name)
+      id === liftId || (!!key && exerciseKey(workout.liftMeta?.[id]) === key)
     );
     const sets = ids.flatMap((id) => workout.logs?.[id] || []).filter((set) => Number(set.reps) > 0);
     if (sets.length === 0) continue;
@@ -212,21 +229,22 @@ const STALL_WINDOW = 3;
  * non-deload sessions so a new lift isn't flagged.
  */
 export function detectStalledLifts(
-  history: (HistoryWorkout & { isDeload?: boolean; liftMeta?: Record<string, { name?: string }> })[] | undefined,
+  history: (HistoryWorkout & { isDeload?: boolean; liftMeta?: Record<string, { name?: string; exercise?: string }> })[] | undefined,
 ): StalledLift[] {
   const training = (history || []).filter((workout) => !workout.isDeload);
-  const names = new Map<string, string>();
+  // One entry per exercise (the same exercise at two gyms is one trend).
+  const exercises = new Map<string, { liftId: string; name: string }>();
   for (const workout of training) {
     for (const liftId of Object.keys(workout.logs || {})) {
-      const name = workout.liftMeta?.[liftId]?.name;
-      if (name) names.set(liftId, name);
-      else if (!names.has(liftId)) names.set(liftId, liftId);
+      const meta = workout.liftMeta?.[liftId];
+      const key = exerciseKey(meta) || liftId;
+      exercises.set(key, { liftId, name: exerciseName(meta) || exercises.get(key)?.name || liftId });
     }
   }
 
   const stalled: StalledLift[] = [];
-  for (const [liftId, name] of names) {
-    const sessions = liftSessions(training, liftId);
+  for (const { liftId, name } of exercises.values()) {
+    const sessions = liftSessions(training, liftId, name);
     if (sessions.length < STALL_WINDOW + 2) continue;
     const recent = sessions.slice(-STALL_WINDOW);
     const before = sessions.slice(0, -STALL_WINDOW);

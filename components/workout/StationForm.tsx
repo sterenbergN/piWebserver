@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { STATION_TYPE_OPTIONS, type Lift, type Station, type StationType } from '@/lib/workout/types';
 import { finalizeStation, listFieldsFromStation, newRecordId, upsertLift } from '@/lib/workout/stations';
-import { liftFromName, presetLifts, suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
+import { presetLifts, suggestedLiftNames, type EquipmentPreset } from '@/lib/workout/catalog';
+import { exerciseKeyFromName, libraryExercisesFor, liftFromNameOrLibrary, type Exercise } from '@/lib/workout/exercises';
 import { STATION_TYPE_META } from '@/lib/workout/station-summary';
 import Sheet from './Sheet';
 import LiftForm, { describeLift } from './LiftForm';
@@ -32,10 +33,12 @@ type StationFormProps = {
   onCancel: () => void;
   /** Shown as a delete button when editing an existing station. */
   onDelete?: () => void;
+  /** Your exercises from all your gyms: offered first, and their details reused. */
+  exercises?: Exercise[];
 };
 
 /** Create/edit sheet for a piece of equipment, shared by the config page and the workout screens. */
-export default function StationForm({ initial, preset, copyFrom, saving = false, onSave, onCancel, onDelete }: StationFormProps) {
+export default function StationForm({ initial, preset, copyFrom, saving = false, onSave, onCancel, onDelete, exercises = [] }: StationFormProps) {
   const [draft, setDraft] = useState<Partial<Station>>(() => {
     const copied: Partial<Station> = copyFrom ? { ...copyFrom, id: undefined, lifts: [] } : {};
     const fromPreset: Partial<Station> = preset ? { ...preset.station, name: preset.name } : {};
@@ -51,9 +54,13 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
   // A lift on this station open in the stacked lift sheet ('new' = a blank one).
   const [editingLift, setEditingLift] = useState<string | null>(null);
   const currentLifts = draft.lifts || [];
-  const liftSuggestions = isEditing ? suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates', lifts: currentLifts })
+  const catalogSuggestions = isEditing ? suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates', lifts: currentLifts })
     : copyFrom ? [...new Set([...(copyFrom.lifts || []).map((l) => l.name), ...suggestedLiftNames({ name: copyFrom.name, type: copyFrom.type, lifts: copyFrom.lifts })])]
     : preset ? preset.lifts.map((l) => l.name) : suggestedLiftNames({ name: draft.name || '', type: draft.type || 'plates' });
+  // Exercises you already do on this kind of equipment come first.
+  const yours = libraryExercisesFor({ type: draft.type || 'plates', lifts: currentLifts }, exercises).map((e) => e.name);
+  const liftSuggestions = [...yours, ...catalogSuggestions]
+    .filter((n, i, all) => all.findIndex((m) => exerciseKeyFromName(m) === exerciseKeyFromName(n)) === i);
 
   const update = (patch: Partial<Station>) => setDraft((prev) => ({ ...prev, ...patch }));
   const changeType = (type: StationType) => setDraft((prev) => {
@@ -80,7 +87,7 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
     const others = [...[...pickedLifts].filter((n) => liftSuggestions.includes(n)), ...typedLifts.split(',')]
       .map((n) => n.trim())
       .filter((n, i, all) => n && !taken.has(n.toLowerCase()) && all.findIndex((m) => m.toLowerCase() === n.toLowerCase()) === i)
-      .map((n) => liftFromName(n, attachment ? { attachment } : {}));
+      .map((n) => liftFromNameOrLibrary(n, exercises, attachment ? { attachment } : {}));
     return [...fromSource, ...others];
   };
 
@@ -193,8 +200,9 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
         {liftSuggestions.length > 0 && (
           <div className="workout-chip-list" style={{ marginBottom: '0.6rem' }}>
             {liftSuggestions.map((name) => (
-              <button key={name} type="button" className="workout-toggle-chip" aria-pressed={pickedLifts.has(name)} onClick={() => togglePicked(name)}>
-                {pickedLifts.has(name) ? '✓ ' : '+ '}{name}
+              <button key={name} type="button" className="workout-toggle-chip" aria-pressed={pickedLifts.has(name)} onClick={() => togglePicked(name)}
+                title={yours.includes(name) ? 'One of your exercises: shares its history' : undefined}>
+                {pickedLifts.has(name) ? '✓ ' : yours.includes(name) ? '↻ ' : '+ '}{name}
               </button>
             ))}
           </div>
@@ -220,6 +228,7 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
           onSave={saveLift}
           onCancel={() => setEditingLift(null)}
           onDelete={liftBeingEdited ? () => removeLift(liftBeingEdited.id) : undefined}
+          exercises={exercises}
         />
       )}
     </Sheet>

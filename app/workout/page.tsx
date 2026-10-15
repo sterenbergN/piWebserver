@@ -23,6 +23,17 @@ import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import BodyweightCard from '@/components/workout/BodyweightCard';
 
+/** The last gym / workout type / lift count you started with, so the form opens on them. */
+const LAST_START_KEY = 'workout:lastStart';
+type LastStart = { gym?: string; type?: string; lifts?: string };
+
+function readLastStart(): LastStart {
+  try { return JSON.parse(localStorage.getItem(LAST_START_KEY) || '{}') || {}; } catch { return {}; }
+}
+function rememberStart(start: LastStart) {
+  try { localStorage.setItem(LAST_START_KEY, JSON.stringify(start)); } catch { /* just not remembered */ }
+}
+
 // A paused workout stays resumable for this long after its last update.
 const PENDING_WORKOUT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -140,8 +151,13 @@ export default function WorkoutDashboard() {
         const userGyms: any[] = gymsRes?.success ? gymsRes.gyms : [];
         setAvailableGyms(userGyms);
         if (typesRes?.success) setAvailableTypes(typesRes.types || []);
-        if (userGyms.length === 1) setSelectedGym(userGyms[0].id);
-        if (typesRes?.success && typesRes.types?.length === 1) setSelectedType(typesRes.types[0].id);
+        const userTypes: any[] = typesRes?.success ? typesRes.types || [] : [];
+        const last = readLastStart();
+        if (last.gym && userGyms.some((g) => g.id === last.gym)) setSelectedGym(last.gym);
+        else if (userGyms.length === 1) setSelectedGym(userGyms[0].id);
+        if (last.type && userTypes.some((t) => t.id === last.type)) setSelectedType(last.type);
+        else if (userTypes.length === 1) setSelectedType(userTypes[0].id);
+        if (last.lifts) setLiftCount(last.lifts);
 
         if (historyRes?.success) {
           const history: any[] = historyRes.history || [];
@@ -362,18 +378,24 @@ export default function WorkoutDashboard() {
   const recentWorkouts = [...history]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 3);
-  const canRepeat = (workout: any) =>
-    availableGyms.some((g) => g.id === workout.gymId) && availableTypes.some((t) => t.id === workout.type?.id);
+  const canRepeat = (workout: any) => availableGyms.some((g) => g.id === workout.gymId) && Object.keys(workout.logs || {}).length > 0;
+  /** Start the same lifts, in the same order, as a past workout. */
   const repeatWorkout = (workout: any) => {
     const params = new URLSearchParams({
       gym: workout.gymId,
-      type: workout.type.id,
-      lifts: String(Math.max(1, Object.keys(workout.logs || {}).length)),
+      repeat: workout.id,
       intensity: String(user?.intensityFactor ?? 1.0),
       isDemo: String(isDemo),
     });
+    if (availableTypes.some((t) => t.id === workout.type?.id)) params.set('type', workout.type.id);
     window.location.href = `/workout/active?${params.toString()}`;
   };
+  // One-tap starts: your latest workout of each kind (type + gym), newest first.
+  const quickStarts = [...history]
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .filter(canRepeat)
+    .filter((w, i, all) => all.findIndex((o) => (o.type?.name || o.name) === (w.type?.name || w.name) && o.gymId === w.gymId) === i)
+    .slice(0, 3);
 
   return (
     <div className="animate-fade-in">
@@ -551,9 +573,26 @@ export default function WorkoutDashboard() {
       })()}
 
       {!showStartMenu ? (
-        <button className="workout-btn-primary" style={{ padding: '1.25rem', fontSize: '1.25rem', marginTop: '0.5rem' }} onClick={() => setShowStartMenu(true)}>
-          Start Lift ⚡
-        </button>
+        <>
+          <button className="workout-btn-primary" style={{ padding: '1.25rem', fontSize: '1.25rem', marginTop: '0.5rem' }} onClick={() => setShowStartMenu(true)}>
+            Start a workout ⚡
+          </button>
+          {quickStarts.length > 0 && (
+            <div className="workout-quick-starts">
+              <span className="workout-hint">Or repeat:</span>
+              {quickStarts.map((w) => {
+                const gym = availableGyms.find((g) => g.id === w.gymId);
+                const lifts = Object.keys(w.logs || {}).length;
+                return (
+                  <button key={w.id} type="button" className="workout-quick-start" onClick={() => repeatWorkout(w)}>
+                    <strong>↻ {w.type?.name || w.name}</strong>
+                    <span>{gym?.emoji ? `${gym.emoji} ` : ''}{gym?.name || w.gymName} · {lifts} lift{lifts === 1 ? '' : 's'} · {formatRelativeDay(w.timestamp)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
       ) : (
         <div className="workout-tile animate-fade-in" style={{ borderColor: 'var(--accent)', background: 'rgba(var(--accent-rgb), 0.05)' }}>
           <div className="workout-flex-between">
@@ -614,6 +653,7 @@ export default function WorkoutDashboard() {
                  isDemo: String(isDemo),
                });
                if (isDeload) params.set('deload', '1');
+               rememberStart({ gym: selectedGym, type: selectedType, lifts: liftCount });
                window.location.href = `/workout/active?${params.toString()}`;
              }}
           >
@@ -639,6 +679,7 @@ export default function WorkoutDashboard() {
                     if (!d.success) throw new Error(d.message || 'Could not create the gym');
                     gymId = d.gym.id;
                   }
+                  rememberStart({ gym: gymId, type: selectedType, lifts: liftCount });
                   const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(user?.intensityFactor ?? 1.0) });
                   if (selectedType) params.set('type', selectedType);
                   window.location.href = `/workout/active?${params.toString()}`;
@@ -769,30 +810,18 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
-      <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
-        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/config'}>
-          Configuration
-        </button>
-        <button
-          className="btn btn-secondary"
-          style={{ width: '100%', padding: '1rem', borderRadius: '12px' }}
-          onClick={() => {
-            if (isDemo) {
-              window.location.href = '/workout/calculators?isDemo=1';
-              return;
-            }
-            window.location.href = '/workout/calculators';
-          }}
-        >
-          Calculators
-        </button>
-        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/report'}>
-          Weekly Report
-        </button>
-        <button className="btn btn-secondary" style={{ width: '100%', padding: '1rem', borderRadius: '12px' }} onClick={() => window.location.href = '/workout/analytics'}>
-          Advanced Analytics
-        </button>
-      </div>
+      <nav className="workout-link-grid" aria-label="More workout pages">
+        {[
+          { href: '/workout/config', icon: '🏋️', label: 'Gyms & lifts' },
+          { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
+          { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
+          { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
+        ].map((link) => (
+          <a key={link.href} className="workout-action-tile" href={link.href}>
+            <span aria-hidden>{link.icon}</span><span>{link.label}</span>
+          </a>
+        ))}
+      </nav>
 
       {isDemo && (
         <div style={{ textAlign: 'center', marginTop: '2rem' }}>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { upsertLift } from '@/lib/workout/stations';
+import { exerciseLibrary, type Exercise } from '@/lib/workout/exercises';
 import Sheet from './Sheet';
 import LiftForm from './LiftForm';
 import StationForm from './StationForm';
@@ -23,6 +24,7 @@ type ActiveLiftEditorProps = {
  */
 export default function ActiveLiftEditor({ mode, stationId, liftId, onSaved, onClose }: ActiveLiftEditorProps) {
   const [gym, setGym] = useState<Gym | null>(null);
+  const [exercises, setExercises] = useState<Exercise[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -32,6 +34,7 @@ export default function ActiveLiftEditor({ mode, stationId, liftId, onSaved, onC
       .then((d) => {
         if (!d.success) throw new Error(d.message === 'Unauthorized' ? 'Log in to edit equipment.' : d.message);
         const owner = (d.gyms as Gym[]).find((g) => g.stations.some((s) => s.id === stationId));
+        setExercises(exerciseLibrary(d.gyms));
         if (owner) setGym(owner);
         else setError('This equipment isn’t in one of your gyms, so it can’t be edited here.');
       })
@@ -74,8 +77,8 @@ export default function ActiveLiftEditor({ mode, stationId, liftId, onSaved, onC
   return (
     <>
       {mode === 'lift'
-        ? <LiftForm station={station} initial={lift} saving={saving} onSave={saveLift} onCancel={onClose} />
-        : <StationForm initial={station} saving={saving} onSave={saveStation} onCancel={onClose} />}
+        ? <LiftForm station={station} initial={lift} saving={saving} onSave={saveLift} onCancel={onClose} exercises={exercises} />
+        : <StationForm initial={station} saving={saving} onSave={saveStation} onCancel={onClose} exercises={exercises} />}
       {error && <div className="tracker-toast is-error" role="alert">{error}</div>}
     </>
   );

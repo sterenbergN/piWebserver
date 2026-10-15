@@ -5,6 +5,7 @@ import { useSitePopup } from '@/components/SitePopup';
 import { GYM_EMOJIS, type Gym, type Station } from '@/lib/workout/types';
 import { GYM_TEMPLATES, stationsFromTemplate } from '@/lib/workout/catalog';
 import { copyStations, equipmentLibrary } from '@/lib/workout/equipment-library';
+import { exerciseLibrary } from '@/lib/workout/exercises';
 import GymStations, { type WeightsCheck } from '@/components/workout/GymStations';
 import Sheet from '@/components/workout/Sheet';
 
@@ -171,6 +172,8 @@ export default function GymEditor() {
   const otherGyms = gyms.filter(g => g.ownerId !== userId);
   // Your stations (and published gyms') that this gym doesn't have yet.
   const library = equipmentLibrary(gyms, activeGym);
+  // Every exercise across your own gyms: same exercise = shared history.
+  const exercises = exerciseLibrary(myGyms);
 
   const gymSheet = gymDraft && (() => {
     const editing = gyms.find(g => g.id === gymDraft.id);
@@ -261,6 +264,28 @@ export default function GymEditor() {
           <button className="workout-button is-primary is-block" style={{ minHeight: 52 }} onClick={() => { setError(''); setGymDraft(EMPTY_GYM_DRAFT); }}>+ New gym</button>
         </div>
 
+        {exercises.length > 0 && (
+          <details className="workout-exercise-list">
+            <summary className="workout-section-title">Your exercises <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>{exercises.length} · tap to show</span></summary>
+            <p className="workout-hint" style={{ margin: '0 0 0.6rem' }}>
+              Lifts that are the same exercise share history, PRs and plateau checks across your gyms. To link lifts with different names, open one and set “Counts as”.
+            </p>
+            <div className="workout-stack">
+              {exercises.map(e => (
+                <div key={e.key} className="workout-lift-row" style={{ cursor: 'default' }}>
+                  <span className="workout-card-text">
+                    <span className="workout-card-title">{e.name}</span>
+                    <span className="workout-card-meta">{[e.primaryMuscle, e.secondaryMuscle].filter(m => m && m !== 'None').join(' • ')}</span>
+                    <span className="workout-card-meta">
+                      {e.uses.map(u => `${u.gymName} · ${u.stationName}${u.liftName !== e.name ? ` (as “${u.liftName}”)` : ''}`).join('; ')}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
         {otherGyms.length > 0 && (<>
           <div className="workout-section-title" style={{ marginTop: '2rem' }}>Other people&apos;s gyms</div>
           <div className="workout-stack">
@@ -328,6 +353,7 @@ export default function GymEditor() {
         saveStations={saveStations}
         weightsCheck={weightsCheck}
         setWeightsCheck={setWeightsCheck}
+        exercises={exercises}
       />
 
       {shareOpen && (

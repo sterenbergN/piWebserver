@@ -13,6 +13,13 @@ export interface Lift {
   progressionProfile?: ProgressionProfile;
   /** Free-text setup reminder, e.g. "seat 4, pin 3, neutral grip". */
   notes?: string;
+  /**
+   * The exercise this lift counts as when that differs from its name (e.g. a
+   * lift renamed from "Bench Press", or "Bench" at home that is "Bench Press"
+   * elsewhere). Lifts with the same exercise share history across gyms.
+   * See lib/workout/exercises.ts.
+   */
+  exercise?: string;
 }
 
 export interface Station {

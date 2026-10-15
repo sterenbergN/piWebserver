@@ -29,6 +29,8 @@ export default function ActiveWorkoutPage() {
   const isDeload = searchParams.get('deload') === '1';
   // "Build as I go": start empty and add machines/lifts while walking around.
   const isFreestyle = searchParams.get('freestyle') === '1';
+  // "Repeat": the same lifts, in the same order, as a past workout (history id).
+  const repeatId = searchParams.get('repeat');
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -49,7 +51,7 @@ export default function ActiveWorkoutPage() {
          } catch(e) {}
       }
 
-      if (!isResuming && !sharedSessionId && (!gymId || (!typeId && !isFreestyle))) {
+      if (!isResuming && !sharedSessionId && (!gymId || (!typeId && !isFreestyle && !repeatId))) {
         setError('Missing gym or workout type.');
         setLoading(false);
         return;
@@ -87,7 +89,10 @@ export default function ActiveWorkoutPage() {
 
         const isSharedJoin = !!sharedSessionId && sharedMode === 'join';
         const gym = gymRes.gyms?.find((g: any) => g.id === gymId);
-        const type = typesRes.types?.find((t: any) => t.id === typeId) || (isFreestyle ? FREESTYLE_TYPE : undefined);
+        const repeatOf = repeatId ? (histRes.history || []).find((w: any) => w.id === repeatId) : null;
+        const type = typesRes.types?.find((t: any) => t.id === typeId)
+          || (isFreestyle ? FREESTYLE_TYPE : undefined)
+          || (repeatOf ? { ...FREESTYLE_TYPE, ...(repeatOf.type || {}), name: repeatOf.type?.name || 'Repeat' } : undefined);
 
         if (!isResuming && !sharedSessionId && (!gym || !type)) {
            setError('Gym or Workout Type not found. Go back and check configuration.');
@@ -121,7 +126,14 @@ export default function ActiveWorkoutPage() {
         const plan: any[] = [];
 
         if (!isResuming && !isSharedJoin && !isFreestyle) {
-           plan.push(...buildLiftPlan(availableLifts, type.muscles || [], liftCountParam, histRes.history || [], type.fixedLifts || []).map((lift) => ({ ...lift, uniquePlanId: newPlanId() })));
+           // Repeating pins every lift of that workout (matched by id, else by name).
+           const repeatLifts = repeatOf
+             ? Object.keys(repeatOf.logs || {}).map((liftId) => ({ liftId, name: repeatOf.liftMeta?.[liftId]?.name || '' }))
+             : null;
+           const picked = repeatLifts
+             ? buildLiftPlan(availableLifts, type.muscles || [], repeatLifts.length, histRes.history || [], repeatLifts)
+             : buildLiftPlan(availableLifts, type.muscles || [], liftCountParam, histRes.history || [], type.fixedLifts || []);
+           plan.push(...picked.map((lift) => ({ ...lift, uniquePlanId: newPlanId() })));
         }
 
         // Maintain full reference list for Tracker Swap Lift UI
@@ -199,7 +211,7 @@ export default function ActiveWorkoutPage() {
     }
     
     init();
-  }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload, isFreestyle]);
+  }, [gymId, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload, isFreestyle, repeatId]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted)' }} className="animate-fade-in">⚙️ Calibrating optimal workout parameters...</div>;
   if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--danger)' }} className="animate-fade-in">{error}</div>;

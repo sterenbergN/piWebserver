@@ -1,5 +1,6 @@
 import { getWorkoutData, updateWorkoutData } from './data';
 import { clamp, normalizeLiftKey, areLiftKeysSimilar } from './calibration-utils';
+import { exerciseName } from './exercises';
 
 
 export type CalibrationReference = {
@@ -131,7 +132,7 @@ export function inferCalibrationsForWorkout(
 
   for (const liftId of Object.keys(workout.logs)) {
     const meta = liftMeta[liftId];
-    const liftName = meta?.name;
+    const liftName = exerciseName(meta);
     const stationType = meta?.stationType;
     if (!liftName || (stationType !== 'stack' && stationType !== 'cable')) continue;
 
@@ -148,7 +149,7 @@ export function inferCalibrationsForWorkout(
     let reference: { gymId: string; gymName?: string; liftId: string; weight: number; reps: number; e1rm: number } | null = null;
     for (const entry of otherGymHistory) {
       const metaMap = entry.liftMeta || {};
-      const matchedLiftId = Object.keys(metaMap).find(key => normalizeLiftKey(metaMap[key]?.name || '') === liftKey);
+      const matchedLiftId = Object.keys(metaMap).find(key => normalizeLiftKey(exerciseName(metaMap[key])) === liftKey);
       if (!matchedLiftId) continue;
       const sets = entry.logs?.[matchedLiftId] || [];
       const lastSet = sets[sets.length - 1];

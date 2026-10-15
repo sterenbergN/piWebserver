@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
-import { bestE1RMByLift, detectStalledLifts, findPreviousSameType, restTargetSeconds, warmupSets, workoutVolume } from '@/lib/workout/session-insights';
+import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, findPreviousSameType, restTargetSeconds, warmupSets, workoutVolume } from '@/lib/workout/session-insights';
 import { calculatePlates, getPossibleWeights, snapToPossibleWeight, stepWeight } from '@/lib/workout/equipment';
 import InlineGymEditor from './InlineGymEditor';
 import { AddExerciseForGym } from '@/components/workout/AddExerciseFlow';
@@ -13,7 +13,9 @@ import PlateDiagram from '@/components/workout/PlateDiagram';
 import StepperInput from '@/components/workout/StepperInput';
 import SetEditSheet, { RIR_OPTIONS, rirLabel, type LoggedSet } from '@/components/workout/SetEditSheet';
 import ActiveLiftEditor from '@/components/workout/ActiveLiftEditor';
-import type { Gym } from '@/lib/workout/types';
+import Sheet from '@/components/workout/Sheet';
+import { isLoadStation, type Gym } from '@/lib/workout/types';
+import { exerciseKey, exerciseKeyFromName, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
@@ -37,6 +39,44 @@ function newPlanId() {
 
 const uidOf = (lift: any) => String(lift?.uniquePlanId ?? '');
 
+/** Small per-device preferences (rest timer); storage can be unavailable. */
+function readPref(key: string) {
+    try { return typeof window === 'undefined' ? null : localStorage.getItem(key); } catch { return null; }
+}
+function savePref(key: string, value: string) {
+    try { localStorage.setItem(key, value); } catch { /* not remembered, still works */ }
+}
+
+/** Browsers only let audio start from a tap, so create/resume the context on one. */
+function unlockAudio(ctx: AudioContext | null) {
+    try {
+        const context = ctx ?? new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (context.state === 'suspended') context.resume().catch(() => {});
+        return context;
+    } catch {
+        return null;
+    }
+}
+
+/** Two short beeps for "rest is over". */
+function playRestBeep(ctx: AudioContext | null) {
+    if (!ctx) return;
+    try {
+        [0, 0.25].forEach((offset) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.value = 880;
+            gain.gain.setValueAtTime(0.25, ctx.currentTime + offset);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.18);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(ctx.currentTime + offset);
+            osc.stop(ctx.currentTime + offset + 0.2);
+        });
+    } catch {
+        // No audio output — vibration still fires.
+    }
+}
+
 type HistoricStats = { prevWeight: number; prevReps: number; prevSets: number; est1RM: number };
 
 type Suggestion = {
@@ -52,15 +92,6 @@ type Suggestion = {
     calibration: any;
     historicStats: HistoricStats | null;
 };
-
-/** Most recent previous workout containing this lift, preferring non-deload sessions
- *  so a light deload week doesn't become the baseline for progression. */
-function findLastSessionForLift(pastHistory: any[] | undefined, lift: any) {
-    const withLift = (pastHistory || [])
-        .filter((workout: any) => Array.isArray(workout?.logs?.[lift.id]) && workout.logs[lift.id].length > 0)
-        .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    return withLift.find((workout: any) => !workout.isDeload) || withLift[0] || null;
-}
 
 function getBaselineReps(type: any) {
     const min = Number(type?.minReps);
@@ -104,7 +135,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    intensityRef.current = intensitySlider;
    const [showBreakdown, setShowBreakdown] = useState(false);
    const [isCompactHeader, setIsCompactHeader] = useState(false);
-   const [showHeaderDetails, setShowHeaderDetails] = useState(true);
+   const [showHeaderDetails, setShowHeaderDetails] = useState(false);
+   const [restAdjust, setRestAdjust] = useState(() => Number(readPref('workout:restAdjust')) || 0);
+   const [restSound, setRestSound] = useState(() => readPref('workout:restSound') === '1');
+   const audioRef = useRef<AudioContext | null>(null);
 
    const [showList, setShowList] = useState(false);
    const [showAddLift, setShowAddLift] = useState(false);
@@ -126,8 +160,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    const [editingSetIndex, setEditingSetIndex] = useState<number | null>(null);
    const [editTarget, setEditTarget] = useState<'lift' | 'station' | null>(null);
    const [templateState, setTemplateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-   const bestBeforeSession = useMemo(() => bestE1RMByLift(pastHistory), [pastHistory]);
-   const stalledLiftIds = useMemo(() => new Set(detectStalledLifts(pastHistory).map((lift) => lift.liftId)), [pastHistory]);
+   // PRs follow the exercise across gyms, except on stacks/cables whose numbers differ per machine.
+   const bestByLift = useMemo(() => bestE1RMByLift(pastHistory), [pastHistory]);
+   const bestByExercise = useMemo(() => bestE1RMByExercise(pastHistory), [pastHistory]);
+   const bestBefore = (lift: any) => (isLoadStation(lift?.station?.type) ? bestByLift[lift.id] : bestByExercise[exerciseKey(lift)]) || 0;
+   const stalledExercises = useMemo(() => new Set(detectStalledLifts(pastHistory).map((lift) => exerciseKeyFromName(lift.name))), [pastHistory]);
   const [sharedSessionId, setSharedSessionId] = useState<string | null>(sharedSessionIdProp || resumeState?.sharedSessionId || null);
   const [sharedCode, setSharedCode] = useState<string | null>(resumeState?.sharedCode || null);
   const [sharedLoading, setSharedLoading] = useState(false);
@@ -163,7 +200,6 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       const mediaQuery = window.matchMedia('(max-width: 430px)');
       const syncHeaderMode = (matches: boolean) => {
          setIsCompactHeader(matches);
-         setShowHeaderDetails(!matches);
       };
 
       syncHeaderMode(mediaQuery.matches);
@@ -208,9 +244,15 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
    // ─── Progression suggestions ────────────────────────────────────────────────
 
    const requestSuggestion = useCallback(async (lift: any, intensity: number): Promise<Suggestion> => {
-      const lastWorkout = findLastSessionForLift(pastHistory, lift);
-      const sessionSets: any[] = lastWorkout ? lastWorkout.logs[lift.id] : [];
+      // Last time on this lift; for plates, dumbbells and bodyweight (same numbers
+      // everywhere) the same exercise at another gym works as a starting point too.
       const possibleWeights = getPossibleWeights(lift.station);
+      const last = lastSessionForLift(pastHistory, lift);
+      const usable = last && (last.sameLift || !isLoadStation(lift.station?.type)) ? last : null;
+      const lastWorkout: any = usable?.workout || null;
+      const sessionSets: any[] = usable
+         ? (usable.sameLift ? usable.sets : usable.sets.map((set: any) => ({ ...set, weight: snapToPossibleWeight(set.weight, possibleWeights) })))
+         : [];
       const baseline: Suggestion = {
          liftId: lift.id,
          intensity,
@@ -232,7 +274,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                liftId: lift.id,
-               liftName: lift.name,
+               liftName: exerciseName(lift),
                gymId: localPlan.gymId,
                station: lift.station,
                logs: sessionSets,
@@ -483,13 +525,14 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
     const updatedLogs = { ...logs, [activeUid]: [...activeLogs, newLog] };
     setLogs(updatedLogs);
     setLastSetAt(newLog.timestamp);
+    if (restSound) audioRef.current = unlockAudio(audioRef.current);
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(30);
 
     // Personal record: beat the best estimated 1RM from history (and this session).
     const e1rm = calcAverage1RM(currentWeight, currentReps);
-    const previousBest = Math.max(bestBeforeSession[activeLift.id] || 0, sessionPRs[activeLift.id]?.e1rm || 0);
+    const previousBest = Math.max(bestBefore(activeLift), sessionPRs[activeLift.id]?.e1rm || 0);
     if (previousBest > 0 && e1rm > previousBest + 0.5) {
-      const baseline = sessionPRs[activeLift.id]?.previous ?? bestBeforeSession[activeLift.id];
+      const baseline = sessionPRs[activeLift.id]?.previous ?? bestBefore(activeLift);
       setSessionPRs((prev) => ({ ...prev, [activeLift.id]: { name: activeLift.name, e1rm, previous: baseline, weight: currentWeight, reps: currentReps } }));
       setToast({ pr: true, undo, text: `🏆 New PR on ${activeLift.name}: ${currentWeight} × ${currentReps} (est. 1RM ${Math.round(e1rm)} lbs, +${Math.round(e1rm - previousBest)})` });
       if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.([80, 60, 80, 60, 160]);
@@ -734,6 +777,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
          exportLogs[lift.id] = [...(exportLogs[lift.id] || []), ...liftLogs];
          liftMeta[lift.id] = {
            name: lift.name,
+           exercise: exerciseName(lift),
            stationType: lift.station?.type,
            stationId: lift.station?.id,
            primaryMuscle: lift.primaryMuscle,
@@ -834,16 +878,30 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       window.location.href = '/workout';
    };
 
-   const restTarget = restTargetSeconds(suggestedReps);
+   // Rest target: rep-based default plus your own adjustment (kept between workouts).
+   const restTarget = Math.max(15, restTargetSeconds(suggestedReps) + restAdjust);
    const restElapsed = lastSetAt ? Math.max(0, Math.floor((Date.now() - lastSetAt) / 1000)) : 0;
    const showRestTimer = !!lastSetAt && totalSets > 0 && restElapsed < 15 * 60;
    const restDone = restElapsed >= restTarget;
    useEffect(() => {
-      // Buzz once when the rest target is reached.
+      // Buzz (and beep, if on) once when the rest target is reached.
       if (!showRestTimer || !restDone || restNotifiedFor.current === lastSetAt) return;
       restNotifiedFor.current = lastSetAt;
       if ('vibrate' in navigator) navigator.vibrate?.([200, 100, 200]);
-   }, [showRestTimer, restDone, lastSetAt]);
+      if (restSound) playRestBeep(audioRef.current);
+   }, [showRestTimer, restDone, lastSetAt, restSound]);
+
+   const adjustRest = (delta: number) => {
+      const next = Math.max(-120, Math.min(300, restAdjust + delta));
+      setRestAdjust(next);
+      savePref('workout:restAdjust', String(next));
+   };
+   const toggleRestSound = () => {
+      const next = !restSound;
+      setRestSound(next);
+      savePref('workout:restSound', next ? '1' : '0');
+      if (next) audioRef.current = unlockAudio(audioRef.current);
+   };
 
    // Finish-screen comparison with the last workout of the same type.
    const previousSameType = findPreviousSameType(pastHistory, localPlan.type);
@@ -855,8 +913,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
       : [];
 
    // What you did on this lift last time, set by set — the easiest thing to beat.
-   const lastSession = useMemo(() => (activeLift?.id ? findLastSessionForLift(pastHistory, activeLift) : null), [pastHistory, activeLift?.id]);
-   const lastSets: any[] = lastSession?.logs?.[activeLift?.id] || [];
+   const lastSession = useMemo(() => (activeLift?.id ? lastSessionForLift(pastHistory, activeLift) : null), [pastHistory, activeLift]);
+   const lastSets: any[] = lastSession?.sets || [];
    const liftDone = activeLogs.length > 0 && activeRemainingSets === 0 && !(activePartner && activePartnerRemainingSets > 0);
    const nextLiftIndex = liftDone ? findNextUnfinishedLiftIndex(safeLiftIndex) : null;
    const canEditEquipment = !!user && !!activeLift?.station?.id;
@@ -870,8 +928,12 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
        setIntensitySlider(newIntensity);
    };
 
-   const showExpandedHeaderDetails = !isCompactHeader || showHeaderDetails;
-   const isUsingBaseline = suggestionReason.toLowerCase().includes('baseline');
+   const onLoadStation = isLoadStation(activeLift?.station?.type);
+   const calibrationNote = !calibrationInfo ? ''
+      : calibrationInfo.status === 'calibrating' ? `🧪 Calibrating: last time at ${calibrationInfo.referenceGymName || 'another gym'} you did ${calibrationInfo.referenceWeight} lbs × ${calibrationInfo.referenceReps}. This gym is calibrated after today.`
+      : calibrationInfo.status === 'calibrated' ? `✅ Calibrated for this gym (×${calibrationInfo.scaleFactor?.toFixed(2)}${typeof calibrationInfo.confidence === 'number' ? `, ${Math.round(calibrationInfo.confidence * 100)}% confident` : ''}).`
+      : calibrationInfo.status === 'none' && onLoadStation ? `⚠️ No calibration for this machine at ${localPlan.gymName || 'this gym'} yet — today's sets will set it.`
+      : '';
 
    if (!activeLift) {
       return <div style={{ padding: '2rem', textAlign: 'center' }}>This workout has no lifts left.</div>;
@@ -1008,7 +1070,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     <button type="button" className="tracker-title-edit" aria-label={`Edit ${activeLift.name}`} title="Edit lift details" onClick={() => setEditTarget('lift')}>✏️</button>
                   )}
                 </h1>
-                {stalledLiftIds.has(activeLift.id) && !localPlan.isDeload && (
+                {stalledExercises.has(exerciseKey(activeLift)) && !localPlan.isDeload && (
                   <p style={{ fontSize: '0.75rem', color: 'var(--warning)', margin: '0 0 0.4rem' }}>
                     ⚠️ Plateau: no new best in 3 sessions. Consider fewer reps at a heavier weight, or{' '}
                     <button className="workout-text-btn" style={{ fontSize: '0.75rem', textDecoration: 'underline' }} onClick={() => setShowChange(true)}>swap to a variation</button>.
@@ -1045,172 +1107,71 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                     </div>
                 )}
 
-                {/* System Target Tile */}
-                <div style={{ marginTop: isCompactHeader ? '0.5rem' : '0.75rem', padding: isCompactHeader ? '0.45rem 0.65rem' : '0.6rem 1rem', background: 'rgba(var(--accent-rgb), 0.08)', border: '1px solid rgba(var(--accent-rgb), 0.3)', borderRadius: '10px', fontSize: isCompactHeader ? '0.8rem' : '0.85rem' }}>
-                    <span style={{ color: 'var(--muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '1px' }}>System Target</span>
-                    <div style={{ fontWeight: 700, color: 'var(--foreground)', fontSize: isCompactHeader ? '0.92rem' : '1rem', margin: isCompactHeader ? '0.1rem 0' : '0.15rem 0' }}>
-                        {suggestionLoading ? 'Calculating…' : `${suggestedWeight} lbs × ${suggestedReps} reps × ${suggestedSets} sets`}
+                {/* Today's target in one line; the why, calibration and intensity sit under Details. */}
+                <div className="tracker-target">
+                    <div style={{ minWidth: 0, textAlign: 'left' }}>
+                      <span className="tracker-target-label">Target</span>
+                      <strong>{suggestionLoading ? 'Calculating…' : `${suggestedWeight} lbs × ${suggestedReps} × ${suggestedSets} sets`}</strong>
                     </div>
-                    {isCompactHeader && (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem', marginTop: '0.3rem' }}>
-                          <button
-                            onClick={() => setShowHeaderDetails((value) => !value)}
-                            className="btn btn-secondary"
-                            style={{ padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '999px' }}
-                          >
-                            <span style={{ marginRight: '0.35rem' }}>{showHeaderDetails ? 'Hide Details' : 'Details'}</span>
-                            <span style={{ display: 'inline-block', transform: showHeaderDetails ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>▾</span>
-                          </button>
-                          {!showHeaderDetails && (
-                            <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', justifyContent: 'center', fontSize: '0.62rem', color: 'var(--muted)' }}>
-                              {calibrationInfo && calibrationInfo.status === 'calibrating' && (
-                                <span title="Calibration in progress">🧪 Calibrating</span>
-                              )}
-                              {calibrationInfo && calibrationInfo.status === 'calibrated' && (
-                                <span title="Calibration applied">✅ Calibrated</span>
-                              )}
-                              {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && (
-                                <span title="Needs calibration">⚠️ Calibration</span>
-                              )}
-                              {scoringBreakdown && (
-                                <span title="Scoring details available">📊 Scoring</span>
-                              )}
-                              {historicStats && (
-                                <span title="History available">🕒 History</span>
-                              )}
-                              {isUsingBaseline && (
-                                <span title="Using baseline weights">🧱 Baseline</span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                    )}
+                    <button type="button" className="tracker-target-toggle" aria-expanded={showHeaderDetails} onClick={() => setShowHeaderDetails((value) => !value)}>
+                      {showHeaderDetails ? 'Hide' : 'Details'} <span aria-hidden style={{ display: 'inline-block', transform: showHeaderDetails ? 'rotate(180deg)' : 'none' }}>▾</span>
+                    </button>
                 </div>
+                {isDeviated && (
+                  <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>
+                    Using your own numbers ·{' '}
+                    <button type="button" className="workout-text-btn" style={{ fontSize: 'inherit', textDecoration: 'underline' }} onClick={resetToSuggestion}>back to target</button>
+                  </p>
+                )}
 
-                {/* Intensity Slider */}
-                {showExpandedHeaderDetails && (
-                  <div style={{ marginTop: '0.45rem', textAlign: 'left' }}>
-                    {isCompactHeader && (
-                      <div style={{ marginBottom: '0.35rem', padding: '0.35rem 0.45rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', fontSize: '0.66rem', color: 'var(--muted)', lineHeight: 1.25 }}>
-                        {calibrationInfo && calibrationInfo.status === 'calibrating' && <div>🧪 Calibrating: using another gym as temporary reference.</div>}
-                        {calibrationInfo && calibrationInfo.status === 'calibrated' && <div>✅ Calibrated: this gym has a saved scale factor.</div>}
-                        {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && <div>⚠️ Calibration: this lift needs a first calibration here.</div>}
-                        {scoringBreakdown && <div>📊 Scoring: shows overload/e1RM decision metrics.</div>}
-                        {historicStats && <div>🕒 History: previous session stats for this lift.</div>}
-                        {isUsingBaseline && <div>🧱 Baseline: using starter weights until enough lift history is built.</div>}
-                      </div>
+                {showHeaderDetails && (
+                  <div className="tracker-details animate-fade-in">
+                    {suggestionReason && <div style={{ color: 'var(--accent)' }}>💡 {suggestionReason}</div>}
+                    {calibrationNote && <div>{calibrationNote}</div>}
+                    {historicStats && (
+                      <div>Best last time: <strong>{historicStats.prevWeight} lbs × {historicStats.prevReps}</strong> ({historicStats.prevSets} sets) · est. 1RM <strong>{historicStats.est1RM} lbs</strong></div>
                     )}
-                    {suggestionReason && (
-                      <div style={{ color: 'var(--accent)', fontSize: '0.74rem', marginBottom: '0.25rem' }}>💡 {suggestionReason}</div>
-                    )}
-                    {isDeviated && (
-                      <div style={{ display: 'flex', gap: '0.45rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-                        <span style={{ background: 'var(--warning)', color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Manual Override</span>
-                        <button onClick={resetToSuggestion} style={{ background: 'none', border: '1px solid var(--accent)', color: 'var(--accent)', padding: '0.1rem 0.5rem', borderRadius: '12px', fontSize: '0.7rem', cursor: 'pointer' }}>
-                          Reset
-                        </button>
-                      </div>
-                    )}
-                    {calibrationInfo && calibrationInfo.status === 'calibrating' && (
-                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
-                        <strong style={{ color: 'var(--accent)' }}>Calibrating</strong> - last time you did this at <strong>{calibrationInfo.referenceGymName || 'another gym'}</strong>{' '}
-                        you used <strong>{calibrationInfo.referenceWeight} lbs × {calibrationInfo.referenceReps}</strong>. We'll auto-calibrate after this session.
-                      </div>
-                    )}
-                    {calibrationInfo && calibrationInfo.status === 'calibrated' && (
-                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
-                        <strong style={{ color: 'var(--accent)' }}>Calibration</strong> - scale factor <strong>{calibrationInfo.scaleFactor?.toFixed(2)}</strong> applied for this station.
-                        {typeof calibrationInfo.confidence === 'number' && (
-                          <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: 'var(--muted)' }}>
-                            {Math.round(calibrationInfo.confidence * 100)}% confidence
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {calibrationInfo && calibrationInfo.status === 'none' && (activeLift.station?.type === 'stack' || activeLift.station?.type === 'cable') && (
-                      <div className="animate-fade-in" style={{ marginTop: '0.2rem', padding: '0.45rem 0.55rem', background: 'rgba(255,255,255,0.06)', borderRadius: '8px', fontSize: '0.73rem', color: 'var(--muted)' }}>
-                        <strong style={{ color: 'var(--accent)' }}>Calibration Needed</strong> - no prior scale for this lift in <strong>{localPlan.gymName || 'this gym'}</strong> yet.
-                      </div>
-                    )}
+                    <div>This lift {formatClock(liftElapsedSecsMap[activeUid] || 0)} · workout {formatClock(elapsedSecs)}</div>
 
-                    {/* Collapsible Scoring Breakdown */}
                     {scoringBreakdown && (
-                      <button 
-                        onClick={() => setShowBreakdown(!showBreakdown)} 
-                        style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '0.7rem', cursor: 'pointer', marginTop: '0.3rem', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                      >
-                        <span>{showBreakdown ? 'Hide Scoring Details' : 'Show Scoring Details'}</span>
-                        <span style={{ display: 'inline-block', transform: showBreakdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>▾</span>
+                      <button type="button" className="workout-text-btn" style={{ fontSize: '0.7rem', textDecoration: 'underline', alignSelf: 'flex-start' }} onClick={() => setShowBreakdown(!showBreakdown)}>
+                        {showBreakdown ? 'Hide scoring' : 'How this was picked'}
                       </button>
                     )}
-
                     {showBreakdown && scoringBreakdown && (
-                      <div className="animate-fade-in" style={{ marginTop: '0.4rem', padding: '0.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', textAlign: 'left', fontSize: '0.73rem' }}>
+                      <div style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.3rem 1rem' }}>
-                          <div>
-                            <span style={{ color: 'var(--muted)' }}>Overload:</span>{' '}
-                            <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? 'var(--success)' : 'var(--danger)' }}>
-                              {((scoringBreakdown.overloadRatio - 1) * 100).toFixed(1)}%
-                            </strong>
-                          </div>
-                          <div>
-                            <span style={{ color: 'var(--muted)' }}>e1RM:</span>{' '}
-                            <strong>{Math.round(scoringBreakdown.e1RM)} lbs</strong>
-                          </div>
-                          <div>
-                            <span style={{ color: 'var(--muted)' }}>Load:</span>{' '}
-                            <strong>{Math.round(scoringBreakdown.totalLoad).toLocaleString()}</strong>
-                          </div>
-                          <div>
-                            <span style={{ color: 'var(--muted)' }}>Candidates:</span>{' '}
-                            <strong>{candidatesEvaluated}</strong>
-                          </div>
+                          <div>Overload: <strong style={{ color: scoringBreakdown.overloadRatio >= 1 ? 'var(--success)' : 'var(--danger)' }}>{((scoringBreakdown.overloadRatio - 1) * 100).toFixed(1)}%</strong></div>
+                          <div>e1RM: <strong>{Math.round(scoringBreakdown.e1RM)} lbs</strong></div>
+                          <div>Load: <strong>{Math.round(scoringBreakdown.totalLoad).toLocaleString()}</strong></div>
+                          <div>Candidates: <strong>{candidatesEvaluated}</strong></div>
                         </div>
                         {performanceMetrics && (
-                          <div style={{ marginTop: '0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--muted)' }}>Performance:</span>
-                            <span style={{ 
-                              color: getScoreColor(performanceMetrics.performanceScore),
-                              fontWeight: 700 
-                            }}>
-                              {performanceMetrics.performanceScore.toFixed(2)}
-                            </span>
-                            <span style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>
-                              {performanceMetrics.performanceScore > 1.05 ? '(Too Easy)' : 
-                               performanceMetrics.performanceScore < 0.95 ? '(Too Hard)' : '(Appropriate)'}
-                            </span>
+                          <div style={{ marginTop: '0.35rem' }}>
+                            Performance: <strong style={{ color: getScoreColor(performanceMetrics.performanceScore) }}>{performanceMetrics.performanceScore.toFixed(2)}</strong>{' '}
+                            ({performanceMetrics.performanceScore > 1.05 ? 'too easy' : performanceMetrics.performanceScore < 0.95 ? 'too hard' : 'about right'})
                           </div>
                         )}
-                        {scoringBreakdown.performanceAdjustment && (
-                          <div style={{ marginTop: '0.3rem', color: 'var(--muted)', fontStyle: 'italic', fontSize: '0.7rem' }}>
-                            {scoringBreakdown.performanceAdjustment}
-                          </div>
-                        )}
+                        {scoringBreakdown.performanceAdjustment && <div style={{ marginTop: '0.3rem', fontStyle: 'italic' }}>{scoringBreakdown.performanceAdjustment}</div>}
                       </div>
                     )}
 
-                    <div style={{ marginTop: '0.55rem', padding: '0.5rem 0.8rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+                    <div style={{ padding: '0.5rem 0.8rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
                       <IntensitySlider value={intensitySlider} onChange={handleIntensityChange} />
                     </div>
                   </div>
                 )}
 
-                {showExpandedHeaderDetails && historicStats && (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '0.75rem' }}>
-                       <span style={{opacity: 0.7}}>Prev:</span> <strong style={{color:'var(--foreground)'}}>{historicStats.prevWeight} lbs × {historicStats.prevReps} ({historicStats.prevSets} sets)</strong> &nbsp;•&nbsp; 
-                       <span style={{opacity: 0.7}}>1RM Est:</span> <strong style={{color:'var(--foreground)'}}>{historicStats.est1RM} lbs</strong>
-                    </div>
-                )}
-                
-                <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem', color: 'var(--muted)', justifyContent: 'center', marginTop: isCompactHeader ? '0.4rem' : '0.6rem' }}>
-                    <span>Workout {formatClock(elapsedSecs)}</span>
-                    <span>This lift {formatClock(liftElapsedSecsMap[activeUid] || 0)}</span>
-                </div>
                 {showRestTimer && (
                   <div className={`tracker-rest${restDone ? ' done' : ''}`} role="timer" aria-live="polite">
-                    <div className="workout-flex-between" style={{ fontSize: '0.8rem' }}>
-                      <span>{restDone ? 'Rested — ready for the next set' : 'Resting'}</span>
-                      <strong>{formatClock(restElapsed)} / {formatClock(restTarget)}</strong>
+                    <div className="workout-flex-between" style={{ fontSize: '0.8rem', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      <span>{restDone ? 'Rested — go!' : 'Resting'}</span>
+                      <span className="tracker-rest-controls">
+                        <button type="button" aria-label="Rest 15 seconds less" onClick={() => adjustRest(-15)}>−15</button>
+                        <strong>{formatClock(restElapsed)} / {formatClock(restTarget)}</strong>
+                        <button type="button" aria-label="Rest 15 seconds more" onClick={() => adjustRest(15)}>+15</button>
+                        <button type="button" aria-label={restSound ? 'Turn rest sound off' : 'Turn rest sound on'} aria-pressed={restSound} onClick={toggleRestSound}>{restSound ? '🔔' : '🔕'}</button>
+                      </span>
                     </div>
                     <div className="tracker-rest-bar"><div style={{ width: `${Math.min(100, (restElapsed / restTarget) * 100)}%` }} /></div>
                   </div>
@@ -1240,7 +1201,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                 )}
                 {lastSets.length > 0 && (
                   <p className="workout-hint" style={{ textAlign: 'center', margin: '0 0 0.75rem' }}>
-                    Last time{lastSession?.timestamp ? ` (${new Date(lastSession.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})` : ''}:{' '}
+                    Last time ({[
+                      lastSession?.workout.timestamp && new Date(lastSession.workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                      !lastSession?.sameLift && (lastSession?.workout.gymId === localPlan.gymId ? 'other equipment' : lastSession?.workout.gymName || 'another gym'),
+                    ].filter(Boolean).join(', ')}):{' '}
                     {lastSets.map((s: any) => `${s.weight}×${s.reps}`).join(' · ')}
                   </p>
                 )}
@@ -1373,45 +1337,23 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
                       onCancel={() => setShowAddExercise(false)}
                     />
                   </div>
-               ) : !showAddLift && (
-                  <button
-                    className="workout-btn-primary"
-                    style={{ marginBottom: '0.6rem' }}
-                    onClick={() => setShowAddExercise(true)}
-                  >
-                    ＋ Add exercise
-                  </button>
-               )}
-               {/* T1: Add Lift button at bottom of list */}
-               {showAddExercise ? null : !showAddLift ? (
-                  <button
-                    className="btn btn-secondary"
-                    style={{ width: '100%', padding: '0.85rem', borderRadius: '12px', border: '1px dashed var(--accent)', color: 'var(--accent)', marginBottom: '1rem' }}
-                    onClick={() => setShowAddLift(true)}
-                  >
-                    Manage Equipment & Lifts
-                  </button>
                ) : (
-                  <div className="animate-fade-in" style={{ marginBottom: '1rem', border: '1px solid var(--accent)', borderRadius: '12px', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: 'rgba(var(--accent-rgb),0.08)', borderBottom: '1px solid var(--accent)' }}>
-                      <strong style={{ fontSize: '0.9rem' }}>Manage Equipment</strong>
-                      <button style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '1.1rem' }} onClick={() => setShowAddLift(false)}>✕</button>
-                    </div>
-                    <div style={{ padding: '0.75rem' }}>
-                      <InlineGymEditor
-                        gymId={localPlan.gymId}
-                        onGymUpdated={applyGymUpdate}
-                        onClose={() => setShowAddLift(false)}
-                        onAddLiftToWorkout={(lift, station) => {
-                          const newLiftEntry = { ...lift, station, gymId: localPlan.gymId, gymName: localPlan.gymName, uniquePlanId: newPlanId() };
-                          setLocalPlan((prev: any) => ({ ...prev, lifts: [...prev.lifts, newLiftEntry] }));
-                          setShowAddLift(false);
-                        }}
-                      />
-                    </div>
-                  </div>
+                  <>
+                    <button className="workout-btn-primary" style={{ marginBottom: '0.6rem' }} onClick={() => setShowAddExercise(true)}>
+                      ＋ Add exercise
+                    </button>
+                    {/* Per-lift edits are on the lift screen (✏️ / ⚙️); this is for bigger changes. */}
+                    <button type="button" className="workout-text-btn" style={{ display: 'block', margin: '0.25rem auto 1rem', textDecoration: 'underline' }} onClick={() => setShowAddLift(true)}>
+                      ⚙️ Edit all equipment at {localPlan.gymName || 'this gym'}
+                    </button>
+                  </>
                )}
             </div>
+         )}
+         {showAddLift && (
+            <Sheet title="Equipment" subtitle={localPlan.gymName} onClose={() => setShowAddLift(false)}>
+               <InlineGymEditor gymId={localPlan.gymId} onGymUpdated={applyGymUpdate} />
+            </Sheet>
          )}
 
          {showChange && (
@@ -1496,7 +1438,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, resumeState
             </div>
          )}
          {showLiftHistory && (
-            <LiftHistorySheet liftId={activeLift.id} liftName={activeLift.name} history={pastHistory || []} onClose={() => setShowLiftHistory(false)} />
+            <LiftHistorySheet liftId={activeLift.id} liftName={exerciseName(activeLift)} history={pastHistory || []} onClose={() => setShowLiftHistory(false)} />
          )}
          {editingSetIndex !== null && activeLogs[editingSetIndex] && (
             <SetEditSheet

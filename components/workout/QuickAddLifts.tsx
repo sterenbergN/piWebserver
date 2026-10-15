@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import type { Lift, Station } from '@/lib/workout/types';
-import { liftFromName, suggestedLiftNames } from '@/lib/workout/catalog';
+import { suggestedLiftNames } from '@/lib/workout/catalog';
+import { exerciseKeyFromName, libraryExercisesFor, liftFromNameOrLibrary, type Exercise } from '@/lib/workout/exercises';
 import Sheet from './Sheet';
 
 type QuickAddLiftsProps = {
@@ -12,6 +13,8 @@ type QuickAddLiftsProps = {
   onCancel: () => void;
   /** Open the full lift form instead (for setting every detail by hand). */
   onCustom?: () => void;
+  /** Your exercises from all your gyms: offered first, and their details reused. */
+  exercises?: Exercise[];
 };
 
 const splitNames = (text: string) => text.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
@@ -20,8 +23,10 @@ const splitNames = (text: string) => text.split(/[,\n]/).map((s) => s.trim()).fi
  * Add several lifts to a station at once: tap suggestions and/or type names
  * separated by commas. Muscles are filled in from the lift name.
  */
-export default function QuickAddLifts({ station, saving = false, onSave, onCancel, onCustom }: QuickAddLiftsProps) {
-  const suggestions = useMemo(() => suggestedLiftNames(station), [station]);
+export default function QuickAddLifts({ station, saving = false, onSave, onCancel, onCustom, exercises = [] }: QuickAddLiftsProps) {
+  const yours = useMemo(() => libraryExercisesFor(station, exercises).map((e) => e.name), [station, exercises]);
+  const suggestions = useMemo(() => [...yours, ...suggestedLiftNames(station)]
+    .filter((n, i, all) => all.findIndex((m) => exerciseKeyFromName(m) === exerciseKeyFromName(n)) === i), [station, yours]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [typed, setTyped] = useState('');
 
@@ -29,7 +34,7 @@ export default function QuickAddLifts({ station, saving = false, onSave, onCance
   const names = Array.from(new Set([...picked, ...splitNames(typed)].map((n) => n.trim())))
     .filter((n, i, all) => !existing.has(n.toLowerCase()) && all.findIndex((m) => m.toLowerCase() === n.toLowerCase()) === i);
   const attachment = station.type === 'cable' && station.attachments?.length === 1 ? station.attachments[0] : undefined;
-  const preview = names.map((n) => liftFromName(n, attachment ? { attachment } : {}));
+  const preview = names.map((n) => liftFromNameOrLibrary(n, exercises, attachment ? { attachment } : {}));
 
   const toggle = (name: string) => setPicked((prev) => {
     const next = new Set(prev);
@@ -49,11 +54,11 @@ export default function QuickAddLifts({ station, saving = false, onSave, onCance
       }
     >
       {suggestions.length > 0 && (<>
-        <div className="workout-section-title">Common lifts here</div>
+        <div className="workout-section-title">Common lifts here{yours.length > 0 && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>↻ = one of yours</span>}</div>
         <div className="workout-chip-list" style={{ marginBottom: '1rem' }}>
           {suggestions.map((name) => (
             <button key={name} type="button" className="workout-toggle-chip" aria-pressed={picked.has(name)} onClick={() => toggle(name)}>
-              {picked.has(name) ? '✓ ' : '+ '}{name}
+              {picked.has(name) ? '✓ ' : yours.includes(name) ? '↻ ' : '+ '}{name}
             </button>
           ))}
         </div>
