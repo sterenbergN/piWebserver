@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { calcWilks, calcBoerLBM, calculateExperienceScore } from '@/lib/workout/analytics';
-import { blendProgressRatio, computeTargetOverload, getStrengthWeight } from '@/lib/workout/progression';
+import { getTargetRir, reviewProgress, type ProgressReview } from '@/lib/workout/progression';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
 import { exerciseName } from '@/lib/workout/exercises';
 import { buildAnalyticsData } from '@/lib/workout/analytics-data';
@@ -186,17 +186,14 @@ export default function AnalyticsPage() {
 
    const intensityInfo = getIntensityLabel(intensityFactor);
 
-   // Compare achieved progress with what the progression engine targets, using
-   // the engine's own formulas so this view can't drift from its behavior.
-   const strengthWeight = getStrengthWeight(intensityFactor);
-   const achievedRatio = (o: any) => blendProgressRatio(o.intensityRatio, o.overloadRatio, strengthWeight);
-   const targetRatioFor = (o: any) => 1 + computeTargetOverload(intensityFactor, o.performanceScore, o.historyTrend);
-   const avgAchievedGrowth = overloadTracking.length > 0
-      ? overloadTracking.reduce((sum, o) => sum + (achievedRatio(o) - 1), 0) / overloadTracking.length
-      : 0;
-   const avgTargetGrowth = overloadTracking.length > 0
-      ? overloadTracking.reduce((sum, o) => sum + (targetRatioFor(o) - 1), 0) / overloadTracking.length
-      : computeTargetOverload(intensityFactor, 1, 1);
+   // Each lift's latest session against what the progression engine expected,
+   // computed by the engine itself so this view can't drift from its behavior.
+   const reviewFor = (o: any): ProgressReview | undefined =>
+      reviewProgress(o.sessions, { intensity: intensityFactor, typeIntensity: o.typeIntensity, profile: o.profile });
+   const reviews = overloadTracking.map(reviewFor).filter((r): r is ProgressReview => r !== undefined);
+   const avgAchievedGrowth = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.achievedGain, 0) / reviews.length : 0;
+   const avgExpectedGain = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.expectedGain, 0) / reviews.length : 0;
+   const targetRir = getTargetRir(intensityFactor);
    const calibrationMap = new Map<string, number>();
    calibrations.forEach((c) => {
       calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
@@ -258,7 +255,7 @@ export default function AnalyticsPage() {
 
               {activeTab === 'volume' && <VolumeTab calorieTimeline={calorieTimeline} muscleVolumeData={muscleVolumeData} trainingHeatmap={trainingHeatmap} volumeTimeline={volumeTimeline} />}
 
-              {activeTab === 'fatigue' && <FatigueTab achievedRatio={achievedRatio} avgAchievedGrowth={avgAchievedGrowth} avgTargetGrowth={avgTargetGrowth} intensityFactor={intensityFactor} intensityInfo={intensityInfo} muscleFatigue={muscleFatigue} overloadTracking={overloadTracking} recoveryData={recoveryData} strengthWeight={strengthWeight} targetRatioFor={targetRatioFor} />}
+              {activeTab === 'fatigue' && <FatigueTab avgAchievedGrowth={avgAchievedGrowth} avgExpectedGain={avgExpectedGain} intensityFactor={intensityFactor} intensityInfo={intensityInfo} muscleFatigue={muscleFatigue} overloadTracking={overloadTracking} recoveryData={recoveryData} reviewFor={reviewFor} targetRir={targetRir} />}
 
               {activeTab === 'history' && <HistoryTab allLiftsMap={allLiftsMap} calibrationByLift={calibrationByLift} calibrations={calibrations} getScaleFactorForLiftDisplay={getScaleFactorForLiftDisplay} gymNameMap={gymNameMap} handleDeleteLog={handleDeleteLog} history={history} />}
 

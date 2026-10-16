@@ -1,5 +1,5 @@
 import { calcAverage1RM, calcBrzycki, calcEpley, calcLombardi, computeMuscleFatigue, type MuscleGroupFatigue } from './analytics';
-import { analyzePerformance, computeHistoryTrend, type PerformanceMetrics, type Session } from './progression';
+import type { ProgressionProfile, Session } from './progression';
 import { normalizeLiftKey } from './calibration-utils';
 import { exerciseKeyFromName, exerciseName } from './exercises';
 
@@ -10,13 +10,13 @@ type SetEntry = { weight: number; reps: number; rir?: number; plannedWeight?: nu
 type Workout = {
   id?: string;
   timestamp: string;
-  type?: { name?: string };
+  type?: { name?: string; intensity?: number };
   calories?: number;
   gymId?: string;
   logs?: Record<string, SetEntry[]>;
-  liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string; primaryMuscle?: string }>;
+  liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string; primaryMuscle?: string; plannedSets?: number }>;
 };
-type LiftInfo = { id: string; name: string; primaryMuscle?: string; stationType?: string };
+type LiftInfo = { id: string; name: string; primaryMuscle?: string; stationType?: string; progressionProfile?: ProgressionProfile };
 type Calibration = { gymId: string; liftKey: string; scaleFactor?: number };
 
 export type OneRMEntry = { liftId: string; name: string; epley: number; brzycki: number; lombardi: number; avg: number; scaleFactor: number };
@@ -31,9 +31,11 @@ export type OverloadEntry = {
   overloadRatio: number;
   prevE1RM: number; currE1RM: number;
   intensityRatio: number;
-  performanceScore: number;
-  performanceMetrics: PerformanceMetrics;
-  historyTrend: number;
+  /** Every session of the lift in engine form, oldest first (input for reviewProgress). */
+  sessions: Session[];
+  /** The latest workout type's % of 1RM — what the engine planned that session with. */
+  typeIntensity?: number;
+  profile?: ProgressionProfile;
 };
 
 export type AnalyticsData = {
@@ -96,7 +98,7 @@ export function buildAnalyticsData(
   const volumeTimeline: AnalyticsData['volumeTimeline'] = [];
   const calorieTimeline: AnalyticsData['calorieTimeline'] = [];
   const typeTotals = new Map<string, { sum: number; count: number }>();
-  const sessionsByLift = new Map<string, { date: string; timestamp: string; sets: SetEntry[]; name: string }[]>();
+  const sessionsByLift = new Map<string, { date: string; timestamp: string; sets: SetEntry[]; name: string; liftId: string; plannedSets?: number; typeIntensity?: number }[]>();
   const muscleVolume = new Map<string, number>();
   const trainingDays = new Map<string, { setCount: number; lifts: string[] }>();
   const prTimeline: AnalyticsData['prTimeline'] = [];
@@ -119,7 +121,13 @@ export function buildAnalyticsData(
       const group = groupKey(workout, liftId);
       const muscle = liftMuscle(workout, liftId);
       const sets = (rawSets || [])
-        .map((s) => ({ ...s, weight: Number(s.weight) * scale, reps: Number(s.reps) }))
+        // Planned weight is scaled too, or a calibrated lift would look like a mid-session weight drop.
+        .map((s) => ({
+          ...s,
+          weight: Number(s.weight) * scale,
+          reps: Number(s.reps),
+          plannedWeight: s.plannedWeight != null ? Number(s.plannedWeight) * scale : undefined,
+        }))
         .filter((s) => s.reps > 0);
       if (sets.length === 0) continue;
       dayLifts.push(name);
@@ -151,7 +159,11 @@ export function buildAnalyticsData(
       const weighted = sets.filter((s) => s.weight > 0);
       if (weighted.length > 0) {
         if (!sessionsByLift.has(group)) sessionsByLift.set(group, []);
-        sessionsByLift.get(group)!.push({ date, timestamp: workout.timestamp, sets: weighted, name });
+        sessionsByLift.get(group)!.push({
+          date, timestamp: workout.timestamp, sets: weighted, name, liftId,
+          plannedSets: workout.liftMeta?.[liftId]?.plannedSets,
+          typeIntensity: Number.isFinite(Number(workout.type?.intensity)) ? Number(workout.type?.intensity) : undefined,
+        });
       }
     }
 
@@ -185,6 +197,7 @@ export function buildAnalyticsData(
     const toSession = (s: typeof prev): Session => ({
       liftId,
       timestamp: s.timestamp,
+      plannedSets: s.plannedSets,
       sets: s.sets.map((set) => ({
         plannedReps: set.plannedReps ?? set.reps,
         actualReps: set.reps,
@@ -194,7 +207,6 @@ export function buildAnalyticsData(
         rir: typeof set.rir === 'number' ? set.rir : undefined,
       })),
     });
-    const performanceMetrics = analyzePerformance(toSession(prev));
     overloadTracking.push({
       liftId,
       name: curr.name,
@@ -206,9 +218,9 @@ export function buildAnalyticsData(
       overloadRatio: currLoad / prevLoad,
       prevE1RM, currE1RM,
       intensityRatio: prevE1RM > 0 ? currE1RM / prevE1RM : 1,
-      performanceScore: performanceMetrics.performanceScore,
-      performanceMetrics,
-      historyTrend: computeHistoryTrend(sessions.slice(0, -1).map(toSession)),
+      sessions: sessions.map(toSession),
+      typeIntensity: curr.typeIntensity,
+      profile: liftById.get(curr.liftId)?.progressionProfile,
     });
   }
   // Most recently trained first.

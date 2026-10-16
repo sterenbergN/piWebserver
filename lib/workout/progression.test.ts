@@ -1,13 +1,16 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { 
-  analyzePerformance, 
-  generateCandidates, 
-  scoreCandidate, 
+import {
+  analyzePerformance,
+  estimateE1RM,
+  generateCandidates,
   generateNextWorkout,
+  getTargetRir,
+  repsToFailureAt,
   Session,
   ProgressionInput
 } from './progression';
+import { getPossibleWeights } from './equipment';
 
 // ─── Helper: Build a standard ProgressionInput ─────────────────────────────────
 
@@ -550,4 +553,164 @@ test('26. A normal rep drop-off (10/9/8) keeps the planned set count', () => {
     equipment: { getValidWeights: () => LADDER },
   }));
   assert.equal(plan.suggestedSets, 3);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RIR AUTOREGULATION (the four problems found in the old engine)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** A barbell with pairs of 45/25/10/5/2.5 plates: 5 lb steps around 150. */
+const PLATES = getPossibleWeights({ type: 'plates', baseWeight: 45, plateSets: [45, 45, 25, 25, 10, 10, 5, 5, 2.5, 2.5] } as any);
+const RANGE_8_12 = { minReps: 8, maxReps: 12, minSets: 2, maxSets: 4 };
+
+function setsOf(weight: number, reps: number[], rir: (number | undefined)[], plannedReps = reps[0]) {
+  return reps.map((r, i) => ({ plannedReps, actualReps: r, plannedWeight: weight, actualWeight: weight, completed: true, rir: rir[i] }));
+}
+
+function plan150(sets: ReturnType<typeof setsOf>, overrides: Partial<ProgressionInput> = {}) {
+  return generateNextWorkout({
+    ...makeInput({
+      lastSession: { liftId: 'bench', timestamp: '', plannedSets: 3, sets },
+      constraints: RANGE_8_12,
+      equipment: { getValidWeights: () => PLATES },
+    }),
+    ...overrides,
+  });
+}
+
+test('27. e1RM counts reps in reserve: 8 @ RIR 3 is an 11-rep max', () => {
+  assert.ok(Math.abs(estimateE1RM(150, 8, 3) - estimateE1RM(150, 11, 0)) < 1e-9);
+  assert.ok(estimateE1RM(150, 8, 3) > estimateE1RM(150, 8, 0) * 1.05);
+  // repsToFailureAt inverts it
+  assert.ok(Math.abs(repsToFailureAt(estimateE1RM(150, 10, 2), 150) - 12) < 0.01);
+});
+
+test('28. Target RIR comes from the slider and the workout type', () => {
+  assert.equal(getTargetRir(1), 2);
+  assert.equal(getTargetRir(1.5), 1);
+  assert.equal(getTargetRir(0.5), 3);
+  assert.equal(getTargetRir(1, 55), 3, 'endurance-type workouts stay further from failure');
+  assert.equal(getTargetRir(1, 80), 2);
+});
+
+test('29. Problem 1: a normal drop-off (10/9/8 @ RIR 2/1/1) never adds weight', () => {
+  // Old engine: scored 0.90 "Adjusted for past difficulty" yet suggested 160 × 8.
+  const plan = plan150(setsOf(150, [10, 9, 8], [2, 1, 1], 10));
+  assert.ok(plan.performanceMetrics.performanceScore < 0.95, 'average RIR 1.3 vs target 2 is harder than target');
+  assert.equal(plan.suggestedWeight, 150, `expected the weight held, got ${plan.suggestedWeight}`);
+  assert.ok(plan.suggestedReps >= 8 && plan.suggestedReps <= 9, `expected 8–9 reps, got ${plan.suggestedReps}`);
+  assert.match(plan.reasoning, /harder than target/);
+  assert.equal(plan.scoringBreakdown.expectedGain, 0, 'no progress assumed after a harder-than-target session');
+  assert.ok(plan.scoringBreakdown.predictedRir! >= 1.5, `plan should land near RIR 2, got ${plan.scoringBreakdown.predictedRir}`);
+});
+
+test('30. Problem 2: top of the range adds weight AND resets reps', () => {
+  // Old engine: 150 × 12/12/12 @ RIR 2 → 160 × 12 (more weight, same reps, near failure).
+  const plan = plan150(setsOf(150, [12, 12, 12], [2, 2, 2]));
+  assert.ok(plan.suggestedWeight > 150, `expected heavier, got ${plan.suggestedWeight}`);
+  assert.ok(plan.suggestedWeight <= 165, `jump capped at ~10%, got ${plan.suggestedWeight}`);
+  assert.ok(plan.suggestedReps < 12 && plan.suggestedReps >= 8, `expected a rep reset into 8–11, got ${plan.suggestedReps}`);
+  assert.equal(plan.suggestedSets, 3);
+  const rir = plan.scoringBreakdown.predictedRir!;
+  assert.ok(rir >= 1.5 && rir <= 3, `the new weight should be predicted near RIR 2, got ${rir}`);
+  assert.match(plan.scoringBreakdown.performanceAdjustment, new RegExp(`reps reset to ${plan.suggestedReps}`));
+});
+
+test('30b. High-rep profile at the top makes a smaller jump with a smaller reset', () => {
+  const standard = plan150(setsOf(150, [12, 12, 12], [2, 2, 2]));
+  const highRep = plan150(setsOf(150, [12, 12, 12], [2, 2, 2]), { profile: 'high-rep' });
+  assert.ok(highRep.suggestedWeight > 150 && highRep.suggestedWeight < standard.suggestedWeight);
+  assert.ok(highRep.suggestedReps > standard.suggestedReps);
+});
+
+test('31. Problem 3: RIR moves the strength estimate and the suggestion', () => {
+  const easy = plan150(setsOf(150, [8, 8, 8], [3, 3, 3]));
+  const grind = plan150(setsOf(150, [8, 8, 8], [0, 0, 0]));
+  assert.ok(easy.scoringBreakdown.lastE1RM > grind.scoringBreakdown.lastE1RM * 1.05,
+    `RIR 3 (${easy.scoringBreakdown.lastE1RM}) should estimate well above RIR 0 (${grind.scoringBreakdown.lastE1RM})`);
+  assert.ok(easy.suggestedWeight > 150, `RIR 3 has headroom, got ${easy.suggestedWeight}`);
+  assert.ok(grind.suggestedWeight < 150, `RIR 0 at the bottom of the range should back off, got ${grind.suggestedWeight}`);
+});
+
+test('32. Problem 3: the slider changes the target RIR, and the plan follows it', () => {
+  const push = plan150(setsOf(150, [10, 10, 10], [2, 2, 2]), { intensity: 1.5 });
+  const normal = plan150(setsOf(150, [10, 10, 10], [2, 2, 2]));
+  const easy = plan150(setsOf(150, [10, 10, 10], [2, 2, 2]), { intensity: 0.5 });
+  assert.equal(push.scoringBreakdown.targetRir, 1);
+  assert.equal(easy.scoringBreakdown.targetRir, 3);
+  const load = (p: typeof push) => p.suggestedWeight * p.suggestedReps;
+  assert.ok(load(push) > load(normal) && load(normal) > load(easy), 'per-set load should follow the slider');
+});
+
+test('33. On target → double progression: same weight, one more rep', () => {
+  const plan = plan150(setsOf(150, [10, 10, 10], [2, 2, 2]));
+  assert.equal(plan.suggestedWeight, 150);
+  assert.equal(plan.suggestedReps, 11);
+  assert.equal(plan.suggestedSets, 3);
+});
+
+test('34. Problem 4: the explanation quotes the numbers the plan was built on', () => {
+  const cases = [
+    plan150(setsOf(150, [10, 9, 8], [2, 1, 1], 10)),
+    plan150(setsOf(150, [12, 12, 12], [2, 2, 2])),
+    plan150(setsOf(150, [8, 8, 8], [3, 3, 3])),
+    plan150(setsOf(150, [8, 8, 8], [0, 0, 0])),
+    plan150(setsOf(150, [10, 10, 10], [2, 2, 2]), { intensity: 1.4 }),
+  ];
+  for (const plan of cases) {
+    const b = plan.scoringBreakdown;
+    const score = plan.performanceMetrics.performanceScore;
+    const effort = score < 0.95 ? 'harder than target' : score > 1.05 ? 'easier than target' : 'on target';
+    const r1 = (n: number) => Math.round(n * 10) / 10;
+    assert.ok(plan.reasoning.includes(`${plan.suggestedWeight} lbs × ${plan.suggestedReps}`), plan.reasoning);
+    assert.ok(plan.reasoning.includes(`target ${b.targetRir}: ${effort}`), plan.reasoning);
+    assert.ok(plan.reasoning.includes(`est. 1RM ${r1(b.e1RM)} lbs`), plan.reasoning);
+    assert.ok(plan.reasoning.includes(`RIR ${r1(b.predictedRir!)}`), plan.reasoning);
+    const delta = plan.suggestedWeight - 150;
+    assert.ok(plan.reasoning.startsWith(delta > 0 ? `↑ Weight +${delta}` : delta < 0 ? `↓ Weight ${delta}` : '→ Weight held'), plan.reasoning);
+    // The predicted RIR really is what the estimate gives for that weight × reps.
+    const expected = b.e1RM * (1 + (b.expectedGain || 0));
+    assert.ok(Math.abs(repsToFailureAt(expected, plan.suggestedWeight) - plan.suggestedReps - b.predictedRir!) < 1e-6);
+  }
+});
+
+test('35. Smoothing: one bad day after good sessions holds the weight', () => {
+  const good = () => ({ liftId: 'bench', timestamp: '', sets: setsOf(150, [10, 10, 10], [2, 2, 2]) });
+  const badDay = setsOf(150, [8, 8, 8], [0, 0, 0]);
+  const alone = plan150(badDay);
+  const smoothed = plan150(badDay, { history: [good(), good()] });
+  assert.ok(alone.suggestedWeight < 150);
+  assert.equal(smoothed.suggestedWeight, 150, `history should cushion one bad day, got ${smoothed.suggestedWeight}`);
+  assert.equal(smoothed.scoringBreakdown.sessionsUsed, 3);
+  assert.ok(smoothed.scoringBreakdown.e1RM > smoothed.scoringBreakdown.lastE1RM);
+});
+
+test('36. History that already contains the last session is not counted twice', () => {
+  const last = { liftId: 'bench', timestamp: '', plannedSets: 3, sets: setsOf(150, [10, 10, 10], [2, 2, 2]) };
+  const plan = plan150(last.sets, { history: [last] });
+  assert.equal(plan.scoringBreakdown.sessionsUsed, 1);
+});
+
+test('37. Unlogged RIR is assumed from reps vs. plan', () => {
+  const none = [undefined, undefined, undefined];
+  const onPlan = analyzePerformance({ liftId: 'x', timestamp: '', sets: setsOf(150, [10, 10, 10], none, 10) });
+  assert.equal(onPlan.performanceScore, 1);
+  const short = plan150(setsOf(150, [10, 9, 8], none, 10));
+  assert.ok(short.performanceMetrics.performanceScore < 0.95);
+  assert.ok(short.suggestedWeight <= 150);
+  assert.match(short.reasoning, /\(est\.\)/);
+});
+
+test('38. Calibrated machines: the text quotes the gym\'s own numbers', () => {
+  // The engine works in calibrated lbs (×1.1); the user sees the machine's labels.
+  const input = makeInput({
+    lastSession: { liftId: 'row', timestamp: '', plannedSets: 3, sets: setsOf(110, [10, 10, 10], [2, 2, 2]) },
+    constraints: RANGE_8_12,
+    equipment: { getValidWeights: () => [88, 99, 110, 121, 132] },
+  });
+  const plan = generateNextWorkout(input);
+  const shown = generateNextWorkout({ ...input, displayWeight: (w) => w / 1.1 });
+  assert.equal(plan.suggestedWeight, shown.suggestedWeight);
+  assert.ok(shown.reasoning.includes(`${Math.round((shown.suggestedWeight / 1.1) * 10) / 10} lbs ×`), shown.reasoning);
+  assert.ok(!shown.reasoning.includes(`${shown.suggestedWeight} lbs ×`), shown.reasoning);
 });

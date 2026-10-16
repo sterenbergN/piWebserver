@@ -172,6 +172,9 @@ export async function POST(request: Request) {
       intensity: Number.isFinite(Number(intensity)) ? Number(intensity) : 1.0,
       profile: PROFILES.includes(progressionProfile) ? progressionProfile : 'standard',
       deload: deload === true,
+      typeIntensity: Number.isFinite(Number(planType?.intensity)) ? Number(planType.intensity) : undefined,
+      // The explanation should quote the numbers printed on this gym's machine.
+      displayWeight: currentScaleFactor !== 1 ? (w) => w / currentScaleFactor : undefined,
     };
 
     const plan = generateNextWorkout(input);

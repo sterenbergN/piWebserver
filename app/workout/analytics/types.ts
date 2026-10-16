@@ -1,6 +1,7 @@
 // Data and handlers the analytics page passes down to its tabs.
 
 import type { IntensityLabel } from '@/lib/workout/intensity';
+import type { ProgressReview } from '@/lib/workout/progression';
 
 export type AnalyticsTabProps = {
   oneRMs: any[];
@@ -33,10 +34,9 @@ export type AnalyticsTabProps = {
   handleDeleteLog: (id: string) => void;
   handleDownloadCsv: () => void;
   getScaleFactorForLiftDisplay: (workout: any, liftId: string) => number;
-  achievedRatio: (entry: any) => number;
-  targetRatioFor: (entry: any) => number;
+  reviewFor: (entry: any) => ProgressReview | undefined;
   avgAchievedGrowth: number;
-  avgTargetGrowth: number;
-  strengthWeight: number;
+  avgExpectedGain: number;
+  targetRir: number;
   popup: React.ReactNode;
 };

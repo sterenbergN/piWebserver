@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AnalyticsTabProps } from './types';
 
 // Props are the analytics page's shared data and handlers this tab reads.
-export default function FatigueTab({ achievedRatio, avgAchievedGrowth, avgTargetGrowth, intensityFactor, intensityInfo, muscleFatigue, overloadTracking, recoveryData, strengthWeight, targetRatioFor }: Pick<AnalyticsTabProps, 'achievedRatio' | 'avgAchievedGrowth' | 'avgTargetGrowth' | 'intensityFactor' | 'intensityInfo' | 'muscleFatigue' | 'overloadTracking' | 'recoveryData' | 'strengthWeight' | 'targetRatioFor'>) {
+export default function FatigueTab({ avgAchievedGrowth, avgExpectedGain, intensityFactor, intensityInfo, muscleFatigue, overloadTracking, recoveryData, reviewFor, targetRir }: Pick<AnalyticsTabProps, 'avgAchievedGrowth' | 'avgExpectedGain' | 'intensityFactor' | 'intensityInfo' | 'muscleFatigue' | 'overloadTracking' | 'recoveryData' | 'reviewFor' | 'targetRir'>) {
    const [expandedInfo, setExpandedInfo] = useState<string | null>(null);
    const [overloadPage, setOverloadPage] = useState(0);
    const [expandedOverload, setExpandedOverload] = useState<string | null>(null);
@@ -107,14 +107,16 @@ export default function FatigueTab({ achievedRatio, avgAchievedGrowth, avgTarget
                   {expandedInfo === 'overload' && (
                      <div className="animate-fade-in" style={{ marginBottom: '1rem', background: 'var(--input-bg)', padding: '1rem', borderRadius: '8px', fontSize: '0.85rem' }}>
                         <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)' }}>How Progressive Overload Works</h4>
-                        <p>Your intensity factor of <strong>{intensityFactor.toFixed(2)}</strong> controls how the progression engine selects your next workout:</p>
+                        <p>Your intensity factor of <strong>{intensityFactor.toFixed(2)}</strong> sets how many reps in reserve the progression engine aims to leave:</p>
                         <ul style={{ margin: '0.5rem 0', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
-                            <li><strong>Target:</strong> <code style={{ color: 'var(--accent-light)' }}>1 + 5% × intensity × historyTrend + (perfScore − 1) × 0.5</code></li>
-                            <li><strong>Progress:</strong> a blend of e1RM ratio and load ratio; higher intensity weighs e1RM more (currently {Math.round(strengthWeight * 100)}% e1RM)</li>
-                            <li><strong>RIR Targeting:</strong> average RIR of 2 is neutral, 0-1 lowers the next progression, 3+ allows more aggressive overload</li>
+                            <li><strong>Target RIR:</strong> currently <strong>{targetRir}</strong> (one more for workout types at or below 60% of 1RM)</li>
+                            <li><strong>RIR Targeting:</strong> <code style={{ color: 'var(--accent-light)' }}>rirAdjustment = 0.1 × (working-set RIR − target RIR)</code>. More than half a rep harder than the target means no gain is assumed and the weight holds or comes down; otherwise the gain is assumed, and any extra reserve also raises the estimate (a heavier pick)</li>
+                            <li><strong>Expected Gain:</strong> the strength the engine assumes you gained since the last session: +2.5% standard, +2% high-rep, +1.5% endurance, or 0% after a session that was too hard</li>
+                            <li><strong>Progress:</strong> your latest working-set e1RM (from reps + RIR) against the estimate the engine planned from</li>
+                            <li><strong>Predicted vs Actual RIR:</strong> what that estimate predicted for the weight × reps you lifted, against what you logged. Actual consistently below predicted means the estimate runs high</li>
                             <li><strong>Lift Eligibility:</strong> a lift appears only after at least 2 logged sessions with valid sets</li>
                         </ul>
-                        <p>Each lift row shows load ratio and e1RM ratio, and compares their blend against the engine&apos;s target. When RIR is present, that session feedback also nudges the next target up or down.</p>
+                        <p>Each lift row compares its progress with the expected gain. Load ratio and top-set e1RM are shown for reference; the engine plans from the reps + RIR estimate, not from load.</p>
                       </div>
                    )}
 
@@ -131,25 +133,26 @@ export default function FatigueTab({ achievedRatio, avgAchievedGrowth, avgTarget
                                </div>
                                 <div style={{ textAlign: 'right' }}>
                                    <div style={{ fontSize: '1.2rem', fontWeight: 600, color: intensityInfo.color }}>
-                                    {(avgTargetGrowth * 100).toFixed(1)}%
+                                    {(avgExpectedGain * 100).toFixed(1)}%
                                    </div>
-                                   <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Target Overload</div>
+                                   <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Avg Expected Gain</div>
                                 </div>
                             </div>
                             <p style={{ fontSize: '0.8rem', color: 'var(--muted)', margin: '0.5rem 0 0 0', fontStyle: 'italic' }}>
-                               {avgAchievedGrowth > avgTargetGrowth
-                                 ? 'You are outperforming your target. Consider increasing intensity if workouts feel too easy.'
+                               {avgAchievedGrowth > avgExpectedGain
+                                 ? 'You are gaining faster than the engine assumes. It plans from your logged reps + RIR, so it catches up on its own.'
                                  : avgAchievedGrowth > 0
-                                    ? 'Progression is steady but below target. This is normal — trust the process.'
-                                   : 'Growth is stalling. Consider a deload cycle or reducing intensity.'}
+                                    ? 'Progress is positive but below the expected gain. This is normal — keep logging honest RIR.'
+                                   : 'Estimated strength is flat or down. Consider a deload cycle or reducing intensity.'}
                             </p>
                         </div>
                         {overloadPageEntries.map((ol, i) => {
-                           const targetRatio = targetRatioFor(ol);
-                           const comparisonRatio = achievedRatio(ol);
-                           const comparisonGrowth = comparisonRatio - 1;
-                           const status = comparisonRatio >= targetRatio ? '🟢' : comparisonGrowth > 0 ? '🟡' : '🔴';
+                           const review = reviewFor(ol);
+                           const expectedGain = review?.expectedGain ?? 0;
+                           const comparisonGrowth = review ? review.achievedGain : ol.intensityRatio - 1;
+                           const status = comparisonGrowth >= expectedGain ? '🟢' : comparisonGrowth > 0 ? '🟡' : '🔴';
                            const comparisonLabel = 'Progress';
+                           const perf = review?.performance;
                            const rowId = `${ol.name}-${ol.date}-${safeOverloadPage * listPageSize + i}`;
                            const expanded = expandedOverload === rowId;
                             return (
@@ -184,32 +187,48 @@ export default function FatigueTab({ achievedRatio, avgAchievedGrowth, avgTarget
                                           <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
                                              <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Load Ratio</div>
                                              <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.overloadRatio - 1) * 100).toFixed(1)}%</div>
-                                         </div>
-                                         <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
-                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>e1RM Ratio</div>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.intensityRatio - 1) * 100).toFixed(1)}%</div>
-                                         </div>
-                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
-                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Target Ratio</div>
-                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((targetRatio - 1) * 100).toFixed(1)}%</div>
                                           </div>
                                           <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
-                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Reps In Reserve</div>
-                                            <div style={{ fontSize: '0.75rem', lineHeight: 1.45 }}>
-                                              <div style={{ fontWeight: 600 }}>
-                                                Last: {typeof ol.performanceMetrics?.lastSetRir === 'number' ? (ol.performanceMetrics.lastSetRir >= 5 ? '5+' : ol.performanceMetrics.lastSetRir) : 'N/A'}
-                                              </div>
-                                              <div style={{ color: 'var(--muted)' }}>
-                                                Avg: {typeof ol.performanceMetrics?.avgRir === 'number' ? ol.performanceMetrics.avgRir.toFixed(1) : 'N/A'}
-                                              </div>
-                                              <div style={{ color: 'var(--muted)' }}>
-                                                Adj: {typeof ol.performanceMetrics?.rirAdjustment === 'number' ? `${ol.performanceMetrics.rirAdjustment >= 0 ? '+' : ''}${ol.performanceMetrics.rirAdjustment.toFixed(2)}` : 'N/A'}
-                                              </div>
-                                              <div style={{ color: 'var(--muted)' }}>
-                                                Coverage: {typeof ol.performanceMetrics?.rirCoverage === 'number' ? `${Math.round(ol.performanceMetrics.rirCoverage * 100)}%` : 'N/A'}
-                                              </div>
+                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Top-Set e1RM</div>
+                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{((ol.intensityRatio - 1) * 100).toFixed(1)}%</div>
+                                          </div>
+                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Expected Gain</div>
+                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{review ? `${(review.expectedGain * 100).toFixed(1)}%` : 'N/A'}</div>
+                                             {review && (
+                                               <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                                 e1RM {Math.round(review.estimatedE1RM)} → {Math.round(review.currE1RM)}
+                                               </div>
+                                             )}
+                                          </div>
+                                          <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                             <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Predicted vs Actual RIR</div>
+                                             <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                                               {review ? `${review.predictedRir.toFixed(1)} → ${review.actualRir.toFixed(1)}${review.actualRirAssumed ? ' (est.)' : ''}` : 'N/A'}
+                                             </div>
+                                          </div>
+                                          <div style={{ gridColumn: '1 / -1', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', padding: '0.35rem 0.45rem' }}>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--muted)' }}>Reps In Reserve, Previous Session (target {review?.targetRir ?? targetRir})</div>
+                                            <div style={{ fontSize: '0.75rem', lineHeight: 1.45, display: 'flex', flexWrap: 'wrap', columnGap: '0.75rem' }}>
+                                              <span style={{ fontWeight: 600 }}>
+                                                Last: {typeof perf?.lastSetRir === 'number' ? (perf.lastSetRir >= 5 ? '5+' : perf.lastSetRir) : 'N/A'}
+                                              </span>
+                                              <span style={{ color: 'var(--muted)' }}>
+                                                Avg: {typeof perf?.avgRir === 'number' ? perf.avgRir.toFixed(1) : 'N/A'}
+                                              </span>
+                                              <span style={{ color: 'var(--muted)' }}>
+                                                Adj: {typeof perf?.rirAdjustment === 'number' ? `${perf.rirAdjustment >= 0 ? '+' : ''}${perf.rirAdjustment.toFixed(2)}` : 'N/A'}
+                                              </span>
+                                              <span style={{ color: 'var(--muted)' }}>
+                                                Coverage: {typeof perf?.rirCoverage === 'number' ? `${Math.round(perf.rirCoverage * 100)}%` : 'N/A'}
+                                              </span>
+                                              {review && (
+                                                <span style={{ color: review.effort === 'harder' ? 'var(--danger)' : review.effort === 'easier' ? 'var(--success)' : 'var(--warning)' }}>
+                                                  {review.effort === 'harder' ? 'Too hard' : review.effort === 'easier' ? 'Too easy' : 'On target'}
+                                                </span>
+                                              )}
                                             </div>
-                                         </div>
+                                          </div>
                                        </div>
                                     </div>
                                   )}
