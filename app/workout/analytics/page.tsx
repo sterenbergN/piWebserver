@@ -1,278 +1,228 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { calcWilks, calcBoerLBM, calculateExperienceScore } from '@/lib/workout/analytics';
-import { getTargetRir, reviewProgress, type ProgressReview } from '@/lib/workout/progression';
-import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
-import { exerciseName } from '@/lib/workout/exercises';
+import { useEffect, useMemo, useState } from 'react';
+import './analytics.css';
+import { calculateExperienceScore } from '@/lib/workout/analytics';
 import { buildAnalyticsData } from '@/lib/workout/analytics-data';
-import { getIntensityLabel } from '@/lib/workout/intensity';
+import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
+import { exerciseName, exerciseKeyFromName } from '@/lib/workout/exercises';
+import { reviewProgress } from '@/lib/workout/progression';
+import { detectStalledLifts } from '@/lib/workout/session-insights';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
+import { readPref, savePref } from '@/lib/workout/device-prefs';
+import type { Goal } from '@/lib/workout/goals';
+import {
+  buildInsights, exerciseStats, muscleBalance, muscleSetsPerWeek, periodSummary, PERIODS, recentPRs,
+  type Period, type ScaleFor, type Workout,
+} from '@/lib/workout/insights';
 import { useSitePopup } from '@/components/SitePopup';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_USER } from '@/lib/workout/demo-data';
-import OverviewTab from './OverviewTab';
-import StrengthTab from './StrengthTab';
-import VolumeTab from './VolumeTab';
-import FatigueTab from './FatigueTab';
+import SummaryTab from './SummaryTab';
+import LiftsTab from './LiftsTab';
+import MusclesTab from './MusclesTab';
 import HistoryTab from './HistoryTab';
+import HowItWorksSheet from './HowItWorksSheet';
 
+type Tab = 'summary' | 'lifts' | 'muscles' | 'history';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'summary', label: 'Summary' },
+  { key: 'lifts', label: 'Lifts' },
+  { key: 'muscles', label: 'Muscles' },
+  { key: 'history', label: 'History' },
+];
 
-
-
-
-
+/**
+ * Workout analytics: how training is going over a chosen period (vs the one
+ * before), each exercise's strength trend and records, sets per muscle and
+ * balance, and the full history. All numbers come from lib/workout/insights.ts.
+ */
 export default function AnalyticsPage() {
-   const [history, setHistory] = useState<any[]>([]);
-   const [user, setUser] = useState<any>(null);
-   const [loading, setLoading] = useState(true);
-   const [isDemo, setIsDemo] = useState(false);
+  const { confirm, popup } = useSitePopup();
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [isDemo, setIsDemo] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [history, setHistory] = useState<Workout[]>([]);
+  const [lifts, setLifts] = useState<any[]>([]);
+  const [gymNames, setGymNames] = useState<Map<string, string>>(new Map());
+  const [calibrations, setCalibrations] = useState<any[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [tab, setTab] = useState<Tab>('summary');
+  const [period, setPeriod] = useState<Period>('12w');
+  const [openLift, setOpenLift] = useState<string | null>(null);
+  const [showHow, setShowHow] = useState(false);
 
-   const [oneRMs, setOneRMs] = useState<any[]>([]);
-   const [volumeTimeline, setVolumeTimeline] = useState<any[]>([]);
-   const [calorieTimeline, setCalorieTimeline] = useState<any[]>([]);
-   const [overloadTracking, setOverloadTracking] = useState<any[]>([]);
-   const [calibrations, setCalibrations] = useState<any[]>([]);
+  // Remember the chosen tab and period on this device; ?tab= deep-links.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const wantedTab = params.get('tab') || readPref('workout:analyticsTab');
+    if (TABS.some((t) => t.key === wantedTab)) setTab(wantedTab as Tab);
+    const savedPeriod = readPref('workout:analyticsPeriod');
+    if (PERIODS.some((p) => p.key === savedPeriod)) setPeriod(savedPeriod as Period);
+  }, []);
+  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:analyticsTab', next); window.scrollTo({ top: 0 }); };
+  const choosePeriod = (next: Period) => { setPeriod(next); savePref('workout:analyticsPeriod', next); };
 
-   // Modals / Expanded states
-
-   const { confirm, popup } = useSitePopup();
-   
-   // Advanced Analytics Extensions
-   const [allLiftsMap, setAllLiftsMap] = useState<Map<string, string>>(new Map());
-   const [liftStationTypeMap, setLiftStationTypeMap] = useState<Map<string, string>>(new Map());
-   const [gymNameMap, setGymNameMap] = useState<Map<string, string>>(new Map());
-   const [experience, setExperience] = useState<any>(null);
-
-   type AnalyticsTab = 'overview' | 'strength' | 'volume' | 'fatigue' | 'history';
-   const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
-   const [muscleFatigue, setMuscleFatigue] = useState<any[]>([]);
-   const [muscleVolumeData, setMuscleVolumeData] = useState<any[]>([]);
-   const [trainingHeatmap, setTrainingHeatmap] = useState<Map<string, { setCount: number; lifts: string[] }>>(new Map());
-   const [prTimeline, setPrTimeline] = useState<any[]>([]);
-   const [recoveryData, setRecoveryData] = useState<any[]>([]);
-
-   // Link Lift Modal (Phase 7)
-
-
-   // Intensity Factor Slider (persisted)
-   const [intensityFactor, setIntensityFactor] = useState(1.0);
-   const [intensitySaving, setIntensitySaving] = useState(false);
-   const [intensitySaved, setIntensitySaved] = useState(false);
-
-   useEffect(() => {
-       async function fetchData() {
-            const safeJson = (url: string) => fetch(url).then(r => r.json()).catch(() => ({ success: false }));
-            const [authRes, histRes, gymsRes, calibRes] = await Promise.all([
-                safeJson('/api/workout/auth'),
-                safeJson('/api/workout/history'),
-                safeJson('/api/workout/gyms'),
-                fetch('/api/workout/calibration').then(r => r.json()).catch(() => ({ success: false }))
-            ]);
-           
-           let currentUser = null;
-           let histData = [];
-
-            const rawLifts: any[] = [];
-            const liftsMap = new Map<string, string>();
-            const stationTypeMap = new Map<string, string>();
-            if (gymsRes.success) {
-                const gymMap = new Map<string, string>();
-                gymsRes.gyms?.forEach((g:any) => g.stations?.forEach((s:any) => s.lifts?.forEach((l:any) => {
-                    liftsMap.set(l.id, l.name);
-                    stationTypeMap.set(l.id, s.type);
-                    rawLifts.push(l);
-                })));
-                gymsRes.gyms?.forEach((g: any) => {
-                   if (g?.id) gymMap.set(g.id, g.name);
-                });
-                setGymNameMap(gymMap);
-            }
-            setAllLiftsMap(liftsMap);
-            setLiftStationTypeMap(stationTypeMap);
-
-            if (authRes.authenticated) {
-                currentUser = authRes.user;
-                histData = authRes.user.id ? histRes.history || [] : [];
-                setIsDemo(false);
-                setIntensityFactor(authRes.user.intensityFactor ?? 1.0);
-                if (calibRes?.success) setCalibrations(calibRes.calibrations || []);
-            } else {
-               // Sample mode: same demo data as the rest of the workout pages
-               setIsDemo(true);
-               currentUser = DEMO_USER;
-               histData = [...DEMO_HISTORY];
-               DEMO_GYMS.forEach((g: any) => g.stations?.forEach((st: any) => st.lifts?.forEach((l: any) => {
-                  liftsMap.set(l.id, l.name);
-                  stationTypeMap.set(l.id, st.type);
-                  rawLifts.push(l);
-               })));
-               setAllLiftsMap(liftsMap);
-               setLiftStationTypeMap(stationTypeMap);
-           }
-
-           setUser(currentUser);
-           setHistory(histData.sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
-
-           const exp = calculateExperienceScore(currentUser || { weight: 150 }, histData, rawLifts);
-           setExperience(exp);
-
-            const fetchedCalibrations: any[] = authRes.authenticated && calibRes?.success ? calibRes.calibrations || [] : [];
-            const liftInfos = rawLifts.map((lift: any) => ({ ...lift, stationType: stationTypeMap.get(lift.id) }));
-            const data = buildAnalyticsData(histData, liftInfos, fetchedCalibrations);
-            setOneRMs(data.oneRMs);
-            setVolumeTimeline(data.volumeTimeline);
-            setCalorieTimeline(data.calorieTimeline);
-            setOverloadTracking(data.overloadTracking);
-            setMuscleVolumeData(data.muscleVolume);
-            setTrainingHeatmap(data.trainingDays);
-            setPrTimeline(data.prTimeline);
-            setRecoveryData(data.recovery);
-            setMuscleFatigue(data.fatigue);
-
-           setLoading(false);
-       }
-       fetchData();
-   }, []);
-
-   const handleDeleteLog = async (id: string) => {
-      const ok = await confirm({ title: 'Delete Workout', message: 'Permanently delete this workout from your history?', confirmLabel: 'Delete', danger: true });
-      if (!ok) return;
-      const res = await fetch('/api/workout/history?id=' + encodeURIComponent(id), { method: 'DELETE' });
-      if ((await res.json().catch(() => ({}))).success) {
-         setHistory((prev) => prev.filter(h => h.id !== id));
+  useEffect(() => {
+    (async () => {
+      const [auth, hist, gyms, calib, goalsRes] = await Promise.all([
+        fetchWorkoutJson('/api/workout/auth'),
+        fetchWorkoutJson('/api/workout/history'),
+        fetchWorkoutJson('/api/workout/gyms'),
+        fetchWorkoutJson('/api/workout/calibration'),
+        fetchWorkoutJson('/api/workout/goals'),
+      ]);
+      if ([auth, hist, gyms].some((r) => r.offline)) setOffline(true);
+      const gymList: any[] = auth.data?.authenticated ? gyms.data?.gyms || [] : DEMO_GYMS;
+      const liftList = gymList.flatMap((g) => (g.stations || []).flatMap((s: any) => (s.lifts || []).map((l: any) => ({ ...l, stationType: s.type }))));
+      setLifts(liftList);
+      setGymNames(new Map(gymList.map((g) => [g.id, g.name])));
+      if (auth.data?.authenticated) {
+        setUser(auth.data.user);
+        setHistory(hist.data?.history || []);
+        setCalibrations(calib.data?.calibrations || []);
+        setGoals(goalsRes.data?.goals || []);
+      } else {
+        setIsDemo(true);
+        setUser(DEMO_USER);
+        setHistory(DEMO_HISTORY as unknown as Workout[]);
       }
-   };
+      setLoading(false);
+    })();
+  }, []);
 
-   const handleSaveIntensity = async () => {
-      setIntensitySaving(true);
-      setIntensitySaved(false);
-      try {
-         const res = await fetch('/api/workout/auth', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ intensityFactor: intensityFactor })
-         });
-         if (res.ok) {
-            setIntensitySaved(true);
-            setTimeout(() => setIntensitySaved(false), 2500);
-         }
-      } catch { /* silent */ }
-      setIntensitySaving(false);
-   };
-
-   const handleDownloadCsv = () => {
-      window.location.href = '/api/workout/export';
-   };
-
-   if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Crunching numbers...</div>;
-
-   let sbdTotal = 0;
-   const bench = oneRMs.find(r => r.name.toLowerCase().includes('bench'))?.avg || 0;
-   const squat = oneRMs.find(r => r.name.toLowerCase().includes('squat'))?.avg || 0;
-   const deadlift = oneRMs.find(r => r.name.toLowerCase().includes('deadlift'))?.avg || 0;
-   sbdTotal = bench + squat + deadlift;
-
-   const missingWilks = [];
-   if (!bench) missingWilks.push('Bench Press');
-   if (!squat) missingWilks.push('Squat');
-   if (!deadlift) missingWilks.push('Deadlift');
-
-   let wilks = 0;
-   if (missingWilks.length === 0 && user?.weight) {
-      wilks = Math.round(calcWilks(sbdTotal, user.weight, user.gender));
-   }
-
-   let lbm = 0;
-   if (user?.weight && user?.height) lbm = Math.round(calcBoerLBM(user.weight, parseInt(user.height), user.gender));
-
-   const intensityInfo = getIntensityLabel(intensityFactor);
-
-   // Each lift's latest session against what the progression engine expected,
-   // computed by the engine itself so this view can't drift from its behavior.
-   const reviewFor = (o: any): ProgressReview | undefined =>
-      reviewProgress(o.sessions, { intensity: intensityFactor, typeIntensity: o.typeIntensity, profile: o.profile });
-   const reviews = overloadTracking.map(reviewFor).filter((r): r is ProgressReview => r !== undefined);
-   const avgAchievedGrowth = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.achievedGain, 0) / reviews.length : 0;
-   const avgExpectedGain = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.expectedGain, 0) / reviews.length : 0;
-   const targetRir = getTargetRir(intensityFactor);
-   const calibrationMap = new Map<string, number>();
-   calibrations.forEach((c) => {
-      calibrationMap.set(`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1);
-   });
-   const getScaleFactorForLiftDisplay = (workout: any, liftId: string) => {
+  // Machines at different gyms read differently; calibration puts them on one scale.
+  const scaleFor: ScaleFor = useMemo(() => {
+    const map = new Map(calibrations.map((c) => [`${c.gymId}|${c.liftKey}`, c.scaleFactor || 1]));
+    const stationType = new Map(lifts.map((l) => [l.id, l.stationType]));
+    return (workout, liftId) => {
       const meta = workout.liftMeta?.[liftId];
-      const liftName = exerciseName(meta) || allLiftsMap.get(liftId) || liftId;
-      const liftKey = normalizeLiftKey(liftName);
-      const stationType = meta?.stationType || liftStationTypeMap.get(liftId);
-      if (!workout.gymId || !liftKey || (stationType !== 'stack' && stationType !== 'cable')) return 1;
-      return calibrationMap.get(`${workout.gymId}|${liftKey}`) || 1;
-   };
+      const type = meta?.stationType || stationType.get(liftId);
+      if (!workout.gymId || (type !== 'stack' && type !== 'cable')) return 1;
+      return map.get(`${workout.gymId}|${normalizeLiftKey(exerciseName(meta) || '')}`) || 1;
+    };
+  }, [calibrations, lifts]);
 
-   const calibrationByLift = calibrations.reduce((acc: Record<string, any[]>, entry: any) => {
-      const key = entry.liftKey || 'unknown';
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(entry);
-      return acc;
-   }, {});
-   Object.keys(calibrationByLift).forEach((key) => {
-      calibrationByLift[key].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-   });
+  const liftLookup = useMemo(() => Object.fromEntries(lifts.map((l) => [l.id, l])), [lifts]);
+  const periodLabel = PERIODS.find((p) => p.key === period)!.label;
+  const data = useMemo(() => {
+    const summary = periodSummary(history, period);
+    const stats = exerciseStats(history, period, { scaleFor, lifts: liftLookup });
+    const muscles = muscleSetsPerWeek(history, period, { lifts: liftLookup });
+    const balance = muscleBalance(muscles);
+    const stalled = detectStalledLifts(history as any);
+    const last = history.length ? Math.max(...history.map((w) => new Date(w.timestamp).getTime())) : null;
+    const insights = buildInsights({
+      summary, stats, muscles, balance, stalled,
+      weeklySetGoal: user?.weeklySetTarget ?? 10,
+      daysSinceLast: last === null ? null : Math.floor((Date.now() - last) / 86_400_000),
+      periodLabel,
+    });
+    return { summary, stats, muscles, balance, insights, prs: recentPRs(stats, period, history) };
+  }, [history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
 
-   return (
-       <div className="animate-fade-in" style={{ paddingBottom: '4rem' }}>
-           <div className="workout-flex-between" style={{ marginBottom: '1.5rem', padding: '0 1rem' }}>
-              <h1 style={{ fontSize: '1.5rem', margin: 0 }}>Advanced Analytics</h1>
-              <button className="btn btn-secondary" onClick={() => window.location.href = '/workout'} style={{ padding: '0.4rem 0.8rem' }}>Back</button>
-           </div>
+  // Engine view (fatigue, recovery, "vs plan" per lift) from the shared analytics builder.
+  const engine = useMemo(() => buildAnalyticsData(history as any, lifts, calibrations), [history, lifts, calibrations]);
+  const reviewFor = (name: string) => {
+    const entry = engine.overloadTracking.find((o) => exerciseKeyFromName(o.name) === exerciseKeyFromName(name));
+    return entry ? reviewProgress(entry.sessions, { intensity: user?.intensityFactor ?? 1, typeIntensity: entry.typeIntensity, profile: entry.profile }) : undefined;
+  };
+  const experience = useMemo(() => calculateExperienceScore(user || { weight: 150 }, history, lifts), [user, history, lifts]);
 
-           <div style={{ padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              
-              <div className="workout-tile" style={{ padding: '0.4rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem', position: 'sticky', top: 0, zIndex: 20, marginBottom: '0.5rem' }}>
-                {(['overview', 'strength', 'volume', 'fatigue', 'history'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    className="btn btn-secondary"
-                    style={{
-                      flex: '1 1 auto', padding: '0.55rem 0.5rem', borderRadius: '10px', fontSize: '0.75rem',
-                      textTransform: 'capitalize', whiteSpace: 'nowrap', minWidth: '3.5rem',
-                      borderColor: activeTab === tab ? 'var(--accent)' : 'var(--surface-border)',
-                      color: activeTab === tab ? 'var(--accent)' : 'var(--muted)',
-                      background: activeTab === tab ? 'rgba(var(--accent-rgb), 0.1)' : 'transparent',
-                    }}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {tab === 'overview' ? '📊 Overview' :
-                     tab === 'strength' ? '💪 Strength' :
-                     tab === 'volume' ? '📈 Volume' :
-                     tab === 'fatigue' ? '🔋 Fatigue' : '📋 History'}
-                  </button>
-                ))}
-              </div>
+  const deleteWorkout = async (id: string) => {
+    const ok = await confirm({ title: 'Delete workout', message: 'Permanently delete this workout from your history?', confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    const res = await fetch(`/api/workout/history?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if ((await res.json().catch(() => ({}))).success) setHistory((prev) => prev.filter((w) => w.id !== id));
+  };
 
-              {activeTab === 'overview' && <OverviewTab experience={experience} handleSaveIntensity={handleSaveIntensity} intensityFactor={intensityFactor} intensityInfo={intensityInfo} intensitySaved={intensitySaved} intensitySaving={intensitySaving} setIntensityFactor={setIntensityFactor} setIntensitySaved={setIntensitySaved} />}
+  if (loading) return <div className="an-loading">Crunching numbers…</div>;
 
-              {activeTab === 'strength' && <StrengthTab experience={experience} history={history} lbm={lbm} missingWilks={missingWilks} oneRMs={oneRMs} prTimeline={prTimeline} user={user} wilks={wilks} />}
+  return (
+    <div className="animate-fade-in an-page">
+      <header className="an-header">
+        <a href="/workout" className="workout-text-btn">← Workout</a>
+        <div className="workout-flex-between" style={{ gap: '0.5rem' }}>
+          <h1>Analytics</h1>
+          <button type="button" className="workout-button is-small" onClick={() => setShowHow(true)}>ⓘ How it works</button>
+        </div>
+        {isDemo && <p className="workout-hint" style={{ margin: 0 }}>Sample data — log in to see your own.</p>}
+        {offline && <p className="workout-offline-note" style={{ margin: 0 }}>📡 Offline — showing data saved on this phone.</p>}
+      </header>
 
+      <div className="an-sticky">
+        <nav className="an-tabs" aria-label="Analytics sections">
+          {TABS.map((t) => (
+            <button key={t.key} type="button" aria-pressed={tab === t.key} onClick={() => chooseTab(t.key)}>{t.label}</button>
+          ))}
+        </nav>
+        {tab !== 'history' && (
+          <div className="an-periods" role="radiogroup" aria-label="Period">
+            {PERIODS.map((p) => (
+              <button key={p.key} type="button" role="radio" aria-checked={period === p.key} onClick={() => choosePeriod(p.key)}>{p.label}</button>
+            ))}
+          </div>
+        )}
+      </div>
 
-              {activeTab === 'volume' && <VolumeTab calorieTimeline={calorieTimeline} muscleVolumeData={muscleVolumeData} trainingHeatmap={trainingHeatmap} volumeTimeline={volumeTimeline} />}
+      {history.length === 0 ? (
+        <div className="workout-tile an-empty">
+          <strong>No workouts yet</strong>
+          <p className="workout-hint">Log a workout and your trends, records and muscle balance show up here.</p>
+          <a className="workout-button is-primary" href="/workout">Start a workout</a>
+        </div>
+      ) : (<>
+        {tab === 'summary' && (
+          <SummaryTab
+            history={history}
+            period={period}
+            periodLabel={periodLabel}
+            summary={data.summary}
+            insights={data.insights}
+            prs={data.prs}
+            goals={goals}
+            onOpenLift={(key) => { setOpenLift(key); chooseTab('lifts'); }}
+          />
+        )}
+        {tab === 'lifts' && (
+          <LiftsTab
+            stats={data.stats}
+            periodLabel={periodLabel}
+            goals={goals}
+            history={history}
+            bodyweight={user?.weight}
+            openKey={openLift}
+            onOpen={setOpenLift}
+            reviewFor={reviewFor}
+          />
+        )}
+        {tab === 'muscles' && (
+          <MusclesTab
+            muscles={data.muscles}
+            balance={data.balance}
+            weeklySetGoal={user?.weeklySetTarget ?? 10}
+            periodLabel={periodLabel}
+            fatigue={engine.fatigue}
+            recovery={engine.recovery}
+          />
+        )}
+        {tab === 'history' && (
+          <HistoryTab history={history} lifts={liftLookup} gymNames={gymNames} canDelete={!isDemo} onDelete={deleteWorkout} />
+        )}
+      </>)}
 
-              {activeTab === 'fatigue' && <FatigueTab avgAchievedGrowth={avgAchievedGrowth} avgExpectedGain={avgExpectedGain} intensityFactor={intensityFactor} intensityInfo={intensityInfo} muscleFatigue={muscleFatigue} overloadTracking={overloadTracking} recoveryData={recoveryData} reviewFor={reviewFor} targetRir={targetRir} />}
-
-              {activeTab === 'history' && <HistoryTab allLiftsMap={allLiftsMap} calibrationByLift={calibrationByLift} calibrations={calibrations} getScaleFactorForLiftDisplay={getScaleFactorForLiftDisplay} gymNameMap={gymNameMap} handleDeleteLog={handleDeleteLog} history={history} />}
-
-               {!isDemo && (
-                  <div className="workout-tile" style={{ textAlign: 'center' }}>
-                     <h3 style={{ margin: '0 0 0.5rem 0' }}>Export User Data</h3>
-                     <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0 0 1rem 0' }}>
-                        Download a CSV with one row per logged set plus placeholder rows for workouts without set data.
-                     </p>
-                     <button className="workout-btn-primary" style={{ marginTop: 0 }} onClick={handleDownloadCsv}>
-                        Download CSV
-                     </button>
-                  </div>
-               )}
-           </div>
-
-           {popup}
-       </div>
-   );
+      {showHow && (
+        <HowItWorksSheet
+          user={user}
+          isDemo={isDemo}
+          experience={experience}
+          calibrations={calibrations}
+          gymNames={gymNames}
+          onClose={() => setShowHow(false)}
+          onIntensitySaved={(intensityFactor) => setUser((prev: any) => ({ ...prev, intensityFactor }))}
+        />
+      )}
+      {popup}
+    </div>
+  );
 }
