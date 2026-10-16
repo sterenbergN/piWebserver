@@ -3,50 +3,8 @@ import { NextResponse } from 'next/server';
 import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
 import { findWorkoutUser } from '@/lib/workout/users';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
+import { notifySessionChanged, SESSIONS_FILE, type ParticipantProgress, type SessionStore, type SharedSession } from '@/lib/workout/shared-session';
 
-type ParticipantProgress = {
-  activeLiftIndex: number;
-  currentLiftName: string;
-  completedSets: number;
-  totalSets: number;
-  status: 'active' | 'paused' | 'finished' | 'deleted';
-  updatedAt: string;
-  /** Weight × reps the participant has dialed in for their next set. */
-  currentWeight?: number;
-  currentReps?: number;
-  lastSet?: { weight: number; reps: number; at: number } | null;
-};
-
-type SessionParticipant = {
-  userId: string;
-  username: string;
-  joinedAt: string;
-  progress: ParticipantProgress;
-};
-
-type SharedSession = {
-  id: string;
-  code: string;
-  hostUserId: string;
-  createdAt: string;
-  updatedAt: string;
-  version: number;
-  status: 'active' | 'finished';
-  planTemplate: {
-    name: string;
-    type: any;
-    gymId?: string;
-    gymName?: string;
-    lifts: any[];
-  };
-  participants: SessionParticipant[];
-};
-
-type SessionStore = {
-  sessions: SharedSession[];
-};
-
-const SESSIONS_FILE = 'workout-sessions.json';
 const MAX_PARTICIPANTS = 2;
 /** Sessions untouched for this long are pruned so the file doesn't grow forever. */
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -94,8 +52,10 @@ function mergeProgress(current: ParticipantProgress, progress: any): Participant
             weight: nonNegativeNumber(progress.lastSet.weight, 0) ?? 0,
             reps: nonNegativeInt(progress.lastSet.reps, 0),
             at: nonNegativeInt(progress.lastSet.at, Date.now()),
+            liftName: typeof progress.lastSet.liftName === 'string' ? progress.lastSet.liftName.slice(0, 200) : undefined,
           }
         : current.lastSet ?? null,
+    restingSince: progress?.restingSince === null ? null : nonNegativeInt(progress?.restingSince, current.restingSince ?? 0) || null,
   };
 }
 
@@ -210,6 +170,7 @@ export async function POST(request: Request) {
         return found;
       });
 
+      notifySessionChanged(session.id);
       return NextResponse.json({ success: true, sessionId: session.id, session });
     }
 
@@ -244,6 +205,7 @@ export async function PATCH(request: Request) {
       return session.version;
     });
 
+    notifySessionChanged(sessionId);
     return NextResponse.json({ success: true, version });
   } catch (error) {
     return handleApiError(error, 'Update shared session failed');

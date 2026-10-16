@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { Gym, Station } from '@/lib/workout/types';
 import { equipmentLibrary } from '@/lib/workout/equipment-library';
 import { exerciseLibrary } from '@/lib/workout/exercises';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import GymStations, { type WeightsCheck } from '@/components/workout/GymStations';
 
 interface InlineGymEditorProps {
@@ -20,10 +21,10 @@ export default function InlineGymEditor({ gymId, onGymUpdated }: InlineGymEditor
 
   useEffect(() => {
     // scope=all so equipment from your other (and published) gyms can be reused.
-    fetch('/api/workout/gyms?scope=all')
-      .then(r => r.json())
-      .then(d => { if (d.success) setGyms(d.gyms); else setError(d.message || 'Could not load equipment.'); })
-      .catch(() => setError('Could not load equipment.'));
+    fetchWorkoutJson('/api/workout/gyms?scope=all').then(({ data, offline }) => {
+      if (data?.success) setGyms(data.gyms); else setError(data?.message || 'Could not load equipment.');
+      if (offline) setError('Offline — changes can’t be saved until you’re back online.');
+    });
   }, []);
 
   const gym = gyms?.find(g => g.id === gymId) || null;

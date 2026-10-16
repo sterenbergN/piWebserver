@@ -6,7 +6,8 @@
 //   npm run seed:workout            (refuses to touch existing data)
 //   npm run seed:workout -- --force (replaces .data/workouts/*.json)
 //
-// Dev login: username "tester", password "tester-pass". Never run this on the Pi.
+// Dev logins: "tester" / "tester-pass", and "partner" / "partner-pass" for
+// trying partner mode from a second browser. Never run this on the Pi.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -22,7 +23,7 @@ const GYM_ID = 'dev-gym';
 const HOME_ID = 'dev-home';
 
 async function main() {
-  const files = ['users.json', 'gyms.json', 'workout_types.json', 'history.json'];
+  const files = ['users.json', 'gyms.json', 'workout_types.json', 'history.json', 'programs.json', 'goals.json'];
   await fs.mkdir(dir, { recursive: true });
   if (!force) {
     for (const file of files) {
@@ -47,6 +48,16 @@ async function main() {
       height: 70,
       gender: 'male',
       weight: 180,
+      intensityFactor: 1,
+      createdAt: new Date().toISOString(),
+    }, {
+      id: 'dev-partner',
+      username: 'partner',
+      password: hashPassword('partner-pass'),
+      birthdate: '1996-02-01',
+      height: 66,
+      gender: 'female',
+      weight: 140,
       intensityFactor: 1,
       createdAt: new Date().toISOString(),
     }],
@@ -128,8 +139,15 @@ async function main() {
     calories: 150, volume: 155 * 23, gymId: HOME_ID, gymName: 'Dev Home Gym', isDeload: false, intensitySlider: 1,
   });
 
+  const programs = {
+    programs: [{ id: 'dev-program', ownerId: USER_ID, name: 'Push / Legs', days: [{ typeId: 'dev-type-push', lifts: 4 }, { typeId: 'dev-type-legs', lifts: 4 }], deloadEveryWeeks: 4, gymId: GYM_ID, isPublic: false }],
+  };
+  const goals = {
+    goals: [{ id: 'dev-goal', ownerId: USER_ID, exercise: 'Bench Press', targetWeight: 185, targetReps: 5, isPublic: false, createdAt: new Date().toISOString() }],
+  };
+
   const write = (file: string, data: unknown) => fs.writeFile(path.join(dir, file), JSON.stringify(data, null, 2));
-  await Promise.all([write('users.json', users), write('gyms.json', gyms), write('workout_types.json', types), write('history.json', { history })]);
+  await Promise.all([write('users.json', users), write('gyms.json', gyms), write('workout_types.json', types), write('history.json', { history }), write('programs.json', programs), write('goals.json', goals)]);
   console.log(`Seeded ${path.relative(process.cwd(), dir)}: user "tester" / "tester-pass", ${stations.length + homeStations.length} stations in 2 gyms, ${history.length} workouts.`);
 }
 

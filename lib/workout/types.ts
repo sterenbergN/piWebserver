@@ -36,6 +36,8 @@ export interface Station {
   attachments?: string[];
   dumbbellPairs?: number[];
   bodyWeightAdditions?: number[];
+  /** Photo id (see lib/workout/photos.ts), to recognise the machine. */
+  photo?: string;
   lifts: Lift[];
 }
 

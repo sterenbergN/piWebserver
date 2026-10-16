@@ -85,6 +85,17 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
     }
   }
 
+  // Warm-up sets ticked off (kept apart from logs so they don't count as work).
+  const warmups: Record<string, { weight: number; reps: number }[]> = {};
+  if (payload.warmups && typeof payload.warmups === 'object' && !Array.isArray(payload.warmups)) {
+    for (const liftId of Object.keys(logs)) {
+      const sets = payload.warmups[liftId];
+      if (!Array.isArray(sets)) continue;
+      const clean = sets.map(sanitizeSet).filter(Boolean).slice(0, 10).map((s: any) => ({ weight: s.weight, reps: s.reps }));
+      if (clean.length > 0) warmups[liftId] = clean;
+    }
+  }
+
   const liftMeta: Record<string, any> = {};
   if (payload.liftMeta && typeof payload.liftMeta === 'object') {
     for (const liftId of Object.keys(logs)) {
@@ -128,6 +139,7 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
     durationSecs: finiteNumber(payload.durationSecs),
     timestamp,
     logs,
+    ...(Object.keys(warmups).length ? { warmups } : {}),
     liftMeta,
     calories: finiteNumber(payload.calories),
     volume: finiteNumber(payload.volume),
@@ -135,6 +147,9 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
     gymName: optionalString(payload.gymName),
     // Deload sessions are excluded from progression trends and fatigue.
     isDeload: payload.isDeload === true,
+    // Which program (and which day of it) this workout was, if any.
+    programId: optionalString(payload.programId, 80),
+    programDay: Number.isInteger(payload.programDay) && payload.programDay >= 0 ? payload.programDay : undefined,
     intensitySlider: finiteNumber(payload.intensitySlider),
   };
 }

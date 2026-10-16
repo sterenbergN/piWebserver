@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { upsertLift } from '@/lib/workout/stations';
@@ -13,6 +13,7 @@ import LiftForm, { describeLift } from './LiftForm';
 import EquipmentPicker, { type PickedEquipment } from './EquipmentPicker';
 import QuickAddLifts from './QuickAddLifts';
 import StationWeightsEditor from './StationWeightsEditor';
+import { StationThumb } from './StationPhoto';
 
 /** "Check the weights" sheet; `onlyIds` limits it to just-added stations. */
 export type WeightsCheck = { intro?: string; onlyIds?: string[] };
@@ -55,27 +56,46 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
     if (force ?? !next.has(id)) next.add(id); else next.delete(id);
     return next;
   });
-  const save = async (stations: Station[], after?: () => void) => {
-    if (await saveStations(stations)) { setTarget(null); after?.(); }
+  // After anything is deleted: "Deleted … · Undo" puts the previous equipment back.
+  const [undo, setUndo] = useState<{ text: string; stations: Station[] } | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const handle = setTimeout(() => setUndo(null), 10000);
+    return () => clearTimeout(handle);
+  }, [undo]);
+
+  const save = async (stations: Station[], after?: () => void, undoText?: string) => {
+    const before = gym.stations;
+    if (await saveStations(stations)) {
+      setTarget(null);
+      after?.();
+      if (undoText) setUndo({ text: undoText, stations: before });
+    }
+  };
+  const restore = async () => {
+    if (!undo) return;
+    const { stations } = undo;
+    setUndo(null);
+    await saveStations(stations);
   };
   const findStation = (id: string) => gym.stations.find((s) => s.id === id);
 
   const saveStation = (station: Station) => {
-    const exists = gym.stations.some((s) => s.id === station.id);
-    save(exists ? gym.stations.map((s) => (s.id === station.id ? station : s)) : [...gym.stations, station], () => toggleOpen(station.id, true));
+    const existing = gym.stations.find((s) => s.id === station.id);
+    const removed = existing ? existing.lifts.filter((l) => !station.lifts.some((n) => n.id === l.id)).length : 0;
+    save(
+      existing ? gym.stations.map((s) => (s.id === station.id ? station : s)) : [...gym.stations, station],
+      () => toggleOpen(station.id, true),
+      removed ? `Removed ${plural(removed, 'lift')} from ${station.name}` : undefined,
+    );
   };
-  const deleteStation = async (station: Station) => {
-    const ok = await confirm({ title: 'Delete equipment', message: `Delete ${station.name}${station.lifts.length ? ` and its ${plural(station.lifts.length, 'lift')}` : ''}? Past workouts keep their history.`, confirmLabel: 'Delete', danger: true });
-    if (ok) save(gym.stations.filter((s) => s.id !== station.id));
-  };
+  // No "are you sure?": deletes can be undone from the toast instead.
+  const deleteStation = (station: Station) => save(gym.stations.filter((s) => s.id !== station.id), undefined, `Deleted ${station.name}${station.lifts.length ? ` and its ${plural(station.lifts.length, 'lift')}` : ''}`);
   const saveLift = (station: Station, lift: Lift) => save(gym.stations.map((s) => (s.id === station.id ? upsertLift(s, lift) : s)));
   const addLifts = (station: Station, lifts: Lift[]) => {
     if (lifts.length) save(gym.stations.map((s) => (s.id === station.id ? { ...s, lifts: [...s.lifts, ...lifts] } : s)));
   };
-  const deleteLift = async (station: Station, lift: Lift) => {
-    const ok = await confirm({ title: 'Delete lift', message: `Delete ${lift.name} from ${station.name}?`, confirmLabel: 'Delete', danger: true });
-    if (ok) save(gym.stations.map((s) => (s.id === station.id ? { ...s, lifts: s.lifts.filter((l) => l.id !== lift.id) } : s)));
-  };
+  const deleteLift = (station: Station, lift: Lift) => save(gym.stations.map((s) => (s.id === station.id ? { ...s, lifts: s.lifts.filter((l) => l.id !== lift.id) } : s)), undefined, `Deleted ${lift.name}`);
 
   /** Several pieces at once from the picker, then offer to check their weights. */
   const addMany = (items: PickedEquipment[]) => {
@@ -97,7 +117,8 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
     const byId = new Map(edited.map((s) => [s.id, s]));
     // Stations outside the check stay as they are; checked ones are replaced or dropped.
     const next = gym.stations.flatMap((s) => (only && !only.has(s.id) ? [s] : byId.has(s.id) ? [byId.get(s.id)!] : []));
-    saveStations(next).then((ok) => { if (ok) setWeightsCheck(null); });
+    const dropped = gym.stations.length - next.length;
+    save(next, () => setWeightsCheck(null), dropped ? `Removed ${plural(dropped, 'piece')} of equipment` : undefined);
   };
 
   const targetStation = target && target.kind !== 'pick-equipment' && target.stationId !== 'new' ? findStation(target.stationId) : undefined;
@@ -130,7 +151,7 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
               <div key={st.id} className={`workout-station${isOpen ? ' is-open' : ''}`}>
                 <div className="workout-station-top">
                   <button type="button" className="workout-station-head" aria-expanded={isOpen} onClick={() => toggleOpen(st.id)}>
-                    <span className="workout-avatar is-small" aria-hidden title={meta?.label}>{meta?.icon}</span>
+                    <StationThumb photo={st.photo} icon={meta?.icon} label={meta?.label} />
                     <span className="workout-card-text">
                       <span className="workout-card-title">{st.name}</span>
                       <span className="workout-card-meta">{describeStationWeights(st)}</span>
@@ -210,6 +231,12 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
           onSave={saveWeights}
           onCancel={() => setWeightsCheck(null)}
         />
+      )}
+      {undo && (
+        <div className="tracker-toast is-quiet animate-fade-in" role="status">
+          <span style={{ flex: 1, minWidth: 0 }}>{undo.text}</span>
+          <button type="button" className="tracker-toast-action" disabled={saving} onClick={restore}>Undo</button>
+        </div>
       )}
       {popup}
     </>

@@ -119,10 +119,11 @@ export function stepWeight(current: number, direction: 1 | -1, possible: number[
 }
 
 /**
- * Plates to load on EACH side to reach `targetWeight`, using the fewest plates.
- * Unlike a greedy pass, this finds a combination whenever one exists
- * (e.g. 30/side from [25, 15, 15] → 15 + 15, where greedy picks 25 and fails).
- * Returns null if the exact weight can't be built.
+ * Plates to load on EACH side to reach `targetWeight`, loading the biggest
+ * plates possible the way people do in a gym (185 → 45 + 25 per side, never
+ * 35 + 35). Unlike a plain greedy pass, this still finds a combination whenever
+ * one exists (e.g. 30/side from [25, 15, 15] → 15 + 15, where greedy picks 25
+ * and fails). Returns null if the exact weight can't be built.
  */
 export function calculatePlates(targetWeight: number, baseWeight: number, availablePlates: number[]): number[] | null {
   const perSide = roundWeight((targetWeight - baseWeight) / 2);
@@ -133,7 +134,15 @@ export function calculatePlates(targetWeight: number, baseWeight: number, availa
   const targetCents = toCents(perSide);
   const plates = positiveNumbers(availablePlates).sort((a, b) => b - a);
 
-  // best[sum] = fewest plates reaching that sum (each physical plate used once)
+  // Heaviest-first: compare plate lists (each sorted biggest first) element by
+  // element, so [45, 25] beats [35, 35] and [45] beats [25, 10, 10].
+  const heavier = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] > b[i];
+    return a.length < b.length;
+  };
+
+  // best[sum] = heaviest-first plates reaching that sum (each physical plate used
+  // once). Plates are added biggest first, so every list stays sorted.
   let best = new Map<number, number[]>([[0, []]]);
   for (const plate of plates) {
     const plateCents = toCents(plate);
@@ -141,10 +150,9 @@ export function calculatePlates(targetWeight: number, baseWeight: number, availa
     for (const [sum, used] of best) {
       const newSum = sum + plateCents;
       if (newSum > targetCents) continue;
+      const candidate = [...used, plate];
       const existing = next.get(newSum);
-      if (!existing || existing.length > used.length + 1) {
-        next.set(newSum, [...used, plate]);
-      }
+      if (!existing || heavier(candidate, existing)) next.set(newSum, candidate);
     }
     best = next;
   }

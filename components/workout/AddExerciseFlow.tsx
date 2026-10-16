@@ -8,6 +8,8 @@ import EquipmentPicker from './EquipmentPicker';
 import StationForm from './StationForm';
 import { describeLift } from './LiftForm';
 import { STATION_TYPE_META } from '@/lib/workout/station-summary';
+import { StationThumb } from './StationPhoto';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { equipmentLibrary as equipmentLibraryFor } from '@/lib/workout/equipment-library';
 
 type Step =
@@ -183,7 +185,7 @@ export default function AddExerciseFlow({ gym, library = [], exercises = [], inW
       <div className="workout-stack" style={{ maxHeight: '45vh', overflowY: 'auto', marginBottom: '0.75rem' }}>
         {stations.map((s) => (
           <button key={s.id} className="workout-lift-row" onClick={() => openStation(s)}>
-            <span className="workout-avatar is-small" aria-hidden>{STATION_TYPE_META[s.type]?.icon}</span>
+            <StationThumb photo={s.photo} icon={STATION_TYPE_META[s.type]?.icon} label={s.name} />
             <span className="workout-card-text">
               <span className="workout-card-title">{s.name}</span>
               <span className="workout-card-meta">{s.lifts.length ? s.lifts.map((l) => l.name).slice(0, 3).join(', ') + (s.lifts.length > 3 ? '…' : '') : 'no lifts yet'}</span>
@@ -212,9 +214,10 @@ export function AddExerciseForGym({ gymId, onGymUpdated, ...rest }: AddExerciseF
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('/api/workout/gyms?scope=all').then((r) => r.json()).then((d) => {
-      if (d.success) setGyms(d.gyms); else setError(d.message || 'Could not load the gym');
-    }).catch(() => setError('Could not load the gym'));
+    // Offline: the last copy of your gyms still lets you pick lifts (new equipment needs a connection).
+    fetchWorkoutJson('/api/workout/gyms?scope=all').then(({ data }) => {
+      if (data?.success) setGyms(data.gyms); else setError(data?.message || 'Could not load the gym — check your connection.');
+    });
   }, []);
 
   const gym = gyms?.find((g) => g.id === gymId);

@@ -9,6 +9,7 @@ import { STATION_TYPE_META } from '@/lib/workout/station-summary';
 import Sheet from './Sheet';
 import LiftForm, { describeLift } from './LiftForm';
 import { StationWeightFields } from './WeightFields';
+import { PhotoPicker } from './StationPhoto';
 
 const COMMON_ATTACHMENTS = ['Rope', 'Straight Bar', 'V-Bar', 'D-Handle', 'Wide Bar', 'Ankle Strap'];
 
@@ -143,6 +144,8 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
           ))}
         </div>
       </div>
+
+      <PhotoPicker photo={draft.photo} onChange={(photo) => update({ photo })} />
 
       <div className="workout-section-title">Weights</div>
       {/* Keyed by type so the number boxes start fresh after switching. */}

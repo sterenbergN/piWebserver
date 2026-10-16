@@ -22,6 +22,17 @@ import { newRecordId } from '@/lib/workout/stations';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import BodyweightCard from '@/components/workout/BodyweightCard';
+import GoalsCard from '@/components/workout/GoalsCard';
+import DeloadSuggestion from '@/components/workout/DeloadSuggestion';
+import { clearWorkoutCache, fetchWorkoutJson } from '@/lib/workout/offline-cache';
+import { suggestDeload } from '@/lib/workout/deload';
+import { nextProgramDay, programDeloadDue, type Program } from '@/lib/workout/programs';
+import { exerciseLibrary } from '@/lib/workout/exercises';
+import { readPref, savePref } from '@/lib/workout/device-prefs';
+import type { Goal } from '@/lib/workout/goals';
+
+/** "Not today" on a deload suggestion hides it for this long. */
+const DELOAD_SNOOZE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** The last gym / workout type / lift count you started with, so the form opens on them. */
 const LAST_START_KEY = 'workout:lastStart';
@@ -89,7 +100,10 @@ export default function WorkoutDashboard() {
   const [startingFreestyle, setStartingFreestyle] = useState(false);
   const [startError, setStartError] = useState('');
   const [isDeload, setIsDeload] = useState(false);
-  const [fatiguedMuscles, setFatiguedMuscles] = useState<string[]>([]);
+  const [programs, setPrograms] = useState<Program[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [offline, setOffline] = useState(false);
+  const [deloadSnoozedUntil, setDeloadSnoozedUntil] = useState(0);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
@@ -109,9 +123,16 @@ export default function WorkoutDashboard() {
   const [pendingWorkout, setPendingWorkout] = useState<{plan?: any, logs?: any, timestamp?: number, startTime?: number, activeLiftIndex?: number, ownerId?: string} | null>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('showLogin') === '1') {
-      setShowLogin(true);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('showLogin') === '1') setShowLogin(true);
+    // Partner invite link: /workout?join=ABC opens the join box with the code filled in.
+    const join = (params.get('join') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+    if (join) {
+      setJoinCode(join);
+      setShowStartMenu(true);
+      setShowJoinShared(true);
     }
+    setDeloadSnoozedUntil(Number(readPref('workout:deloadSnoozedUntil')) || 0);
   }, []);
 
   useEffect(() => {
@@ -126,8 +147,11 @@ export default function WorkoutDashboard() {
 
     async function load() {
       try {
-        const data = await fetch('/api/workout/auth').then(res => res.json());
-        if (!data.authenticated || !data.user) {
+        // Offline-first: every read falls back to the copy saved on this phone.
+        const auth = await fetchWorkoutJson('/api/workout/auth');
+        const data = auth.data;
+        if (auth.offline) setOffline(true);
+        if (!data?.authenticated || !data.user) {
           enterDemoMode();
           return;
         }
@@ -142,11 +166,17 @@ export default function WorkoutDashboard() {
         setEditGender(data.user.gender || 'male');
         setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
 
-        const [gymsRes, typesRes, historyRes] = await Promise.all([
-          fetch('/api/workout/gyms').then(r => r.json()).catch(() => null),
-          fetch('/api/workout/types?scope=mine').then(r => r.json()).catch(() => null),
-          fetch('/api/workout/history').then(r => r.json()).catch(() => null),
+        const results = await Promise.all([
+          fetchWorkoutJson('/api/workout/gyms'),
+          fetchWorkoutJson('/api/workout/types?scope=mine'),
+          fetchWorkoutJson('/api/workout/history'),
+          fetchWorkoutJson('/api/workout/programs'),
+          fetchWorkoutJson('/api/workout/goals'),
         ]);
+        if (results.some((r) => r.offline)) setOffline(true);
+        const [gymsRes, typesRes, historyRes, programsRes, goalsRes] = results.map((r) => r.data);
+        if (programsRes?.success) setPrograms(programsRes.programs || []);
+        if (goalsRes?.success) setGoals(goalsRes.goals || []);
 
         const userGyms: any[] = gymsRes?.success ? gymsRes.gyms : [];
         setAvailableGyms(userGyms);
@@ -168,15 +198,6 @@ export default function WorkoutDashboard() {
             if (s.lifts) allLifts.push(...s.lifts);
           }));
           setLiftLookup(Object.fromEntries(allLifts.map((lift) => [lift.id, lift])));
-
-          // Suggest a deload when accumulated fatigue is high for any muscle group.
-          if (history.length >= 3) {
-            setFatiguedMuscles(
-              computeMuscleFatigue(history, allLifts)
-                .filter((f) => f.recommendation === 'deload_recommended')
-                .map((f) => f.muscle)
-            );
-          }
 
           if (data.user.weight) {
             const exp = calculateExperienceScore(data.user, history, allLifts);
@@ -241,6 +262,7 @@ export default function WorkoutDashboard() {
 
   const handleLogout = async () => {
     await fetch('/api/workout/auth', { method: 'DELETE' });
+    clearWorkoutCache();
     window.location.reload();
   };
 
@@ -384,11 +406,47 @@ export default function WorkoutDashboard() {
     const params = new URLSearchParams({
       gym: workout.gymId,
       repeat: workout.id,
-      intensity: String(user?.intensityFactor ?? 1.0),
+      intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)),
       isDemo: String(isDemo),
     });
+    if (isDeload) params.set('deload', '1');
     if (availableTypes.some((t) => t.id === workout.type?.id)) params.set('type', workout.type.id);
     window.location.href = `/workout/active?${params.toString()}`;
+  };
+
+  /** Next day of a program, at its usual gym (else the gym you used last). */
+  const startProgram = (program: Program) => {
+    const gym = program.gymId && availableGyms.some((g) => g.id === program.gymId) ? program.gymId : selectedGym && selectedGym !== '__new__' ? selectedGym : '';
+    if (!gym) {
+      setShowStartMenu(true);
+      setStartError(`Pick a gym first, then start ${program.name} again.`);
+      return;
+    }
+    const params = new URLSearchParams({ program: program.id, gym, intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)) });
+    if (isDeload) params.set('deload', '1');
+    window.location.href = `/workout/active?${params.toString()}`;
+  };
+
+  // Deload: only ever suggested, with reasons; the user picks it for a workout or snoozes it.
+  const allLifts = availableGyms.flatMap((g: any) => (g.stations || []).flatMap((s: any) => s.lifts || []));
+  const deloadSuggestion = isDemo || Date.now() < deloadSnoozedUntil ? null
+    : suggestDeload(history, allLifts, { programDue: programs.some((p) => programDeloadDue(p, history)) });
+  const snoozeDeload = () => {
+    const until = Date.now() + DELOAD_SNOOZE_MS;
+    setDeloadSnoozedUntil(until);
+    savePref('workout:deloadSnoozedUntil', String(until));
+    setIsDeload(false);
+  };
+  const exercises = exerciseLibrary(availableGyms);
+  const saveGoal = async (goal: Partial<Goal>) => {
+    const res = await fetch('/api/workout/goals', { method: goal.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(goal) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'Could not save the goal.');
+    setGoals((prev) => (goal.id ? prev.map((g) => (g.id === data.goal.id ? data.goal : g)) : [...prev, data.goal]));
+  };
+  const deleteGoal = async (goal: Goal) => {
+    await fetch(`/api/workout/goals?id=${encodeURIComponent(goal.id)}`, { method: 'DELETE' });
+    setGoals((prev) => prev.filter((g) => g.id !== goal.id));
   };
   // One-tap starts: your latest workout of each kind (type + gym), newest first.
   const quickStarts = [...history]
@@ -400,6 +458,7 @@ export default function WorkoutDashboard() {
   return (
     <div className="animate-fade-in">
       {isDemo && <div className="demo-banner">SAMPLE MODE - PROGRESS WILL NOT BE SAVED</div>}
+      {offline && !isDemo && <p className="workout-offline-note" style={{ margin: '0 0 1rem' }}>📡 Offline — showing data saved on this phone. You can still start and log a workout.</p>}
 
       <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
         <div>
@@ -484,7 +543,7 @@ export default function WorkoutDashboard() {
           {[
             { value: streak.workoutsThisWeek, label: 'This week' },
             { value: streak.weekStreak, label: 'Week streak' },
-            { value: streak.daysSinceLast === null ? '—' : streak.daysSinceLast === 0 ? 'Today' : `${streak.daysSinceLast}d`, label: 'Last workout' },
+            { value: streak.daysSinceLast === null ? '—' : streak.daysSinceLast === 0 ? 'Today' : `${streak.daysSinceLast}d`, label: 'Since last' },
           ].map((stat) => (
             <div key={stat.label} style={{ background: 'var(--background)', padding: '0.85rem 0.5rem', borderRadius: '12px', textAlign: 'center' }}>
               <p style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: '0 0 0.2rem 0', color: 'var(--foreground)' }}>{stat.value}</p>
@@ -574,9 +633,29 @@ export default function WorkoutDashboard() {
 
       {!showStartMenu ? (
         <>
+          {(deloadSuggestion || isDeload) && (
+            <DeloadSuggestion suggestion={deloadSuggestion || { reasons: [] }} chosen={isDeload} onChoose={setIsDeload} onDismiss={snoozeDeload} />
+          )}
           <button className="workout-btn-primary" style={{ padding: '1.25rem', fontSize: '1.25rem', marginTop: '0.5rem' }} onClick={() => setShowStartMenu(true)}>
             Start a workout ⚡
           </button>
+          {programs.length > 0 && !isDemo && (
+            <div className="workout-quick-starts">
+              <span className="workout-hint">Your programs:</span>
+              {programs.map((program) => {
+                const next = nextProgramDay(program, history);
+                const day = program.days[next];
+                const dayName = day?.name || availableTypes.find((t) => t.id === day?.typeId)?.name || 'Next day';
+                const gym = availableGyms.find((g) => g.id === program.gymId);
+                return (
+                  <button key={program.id} type="button" className="workout-quick-start workout-program-start" onClick={() => startProgram(program)}>
+                    <strong>▶ {program.name}: {dayName}</strong>
+                    <span>Day {next + 1} of {program.days.length}{gym ? ` · ${gym.emoji ? `${gym.emoji} ` : ''}${gym.name}` : ''}{programDeloadDue(program, history) ? ' · deload week' : ''}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {quickStarts.length > 0 && (
             <div className="workout-quick-starts">
               <span className="workout-hint">Or repeat:</span>
@@ -634,9 +713,9 @@ export default function WorkoutDashboard() {
               <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Automatically reduces weight targets and sets to prioritize recovery.</div>
             </div>
           </label>
-          {fatiguedMuscles.length > 0 && !isDeload && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--warning)', margin: '-0.5rem 0 1rem' }}>
-              High fatigue detected for {fatiguedMuscles.join(', ')} — consider a deload session.
+          {deloadSuggestion && !isDeload && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--info, #63b3ed)', margin: '-0.5rem 0 1rem' }}>
+              Deload suggested: {deloadSuggestion.reasons.join(' ')}
             </p>
           )}
 
@@ -761,6 +840,10 @@ export default function WorkoutDashboard() {
 
       {!isDemo && (
         <BodyweightCard onWeightChange={(weight) => { setUser((prev) => (prev ? { ...prev, weight } : prev)); setEditWeight(String(weight)); }} />
+      )}
+
+      {!isDemo && (
+        <GoalsCard goals={goals} history={history} exercises={exercises} onSave={saveGoal} onDelete={deleteGoal} />
       )}
 
       {stalledLifts.length > 0 && (

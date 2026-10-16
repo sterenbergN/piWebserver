@@ -31,6 +31,13 @@ test('calculatePlates finds combinations greedy selection misses', () => {
   assert.deepEqual(calculatePlates(105, 45, [25, 15, 15]), [15, 15]);
 });
 
+test('calculatePlates loads 45s first, like in the gym', () => {
+  // 185 on a 45 bar with two 35s per side: 45 + 25, not 35 + 35.
+  assert.deepEqual(calculatePlates(185, 45, [45, 45, 35, 35, 25, 10, 5, 2.5]), [45, 25]);
+  assert.deepEqual(calculatePlates(225, 45, [45, 45, 35, 35, 25, 10]), [45, 45]);
+  assert.deepEqual(calculatePlates(165, 45, [45, 35, 25, 25, 10, 5]), [45, 10, 5]);
+});
+
 test('calculatePlates prefers fewer plates and reports impossible targets', () => {
   assert.deepEqual(calculatePlates(135, 45, [45, 25, 10, 10, 5, 5]), [45]);
   assert.deepEqual(calculatePlates(45, 45, [45]), []);

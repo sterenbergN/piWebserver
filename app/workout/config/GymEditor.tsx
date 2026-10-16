@@ -6,6 +6,8 @@ import { GYM_EMOJIS, type Gym, type Station } from '@/lib/workout/types';
 import { GYM_TEMPLATES, stationsFromTemplate } from '@/lib/workout/catalog';
 import { copyStations, equipmentLibrary } from '@/lib/workout/equipment-library';
 import { exerciseLibrary } from '@/lib/workout/exercises';
+import { likelyDuplicates } from '@/lib/workout/exercise-admin';
+import { ExerciseSheet, MergeDuplicatesSheet } from '@/components/workout/ExerciseSheets';
 import GymStations, { type WeightsCheck } from '@/components/workout/GymStations';
 import Sheet from '@/components/workout/Sheet';
 
@@ -37,6 +39,11 @@ export default function GymEditor() {
   const [gymDraft, setGymDraft] = useState<GymDraft | null>(null);
   const [weightsCheck, setWeightsCheck] = useState<WeightsCheck | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  // Exercise library: one exercise open (rename / merge), or a duplicate group to merge.
+  const [exerciseOpen, setExerciseOpen] = useState<string | null>(null);
+  const [mergeGroup, setMergeGroup] = useState<string[] | null>(null);
+  const [exerciseBusy, setExerciseBusy] = useState(false);
+  const [exerciseError, setExerciseError] = useState('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -174,6 +181,28 @@ export default function GymEditor() {
   const library = equipmentLibrary(gyms, activeGym);
   // Every exercise across your own gyms: same exercise = shared history.
   const exercises = exerciseLibrary(myGyms);
+  const duplicates = likelyDuplicates(exercises);
+
+  /** Rename / merge exercises everywhere (gyms, past workouts, goals, calibration). */
+  const renameExercises = async (from: string[], to: string) => {
+    setExerciseBusy(true);
+    setExerciseError('');
+    try {
+      const data = await requestJson('/api/workout/exercises', { method: 'POST', body: JSON.stringify({ action: from.length > 1 ? 'merge' : 'rename', from, to }) });
+      if (Array.isArray(data.gyms)) {
+        const updated = new Map((data.gyms as Gym[]).map(g => [g.id, g]));
+        setGyms(prev => prev.map(g => updated.get(g.id) ? { ...updated.get(g.id)!, shareToken: g.shareToken } : g));
+      }
+      setExerciseOpen(null);
+      setMergeGroup(null);
+    } catch (err) {
+      setExerciseError(err instanceof Error ? err.message : 'Could not rename.');
+    } finally {
+      setExerciseBusy(false);
+    }
+  };
+  const openExercise = exercises.find(e => e.key === exerciseOpen);
+  const openGroup = mergeGroup ? exercises.filter(e => mergeGroup.includes(e.key)) : [];
 
   const gymSheet = gymDraft && (() => {
     const editing = gyms.find(g => g.id === gymDraft.id);
@@ -264,15 +293,30 @@ export default function GymEditor() {
           <button className="workout-button is-primary is-block" style={{ minHeight: 52 }} onClick={() => { setError(''); setGymDraft(EMPTY_GYM_DRAFT); }}>+ New gym</button>
         </div>
 
+        {duplicates.length > 0 && (
+          <div className="workout-tile" style={{ marginTop: '1.5rem', borderLeft: '3px solid var(--accent)' }}>
+            <strong style={{ display: 'block', marginBottom: '0.35rem' }}>🔁 Possible duplicate exercises</strong>
+            <p className="workout-hint" style={{ margin: '0 0 0.5rem' }}>Merging them combines their history, PRs and goals.</p>
+            <div className="workout-stack">
+              {duplicates.map(group => (
+                <button key={group.map(e => e.key).join('|')} type="button" className="workout-lift-row" onClick={() => { setExerciseError(''); setMergeGroup(group.map(e => e.key)); }}>
+                  <span className="workout-card-text"><span className="workout-card-title">{group.map(e => e.name).join(' / ')}</span></span>
+                  <span style={{ flexShrink: 0, fontSize: '0.85rem' }}>Review ›</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {exercises.length > 0 && (
           <details className="workout-exercise-list">
-            <summary className="workout-section-title">Your exercises <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>{exercises.length} · tap to show</span></summary>
+            <summary className="workout-section-title">Your exercises <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>{exercises.length} · tap to open</span></summary>
             <p className="workout-hint" style={{ margin: '0 0 0.6rem' }}>
               Lifts that are the same exercise share history, PRs and plateau checks across your gyms. To link lifts with different names, open one and set “Counts as”.
             </p>
             <div className="workout-stack">
               {exercises.map(e => (
-                <div key={e.key} className="workout-lift-row" style={{ cursor: 'default' }}>
+                <button key={e.key} type="button" className="workout-lift-row" onClick={() => { setExerciseError(''); setExerciseOpen(e.key); }}>
                   <span className="workout-card-text">
                     <span className="workout-card-title">{e.name}</span>
                     <span className="workout-card-meta">{[e.primaryMuscle, e.secondaryMuscle].filter(m => m && m !== 'None').join(' • ')}</span>
@@ -280,7 +324,8 @@ export default function GymEditor() {
                       {e.uses.map(u => `${u.gymName} · ${u.stationName}${u.liftName !== e.name ? ` (as “${u.liftName}”)` : ''}`).join('; ')}
                     </span>
                   </span>
-                </div>
+                  <span className="workout-chevron" aria-hidden>›</span>
+                </button>
               ))}
             </div>
           </details>
@@ -302,6 +347,21 @@ export default function GymEditor() {
           </div>
         </>)}
         {gymSheet}
+        {openExercise && (
+          <ExerciseSheet
+            key={openExercise.key}
+            exercise={openExercise}
+            others={exercises.filter(e => e.key !== openExercise.key)}
+            busy={exerciseBusy}
+            error={exerciseError}
+            onRename={to => renameExercises([openExercise.name], to)}
+            onMerge={into => renameExercises([openExercise.name, into], into)}
+            onClose={() => setExerciseOpen(null)}
+          />
+        )}
+        {openGroup.length > 1 && (
+          <MergeDuplicatesSheet group={openGroup} busy={exerciseBusy} error={exerciseError} onMerge={renameExercises} onClose={() => setMergeGroup(null)} />
+        )}
         {popup}
       </div>
     );

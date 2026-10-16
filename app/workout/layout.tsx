@@ -1,4 +1,5 @@
 import './workout.css';
+import OverflowGuard from '@/components/workout/OverflowGuard';
 import { Metadata, Viewport } from 'next';
 
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default function WorkoutLayout({ children }: { children: React.ReactNode 
   return (
     <div className="workout-mobile-container animate-fade-in">
       {children}
+      <OverflowGuard />
     </div>
   );
 }

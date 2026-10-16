@@ -98,6 +98,101 @@
 
 .tracker-topbar {
   backdrop-filter: blur(14px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+  border-radius: 0 0 16px 16px;
+  border-top: none;
+}
+.tracker-topbar-compact { margin-bottom: 0.35rem; }
+
+/* Partner mode status in the top bar */
+.tracker-partner {
+  margin-bottom: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+}
+.tracker-partner-bar { height: 6px; border-radius: 4px; background: var(--surface-border); overflow: hidden; margin-top: 0.25rem; }
+.tracker-partner-bar > div { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.tracker-live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: var(--muted);
+  vertical-align: middle;
+}
+.tracker-live-dot.is-live { background: var(--success); box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.25); }
+
+/* Lift card chips (Change / History / Superset) */
+.tracker-chip-row { display: flex; gap: 0.45rem; justify-content: center; align-items: center; flex-wrap: wrap; }
+.tracker-chip {
+  background: none;
+  border: 1px solid var(--surface-border);
+  color: var(--muted);
+  padding: 0.25rem 0.9rem;
+  border-radius: 20px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.tracker-chip.is-on { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.5); }
+
+.tracker-superset {
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Finish screen */
+.tracker-finish { padding: 1.5rem 1rem; }
+.tracker-verdict { margin: 0.75rem 0 0; font-weight: 700; color: var(--accent-light, var(--accent)); }
+.tracker-finish-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; margin: 1.25rem 0; }
+.tracker-finish-stats > div { background: var(--input-bg); padding: 0.8rem; border-radius: 12px; display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.tracker-finish-stats span { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.tracker-finish-stats strong { font-size: 1.35rem; }
+.tracker-finish-stats small { font-size: 0.7rem; color: var(--muted); }
+.tracker-finish-prs {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--success-rgb), 0.4);
+  background: rgba(var(--success-rgb), 0.08);
+}
+.tracker-finish-lift { padding: 0.6rem 0.75rem; border-radius: 12px; background: var(--input-bg); }
+.tracker-change { flex-shrink: 0; font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+.tracker-change.is-up { color: var(--success); }
+.tracker-change.is-down { color: var(--warning); }
+
+/* Warm-up checklist */
+.tracker-warmups { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin: 0.4rem 0 0.2rem; }
+.tracker-warmup {
+  min-height: 38px;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  border: 1px dashed var(--surface-border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.tracker-warmup[aria-pressed="true"] {
+  border-style: solid;
+  border-color: rgba(var(--success-rgb), 0.6);
+  background: rgba(var(--success-rgb), 0.12);
+  color: var(--foreground);
 }
 
 /* Workout name takes the leftover width (and wraps); the buttons never get pushed off-screen. */
@@ -832,6 +927,8 @@
   cursor: pointer;
 }
 .workout-lift-row:hover { border-color: var(--surface-border); }
+.workout-lift-row.is-current { border-color: var(--accent); }
+.workout-lift-row.is-done { background: rgba(var(--success-rgb), 0.1); }
 .workout-lift-row .workout-card-title { font-size: 0.92rem; font-weight: 600; }
 .workout-stack { display: flex; flex-direction: column; gap: 0.4rem; }
 .workout-stack.is-loose { gap: 0.65rem; }
@@ -967,3 +1064,59 @@
 .workout-exercise-list { margin-top: 2rem; }
 .workout-exercise-list > summary { cursor: pointer; list-style: none; }
 .workout-exercise-list > summary::-webkit-details-marker { display: none; }
+
+/* The site-wide .btn never wraps; on a phone long labels must wrap instead of
+   running past the button. */
+.workout-mobile-container .btn,
+.workout-sheet .btn {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  min-width: 0;
+}
+.workout-mobile-container button,
+.workout-sheet button { overflow-wrap: anywhere; }
+
+/* Development only (see OverflowGuard): content spilling out of its box. */
+[data-overflow] { outline: 2px dashed #e53e3e !important; outline-offset: -2px; }
+
+.workout-offline-note {
+  margin: 0 0.75rem 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--warning-rgb, 236, 201, 75), 0.45);
+  background: rgba(var(--warning-rgb, 236, 201, 75), 0.1);
+  font-size: 0.78rem;
+}
+
+/* Home: deload suggestion, programs, goals */
+.workout-deload-card {
+  margin: 0.75rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(99, 179, 237, 0.45);
+  background: rgba(99, 179, 237, 0.08);
+}
+.workout-deload-card.is-chosen { border-color: rgba(var(--success-rgb), 0.5); background: rgba(var(--success-rgb), 0.08); }
+.workout-program-start { border-color: rgba(var(--accent-rgb), 0.45); }
+.workout-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workout-goal:hover { border-color: var(--surface-border); }
+.workout-goal-bar { height: 6px; border-radius: 4px; background: var(--surface-border); overflow: hidden; }
+.workout-goal-bar > div { height: 100%; border-radius: 4px; }
+
+/* Machine photos */
+.workout-photo { object-fit: cover; padding: 0; }
+.tracker-station-photo { display: block; width: 100%; max-height: 160px; object-fit: cover; border-radius: 12px; margin: 0.2rem 0 0.5rem; }
