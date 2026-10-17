@@ -9,6 +9,7 @@ import { exerciseLibrary } from '@/lib/workout/exercises';
 import { likelyDuplicates } from '@/lib/workout/exercise-admin';
 import { ExerciseSheet, MergeDuplicatesSheet } from '@/components/workout/ExerciseSheets';
 import GymStations, { type WeightsCheck } from '@/components/workout/GymStations';
+import MyEquipment from '@/components/workout/MyEquipment';
 import Sheet from '@/components/workout/Sheet';
 
 /** `copyFrom`: 'gym:<id>' or 'template:<key>' to start a new gym with that equipment. */
@@ -80,6 +81,11 @@ export default function GymEditor() {
   };
 
   const replaceGym = (gym: Gym) => setGyms(prev => prev.map(g => (g.id === gym.id ? gym : g)));
+  /** Gyms the server changed in bulk (rename / link); keeps their share links. */
+  const replaceGyms = (updated: Gym[]) => {
+    const byId = new Map(updated.map(g => [g.id, g]));
+    setGyms(prev => prev.map(g => byId.has(g.id) ? { ...byId.get(g.id)!, shareToken: g.shareToken } : g));
+  };
   const openGym = (id: string | null) => {
     setActiveGymId(id);
     setWeightsCheck(null);
@@ -189,10 +195,7 @@ export default function GymEditor() {
     setExerciseError('');
     try {
       const data = await requestJson('/api/workout/exercises', { method: 'POST', body: JSON.stringify({ action: from.length > 1 ? 'merge' : 'rename', from, to }) });
-      if (Array.isArray(data.gyms)) {
-        const updated = new Map((data.gyms as Gym[]).map(g => [g.id, g]));
-        setGyms(prev => prev.map(g => updated.get(g.id) ? { ...updated.get(g.id)!, shareToken: g.shareToken } : g));
-      }
+      if (Array.isArray(data.gyms)) replaceGyms(data.gyms);
       setExerciseOpen(null);
       setMergeGroup(null);
     } catch (err) {
@@ -330,6 +333,8 @@ export default function GymEditor() {
             </div>
           </details>
         )}
+
+        <MyEquipment gyms={myGyms} onGymsUpdated={replaceGyms} />
 
         {otherGyms.length > 0 && (<>
           <div className="workout-section-title" style={{ marginTop: '2rem' }}>Other people&apos;s gyms</div>

@@ -1,25 +1,24 @@
+import { kindKey } from './equipment-kinds';
 import { newRecordId } from './stations';
 import type { Gym, Lift, Station } from './types';
 
 // "Your equipment": stations you've already set up in other gyms, reused as
 // starting points in a new gym (same machine, usually different weights).
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-export const stationKey = (s: Pick<Station, 'name' | 'type'>) => `${norm(s.name)}|${s.type}`;
-
 /**
- * One entry per kind of station across the given gyms (same name + type),
- * keeping the version with the most lifts. Stations already in `exclude`
- * (e.g. the gym being edited) are left out.
+ * One entry per machine kind across the given gyms (see equipment-kinds.ts:
+ * "Machine Row" linked to "Row Machine" is one entry), keeping the version
+ * with the most lifts. Kinds the gym in `exclude` (e.g. the one being edited)
+ * already has are left out.
  */
 export function equipmentLibrary(gyms: Gym[], exclude?: Gym | null): Station[] {
-  const taken = new Set((exclude?.stations || []).map(stationKey));
+  const taken = new Set((exclude?.stations || []).map(kindKey));
   const best = new Map<string, Station>();
   for (const gym of gyms) {
     if (exclude && gym.id === exclude.id) continue;
     for (const station of gym.stations || []) {
-      const key = stationKey(station);
-      if (taken.has(key)) continue;
+      const key = kindKey(station);
+      if (!key || taken.has(key)) continue;
       const current = best.get(key);
       if (!current || (station.lifts?.length || 0) > (current.lifts?.length || 0)) best.set(key, station);
     }
@@ -27,7 +26,7 @@ export function equipmentLibrary(gyms: Gym[], exclude?: Gym | null): Station[] {
   return [...best.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** A fresh copy of a station (new ids) with the chosen lifts (all by default). */
+/** A fresh copy of a station (new ids) with the chosen lifts (all by default), still the same machine kind. */
 export function copyStation(station: Station, liftIds?: string[]): Station {
   const keep = liftIds ? new Set(liftIds) : null;
   return {

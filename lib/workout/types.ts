@@ -38,6 +38,13 @@ export interface Station {
   bodyWeightAdditions?: number[];
   /** Photo id (see lib/workout/photos.ts), to recognise the machine. */
   photo?: string;
+  /**
+   * The machine kind this station is when that differs from its name (e.g.
+   * "Machine Row" here that is the "Row Machine" at another gym). Stations of
+   * the same kind are one machine in "My equipment"; each keeps its own
+   * weights. See lib/workout/equipment-kinds.ts.
+   */
+  kind?: string;
   lifts: Lift[];
 }
 

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { generateNextWorkout, ProgressionInput, ProgressionProfile, Session, SetLog } from '@/lib/workout/progression';
-import { CalibrationStore, findCalibration, getCalibrationStore } from '@/lib/workout/calibration';
+import { CalibrationStore, findCalibration, findReferenceLift, getCalibrationStore } from '@/lib/workout/calibration';
 import { normalizeLiftKey } from '@/lib/workout/calibration-utils';
-import { exerciseName } from '@/lib/workout/exercises';
+import { exerciseKeyFromName, exerciseName } from '@/lib/workout/exercises';
+import { kindKey, stationKindIndex } from '@/lib/workout/equipment-kinds';
+import { getWorkoutData } from '@/lib/workout/data';
 import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipment';
 import { loadUserHistory } from '@/lib/workout/history';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
@@ -83,27 +85,25 @@ function buildHistorySessions(
   return sessions;
 }
 
-function findCalibrationReference(userHistory: any[], gymId: string, liftKey: string) {
+/** The last time this lift was done at another gym, preferring the same kind of machine. */
+async function findCalibrationReference(userHistory: any[], userId: string, gymId: string, liftKey: string, liftName: string, station: any) {
   const otherHistory = userHistory
     .filter((h: any) => h.gymId && h.gymId !== gymId && h.liftMeta)
     .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  if (otherHistory.length === 0) return null;
 
-  for (const entry of otherHistory) {
-    const metaMap = entry.liftMeta || {};
-    const matchedLiftId = Object.keys(metaMap).find(
-      id => normalizeLiftKey(exerciseName(metaMap[id])) === liftKey
-    );
-    if (!matchedLiftId) continue;
-    const sets = entry.logs?.[matchedLiftId] || [];
-    const lastSet = sets[sets.length - 1];
-    if (!lastSet) continue;
-    return {
-      referenceGymName: entry.gymName,
-      referenceWeight: lastSet.weight,
-      referenceReps: lastSet.reps,
-    };
-  }
-  return null;
+  const gymData = await getWorkoutData('gyms.json', { gyms: [] as any[] });
+  const stationKinds = stationKindIndex((gymData.gyms || []).filter((g: any) => g.ownerId === userId));
+  const found = findReferenceLift(otherHistory, {
+    liftKey,
+    exerciseKey: exerciseKeyFromName(liftName),
+    kindKey: (station?.id && stationKinds.get(String(station.id))) || kindKey(station) || undefined,
+  }, stationKinds);
+  return found && {
+    referenceGymName: found.workout.gymName,
+    referenceWeight: found.lastSet.weight,
+    referenceReps: found.lastSet.reps,
+  };
 }
 
 // ─── POST Handler ──────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     let currentScaleFactor = 1;
     let calibrationStatus: 'none' | 'calibrated' | 'calibrating' = 'none';
     let calibrationConfidence = 0;
-    let calibrationReference: ReturnType<typeof findCalibrationReference> = null;
+    let calibrationReference: Awaited<ReturnType<typeof findCalibrationReference>> = null;
 
     if (userId && gymId && liftKey && isCalibratedStation(station?.type)) {
       const entry = findCalibration(calibrationStore, userId, gymId, liftKey);
@@ -140,7 +140,7 @@ export async function POST(request: Request) {
         calibrationConfidence = entry.confidence || 0;
         calibrationStatus = 'calibrated';
       } else {
-        calibrationReference = findCalibrationReference(userHistory, gymId, liftKey);
+        calibrationReference = await findCalibrationReference(userHistory, userId, gymId, liftKey, liftName || '', station);
         calibrationStatus = calibrationReference ? 'calibrating' : 'none';
       }
     }

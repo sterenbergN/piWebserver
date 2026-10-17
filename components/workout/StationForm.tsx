@@ -103,7 +103,10 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
 
   const handleSave = () => {
     if (!draft.name?.trim()) return;
-    onSave(finalizeStation({ ...draft, lifts: [...(draft.lifts || []), ...newLifts()] }, listFieldsFromStation(draft)));
+    // Renaming (or renaming a copy) keeps it the same machine as before.
+    const source = isEditing ? initial : copyFrom;
+    const kind = draft.kind || source?.name;
+    onSave(finalizeStation({ ...draft, kind, lifts: [...(draft.lifts || []), ...newLifts()] }, listFieldsFromStation(draft)));
   };
 
   const togglePicked = (name: string) => setPickedLifts((prev) => {

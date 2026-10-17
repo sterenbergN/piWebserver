@@ -1,7 +1,9 @@
-// Local test data for the workout tracker: a login, a commercial gym and a
-// home gym, two workout types and a few weeks of history. The home gym's bench
-// lift is named "Flat Bench" (not linked to "Bench Press") so exercise linking
-// can be tried out.
+// Local test data for the workout tracker: a login, a commercial gym, a home
+// gym and a downtown gym, two workout types and a few weeks of history. The
+// home gym's bench lift is named "Flat Bench" (not linked to "Bench Press") so
+// exercise linking can be tried out, and the downtown gym's machines have
+// other names than the commercial gym's ("Machine Row" / "Row Machine") for
+// trying out machine linking in "My equipment".
 //
 //   npm run seed:workout            (refuses to touch existing data)
 //   npm run seed:workout -- --force (replaces .data/workouts/*.json)
@@ -12,7 +14,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { hashPassword } from '../lib/workout/passwords';
-import { stationsFromTemplate } from '../lib/workout/catalog';
+import { findPreset, stationFromPreset, stationsFromTemplate } from '../lib/workout/catalog';
 import { getPossibleWeights, snapToPossibleWeight } from '../lib/workout/equipment';
 import type { Lift, Station } from '../lib/workout/types';
 
@@ -21,6 +23,7 @@ const force = process.argv.includes('--force');
 const USER_ID = 'dev-tester';
 const GYM_ID = 'dev-gym';
 const HOME_ID = 'dev-home';
+const DOWNTOWN_ID = 'dev-downtown';
 
 async function main() {
   const files = ['users.json', 'gyms.json', 'workout_types.json', 'history.json', 'programs.json', 'goals.json'];
@@ -36,6 +39,16 @@ async function main() {
   }
 
   const stations = stationsFromTemplate('commercial');
+  stations.push({ ...stationFromPreset(findPreset('row-machine')!), name: 'Row Machine' });
+  // The same machines elsewhere under other names, with that gym's weights.
+  const preset = (key: string, name: string, extra: Partial<Station> = {}): Station => ({ ...stationFromPreset(findPreset(key)!), name, ...extra });
+  const downtownStations = [
+    preset('row-machine', 'Machine Row', { minWeight: 15, maxWeight: 225, increment: 15 }),
+    preset('chest-press', 'Chest Press', { minWeight: 5, maxWeight: 150, increment: 5 }),
+    preset('lat-pulldown', 'Pulldown Station'),
+    preset('leg-press', 'Leg Press'),
+  ];
+  downtownStations[0].lifts[0].name = 'Seated Row';
   const homeStations = stationsFromTemplate('home');
   const homeBench = homeStations.flatMap((s) => s.lifts).find((l) => l.name === 'Bench Press')!;
   homeBench.name = 'Flat Bench';
@@ -66,6 +79,7 @@ async function main() {
     gyms: [
       { id: GYM_ID, ownerId: USER_ID, name: 'Dev Commercial Gym', emoji: '🏢', isPublic: false, stations, createdAt: new Date().toISOString() },
       { id: HOME_ID, ownerId: USER_ID, name: 'Dev Home Gym', emoji: '🏠', isPublic: false, stations: homeStations, createdAt: new Date().toISOString() },
+      { id: DOWNTOWN_ID, ownerId: USER_ID, name: 'Dev Downtown Gym', emoji: '🏟️', isPublic: false, stations: downtownStations, createdAt: new Date().toISOString() },
     ],
   };
   const types = {
@@ -148,7 +162,7 @@ async function main() {
 
   const write = (file: string, data: unknown) => fs.writeFile(path.join(dir, file), JSON.stringify(data, null, 2));
   await Promise.all([write('users.json', users), write('gyms.json', gyms), write('workout_types.json', types), write('history.json', { history }), write('programs.json', programs), write('goals.json', goals)]);
-  console.log(`Seeded ${path.relative(process.cwd(), dir)}: user "tester" / "tester-pass", ${stations.length + homeStations.length} stations in 2 gyms, ${history.length} workouts.`);
+  console.log(`Seeded ${path.relative(process.cwd(), dir)}: user "tester" / "tester-pass", ${stations.length + homeStations.length + downtownStations.length} stations in 3 gyms, ${history.length} workouts.`);
 }
 
 function liftMetaFor(lift: Lift, station: Station) {

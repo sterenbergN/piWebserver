@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { generateId, updateWorkoutData } from '@/lib/workout/data';
+import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
+import { stationKindIndex } from '@/lib/workout/equipment-kinds';
 import { HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore, inferCalibrationsForWorkout, upsertCalibrationEntries } from '@/lib/workout/calibration';
@@ -57,8 +58,10 @@ export async function POST(request: Request) {
     if (!duplicate) {
       // Calibration is best-effort; a failure here must not fail the save.
       try {
-        const store = await getCalibrationStore();
-        const inferred = inferCalibrationsForWorkout(userId, entry, previousUserHistory, store, calcAverage1RM);
+        const [store, gymData] = await Promise.all([getCalibrationStore(), getWorkoutData('gyms.json', { gyms: [] as any[] })]);
+        // Same kind of machine at the other gym is the best reference.
+        const stationKinds = stationKindIndex((gymData.gyms || []).filter((g: any) => g.ownerId === userId));
+        const inferred = inferCalibrationsForWorkout(userId, entry, previousUserHistory, store, calcAverage1RM, stationKinds);
         await upsertCalibrationEntries(inferred);
       } catch (error) {
         console.error('Calibration inference failed:', error);

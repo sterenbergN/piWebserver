@@ -62,6 +62,8 @@ export function finalizeStation(draft: Partial<Station>, lists: StationListField
     additionalWeight: undefined, // migrated into additionalWeights
     dumbbellPairs: type === 'dumbbells' ? parseWeightList(lists.dumbbells, { positiveOnly: true }) : undefined,
     bodyWeightAdditions: type === 'bodyweight' ? parseWeightList(lists.bodyWeight, { positiveOnly: true }) : undefined,
+    // Only kept when it differs from the name; otherwise the name is the kind.
+    kind: draft.kind?.trim() && !sameName(draft.kind, draft.name || '') ? draft.kind.trim().slice(0, 120) : undefined,
   };
 
   // Attachments only exist on cable stations; drop ones that were removed.

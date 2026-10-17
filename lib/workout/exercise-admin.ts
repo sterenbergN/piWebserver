@@ -76,10 +76,14 @@ export function renameInCalibrations<T extends { gymId: string; liftKey: string;
 /** Words that don't change which exercise it is ("Barbell Bench Press" = "Bench Press"). */
 const FILLER = new Set(['barbell', 'bb', 'flat', 'standard', 'regular', 'normal', 'straight', 'the', 'a', 'with', 'exercise']);
 
-function looseKey(name: string) {
+/**
+ * A name with case, word order, plurals and filler words ignored. `extraFiller`
+ * adds words that don't matter in that context (e.g. "machine" for equipment).
+ */
+export function looseNameKey(name: string, extraFiller?: Set<string>) {
   return exerciseKeyFromName(name)
     .split(' ')
-    .filter((w) => w && !FILLER.has(w))
+    .filter((w) => w && !FILLER.has(w) && !extraFiller?.has(w))
     // Plurals and hyphen splits: "curls" = "curl", "pull ups" = "pullup".
     .map((w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w))
     .sort()
@@ -91,7 +95,7 @@ function looseKey(name: string) {
 export function likelyDuplicates(library: Exercise[]): Exercise[][] {
   const groups = new Map<string, Exercise[]>();
   for (const exercise of library) {
-    const key = looseKey(exercise.name);
+    const key = looseNameKey(exercise.name);
     if (!key) continue;
     groups.set(key, [...(groups.get(key) || []), exercise]);
   }

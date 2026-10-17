@@ -1,6 +1,6 @@
 import { getWorkoutData, updateWorkoutData } from './data';
 import { clamp, normalizeLiftKey, areLiftKeysSimilar } from './calibration-utils';
-import { exerciseName } from './exercises';
+import { exerciseKey, exerciseName } from './exercises';
 
 
 export type CalibrationReference = {
@@ -104,13 +104,50 @@ type HistoryWorkout = {
   gymName?: string;
   timestamp?: string;
   logs?: Record<string, { weight: number; reps: number }[]>;
-  liftMeta?: Record<string, { name?: string; stationType?: string }>;
+  liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string; stationId?: string }>;
 };
+
+/** The lift to find at another gym: its calibration key, and its exercise and machine kind when known. */
+export type ReferenceTarget = { liftKey: string; exerciseKey?: string; kindKey?: string };
+
+/**
+ * The most recent session of a lift at another gym (pass the history newest
+ * first), with its last set. When the machine kinds are known (`stationKinds`:
+ * station id → kind key, see stationKindIndex), the same exercise on the same
+ * kind of machine wins — "Row" on the Row Machine, not on the cable row —
+ * falling back to any lift with the same name.
+ */
+export function findReferenceLift<T extends HistoryWorkout>(
+  otherGymHistory: T[],
+  target: ReferenceTarget,
+  stationKinds?: Map<string, string>,
+): { workout: T; liftId: string; lastSet: { weight: number; reps: number } } | null {
+  type Meta = NonNullable<HistoryWorkout['liftMeta']>[string];
+  const sameName = (meta: Meta) => normalizeLiftKey(exerciseName(meta)) === target.liftKey;
+  const sameKind = (meta: Meta) => {
+    const kind = meta?.stationId ? stationKinds?.get(meta.stationId) : undefined;
+    return !!kind && kind === target.kindKey && (sameName(meta) || (!!target.exerciseKey && exerciseKey(meta) === target.exerciseKey));
+  };
+  const passes = target.kindKey && stationKinds?.size ? [sameKind, sameName] : [sameName];
+  for (const matches of passes) {
+    for (const workout of otherGymHistory) {
+      const metaMap = workout.liftMeta || {};
+      for (const liftId of Object.keys(metaMap)) {
+        if (!matches(metaMap[liftId])) continue;
+        const sets = workout.logs?.[liftId] || [];
+        const lastSet = sets[sets.length - 1];
+        if (lastSet) return { workout, liftId, lastSet };
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * For stack/cable lifts done at a gym for the first time, infer a scale factor
  * from the most recent session of the same lift at another gym (pin-loaded
- * stacks rarely weigh the same between brands).
+ * stacks rarely weigh the same between brands). `stationKinds` (see
+ * stationKindIndex) prefers that lift on the same kind of machine.
  */
 export function inferCalibrationsForWorkout(
   userId: string,
@@ -118,6 +155,7 @@ export function inferCalibrationsForWorkout(
   previousUserHistory: HistoryWorkout[],
   store: CalibrationStore,
   calcE1RM: (weight: number, reps: number) => number,
+  stationKinds?: Map<string, string>,
 ): CalibrationEntry[] {
   const gymId = workout.gymId;
   if (!gymId || !workout.logs) return [];
@@ -146,24 +184,19 @@ export function inferCalibrationsForWorkout(
     if (!currentLastSet) continue;
     const currentE1RM = calcE1RM(currentLastSet.weight, currentLastSet.reps);
 
-    let reference: { gymId: string; gymName?: string; liftId: string; weight: number; reps: number; e1rm: number } | null = null;
-    for (const entry of otherGymHistory) {
-      const metaMap = entry.liftMeta || {};
-      const matchedLiftId = Object.keys(metaMap).find(key => normalizeLiftKey(exerciseName(metaMap[key])) === liftKey);
-      if (!matchedLiftId) continue;
-      const sets = entry.logs?.[matchedLiftId] || [];
-      const lastSet = sets[sets.length - 1];
-      if (!lastSet) continue;
-      reference = {
-        gymId: entry.gymId as string,
-        gymName: entry.gymName,
-        liftId: matchedLiftId,
-        weight: lastSet.weight,
-        reps: lastSet.reps,
-        e1rm: calcE1RM(lastSet.weight, lastSet.reps),
-      };
-      break;
-    }
+    const found = findReferenceLift(otherGymHistory, {
+      liftKey,
+      exerciseKey: exerciseKey(meta),
+      kindKey: meta?.stationId ? stationKinds?.get(meta.stationId) : undefined,
+    }, stationKinds);
+    const reference = found && {
+      gymId: found.workout.gymId as string,
+      gymName: found.workout.gymName,
+      liftId: found.liftId,
+      weight: found.lastSet.weight,
+      reps: found.lastSet.reps,
+      e1rm: calcE1RM(found.lastSet.weight, found.lastSet.reps),
+    };
     if (!reference) continue;
 
     const prevScale = findCalibration(store, userId, reference.gymId, liftKey)?.scaleFactor || 1;
