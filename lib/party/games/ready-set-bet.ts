@@ -40,15 +40,20 @@ export const readySetBetLogic = {
   onStart: async (state: GameState) => {
     if (state.playerOrder.length < 1) return;
 
+    const baseScores: Record<string, number> = {};
+    for (const pid of state.playerOrder) {
+      baseScores[pid] = state.players[pid]?.score || 0;
+    }
+
     state.gameData = {
       raceNumber: 0,
       totalRaces: TOTAL_RACES,
-      money: {}, // playerId -> money
+      money: {}, // playerId -> money earned in this game
+      baseScores,
     };
 
     for (const pid of state.playerOrder) {
       state.gameData.money[pid] = 0;
-      state.players[pid].score = 0;
     }
 
     startRace(state);
@@ -165,16 +170,6 @@ export const readySetBetLogic = {
         } else {
           startRace(state);
         }
-        break;
-      }
-
-      case 'PLAY_AGAIN': {
-        if (playerId !== state.hostId) return;
-        state.phase = 'LOBBY';
-        state.hostData = {};
-        state.playerData = {};
-        state.gameData = {};
-        for (const pid of state.playerOrder) state.players[pid].score = 0;
         break;
       }
     }
@@ -299,10 +294,10 @@ function finishRace(state: GameState) {
 
     state.gameData.money[pid] += results[pid].net;
     if (results[pid].net > 0) maxStat(state, 'bigWin', pid, results[pid].net);
-    // Don't let money go below 0
+    // Don't let match money go below 0
     if (state.gameData.money[pid] < 0) state.gameData.money[pid] = 0;
     
-    state.players[pid].score = state.gameData.money[pid];
+    state.players[pid].score = (state.gameData.baseScores?.[pid] || 0) + state.gameData.money[pid];
   }
 
   state.hostData = {

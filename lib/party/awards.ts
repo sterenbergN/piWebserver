@@ -61,6 +61,23 @@ const AWARDS: Record<GameType, AwardDef[]> = {
     { stat: 'bets', emoji: '🎰', title: 'High Roller', detail: (n) => plural(n, 'bet'), atLeast: 1 },
     { stat: 'longshots', emoji: '🐴', title: 'Longshot Legend', detail: (n) => `cashed ${plural(n, 'longshot')}`, atLeast: 1 },
   ],
+  'spyfall': [
+    { stat: 'escapes', emoji: '🕵️‍♀️', title: 'Master Spy', detail: (n) => `escaped ${plural(n, 'time')} undercover`, atLeast: 1 },
+    { stat: 'detective', emoji: '🔍', title: 'Counter-Intelligence', detail: (n) => `caught the spy ${plural(n, 'time')}`, atLeast: 1 },
+  ],
+  'herd-mentality': [
+    { stat: 'votes', emoji: '🐄', title: 'Leader of the Herd', detail: (n) => `in the majority ${plural(Math.round(n / 2), 'round')}`, atLeast: 1 },
+  ],
+  'wavelength': [
+    { stat: 'correct', emoji: '📡', title: 'Mind Reader', detail: (n) => plural(n, 'bullseye'), atLeast: 1 },
+  ],
+  'bluff-clash': [
+    { stat: 'votes', emoji: '🤥', title: 'Master Fibber', detail: (n) => `fooled ${plural(n, 'player')}`, atLeast: 1 },
+    { stat: 'correct', emoji: '🎯', title: 'Truth Seeker', detail: (n) => `spotted the truth ${plural(n, 'time')}`, atLeast: 1 },
+  ],
+  'emoji-telephone': [
+    { stat: 'votes', emoji: '🔗', title: 'Emoji Poet', detail: (n) => `${plural(n, 'vote')} for funniest chain`, atLeast: 1 },
+  ],
 };
 
 export type Award = { emoji: string; title: string; detail: string; playerIds: string[] };

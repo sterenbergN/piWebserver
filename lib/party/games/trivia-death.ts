@@ -1,4 +1,5 @@
 import { GameState } from '../types';
+import { waitingFor } from '../presence';
 import { closeAudienceVote, openAudienceVote } from '../audience';
 import { bumpStat } from '../awards';
 import { getRandomTriviaQuestions, TriviaQuestion } from '../prompts';
@@ -106,6 +107,11 @@ export const triviaDeathLogic = {
 
     const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20, state.settings?.packs);
 
+    const baseScores: Record<string, number> = {};
+    for (const pid of state.playerOrder) {
+      baseScores[pid] = state.players[pid]?.score || 0;
+    }
+
     state.gameData = {
       round: 0,
       totalRounds: TOTAL_ROUNDS,
@@ -118,6 +124,7 @@ export const triviaDeathLogic = {
       killingFloorData: null as any,
       killingFloorAnswers: {} as Record<string, any>,
       money: {} as Record<string, number>,
+      baseScores,
       currentAnswers: {} as Record<string, number | null>,
       escapeProgress: {} as Record<string, number>,
       escapeAnswers: {} as Record<string, any>,
@@ -131,9 +138,8 @@ export const triviaDeathLogic = {
     for (const pid of state.playerOrder) {
       state.gameData.playerStatuses[pid] = 'alive';
       state.gameData.ghostStreaks[pid] = 0;
-      state.gameData.money[pid] = 500; // Starting cash
+      state.gameData.money[pid] = 500; // Starting cash for hotel auctions
       state.gameData.escapeProgress[pid] = 0;
-      state.players[pid].score = 500;
     }
 
     await startTriviaRound(state);
@@ -147,13 +153,14 @@ export const triviaDeathLogic = {
         if (state.gameData.currentAnswers[playerId] !== undefined) return;
         if (state.gameData.playerStatuses[playerId] === 'escaped' || !Number.isInteger(action.answer)) return;
         state.gameData.currentAnswers[playerId] = action.answer;
-        const eligible = state.playerOrder.filter(
+        const allEligible = state.playerOrder.filter(
           (pid: string) => state.gameData.playerStatuses[pid] !== 'escaped'
         );
-        const answered = eligible.filter(
+        const target = waitingFor(state, allEligible);
+        const allDone = target.every(
           (pid: string) => state.gameData.currentAnswers[pid] !== null && state.gameData.currentAnswers[pid] !== undefined
         );
-        if (answered.length >= eligible.length) revealTriviaAnswers(state);
+        if (allDone) revealTriviaAnswers(state);
         break;
       }
 
@@ -176,6 +183,7 @@ export const triviaDeathLogic = {
         // Only players on the killing floor take part in its mini-game.
         if (!state.gameData.killingFloorPlayers.includes(playerId)) return;
         const mg = state.gameData.killingFloorMiniGame as MiniGame;
+        const kfTargets = waitingFor(state, state.gameData.killingFloorPlayers);
 
         if (mg === 'hotpotato') {
           // Pass the hot potato to a random alive player
@@ -201,7 +209,7 @@ export const triviaDeathLogic = {
           if (state.gameData.killingFloorAnswers[playerId] !== undefined) return;
           state.gameData.killingFloorAnswers[playerId] = Date.now();
           // If all have tapped, resolve immediately
-          const allTapped = state.gameData.killingFloorPlayers.every(
+          const allTapped = kfTargets.every(
             (pid: string) => state.gameData.killingFloorAnswers[pid] !== undefined
           );
           if (allTapped) { resolveKillingFloor(state); return; }
@@ -214,7 +222,7 @@ export const triviaDeathLogic = {
           const raw = Math.floor(Number(action.answer) || 0);
           const bid = Math.max(0, Math.min(raw, state.gameData.money[playerId] || 0));
           state.gameData.auctionBids[playerId] = bid;
-          const allBid = state.gameData.killingFloorPlayers.every(
+          const allBid = kfTargets.every(
             (pid: string) => state.gameData.auctionBids[pid] !== undefined
           );
           if (allBid) { resolveKillingFloor(state); return; }
@@ -224,7 +232,7 @@ export const triviaDeathLogic = {
         if (!state.gameData.killingFloorPlayers.includes(playerId)) return;
         if (state.gameData.killingFloorAnswers[playerId] !== undefined) return;
         state.gameData.killingFloorAnswers[playerId] = action.answer;
-        const allAnswered = state.gameData.killingFloorPlayers.every(
+        const allAnswered = kfTargets.every(
           (pid: string) => state.gameData.killingFloorAnswers[pid] !== undefined
         );
         if (allAnswered) resolveKillingFloor(state);
@@ -248,60 +256,71 @@ export const triviaDeathLogic = {
         if (state.gameData.escapeAnswers[pid] || !Number.isInteger(action.answer)) return;
         state.gameData.escapeAnswers[pid] = { answer: action.answer, doubleDown: action.doubleDown === true };
         state.playerData[pid].voted = true;
+        const allEligible = state.playerOrder.filter((id: string) => state.gameData.playerStatuses[id] !== 'escaped');
+        const target = waitingFor(state, allEligible);
+        if (target.length > 0 && target.every((id: string) => state.gameData.escapeAnswers[id])) {
+          resolveEscapeAnswers(state);
+        }
         break;
       }
 
       case 'FORCE_ESCAPE_ADVANCE': {
         if (state.phase !== 'FINAL_ESCAPE') return;
-        const escQ = state.gameData.currentEscapeQuestion as TriviaQuestion;
-        
-        let anyoneEscaped = false;
-        
-        for (const pid of state.playerOrder) {
-          if (state.gameData.playerStatuses[pid] === 'escaped') continue;
-          const ans = state.gameData.escapeAnswers[pid];
-          if (!ans) continue;
-          
-          if (ans.answer === escQ.answer) {
-            state.gameData.money[pid] += 300;
-            if (ans.doubleDown) {
-              state.gameData.escapeProgress[pid] += 2;
-            } else {
-              state.gameData.escapeProgress[pid] += 1;
-            }
-          } else {
-            if (ans.doubleDown) {
-              state.gameData.escapeProgress[pid] = Math.max(0, state.gameData.escapeProgress[pid] - 2);
-            }
-          }
-          
-          if (state.gameData.escapeProgress[pid] >= ESCAPE_QUESTIONS) {
-            state.gameData.playerStatuses[pid] = 'escaped';
-            state.gameData.escapedPlayers.push(pid);
-            anyoneEscaped = true;
-          }
-        }
-        
-        if (anyoneEscaped) {
-           // We have a winner!
-           endTriviaGame(state);
-        } else {
-           advanceEscapeQuestion(state);
-        }
+        resolveEscapeAnswers(state);
         break;
       }
-
-      case 'PLAY_AGAIN':
-        if (playerId !== state.hostId) return;
-        state.phase = 'LOBBY';
-        state.hostData = {};
-        state.playerData = {};
-        state.gameData = {};
-        for (const pid of state.playerOrder) state.players[pid].score = 0;
-        break;
     }
   },
 };
+
+function syncTriviaScores(state: GameState) {
+  for (const pid of state.playerOrder) {
+    const base = state.gameData.baseScores?.[pid] || 0;
+    const earned = Math.max(0, (state.gameData.money[pid] ?? 500) - 500);
+    if (state.players[pid]) {
+      state.players[pid].score = base + earned;
+    }
+  }
+}
+
+function resolveEscapeAnswers(state: GameState) {
+  const escQ = state.gameData.currentEscapeQuestion as TriviaQuestion;
+  let anyoneEscaped = false;
+
+  for (const pid of state.playerOrder) {
+    if (state.gameData.playerStatuses[pid] === 'escaped') continue;
+    const ans = state.gameData.escapeAnswers[pid];
+    if (!ans) continue;
+
+    if (ans.answer === escQ.answer) {
+      state.gameData.money[pid] += 300;
+      if (ans.doubleDown) {
+        state.gameData.escapeProgress[pid] += 2;
+      } else {
+        state.gameData.escapeProgress[pid] += 1;
+      }
+    } else {
+      if (ans.doubleDown) {
+        state.gameData.escapeProgress[pid] = Math.max(0, state.gameData.escapeProgress[pid] - 2);
+      }
+    }
+
+    if (state.gameData.escapeProgress[pid] >= ESCAPE_QUESTIONS) {
+      state.gameData.playerStatuses[pid] = 'escaped';
+      state.gameData.escapedPlayers.push(pid);
+      state.gameData.money[pid] += 1000; // Escape bonus
+      anyoneEscaped = true;
+    }
+  }
+
+  syncTriviaScores(state);
+
+  if (anyoneEscaped) {
+    endTriviaGame(state);
+  } else {
+    advanceEscapeQuestion(state);
+  }
+}
 
 async function startTriviaRound(state: GameState) {
   state.gameData.round++;
@@ -382,7 +401,6 @@ function revealTriviaAnswers(state: GameState) {
     if (status === 'alive') {
       if (correct) {
         state.gameData.money[pid] += 500;
-        state.players[pid].score = state.gameData.money[pid];
       } else {
         state.gameData.killingFloorPlayers.push(pid);
         roundRecord.killingFloor = true;
@@ -396,13 +414,14 @@ function revealTriviaAnswers(state: GameState) {
           state.gameData.playerStatuses[pid] = 'alive';
           state.gameData.ghostStreaks[pid] = 0;
           state.gameData.money[pid] += 500; // resurrection bonus
-          state.players[pid].score = state.gameData.money[pid];
         }
       } else {
         state.gameData.ghostStreaks[pid] = 0;
       }
     }
   }
+
+  syncTriviaScores(state);
 
   state.gameData.roundHistory.push(roundRecord);
 
@@ -742,9 +761,7 @@ function resolveKillingFloor(state: GameState) {
   }
 
   // Sync scores
-  for (const pid of state.playerOrder) {
-    state.players[pid].score = state.gameData.money[pid];
-  }
+  syncTriviaScores(state);
 
   let revealAnswer: any = null;
   if (miniGame === 'math') revealAnswer = data.answer;
@@ -900,9 +917,7 @@ function advanceEscapeQuestion(state: GameState) {
 
 function endTriviaGame(state: GameState) {
   state.phase = 'FINAL_RESULTS';
-  for (const pid of state.playerOrder) {
-    state.players[pid].score = state.gameData.money[pid];
-  }
+  syncTriviaScores(state);
   state.hostData = {
     phase: 'FINAL_RESULTS',
     escapedPlayers: state.gameData.escapedPlayers,

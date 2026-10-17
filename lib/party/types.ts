@@ -1,4 +1,14 @@
-export type GameType = 'quip-clash' | 'the-faker' | 'trivia-death' | 'bracket-battles' | 'ready-set-bet';
+export type GameType =
+  | 'quip-clash'
+  | 'the-faker'
+  | 'trivia-death'
+  | 'bracket-battles'
+  | 'ready-set-bet'
+  | 'spyfall'
+  | 'herd-mentality'
+  | 'wavelength'
+  | 'bluff-clash'
+  | 'emoji-telephone';
 
 export interface Player {
   id: string;
@@ -8,6 +18,10 @@ export interface Player {
   avatarColor: string;
   /** Character emoji picked on joining (see AVATARS). */
   avatar?: string;
+  /** Set when a player explicitly leaves or is kicked mid-game; purged on return to lobby. */
+  left?: boolean;
+  /** When their last live connection closed (see DISCONNECT_GRACE_MS); cleared on reconnect. */
+  disconnectedAt?: number;
 }
 
 /** An emoji a phone threw at the TV. */

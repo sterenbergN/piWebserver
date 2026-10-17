@@ -24,6 +24,11 @@ export const GAME_TITLES: Record<string, { title: string; tagline: string; color
   'trivia-death': { title: 'Trivia Death', tagline: 'Answer right… or visit the Killing Floor.', color: 'var(--party-purple-lt)' },
   'bracket-battles': { title: 'Bracket Battles', tagline: 'Your answers fight to the death.', color: 'var(--party-cyan)' },
   'ready-set-bet': { title: 'Ready Set Bet', tagline: 'Bet big. Yell louder.', color: 'var(--party-green)' },
+  'spyfall': { title: 'Spyfall', tagline: 'Everyone knows where we are… except The Spy.', color: 'var(--party-red)' },
+  'herd-mentality': { title: 'Herd Mentality', tagline: 'Think like the crowd, or get the Pink Cow.', color: 'var(--party-pink)' },
+  'wavelength': { title: 'Wavelength', tagline: 'Read your friends’ minds on the spectrum.', color: 'var(--party-cyan)' },
+  'bluff-clash': { title: 'Bluff Clash', tagline: 'Fake the truth. Spot the liars.', color: 'var(--party-yellow)' },
+  'emoji-telephone': { title: 'Emoji Telephone', tagline: 'Words to emojis to total chaos.', color: 'var(--party-green)' },
 };
 
 /** Hide the website chrome so the TV / phone shows only the game. */
@@ -38,7 +43,7 @@ function moodFor(state: HostState): Mood {
   if (state.phase === 'LOBBY') return 'lobby';
   if (state.phase === 'FINAL_RESULTS') return 'results';
   if (['KILLING_FLOOR', 'TIEBREAKER', 'FINAL_ESCAPE'].includes(state.phase)) return 'tense';
-  if (state.gameType === 'the-faker' && ['VOTING', 'ACTION'].includes(state.phase)) return 'tense';
+  if ((state.gameType === 'the-faker' || state.gameType === 'spyfall') && ['VOTING', 'ACTION', 'DISCUSSION'].includes(state.phase)) return 'tense';
   return 'play';
 }
 
@@ -47,7 +52,7 @@ const names = (state: HostState, ids: string[]) => ids.map((id) => state.players
 /** What the narrator says and which title card (if any) to show on entering a phase. */
 function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { title: string; subtitle?: string }; sfx?: Parameters<typeof partyAudio.sfx>[0] } {
   const h = state.hostData || {};
-  const g = GAME_TITLES[state.gameType];
+  const g = GAME_TITLES[state.gameType] || GAME_TITLES['quip-clash'];
   const starting = prevPhase === 'LOBBY';
   const intro = starting ? { title: g.title, subtitle: g.tagline } : undefined;
   switch (`${state.gameType}:${state.phase}`) {
@@ -103,6 +108,36 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
       return { card: intro || { title: h.message || 'Next Race' }, sfx: 'whoosh', say: line(['And they’re off!', 'Place your bets! And they’re off!']) };
     case 'ready-set-bet:RACE_RESULTS':
       return { sfx: 'fanfare', say: 'And that’s the race!' };
+    case 'spyfall:DISCUSSION':
+      return { card: intro || { title: `Round ${h.round || ''}`, subtitle: 'Find the Spy' }, sfx: 'whoosh', say: 'Check your secret role. Question each other—one of you is the spy!' };
+    case 'spyfall:VOTING':
+      return { sfx: 'slam', say: 'Vote on your phones! Who is the spy?' };
+    case 'spyfall:RESULTS':
+      return { sfx: h.spyCaught ? 'cheer' : 'boo', say: h.headline || '' };
+    case 'herd-mentality:PROMPTING':
+      return { card: intro || { title: `Question ${h.round || ''}` }, sfx: 'whoosh', say: h.prompt || 'Think like the herd!' };
+    case 'herd-mentality:ROUND_RESULTS':
+      return { sfx: h.newPinkCowId ? 'boo' : 'ding', say: h.newPinkCowId ? `Moo! ${state.players[h.newPinkCowId]?.name || 'Someone'} got the Pink Cow!` : 'Let’s see the herd!' };
+    case 'wavelength:CLUE_GIVING':
+      return { card: intro || { title: `Round ${h.round || ''}` }, sfx: 'whoosh', say: `${h.psychicName || 'The Psychic'} is thinking of a clue.` };
+    case 'wavelength:DIALING':
+      return { sfx: 'slam', say: `The clue is: ${h.clue || ''}. Turn your dials!` };
+    case 'wavelength:ROUND_RESULTS':
+      return { sfx: 'ding', say: `Target was ${h.target} percent!` };
+    case 'bluff-clash:BLUFFING':
+      return { card: intro || { title: `Fact ${h.round || ''}` }, sfx: 'whoosh', say: 'Write a convincing lie on your phone!' };
+    case 'bluff-clash:VOTING':
+      return { sfx: 'slam', say: 'Spot the real truth among the lies!' };
+    case 'bluff-clash:ROUND_RESULTS':
+      return { sfx: 'ding', say: `The real truth was: ${h.truth || ''}!` };
+    case 'emoji-telephone:TRANSLATE':
+      return { card: intro, sfx: 'whoosh', say: 'Translate your secret prompt into emojis only!' };
+    case 'emoji-telephone:GUESS':
+      return { sfx: 'slam', say: 'Now decode those emojis back into English!' };
+    case 'emoji-telephone:SHOWCASE':
+      return { sfx: 'ding', say: h.chain ? `${h.chain.originPrompt}… became… ${h.chain.guess}!` : '' };
+    case 'emoji-telephone:VOTING':
+      return { sfx: 'whoosh', say: 'Vote for the funniest chain!' };
   }
   if (state.phase === 'FINAL_RESULTS') {
     const top = Object.values(state.players).sort((a, b) => b.score - a.score)[0];

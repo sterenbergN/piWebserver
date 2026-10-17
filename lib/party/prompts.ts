@@ -1,6 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { BUILT_IN_PACKS } from './prompt-packs';
+import {
+  DEFAULT_BLUFF_FACTS,
+  DEFAULT_HERD_PROMPTS,
+  DEFAULT_SPYFALL_LOCATIONS,
+  DEFAULT_TELEPHONE_PROMPTS,
+  DEFAULT_WAVELENGTH_SPECTRUMS,
+} from './default-game-content';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
 const PROMPTS_FILE = path.join(DATA_DIR, 'party-prompts.json');
@@ -12,11 +19,46 @@ export interface TriviaQuestion {
   category?: string;
 }
 
+export interface SpyfallLocation {
+  name: string;
+  emoji: string;
+  roles: string[]; // at least one; handed out round-robin when players outnumber them
+}
+
+export interface WavelengthSpectrum {
+  left: string;
+  right: string;
+}
+
+export interface BluffFact {
+  prompt: string; // contains "_____" where the answer goes
+  truth: string;
+  decoys: string[]; // house lies that top up a short ballot (0–5)
+}
+
 export interface PromptLists {
   quipClash: string[];
   theFaker: string[];
   triviaQuestions: TriviaQuestion[];
   bracketBattles: string[];
+  spyfallLocations: SpyfallLocation[];
+  herdMentality: string[];
+  wavelengthSpectrums: WavelengthSpectrum[];
+  bluffFacts: BluffFact[];
+  emojiTelephone: string[];
+}
+
+export const PROMPT_LIST_KEYS = [
+  'quipClash', 'theFaker', 'triviaQuestions', 'bracketBattles',
+  'spyfallLocations', 'herdMentality', 'wavelengthSpectrums', 'bluffFacts', 'emojiTelephone',
+] as const satisfies readonly (keyof PromptLists)[];
+
+/** Packs saved before a list existed simply don't have it yet. */
+export function emptyLists(): PromptLists {
+  return {
+    quipClash: [], theFaker: [], triviaQuestions: [], bracketBattles: [],
+    spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [],
+  };
 }
 
 /** A themed set of prompts the host can switch on per room. */
@@ -127,7 +169,12 @@ const DEFAULT_PROMPTS: PromptLists = {
     "The absolute worst mascot for a high school",
     "A terrible catchphrase for an action hero",
     "The worst thing to hear the pilot say mid-flight"
-  ]
+  ],
+  spyfallLocations: DEFAULT_SPYFALL_LOCATIONS,
+  herdMentality: DEFAULT_HERD_PROMPTS,
+  wavelengthSpectrums: DEFAULT_WAVELENGTH_SPECTRUMS,
+  bluffFacts: DEFAULT_BLUFF_FACTS,
+  emojiTelephone: DEFAULT_TELEPHONE_PROMPTS,
 };
 
 const MAX_PROMPT_LENGTH = 200;
@@ -165,12 +212,58 @@ function cleanTrivia(value: unknown): TriviaQuestion[] {
   return out;
 }
 
+function cleanLocations(value: unknown): SpyfallLocation[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: SpyfallLocation[] = [];
+  for (const raw of value) {
+    const name = cleanText(raw?.name).slice(0, 40);
+    const roles = cleanList(raw?.roles).map((r) => r.slice(0, 40)).slice(0, 16);
+    if (!name || !roles.length || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, emoji: cleanText(raw?.emoji).slice(0, 8) || '📍', roles });
+  }
+  return out;
+}
+
+function cleanSpectrums(value: unknown): WavelengthSpectrum[] {
+  if (!Array.isArray(value)) return [];
+  const out: WavelengthSpectrum[] = [];
+  for (const raw of value) {
+    const left = cleanText(raw?.left).slice(0, 40);
+    const right = cleanText(raw?.right).slice(0, 40);
+    if (left && right) out.push({ left, right });
+  }
+  return out;
+}
+
+function cleanBluffFacts(value: unknown): BluffFact[] {
+  if (!Array.isArray(value)) return [];
+  const out: BluffFact[] = [];
+  for (const raw of value) {
+    const prompt = cleanText(raw?.prompt);
+    const truth = cleanText(raw?.truth).slice(0, 80);
+    if (!prompt || !truth) continue;
+    const decoys = cleanList(raw?.decoys)
+      .map((d) => d.slice(0, 80))
+      .filter((d) => d.toLowerCase() !== truth.toLowerCase())
+      .slice(0, 5);
+    out.push({ prompt, truth, decoys });
+  }
+  return out;
+}
+
 function cleanLists(input: any): PromptLists {
   return {
     quipClash: cleanList(input?.quipClash),
     theFaker: cleanList(input?.theFaker),
     bracketBattles: cleanList(input?.bracketBattles),
     triviaQuestions: cleanTrivia(input?.triviaQuestions),
+    spyfallLocations: cleanLocations(input?.spyfallLocations),
+    herdMentality: cleanList(input?.herdMentality),
+    wavelengthSpectrums: cleanSpectrums(input?.wavelengthSpectrums),
+    bluffFacts: cleanBluffFacts(input?.bluffFacts),
+    emojiTelephone: cleanList(input?.emojiTelephone),
   };
 }
 
@@ -198,9 +291,8 @@ export function normalizePrompts(input: (Partial<Record<keyof PromptLists, unkno
 
 /** Summary of every pack for pickers (no trivia answers). */
 export function listPacks(data: PromptsData) {
-  const count = (l: PromptLists) => ({
-    quipClash: l.quipClash.length, theFaker: l.theFaker.length, bracketBattles: l.bracketBattles.length, triviaQuestions: l.triviaQuestions.length,
-  });
+  const count = (l: PromptLists) =>
+    Object.fromEntries(PROMPT_LIST_KEYS.map((k) => [k, l[k]?.length || 0])) as Record<keyof PromptLists, number>;
   return [
     { id: CLASSIC_PACK_ID, name: 'Classic', emoji: '🎉', counts: count(data) },
     ...(data.packs || []).map((p) => ({ id: p.id, name: p.name, emoji: p.emoji, counts: count(p) })),
@@ -213,7 +305,7 @@ function pool<K extends keyof PromptLists>(data: PromptsData, key: K, packIds?: 
   const sources: PromptLists[] = chosen
     .map((id) => (id === CLASSIC_PACK_ID ? data : data.packs?.find((p) => p.id === id)))
     .filter((p): p is PromptLists => !!p);
-  const merged = sources.flatMap((p) => p[key] as unknown[]);
+  const merged = sources.flatMap((p) => (p[key] || []) as unknown[]);
   if (merged.length > 0) return merged as PromptLists[K];
   return (data[key].length ? data[key] : DEFAULT_PROMPTS[key]) as PromptLists[K];
 }
@@ -227,13 +319,12 @@ export async function getPrompts(): Promise<PromptsData> {
     await savePrompts(fresh).catch((err) => console.error('Error saving prompts', err));
     return fresh;
   }
-  // Back-fill lists (and the themed packs) missing from older installs.
+  // Back-fill lists (and the themed packs) missing from older installs; a pack
+  // saved before a list existed gets it empty, so the game falls back to Classic.
+  const lists = Object.fromEntries(PROMPT_LIST_KEYS.map((k) => [k, parsed?.[k] ?? DEFAULT_PROMPTS[k]])) as unknown as PromptLists;
   return {
-    quipClash: parsed?.quipClash ?? DEFAULT_PROMPTS.quipClash,
-    theFaker: parsed?.theFaker ?? DEFAULT_PROMPTS.theFaker,
-    bracketBattles: parsed?.bracketBattles ?? DEFAULT_PROMPTS.bracketBattles,
-    triviaQuestions: parsed?.triviaQuestions ?? DEFAULT_PROMPTS.triviaQuestions,
-    packs: parsed?.packs ?? BUILT_IN_PACKS,
+    ...lists,
+    packs: (parsed?.packs ?? BUILT_IN_PACKS).map((pk) => ({ ...emptyLists(), ...pk })),
   };
 }
 
@@ -268,4 +359,19 @@ export async function getRandomPrompts(gameType: keyof typeof LIST_FOR, count: n
 
 export async function getRandomTriviaQuestions(count: number, packIds?: string[]): Promise<TriviaQuestion[]> {
   return draw(pool(await getPrompts(), 'triviaQuestions', packIds), count);
+}
+
+/** Up to `count` distinct entries of one list from the chosen packs (fewer if the pool is smaller). */
+export async function getGameContent<K extends 'spyfallLocations' | 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone'>(
+  key: K, count: number, packIds?: string[],
+): Promise<PromptLists[K]> {
+  const list = pool(await getPrompts(), key, packIds) as unknown[];
+  return shuffled(list).slice(0, count) as PromptLists[K];
+}
+
+/** Like getGameContent, but repeats entries once the pool runs out (for games that need exactly `count`). */
+export async function drawGameContent<K extends 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone'>(
+  key: K, count: number, packIds?: string[],
+): Promise<PromptLists[K]> {
+  return draw(pool(await getPrompts(), key, packIds) as unknown[], count) as PromptLists[K];
 }

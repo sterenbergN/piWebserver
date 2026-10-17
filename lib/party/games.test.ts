@@ -14,6 +14,7 @@ let bracketBattlesLogic: typeof import('./games/bracket-battles').bracketBattles
 let fakerLogic: typeof import('./games/the-faker').fakerLogic;
 let normalizePrompts: typeof Prompts.normalizePrompts;
 let savePrompts: typeof Prompts.savePrompts;
+let sanitizeEmojiClue: typeof import('./games/emoji-telephone').sanitizeEmojiClue;
 let engine: typeof import('./engine');
 
 test.before(async () => {
@@ -22,6 +23,7 @@ test.before(async () => {
   ({ bracketBattlesLogic } = await import('./games/bracket-battles'));
   ({ fakerLogic } = await import('./games/the-faker'));
   ({ normalizePrompts, savePrompts } = await import('./prompts'));
+  ({ sanitizeEmojiClue } = await import('./games/emoji-telephone'));
   engine = await import('./engine');
 });
 
@@ -37,7 +39,7 @@ function makeState(gameType: GameState['gameType'], count: number): GameState {
 }
 
 test('quip clash keeps matchups separate even when the prompt pool repeats', async () => {
-  await savePrompts({ quipClash: ['Only prompt'], theFaker: ['x'], bracketBattles: ['y'], triviaQuestions: [] });
+  await savePrompts(normalizePrompts({ quipClash: ['Only prompt'], theFaker: ['x'], bracketBattles: ['y'] }));
   const state = makeState('quip-clash', 4);
   await quipClashLogic.onStart(state);
 
@@ -214,4 +216,449 @@ test('avatars are unique per room and reactions are validated and rate-limited',
   await engine.processAction(roomCode, (b as { playerId: string }).playerId, { type: 'SUBMIT_REACTION', emoji: '<script>' }); // not allowed
   state = (await engine.getGameState(roomCode))!;
   assert.deepEqual(state.reactions?.map((r) => r.emoji), ['😂']);
+});
+
+test('in-session profile updates, leaving rooms, closing rooms, and disconnected player advance', async () => {
+  await savePrompts(normalizePrompts({ quipClash: ['p1', 'p2', 'p3', 'p4'], theFaker: ['x'], bracketBattles: ['y'] }));
+  const { roomCode, hostId } = await engine.createRoom('quip-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice', { avatar: '🦊' })) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob', { avatar: '🐸' })) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara', { avatar: '🐼' })) as { playerId: string };
+  const aud = (await engine.joinRoom(roomCode, 'Spec', { asAudience: true })) as { playerId: string };
+
+  // Seat validation works for player, audience, and host
+  assert.equal((await engine.checkRoomSeat(roomCode, { playerKey: p1.playerId })).valid, true);
+  assert.equal((await engine.checkRoomSeat(roomCode, { playerKey: aud.playerId, audience: true })).valid, true);
+  assert.equal((await engine.checkRoomSeat(roomCode, { hostId })).valid, true);
+  assert.equal((await engine.checkRoomSeat(roomCode, { hostId: 'wrong' })).valid, false);
+
+  // Profile update: rename and swap avatar
+  assert.equal((await engine.processAction(roomCode, p1.playerId, { type: 'UPDATE_PROFILE', name: 'Bob' })).success, false, 'duplicate player name rejected');
+  assert.equal((await engine.processAction(roomCode, p1.playerId, { type: 'UPDATE_PROFILE', name: 'Spec' })).success, false, 'duplicate audience name rejected');
+  assert.equal((await engine.processAction(roomCode, p1.playerId, { type: 'UPDATE_PROFILE', avatar: '🐸' })).success, false, 'taken avatar rejected');
+  assert.equal((await engine.processAction(roomCode, p1.playerId, { type: 'UPDATE_PROFILE', name: 'Alicia', avatar: '🐙' })).success, true);
+  assert.equal((await engine.processAction(roomCode, aud.playerId, { type: 'UPDATE_PROFILE', name: 'Watcher' })).success, true);
+
+  let state = (await engine.getGameState(roomCode))!;
+  const p1Id = engine.resolvePlayerKey(state, p1.playerId)!;
+  const p3Id = engine.resolvePlayerKey(state, p3.playerId)!;
+  assert.equal(state.players[p1Id].name, 'Alicia');
+  assert.equal(state.players[p1Id].avatar, '🐙');
+
+  // Set rounds and start game
+  await engine.processAction(roomCode, hostId, { type: 'SET_QUIP_ROUNDS', rounds: 2 });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+
+  // p3 leaves mid-game: their key is revoked and p1 + p2 submitting advances without waiting on p3
+  assert.equal((await engine.processAction(roomCode, p3.playerId, { type: 'LEAVE_ROOM' })).success, true);
+  assert.equal((await engine.checkRoomSeat(roomCode, { playerKey: p3.playerId })).valid, false);
+
+  for (const key of [p1.playerId, p2.playerId]) {
+    await engine.processAction(roomCode, key, { type: 'SUBMIT_ANSWER', promptIndex: 0, answer: 'a0' });
+    await engine.processAction(roomCode, key, { type: 'SUBMIT_ANSWER', promptIndex: 1, answer: 'a1' });
+  }
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING', 'advances without waiting for disconnected/left player');
+
+  // PLAY_AGAIN resets to lobby, purges left player p3, and preserves targetRounds
+  await engine.processAction(roomCode, hostId, { type: 'PLAY_AGAIN' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'LOBBY');
+  assert.equal(state.players[p3Id], undefined);
+  assert.equal(state.gameData.targetRounds, 2);
+
+  // Audience leaves
+  assert.equal((await engine.processAction(roomCode, aud.playerId, { type: 'LEAVE_ROOM' })).success, true);
+  assert.equal((await engine.checkRoomSeat(roomCode, { playerKey: aud.playerId, audience: true })).valid, false);
+
+  // Host closes room
+  assert.equal((await engine.processAction(roomCode, hostId, { type: 'CLOSE_ROOM' })).success, true);
+  assert.equal(await engine.getGameState(roomCode), null);
+  assert.equal((await engine.checkRoomSeat(roomCode, { hostId })).valid, false);
+});
+
+test('Spyfall: discussion, spy location guess, and voting flow', async () => {
+  const { roomCode, hostId } = await engine.createRoom('spyfall');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'DISCUSSION');
+
+  const keys = [p1.playerId, p2.playerId, p3.playerId];
+  const spyId = state.gameData.spyId as string;
+  const spyKey = keys.find((k) => engine.resolvePlayerKey(state, k) === spyId)!;
+  const nonSpyKey = keys.find((k) => engine.resolvePlayerKey(state, k) !== spyId)!;
+
+  // Non-spy cannot guess location
+  await engine.processAction(roomCode, nonSpyKey, { type: 'SPY_GUESS_LOCATION', location: state.gameData.location });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'DISCUSSION');
+
+  // Anyone can call a vote
+  await engine.processAction(roomCode, nonSpyKey, { type: 'CALL_VOTE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING');
+
+  // Everyone votes for the Spy
+  for (const k of keys) {
+    const myId = engine.resolvePlayerKey(state, k)!;
+    const target = myId === spyId ? engine.resolvePlayerKey(state, nonSpyKey)! : spyId;
+    await engine.processAction(roomCode, k, { type: 'SUBMIT_VOTE', votedFor: target });
+  }
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RESULTS');
+  assert.equal(state.hostData.spyCaught, true);
+
+  // Advance to round 2 and test Spy guessing correct location
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_SPYFALL_ROUND' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'DISCUSSION');
+  const spyKeyR2 = keys.find((k) => engine.resolvePlayerKey(state, k) === state.gameData.spyId)!;
+  await engine.processAction(roomCode, spyKeyR2, { type: 'SPY_GUESS_LOCATION', location: state.gameData.location });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RESULTS');
+  assert.equal(state.hostData.spyCaught, false);
+});
+
+test('Herd Mentality: majority scoring and Pink Cow penalty', async () => {
+  const { roomCode, hostId } = await engine.createRoom('herd-mentality');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'PROMPTING');
+
+  const id1 = engine.resolvePlayerKey(state, p1.playerId)!;
+  const id2 = engine.resolvePlayerKey(state, p2.playerId)!;
+  const id3 = engine.resolvePlayerKey(state, p3.playerId)!;
+
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_ANSWER', answer: 'Pizza' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_ANSWER', answer: 'the pizza!' });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_ANSWER', answer: 'Broccoli' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'ROUND_RESULTS');
+  assert.equal(state.players[id1].score, 600);
+  assert.equal(state.players[id2].score, 600);
+  assert.equal(state.players[id3].score, 0);
+  assert.equal(state.hostData.pinkCowHolder, id3, 'lone outlier gets the Pink Cow');
+});
+
+test('Wavelength: psychic clue and dial proximity scoring', async () => {
+  const { roomCode, hostId } = await engine.createRoom('wavelength');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'CLUE_GIVING');
+
+  const keys = [p1.playerId, p2.playerId, p3.playerId];
+  const psychicId = state.gameData.psychicId as string;
+  const target = state.gameData.target as number;
+  const psychicKey = keys.find((k) => engine.resolvePlayerKey(state, k) === psychicId)!;
+  const guesserKeys = keys.filter((k) => k !== psychicKey);
+
+  await engine.processAction(roomCode, psychicKey, { type: 'SUBMIT_CLUE', clue: 'Warm coffee' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'DIALING');
+
+  // Guesser 1 hits bullseye, Guesser 2 misses by 40
+  await engine.processAction(roomCode, guesserKeys[0], { type: 'SUBMIT_DIAL', value: target });
+  await engine.processAction(roomCode, guesserKeys[1], { type: 'SUBMIT_DIAL', value: (target + 40) % 100 });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'ROUND_RESULTS');
+  const g1Id = engine.resolvePlayerKey(state, guesserKeys[0])!;
+  assert.equal(state.players[g1Id].score, 800);
+  assert.ok(state.players[psychicId].score > 0);
+});
+
+test('Bluff Clash: blocks real truth, scores bluffs and truth votes', async () => {
+  const { roomCode, hostId } = await engine.createRoom('bluff-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'BLUFFING');
+
+  const realTruth = state.gameData.facts[0].truth as string;
+  // Typing the real truth warns the player instead of accepting it
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_BLUFF', bluff: realTruth });
+  state = (await engine.getGameState(roomCode))!;
+  const id1 = engine.resolvePlayerKey(state, p1.playerId)!;
+  assert.ok(state.playerData[id1].truthWarning);
+  assert.equal(state.playerData[id1].submitted, null);
+
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_BLUFF', bluff: 'Fake answer A' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_BLUFF', bluff: 'Fake answer B' });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_BLUFF', bluff: 'Fake answer C' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING');
+
+  const choices = state.gameData.choices as { id: string; text: string; isTruth: boolean; authorIds: string[] }[];
+  const truthChoice = choices.find((c) => c.isTruth)!;
+  const p1Bluff = choices.find((c) => c.authorIds.includes(id1))!;
+
+  // p1 votes for truth (+750), p2 & p3 fall for p1's bluff (+400 each to p1)
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_VOTE', choiceId: truthChoice.id });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_VOTE', choiceId: p1Bluff.id });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_VOTE', choiceId: p1Bluff.id });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'ROUND_RESULTS');
+  assert.equal(state.players[id1].score, 1550);
+});
+
+test('Emoji Telephone: translate, decode, showcase, and vote', async () => {
+  const { roomCode, hostId } = await engine.createRoom('emoji-telephone');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'TRANSLATE');
+
+  // ASCII letters get stripped from emoji submissions
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_EMOJIS', emojis: '🐍✈️abc' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_EMOJIS', emojis: '🦖🏞️' });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_EMOJIS', emojis: '👻🔫' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'GUESS');
+
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_GUESS', guess: 'Ghostbusters' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_GUESS', guess: 'Snakes on a plane' });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_GUESS', guess: 'Jurassic Park' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'SHOWCASE');
+
+  // Advance through chains to VOTING
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_CHAIN' });
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_CHAIN' });
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_CHAIN' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING');
+
+  // With 3 players each phone may only vote for the one chain it had no hand in.
+  const keys = [p1.playerId, p2.playerId, p3.playerId];
+  for (const key of keys) {
+    const pid = engine.resolvePlayerKey(state, key)!;
+    const own = state.gameData.chains.find((c: any) => c.translatorId === pid);
+    assert.ok(state.playerData[pid].chains.every((c: any) => c.id !== own.id), 'own chain hidden from the ballot');
+    await engine.processAction(roomCode, key, { type: 'SUBMIT_VOTE', chainId: own.id });
+  }
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING', 'self-votes are ignored');
+  assert.deepEqual(state.gameData.favoriteVotes, {});
+
+  for (const key of keys) {
+    const pid = engine.resolvePlayerKey(state, key)!;
+    const [allowed] = state.playerData[pid].chains;
+    await engine.processAction(roomCode, key, { type: 'SUBMIT_VOTE', chainId: allowed.id });
+  }
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'FINAL_RESULTS');
+  // Each player: 400 + 400 for submitting, 800 for the chain they translated and 600 for the one they decoded.
+  assert.ok(Object.values(state.players).every((p) => p.score === 2200));
+});
+
+test('Emoji Telephone: clues keep only emoji and never split one in half', () => {
+  assert.equal(sanitizeEmojiClue('🐍 snake ✈️ 42'), '🐍 ✈️');
+  const family = '👨‍👩‍👧‍👦';
+  const capped = sanitizeEmojiClue(family.repeat(20));
+  assert.equal(capped, family.repeat(16));
+});
+
+test('Bluff Clash: near-copies of the truth are rejected and merged with it', async () => {
+  const { roomCode, hostId } = await engine.createRoom('bluff-clash');
+  const keys = [];
+  for (const name of ['Alice', 'Bob', 'Cara']) keys.push(((await engine.joinRoom(roomCode, name)) as { playerId: string }).playerId);
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  const truth: string = state.gameData.facts[0].truth;
+  const id0 = engine.resolvePlayerKey(state, keys[0])!;
+
+  await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_BLUFF', bluff: `The ${truth.toUpperCase()}!` });
+  state = (await engine.getGameState(roomCode))!;
+  assert.ok(state.playerData[id0].truthWarning, 'a reworded truth is caught');
+  assert.equal(state.gameData.bluffs[id0], undefined);
+
+  await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_BLUFF', bluff: 'a sentient toaster' });
+  await engine.processAction(roomCode, keys[1], { type: 'SUBMIT_BLUFF', bluff: 'A sentient toaster.' });
+  await engine.processAction(roomCode, keys[2], { type: 'SUBMIT_BLUFF', bluff: 'moon dust' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'VOTING');
+  const toaster = state.gameData.choices.find((c: any) => c.text.includes('toaster'));
+  assert.equal(toaster.authorIds.length, 2, 'identical lies are merged');
+  assert.ok(state.gameData.choices.length >= 4, 'house decoys top up the ballot');
+  assert.ok(!JSON.stringify(state.hostData).includes('authorIds'), 'TV and phones never see who wrote which lie');
+  const shownIds = state.playerData[id0].choices.map((c: any) => c.id).join(',');
+  assert.ok(!/TRUTH|BLUFF|DECOY/.test(shownIds), `choice ids don't give the answer away (${shownIds})`);
+});
+
+test('Spyfall: only the spy is kept in the dark and public data never names the location', async () => {
+  const { roomCode, hostId } = await engine.createRoom('spyfall');
+  for (const name of ['Alice', 'Bob', 'Cara', 'Dev']) await engine.joinRoom(roomCode, name);
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  const state = (await engine.getGameState(roomCode))!;
+  const { spyId, location } = state.gameData;
+  assert.equal(state.playerData[spyId].location, null);
+  assert.equal(state.playerData[spyId].isSpy, true);
+  for (const pid of state.playerOrder.filter((id) => id !== spyId)) {
+    assert.equal(state.playerData[pid].location, location);
+    assert.equal(state.playerData[pid].isSpy, false);
+  }
+  // hostData goes to every phone, so it must not reveal the spy or the answer before the vote.
+  const pub = JSON.stringify(state.hostData);
+  assert.ok(!pub.includes(spyId), 'spy id not public');
+  assert.ok(!pub.includes(`"location":`), 'location not public');
+});
+
+test('Session Leaderboard: scores persist across games and only host can RESET_SCORES', async () => {
+  const { roomCode, hostId } = await engine.createRoom('herd-mentality');
+  const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Bob')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Cara')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  const id1 = engine.resolvePlayerKey(state, p1.playerId)!;
+
+  await engine.processAction(roomCode, p1.playerId, { type: 'SUBMIT_ANSWER', answer: 'Tacos' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'SUBMIT_ANSWER', answer: 'Tacos' });
+  await engine.processAction(roomCode, p3.playerId, { type: 'SUBMIT_ANSWER', answer: 'Salad' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.players[id1].score, 600);
+
+  // Switch to another game and start it — scores should persist!
+  await engine.processAction(roomCode, hostId, { type: 'SWITCH_GAME', gameType: 'bluff-clash' });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.players[id1].score, 600, 'score persists across games');
+  assert.equal(state.gameData.baseScores[id1], 600, 'baseScores snapshots session score at start of match');
+
+  // Non-host player cannot reset scores
+  const badReset = await engine.processAction(roomCode, p1.playerId, { type: 'RESET_SCORES' });
+  assert.ok('error' in badReset);
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.players[id1].score, 600);
+
+  // Host can reset scores
+  const goodReset = await engine.processAction(roomCode, hostId, { type: 'RESET_SCORES' });
+  assert.ok('success' in goodReset);
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.players[id1].score, 0);
+});
+
+
+test('presence: a phone that drops briefly is still waited on, one gone past the grace period is not', async () => {
+  const { DISCONNECT_GRACE_MS, isPresent } = await import('./presence');
+  const now = Date.now();
+  const base = { id: 'p', name: 'P', score: 0, avatarColor: '#fff' };
+  assert.equal(isPresent({ ...base, connected: true }, now), true);
+  assert.equal(isPresent({ ...base, connected: false, disconnectedAt: now - 5_000 }, now), true, 'locked screen for 5s');
+  assert.equal(isPresent({ ...base, connected: false, disconnectedAt: now - DISCONNECT_GRACE_MS - 1 }, now), false);
+  assert.equal(isPresent({ ...base, connected: false }, now), false, 'rooms saved before the grace period existed');
+  assert.equal(isPresent({ ...base, connected: true, left: true }, now), false, 'players who left never hold up a round');
+
+  const { roomCode, hostId } = await engine.createRoom('herd-mentality');
+  const keys: string[] = [];
+  for (const name of ['Alice', 'Bob', 'Cara']) keys.push(((await engine.joinRoom(roomCode, name)) as { playerId: string }).playerId);
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  const caraId = engine.resolvePlayerKey(state, keys[2])!;
+
+  // Cara's screen locks: her stream closes, but the round still waits for her.
+  await engine.setPlayerConnected(roomCode, caraId, false);
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(typeof state.players[caraId].disconnectedAt, 'number');
+  await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_ANSWER', answer: 'Ranch' });
+  await engine.processAction(roomCode, keys[1], { type: 'SUBMIT_ANSWER', answer: 'Ranch' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'PROMPTING', 'no early advance while Cara is inside the grace period');
+
+  // She comes back and answers; the round ends normally.
+  await engine.setPlayerConnected(roomCode, caraId, true);
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.players[caraId].disconnectedAt, undefined, 'reconnecting clears the timestamp');
+  await engine.processAction(roomCode, keys[2], { type: 'SUBMIT_ANSWER', answer: 'Ketchup' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'ROUND_RESULTS');
+
+  // Next round: Cara has been gone longer than the grace period, so she no longer blocks it.
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_HERD_ROUND' });
+  await engine.setPlayerConnected(roomCode, caraId, false);
+  state = (await engine.getGameState(roomCode))!;
+  state.players[caraId].disconnectedAt = Date.now() - DISCONNECT_GRACE_MS - 1_000;
+  await engine.saveGameState(state);
+  await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_ANSWER', answer: 'Ranch' });
+  await engine.processAction(roomCode, keys[1], { type: 'SUBMIT_ANSWER', answer: 'Ranch' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'ROUND_RESULTS', 'a long-gone phone stops holding up the round');
+});
+
+test('prompt store: new games\' content is validated, back-filled into older files and used by the games', async () => {
+  const { getPrompts, getGameContent } = await import('./prompts');
+  const cleaned = normalizePrompts({
+    spyfallLocations: [
+      { emoji: '🚒', name: ' Fire Station ', roles: ['Chief', ' chief', '', 'Rookie'] },
+      { name: 'No Roles', roles: [] },
+      { name: 'fire station', roles: ['Dup'] },
+    ],
+    wavelengthSpectrums: [{ left: 'Cold', right: 'Hot' }, { left: 'Half', right: '' }],
+    bluffFacts: [
+      { prompt: 'A group of crows is a _____.', truth: 'murder', decoys: ['party', 'Murder', 'flock', '', 'a', 'b', 'c', 'd'] },
+      { prompt: 'No truth _____.', truth: '' },
+    ],
+    herdMentality: [' Best pizza? ', 'best pizza?'],
+  } as never);
+  assert.deepEqual(cleaned.spyfallLocations, [{ emoji: '🚒', name: 'Fire Station', roles: ['Chief', 'Rookie'] }]);
+  assert.deepEqual(cleaned.wavelengthSpectrums, [{ left: 'Cold', right: 'Hot' }]);
+  assert.deepEqual(cleaned.bluffFacts, [{ prompt: 'A group of crows is a _____.', truth: 'murder', decoys: ['party', 'flock', 'a', 'b', 'c'] }]);
+  assert.deepEqual(cleaned.herdMentality, ['Best pizza?']);
+
+  // A prompt file from before these games existed: lists come back from the
+  // defaults and old packs gain empty lists instead of crashing the pool.
+  await fs.writeFile(path.join('.data', 'party-prompts.json'), JSON.stringify({
+    quipClash: ['q'], theFaker: ['f'], bracketBattles: ['b'], triviaQuestions: [],
+    packs: [{ id: 'old', name: 'Old', emoji: '📦', quipClash: ['x'], theFaker: [], bracketBattles: [], triviaQuestions: [] }],
+  }));
+  const data = await getPrompts();
+  assert.ok(data.spyfallLocations.length >= 16 && data.bluffFacts.length > 0 && data.emojiTelephone.length > 0);
+  assert.deepEqual(data.packs![0].spyfallLocations, []);
+  assert.ok((await getGameContent('spyfallLocations', 3, ['old'])).length === 3, 'an empty pack falls back to Classic');
+
+  // Edited content is what the games play with.
+  await savePrompts(normalizePrompts({
+    spyfallLocations: [{ emoji: '🚒', name: 'Fire Station', roles: ['Chief', 'Rookie'] }],
+    bluffFacts: [{ prompt: 'A group of crows is a _____.', truth: 'murder', decoys: ['party'] }],
+    herdMentality: ['Only herd prompt'],
+    wavelengthSpectrums: [{ left: 'Cold', right: 'Hot' }],
+    emojiTelephone: ['Only phrase'],
+  }));
+  for (const [game, check] of [
+    ['spyfall', (s: GameState) => assert.equal(s.gameData.location, 'Fire Station')],
+    ['bluff-clash', (s: GameState) => assert.equal(s.hostData.prompt, 'A group of crows is a _____.')],
+    ['herd-mentality', (s: GameState) => assert.equal(s.hostData.prompt, 'Only herd prompt')],
+    ['wavelength', (s: GameState) => assert.deepEqual(s.hostData.spectrum, ['Cold', 'Hot'])],
+    ['emoji-telephone', (s: GameState) => assert.ok(s.gameData.chains.every((c: any) => c.originPrompt === 'Only phrase'))],
+  ] as const) {
+    const { roomCode, hostId } = await engine.createRoom(game);
+    for (const name of ['Alice', 'Bob', 'Cara']) await engine.joinRoom(roomCode, name);
+    assert.equal((await engine.processAction(roomCode, hostId, { type: 'START_GAME' })).success, true, game);
+    check((await engine.getGameState(roomCode))!);
+  }
 });

@@ -1,5 +1,15 @@
 import { NextResponse } from 'next/server';
-import { joinRoom } from '@/lib/party/engine';
+import { checkRoomSeat, joinRoom } from '@/lib/party/engine';
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const roomCode = url.searchParams.get('roomCode');
+  const playerKey = url.searchParams.get('playerId');
+  const audience = url.searchParams.get('audience') === 'true';
+  const hostId = url.searchParams.get('hostId');
+  const { valid } = await checkRoomSeat(roomCode, { playerKey, audience, hostId });
+  return NextResponse.json({ valid });
+}
 
 export async function POST(request: Request) {
   try {

@@ -2,7 +2,7 @@
 import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useImmersive } from '@/components/party/HostShow';
-import { ReactionBar } from '@/components/party/PhoneExtras';
+import { ReactionBar, PhoneSessionControls } from '@/components/party/PhoneExtras';
 
 type Poll = { key: string; prompt: string; choices: { id: string; label: string }[]; myChoice: string | null };
 type AudienceState = {
@@ -22,6 +22,11 @@ const POLL_HINT: Record<string, string> = {
   'trivia-death': 'Play along — a point for every right answer.',
   'the-faker': 'Spot the faker for a point.',
   'ready-set-bet': 'Pick the winner for a point.',
+  'spyfall': 'Spot the Spy!',
+  'herd-mentality': 'Think like the herd!',
+  'wavelength': 'Read the Psychic\'s mind!',
+  'bluff-clash': 'Spot the real truth!',
+  'emoji-telephone': 'Vote for your favorite chain!',
 };
 
 export default function AudiencePage({ params }: { params: Promise<{ roomCode: string; key: string }> }) {
@@ -40,7 +45,11 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
       let data: any;
       try { data = JSON.parse(event.data); } catch { return; }
       setReconnecting(false);
-      if (data.error) { setError(data.error); sse.close(); } else setState(data);
+      if (data.error) {
+        try { localStorage.removeItem('partyLastPlayed'); } catch { /* ignore */ }
+        setError(data.error);
+        sse.close();
+      } else setState(data);
     };
     return () => sse.close();
   }, [roomCode, key]);
@@ -76,14 +85,22 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--party-bg)' }}>
-      <div className="player-header party-content" style={{ borderBottomColor: 'var(--party-cyan)' }}>
-        <div>
-          <div className="player-header-name" style={{ color: 'var(--party-cyan)' }}>{state.me.name}</div>
+      <div className="player-header party-content" style={{ borderBottomColor: 'var(--party-cyan)', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="player-header-name" style={{ color: 'var(--party-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{state.me.name}</div>
           <div style={{ fontSize: '0.75rem', color: 'var(--party-text-muted)' }}>👀 Audience · {state.audienceSize} watching</div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div className="player-header-score-label">Points</div>
-          <div className="player-header-score">{state.me.score}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginLeft: 'auto' }}>
+          <PhoneSessionControls
+            roomCode={roomCode}
+            actorKey={key}
+            currentName={state.me.name}
+            isAudience
+          />
+          <div style={{ textAlign: 'right' }}>
+            <div className="player-header-score-label">Points</div>
+            <div className="player-header-score">{state.me.score}</div>
+          </div>
         </div>
       </div>
       {reconnecting && (

@@ -1,9 +1,19 @@
-import type { PromptPack } from './prompts';
+import type { PromptLists, PromptPack } from './prompts';
+
+type PackSeed = Omit<PromptPack, keyof PromptLists> & Partial<PromptLists>;
+
+// The themed packs predate the newer games, so those lists start empty (the
+// games fall back to Classic) until the admin fills them in.
+const withAllLists = (seed: PackSeed): PromptPack => ({
+  quipClash: [], theFaker: [], triviaQuestions: [], bracketBattles: [],
+  spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [],
+  ...seed,
+});
 
 // Built-in themed packs, seeded into the prompt file the first time it's read
 // after an upgrade. Once saved they're ordinary packs the admin can edit.
 
-export const BUILT_IN_PACKS: PromptPack[] = [
+export const BUILT_IN_PACKS: PromptPack[] = ([
   {
     id: 'family',
     name: 'Family Friendly',
@@ -151,4 +161,4 @@ export const BUILT_IN_PACKS: PromptPack[] = [
       { question: 'Which company created the Raspberry Pi?', choices: ['Arduino', 'Raspberry Pi Foundation', 'Intel', 'Adafruit'], answer: 1, category: 'Tech' },
     ],
   },
-];
+] satisfies PackSeed[]).map(withAllLists);

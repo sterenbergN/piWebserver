@@ -1,4 +1,5 @@
 import { GameState } from '../types';
+import { waitingFor } from '../presence';
 import { getRandomPrompts } from '../prompts';
 import { closeAudienceVote, openAudienceVote } from '../audience';
 import { bumpStat } from '../awards';
@@ -62,9 +63,6 @@ export const quipClashLogic = {
         promptIdx: playerPromptIdx[pid],
         answers: ['', '']
       };
-      if (!isNextRound) {
-        state.players[pid].score = 0; // Reset score only on a fresh new game, not between rounds
-      }
     }
   },
 
@@ -81,24 +79,19 @@ export const quipClashLogic = {
         state.gameData.answers[k][playerId] = answer;
         pd.answers[promptIndex] = answer;
 
-        const complete = state.playerOrder.every(
+        const complete = waitingFor(state, state.playerOrder).every(
           (pid) => state.playerData[pid]?.answers?.[0] && state.playerData[pid]?.answers?.[1],
         );
-        if (complete) startVotingPhase(state);
+        if (complete) {
+          fillMissingQuipAnswers(state);
+          startVotingPhase(state);
+        }
         break;
       }
 
       case 'FORCE_VOTING': // Host (or the prompt timer) ends the writing phase
         if (playerId !== state.hostId || state.phase !== 'PROMPTING') return;
-        for (const pid of state.playerOrder) {
-          const pd = state.playerData[pid];
-          for (let i = 0; i < 2; i++) {
-            if (pd.answers[i]) continue;
-            const k = pd.promptIdx[i];
-            if (!state.gameData.answers[k]) state.gameData.answers[k] = {};
-            state.gameData.answers[k][pid] = 'Too slow!';
-          }
-        }
+        fillMissingQuipAnswers(state);
         startVotingPhase(state);
         break;
 
@@ -111,8 +104,8 @@ export const quipClashLogic = {
         if (!state.gameData.votes[currentIdx]) state.gameData.votes[currentIdx] = {};
         state.gameData.votes[currentIdx][playerId] = action.votedForId;
 
-        const votersCount = Object.keys(state.gameData.votes[currentIdx]).length;
-        if (votersCount >= state.playerOrder.length - owners.length) calculateRoundVotes(state);
+        const targetVoters = waitingFor(state, state.playerOrder.filter((pid) => !owners.includes(pid)));
+        if (targetVoters.every((pid) => state.gameData.votes[currentIdx]?.[pid])) calculateRoundVotes(state);
         break;
       }
 
@@ -131,14 +124,6 @@ export const quipClashLogic = {
           startVotingRound(state);
         }
         break;
-        
-      case 'PLAY_AGAIN':
-        if (playerId !== state.hostId) return;
-        state.phase = 'LOBBY';
-        state.hostData = {};
-        state.playerData = {};
-        state.gameData = {};
-        break;
 
       case 'FORCE_NEXT_VOTE':
         // Auto-advance voting when timer runs out
@@ -148,6 +133,19 @@ export const quipClashLogic = {
     }
   }
 };
+
+function fillMissingQuipAnswers(state: GameState) {
+  for (const pid of state.playerOrder) {
+    const pd = state.playerData[pid];
+    if (!pd?.promptIdx) continue;
+    for (let i = 0; i < 2; i++) {
+      if (pd.answers?.[i]) continue;
+      const k = pd.promptIdx[i];
+      if (!state.gameData.answers[k]) state.gameData.answers[k] = {};
+      state.gameData.answers[k][pid] = 'Too slow!';
+    }
+  }
+}
 
 function startVotingPhase(state: GameState) {
   state.phase = 'VOTING';

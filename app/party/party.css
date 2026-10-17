@@ -529,6 +529,8 @@
   text-shadow: none;
   filter: drop-shadow(0 0 20px rgba(245,158,11,0.5));
 }
+/* Emoji inside gradient-clipped titles keep their own colours (see EmojiText). */
+.host-emoji { -webkit-text-fill-color: initial; }
 .host-prompting-sub {
   color: var(--party-text-muted);
   font-size: 1.15rem;
@@ -869,7 +871,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.85rem 1.25rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
+  padding: 0.65rem 0.9rem;
   background: rgba(0,0,0,0.4);
   backdrop-filter: blur(20px);
   border-bottom: 3px solid transparent;
@@ -879,19 +886,20 @@
 }
 .player-header-name {
   font-family: var(--party-font-display);
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 900;
 }
 .player-header-score {
   font-family: var(--party-font-display);
-  font-size: 1.3rem;
+  font-size: 1.15rem;
   font-weight: 900;
   color: var(--party-text);
+  line-height: 1.1;
 }
 .player-header-score-label {
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--party-text-muted);
   text-align: right;
@@ -1210,6 +1218,14 @@
 .admin-section.yellow .admin-section-count { background: rgba(245,158,11,0.15); color: var(--party-yellow); border: 1px solid rgba(245,158,11,0.3); }
 .admin-section.red    .admin-section-title { color: var(--party-red); }
 .admin-section.red    .admin-section-count { background: rgba(239,68,68,0.15); color: var(--party-red); border: 1px solid rgba(239,68,68,0.3); }
+.admin-section.cyan   .admin-section-title { color: var(--party-cyan); }
+.admin-section.cyan   .admin-section-count { background: rgba(6,182,212,0.15); color: var(--party-cyan); border: 1px solid rgba(6,182,212,0.3); }
+.admin-section.purple .admin-section-title { color: var(--party-purple-lt); }
+.admin-section.purple .admin-section-count { background: rgba(168,85,247,0.15); color: var(--party-purple-lt); border: 1px solid rgba(168,85,247,0.3); }
+.admin-section.pink   .admin-section-title { color: var(--party-pink); }
+.admin-section.pink   .admin-section-count { background: rgba(236,72,153,0.15); color: var(--party-pink); border: 1px solid rgba(236,72,153,0.3); }
+.admin-section.green  .admin-section-title { color: var(--party-green); }
+.admin-section.green  .admin-section-count { background: rgba(34,197,94,0.15); color: var(--party-green); border: 1px solid rgba(34,197,94,0.3); }
 .admin-prompt-list { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; max-height: 55vh; }
 .admin-prompt-list::-webkit-scrollbar { width: 6px; }
 .admin-prompt-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
@@ -2026,12 +2042,12 @@ body.party-tv main.container, body.party-phone main.container { max-width: none;
 .party-avatar-option {
   font-size: 1.6rem; aspect-ratio: 1; border-radius: 12px; border: 2px solid transparent; background: rgba(255,255,255,0.06); cursor: pointer;
 }
-.party-avatar-option[aria-pressed="true"] { border-color: var(--party-yellow); background: rgba(250,204,21,0.18); transform: scale(1.08); }
+.party-avatar-option[aria-checked="true"] { border-color: var(--party-yellow); background: rgba(250,204,21,0.18); transform: scale(1.08); }
 .party-reaction-bar {
   position: sticky; bottom: 0; display: flex; justify-content: space-around; gap: 0.25rem;
   padding: 0.5rem 0.4rem calc(0.5rem + env(safe-area-inset-bottom)); background: rgba(8,4,20,0.9); border-top: 1px solid var(--party-border);
 }
-.party-reaction-bar button { font-size: 1.6rem; background: none; border: none; cursor: pointer; padding: 0.2rem; transition: transform 0.1s; touch-action: manipulation; }
+.party-reaction-bar button { flex: 1 1 0; min-width: 0; font-size: clamp(1.25rem, 6.5vw, 1.6rem); background: none; border: none; cursor: pointer; padding: 0.2rem 0; transition: transform 0.1s; touch-action: manipulation; }
 .party-reaction-bar button:active { transform: scale(1.4); }
 .party-safety-btn {
   background: rgba(255,255,255,0.08); border: 1px dashed var(--party-border); color: var(--party-text-muted);

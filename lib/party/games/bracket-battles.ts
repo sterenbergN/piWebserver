@@ -1,4 +1,5 @@
 import { GameState } from '../types';
+import { waitingFor } from '../presence';
 import { getRandomPrompts } from '../prompts';
 import { closeAudienceVote, openAudienceVote } from '../audience';
 import { bumpStat } from '../awards';
@@ -70,7 +71,6 @@ export const bracketBattlesLogic = {
         phase: 'PROMPTING',
         prompt: playerPrompts[pid],
       };
-      state.players[pid].score = 0;
     }
   },
 
@@ -83,8 +83,12 @@ export const bracketBattlesLogic = {
         state.gameData.answers[playerId] = answer;
         state.playerData[playerId].phase = 'WAITING';
         
-        // Check if all players answered
-        if (Object.keys(state.gameData.answers).length >= state.playerOrder.length) {
+        // Check if all connected players answered
+        const targets = waitingFor(state, state.playerOrder);
+        if (targets.every((pid) => state.gameData.answers[pid])) {
+          for (const pid of state.playerOrder) {
+            if (!state.gameData.answers[pid]) state.gameData.answers[pid] = 'Too slow!';
+          }
           setupBracketAndPredictions(state);
         }
         break;
@@ -109,7 +113,8 @@ export const bracketBattlesLogic = {
         state.gameData.predictions[playerId] = action.predictionId;
         state.playerData[playerId].phase = 'WAITING';
         
-        if (Object.keys(state.gameData.predictions).length >= state.playerOrder.length) {
+        const targets = waitingFor(state, state.playerOrder);
+        if (targets.every((pid) => state.gameData.predictions[pid])) {
           startNextMatch(state);
         }
         break;
@@ -128,7 +133,8 @@ export const bracketBattlesLogic = {
         if (!voters.includes(playerId)) return;
         if (action.voteId !== match.answer1.id && action.voteId !== match.answer2.id) return;
         state.gameData.votes[playerId] = action.voteId;
-        if (voters.every((pid) => state.gameData.votes[pid])) {
+        const targetVoters = waitingFor(state, voters);
+        if (targetVoters.every((pid) => state.gameData.votes[pid])) {
           resolveMatch(state);
         }
         break;
@@ -156,16 +162,6 @@ export const bracketBattlesLogic = {
       case 'NEXT_MATCH': {
         if (state.phase !== 'MATCH_RESULT') return;
         startNextMatch(state);
-        break;
-      }
-
-      case 'PLAY_AGAIN': {
-        if (playerId !== state.hostId) return;
-        state.phase = 'LOBBY';
-        state.hostData = {};
-        state.playerData = {};
-        state.gameData = {};
-        for (const pid of state.playerOrder) state.players[pid].score = 0;
         break;
       }
     }
@@ -416,16 +412,22 @@ function finalizeMatchWinner(state: GameState, matchId: number, winner: any, los
   }
 
   let roundValue = 500;
-  if (matchId >= numMatches - 3) roundValue = 1000;
-  if (matchId === numMatches - 1) roundValue = 2000;
+  if (matchId >= numMatches - 3) roundValue = 750;
+  if (matchId === numMatches - 1) roundValue = 1250;
 
-  // Award points to the AUTHOR of the winning answer (if not a bot)
+  const winVotes = winner === bracket[matchId].answer1 ? v1 : v2;
+  const loseVotes = loser === bracket[matchId].answer1 ? v1 : v2;
+
+  // Award points to the AUTHOR of the winning answer (if not a bot) plus per-vote bonus
   if (!winner.isBot && state.players[winner.id]) {
-    state.players[winner.id].score += roundValue;
+    state.players[winner.id].score += roundValue + winVotes * 100;
     bumpStat(state, 'matchWins', winner.id);
   }
-  if (!winner.isBot) bumpStat(state, 'votesReceived', winner.id, winner === bracket[matchId].answer1 ? v1 : v2);
-  if (!loser.isBot) bumpStat(state, 'votesReceived', loser.id, loser === bracket[matchId].answer1 ? v1 : v2);
+  if (!loser.isBot && state.players[loser.id]) {
+    state.players[loser.id].score += loseVotes * 100;
+  }
+  if (!winner.isBot) bumpStat(state, 'votesReceived', winner.id, winVotes);
+  if (!loser.isBot) bumpStat(state, 'votesReceived', loser.id, loseVotes);
 
   state.hostData = {
     message: 'Winner Advances!',
@@ -436,8 +438,8 @@ function finalizeMatchWinner(state: GameState, matchId: number, winner: any, los
     winner,
     loser,
     votes: {
-      [winner.id]: winner === bracket[matchId].answer1 ? v1 : v2,
-      [loser.id]: loser === bracket[matchId].answer1 ? v1 : v2
+      [winner.id]: winVotes,
+      [loser.id]: loseVotes
     },
     voters: {
       [winner.id]: Object.keys(votes || {}).filter((pid) => votes[pid] === winner.id),
@@ -467,7 +469,7 @@ function endBracketGame(state: GameState) {
   // Award prediction points
   for (const pid of state.playerOrder) {
     if (state.gameData.predictions[pid] === championId) {
-      state.players[pid].score += 3000;
+      state.players[pid].score += 750;
       bumpStat(state, 'oracle', pid);
     }
   }

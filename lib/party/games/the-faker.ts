@@ -1,4 +1,5 @@
 import { GameState } from '../types';
+import { waitingFor } from '../presence';
 import { getRandomPrompts } from '../prompts';
 import { closeAudienceVote, openAudienceVote } from '../audience';
 import { bumpStat } from '../awards';
@@ -81,18 +82,20 @@ export const fakerLogic = {
         }
         break;
 
-      case 'SUBMIT_VOTE':
+      case 'SUBMIT_VOTE': {
         if (state.phase !== 'VOTING') return;
         // Only active non-eliminated players can vote
         if (!state.gameData.activePlayers.includes(playerId)) return;
         // A vote must name another player who is still in the round.
         if (action.votedFor === playerId || !state.gameData.activePlayers.includes(action.votedFor)) return;
         state.gameData.votes[playerId] = action.votedFor;
-        // Auto-advance when everyone active has voted
-        if (Object.keys(state.gameData.votes).length >= state.gameData.activePlayers.length) {
+        // Auto-advance when everyone active (and connected) has voted
+        const targetVoters = waitingFor(state, state.gameData.activePlayers);
+        if (targetVoters.every((pid: string) => state.gameData.votes[pid])) {
           calculateFakerRoundResult(state);
         }
         break;
+      }
 
       case 'FORCE_FAKER_RESULTS':
         if (state.phase !== 'VOTING') return;
@@ -103,7 +106,7 @@ export const fakerLogic = {
         if (state.phase !== 'RESULTS') return;
         // Check if we should continue or end the game
         const remaining = state.gameData.activePlayers.filter(
-          (pid: string) => !state.gameData.eliminatedPlayers.includes(pid)
+          (pid: string) => !state.gameData.eliminatedPlayers.includes(pid) && !state.players[pid]?.left
         );
         if (state.gameData.round >= TOTAL_ROUNDS || remaining.length <= 2) {
           endFakerGame(state);
@@ -116,15 +119,6 @@ export const fakerLogic = {
 
       case 'END_FAKER_GAME':
         endFakerGame(state);
-        break;
-
-      case 'PLAY_AGAIN':
-        if (playerId !== state.hostId) return;
-        state.phase = 'LOBBY';
-        state.hostData = {};
-        state.playerData = {};
-        state.gameData = {};
-        for (const pid of state.playerOrder) state.players[pid].score = 0;
         break;
     }
   },

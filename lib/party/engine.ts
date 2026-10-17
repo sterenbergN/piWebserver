@@ -8,6 +8,11 @@ import { quipClashLogic } from './games/quip-clash';
 import { triviaDeathLogic } from './games/trivia-death';
 import { bracketBattlesLogic } from './games/bracket-battles';
 import { readySetBetLogic } from './games/ready-set-bet';
+import { spyfallLogic } from './games/spyfall';
+import { herdMentalityLogic } from './games/herd-mentality';
+import { wavelengthLogic } from './games/wavelength';
+import { bluffClashLogic } from './games/bluff-clash';
+import { emojiTelephoneLogic } from './games/emoji-telephone';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
 import { AVATARS, isAvatar, isReaction } from './avatars';
@@ -22,7 +27,18 @@ const MAX_NAME_LENGTH = 16;
 /** Free-text answers are capped so one player can't flood everyone's screen. */
 const MAX_TEXT_LENGTH = 120;
 
-export const GAME_TYPES: GameType[] = ['quip-clash', 'the-faker', 'trivia-death', 'bracket-battles', 'ready-set-bet'];
+export const GAME_TYPES: GameType[] = [
+  'quip-clash',
+  'the-faker',
+  'trivia-death',
+  'bracket-battles',
+  'ready-set-bet',
+  'spyfall',
+  'herd-mentality',
+  'wavelength',
+  'bluff-clash',
+  'emoji-telephone',
+];
 
 type GameLogic = {
   onStart: (state: GameState, ...args: any[]) => Promise<void> | void;
@@ -35,6 +51,11 @@ const LOGIC: Record<GameType, GameLogic> = {
   'trivia-death': triviaDeathLogic,
   'bracket-battles': bracketBattlesLogic,
   'ready-set-bet': readySetBetLogic,
+  'spyfall': spyfallLogic,
+  'herd-mentality': herdMentalityLogic,
+  'wavelength': wavelengthLogic,
+  'bluff-clash': bluffClashLogic,
+  'emoji-telephone': emojiTelephoneLogic,
 };
 
 /** Minimum players needed to start each game. */
@@ -44,6 +65,11 @@ export const MIN_PLAYERS: Record<GameType, number> = {
   'trivia-death': 3,
   'bracket-battles': 3,
   'ready-set-bet': 1,
+  'spyfall': 3,
+  'herd-mentality': 3,
+  'wavelength': 2,
+  'bluff-clash': 3,
+  'emoji-telephone': 3,
 };
 
 export function normalizeRoomCode(roomCode: unknown): string | null {
@@ -197,11 +223,12 @@ export async function joinRoom(roomCode: string, playerName: string, options: { 
     const state = await getGameState(code);
     if (!state) return { error: 'Room not found' };
 
-    const existing = Object.values(state.players).find((p) => p.name.toLowerCase() === name.toLowerCase());
+    const existing = Object.values(state.players).find((p) => !p.left && p.name.toLowerCase() === name.toLowerCase());
     if (existing) {
       // Let a player who lost their tab get back in (same name, not currently connected).
       if (!existing.connected) {
         existing.connected = true;
+        delete existing.disconnectedAt;
         const key = Object.keys(state.playerKeys || {}).find((k) => state.playerKeys![k] === existing.id) || newPlayerKey(state, existing.id);
         await saveGameState(state);
         return { playerId: key, rejoined: true };
@@ -217,11 +244,11 @@ export async function joinRoom(roomCode: string, playerName: string, options: { 
     }
 
     const playerId = `P_${crypto.randomBytes(6).toString('hex')}`;
-    const usedColors = new Set(Object.values(state.players).map((p) => p.avatarColor));
+    const usedColors = new Set(Object.values(state.players).filter((p) => !p.left).map((p) => p.avatarColor));
     const color = COLORS.find((c) => !usedColors.has(c)) || COLORS[state.playerOrder.length % COLORS.length];
 
     // Characters are unique per room: take the one asked for if it's free.
-    const usedAvatars = new Set(Object.values(state.players).map((p) => p.avatar));
+    const usedAvatars = new Set(Object.values(state.players).filter((p) => !p.left).map((p) => p.avatar));
     const avatar = isAvatar(options.avatar) && !usedAvatars.has(options.avatar)
       ? options.avatar
       : AVATARS.find((a) => !usedAvatars.has(a)) || AVATARS[state.playerOrder.length % AVATARS.length];
@@ -261,6 +288,24 @@ export function resolveAudienceKey(state: GameState, key: string | null | undefi
   if (!key || !state.audienceKeys) return null;
   const id = state.audienceKeys[key];
   return id && state.audience?.[id] ? id : null;
+}
+
+/** Check whether a saved player/audience key or host token is still valid in an active room. */
+export async function checkRoomSeat(
+  roomCode: unknown,
+  opts: { playerKey?: string | null; audience?: boolean; hostId?: string | null },
+): Promise<{ valid: boolean }> {
+  const code = normalizeRoomCode(roomCode);
+  if (!code) return { valid: false };
+  const state = await getGameState(code);
+  if (!state) return { valid: false };
+  if (opts.hostId) return { valid: state.hostId === opts.hostId };
+  if (opts.playerKey) {
+    if (opts.audience) return { valid: !!resolveAudienceKey(state, opts.playerKey) };
+    const pid = resolvePlayerKey(state, opts.playerKey);
+    return { valid: !!(pid && state.players[pid] && !state.players[pid].left) };
+  }
+  return { valid: true };
 }
 
 /** What an audience member's phone shows: the open poll (if any) and their own vote. */
@@ -328,6 +373,9 @@ export async function setPlayerConnected(roomCode: string, playerId: string, con
     const player = state?.players[playerId];
     if (!state || !player || player.connected === connected) return;
     player.connected = connected;
+    // Games keep waiting on a dropped phone for a short grace period (see presence.ts).
+    if (connected) delete player.disconnectedAt;
+    else player.disconnectedAt = Date.now();
     await saveGameState(state);
   });
 }
@@ -336,7 +384,14 @@ export async function setPlayerConnected(roomCode: string, playerId: string, con
 
 /** Actions a player may send. Everything else (timers, next, force) is host-only. */
 function isPlayerAction(type: string) {
-  return type.startsWith('SUBMIT_') || type === 'PLACE_BET';
+  return (
+    type.startsWith('SUBMIT_') ||
+    type === 'PLACE_BET' ||
+    type === 'LEAVE_ROOM' ||
+    type === 'UPDATE_PROFILE' ||
+    type === 'CALL_VOTE' ||
+    type === 'SPY_GUESS_LOCATION'
+  );
 }
 
 /** Trim free-text fields in an action so they stay within display limits. */
@@ -362,13 +417,88 @@ function addReaction(state: GameState, from: string, emoji: unknown): boolean {
   return true;
 }
 
-function resetToLobby(state: GameState, resetScores: boolean) {
+function purgePlayer(state: GameState, target: string) {
+  delete state.players[target];
+  delete state.playerData[target];
+  if (state.playerKeys) {
+    for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
+  }
+  state.playerOrder = state.playerOrder.filter((pid) => pid !== target);
+}
+
+function removePlayerFromRoom(state: GameState, target: string) {
+  if (!state.players[target]) return;
+  if (state.phase === 'LOBBY' || state.phase === 'FINAL_RESULTS') {
+    purgePlayer(state, target);
+  } else {
+    state.players[target].connected = false;
+    state.players[target].left = true;
+    if (state.playerKeys) {
+      for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
+    }
+  }
+}
+
+function updateProfile(
+  state: GameState,
+  actor: { playerId?: string; audienceId?: string },
+  action: Record<string, any>,
+): { success: boolean; error?: string } {
+  const hasName = action.name !== undefined;
+  const hasAvatar = action.avatar !== undefined;
+  if (!hasName && !hasAvatar) return { success: false, error: 'Nothing to update' };
+
+  let nextName: string | undefined;
+  if (hasName) {
+    nextName = sanitizePlayerName(action.name);
+    if (!nextName) return { success: false, error: 'Enter a nickname' };
+    const lower = nextName.toLowerCase();
+    const playerConflict = Object.values(state.players).some(
+      (p) => !p.left && p.id !== actor.playerId && p.name.toLowerCase() === lower,
+    );
+    const audienceConflict = Object.values(state.audience || {}).some(
+      (a) => a.id !== actor.audienceId && a.name.toLowerCase() === lower,
+    );
+    if (playerConflict || audienceConflict) return { success: false, error: 'Name already taken' };
+  }
+
+  if (actor.playerId && state.players[actor.playerId]) {
+    if (hasAvatar) {
+      if (!isAvatar(action.avatar)) return { success: false, error: 'Invalid character' };
+      const avatarTaken = Object.values(state.players).some(
+        (p) => !p.left && p.id !== actor.playerId && p.avatar === action.avatar,
+      );
+      if (avatarTaken) return { success: false, error: 'Character already taken' };
+      state.players[actor.playerId].avatar = action.avatar;
+    }
+    if (nextName) {
+      state.players[actor.playerId].name = nextName;
+      if (state.audienceVote) {
+        for (const c of state.audienceVote.choices) {
+          if (c.id === actor.playerId) c.label = nextName;
+        }
+      }
+    }
+    return { success: true };
+  }
+
+  if (actor.audienceId && state.audience?.[actor.audienceId]) {
+    if (nextName) state.audience[actor.audienceId].name = nextName;
+    return { success: true };
+  }
+
+  return { success: false, error: 'Not in this room' };
+}
+
+function resetToLobby(state: GameState) {
+  for (const pid of [...state.playerOrder]) {
+    if (state.players[pid]?.left) purgePlayer(state, pid);
+  }
   state.phase = 'LOBBY';
   state.hostData = {};
   state.playerData = {};
   state.gameData = { targetRounds: state.gameData?.targetRounds };
   state.audienceVote = null;
-  if (resetScores) for (const pid of state.playerOrder) state.players[pid].score = 0;
 }
 
 export async function processAction(roomCode: string, actorKey: string, rawAction: any): Promise<{ success: boolean; error?: string }> {
@@ -393,6 +523,20 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         await saveGameState(state);
         return { success: true };
       }
+      if (action.type === 'LEAVE_ROOM') {
+        delete state.audience?.[audienceId];
+        if (state.audienceKeys) {
+          for (const [k, aid] of Object.entries(state.audienceKeys)) if (aid === audienceId) delete state.audienceKeys[k];
+        }
+        if (state.audienceVote?.votes) delete state.audienceVote.votes[audienceId];
+        await saveGameState(state);
+        return { success: true };
+      }
+      if (action.type === 'UPDATE_PROFILE') {
+        const res = updateProfile(state, { audienceId }, action);
+        if (res.success) await saveGameState(state);
+        return res;
+      }
       if (action.type !== 'AUDIENCE_VOTE') return { success: false, error: 'The audience can only vote' };
       if (!recordAudienceVote(state, audienceId, action.choice)) return { success: false, error: 'Voting is closed' };
       await saveGameState(state);
@@ -412,19 +556,54 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         // Rate-limited; a dropped reaction isn't an error worth showing.
         if (!addReaction(state, playerId, action.emoji)) return { success: true };
         break;
+      case 'LEAVE_ROOM':
+        removePlayerFromRoom(state, playerId);
+        break;
+      case 'UPDATE_PROFILE': {
+        const res = updateProfile(state, { playerId }, action);
+        if (!res.success) return res;
+        break;
+      }
+      case 'CLOSE_ROOM': {
+        const existingTimer = autoTimers.get(state.roomCode);
+        if (existingTimer) clearTimeout(existingTimer);
+        autoTimers.delete(state.roomCode);
+        await fs.unlink(roomPath(state.roomCode)).catch(() => {});
+        emitStateUpdate(state.roomCode);
+        return { success: true };
+      }
+      case 'RESET_SCORES': {
+        for (const p of Object.values(state.players)) p.score = 0;
+        for (const a of Object.values(state.audience || {})) a.score = 0;
+        if (state.gameData?.baseScores) {
+          for (const pid of Object.keys(state.gameData.baseScores)) state.gameData.baseScores[pid] = 0;
+        }
+        break;
+      }
       case 'START_GAME': {
+        // A double-tapped Start must not reshuffle a game that's already running.
+        if (state.phase !== 'LOBBY') return { success: false, error: 'The game has already started' };
+        for (const pid of [...state.playerOrder]) {
+          if (state.players[pid]?.left) purgePlayer(state, pid);
+        }
         const min = MIN_PLAYERS[state.gameType];
         if (state.playerOrder.length < min) return { success: false, error: `Need at least ${min} players` };
+        const baseScores: Record<string, number> = {};
+        for (const pid of state.playerOrder) baseScores[pid] = state.players[pid]?.score || 0;
         await LOGIC[state.gameType].onStart(state);
+        state.gameData = { ...(state.gameData || {}), baseScores };
         break;
       }
       case 'QUIT_GAME':
-        resetToLobby(state, false);
+        resetToLobby(state);
+        break;
+      case 'PLAY_AGAIN':
+        resetToLobby(state);
         break;
       case 'SWITCH_GAME': {
         if (!GAME_TYPES.includes(action.gameType)) return { success: false, error: 'Unknown game' };
         state.gameType = action.gameType;
-        resetToLobby(state, true);
+        resetToLobby(state);
         break;
       }
       case 'SET_QUIP_ROUNDS': {
@@ -441,15 +620,9 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         break;
       }
       case 'KICK_PLAYER': {
-        if (state.phase !== 'LOBBY') return { success: false, error: 'Players can only be removed in the lobby' };
         const target = String(action.targetId || '');
         if (!state.players[target]) return { success: false, error: 'Player not found' };
-        delete state.players[target];
-        delete state.playerData[target];
-        if (state.playerKeys) {
-          for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
-        }
-        state.playerOrder = state.playerOrder.filter((pid) => pid !== target);
+        removePlayerFromRoom(state, target);
         break;
       }
       default:
