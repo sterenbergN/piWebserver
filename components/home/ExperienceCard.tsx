@@ -1,15 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ExperienceEntry } from '@/lib/resume';
 
-/** The two latest roles, expanding in place into a horizontal career timeline. */
+/**
+ * The two latest roles, expanding in place into a vertical career timeline.
+ * `experience` is ordered newest first, and the timeline keeps that order so the
+ * current role is always at the top.
+ */
 export default function ExperienceCard({ experience }: { experience: ExperienceEntry[] }) {
   const [expanded, setExpanded] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    // When collapsing a long timeline the header may be off-screen; bring it back.
+    if (!next) {
+      requestAnimationFrame(() => {
+        const el = cardRef.current;
+        if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+    }
+  };
 
   return (
-    <div className="premium-card exp-card" style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
-      <button className="home-card-head" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+    <div ref={cardRef} className="premium-card exp-card" style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
+      <button className="home-card-head" aria-expanded={expanded} onClick={toggle}>
         <span className="home-card-icon" aria-hidden>
           {expanded
             ? <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
@@ -17,7 +34,7 @@ export default function ExperienceCard({ experience }: { experience: ExperienceE
         </span>
         <span style={{ flex: 1, minWidth: 0 }}>
           <h2 className="home-card-title">{expanded ? 'Career timeline' : 'Experience'}</h2>
-          {expanded && <span className="home-muted-sm">Scroll sideways to explore</span>}
+          {expanded && <span className="home-muted-sm">Most recent first</span>}
         </span>
         <span className="home-card-toggle">
           {expanded ? 'Close' : 'Timeline'}
@@ -36,31 +53,30 @@ export default function ExperienceCard({ experience }: { experience: ExperienceE
           ))}
         </div>
       ) : (
-        <div className="htl-scroll animate-fade-in">
-          <div className="htl-track">
-            <div className="htl-line" />
-            {[...experience].reverse().map((exp, idx, arr) => (
-              <div key={exp.id} style={{ display: 'flex', alignItems: 'flex-start' }}>
-                <div className="htl-node" style={{ animationDelay: `${idx * 0.12}s` }}>
-                  <div className="htl-period">{exp.period}</div>
-                  <div className="htl-dot" />
-                  <div className="htl-card">
-                    <div className="htl-tag" data-current={idx === arr.length - 1 || undefined}>{idx === arr.length - 1 ? '● Current role' : 'Previous role'}</div>
-                    <h3 style={{ fontSize: '1.15rem', color: 'var(--foreground)', marginBottom: '0.25rem', lineHeight: 1.2 }}>{exp.role}</h3>
-                    <div style={{ color: 'var(--accent-light)', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.75rem' }}>{exp.company}</div>
-                    <p style={{ fontSize: '0.875rem', color: 'var(--muted)', lineHeight: 1.6, marginBottom: exp.details?.length ? '1rem' : 0 }}>{exp.description}</p>
-                    {exp.details?.length > 0 && (
-                      <ul className="htl-details">
-                        {exp.details.map((detail, dIdx) => <li key={dIdx}><span aria-hidden>›</span><span>{detail}</span></li>)}
-                      </ul>
-                    )}
+        <ol className="vtl animate-fade-in">
+          {experience.map((exp, idx) => {
+            const current = idx === 0;
+            return (
+              <li key={exp.id} className={`vtl-node${current ? ' is-current' : ''}`} style={{ animationDelay: `${Math.min(idx, 6) * 0.08}s` }}>
+                <span className="vtl-dot" aria-hidden />
+                <div className="vtl-card">
+                  <div className="vtl-meta">
+                    <span className="vtl-period">{exp.period}</span>
+                    {current && <span className="vtl-tag">● Current role</span>}
                   </div>
+                  <h3 className="vtl-role">{exp.role}</h3>
+                  <div className="vtl-company">{exp.company}</div>
+                  <p className="vtl-desc" style={{ marginBottom: exp.details?.length ? '1rem' : 0 }}>{exp.description}</p>
+                  {exp.details?.length > 0 && (
+                    <ul className="vtl-details">
+                      {exp.details.map((detail, dIdx) => <li key={dIdx}><span aria-hidden>›</span><span>{detail}</span></li>)}
+                    </ul>
+                  )}
                 </div>
-                {idx < arr.length - 1 && <div className="htl-connector" />}
-              </div>
-            ))}
-          </div>
-        </div>
+              </li>
+            );
+          })}
+        </ol>
       )}
     </div>
   );

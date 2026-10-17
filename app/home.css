@@ -148,28 +148,36 @@ a.premium-card:hover, .home-project:hover { transform: translateY(-6px); box-sha
 .exp-item.is-current .exp-where { color: var(--accent-light); }
 .exp-desc { color: var(--muted); font-size: 0.92rem; line-height: 1.55; margin: 0; }
 
-/* Horizontal timeline */
-.htl-scroll { display: flex; overflow-x: auto; padding: 2rem 1rem 2.5rem; margin: 0 calc(-1 * clamp(1.25rem, 4vw, 2rem)) calc(-1 * clamp(1.25rem, 4vw, 2rem)); scroll-behavior: smooth; scrollbar-width: none; scroll-snap-type: x proximity; }
-.htl-scroll::-webkit-scrollbar { display: none; }
-.htl-track { position: relative; display: flex; align-items: flex-start; min-width: max-content; padding-top: 3.5rem; }
-.htl-line { position: absolute; top: 28px; left: 20px; right: 20px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-light), var(--surface-border)); }
-.htl-node { position: relative; display: flex; flex-direction: column; align-items: center; width: min(320px, 78vw); scroll-snap-align: center; opacity: 0; transform: translateY(30px); animation: htlFadeUp 0.6s ease forwards; }
-@keyframes htlFadeUp { to { opacity: 1; transform: translateY(0); } }
-.htl-dot { position: absolute; top: -32px; left: 50%; transform: translateX(-50%); width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--background); box-shadow: 0 0 0 3px var(--accent), 0 0 20px rgba(107, 70, 193, 0.4); z-index: 2; }
-.htl-node:last-child .htl-dot { animation: htlPulse 2s ease-in-out infinite; }
-@keyframes htlPulse {
+/* Vertical timeline (newest first) */
+.vtl { position: relative; max-width: 820px; margin: 0; padding: 0 0 0 2rem; list-style: none; display: flex; flex-direction: column; gap: 1.25rem; }
+.vtl::before { content: ''; position: absolute; left: 8px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: linear-gradient(to bottom, var(--accent), var(--accent-light) 40%, var(--surface-border)); }
+.vtl-node { position: relative; opacity: 0; transform: translateY(16px); animation: vtlFadeUp 0.5s ease forwards; }
+@keyframes vtlFadeUp { to { opacity: 1; transform: translateY(0); } }
+.vtl-dot { position: absolute; left: calc(-2rem + 2px); top: 1.5rem; width: 15px; height: 15px; border-radius: 50%; background: var(--background); border: 3px solid var(--accent-light); z-index: 1; }
+.vtl-node.is-current .vtl-dot { left: calc(-2rem + 1px); width: 17px; height: 17px; background: var(--accent); border-color: var(--background); box-shadow: 0 0 0 3px var(--accent), 0 0 20px rgba(107, 70, 193, 0.4); animation: vtlPulse 2s ease-in-out infinite; }
+@keyframes vtlPulse {
   0%, 100% { box-shadow: 0 0 0 3px var(--accent), 0 0 20px rgba(107, 70, 193, 0.4); }
   50% { box-shadow: 0 0 0 5px var(--accent-light), 0 0 30px rgba(107, 70, 193, 0.6); }
 }
-.htl-period { position: absolute; top: -56px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-light); white-space: nowrap; }
-.htl-card { position: relative; width: 100%; margin-top: 1rem; padding: 1.4rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--card-bg); transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s; }
-.htl-node:hover .htl-card { transform: translateY(-6px); box-shadow: 0 16px 36px rgba(0, 0, 0, 0.2); border-color: var(--accent); }
-.htl-tag { margin-bottom: 0.6rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-light); }
-.htl-tag[data-current] { color: var(--accent); }
-.htl-details { padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
-.htl-details li { display: flex; gap: 0.6rem; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
-.htl-details li span:first-child { color: var(--accent); font-weight: 700; flex-shrink: 0; }
-.htl-connector { width: 48px; height: 3px; flex-shrink: 0; margin-top: 27px; border-radius: 2px; opacity: 0.35; background: linear-gradient(90deg, var(--accent), var(--accent-light)); }
+.vtl-card { padding: 1.25rem 1.4rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--card-bg); transition: box-shadow 0.3s, border-color 0.3s; }
+.vtl-node:hover .vtl-card { box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); border-color: var(--accent); }
+.vtl-node.is-current .vtl-card { border-color: rgba(var(--accent-rgb), 0.55); }
+.vtl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin-bottom: 0.45rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.vtl-period { color: var(--accent-light); }
+.vtl-tag { color: var(--accent); }
+.vtl-role { margin: 0 0 0.2rem; font-size: 1.15rem; line-height: 1.25; color: var(--foreground); }
+.vtl-company { margin-bottom: 0.7rem; color: var(--accent-light); font-size: 0.85rem; font-weight: 600; }
+.vtl-desc { margin-top: 0; font-size: 0.9rem; line-height: 1.6; color: var(--muted); }
+.vtl-details { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+.vtl-details li { display: flex; gap: 0.6rem; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+.vtl-details li span:first-child { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .vtl { padding-left: 1.6rem; }
+  .vtl::before { left: 6px; }
+  .vtl-dot { left: calc(-1.6rem); }
+  .vtl-node.is-current .vtl-dot { left: calc(-1.6rem - 1px); }
+  .vtl-card { padding: 1rem 1.1rem; }
+}
 
 /* Skills */
 .skill-wrapper { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; }
@@ -265,5 +273,5 @@ a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: 
   .home-explore-icon { width: 36px; height: 36px; font-size: 1.1rem; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hero-gradient, .home-hero, .htl-node, .htl-node:last-child .htl-dot { animation: none; opacity: 1; transform: none; }
+  .hero-gradient, .home-hero, .vtl-node, .vtl-node.is-current .vtl-dot { animation: none; opacity: 1; transform: none; }
 }
