@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
+import CpuBreakdown from '@/components/stats/CpuBreakdown';
+import type { CpuDetail } from '@/lib/cpu-detail';
 
 interface SystemStats {
   platform: string;
@@ -9,6 +11,7 @@ interface SystemStats {
   storage: string;
   uptime?: string;
   cpu?: string;
+  cpuDetail?: CpuDetail | null;
   network?: string;
   networkTotal?: string;
 }
@@ -41,13 +44,13 @@ const calculateAverages = (history: StatHistory[], type: StatType, mins: number)
   return null;
 };
 
-const StatTile = ({ label, value, sub, history, type }: { label: string; value: string; sub?: string; history?: StatHistory[]; type?: StatType }) => {
+const StatTile = ({ label, value, sub, history, type, wide, children }: { label: string; value: string; sub?: string; history?: StatHistory[]; type?: StatType; wide?: boolean; children?: ReactNode }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="glass-panel" 
       onClick={() => history && type && setExpanded(!expanded)}
-      style={{ textAlign: 'center', padding: 'clamp(1rem, 4vw, 2rem) 1rem', cursor: history && type ? 'pointer' : 'default', transition: 'all 0.2s ease', position: 'relative', gridColumn: expanded ? '1 / -1' : undefined }}>
+      style={{ textAlign: 'center', padding: 'clamp(1rem, 4vw, 2rem) 1rem', cursor: history && type ? 'pointer' : 'default', transition: 'all 0.2s ease', position: 'relative', gridColumn: expanded ? '1 / -1' : wide ? 'span 2' : undefined }}>
       
       {history && type && (
         <div style={{ position: 'absolute', top: '10px', right: '12px', opacity: 0.4, fontSize: '0.8rem' }}>
@@ -58,6 +61,7 @@ const StatTile = ({ label, value, sub, history, type }: { label: string; value: 
       <h3 style={{ color: 'var(--accent-light)', marginBottom: '0.5rem', fontSize: '0.78rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{label}</h3>
       <p style={{ fontSize: 'clamp(1.35rem, 5vw, 2.2rem)', fontWeight: 'bold', margin: 0, fontFamily: 'monospace', color: 'var(--foreground)', overflowWrap: 'anywhere' }}>{value}</p>
       {sub && <p style={{ fontSize: '0.9rem', marginTop: '0.25rem', opacity: 0.6, marginBottom: 0 }}>{sub}</p>}
+      {children}
 
       {expanded && history && type && (
         <div className="animate-fade-in" style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--surface-border)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -111,7 +115,7 @@ export default function StatsPage() {
         <p>Connecting to system services...</p>
       ) : stats ? (
         <>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(46%, 200px), 1fr))', gap: '0.75rem' }}>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(46%, 200px), 1fr))', gridAutoFlow: 'row dense', gap: '0.75rem' }}>
             <StatTile label="Core Temperature" value={stats.temp} history={history} type="temp" />
             <StatTile label="Memory Usage" value={stats.ram.split('/')[0].trim()} sub={`of ${stats.ram.split('/')[1]?.trim() || ''}`} history={history} type="ram" />
             {(() => {
@@ -122,7 +126,9 @@ export default function StatsPage() {
               return <StatTile label="Storage Used" value={used} sub={[total && `of ${total}`, freeText].filter(Boolean).join(' · ') || undefined} />;
             })()}
             {stats.cpu !== undefined && (
-              <StatTile label="CPU use" value={`${stats.cpu}%`} sub="Current" history={history} type="cpu" />
+              <StatTile label="CPU use" value={`${stats.cpu}%`} sub={stats.cpuDetail?.cores.length ? `busy, across ${stats.cpuDetail.cores.length} cores` : 'Current'} history={history} type="cpu" wide={!!stats.cpuDetail}>
+                {stats.cpuDetail && <CpuBreakdown detail={stats.cpuDetail} />}
+              </StatTile>
             )}
             {stats.network && stats.network !== 'N/A' && (() => {
               // "↓ 2.40 Mbit/s | ↑ 310 kbit/s" (live speed) plus traffic since boot.

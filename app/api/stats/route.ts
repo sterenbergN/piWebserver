@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
 import fs from 'fs/promises';
-import { formatBitRate, formatBytes, getLiveRates } from '@/lib/system-stats';
+import { formatBitRate, formatBytes, getLiveRates, readCpuClock, toCpuDetail } from '@/lib/system-stats';
+import type { CpuDetail } from '@/lib/cpu-detail';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,8 +20,10 @@ export async function GET() {
           storage: 'Mock: 15GB / 64GB (76% Free)',
           uptime: 'up 3 days, 4 hours, 12 minutes',
           cpu: '12.5',
-          network: '↓ 2.40 Mbit/s | ↑ 310 kbit/s',
-          networkTotal: '↓ 12.4 GB · ↑ 3.2 GB since boot'
+          cpuDetail: { cores: [18.1, 9.6, 14.0, 8.3], apps: 9.2, kernel: 2.9, irq: 0.4, iowait: 0.6, load: [0.42, 0.35, 0.3], mhz: 1500, maxMhz: 1800 } satisfies CpuDetail,
+          // No /proc/net/dev on Windows: sample speeds, run through the same formatters as the Pi.
+          network: `↓ ${formatBitRate(300_000)} | ↑ ${formatBitRate(38_750)}`,
+          networkTotal: `↓ ${formatBytes(12.4 * 1024 ** 3)} · ↑ ${formatBytes(3.2 * 1024 ** 3)} since boot`
         }
       });
     }
@@ -90,11 +93,13 @@ export async function GET() {
 
     // CPU use and network speed, measured between this reading and the last one.
     let cpuStr = 'N/A';
+    let cpuDetail: CpuDetail | null = null;
     let networkStr = 'N/A';
     let networkTotalStr = '';
     try {
       const rates = await getLiveRates();
       cpuStr = rates.cpuPercent.toFixed(1);
+      if (rates.cpu) cpuDetail = toCpuDetail(rates.cpu, os.loadavg(), await readCpuClock());
       if (rates.since) {
         networkStr = `↓ ${formatBitRate(rates.rxPerSec)} | ↑ ${formatBitRate(rates.txPerSec)}`;
         networkTotalStr = `↓ ${formatBytes(rates.since.rx)} · ↑ ${formatBytes(rates.since.tx)} since boot`;
@@ -110,6 +115,7 @@ export async function GET() {
         storage: diskOutStr,
         uptime: uptimeStr,
         cpu: cpuStr,
+        cpuDetail,
         network: networkStr,
         networkTotal: networkTotalStr
       }
