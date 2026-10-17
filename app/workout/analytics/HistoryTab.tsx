@@ -5,6 +5,7 @@ import { rirLabel } from '@/components/workout/SetEditSheet';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { localDayKey, weekStart, type Workout } from '@/lib/workout/insights';
 import { compact } from './charts';
+import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 
 type HistoryTabProps = {
   history: Workout[];
@@ -34,7 +35,19 @@ export default function HistoryTab({ history, lifts, gymNames, canDelete, onDele
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [pages, setPages] = useState(1);
+  const [linkNote, setLinkNote] = useState<{ id: string; text: string } | null>(null);
   const q = query.trim().toLowerCase();
+
+  const sendLink = async (w: Workout) => {
+    setLinkNote({ id: w.id!, text: 'Making link…' });
+    try {
+      const url = await createWorkoutLink({ historyId: w.id! });
+      const result = await shareLink(url, `${w.type?.name || 'Workout'} — do it with me`);
+      setLinkNote({ id: w.id!, text: result === 'copied' ? 'Link copied — send it to a friend.' : result === 'shared' ? 'Link sent.' : '' });
+    } catch (err) {
+      setLinkNote({ id: w.id!, text: err instanceof Error ? err.message : 'Could not create the link' });
+    }
+  };
 
   const weeks = useMemo(() => {
     const matches = [...history]
@@ -107,8 +120,12 @@ export default function HistoryTab({ history, lifts, gymNames, canDelete, onDele
                         })}
                         {Object.keys(w.logs || {}).length === 0 && <p className="workout-hint">No sets were logged.</p>}
                         {canDelete && w.id && (
-                          <button type="button" className="workout-text-btn danger" style={{ marginTop: '0.5rem' }} onClick={() => onDelete(w.id!)}>Delete this workout</button>
+                          <div className="workout-flex-between" style={{ marginTop: '0.5rem', gap: '0.75rem' }}>
+                            <button type="button" className="workout-text-btn" onClick={() => sendLink(w)}>🔗 Send to a friend</button>
+                            <button type="button" className="workout-text-btn danger" onClick={() => onDelete(w.id!)}>Delete this workout</button>
+                          </div>
                         )}
+                        {linkNote && linkNote.id === w.id && linkNote.text && <p className="workout-hint" style={{ margin: '0.3rem 0 0' }}>{linkNote.text}</p>}
                       </div>
                     )}
                   </div>

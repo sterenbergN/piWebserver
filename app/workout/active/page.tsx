@@ -9,6 +9,7 @@ import { nextProgramDay, type Program } from '@/lib/workout/programs';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { newPlanId } from '@/lib/workout/tracker-utils';
 import type { Goal } from '@/lib/workout/goals';
+import { planFromShare, type SharedWorkout } from '@/lib/workout/workout-share';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER_ID } from '@/lib/workout/demo-data';
 
 /** Rep/set scheme when a "build as I go" workout has no workout type. */
@@ -32,6 +33,8 @@ export default function ActiveWorkoutPage() {
   // Programs: the next day of a pre-planned rotation (or a specific day).
   const programId = searchParams.get('program');
   const programDayParam = searchParams.get('day');
+  // A workout someone shared by link (token): its lifts, at `gym` if given, else at their gym once.
+  const sharedWorkoutToken = searchParams.get('sharedWorkout');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -54,7 +57,7 @@ export default function ActiveWorkoutPage() {
         } catch { /* nothing to resume */ }
       }
 
-      if (!isResuming && !sharedSessionId && !programId && (!gymParam || (!typeId && !isFreestyle && !repeatId))) {
+      if (!isResuming && !sharedSessionId && !programId && !sharedWorkoutToken && (!gymParam || (!typeId && !isFreestyle && !repeatId))) {
         setError('Missing gym or workout type.');
         setLoading(false);
         return;
@@ -103,11 +106,23 @@ export default function ActiveWorkoutPage() {
         const day = program && programDay !== undefined ? program.days[programDay] : undefined;
         const gymId = gymParam || program?.gymId || null;
 
-        const gym = gymRes?.gyms?.find((g: any) => g.id === gymId);
+        let gym = gymRes?.gyms?.find((g: any) => g.id === gymId);
+        let share: SharedWorkout | null = null;
+        if (sharedWorkoutToken && !isResuming) {
+          const shareRes = await fetch(`/api/workout/shared-workouts?token=${encodeURIComponent(sharedWorkoutToken)}`).then((r) => r.json()).catch(() => ({}));
+          if (!shareRes.success) {
+            setError(shareRes.message || 'Could not open the shared workout.');
+            return;
+          }
+          share = shareRes.share as SharedWorkout;
+          // Without one of your gyms, use theirs just this once (nothing is saved to your gyms).
+          if (!gym) gym = share.gym;
+        }
         const repeatOf = repeatId ? history.find((w: any) => w.id === repeatId) : null;
         const type = typesRes?.types?.find((t: any) => t.id === (day?.typeId || typeId))
           || (isFreestyle ? FREESTYLE_TYPE : undefined)
-          || (repeatOf ? { ...FREESTYLE_TYPE, ...(repeatOf.type || {}), name: repeatOf.type?.name || 'Repeat' } : undefined);
+          || (repeatOf ? { ...FREESTYLE_TYPE, ...(repeatOf.type || {}), name: repeatOf.type?.name || 'Repeat' } : undefined)
+          || (share ? { ...FREESTYLE_TYPE, name: share.typeName || share.title } : undefined);
 
         if (!isResuming && !sharedSessionId && (!gym || !type)) {
           setError(program && !type ? 'This program day uses a workout type that no longer exists. Edit the program.' : 'Gym or workout type not found. Go back and check configuration.');
@@ -138,10 +153,16 @@ export default function ActiveWorkoutPage() {
           const repeatLifts = repeatOf
             ? Object.keys(repeatOf.logs || {}).map((liftId) => ({ liftId, name: repeatOf.liftMeta?.[liftId]?.name || '' }))
             : null;
-          const picked = repeatLifts
+          const picked = share ? [] : repeatLifts
             ? buildLiftPlan(availableLifts, type.muscles || [], repeatLifts.length, history, repeatLifts)
             : buildLiftPlan(availableLifts, type.muscles || [], day?.lifts ?? liftCountParam, history, type.fixedLifts || []);
-          plan.push(...picked.map((lift) => ({ ...lift, uniquePlanId: newPlanId() })));
+          if (share) {
+            // Their lifts in their order, as they exist in this gym; targets come from your own history.
+            const { entries } = planFromShare(share, gym);
+            plan.push(...entries.map(({ lift, station }) => ({ ...lift, station, gymName: gym.name, gymId: gym.id, uniquePlanId: newPlanId() })));
+          } else {
+            plan.push(...picked.map((lift) => ({ ...lift, uniquePlanId: newPlanId() })));
+          }
         }
 
         // Full reference list for the tracker's Swap Lift sheet.
@@ -176,7 +197,7 @@ export default function ActiveWorkoutPage() {
           const dayLabel = day ? day.name || type.name : type.name;
           setWorkoutPlan({
             id: newPlanId(),
-            name: `${isDeload ? 'Deload: ' : ''}${program ? `${program.name} · ${dayLabel}` : type.name} @ ${gym.name}`,
+            name: share ? `${share.ownerName}'s ${type.name} @ ${gym.name}` : `${isDeload ? 'Deload: ' : ''}${program ? `${program.name} · ${dayLabel}` : type.name} @ ${gym.name}`,
             freestyle: isFreestyle || undefined,
             isDeload,
             type,
@@ -196,7 +217,7 @@ export default function ActiveWorkoutPage() {
     }
 
     init();
-  }, [gymParam, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload, isFreestyle, repeatId, programId, programDayParam]);
+  }, [gymParam, typeId, liftCountParam, sharedMode, sharedSessionId, isDeload, isFreestyle, repeatId, programId, programDayParam, sharedWorkoutToken]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--muted)' }} className="animate-fade-in">⚙️ Planning your workout…</div>;
   if (error) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--danger)' }} className="animate-fade-in">{error}</div>;

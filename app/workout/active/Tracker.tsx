@@ -466,6 +466,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
         saveError={saveError}
         onSave={saveWorkout}
         onBack={() => { setFinished(false); setSaveError(''); }}
+        getLinkPayload={user ? () => buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: false }) : undefined}
       />
     );
   }

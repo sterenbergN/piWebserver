@@ -9,7 +9,7 @@ import EngineExplainer from './EngineExplainer';
 type HowItWorksProps = {
   user: any;
   isDemo: boolean;
-  experience: { symbol: string; level: string; score: number; breakdown: { time: number; consistency: number; strength: number; progression: number } } | null;
+  experience: { symbol: string; level: string; score: number; breakdown: { time: number; consistency: number; strength: number; progression: number }; progressPctPerMonth?: number | null } | null;
   calibrations: { gymId: string; liftKey: string; scaleFactor?: number; confidence?: number; stationType?: string; updatedAt?: string }[];
   gymNames: Map<string, string>;
   onClose: () => void;
@@ -57,6 +57,11 @@ export default function HowItWorksSheet({ user, isDemo, experience, calibrations
       {experience && (
         <Section title={`Lifter level: ${experience.symbol} ${experience.level}`} open={section === 'level'} onToggle={() => toggle('level')}>
           <p className="workout-hint" style={{ marginTop: 0 }}>Score {experience.score.toFixed(2)} = 20% time training + 30% consistency + 30% strength (vs bodyweight) + 20% progression.</p>
+          <p className="workout-hint">
+            Progression is your typical strength gain per month
+            {typeof experience.progressPctPerMonth === 'number' ? ` (now ${experience.progressPctPerMonth > 0 ? '+' : ''}${experience.progressPctPerMonth}%/month)` : ' (needs a few more weeks of history)'},
+            comparing each lift&apos;s last three sessions with three from at least three weeks earlier. Each lift&apos;s first three sessions are skipped, since the app starts light while it finds your level.
+          </p>
           <div className="an-review">
             <div><span>Time</span><strong>{experience.breakdown.time.toFixed(2)}</strong></div>
             <div><span>Consistency</span><strong>{experience.breakdown.consistency.toFixed(2)}</strong></div>

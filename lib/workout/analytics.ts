@@ -1,3 +1,5 @@
+import { exerciseKey } from './exercises';
+
 // 1 RM Calculators
 // All return 0 for invalid input (0/negative reps or weight) so bad data can't
 // produce NaN or Infinity downstream.
@@ -79,6 +81,61 @@ export interface ExperienceResult {
     strength: number;
     progression: number;
   };
+  /** Typical strength gain per month (%) behind the progression part, or null without enough data. */
+  progressPctPerMonth?: number | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Each lift's first sessions are the app finding your level (light starting weights), not progress. */
+const RAMP_UP_SESSIONS = 3;
+
+/**
+ * Typical strength gain per month (%): for each exercise with enough history,
+ * its best estimated 1RM over the last three sessions against its best in the
+ * three sessions at least three weeks before those, per month between them;
+ * the median across exercises. Ramp-up sessions, deloads and sets logged at
+ * 5+ reps in reserve (too easy to show how strong you are) are left out, so
+ * starting light doesn't read as a big jump.
+ */
+export function strengthProgressRate(workouts: any[]): { pctPerMonth: number; lifts: number } | null {
+  const byExercise = new Map<string, { t: number; e1rm: number }[]>();
+  const sorted = [...workouts].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  for (const w of sorted) {
+    if (w.isDeload || !w.logs) continue;
+    const t = new Date(w.timestamp).getTime();
+    for (const [liftId, sets] of Object.entries(w.logs as Record<string, any[]>)) {
+      let best = 0;
+      for (const set of sets || []) {
+        const weight = Number(set.weight);
+        const reps = Number(set.reps);
+        const rir = typeof set.rir === 'number' ? set.rir : 0;
+        if (!(weight > 0) || !(reps > 0) || rir >= 5) continue;
+        best = Math.max(best, calcAverage1RM(weight, Math.min(30, reps + Math.max(0, rir))));
+      }
+      if (best <= 0) continue;
+      const key = exerciseKey(w.liftMeta?.[liftId]) || liftId;
+      byExercise.set(key, [...(byExercise.get(key) || []), { t, e1rm: best }]);
+    }
+  }
+
+  const rates: number[] = [];
+  for (const sessions of byExercise.values()) {
+    const usable = sessions.slice(RAMP_UP_SESSIONS);
+    if (usable.length < 4) continue;
+    const recent = usable.slice(-3);
+    const base = usable.filter((s) => s.t <= recent[0].t - 21 * DAY_MS).slice(-3);
+    if (base.length === 0) continue;
+    const months = (recent[recent.length - 1].t - base[base.length - 1].t) / (30.44 * DAY_MS);
+    if (months < 0.5) continue;
+    const recentBest = Math.max(...recent.map((s) => s.e1rm));
+    const baseBest = Math.max(...base.map((s) => s.e1rm));
+    rates.push(((recentBest / baseBest - 1) / months) * 100);
+  }
+  if (rates.length === 0) return null;
+  rates.sort((a, b) => a - b);
+  const mid = Math.floor(rates.length / 2);
+  const median = rates.length % 2 ? rates[mid] : (rates[mid - 1] + rates[mid]) / 2;
+  return { pctPerMonth: Math.max(-10, Math.min(15, Math.round(median * 10) / 10)), lifts: rates.length };
 }
 
 // ─── Fatigue Model ─────────────────────────────────────────────────────────────
@@ -227,19 +284,12 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
   // 3. Strength (S)
   const liftMaxes = new Map<string, number>();
   
-  const firstMonthEnd = firstDate + (30.44 * 24 * 60 * 60 * 1000);
-  const initialMaxes = new Map<string, number>();
-
   workouts.forEach((w: any) => {
-      const isFirstMonth = new Date(w.timestamp).getTime() <= firstMonthEnd;
       Object.keys(w.logs).forEach(liftId => {
           w.logs[liftId].forEach((set: any) => {
               if (set.weight > 0 && set.reps > 0) {
                   const rm = calcAverage1RM(set.weight, set.reps);
                   if (rm > (liftMaxes.get(liftId) || 0)) liftMaxes.set(liftId, rm);
-                  if (isFirstMonth) {
-                      if (rm > (initialMaxes.get(liftId) || 0)) initialMaxes.set(liftId, rm);
-                  }
               }
           });
       });
@@ -249,14 +299,14 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
   // muscle-group fallbacks (e.g. a Quads leg press), regardless of order.
   const liftById = new Map<string, any>(allLifts.map((l: any) => [l.id, l]));
   const pickCompound = (namePattern: RegExp, fallbackMuscle: string) => {
-      let best = { max: 0, initial: 0, byName: false };
+      let best = { max: 0, byName: false };
       liftMaxes.forEach((rm, liftId) => {
           const lift = liftById.get(liftId);
           if (!lift) return;
           const byName = namePattern.test(String(lift.name || '').toLowerCase());
           if (!byName && lift.primaryMuscle !== fallbackMuscle) return;
           const better = byName !== best.byName ? byName : rm > best.max;
-          if (better) best = { max: rm, initial: initialMaxes.get(liftId) || 0, byName };
+          if (better) best = { max: rm, byName };
       });
       return best;
   };
@@ -265,18 +315,14 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
   const bench = pickCompound(/bench press/, 'Chest');
   const deadlift = pickCompound(/deadlift/, 'Hamstrings');
   const squatMax = squat.max, benchMax = bench.max, deadliftMax = deadlift.max;
-  const initialSquatMax = squat.initial, initialBenchMax = bench.initial, initialDeadliftMax = deadlift.initial;
 
   const bodyweight = user.weight || 150;
   const S_raw = (squatMax + benchMax + deadliftMax) / bodyweight;
 
-  // 4. Progression (P)
-  const initialTotal = initialSquatMax + initialBenchMax + initialDeadliftMax;
-  const currentTotal = squatMax + benchMax + deadliftMax;
-  let P_raw = 0;
-  if (months_trained > 0 && initialTotal > 0) {
-      P_raw = Math.max(0, (currentTotal - initialTotal) / months_trained);
-  }
+  // 4. Progression (P): typical % gained per month, not raw pounds since the
+  // first (light, ramp-up) weights. ~5%/month (fast novice gains) ≈ 2.5, capped at 3.
+  const progress = strengthProgressRate(workouts);
+  const P_raw = progress ? Math.min(3, Math.max(0, progress.pctPerMonth / 2)) : 0;
 
   // Calculate E
   const E = (0.2 * T_raw) + (0.3 * C) + (0.3 * S_raw) + (0.2 * P_raw);
@@ -299,6 +345,7 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
       consistency: Number(C.toFixed(2)),
       strength: Number(S_raw.toFixed(2)),
       progression: Number(P_raw.toFixed(2))
-    }
+    },
+    progressPctPerMonth: progress ? progress.pctPerMonth : null,
   };
 }

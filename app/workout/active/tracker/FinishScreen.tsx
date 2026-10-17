@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { findPreviousSameType, workoutVolume } from '@/lib/workout/session-insights';
 import { compareWithLastTime, formatClock, sessionVerdict, workoutTotals, type LoggedSet } from '@/lib/workout/tracker-utils';
 import { shareWorkoutCard } from '@/lib/workout/share-card';
+import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { rirLabel } from '@/components/workout/SetEditSheet';
 
 type PR = { name: string; e1rm: number; previous: number; weight: number; reps: number };
@@ -24,6 +25,8 @@ type FinishScreenProps = {
   saveError: string;
   onSave: () => void;
   onBack: () => void;
+  /** The save payload, for a link someone else can do this workout from (logged-in, own gym only). */
+  getLinkPayload?: () => unknown;
 };
 
 const CHANGE_ICON = { up: '▲', down: '▼', same: '=', new: '★' } as const;
@@ -32,6 +35,8 @@ const CHANGE_ICON = { up: '▲', down: '▼', same: '=', new: '★' } as const;
 export default function FinishScreen(props: FinishScreenProps) {
   const { plan, logs, pastHistory, elapsedSecs, prs } = props;
   const [shareState, setShareState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
+  const [linkState, setLinkState] = useState<'idle' | 'busy' | 'shared' | 'copied' | 'error'>('idle');
+  const [linkError, setLinkError] = useState('');
   const comparisons = useMemo(() => compareWithLastTime(plan, logs, pastHistory), [plan, logs, pastHistory]);
   const { volume, sets } = workoutTotals(logs);
   const prList = Object.values(prs);
@@ -60,6 +65,20 @@ export default function FinishScreen(props: FinishScreenProps) {
       setShareState('done');
     } catch {
       setShareState('error');
+    }
+  };
+
+  const sendLink = async () => {
+    if (!props.getLinkPayload) return;
+    setLinkState('busy');
+    setLinkError('');
+    try {
+      const url = await createWorkoutLink({ workout: props.getLinkPayload() });
+      const result = await shareLink(url, `${plan.type?.name || 'Workout'} — do it with me`);
+      setLinkState(result === 'cancelled' ? 'idle' : result);
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : 'Could not create the link');
+      setLinkState('error');
     }
   };
 
@@ -133,6 +152,12 @@ export default function FinishScreen(props: FinishScreenProps) {
           </button>
         ) : <span />}
       </div>
+      {props.getLinkPayload && (<>
+        <button className="workout-button is-block" style={{ marginTop: '0.6rem' }} onClick={sendLink} disabled={linkState === 'busy'}>
+          {linkState === 'busy' ? 'Making link…' : linkState === 'copied' ? '✅ Link copied' : linkState === 'shared' ? '✅ Link sent' : '🔗 Send this workout to a friend'}
+        </button>
+        <p className="workout-hint" style={{ margin: '0.3rem 0 0', textAlign: 'center' }}>{linkError || 'They get these lifts and this gym, with their own weights.'}</p>
+      </>)}
       <button className="workout-button is-block" style={{ marginTop: '0.6rem' }} onClick={props.onBack} disabled={props.saving}>Back to workout</button>
     </div>
   );

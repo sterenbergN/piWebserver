@@ -35,3 +35,16 @@ test('buildAnalyticsData applies calibration scale to stack lifts', () => {
   assert.equal(data.oneRMs[0].scaleFactor, 1.2);
   assert.equal(data.volumeTimeline[0].volume, 1200);
 });
+
+test('progression ignores ramp-up from light starting weights', async () => {
+  const { strengthProgressRate, calculateExperienceScore } = await import('./analytics');
+  const day = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 86_400_000).toISOString();
+  // Ramp-up 45 → 135 in the first three sessions, then flat at 135 × 8 for weeks.
+  const weights = [45, 95, 135, 135, 135, 135, 135, 135, 135, 135];
+  const history = weights.map((w, i) => ({ timestamp: day(i * 7), logs: { b: [{ weight: w, reps: 8, rir: 2 }] }, liftMeta: { b: { name: 'Bench Press' } } }));
+  assert.equal(strengthProgressRate(history)?.pctPerMonth, 0);
+  assert.equal(calculateExperienceScore({ weight: 180 }, history, [{ id: 'b', name: 'Bench Press', primaryMuscle: 'Chest' }]).breakdown.progression, 0);
+  // Real progress: +5 lb a session after the ramp-up.
+  const growing = weights.map((w, i) => ({ timestamp: day(i * 7), logs: { b: [{ weight: i < 3 ? w : 135 + (i - 3) * 5, reps: 8, rir: 2 }] }, liftMeta: { b: { name: 'Bench Press' } } }));
+  assert.ok(strengthProgressRate(growing)!.pctPerMonth > 5);
+});

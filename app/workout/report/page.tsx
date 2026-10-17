@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { monthlyStrength, weeklyReport, type ReportWorkout } from '@/lib/workout/reports';
 import { DEMO_HISTORY } from '@/lib/workout/demo-data';
+import PageHeader from '@/components/workout/PageHeader';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const fmt = (n: number) => n.toLocaleString();
@@ -87,11 +88,7 @@ export default function ReportPage() {
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '3rem' }}>
-      <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
-        <Link href="/workout" style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>← Workout</Link>
-        {isDemo && <span className="workout-pill">Sample data</span>}
-      </div>
-      <h1 style={{ fontSize: '1.5rem', margin: '0 0 0.75rem' }}>Training Report</h1>
+      <PageHeader title="Training report" actions={isDemo ? <span className="workout-pill">Sample data</span> : undefined} />
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
         {(['week', 'month'] as const).map((v) => (
