@@ -292,6 +292,9 @@ main { min-height: calc(100vh - 120px); }
 /* Blog article: roomy on desktop, but the text keeps most of a phone's width. */
 .glass-panel.post-body { padding: clamp(1.1rem, 5vw, 2.5rem); line-height: 1.8; overflow-wrap: break-word; }
 .post-body img { max-width: 100%; height: auto; border-radius: 10px; }
+.post-figure { display: block; margin: 1.25rem 0; text-align: center; }
+.post-figure img { display: block; margin: 0 auto; }
+.post-caption { display: block; margin-top: 0.45rem; font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
 .post-body pre, .post-body table { max-width: 100%; overflow-x: auto; }
 .markdown-body blockquote { border-left: 3px solid var(--accent); padding-left: 1rem; opacity: 0.8; }
 .markdown-body a { color: var(--accent-light); }

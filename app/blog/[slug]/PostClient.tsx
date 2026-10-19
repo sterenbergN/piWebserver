@@ -5,6 +5,7 @@ import Markdown from 'react-markdown';
 import Link from 'next/link';
 import { useSitePopup } from '@/components/SitePopup';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
+import PostImage from '@/components/blog/PostImage';
 
 type PostLink = { slug: string; title: string };
 type PostClientProps = {
@@ -126,9 +127,7 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
                 style={{ color: 'var(--accent)', textDecoration: 'underline' }} />
               ),
               // Pictures in the text: a screen-sized copy, loaded as they scroll into view.
-              img: ({ node: _node, src, alt }) => typeof src === 'string' && src.startsWith('/api/media') ? (
-                <img src={mediaSrc(src, 1280)} srcSet={mediaSrcSet(src, [640, 960, 1280, 1920])} sizes="(max-width: 900px) 100vw, 860px" alt={alt || ''} loading="lazy" decoding="async" />
-              ) : <img src={typeof src === 'string' ? src : undefined} alt={alt || ''} loading="lazy" />,
+              img: ({ node: _node, src, alt, title }) => <PostImage src={src} alt={alt} title={title} />,
             }}
           >{markdown}</Markdown>
         </div>
