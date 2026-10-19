@@ -18,7 +18,6 @@
   border-radius: 14px;
   border: 1px solid var(--surface-border);
   background: var(--nav-bg);
-  backdrop-filter: blur(12px);
 }
 .adm-tabs::-webkit-scrollbar { display: none; }
 .adm-tab {

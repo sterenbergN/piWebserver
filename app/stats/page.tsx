@@ -106,7 +106,7 @@ export default function StatsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
         <h1>System Node</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', opacity: 0.6, fontSize: '0.875rem' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#48bb78', display: 'inline-block', animation: 'fadeIn 1s infinite alternate' }} />
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--success)', display: 'inline-block', animation: 'fadeIn 1s infinite alternate' }} />
           Auto-refresh every 10s
         </div>
       </div>

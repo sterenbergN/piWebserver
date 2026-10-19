@@ -13,14 +13,14 @@ export default function OpenGraphImage() {
       <div
         style={{
           width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center',
-          padding: '80px 96px', color: '#ededed',
-          background: 'radial-gradient(circle at 15% 20%, rgba(107,70,193,0.55), transparent 55%), radial-gradient(circle at 90% 90%, rgba(49,130,206,0.45), transparent 50%), #0a0a0c',
+          padding: '80px 96px', color: '#eceff4',
+          background: '#2b303b', borderLeft: '16px solid #88c0d0',
         }}
       >
-        <div style={{ display: 'flex', fontSize: 34, color: '#9f7aea', marginBottom: 28 }}>🐾 noahstuf.com</div>
+        <div style={{ display: 'flex', fontSize: 34, color: '#88c0d0', marginBottom: 28 }}>noahstuf.com</div>
         <div style={{ display: 'flex', fontSize: 92, fontWeight: 700, letterSpacing: -2, lineHeight: 1.05 }}>{DEFAULT_PROFILE.name}</div>
-        <div style={{ display: 'flex', fontSize: 36, color: '#a0aec0', marginTop: 28, lineHeight: 1.35, maxWidth: 980 }}>{DEFAULT_PROFILE.headline}</div>
-        <div style={{ display: 'flex', fontSize: 26, color: '#68d391', marginTop: 44 }}>● Self-hosted on a Raspberry Pi</div>
+        <div style={{ display: 'flex', fontSize: 36, color: '#a3adbf', marginTop: 28, lineHeight: 1.35, maxWidth: 980 }}>{DEFAULT_PROFILE.headline}</div>
+        <div style={{ display: 'flex', fontSize: 26, color: '#a3be8c', marginTop: 44 }}>● Self-hosted on a Raspberry Pi</div>
       </div>
     ),
     size,

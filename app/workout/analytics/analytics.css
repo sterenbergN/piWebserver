@@ -285,7 +285,7 @@
   padding: 0.85rem 1rem;
   border: 0;
   border-radius: 16px;
-  background: linear-gradient(120deg, #5b21b6, #db2777);
+  background: var(--accent);
   color: #fff;
   text-align: left;
   font: inherit;

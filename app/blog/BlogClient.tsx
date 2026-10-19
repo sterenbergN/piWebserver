@@ -78,7 +78,7 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
         {isAdmin && (
           <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.35rem' }}>
             <Link href={`/admin/posts/${post.slug}`} title="Edit post" aria-label={`Edit ${post.title}`}
-              style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'none' }}>✏️</Link>
+              style={{ background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'none' }}>✏️</Link>
             <button onClick={e => { e.preventDefault(); handleDelete(post.slug); }}
               style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
           </div>

@@ -1,52 +1,62 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+/* Arctic palette: cool blue-grays with one icy blue accent, flat surfaces.
+   --accent fills controls (white text on it); --accent-light is for accent text and links. */
+
 /* ── Dark Mode (default) ── */
 :root, [data-theme="dark"] {
-  --background: #0a0a0c;
-  --foreground: #ededed;
-  --muted: #a0aec0;
-  --accent: #6b46c1;
-  --accent-rgb: 107, 70, 193;
-  --accent-light: #9f7aea;
-  --accent-gradient: linear-gradient(135deg, #6b46c1, #3182ce);
-  --surface-glass: rgba(255, 255, 255, 0.03);
-  --surface-border: rgba(255, 255, 255, 0.08);
-  --surface-hover: rgba(255, 255, 255, 0.06);
-  --nav-bg: rgba(10, 10, 12, 0.85);
-  --input-bg: rgba(0,0,0,0.3);
-  --card-bg: rgba(0,0,0,0.3);
-  --danger: #fc8181;
-  --danger-rgb: 252, 129, 129;
-  --success: #48bb78;
-  --success-rgb: 72, 187, 120;
-  --success-light: #68d391;
-  --warning: #ed8936;
-  --info: #63b3ed;
+  --background: #2b303b;
+  --foreground: #eceff4;
+  --muted: #a3adbf;
+  --accent: #5e81ac;
+  --accent-rgb: 94, 129, 172;
+  --accent-light: #88c0d0;
+  /* Kept for older rules that use it as a background; it's a flat color now. */
+  --accent-gradient: var(--accent);
+  --primary-bg: #88c0d0;
+  --primary-bg-hover: #9fcfdc;
+  --primary-fg: #1d2a33;
+  --surface-glass: #323845;
+  --surface-border: #434c5e;
+  --surface-hover: #3a4150;
+  --nav-bg: #2b303b;
+  --input-bg: #262b35;
+  --card-bg: #2f3542;
+  --danger: #e0707a;
+  --danger-rgb: 224, 112, 122;
+  --success: #a3be8c;
+  --success-rgb: 163, 190, 140;
+  --success-light: #b8cfa4;
+  --warning: #d08770;
+  --info: #81a1c1;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 /* ── Light Mode ── */
 [data-theme="light"] {
-  --background: #f0f2f5;
-  --foreground: #1a1a2e;
-  --muted: #555e75;
-  --accent: #6b46c1;
-  --accent-rgb: 107, 70, 193;
-  --accent-light: #553c9a;
-  --accent-gradient: linear-gradient(135deg, #6b46c1, #3182ce);
-  --surface-glass: rgba(255, 255, 255, 0.75);
-  --surface-border: rgba(0, 0, 0, 0.09);
-  --surface-hover: rgba(255, 255, 255, 0.95);
-  --nav-bg: rgba(240, 242, 245, 0.88);
-  --input-bg: rgba(255,255,255,0.8);
-  --card-bg: rgba(255,255,255,0.6);
-  --danger: #c53030;
-  --danger-rgb: 197, 48, 48;
-  --success: #2f855a;
-  --success-rgb: 47, 133, 90;
-  --success-light: #38a169;
-  --warning: #c05621;
-  --info: #2b6cb0;
+  --background: #eceff4;
+  --foreground: #2e3440;
+  --muted: #5c667a;
+  --accent: #4c6f99;
+  --accent-rgb: 76, 111, 153;
+  --accent-light: #3e5f88;
+  --accent-gradient: var(--accent);
+  --primary-bg: #4c6f99;
+  --primary-bg-hover: #42628a;
+  --primary-fg: #ffffff;
+  --surface-glass: #ffffff;
+  --surface-border: #d8dee9;
+  --surface-hover: #f4f6f9;
+  --nav-bg: #eceff4;
+  --input-bg: #ffffff;
+  --card-bg: #f6f8fb;
+  --danger: #b23a46;
+  --danger-rgb: 178, 58, 70;
+  --success: #4a7a3a;
+  --success-rgb: 74, 122, 58;
+  --success-light: #3f6b30;
+  --warning: #b0562c;
+  --info: #3b6ea5;
 }
 
 * { box-sizing: border-box; padding: 0; margin: 0; }
@@ -60,22 +70,13 @@ body {
   line-height: 1.6;
   min-height: 100vh;
   overflow-x: hidden;
-  background-image:
-    radial-gradient(circle at 15% 50%, rgba(107, 70, 193, 0.05), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(49, 130, 206, 0.05), transparent 25%);
   transition: background-color 0.3s ease;
 }
 
 /* ── Typography ── */
 h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
 
-h1 {
-  font-size: clamp(2rem, 5vw, 3rem);
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
+h1 { font-size: clamp(2rem, 5vw, 3rem); color: var(--foreground); }
 h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 1rem; }
 
 p { color: var(--muted); margin-bottom: 1rem; }
@@ -83,20 +84,13 @@ p { color: var(--muted); margin-bottom: 1rem; }
 a { color: inherit; text-decoration: none; transition: color 0.2s ease; }
 a:hover { color: var(--accent-light); }
 
-/* ── Glassmorphism ── */
+/* ── Panels (flat surface + hairline border; the class name is historical) ── */
 .glass-panel {
   background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--surface-border);
-  border-radius: 16px;
+  border-radius: 12px;
   padding: 2rem;
-  transition: transform 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
-}
-.glass-panel:hover {
-  transform: translateY(-2px);
-  background: var(--surface-hover);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.2s ease;
 }
 
 /* ── Navbar ── */
@@ -105,8 +99,6 @@ a:hover { color: var(--accent-light); }
   top: 0;
   z-index: 100;
   background: var(--nav-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--surface-border);
   padding: 0.85rem 2rem;
   display: flex;
@@ -174,7 +166,7 @@ input[type="checkbox"], input[type="radio"] {
 
 input:focus, textarea:focus, select:focus {
   border-color: var(--accent-light);
-  box-shadow: 0 0 0 2px rgba(159, 122, 234, 0.2);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.3);
 }
 
 /* ── Buttons ── */
@@ -191,11 +183,11 @@ input:focus, textarea:focus, select:focus {
   white-space: nowrap;
 }
 .btn-primary {
-  background: var(--accent-gradient);
-  color: white;
-  box-shadow: 0 4px 14px 0 rgba(107, 70, 193, 0.39);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(107, 70, 193, 0.4); }
+.btn-primary:hover { background: var(--primary-bg-hover); color: var(--primary-fg); }
+.btn-primary:disabled { opacity: 0.55; cursor: default; }
 .btn-secondary {
   background: var(--surface-glass);
   color: var(--foreground);
@@ -262,7 +254,7 @@ input:focus, textarea:focus, select:focus {
 
 .site-popup-danger {
   border: none;
-  background: #e53e3e;
+  background: #b23a46;
   color: #fff;
   border-radius: 8px;
   padding: 0.75rem 1.25rem;

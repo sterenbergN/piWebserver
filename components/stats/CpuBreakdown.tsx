@@ -32,7 +32,7 @@ export default function CpuBreakdown({ detail, align = 'center' }: { detail: Cpu
           {detail.cores.map((pct, i) => (
             <div key={i} role="listitem" title={`Core ${i + 1}: ${pct.toFixed(1)}% busy`} aria-label={`Core ${i + 1}: ${Math.round(pct)}% busy`}>
               <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', borderRadius: 4, background: 'var(--input-bg)', border: '1px solid var(--surface-border)', overflow: 'hidden' }}>
-                <div style={{ width: '100%', height: `${Math.min(100, pct)}%`, minHeight: pct > 0 ? 1 : 0, background: 'linear-gradient(0deg, var(--accent), var(--accent-light))' }} />
+                <div style={{ width: '100%', height: `${Math.min(100, pct)}%`, minHeight: pct > 0 ? 1 : 0, background: 'var(--accent-light)' }} />
               </div>
               {!manyCores && <div style={{ marginTop: 2, opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>{Math.round(pct)}%</div>}
             </div>

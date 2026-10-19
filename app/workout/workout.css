@@ -10,20 +10,18 @@
 .workout-tile {
   background: var(--surface-glass);
   border: 1px solid var(--surface-border);
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 1.25rem;
   margin-bottom: 1rem;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-  backdrop-filter: blur(10px);
-  transition: all 0.3s ease;
+  transition: border-color 0.2s ease;
 }
 
 .workout-btn-primary {
   width: 100%;
   padding: 1rem;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
-  color: white;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
   font-weight: 700;
   font-size: 1.1rem;
   border: none;
@@ -97,7 +95,6 @@
 }
 
 .tracker-topbar {
-  backdrop-filter: blur(14px);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -778,9 +775,8 @@
 .workout-button:disabled { opacity: 0.5; cursor: default; }
 .workout-button.is-primary {
   border: none;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
-  box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.3);
+  color: var(--primary-fg);
+  background: var(--primary-bg);
 }
 .workout-button.is-dashed { background: transparent; border: 1px dashed var(--accent); color: var(--accent-light); }
 .workout-button.is-danger { background: transparent; border-color: rgba(var(--danger-rgb), 0.6); color: var(--danger); }

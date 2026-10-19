@@ -219,7 +219,7 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
                     )}
                     {isAdmin && (
                       <button onClick={() => setEditingPhoto({ src: currentPhoto.src, description: currentPhoto.description || '' })}
-                        style={{ background: '#3182ce', color: 'white', border: 'none', borderRadius: '4px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontSize: '0.8rem' }}>
+                        style={{ background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontSize: '0.8rem' }}>
                         ✏️
                       </button>
                     )}

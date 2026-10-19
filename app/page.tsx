@@ -14,11 +14,12 @@ import './home.css';
 // (no blank screen while the browser fetches the resume, posts and CAD list).
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Automation: '#3b82f6',
-  Infrastructure: '#8b5cf6',
-  Software: '#10b981',
-  Hardware: '#f59e0b',
-  Other: '#64748b',
+  // Muted Nord-style tones that read on both the light and dark theme.
+  Automation: '#5e81ac',
+  Infrastructure: '#9a7397',
+  Software: '#6f8f57',
+  Hardware: '#b58b2e',
+  Other: '#7b8597',
 };
 
 const countPhotos = (albums: GalleryAlbum[]): number => albums.reduce((n, a) => n + a.images.length + countPhotos(a.albums), 0);

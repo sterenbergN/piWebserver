@@ -616,9 +616,10 @@ export default function WorkoutDashboard() {
           const totalSets = pendingWorkout.logs ? Object.values(pendingWorkout.logs).reduce((sum: number, sets: any) => sum + (sets?.length || 0), 0) : 0;
           return (
              <div className="workout-tile animate-fade-in" style={{ 
-                borderLeft: '3px solid #4299e1', 
-                background: 'linear-gradient(135deg, rgba(66, 153, 225, 0.08), rgba(102, 126, 234, 0.05))',
-                marginBottom: '0.5rem' 
+                borderLeft: '3px solid var(--accent-light)',
+                borderRadius: 0,
+                background: 'rgba(var(--accent-rgb), 0.08)',
+                marginBottom: '0.5rem'
              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
                    <span style={{ fontSize: '1.5rem' }}>⚡</span>
@@ -632,7 +633,7 @@ export default function WorkoutDashboard() {
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                    <button 
                      className="workout-btn-primary" 
-                     style={{ flex: 2, margin: 0, padding: '0.85rem', background: 'linear-gradient(135deg, #4299e1, #667eea)', boxShadow: '0 4px 12px rgba(66, 153, 225, 0.3)' }}
+                     style={{ flex: 2, margin: 0, padding: '0.85rem' }}
                      onClick={() => window.location.href = '/workout/active?resume=true'}
                    >
                      Resume

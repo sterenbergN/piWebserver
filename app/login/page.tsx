@@ -42,7 +42,7 @@ export default function LoginPage() {
         
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div>
-            <label htmlFor="password" style={{ display: 'block', marginBottom: '0.5rem', color: '#a0aec0' }}>
+            <label htmlFor="password" style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)' }}>
               Access Code
             </label>
             <input 
@@ -56,7 +56,7 @@ export default function LoginPage() {
             />
           </div>
           
-          {error && <p style={{ color: '#fc8181', fontSize: '0.875rem', margin: 0 }}>{error}</p>}
+          {error && <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.875rem', margin: 0 }}>{error}</p>}
           
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', marginTop: '0.5rem' }}>
             {loading ? 'Verifying...' : 'Authenticate'}
