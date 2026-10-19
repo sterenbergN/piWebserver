@@ -143,7 +143,8 @@ function LiftDetail({ stat, goals, history, review, onClose }: { stat: ExerciseS
       )}
 
       {stat.repRecords.length > 0 && (<>
-        <div className="workout-section-title">Rep records <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>heaviest weight for at least that many reps</span></div>
+        <div className="workout-section-title">Rep records</div>
+        <p className="workout-hint" style={{ margin: '-0.35rem 0 0.5rem' }}>Heaviest weight for at least that many reps</p>
         <div className="an-records">
           {stat.repRecords.map((r) => (
             <div key={r.reps}><span>{r.reps === 1 ? 'Single' : `${r.reps}+ reps`}</span><strong>{r.weight} lb</strong><small>{shortDate(r.timestamp)}</small></div>
