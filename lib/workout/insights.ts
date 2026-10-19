@@ -24,6 +24,7 @@ export type Workout = {
   gymId?: string;
   gymName?: string;
   durationSecs?: number;
+  notes?: string;
   isDeload?: boolean;
   logs?: Record<string, SetLike[]>;
   liftMeta?: Record<string, { name?: string; exercise?: string; primaryMuscle?: string; secondaryMuscle?: string; stationType?: string }>;

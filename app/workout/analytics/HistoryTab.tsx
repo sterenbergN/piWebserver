@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { rirLabel } from '@/components/workout/SetEditSheet';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { exerciseKey } from '@/lib/workout/exercises';
+import { getPossibleWeights } from '@/lib/workout/equipment';
 import { localDayKey, weekStart, type Workout } from '@/lib/workout/insights';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import { compact } from './charts';
@@ -11,15 +12,19 @@ import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { cardDataForWorkout, renderWorkoutCard, type CardFormat } from '@/lib/workout/share-card';
 import ShareViewer from '@/components/workout/ShareViewer';
 import EditWorkoutSheet from './EditWorkoutSheet';
+import CompareSheet from './CompareSheet';
 
 type HistoryTabProps = {
   history: Workout[];
-  lifts: Record<string, { name?: string; exercise?: string }>;
+  lifts: Record<string, { name?: string; exercise?: string; station?: any }>;
   gymNames: Map<string, string>;
   /** Logged in (not the demo): workouts can be edited, deleted and sent. */
   canEdit: boolean;
   onDelete: (id: string) => void;
-  onUpdated: (workout: Workout) => void;
+  /** Who's logged in, for edits kept on the phone while offline. */
+  ownerId?: string;
+  /** `queued`: saved on this phone, not yet on the server. */
+  onUpdated: (workout: Workout, queued?: boolean) => void;
   /** Open an exercise on the Lifts tab. */
   onOpenLift: (key: string) => void;
 };
@@ -46,7 +51,7 @@ function stats(w: Workout) {
 }
 
 /** Every saved workout, newest first, grouped by week or on a calendar; tap one for its sets. */
-export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete, onUpdated, onOpenLift }: HistoryTabProps) {
+export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId, onDelete, onUpdated, onOpenLift }: HistoryTabProps) {
   const [query, setQuery] = useState('');
   const [gym, setGym] = useState('');
   const [type, setType] = useState('');
@@ -58,6 +63,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
   const [linkNote, setLinkNote] = useState<{ id: string; text: string } | null>(null);
   const [cardFor, setCardFor] = useState<Workout | null>(null);
   const [editing, setEditing] = useState<Workout | null>(null);
+  const [comparing, setComparing] = useState<Workout | null>(null);
   const q = query.trim().toLowerCase();
 
   const chooseView = (next: View) => { setView(next); savePref('workout:historyView', next); };
@@ -85,7 +91,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
   const matches = useMemo(() => [...history]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .filter((w) => (!gymFilter || gymOf(w, gymNames) === gymFilter) && (!typeFilter || typeOf(w) === typeFilter))
-    .filter((w) => !q || [typeOf(w), w.name, gymOf(w, gymNames), ...Object.keys(w.logs || {}).map((id) => nameOf(w, id, lifts))]
+    .filter((w) => !q || [typeOf(w), w.name, w.notes, gymOf(w, gymNames), ...Object.keys(w.logs || {}).map((id) => nameOf(w, id, lifts))]
       .some((text) => (text || '').toLowerCase().includes(q))),
   [history, q, gymFilter, typeFilter, gymNames, lifts]);
 
@@ -110,6 +116,9 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
     return map;
   }, [matches]);
 
+  // Weeks with any workout (for streak marks), keyed by their Monday.
+  const trainedWeeks = useMemo(() => new Set(matches.map((w) => localDayKey(weekStart(new Date(w.timestamp))))), [matches]);
+
   const shown = weeks.slice(0, pages * WEEKS_PER_PAGE);
   const shownMonth = month || (matches[0] ? new Date(matches[0].timestamp) : new Date());
 
@@ -121,7 +130,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
       <div key={id} className={`an-workout${isOpen ? ' is-open' : ''}`}>
         <button type="button" className="an-workout-head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : id)}>
           <span className="workout-card-text">
-            <span className="workout-card-title">{w.isDeload ? '🧘 ' : ''}{typeOf(w)}</span>
+            <span className="workout-card-title">{w.isDeload ? '🧘 ' : ''}{typeOf(w)}{w.notes ? ' 📝' : ''}</span>
             <span className="workout-card-meta">
               {new Date(w.timestamp).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
               {gymOf(w, gymNames) ? ` · ${gymOf(w, gymNames)}` : ''}
@@ -133,6 +142,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
         </button>
         {isOpen && (
           <div className="an-workout-body animate-fade-in">
+            {w.notes && <p className="an-workout-notes">📝 {w.notes}</p>}
             {Object.entries(w.logs || {}).map(([liftId, sets]) => {
               const valid = (sets || []).filter((set) => Number(set.reps) > 0);
               const best = valid.reduce((m, set) => Math.max(m, calcAverage1RM(Number(set.weight) || 0, Number(set.reps))), 0);
@@ -152,6 +162,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
             {Object.keys(w.logs || {}).length === 0 && <p className="workout-hint">No sets were logged.</p>}
             <div className="an-workout-actions">
               {s.sets > 0 && <button type="button" className="workout-button is-small" onClick={() => setCardFor(w)}>📸 Share card</button>}
+              {history.length > 1 && <button type="button" className="workout-button is-small" onClick={() => setComparing(w)}>⚖️ Compare</button>}
               {canEdit && w.id && (<>
                 <button type="button" className="workout-button is-small" onClick={() => sendLink(w)}>🔗 Send</button>
                 <button type="button" className="workout-button is-small" onClick={() => setEditing(w)}>✏️ Edit</button>
@@ -175,6 +186,24 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
       return d.getFullYear() === first.getFullYear() && d.getMonth() === first.getMonth();
     });
     const monthSets = inMonth.reduce((n, w) => n + stats(w).sets, 0);
+    // Shade days by volume (4 levels, relative to this month's biggest day).
+    const dayVolume = (key: string) => (byDay.get(key) || []).reduce((n, w) => n + stats(w).volume, 0);
+    const days = Array.from({ length: daysInMonth }, (_, i) => {
+      const date = new Date(first.getFullYear(), first.getMonth(), i + 1);
+      const key = localDayKey(date);
+      return { key, date, count: byDay.get(key)?.length || 0, volume: dayVolume(key), level: 0 };
+    });
+    const maxVolume = Math.max(1, ...days.map((d) => d.volume));
+    days.forEach((d) => { d.level = d.count ? Math.max(1, Math.ceil((d.volume / maxVolume) * 4)) : 0; });
+    const cells = [...Array(lead).fill(null), ...days];
+    while (cells.length % 7) cells.push(null);
+    const rows = Array.from({ length: cells.length / 7 }, (_, r) => {
+      const rowDays = cells.slice(r * 7, r * 7 + 7) as (typeof days[number] | null)[];
+      const firstDay = rowDays.find(Boolean)!;
+      const monday = weekStart(firstDay.date);
+      const shift = (weeks: number) => localDayKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + weeks * 7));
+      return { key: shift(0), days: rowDays, streak: trainedWeeks.has(shift(0)) && (trainedWeeks.has(shift(-1)) || trainedWeeks.has(shift(1))) };
+    });
     const moveMonth = (delta: number) => { setMonth(new Date(first.getFullYear(), first.getMonth() + delta, 1)); setDay(null); };
     const dayWorkouts = day ? byDay.get(day) || [] : [];
     return (<>
@@ -187,28 +216,31 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
           </div>
           <button type="button" className="workout-icon-btn" aria-label="Next month" onClick={() => moveMonth(1)}>›</button>
         </div>
-        <div className="an-calendar-grid" role="grid">
+        <div className="an-calendar-grid">
           {WEEKDAYS.map((d) => <span key={d} className="an-calendar-weekday">{d.slice(0, 1)}</span>)}
-          {Array.from({ length: lead }, (_, i) => <span key={`lead-${i}`} />)}
-          {Array.from({ length: daysInMonth }, (_, i) => {
-            const key = localDayKey(new Date(first.getFullYear(), first.getMonth(), i + 1));
-            const count = byDay.get(key)?.length || 0;
-            const classes = ['an-calendar-day', count ? 'has-workout' : '', key === today ? 'is-today' : '', key === day ? 'is-selected' : ''].filter(Boolean).join(' ');
-            return (
-              <button
-                key={key}
-                type="button"
-                className={classes}
-                disabled={!count}
-                aria-pressed={key === day}
-                aria-label={`${new Date(first.getFullYear(), first.getMonth(), i + 1).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}${count ? `, ${count} workout${count === 1 ? '' : 's'}` : ''}`}
-                onClick={() => { setDay(key === day ? null : key); setOpen((byDay.get(key) || [])[0]?.id || null); }}
-              >
-                {i + 1}
-                {count > 1 && <small>{count}</small>}
-              </button>
-            );
-          })}
+          <span className="an-calendar-weekday" title="Weeks in a streak">🔥</span>
+          {rows.map((row) => (<Fragment key={row.key}>
+            {row.days.map((cell, i) => {
+              if (!cell) return <span key={`${row.key}-${i}`} />;
+              const { key, date, count, level } = cell;
+              const classes = ['an-calendar-day', count ? `has-workout lvl-${level}` : '', key === today ? 'is-today' : '', key === day ? 'is-selected' : ''].filter(Boolean).join(' ');
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={classes}
+                  disabled={!count}
+                  aria-pressed={key === day}
+                  aria-label={`${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}${count ? `, ${count} workout${count === 1 ? '' : 's'}` : ''}`}
+                  onClick={() => { setDay(key === day ? null : key); setOpen((byDay.get(key) || [])[0]?.id || null); }}
+                >
+                  {date.getDate()}
+                  {count > 1 && <small>{count}</small>}
+                </button>
+              );
+            })}
+            <span className={`an-calendar-streak${row.streak ? ' is-on' : ''}`} aria-label={row.streak ? 'Part of a streak' : undefined}>{row.streak ? '🔥' : ''}</span>
+          </Fragment>))}
         </div>
       </section>
       {day ? (
@@ -223,7 +255,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
     <div className="an-stack">
       <section className="workout-tile an-card an-history-filters">
         <div className="an-history-search">
-          <input className="workout-input" type="search" placeholder="Search by workout, lift or gym" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="workout-input" type="search" placeholder="Search workouts, lifts, gyms, notes" value={query} onChange={(e) => setQuery(e.target.value)} />
           <div className="an-view-toggle" role="radiogroup" aria-label="View">
             <button type="button" role="radio" aria-checked={view === 'list'} aria-label="List" onClick={() => chooseView('list')}>☰</button>
             <button type="button" role="radio" aria-checked={view === 'calendar'} aria-label="Calendar" onClick={() => chooseView('calendar')}>📅</button>
@@ -272,17 +304,21 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, onDelete
           title={`${typeOf(cardFor)} · ${new Date(cardFor.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
           options={CARD_FORMATS}
           optionPref="workout:cardFormat"
-          render={async (format) => [await renderWorkoutCard(cardDataForWorkout(cardFor, history, { gymName: gymNames.get(cardFor.gymId || ''), lifts }), format as CardFormat)]}
+          allowPhoto
+          render={async (format, photo) => [await renderWorkoutCard(cardDataForWorkout(cardFor, history, { gymName: gymNames.get(cardFor.gymId || ''), lifts }), format as CardFormat, photo)]}
           fileBase={`workout-${localDayKey(new Date(cardFor.timestamp))}`}
           shareTitle={typeOf(cardFor)}
           onClose={() => setCardFor(null)}
         />
       )}
+      {comparing && <CompareSheet workout={comparing} history={history} lifts={lifts} onClose={() => setComparing(null)} />}
       {editing && (
         <EditWorkoutSheet
           workout={editing}
           liftName={(id) => nameOf(editing, id, lifts)}
-          onSaved={(w) => { onUpdated(w); setEditing(null); }}
+          weightsFor={(id) => (lifts[id]?.station ? getPossibleWeights(lifts[id].station) : [])}
+          ownerId={ownerId}
+          onSaved={(w, queued) => { onUpdated(w, queued); setEditing(null); }}
           onClose={() => setEditing(null)}
         />
       )}

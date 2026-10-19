@@ -95,6 +95,12 @@ export default function SetLogger(props: SetLoggerProps) {
           <StepperInput label="Weight (lbs)" decimal value={weight} onChange={props.onWeight} onStep={props.onStepWeight} />
           <StepperInput label="Reps" value={props.reps} onChange={props.onReps} onStep={(d) => props.onReps(Math.max(0, props.reps + d))} />
         </div>
+        {props.plates?.plates && (
+          // The full diagram is further down; this saves the mental maths mid-set.
+          <p className="tracker-plate-line">
+            {props.plates.plates.length ? <>Per side: <strong>{props.plates.plates.join(' + ')}</strong> on the {props.plates.bar} lb bar</> : <>Just the {props.plates.bar} lb bar</>}
+          </p>
+        )}
         <div style={{ marginTop: '0.8rem' }}>
           <p style={{ fontSize: '0.8rem', fontWeight: 700, textAlign: 'center', margin: '0 0 0.1rem' }}>
             {liftDone ? 'Log an extra set' : `Log set ${sets.length + 1}`} — tap how many more reps you had left

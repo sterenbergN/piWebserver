@@ -151,21 +151,44 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
     programId: optionalString(payload.programId, 80),
     programDay: Number.isInteger(payload.programDay) && payload.programDay >= 0 ? payload.programDay : undefined,
     intensitySlider: finiteNumber(payload.intensitySlider),
+    notes: cleanNotes(payload.notes),
   };
 }
 
+export type WorkoutEdit = { logs?: unknown; timestamp?: unknown; durationSecs?: unknown; notes?: unknown };
+
 /**
- * Fix the sets of a saved workout (wrong weight, a missed set, a typo). Only
- * lifts already in the workout can be edited; a lift left with no sets drops
- * out, along with its warm-ups and metadata. Returns null if nothing is left.
+ * Fix a saved workout: its sets (wrong weight, a missed set, a typo), when it
+ * was and how long it took, and its notes. Only lifts already in the workout
+ * can be edited; a lift left with no sets drops out, along with its warm-ups
+ * and metadata. Returns null if no sets would be left.
  */
-export function applyWorkoutEdit(entry: WorkoutHistoryItem, rawLogs: unknown): WorkoutHistoryItem | null {
-  const { logs } = sanitizeWorkoutPayload({ logs: rawLogs });
-  for (const liftId of Object.keys(logs)) {
-    if (!entry.logs?.[liftId]) delete logs[liftId];
+export function applyWorkoutEdit(entry: WorkoutHistoryItem, edit: WorkoutEdit): WorkoutHistoryItem | null {
+  const next: WorkoutHistoryItem = { ...entry, editedAt: new Date().toISOString() };
+  if (edit.logs !== undefined) {
+    const { logs } = sanitizeWorkoutPayload({ logs: edit.logs });
+    for (const liftId of Object.keys(logs)) {
+      if (!entry.logs?.[liftId]) delete logs[liftId];
+    }
+    if (Object.keys(logs).length === 0) return null;
+    const keep = <T,>(map: Record<string, T> | undefined) => (map ? Object.fromEntries(Object.entries(map).filter(([id]) => logs[id])) : map);
+    next.logs = logs;
+    next.liftMeta = keep(entry.liftMeta);
+    next.warmups = keep(entry.warmups);
+    next.volume = Object.values(logs).flat().reduce((sum, s: any) => sum + s.weight * s.reps, 0);
   }
-  if (Object.keys(logs).length === 0) return null;
-  const keep = <T,>(map: Record<string, T> | undefined) => (map ? Object.fromEntries(Object.entries(map).filter(([id]) => logs[id])) : map);
-  const volume = Object.values(logs).flat().reduce((sum, s: any) => sum + s.weight * s.reps, 0);
-  return { ...entry, logs, liftMeta: keep(entry.liftMeta), warmups: keep(entry.warmups), volume, editedAt: new Date().toISOString() };
+  if (typeof edit.timestamp === 'string' && !Number.isNaN(Date.parse(edit.timestamp))) {
+    next.timestamp = new Date(edit.timestamp).toISOString();
+  }
+  const secs = finiteNumber(edit.durationSecs);
+  if (secs !== undefined && secs >= 0 && secs <= 24 * 3600) {
+    next.durationSecs = Math.round(secs);
+    next.duration = `${Math.floor(next.durationSecs / 60)}:${String(next.durationSecs % 60).padStart(2, '0')}`;
+  }
+  if (edit.notes !== undefined) next.notes = cleanNotes(edit.notes);
+  return next;
+}
+
+function cleanNotes(value: unknown) {
+  return optionalString(value, 500)?.trim() || undefined;
 }

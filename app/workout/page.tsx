@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER, DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { detectStalledLifts, formatRelativeDay, muscleSetCounts, startOfCurrentWeek, trainingStreak, workoutVolume } from '@/lib/workout/session-insights';
-import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
+import { flushChangeQueue, flushWorkoutQueue, getQueuedChanges, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 
 // Interfaces for user representation
 interface UserData {
@@ -218,6 +218,8 @@ export default function WorkoutDashboard() {
 
   // Upload workouts that were saved offline, now and whenever we reconnect.
   const syncQueuedWorkouts = async (ownerId: string) => {
+    // Edits and deletes made offline in History go up too.
+    if (getQueuedChanges(ownerId).length > 0) await flushChangeQueue(ownerId);
     if (getQueuedWorkouts(ownerId).length === 0) {
       setQueuedCount(0);
       return;

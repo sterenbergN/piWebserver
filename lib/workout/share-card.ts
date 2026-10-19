@@ -180,9 +180,101 @@ function drawTrend(ctx: CanvasRenderingContext2D, trend: NonNullable<WorkoutCard
   });
 }
 
-export async function renderWorkoutCard(data: WorkoutCardData, format: CardFormat = 'post'): Promise<Blob> {
+/** An image the card can be drawn over (a decoded photo). */
+export type CardPhoto = CanvasImageSource & { width: number; height: number };
+
+/** Your own photo with the workout over its lower part, Strava-style. */
+function drawPhotoCard(ctx: CanvasRenderingContext2D, data: WorkoutCardData, photo: CardPhoto, H: number, story: boolean) {
+  // Cover-fit the photo.
+  const scale = Math.max(W / photo.width, H / photo.height);
+  const pw = photo.width * scale;
+  const ph = photo.height * scale;
+  ctx.drawImage(photo, (W - pw) / 2, (H - ph) / 2, pw, ph);
+
+  const lifts = data.lifts.slice(0, story ? 4 : 3);
+  const bottom = story ? H - 200 : H - 90;
+  const contentH = 360 + lifts.length * 64;
+  const top = bottom - contentH;
+
+  const shade = ctx.createLinearGradient(0, top - 260, 0, H);
+  shade.addColorStop(0, 'rgba(8,6,18,0)');
+  shade.addColorStop(0.35, 'rgba(8,6,18,0.7)');
+  shade.addColorStop(1, 'rgba(8,6,18,0.92)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, top - 260, W, H - top + 260);
+  const topShade = ctx.createLinearGradient(0, 0, 0, 220);
+  topShade.addColorStop(0, 'rgba(0,0,0,0.45)');
+  topShade.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, W, 220);
+
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = font(700, 28);
+  ctx.fillText(data.date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase(), 80, story ? 260 : 100);
+
+  let y = top;
+  ctx.fillStyle = '#ffffff';
+  ctx.font = font(900, 84);
+  ctx.fillText(fitText(ctx, data.title, W - 160), 80, y + 70);
+  if (data.gymName) {
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = font(500, 34);
+    ctx.fillText(fitText(ctx, data.gymName, W - 160), 80, y + 120);
+  }
+  y += 150;
+  const stats = [
+    { label: 'TIME', value: data.duration },
+    { label: 'SETS', value: String(data.sets) },
+    { label: 'VOLUME', value: `${Math.round(data.volume).toLocaleString()} lb` },
+  ];
+  const colW = (W - 160) / 3;
+  stats.forEach((stat, i) => {
+    const x = 80 + i * colW;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = font(700, 24);
+    ctx.fillText(stat.label, x, y + 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = font(800, 54);
+    ctx.fillText(fitText(ctx, stat.value, colW - 20), x, y + 92);
+  });
+  y += 170;
+  ctx.fillStyle = '#c4b5fd';
+  ctx.font = font(700, 34);
+  ctx.fillText(fitText(ctx, data.verdict, W - 160), 80, y);
+  y += 30;
+  lifts.forEach((lift, i) => {
+    const rowY = y + i * 64;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = font(700, 32);
+    ctx.fillText(fitText(ctx, `${lift.pr ? '🏆 ' : ''}${lift.name}`, 560), 80, rowY + 44);
+    ctx.textAlign = 'right';
+    ctx.font = font(800, 32);
+    ctx.fillText(lift.top, W - 260, rowY + 44);
+    ctx.font = font(700, 26);
+    ctx.fillStyle = lift.change === 'up' ? '#68d391' : lift.change === 'down' ? '#f6ad55' : 'rgba(255,255,255,0.6)';
+    ctx.fillText(lift.change === 'up' ? `▲ ${lift.changeText}` : lift.change === 'down' ? `▼ ${lift.changeText}` : lift.change === 'new' ? 'new' : '=', W - 80, rowY + 44);
+  });
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = font(600, 26);
+  ctx.fillText(data.lifts.length > lifts.length ? `+ ${data.lifts.length - lifts.length} more · noahstuf.com` : 'noahstuf.com · workout tracker', W / 2, story ? H - 110 : H - 40);
+}
+
+export async function renderWorkoutCard(data: WorkoutCardData, format: CardFormat = 'post', photo?: CardPhoto | null): Promise<Blob> {
   const story = format === 'story';
   const H = story ? 1920 : 1350;
+  if (photo) {
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    drawPhotoCard(canvas.getContext('2d')!, data, photo, H, story);
+    return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not draw the card'))), 'image/png'));
+  }
   // The trend line fits under up to 4 lifts on a post, 7 on a story.
   const trendRows = story ? 7 : 4;
   const showTrend = !!data.trend && (story || data.lifts.length <= trendRows);
@@ -273,6 +365,97 @@ export async function renderWorkoutCard(data: WorkoutCardData, format: CardForma
   ctx.font = font(600, 26);
   ctx.fillText('noahstuf.com · workout tracker', W / 2, story ? H - 110 : H - 50);
 
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not draw the card'))), 'image/png'));
+}
+
+export type LiftCardData = {
+  name: string;
+  subtitle?: string;
+  /** The latest session set a record: shown as a PR card. */
+  pr?: { weight: number; reps: number; date: Date };
+  current: number;
+  /** First session's estimated 1RM and when, for "+X% since". */
+  first?: { e1rm: number; date: Date };
+  sessions: number;
+  points: number[];
+  records: { label: string; weight: number }[];
+};
+
+/** One exercise's progress (or a new PR) as a card, same look as the workout card. */
+export async function renderLiftCard(data: LiftCardData, format: CardFormat = 'post'): Promise<Blob> {
+  const story = format === 'story';
+  const H = story ? 1920 : 1350;
+  const T = story ? 300 : 0;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, data.pr ? '#3b1d05' : '#1e1037');
+  bg.addColorStop(1, '#0b1a2e');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = data.pr ? '#fde047' : '#c4b5fd';
+  ctx.font = font(800, 32);
+  ctx.fillText(data.pr ? 'NEW PERSONAL RECORD 🏆' : 'STRENGTH PROGRESS', 80, T + 120);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = font(900, 80);
+  ctx.fillText(fitText(ctx, data.name, W - 160), 80, T + 215);
+  if (data.subtitle) {
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = font(500, 34);
+    ctx.fillText(fitText(ctx, data.subtitle, W - 160), 80, T + 268);
+  }
+
+  // Hero number: the PR set, or current estimated 1RM.
+  ctx.fillStyle = data.pr ? '#fde047' : '#ffffff';
+  ctx.font = font(900, 150);
+  const hero = data.pr ? `${data.pr.weight} × ${data.pr.reps}` : `${Math.round(data.current)} lb`;
+  ctx.fillText(fitText(ctx, hero, W - 160), 72, T + 440);
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = font(600, 36);
+  const caption = data.pr
+    ? `${data.pr.date.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} · est. 1RM ${Math.round(data.current)} lb`
+    : 'estimated one-rep max';
+  ctx.fillText(fitText(ctx, caption, W - 160), 80, T + 500);
+
+  let y = T + 560;
+  if (data.first && data.sessions > 1 && data.first.e1rm > 0) {
+    const pct = Math.round(((data.current - data.first.e1rm) / data.first.e1rm) * 100);
+    ctx.fillStyle = pct >= 0 ? '#68d391' : '#f6ad55';
+    ctx.font = font(800, 40);
+    ctx.fillText(`${pct >= 0 ? '+' : ''}${pct}% since ${data.first.date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })} · ${data.sessions} sessions`, 80, y + 10);
+    y += 50;
+  }
+  if (data.points.length >= 2) {
+    drawTrend(ctx, { name: data.name, points: data.points }, y, story ? 360 : 300);
+    y += (story ? 360 : 300) + 30;
+  }
+
+  const records = data.records.slice(0, 4);
+  if (records.length) {
+    const boxW = (W - 160 - 20 * (records.length - 1)) / records.length;
+    records.forEach((r, i) => {
+      const x = 80 + i * (boxW + 20);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      roundRect(ctx, x, y, boxW, 130, 22);
+      ctx.fill();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = font(700, 24);
+      ctx.fillText(r.label.toUpperCase(), x + 24, y + 46);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = font(800, 42);
+      ctx.fillText(fitText(ctx, `${r.weight} lb`, boxW - 48), x + 24, y + 102);
+    });
+  }
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = font(600, 26);
+  ctx.fillText('noahstuf.com · workout tracker', W / 2, story ? H - 110 : H - 50);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not draw the card'))), 'image/png'));
 }
 

@@ -11,6 +11,7 @@ import { detectStalledLifts } from '@/lib/workout/session-insights';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import type { Goal } from '@/lib/workout/goals';
+import { applyQueuedChanges, enqueueChange, flushChangeQueue, getQueuedChanges, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
 import {
   buildInsights, exerciseStats, muscleBalance, muscleSetsPerWeek, periodSummary, PERIODS, recentPRs,
   type Period, type ScaleFor, type Workout,
@@ -79,12 +80,15 @@ export default function AnalyticsPage() {
       ]);
       if ([auth, hist, gyms].some((r) => r.offline)) setOffline(true);
       const gymList: any[] = auth.data?.authenticated ? gyms.data?.gyms || [] : DEMO_GYMS;
-      const liftList = gymList.flatMap((g) => (g.stations || []).flatMap((s: any) => (s.lifts || []).map((l: any) => ({ ...l, stationType: s.type }))));
+      const liftList = gymList.flatMap((g) => (g.stations || []).flatMap((s: any) => (s.lifts || []).map((l: any) => ({ ...l, stationType: s.type, station: s }))));
       setLifts(liftList);
       setGymNames(new Map(gymList.map((g) => [g.id, g.name])));
       if (auth.data?.authenticated) {
         setUser(auth.data.user);
-        setHistory(hist.data?.history || []);
+        // Show edits and deletes still waiting on this phone, then try sending them.
+        const uid = auth.data.user.id;
+        setHistory(applyQueuedChanges(hist.data?.history || [], getQueuedChanges(uid)));
+        if (getQueuedChanges(uid).length > 0 && navigator.onLine) flushChangeQueue(uid).catch(() => {});
         setCalibrations(calib.data?.calibrations || []);
         setGoals(goalsRes.data?.goals || []);
       } else {
@@ -143,20 +147,36 @@ export default function AnalyticsPage() {
   // on the server after a few seconds (or when leaving the page).
   const [toast, setToast] = useState<{ text: string; undo?: () => void; error?: boolean } | null>(null);
   const pendingDelete = useRef<{ workout: Workout; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const userId: string | undefined = isDemo ? undefined : user?.id;
   const commitDelete = useCallback((keepalive = false) => {
     const pending = pendingDelete.current;
     if (!pending) return;
     clearTimeout(pending.timer);
     pendingDelete.current = null;
-    fetch(`/api/workout/history?id=${encodeURIComponent(pending.workout.id!)}`, { method: 'DELETE', keepalive })
-      .then((res) => res.json())
-      .then((data) => { if (!data.success) throw new Error(); })
-      .catch(() => {
+    const id = pending.workout.id!;
+    // No signal: keep the delete on this phone and send it later.
+    const queue = () => { if (userId) enqueueChange(userId, { id, kind: 'delete' }); };
+    if (keepalive && !navigator.onLine) { queue(); return; }
+    fetch(`/api/workout/history?id=${encodeURIComponent(id)}`, { method: 'DELETE', keepalive })
+      .then(async (res) => {
+        if (res.ok || res.status === 404) return;
+        if (isRetryableSaveFailure(res.status)) { queue(); return; }
+        throw new Error();
+      })
+      .catch((err) => {
+        if (!err) return;
+        if (err instanceof TypeError) { queue(); return; } // network error
         if (keepalive) return;
         setHistory((prev) => [...prev, pending.workout]);
         setToast({ text: 'Could not delete the workout — it’s back in your history.', error: true });
       });
-  }, []);
+  }, [userId]);
+  useEffect(() => {
+    if (!userId) return;
+    const sync = () => { flushChangeQueue(userId).catch(() => {}); };
+    window.addEventListener('online', sync);
+    return () => window.removeEventListener('online', sync);
+  }, [userId]);
   useEffect(() => {
     const flush = () => commitDelete(true);
     window.addEventListener('pagehide', flush);
@@ -269,7 +289,11 @@ export default function AnalyticsPage() {
             gymNames={gymNames}
             canEdit={!isDemo}
             onDelete={deleteWorkout}
-            onUpdated={(updated) => { setHistory((prev) => prev.map((w) => (w.id === updated.id ? updated : w))); setToast({ text: 'Workout updated.' }); }}
+            ownerId={userId}
+            onUpdated={(updated, queued) => {
+              setHistory((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
+              setToast({ text: queued ? 'Saved on this phone — it syncs when you’re back online.' : 'Workout updated.' });
+            }}
             onOpenLift={(key) => { setOpenLift(key); chooseTab('lifts'); }}
           />
         )}

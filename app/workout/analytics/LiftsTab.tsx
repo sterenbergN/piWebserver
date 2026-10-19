@@ -8,6 +8,8 @@ import { formatProjection, goalProgress, goalsFor, type Goal } from '@/lib/worko
 import type { ProgressReview } from '@/lib/workout/progression';
 import type { ExerciseStat, Workout } from '@/lib/workout/insights';
 import { Delta, Sparkline, StrengthLine } from './charts';
+import ShareViewer from '@/components/workout/ShareViewer';
+import { renderLiftCard, type CardFormat, type LiftCardData } from '@/lib/workout/share-card';
 
 // Bodyweight multiples (estimated 1RM ÷ bodyweight) for common strength levels.
 const STANDARDS: { name: string; match: string[]; levels: [string, number][] }[] = [
@@ -124,8 +126,25 @@ function LiftDetail({ stat, goals, history, review, onClose }: { stat: ExerciseS
   const progress = goal ? goalProgress(goal, history) : null;
   const chartData = stat.sessions.slice(-20).map((s) => ({ label: shortDate(s.timestamp), e1rm: Math.round(s.e1rm), detail: `${s.top.weight}×${s.top.reps}${s.gymName ? ` · ${s.gymName}` : ''}` }));
   const recent = [...stat.sessions].reverse().slice(0, 8);
+  const [sharing, setSharing] = useState(false);
+  const last = stat.sessions[stat.sessions.length - 1];
+  const cardData = (): LiftCardData => ({
+    name: stat.name,
+    subtitle: `${stat.muscle}${stat.gyms.length ? ` · ${stat.gyms.join(', ')}` : ''}`,
+    pr: last?.pr ? { weight: last.top.weight, reps: last.top.reps, date: new Date(last.timestamp) } : undefined,
+    current: stat.current,
+    first: stat.sessions[0] ? { e1rm: stat.sessions[0].e1rm, date: new Date(stat.sessions[0].timestamp) } : undefined,
+    sessions: stat.sessions.length,
+    points: stat.sessions.slice(-12).map((s) => Math.round(s.e1rm)),
+    records: stat.repRecords.map((r) => ({ label: r.reps === 1 ? 'Single' : `${r.reps}+ reps`, weight: r.weight })),
+  });
   return (
-    <Sheet title={stat.name} subtitle={`${stat.muscle}${stat.gyms.length ? ` · ${stat.gyms.join(', ')}` : ''}`} onClose={onClose}>
+    <Sheet
+      title={stat.name}
+      subtitle={`${stat.muscle}${stat.gyms.length ? ` · ${stat.gyms.join(', ')}` : ''}`}
+      onClose={onClose}
+      footer={<button type="button" className="workout-button is-primary" onClick={() => setSharing(true)}>📸 {last?.pr ? 'Share your PR' : 'Share progress'}</button>}
+    >
       <div className="an-tiles is-three">
         <div className="an-tile"><span className="an-tile-label">Est. 1RM now</span><strong className="an-tile-value">{Math.round(stat.current)}</strong><span className="an-tile-sub">best of last 3</span></div>
         <div className="an-tile"><span className="an-tile-label">All-time best</span><strong className="an-tile-value">{Math.round(stat.best)}</strong><span className="an-tile-sub">{stat.sessions.length} sessions</span></div>
@@ -178,6 +197,17 @@ function LiftDetail({ stat, goals, history, review, onClose }: { stat: ExerciseS
         ))}
       </div>
       <p className="workout-hint" style={{ marginTop: '1rem' }}>Same exercise under different names? Merge them in Configuration → Your exercises.</p>
+      {sharing && (
+        <ShareViewer
+          title={stat.name}
+          options={[{ key: 'post', label: 'Post 4:5' }, { key: 'story', label: 'Story 9:16' }]}
+          optionPref="workout:cardFormat"
+          render={async (format) => [await renderLiftCard(cardData(), format as CardFormat)]}
+          fileBase={`${stat.key.replace(/\s+/g, '-')}-progress`}
+          shareTitle={`${stat.name} progress`}
+          onClose={() => setSharing(false)}
+        />
+      )}
     </Sheet>
   );
 }

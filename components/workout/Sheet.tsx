@@ -39,9 +39,9 @@ export default function Sheet({ title, subtitle, onClose, children, footer }: Sh
   }, [token]);
 
   useEffect(() => {
-    // Escape closes the top sheet, unless a confirm popup on top of it is taking that key.
+    // Escape closes the top sheet, unless a confirm popup or share viewer on top of it is taking that key.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && sheetStack[sheetStack.length - 1] === token && !document.querySelector('.site-popup-backdrop')) onClose();
+      if (e.key === 'Escape' && sheetStack[sheetStack.length - 1] === token && !document.querySelector('.site-popup-backdrop, .share-viewer')) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

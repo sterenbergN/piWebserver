@@ -34,3 +34,28 @@ test('flushWorkoutQueue keeps retryable failures and drops permanent ones', asyn
   assert.equal(getQueuedWorkouts('u1')[0].attempts, 1);
   assert.equal(getQueuedWorkouts('u2').length, 1);
 });
+
+test('queued edits merge, a delete replaces them, and flushing keeps only retryable failures', async () => {
+  const { enqueueChange, getQueuedChanges, applyQueuedChanges, flushChangeQueue } = await import('./offline-queue');
+  store.clear();
+  enqueueChange('u1', { id: 'w1', kind: 'edit', body: { notes: 'a' }, preview: { id: 'w1', notes: 'a' } });
+  enqueueChange('u1', { id: 'w1', kind: 'edit', body: { durationSecs: 600 }, preview: { id: 'w1', notes: 'a', durationSecs: 600 } });
+  enqueueChange('u1', { id: 'w2', kind: 'edit', body: { notes: 'b' } });
+  enqueueChange('u1', { id: 'w2', kind: 'delete' });
+  enqueueChange('u1', { id: 'w3', kind: 'delete' });
+  const changes = getQueuedChanges('u1');
+  assert.deepEqual(changes.map((c) => [c.id, c.kind]), [['w1', 'edit'], ['w2', 'delete'], ['w3', 'delete']]);
+  assert.deepEqual(changes[0].body, { notes: 'a', durationSecs: 600 });
+
+  const shown = applyQueuedChanges([{ id: 'w1' }, { id: 'w2' }, { id: 'w4' }], changes);
+  assert.deepEqual(shown, [{ id: 'w1', notes: 'a', durationSecs: 600 }, { id: 'w4' }]);
+
+  const fakeFetch = (async (url: string) => {
+    if (url.includes('w1')) throw new Error('offline');
+    if (url.includes('w2')) return respond(404, {});
+    return respond(200, { success: true });
+  }) as typeof fetch;
+  const result = await flushChangeQueue('u1', fakeFetch);
+  assert.deepEqual(result, { synced: 2, remaining: 1 });
+  assert.equal(getQueuedChanges('u1')[0].attempts, 1);
+});

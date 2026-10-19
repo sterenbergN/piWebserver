@@ -7,6 +7,7 @@ import { exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { restTargetSeconds } from '@/lib/workout/session-insights';
 import { isLoadStation } from '@/lib/workout/types';
 import { playBeep, readPref, savePref, unlockAudio, vibrate } from '@/lib/workout/device-prefs';
+import { relatedStartingWeight } from '@/lib/workout/related-exercises';
 import { getBaselineReps, topSet, uidOf, type HistoricStats, type Suggestion } from '@/lib/workout/tracker-utils';
 
 // Self-contained pieces of the tracker's behaviour. Tracker.tsx owns the
@@ -171,7 +172,13 @@ async function requestSuggestion(lift: any, { plan, pastHistory, intensity, defa
   }
 
   const calibration = data?.calibration || null;
-  if (sessionSets.length === 0) return { ...baseline, calibration };
+  if (sessionSets.length === 0) {
+    // Never done here: start from a related lift if there is one (bench → dumbbell bench).
+    const related = plan.isDeload ? null : relatedStartingWeight(lift, pastHistory, { reps: baseline.reps, possibleWeights });
+    return related
+      ? { ...baseline, weight: related.weight, reason: `First time — estimated from your ${related.fromName} (est. 1RM ${related.fromE1rm}). Adjust if it feels off.`, calibration }
+      : { ...baseline, calibration };
+  }
 
   const top = topSet(sessionSets)!;
   const historicStats: HistoricStats = {

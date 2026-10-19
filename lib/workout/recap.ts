@@ -1,4 +1,4 @@
-import { periodWindow, PERIODS, weekStart, type ExerciseStat, type MuscleWeek, type Period, type Workout } from './insights';
+import { periodSummary, periodWindow, PERIODS, weekStart, type ExerciseStat, type MuscleWeek, type Period, type Workout } from './insights';
 
 // "Wrapped"-style recap of a period: the story slides' data, worked out from
 // history and the analytics already computed for the page. Drawn as images in
@@ -24,6 +24,7 @@ export type RecapSlide =
   | { kind: 'gains'; lifts: { name: string; from: number; to: number; pct: number }[] }
   | { kind: 'records'; count: number; lifts: { name: string; weight: number; reps: number }[] }
   | { kind: 'muscles'; muscles: { muscle: string; sets: number; share: number }[] }
+  | { kind: 'versus'; previousLabel: string; headline: { label: string; pct: number }; rows: { label: string; before: number; now: number; pct: number | null }[] }
   | { kind: 'summary'; persona: string; personaWhy: string; workouts: number; volume: number; topLift: string | null; topMuscle: string | null; prs: number; range: string };
 
 const rangeLabel = (start: number, end: number) => {
@@ -161,6 +162,8 @@ export function buildRecap(input: {
   if (gains.length > 0) slides.push({ kind: 'gains', lifts: gains });
   if (records.length > 0) slides.push({ kind: 'records', count: records.length, lifts: recordLifts.map(({ name, weight, reps }) => ({ name, weight, reps })) });
   if (topMuscles.length > 0) slides.push({ kind: 'muscles', muscles: topMuscles });
+  const versus = versusSlide(history, period, label, now);
+  if (versus) slides.push(versus);
   slides.push({
     kind: 'summary',
     persona,
@@ -173,4 +176,22 @@ export function buildRecap(input: {
     range,
   });
   return slides;
+}
+
+/** This period against the same length of time before it, when there was some training then too. */
+function versusSlide(history: Workout[], period: Period, label: string, now: number): RecapSlide | null {
+  if (period === 'all') return null;
+  const { current, previous } = periodSummary(history, period, now);
+  // One stray workout before makes for silly percentages; need a real baseline.
+  if (!previous || previous.workouts < 2) return null;
+  const pct = (a: number, b: number) => (b > 0 ? Math.round(((a - b) / b) * 100) : null);
+  const rows = [
+    { label: 'Workouts', before: previous.workouts, now: current.workouts, pct: pct(current.workouts, previous.workouts) },
+    { label: 'Sets', before: previous.sets, now: current.sets, pct: pct(current.sets, previous.sets) },
+    { label: 'Pounds lifted', before: previous.volume, now: current.volume, pct: pct(current.volume, previous.volume) },
+  ];
+  // Lead with the best news; if everything dipped, the smallest dip.
+  const headline = [...rows].filter((r) => r.pct !== null).sort((a, b) => (b.pct as number) - (a.pct as number))[0];
+  if (!headline) return null;
+  return { kind: 'versus', previousLabel: `the ${label} before`, headline: { label: headline.label.toLowerCase(), pct: headline.pct as number }, rows };
 }

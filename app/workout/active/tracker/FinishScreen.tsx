@@ -25,6 +25,9 @@ type FinishScreenProps = {
   saving: boolean;
   saveError: string;
   onSave: () => void;
+  /** A note saved with the workout ("left shoulder tight"). */
+  notes: string;
+  onNotesChange: (notes: string) => void;
   onBack: () => void;
   /** The save payload, for a link someone else can do this workout from (logged-in, own gym only). */
   getLinkPayload?: () => unknown;
@@ -136,6 +139,10 @@ export default function FinishScreen(props: FinishScreenProps) {
         ))}
       </div>
 
+      <label style={{ display: 'block', marginBottom: '1rem' }}>
+        <span className="workout-label">Notes (optional)</span>
+        <textarea className="workout-input" rows={2} maxLength={500} value={props.notes} placeholder="How it felt, anything to remember next time" onChange={(e) => props.onNotesChange(e.target.value)} />
+      </label>
       {props.saveError && <p className="workout-error" style={{ margin: '0 0 1rem' }}>{props.saveError}</p>}
       <button className="workout-btn-primary" style={{ padding: '1.1rem', fontSize: '1.15rem', opacity: props.saving ? 0.6 : 1, marginTop: 0 }} onClick={props.onSave} disabled={props.saving}>
         {props.saving ? 'Saving…' : 'Save & exit'}
@@ -148,6 +155,7 @@ export default function FinishScreen(props: FinishScreenProps) {
           </button>
         ) : <span />}
       </div>
+      <p className="workout-hint" style={{ margin: '0.3rem 0 0', textAlign: 'center' }}>You can share the card again any time from Analytics → History.</p>
       {props.getLinkPayload && (<>
         <button className="workout-button is-block" style={{ marginTop: '0.6rem' }} onClick={sendLink} disabled={linkState === 'busy'}>
           {linkState === 'busy' ? 'Making link…' : linkState === 'copied' ? '✅ Link copied' : linkState === 'shared' ? '✅ Link sent' : '🔗 Send this workout to a friend'}
@@ -160,7 +168,8 @@ export default function FinishScreen(props: FinishScreenProps) {
           title="Today’s workout"
           options={[{ key: 'post', label: 'Post 4:5' }, { key: 'story', label: 'Story 9:16' }]}
           optionPref="workout:cardFormat"
-          render={async (format) => [await renderWorkoutCard(cardData(), format as CardFormat)]}
+          allowPhoto
+          render={async (format, photo) => [await renderWorkoutCard(cardData(), format as CardFormat, photo)]}
           fileBase={`workout-${new Date().toISOString().slice(0, 10)}`}
           shareTitle={plan.type?.name || plan.name}
           onClose={() => setShowCard(false)}

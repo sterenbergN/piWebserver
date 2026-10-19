@@ -3,7 +3,7 @@ import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/dat
 import { stationKindIndex } from '@/lib/workout/equipment-kinds';
 import { applyWorkoutEdit, HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
-import { getCalibrationStore, inferCalibrationsForWorkout, upsertCalibrationEntries } from '@/lib/workout/calibration';
+import { getCalibrationStore, inferCalibrationsForWorkout, recalibrateAfterEdit, upsertCalibrationEntries } from '@/lib/workout/calibration';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
   }
 }
 
-/** Fix the sets of a saved workout: { logs } replaces its logged sets. */
+/** Fix a saved workout: { logs?, timestamp?, durationSecs?, notes? }. */
 export async function PATCH(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
@@ -82,15 +82,29 @@ export async function PATCH(request: Request) {
     if (!id) throw new ApiError(400, 'ID missing');
     const payload = await readJsonObject(request);
 
-    const workout = await updateWorkoutData(HISTORY_FILE, { history: [] as any[] }, (data) => {
+    const { before, workout, previousUserHistory } = await updateWorkoutData(HISTORY_FILE, { history: [] as any[] }, (data) => {
       const index = (data.history || []).findIndex((h: any) => h.id === id);
       if (index === -1) throw new ApiError(404, 'Not found');
-      if (data.history[index].userId !== userId) throw new ApiError(403, 'Forbidden');
-      const edited = applyWorkoutEdit(data.history[index], payload.logs);
+      const before = data.history[index];
+      if (before.userId !== userId) throw new ApiError(403, 'Forbidden');
+      const edited = applyWorkoutEdit(before, payload);
       if (!edited) throw new ApiError(400, 'A workout needs at least one set — delete it instead');
       data.history[index] = edited;
-      return edited;
+      const at = new Date(edited.timestamp).getTime();
+      const previousUserHistory = data.history.filter((h: any) => h.userId === userId && h.id !== id && new Date(h.timestamp).getTime() < at);
+      return { before, workout: edited, previousUserHistory };
     });
+
+    if (payload.logs !== undefined) {
+      // Redo machine calibrations that came from the old numbers (best-effort).
+      try {
+        const [store, gymData] = await Promise.all([getCalibrationStore(), getWorkoutData('gyms.json', { gyms: [] as any[] })]);
+        const stationKinds = stationKindIndex((gymData.gyms || []).filter((g: any) => g.ownerId === userId));
+        await upsertCalibrationEntries(recalibrateAfterEdit(userId, before, workout, previousUserHistory, store, calcAverage1RM, stationKinds));
+      } catch (error) {
+        console.error('Recalibration after edit failed:', error);
+      }
+    }
 
     return NextResponse.json({ success: true, workout });
   } catch (error) {

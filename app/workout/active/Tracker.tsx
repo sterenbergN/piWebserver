@@ -361,11 +361,12 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
 
   const calories = estimateCalories(elapsedSecs, user?.weight);
 
+  const [notes, setNotes] = useState('');
   const saveWorkout = async () => {
     if (saving) return;
     setSaving(true);
     setSaveError('');
-    const payload = buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: !user });
+    const payload = { ...buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: !user }), notes: notes.trim() || undefined };
     if (Object.keys(payload.logs).length === 0) {
       setSaveError('No sets were logged, so there is nothing to save.');
       setSaving(false);
@@ -465,6 +466,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
         saving={saving}
         saveError={saveError}
         onSave={saveWorkout}
+        notes={notes}
+        onNotesChange={setNotes}
         onBack={() => { setFinished(false); setSaveError(''); }}
         getLinkPayload={user ? () => buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: false }) : undefined}
       />

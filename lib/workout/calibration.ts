@@ -227,3 +227,37 @@ export function inferCalibrationsForWorkout(
 
   return entries;
 }
+
+/**
+ * After a saved workout's sets are edited: redo the machine calibrations that
+ * were inferred from it (the first visit to a gym's machine), so a corrected
+ * set doesn't leave a wrong scale behind. Hand-set calibrations are kept.
+ */
+export function recalibrateAfterEdit(
+  userId: string,
+  before: HistoryWorkout,
+  after: HistoryWorkout,
+  previousUserHistory: HistoryWorkout[],
+  store: CalibrationStore,
+  calcE1RM: (weight: number, reps: number) => number,
+  stationKinds?: Map<string, string>,
+): CalibrationEntry[] {
+  if (!before.gymId) return [];
+  const lastSetByKey = new Map<string, { weight: number; reps: number }>();
+  for (const [liftId, sets] of Object.entries(before.logs || {})) {
+    const key = normalizeLiftKey(exerciseName(before.liftMeta?.[liftId]));
+    const last = sets?.[sets.length - 1];
+    if (key && last) lastSetByKey.set(key, last);
+  }
+  const derived = (c: CalibrationEntry) => {
+    const last = lastSetByKey.get(c.liftKey);
+    return c.userId === userId && c.gymId === before.gymId && c.confidence === 0.35 && !!last && !!c.reference
+      && c.reference.currentWeight === last.weight && c.reference.currentReps === last.reps;
+  };
+  const stale = store.calibrations.filter(derived);
+  if (stale.length === 0) return [];
+  const staleKeys = new Set(stale.map((c) => c.liftKey));
+  const without = { ...store, calibrations: store.calibrations.filter((c) => !derived(c)) };
+  return inferCalibrationsForWorkout(userId, after, previousUserHistory, without, calcE1RM, stationKinds)
+    .filter((entry) => staleKeys.has(entry.liftKey));
+}

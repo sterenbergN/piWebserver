@@ -1284,4 +1284,6 @@
   font-size: 0.8rem;
   cursor: pointer;
 }
-.share-viewer-options button[aria-checked="true"] { background: #fff; border-color: #fff; color: #111; font-weight: 600; }
+.share-viewer-options button[aria-checked="true"], .share-viewer-options button[aria-pressed="true"] { background: #fff; border-color: #fff; color: #111; font-weight: 600; }
+.tracker-plate-line { margin: 0.45rem 0 0; text-align: center; font-size: 0.85rem; color: var(--muted); }
+.tracker-plate-line strong { color: var(--foreground); }

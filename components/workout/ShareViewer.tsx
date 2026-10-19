@@ -7,8 +7,10 @@ import { readPref, savePref } from '@/lib/workout/device-prefs';
 
 type ShareViewerProps = {
   title: string;
-  /** Draws the images: when the viewer opens, and again for another option. */
-  render: (option?: string) => Promise<Blob[]>;
+  /** Draws the images: when the viewer opens, and again for another option or photo. */
+  render: (option?: string, photo?: ImageBitmap | null) => Promise<Blob[]>;
+  /** Offer "Add photo": the image is drawn under the card (it never leaves the phone). */
+  allowPhoto?: boolean;
   /** Layouts to choose between (e.g. post / story); passed to render. */
   options?: { key: string; label: string }[];
   /** Device pref that remembers the chosen option. */
@@ -29,7 +31,7 @@ type Image = { blob: Blob; url: string };
  * slides): one image at a time, swipe / tap the sides / arrow keys to move,
  * and share or save the one on screen.
  */
-export default function ShareViewer({ title, render, options, optionPref, autoplay, fileBase, shareTitle, onClose }: ShareViewerProps) {
+export default function ShareViewer({ title, render, options, optionPref, autoplay, allowPhoto, fileBase, shareTitle, onClose }: ShareViewerProps) {
   const [mounted, setMounted] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [error, setError] = useState('');
@@ -46,6 +48,8 @@ export default function ShareViewer({ title, render, options, optionPref, autopl
     const saved = optionPref ? readPref(optionPref) : null;
     return options?.find((o) => o.key === saved)?.key ?? options?.[0]?.key;
   });
+  const [photo, setPhoto] = useState<ImageBitmap | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
   const [playing, setPlaying] = useState(false);
   const [held, setHeld] = useState(false);
 
@@ -62,7 +66,7 @@ export default function ShareViewer({ title, render, options, optionPref, autopl
     let made: Image[] = [];
     setError('');
     setImages([]);
-    renderRef.current(option)
+    renderRef.current(option, photo)
       .then((blobs) => {
         made = blobs.map((blob) => ({ blob, url: URL.createObjectURL(blob) }));
         if (cancelled) made.forEach((m) => URL.revokeObjectURL(m.url));
@@ -73,7 +77,19 @@ export default function ShareViewer({ title, render, options, optionPref, autopl
       cancelled = true;
       made.forEach((m) => URL.revokeObjectURL(m.url));
     };
-  }, [option]);
+  }, [option, photo]);
+
+  const pickPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const bitmap = await createImageBitmap(file);
+      setPhoto(bitmap);
+      setStatus('');
+    } catch {
+      setStatus('Could not open that photo.');
+    }
+  };
+  useEffect(() => () => photo?.close(), [photo]);
 
   const chooseOption = (key: string) => {
     setOption(key);
@@ -191,11 +207,21 @@ export default function ShareViewer({ title, render, options, optionPref, autopl
           ))}
         </div>
       )}
-      {options && options.length > 1 && (
-        <div className="share-viewer-options" role="radiogroup" aria-label="Layout">
-          {options.map((o) => (
-            <button key={o.key} type="button" role="radio" aria-checked={option === o.key} onClick={() => chooseOption(o.key)}>{o.label}</button>
-          ))}
+      {((options && options.length > 1) || allowPhoto) && (
+        <div className="share-viewer-options">
+          {options && options.length > 1 && (
+            <div role="radiogroup" aria-label="Layout" style={{ display: 'contents' }}>
+              {options.map((o) => (
+                <button key={o.key} type="button" role="radio" aria-checked={option === o.key} onClick={() => chooseOption(o.key)}>{o.label}</button>
+              ))}
+            </div>
+          )}
+          {allowPhoto && (<>
+            <button type="button" aria-pressed={!!photo} onClick={() => (photo ? setPhoto(null) : photoInput.current?.click())}>
+              {photo ? '✕ Photo' : '📷 Photo'}
+            </button>
+            <input ref={photoInput} type="file" accept="image/*" hidden onChange={(e) => { pickPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+          </>)}
         </div>
       )}
 

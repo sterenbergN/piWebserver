@@ -36,12 +36,20 @@ test('applyWorkoutEdit fixes sets but cannot add lifts', () => {
     warmups: { bench: [{ weight: 45, reps: 10 }], row: [{ weight: 20, reps: 10 }] },
     liftMeta: { bench: { name: 'Bench' }, row: { name: 'Row' } },
   };
-  const edited = applyWorkoutEdit(entry, { bench: [{ weight: 105, reps: 8, rir: 2 }, { weight: 'x', reps: 5 }], row: [], sneaky: [{ weight: 500, reps: 1 }] })!;
+  const edited = applyWorkoutEdit(entry, { logs: { bench: [{ weight: 105, reps: 8, rir: 2 }, { weight: 'x', reps: 5 }], row: [], sneaky: [{ weight: 500, reps: 1 }] } })!;
   assert.deepEqual(edited.logs, { bench: [{ weight: 105, reps: 8, rir: 2, completed: true }] });
   assert.equal(edited.volume, 840);
   assert.deepEqual(Object.keys(edited.liftMeta), ['bench']);
   assert.deepEqual(Object.keys(edited.warmups), ['bench']);
   assert.equal(edited.id, 'w1');
   assert.equal(edited.userId, 'me');
-  assert.equal(applyWorkoutEdit(entry, { bench: [] }), null);
+  assert.equal(applyWorkoutEdit(entry, { logs: { bench: [] } }), null);
+
+  const moved = applyWorkoutEdit(entry, { timestamp: '2026-03-02T07:30:00Z', durationSecs: 3725, notes: '  shoulder tight  ' })!;
+  assert.deepEqual(moved.logs, entry.logs);
+  assert.equal(moved.timestamp, '2026-03-02T07:30:00.000Z');
+  assert.equal(moved.duration, '62:05');
+  assert.equal(moved.notes, 'shoulder tight');
+  assert.equal(applyWorkoutEdit({ ...entry, notes: 'x' }, { notes: '' })!.notes, undefined);
+  assert.equal(applyWorkoutEdit(entry, { timestamp: 'nonsense' })!.timestamp, undefined);
 });

@@ -17,6 +17,7 @@ const THEMES: Record<RecapSlide['kind'], { from: string; to: string; accent: str
   gains: { from: '#15803d', to: '#052e16', accent: '#bbf7d0', ink: '#ffffff' },
   records: { from: '#a16207', to: '#422006', accent: '#fde047', ink: '#ffffff' },
   muscles: { from: '#be123c', to: '#4c0519', accent: '#fecdd3', ink: '#ffffff' },
+  versus: { from: '#0e7490', to: '#082f49', accent: '#a5f3fc', ink: '#ffffff' },
   summary: { from: '#1e1037', to: '#0b1a2e', accent: '#c4b5fd', ink: '#ffffff' },
 };
 
@@ -264,6 +265,31 @@ function drawSlide(ctx: CanvasRenderingContext2D, slide: RecapSlide, index: numb
         ctx.fillStyle = i === 0 ? theme.accent : 'rgba(255,255,255,0.7)';
         roundRect(ctx, PAD, y + 34, Math.max(40, maxW * (m.share / top)), 40, 20);
         ctx.fill();
+      });
+      break;
+    }
+    case 'versus': {
+      kicker(ctx, `Vs ${slide.previousLabel}`, theme.accent);
+      const up = slide.headline.pct >= 0;
+      hero(ctx, `${up ? '+' : ''}${slide.headline.pct}%`, up ? `more ${slide.headline.label}` : `${slide.headline.label} vs before`, 680, theme.accent);
+      slide.rows.forEach((row, i) => {
+        const y = 960 + i * 230;
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        roundRect(ctx, PAD, y, maxW, 190, 32);
+        ctx.fill();
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = font(700, 32);
+        ctx.fillText(row.label.toUpperCase(), PAD + 40, y + 62);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = font(800, 54);
+        ctx.fillText(`${num(row.before)} → ${num(row.now)}`, PAD + 40, y + 140);
+        if (row.pct !== null) {
+          ctx.textAlign = 'right';
+          ctx.fillStyle = row.pct >= 0 ? theme.accent : '#fdba74';
+          ctx.font = font(900, 60);
+          ctx.fillText(`${row.pct >= 0 ? '+' : ''}${row.pct}%`, W - PAD - 40, y + 120);
+        }
       });
       break;
     }

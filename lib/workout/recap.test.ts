@@ -66,3 +66,18 @@ test('a recap has slides only for what there is to say', () => {
   assert.deepEqual(quiet.map((s) => s.kind), ['cover', 'showing-up', 'volume', 'top-lifts', 'summary']);
   assert.deepEqual(buildRecap({ history: [], period: '4w', stats: [], muscles: [], now: NOW }), []);
 });
+
+test('a recap compares with the period before when there was training then', () => {
+  const stats = exerciseStats(history, '4w', { now: NOW });
+  const muscles = muscleSetsPerWeek(history, '4w', { now: NOW });
+  const slides = buildRecap({ history, period: '4w', stats, muscles, now: NOW });
+  const versus = slides.find((s) => s.kind === 'versus');
+  assert.ok(versus && versus.kind === 'versus');
+  assert.equal(versus.previousLabel, 'the 4 weeks before');
+  // 35 and 28 days ago were the 4 weeks before; 14, 7 and 0 days ago are this period.
+  assert.deepEqual(versus.rows.map((r) => [r.label, r.before, r.now, r.pct]), [['Workouts', 2, 3, 50], ['Sets', 4, 8, 100], ['Pounds lifted', 2800, 5670, 102]]);
+  assert.deepEqual(versus.headline, { label: 'pounds lifted', pct: 102 });
+  assert.equal(slides.at(-2)?.kind, 'versus'); // just before the summary
+  // All time has nothing before it.
+  assert.equal(buildRecap({ history, period: 'all', stats, muscles, now: NOW }).some((s) => s.kind === 'versus'), false);
+});
