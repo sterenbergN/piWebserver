@@ -64,6 +64,7 @@ export default function WorkoutCalculatorsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('calorie');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [needsLogin, setNeedsLogin] = useState(false);
   const [showCalorieInfo, setShowCalorieInfo] = useState(false);
   const [showBodyFatInfo, setShowBodyFatInfo] = useState(false);
@@ -105,7 +106,7 @@ export default function WorkoutCalculatorsPage() {
     const timeout = window.setTimeout(async () => {
       setSaving(true);
       try {
-        await fetch('/api/workout/calculator-settings', {
+        const response = await fetch('/api/workout/calculator-settings', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -115,6 +116,9 @@ export default function WorkoutCalculatorsPage() {
             },
           }),
         });
+        setSaveFailed(!response.ok);
+      } catch {
+        setSaveFailed(true);
       } finally {
         setSaving(false);
       }
@@ -243,7 +247,7 @@ export default function WorkoutCalculatorsPage() {
       <PageHeader
         title="Calculators"
         subtitle={isSampleMode ? 'Sample mode: inputs are local only and are not saved.' : 'Inputs are saved to your profile; results stay on this page.'}
-        actions={!isSampleMode ? <span style={{ fontSize: '0.75rem', color: saving ? 'var(--accent)' : 'var(--muted)' }}>{saving ? 'Saving…' : 'Saved'}</span> : undefined}
+        actions={!isSampleMode ? <span style={{ fontSize: '0.75rem', color: saving ? 'var(--accent)' : saveFailed ? 'var(--danger)' : 'var(--muted)' }}>{saving ? 'Saving…' : saveFailed ? 'Couldn’t save' : 'Saved'}</span> : undefined}
       />
 
       <div className="workout-tile" style={{ padding: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
@@ -274,28 +278,28 @@ export default function WorkoutCalculatorsPage() {
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Height (inches)</label>
-                <input className="workout-input" type="number" value={calorieForm.heightInches} onChange={(e) => setCalorieForm({ ...calorieForm, heightInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="calorie-height-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Height (inches)</label>
+                <input id="calorie-height-inches" className="workout-input" type="number" value={calorieForm.heightInches} onChange={(e) => setCalorieForm({ ...calorieForm, heightInches: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Weight (lbs)</label>
-                <input className="workout-input" type="number" value={calorieForm.weightLbs} onChange={(e) => setCalorieForm({ ...calorieForm, weightLbs: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="calorie-weight-lbs" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Weight (lbs)</label>
+                <input id="calorie-weight-lbs" className="workout-input" type="number" value={calorieForm.weightLbs} onChange={(e) => setCalorieForm({ ...calorieForm, weightLbs: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Age</label>
-                <input className="workout-input" type="number" value={calorieForm.age} onChange={(e) => setCalorieForm({ ...calorieForm, age: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="calorie-age" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Age</label>
+                <input id="calorie-age" className="workout-input" type="number" value={calorieForm.age} onChange={(e) => setCalorieForm({ ...calorieForm, age: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Sex</label>
-                <select className="workout-input" value={calorieForm.sex} onChange={(e) => setCalorieForm({ ...calorieForm, sex: e.target.value as 'male' | 'female' })}>
+                <label htmlFor="calorie-sex" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Sex</label>
+                <select id="calorie-sex" className="workout-input" value={calorieForm.sex} onChange={(e) => setCalorieForm({ ...calorieForm, sex: e.target.value as 'male' | 'female' })}>
                   <option value="male">Male</option>
                   <option value="female">Female</option>
                 </select>
               </div>
             </div>
 
-            <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Activity Level</label>
-            <select className="workout-input" value={calorieForm.activityLevel} onChange={(e) => setCalorieForm({ ...calorieForm, activityLevel: e.target.value as typeof calorieForm.activityLevel })}>
+            <label htmlFor="calorie-activity-level" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Activity Level</label>
+            <select id="calorie-activity-level" className="workout-input" value={calorieForm.activityLevel} onChange={(e) => setCalorieForm({ ...calorieForm, activityLevel: e.target.value as typeof calorieForm.activityLevel })}>
               {ACTIVITY_LEVELS.map((level) => (
                 <option key={level.value} value={level.value}>{level.label}</option>
               ))}
@@ -304,8 +308,8 @@ export default function WorkoutCalculatorsPage() {
               {ACTIVITY_LEVELS.find((level) => level.value === calorieForm.activityLevel)?.description}
             </p>
 
-            <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Goal</label>
-            <select className="workout-input" value={calorieForm.goalRate} onChange={(e) => setCalorieForm({ ...calorieForm, goalRate: Number(e.target.value) })}>
+            <label htmlFor="calorie-goal" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Goal</label>
+            <select id="calorie-goal" className="workout-input" value={calorieForm.goalRate} onChange={(e) => setCalorieForm({ ...calorieForm, goalRate: Number(e.target.value) })}>
               {GOAL_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
@@ -313,16 +317,16 @@ export default function WorkoutCalculatorsPage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Timeline (weeks)</label>
-                <select className="workout-input" value={calorieForm.timelineWeeks || 12} onChange={(e) => setCalorieForm({ ...calorieForm, timelineWeeks: Number(e.target.value) })}>
+                <label htmlFor="calorie-timeline-weeks" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Timeline (weeks)</label>
+                <select id="calorie-timeline-weeks" className="workout-input" value={calorieForm.timelineWeeks || 12} onChange={(e) => setCalorieForm({ ...calorieForm, timelineWeeks: Number(e.target.value) })}>
                   {Array.from({ length: 22 }, (_, idx) => 8 + (idx * 2)).map((weeks) => (
                     <option key={weeks} value={weeks}>{weeks} wk</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Projection start date</label>
-                <input className="workout-input" type="date" value={calorieForm.startDate || ''} onChange={(e) => setCalorieForm({ ...calorieForm, startDate: e.target.value })} />
+                <label htmlFor="calorie-projection-start-date" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Projection start date</label>
+                <input id="calorie-projection-start-date" className="workout-input" type="date" value={calorieForm.startDate || ''} onChange={(e) => setCalorieForm({ ...calorieForm, startDate: e.target.value })} />
               </div>
             </div>
           </div>
@@ -433,65 +437,65 @@ export default function WorkoutCalculatorsPage() {
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Sex</label>
-                <select className="workout-input" value={bodyFatForm.sex} onChange={(e) => setBodyFatForm({ ...bodyFatForm, sex: e.target.value as 'male' | 'female' })}>
+                <label htmlFor="bodyfat-sex" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Sex</label>
+                <select id="bodyfat-sex" className="workout-input" value={bodyFatForm.sex} onChange={(e) => setBodyFatForm({ ...bodyFatForm, sex: e.target.value as 'male' | 'female' })}>
                   <option value="male">Male</option>
                   <option value="female">Female</option>
                 </select>
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Height (inches)</label>
-                <input className="workout-input" type="number" value={bodyFatForm.heightInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, heightInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-height-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Height (inches)</label>
+                <input id="bodyfat-height-inches" className="workout-input" type="number" value={bodyFatForm.heightInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, heightInches: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Weight (lbs)</label>
-                <input className="workout-input" type="number" value={bodyFatForm.weightLbs} onChange={(e) => setBodyFatForm({ ...bodyFatForm, weightLbs: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-weight-lbs" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Weight (lbs)</label>
+                <input id="bodyfat-weight-lbs" className="workout-input" type="number" value={bodyFatForm.weightLbs} onChange={(e) => setBodyFatForm({ ...bodyFatForm, weightLbs: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Age</label>
-                <input className="workout-input" type="number" value={bodyFatForm.age} onChange={(e) => setBodyFatForm({ ...bodyFatForm, age: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-age" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Age</label>
+                <input id="bodyfat-age" className="workout-input" type="number" value={bodyFatForm.age} onChange={(e) => setBodyFatForm({ ...bodyFatForm, age: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Neck (inches)</label>
-                <input className="workout-input" type="number" value={bodyFatForm.neckInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, neckInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-neck-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Neck (inches)</label>
+                <input id="bodyfat-neck-inches" className="workout-input" type="number" value={bodyFatForm.neckInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, neckInches: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Waist (inches)</label>
-                <input className="workout-input" type="number" value={bodyFatForm.waistInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, waistInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-waist-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Waist (inches)</label>
+                <input id="bodyfat-waist-inches" className="workout-input" type="number" value={bodyFatForm.waistInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, waistInches: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
               {bodyFatForm.sex === 'female' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Hip (inches)</label>
-                  <input className="workout-input" type="number" value={bodyFatForm.hipInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, hipInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                  <label htmlFor="bodyfat-hip-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Hip (inches)</label>
+                  <input id="bodyfat-hip-inches" className="workout-input" type="number" value={bodyFatForm.hipInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, hipInches: e.target.value === '' ? '' : Number(e.target.value) })} />
                 </div>
               )}
               {bodyFatForm.sex === 'male' && (
                 <>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Hip (inches)</label>
-                    <input className="workout-input" type="number" value={bodyFatForm.hipInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, hipInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                    <label htmlFor="bodyfat-hip-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Hip (inches)</label>
+                    <input id="bodyfat-hip-inches" className="workout-input" type="number" value={bodyFatForm.hipInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, hipInches: e.target.value === '' ? '' : Number(e.target.value) })} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Forearm (inches)</label>
-                    <input className="workout-input" type="number" value={bodyFatForm.forearmInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, forearmInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                    <label htmlFor="bodyfat-forearm-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Forearm (inches)</label>
+                    <input id="bodyfat-forearm-inches" className="workout-input" type="number" value={bodyFatForm.forearmInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, forearmInches: e.target.value === '' ? '' : Number(e.target.value) })} />
                   </div>
                 </>
               )}
               {bodyFatForm.sex === 'female' && (
                 <>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Thigh (inches)</label>
-                    <input className="workout-input" type="number" value={bodyFatForm.thighInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, thighInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                    <label htmlFor="bodyfat-thigh-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Thigh (inches)</label>
+                    <input id="bodyfat-thigh-inches" className="workout-input" type="number" value={bodyFatForm.thighInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, thighInches: e.target.value === '' ? '' : Number(e.target.value) })} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Calf (inches)</label>
-                    <input className="workout-input" type="number" value={bodyFatForm.calfInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, calfInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                    <label htmlFor="bodyfat-calf-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Calf (inches)</label>
+                    <input id="bodyfat-calf-inches" className="workout-input" type="number" value={bodyFatForm.calfInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, calfInches: e.target.value === '' ? '' : Number(e.target.value) })} />
                   </div>
                 </>
               )}
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Wrist (inches)</label>
-                <input className="workout-input" type="number" value={bodyFatForm.wristInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, wristInches: e.target.value === '' ? '' : Number(e.target.value) })} />
+                <label htmlFor="bodyfat-wrist-inches" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Wrist (inches)</label>
+                <input id="bodyfat-wrist-inches" className="workout-input" type="number" value={bodyFatForm.wristInches} onChange={(e) => setBodyFatForm({ ...bodyFatForm, wristInches: e.target.value === '' ? '' : Number(e.target.value) })} />
               </div>
             </div>
           </div>

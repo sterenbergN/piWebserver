@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   const { profile } = await getResume();
-  return { title: `${profile.name} — Resume`, description: profile.headline };
+  return { title: 'Resume', description: profile.headline };
 }
 
 export default async function ResumePage() {

@@ -7,6 +7,7 @@ import { formatRelativeDay, liftSessions } from '@/lib/workout/session-insights'
 import { exerciseName } from '@/lib/workout/exercises';
 import { describeLift } from '@/components/workout/LiftForm';
 import { hasPendingWorkout, queueLiftsForWorkout } from '@/lib/workout/station-link';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 
 function equipmentSummary(station: Station) {
   switch (station.type) {
@@ -39,17 +40,17 @@ export default function StationPage() {
   useEffect(() => {
     if (!ids) return;
     (async () => {
-      const auth = await fetch('/api/workout/auth').then((r) => r.json()).catch(() => ({}));
-      if (!auth.authenticated) { setStatus('login'); return; }
+      const { data: auth } = await fetchWorkoutJson('/api/workout/auth');
+      if (!auth?.authenticated) { setStatus('login'); return; }
       setUserId(auth.user?.id);
       setPending(hasPendingWorkout(auth.user?.id));
-      const [gyms, hist] = await Promise.all([
-        fetch('/api/workout/gyms?scope=all').then((r) => r.json()).catch(() => ({})),
-        fetch('/api/workout/history').then((r) => r.json()).catch(() => ({})),
+      const [{ data: gyms }, { data: hist }] = await Promise.all([
+        fetchWorkoutJson('/api/workout/gyms?scope=all'),
+        fetchWorkoutJson('/api/workout/history'),
       ]);
-      const found = (gyms.gyms || []).find((g: Gym) => g.id === ids.gym) || null;
+      const found = (gyms?.gyms || []).find((g: Gym) => g.id === ids.gym) || null;
       setGym(found);
-      setHistory(hist.history || []);
+      setHistory(hist?.history || []);
       setStatus(found?.stations.some((s: Station) => s.id === ids.station) ? 'ready' : 'missing');
     })();
   }, [ids]);

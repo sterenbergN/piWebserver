@@ -168,7 +168,7 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
                     {groupedPosts.map(renderCard)}
                   </div>
                 ) : (
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(${tileColumns}, minmax(0, 1fr))`, gap: '1.5rem' }}>
+                  <div className="grid blog-tiles" style={{ gridTemplateColumns: `repeat(${tileColumns}, minmax(0, 1fr))`, gap: '1.5rem' }}>
                     {groupedPosts.map(renderCard)}
                   </div>
                 )}
@@ -180,7 +180,7 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
             {sortedPosts.map(renderCard)}
           </div>
         ) : (
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${tileColumns}, minmax(0, 1fr))`, gap: '1.5rem' }}>
+          <div className="grid blog-tiles" style={{ gridTemplateColumns: `repeat(${tileColumns}, minmax(0, 1fr))`, gap: '1.5rem' }}>
             {sortedPosts.map(renderCard)}
           </div>
         )}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { monthlyStrength, weeklyReport, type ReportWorkout } from '@/lib/workout/reports';
 import { DEMO_HISTORY } from '@/lib/workout/demo-data';
 import PageHeader from '@/components/workout/PageHeader';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const fmt = (n: number) => n.toLocaleString();
@@ -41,10 +42,10 @@ export default function ReportPage() {
 
   useEffect(() => {
     (async () => {
-      const auth = await fetch('/api/workout/auth').then((r) => r.json()).catch(() => ({}));
-      if (!auth.authenticated) { setIsDemo(true); setHistory(DEMO_HISTORY as unknown as ReportWorkout[]); return; }
-      const hist = await fetch('/api/workout/history').then((r) => r.json()).catch(() => ({}));
-      setHistory(hist.history || []);
+      const { data: auth } = await fetchWorkoutJson('/api/workout/auth');
+      if (!auth?.authenticated) { setIsDemo(true); setHistory(DEMO_HISTORY as unknown as ReportWorkout[]); return; }
+      const { data: hist } = await fetchWorkoutJson('/api/workout/history');
+      setHistory(hist?.history || []);
     })();
   }, []);
 

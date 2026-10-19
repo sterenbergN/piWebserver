@@ -48,8 +48,8 @@ export default async function RootLayout({
             {children}
           </main>
           <footer style={{ padding: '2rem', textAlign: 'center', opacity: 0.5, fontSize: '0.875rem', marginTop: 'auto' }}>
-            <p>{new Date().getFullYear()} Noah Sterenberg. Its alive.
-              <Link href="/login" style={{ opacity: 0, paddingLeft: '0.5rem', cursor: 'pointer' }}>.</Link>
+            <p>© {new Date().getFullYear()} Noah Sterenberg. It’s alive.
+              <Link href="/login" tabIndex={-1} aria-hidden="true" style={{ opacity: 0, paddingLeft: '0.5rem', cursor: 'pointer' }}>.</Link>
             </p>
           </footer>
         </ThemeProvider>

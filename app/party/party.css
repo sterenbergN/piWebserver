@@ -343,6 +343,15 @@
   margin-bottom: 1rem;
   font-family: var(--party-font-display);
 }
+/* The title button's ::after stretches over the whole card, so a click anywhere
+   hosts the game; "How to Play" sits above it as its own button. */
+.party-game-card { position: relative; }
+.party-game-card-host { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.party-game-card-host::after { content: ''; position: absolute; inset: 0; border-radius: var(--party-radius); }
+.party-game-card-host:disabled { cursor: wait; }
+.party-game-card-host:focus-visible { outline: none; }
+.party-game-card-host:focus-visible::after { outline: 2px solid var(--party-cyan); outline-offset: 2px; }
+.party-game-card-guide { position: relative; z-index: 1; cursor: pointer; }
 .party-game-card:hover { transform: translateY(-3px); }
 .party-game-card:active { transform: translateY(0); }
 .party-game-card.yellow { border-color: rgba(245,158,11,0.4); }

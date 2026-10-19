@@ -30,6 +30,7 @@ import { nextProgramDay, programDeloadDue, type Program } from '@/lib/workout/pr
 import { exerciseLibrary } from '@/lib/workout/exercises';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import type { Goal } from '@/lib/workout/goals';
+import { useSitePopup } from '@/components/SitePopup';
 
 /** "Not today" on a deload suggestion hides it for this long. */
 const DELOAD_SNOOZE_MS = 3 * 24 * 60 * 60 * 1000;
@@ -66,6 +67,7 @@ function readPendingWorkout(ownerId: string) {
 
 
 export default function WorkoutDashboard() {
+  const { confirm, popup } = useSitePopup();
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDemo, setIsDemo] = useState(false);
@@ -114,7 +116,7 @@ export default function WorkoutDashboard() {
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [editWeight, setEditWeight] = useState('');
   const [editHeight, setEditHeight] = useState('');
-  const [editGender, setEditGender] = useState('male');
+  const [editGender, setEditGender] = useState('unspecified');
   const [editIntensityFactor, setEditIntensityFactor] = useState(1.0);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState('');
@@ -163,7 +165,7 @@ export default function WorkoutDashboard() {
         // Populate profile editor fields
         setEditWeight(data.user.weight?.toString() || '');
         setEditHeight(data.user.height?.toString() || '');
-        setEditGender(data.user.gender || 'male');
+        setEditGender(data.user.gender || 'unspecified');
         setEditIntensityFactor(data.user.intensityFactor ?? 1.0);
 
         const results = await Promise.all([
@@ -339,15 +341,23 @@ export default function WorkoutDashboard() {
       <div className="workout-tile animate-fade-in" style={{ marginTop: '20vh' }}>
         <h2 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Login to Workout</h2>
         <form onSubmit={handleLogin}>
+          <label htmlFor="workout-login-username" className="sr-only">Username</label>
           <input 
+            id="workout-login-username"
+            name="username"
             type="text" 
+            autoComplete="username"
             className="workout-input" 
             placeholder="Username" 
             value={loginUsername} 
             onChange={e => setLoginUsername(e.target.value)} 
           />
+          <label htmlFor="workout-login-password" className="sr-only">Password</label>
           <input 
+            id="workout-login-password"
+            name="password"
             type="password" 
+            autoComplete="current-password"
             className="workout-input" 
             placeholder="Password" 
             value={loginPassword} 
@@ -507,6 +517,7 @@ export default function WorkoutDashboard() {
 
                 <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '0.2rem', fontWeight: 600 }}>Gender</label>
                 <select className="workout-input" style={{ marginBottom: '0.75rem', padding: '0.6rem 0.8rem', background: 'var(--input-bg)', border: '1px solid var(--surface-border)', color: 'var(--foreground)' }} value={editGender} onChange={e => setEditGender(e.target.value)}>
+                   <option value="unspecified">Unspecified</option>
                    <option value="male">Male</option>
                    <option value="female">Female</option>
                 </select>
@@ -624,7 +635,12 @@ export default function WorkoutDashboard() {
                    <button 
                      className="btn btn-secondary" 
                      style={{ flex: 1, padding: '0.85rem', borderRadius: '12px', color: 'var(--danger)', borderColor: 'rgba(var(--danger-rgb), 0.3)' }}
-                     onClick={() => { localStorage.removeItem('pendingWorkout'); setPendingWorkout(null); }}
+                     onClick={async () => {
+                       const ok = await confirm({ title: 'Discard workout', message: `Discard this workout? Its ${totalSets} logged set${totalSets === 1 ? '' : 's'} will be lost.`, confirmLabel: 'Discard', danger: true });
+                       if (!ok) return;
+                       localStorage.removeItem('pendingWorkout');
+                       setPendingWorkout(null);
+                     }}
                    >
                      Discard
                    </button>
@@ -916,6 +932,7 @@ export default function WorkoutDashboard() {
           </button>
         </div>
       )}
+      {popup}
     </div>
   );
 }

@@ -277,6 +277,9 @@ input:focus, textarea:focus, select:focus {
 /* ── Layout ── */
 .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
 .grid { display: grid; gap: 2rem; }
+
+/* Hidden on screen, still read by screen readers (e.g. labels for placeholder-only inputs). */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 main { min-height: calc(100vh - 120px); }
 
 /* ── Markdown body ── */
@@ -320,6 +323,13 @@ main { min-height: calc(100vh - 120px); }
 
   /* Stats grid */
   .grid[style*="minmax(280px"] { grid-template-columns: 1fr 1fr !important; }
+
+  /* Blog tiles: the chosen column count is for wide screens; cap it here. */
+  .blog-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
+@media (max-width: 600px) {
+  .blog-tiles { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
 @media (max-width: 480px) {

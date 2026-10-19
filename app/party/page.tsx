@@ -295,90 +295,110 @@ export default function PartyLobby() {
               <div className="party-label" style={{ textAlign: 'center', marginBottom: '0.6rem', color: 'var(--party-purple-lt)' }}>
                 🎉 Classic Party Games
               </div>
-              <button onClick={() => handleHost('quip-clash')} disabled={loading} className="party-game-card yellow">
+              <div className="party-game-card yellow">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-yellow)', margin: 0 }}>⚡ Quip Clash</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('quip-clash'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-yellow)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('quip-clash')} disabled={loading} className="party-game-card-host">⚡ Quip Clash</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('quip-clash')} className="badge party-game-card-guide" aria-label="How to play Quip Clash" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Answer hilarious prompts and vote for the funniest response!</p>
                 <div className="badges"><span className="badge">3–8 Players</span><span className="badge">Comedy</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('the-faker')} disabled={loading} className="party-game-card red">
+              </div>
+              <div className="party-game-card red">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-red)', margin: 0 }}>🕵️ The Faker</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('the-faker'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-red)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('the-faker')} disabled={loading} className="party-game-card-host">🕵️ The Faker</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('the-faker')} className="badge party-game-card-guide" aria-label="How to play The Faker" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>3 rounds — everyone gets a physical task <em>except</em> The Faker. Vote out the impostor!</p>
                 <div className="badges"><span className="badge">3–8 Players</span><span className="badge">Deception</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('trivia-death')} disabled={loading} className="party-game-card purple">
+              </div>
+              <div className="party-game-card purple">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-purple-lt)', margin: 0 }}>💀 Trivia Death</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('trivia-death'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-purple-lt)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('trivia-death')} disabled={loading} className="party-game-card-host">💀 Trivia Death</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('trivia-death')} className="badge party-game-card-guide" aria-label="How to play Trivia Death" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Answer trivia or face the Killing Floor. Die and become a ghost — or escape!</p>
                 <div className="badges"><span className="badge">3–8 Players</span><span className="badge">Trivia</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('bracket-battles')} disabled={loading} className="party-game-card cyan">
+              </div>
+              <div className="party-game-card cyan">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>🏆 Bracket Battles</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('bracket-battles'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('bracket-battles')} disabled={loading} className="party-game-card-host">🏆 Bracket Battles</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('bracket-battles')} className="badge party-game-card-guide" aria-label="How to play Bracket Battles" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Submit crazy answers — they battle tournament-style and the crowd votes for a champion!</p>
                 <div className="badges"><span className="badge">3–16 Players</span><span className="badge">Tournament Comedy</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('ready-set-bet')} disabled={loading} className="party-game-card green">
+              </div>
+              <div className="party-game-card green">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-green)', margin: 0 }}>🐎 Ready Set Bet</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('ready-set-bet'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-green)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('ready-set-bet')} disabled={loading} className="party-game-card-host">🐎 Ready Set Bet</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('ready-set-bet')} className="badge party-game-card-guide" aria-label="How to play Ready Set Bet" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Bet in real-time as dice-powered horses race to the finish. 4 races, live odds!</p>
                 <div className="badges"><span className="badge">1–16 Players</span><span className="badge">Party Racing</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
+              </div>
 
               <div className="party-label" style={{ textAlign: 'center', margin: '1.25rem 0 0.6rem', color: 'var(--party-cyan)' }}>
                 🎲 Social &amp; Tabletop Party Games
               </div>
-              <button onClick={() => handleHost('spyfall')} disabled={loading} className="party-game-card red">
+              <div className="party-game-card red">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-red)', margin: 0 }}>🕵️‍♀️ Spyfall</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('spyfall'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-red)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('spyfall')} disabled={loading} className="party-game-card-host">🕵️‍♀️ Spyfall</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('spyfall')} className="badge party-game-card-guide" aria-label="How to play Spyfall" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Everyone gets the secret location &amp; a role <em>except</em> The Spy. Question each other out loud to catch them!</p>
                 <div className="badges"><span className="badge">3–12 Players</span><span className="badge">Social Deduction</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('herd-mentality')} disabled={loading} className="party-game-card purple">
+              </div>
+              <div className="party-game-card purple">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-pink)', margin: 0 }}>🐄 Herd Mentality</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('herd-mentality'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-pink)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('herd-mentality')} disabled={loading} className="party-game-card-host">🐄 Herd Mentality</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('herd-mentality')} className="badge party-game-card-guide" aria-label="How to play Herd Mentality" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Think like the crowd! Match the majority answer to score—or get stuck with the Pink Cow if you’re the lone oddball.</p>
                 <div className="badges"><span className="badge">3–16 Players</span><span className="badge">Hive Mind</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('wavelength')} disabled={loading} className="party-game-card cyan">
+              </div>
+              <div className="party-game-card cyan">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>📡 Wavelength</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('wavelength'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('wavelength')} disabled={loading} className="party-game-card-host">📡 Wavelength</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('wavelength')} className="badge party-game-card-guide" aria-label="How to play Wavelength" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>The Psychic gives a one-phrase clue on a wild spectrum (e.g. Trashy ↔ Classy). Turn your dial to hit the bullseye!</p>
                 <div className="badges"><span className="badge">2–16 Players</span><span className="badge">Mind Reading</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('bluff-clash')} disabled={loading} className="party-game-card yellow">
+              </div>
+              <div className="party-game-card yellow">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-yellow)', margin: 0 }}>🤥 Bluff Clash</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('bluff-clash'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-yellow)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('bluff-clash')} disabled={loading} className="party-game-card-host">🤥 Bluff Clash</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('bluff-clash')} className="badge party-game-card-guide" aria-label="How to play Bluff Clash" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Write believable fake answers to bizarre real-world facts and trick your friends into voting for your lie!</p>
                 <div className="badges"><span className="badge">3–16 Players</span><span className="badge">Trivia &amp; Lies</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
-              <button onClick={() => handleHost('emoji-telephone')} disabled={loading} className="party-game-card green">
+              </div>
+              <div className="party-game-card green">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: 'var(--party-green)', margin: 0 }}>🔗 Emoji Telephone</h3>
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setGuideGame('emoji-telephone'); }} className="badge" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</span>
+                  <h3 style={{ color: 'var(--party-green)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('emoji-telephone')} disabled={loading} className="party-game-card-host">🔗 Emoji Telephone</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('emoji-telephone')} className="badge party-game-card-guide" aria-label="How to play Emoji Telephone" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>Translate a chaotic prompt into ONLY emojis, pass it on to be decoded, and watch the chain go off the rails!</p>
                 <div className="badges"><span className="badge">3–12 Players</span><span className="badge">Pass-the-Chain</span><span className="badge">TV &amp; VIP</span></div>
-              </button>
+              </div>
 
               <div className="party-divider" />
               {isAdmin && (
