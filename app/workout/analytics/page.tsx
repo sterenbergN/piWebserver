@@ -22,7 +22,8 @@ import LiftsTab from './LiftsTab';
 import MusclesTab from './MusclesTab';
 import HistoryTab from './HistoryTab';
 import HowItWorksSheet from './HowItWorksSheet';
-import RecapSheet from './RecapSheet';
+import ShareViewer from '@/components/workout/ShareViewer';
+import { renderRecap } from '@/lib/workout/recap-cards';
 import { buildRecap } from '@/lib/workout/recap';
 import PageHeader from '@/components/workout/PageHeader';
 
@@ -109,6 +110,7 @@ export default function AnalyticsPage() {
 
   const liftLookup = useMemo(() => Object.fromEntries(lifts.map((l) => [l.id, l])), [lifts]);
   const periodLabel = PERIODS.find((p) => p.key === period)!.label;
+  const recapName = period === 'all' ? 'all-time' : periodLabel.replace(/s$/, '').replace(' ', '-');
   const data = useMemo(() => {
     const summary = periodSummary(history, period);
     const stats = exerciseStats(history, period, { scaleFor, lifts: liftLookup });
@@ -180,7 +182,7 @@ export default function AnalyticsPage() {
         {tab === 'summary' && data.summary.current.workouts > 0 && (
           <button type="button" className="an-recap-banner" onClick={() => setShowRecap(true)}>
             <span className="an-recap-banner-text">
-              <strong>✨ Your {period === 'all' ? 'all-time' : periodLabel.replace(/s$/, '').replace(' ', '-')} recap</strong>
+              <strong>✨ Your {recapName} recap</strong>
               <span>Story images of your numbers, top lifts and PRs to send to friends</span>
             </span>
             <span aria-hidden>›</span>
@@ -236,7 +238,15 @@ export default function AnalyticsPage() {
           onIntensitySaved={(intensityFactor) => setUser((prev: any) => ({ ...prev, intensityFactor }))}
         />
       )}
-      {showRecap && recapSlides.length > 0 && <RecapSheet slides={recapSlides} periodLabel={periodLabel} onClose={() => setShowRecap(false)} />}
+      {showRecap && recapSlides.length > 0 && (
+        <ShareViewer
+          title={`Your ${recapName} recap`}
+          render={() => renderRecap(recapSlides)}
+          fileBase={`workout-recap-${new Date().toISOString().slice(0, 10)}`}
+          shareTitle={`My ${periodLabel.toLowerCase()} workout recap`}
+          onClose={() => setShowRecap(false)}
+        />
+      )}
       {popup}
     </div>
   );

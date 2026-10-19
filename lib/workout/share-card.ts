@@ -1,3 +1,9 @@
+import { calcAverage1RM } from './analytics';
+import { exerciseKey } from './exercises';
+import { bestE1RMByExercise, bestE1RMByLift } from './session-insights';
+import { compareWithLastTime, formatClock, sessionVerdict, workoutTotals, type LoggedSet } from './tracker-utils';
+import { isLoadStation, type StationType } from './types';
+
 // Draws a shareable "today's workout" card (1080×1350, sized for chats and
 // stories) on a canvas, entirely in the browser — see components/party/resultsCard.ts.
 
@@ -11,6 +17,57 @@ export type WorkoutCardData = {
   verdict: string;
   lifts: { name: string; top: string; change: 'up' | 'same' | 'down' | 'new'; changeText: string; pr?: boolean }[];
 };
+
+type SavedWorkout = {
+  id?: string;
+  timestamp: string;
+  name?: string;
+  type?: { name?: string };
+  gymName?: string;
+  duration?: string;
+  durationSecs?: number;
+  logs?: Record<string, LoggedSet[] | undefined>;
+  liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string } | undefined>;
+};
+
+/**
+ * The card for a workout already in history, compared with the workouts
+ * before it — the same numbers the finish screen showed on the day.
+ */
+export function cardDataForWorkout(workout: SavedWorkout, history: SavedWorkout[], opts: { gymName?: string; lifts?: Record<string, { name?: string }> } = {}): WorkoutCardData {
+  const at = new Date(workout.timestamp).getTime();
+  const earlier = history.filter((w) => w !== workout && (!workout.id || w.id !== workout.id) && new Date(w.timestamp).getTime() < at);
+  const logs: Record<string, LoggedSet[]> = {};
+  for (const [id, sets] of Object.entries(workout.logs || {})) {
+    const valid = (sets || []).filter((s) => Number(s.reps) > 0).map((s) => ({ ...s, weight: Number(s.weight) || 0, reps: Number(s.reps) }));
+    if (valid.length) logs[id] = valid;
+  }
+  const planLifts = Object.keys(logs).map((id) => {
+    const meta = workout.liftMeta?.[id];
+    return { id, uniquePlanId: id, name: meta?.name || opts.lifts?.[id]?.name || 'Lift', exercise: meta?.exercise, stationType: meta?.stationType };
+  });
+  const comparisons = compareWithLastTime({ id: workout.id || '', name: workout.name || '', lifts: planLifts }, logs, earlier as any[]);
+
+  const bestByLift = bestE1RMByLift(earlier as any[]);
+  const bestByExercise = bestE1RMByExercise(earlier as any[]);
+  const prs = new Set(planLifts.filter((lift) => {
+    const best = Math.max(...logs[lift.id].map((s) => calcAverage1RM(s.weight, s.reps)));
+    const previous = (isLoadStation(lift.stationType as StationType) ? bestByLift[lift.id] : bestByExercise[exerciseKey(lift) || lift.id]) || 0;
+    return previous > 0 && best > previous + 0.5;
+  }).map((lift) => lift.name));
+
+  const { sets, volume } = workoutTotals(logs);
+  return {
+    title: workout.type?.name || workout.name || 'Workout',
+    date: new Date(workout.timestamp),
+    gymName: workout.gymName || opts.gymName,
+    duration: workout.durationSecs ? formatClock(workout.durationSecs) : workout.duration || '—',
+    sets,
+    volume,
+    verdict: sessionVerdict(comparisons, prs.size),
+    lifts: comparisons.map((c) => ({ name: c.name, top: `${c.top.weight}×${c.top.reps}`, change: c.change, changeText: c.changeText, pr: prs.has(c.name) })),
+  };
+}
 
 const W = 1080;
 const H = 1350;
@@ -116,24 +173,48 @@ export async function renderWorkoutCard(data: WorkoutCardData): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not draw the card'))), 'image/png'));
 }
 
-/** Share the card (phone share sheet) or fall back to downloading it. */
-export async function shareWorkoutCard(data: WorkoutCardData) {
-  const blob = await renderWorkoutCard(data);
-  const file = new File([blob], `workout-${data.date.toISOString().slice(0, 10)}.png`, { type: 'image/png' });
+/** Share images through the phone's share sheet, or download them. */
+export async function shareImages(blobs: Blob[], baseName: string, title: string) {
+  const files = blobs.map((blob, i) => new File([blob], blobs.length > 1 ? `${baseName}-${i + 1}.png` : `${baseName}.png`, { type: 'image/png' }));
   const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean; share?: (d: { files: File[]; title?: string }) => Promise<void> };
-  if (nav.canShare?.({ files: [file] }) && nav.share) {
+  if (nav.canShare?.({ files }) && nav.share) {
     try {
-      await nav.share({ files: [file], title: data.title });
+      await nav.share({ files, title });
       return 'shared';
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') return 'cancelled';
     }
   }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  files.forEach((file, i) => {
+    const url = URL.createObjectURL(file);
+    // Browsers may block a burst of downloads; stagger them a little.
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }, i * 250);
+  });
   return 'downloaded';
+}
+
+/** Whether this browser can hand image files to the phone's share sheet (else they download). */
+export function canShareImages() {
+  if (typeof navigator === 'undefined' || typeof File === 'undefined') return false;
+  const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean };
+  try {
+    return !!nav.canShare?.({ files: [new File([''], 'x.png', { type: 'image/png' })] }) && 'share' in navigator;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether images can be put on the clipboard (desktop browsers mostly). */
+export function canCopyImages() {
+  return typeof ClipboardItem !== 'undefined' && typeof navigator !== 'undefined' && !!navigator.clipboard?.write;
+}
+
+export async function copyImage(blob: Blob) {
+  await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
 }

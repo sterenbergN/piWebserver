@@ -304,29 +304,3 @@ export async function renderRecap(slides: RecapSlide[]): Promise<Blob[]> {
     return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not draw the recap'))), 'image/png'));
   }));
 }
-
-/** Share images through the phone's share sheet, or download them. */
-export async function shareImages(blobs: Blob[], baseName: string, title: string) {
-  const files = blobs.map((blob, i) => new File([blob], blobs.length > 1 ? `${baseName}-${i + 1}.png` : `${baseName}.png`, { type: 'image/png' }));
-  const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean; share?: (d: { files: File[]; title?: string }) => Promise<void> };
-  if (nav.canShare?.({ files }) && nav.share) {
-    try {
-      await nav.share({ files, title });
-      return 'shared';
-    } catch (error) {
-      if ((error as Error)?.name === 'AbortError') return 'cancelled';
-    }
-  }
-  files.forEach((file, i) => {
-    const url = URL.createObjectURL(file);
-    // Browsers may block a burst of downloads; stagger them a little.
-    setTimeout(() => {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }, i * 250);
-  });
-  return 'downloaded';
-}

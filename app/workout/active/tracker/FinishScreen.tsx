@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react';
 import { findPreviousSameType, workoutVolume } from '@/lib/workout/session-insights';
 import { compareWithLastTime, formatClock, sessionVerdict, workoutTotals, type LoggedSet } from '@/lib/workout/tracker-utils';
-import { shareWorkoutCard } from '@/lib/workout/share-card';
+import { renderWorkoutCard } from '@/lib/workout/share-card';
+import ShareViewer from '@/components/workout/ShareViewer';
 import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { rirLabel } from '@/components/workout/SetEditSheet';
 
@@ -34,7 +35,7 @@ const CHANGE_ICON = { up: '▲', down: '▼', same: '=', new: '★' } as const;
 /** End of workout: how it went against last time, PRs, share card, save. */
 export default function FinishScreen(props: FinishScreenProps) {
   const { plan, logs, pastHistory, elapsedSecs, prs } = props;
-  const [shareState, setShareState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
+  const [showCard, setShowCard] = useState(false);
   const [linkState, setLinkState] = useState<'idle' | 'busy' | 'shared' | 'copied' | 'error'>('idle');
   const [linkError, setLinkError] = useState('');
   const comparisons = useMemo(() => compareWithLastTime(plan, logs, pastHistory), [plan, logs, pastHistory]);
@@ -49,24 +50,16 @@ export default function FinishScreen(props: FinishScreenProps) {
   const avgRir = rirSets.length ? rirSets.reduce((sum, s) => sum + (s.rir as number), 0) / rirSets.length : null;
   const verdict = sessionVerdict(comparisons, prList.length);
 
-  const share = async () => {
-    setShareState('busy');
-    try {
-      await shareWorkoutCard({
-        title: plan.type?.name || plan.name,
-        date: new Date(),
-        gymName: plan.gymName,
-        duration: formatClock(elapsedSecs),
-        sets,
-        volume,
-        verdict,
-        lifts: comparisons.map((c) => ({ name: c.name, top: `${c.top.weight}×${c.top.reps}`, change: c.change, changeText: c.changeText, pr: prNames.has(c.name) })),
-      });
-      setShareState('done');
-    } catch {
-      setShareState('error');
-    }
-  };
+  const cardData = () => ({
+    title: plan.type?.name || plan.name,
+    date: new Date(),
+    gymName: plan.gymName,
+    duration: formatClock(elapsedSecs),
+    sets,
+    volume,
+    verdict,
+    lifts: comparisons.map((c) => ({ name: c.name, top: `${c.top.weight}×${c.top.reps}`, change: c.change, changeText: c.changeText, pr: prNames.has(c.name) })),
+  });
 
   const sendLink = async () => {
     if (!props.getLinkPayload) return;
@@ -143,9 +136,7 @@ export default function FinishScreen(props: FinishScreenProps) {
         {props.saving ? 'Saving…' : 'Save & exit'}
       </button>
       <div className="workout-grid-2" style={{ marginTop: '0.6rem' }}>
-        <button className="workout-button" onClick={share} disabled={shareState === 'busy'}>
-          {shareState === 'busy' ? 'Drawing…' : shareState === 'done' ? '✅ Shared' : shareState === 'error' ? 'Try sharing again' : '📤 Share card'}
-        </button>
+        <button className="workout-button" onClick={() => setShowCard(true)}>📸 Share card</button>
         {props.canSaveTemplate ? (
           <button className="workout-button" onClick={props.onSaveTemplate} disabled={props.templateState === 'saving' || props.templateState === 'saved'}>
             {props.templateState === 'saved' ? '📌 Saved' : props.templateState === 'saving' ? 'Saving…' : props.templateState === 'error' ? 'Retry template' : '📌 Save as template'}
@@ -159,6 +150,15 @@ export default function FinishScreen(props: FinishScreenProps) {
         <p className="workout-hint" style={{ margin: '0.3rem 0 0', textAlign: 'center' }}>{linkError || 'They get these lifts and this gym, with their own weights.'}</p>
       </>)}
       <button className="workout-button is-block" style={{ marginTop: '0.6rem' }} onClick={props.onBack} disabled={props.saving}>Back to workout</button>
+      {showCard && (
+        <ShareViewer
+          title="Today’s workout"
+          render={async () => [await renderWorkoutCard(cardData())]}
+          fileBase={`workout-${new Date().toISOString().slice(0, 10)}`}
+          shareTitle={plan.type?.name || plan.name}
+          onClose={() => setShowCard(false)}
+        />
+      )}
     </div>
   );
 }

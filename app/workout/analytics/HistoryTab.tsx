@@ -6,6 +6,8 @@ import { calcAverage1RM } from '@/lib/workout/analytics';
 import { localDayKey, weekStart, type Workout } from '@/lib/workout/insights';
 import { compact } from './charts';
 import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
+import { cardDataForWorkout, renderWorkoutCard } from '@/lib/workout/share-card';
+import ShareViewer from '@/components/workout/ShareViewer';
 
 type HistoryTabProps = {
   history: Workout[];
@@ -36,6 +38,7 @@ export default function HistoryTab({ history, lifts, gymNames, canDelete, onDele
   const [open, setOpen] = useState<string | null>(null);
   const [pages, setPages] = useState(1);
   const [linkNote, setLinkNote] = useState<{ id: string; text: string } | null>(null);
+  const [cardFor, setCardFor] = useState<Workout | null>(null);
   const q = query.trim().toLowerCase();
 
   const sendLink = async (w: Workout) => {
@@ -119,12 +122,15 @@ export default function HistoryTab({ history, lifts, gymNames, canDelete, onDele
                           );
                         })}
                         {Object.keys(w.logs || {}).length === 0 && <p className="workout-hint">No sets were logged.</p>}
-                        {canDelete && w.id && (
-                          <div className="workout-flex-between" style={{ marginTop: '0.5rem', gap: '0.75rem' }}>
-                            <button type="button" className="workout-text-btn" onClick={() => sendLink(w)}>🔗 Send to a friend</button>
-                            <button type="button" className="workout-text-btn danger" onClick={() => onDelete(w.id!)}>Delete this workout</button>
-                          </div>
-                        )}
+                        <div className="an-workout-actions">
+                          {Object.keys(w.logs || {}).length > 0 && (
+                            <button type="button" className="workout-button is-small" onClick={() => setCardFor(w)}>📸 Share card</button>
+                          )}
+                          {canDelete && w.id && (<>
+                            <button type="button" className="workout-button is-small" onClick={() => sendLink(w)}>🔗 Send to a friend</button>
+                            <button type="button" className="workout-text-btn danger" onClick={() => onDelete(w.id!)}>Delete</button>
+                          </>)}
+                        </div>
                         {linkNote && linkNote.id === w.id && linkNote.text && <p className="workout-hint" style={{ margin: '0.3rem 0 0' }}>{linkNote.text}</p>}
                       </div>
                     )}
@@ -138,6 +144,15 @@ export default function HistoryTab({ history, lifts, gymNames, canDelete, onDele
       {weeks.length === 0 && <p className="workout-hint" style={{ textAlign: 'center' }}>No workouts match.</p>}
       {weeks.length > shown.length && (
         <button type="button" className="workout-button is-block" onClick={() => setPages((p) => p + 1)}>Show older weeks</button>
+      )}
+      {cardFor && (
+        <ShareViewer
+          title={`${cardFor.type?.name || cardFor.name || 'Workout'} · ${new Date(cardFor.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
+          render={async () => [await renderWorkoutCard(cardDataForWorkout(cardFor, history, { gymName: gymNames.get(cardFor.gymId || ''), lifts }))]}
+          fileBase={`workout-${localDayKey(new Date(cardFor.timestamp))}`}
+          shareTitle={cardFor.type?.name || cardFor.name || 'Workout'}
+          onClose={() => setCardFor(null)}
+        />
       )}
     </div>
   );

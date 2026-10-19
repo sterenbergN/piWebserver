@@ -1144,3 +1144,125 @@
 .workout-page-title h1 { margin: 0; font-size: 1.5rem; line-height: 1.2; }
 .workout-page-actions { display: flex; align-items: center; gap: 0.5rem; }
 .workout-page-subtitle { margin: 0; }
+
+/* Full-screen viewer for share images (components/workout/ShareViewer.tsx) */
+.share-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 8, 14, 0.97);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  animation: shareViewerIn 0.18s ease-out;
+}
+@keyframes shareViewerIn { from { opacity: 0; } to { opacity: 1; } }
+.share-viewer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem 0.5rem;
+}
+.share-viewer-title { font-weight: 700; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-viewer-count { font-size: 0.8rem; opacity: 0.65; }
+.share-viewer-close {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.share-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.share-viewer-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.share-viewer-slide {
+  flex: 0 0 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 1rem;
+  box-sizing: border-box;
+}
+.share-viewer-slide img {
+  max-width: min(100%, 560px);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.share-viewer-note { text-align: center; opacity: 0.7; margin-top: 30vh; }
+.share-viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.share-viewer-nav span { margin-top: -0.2rem; }
+.share-viewer-nav.is-prev { left: 0.75rem; }
+.share-viewer-nav.is-next { right: 0.75rem; }
+.share-viewer-nav:disabled { opacity: 0; pointer-events: none; }
+@media (hover: none) { .share-viewer-nav { background: rgba(0, 0, 0, 0.3); } }
+.share-viewer-thumbs {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.6rem 1rem 0.2rem;
+  scrollbar-width: none;
+  justify-content: safe center;
+}
+.share-viewer-thumbs::-webkit-scrollbar { display: none; }
+.share-viewer-thumbs button {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.share-viewer-thumbs button.is-active { opacity: 1; border-color: #fff; }
+.share-viewer-thumbs img { display: block; height: 56px; border-radius: 6px; }
+.share-viewer-actions {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0.6rem 1rem 0;
+  box-sizing: border-box;
+}
+.share-viewer-actions > * { flex: 1; }
+.share-viewer-status { min-height: 1.2em; margin: 0.35rem 1rem 0.6rem; text-align: center; font-size: 0.8rem; opacity: 0.75; }
+@media (prefers-reduced-motion: reduce) { .share-viewer, .share-viewer-track { animation: none; transition: none; } }
+.share-viewer .workout-button:not(.is-primary) { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.2); color: #fff; }
