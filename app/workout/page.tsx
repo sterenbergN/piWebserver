@@ -809,6 +809,19 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
+      <nav className="workout-link-grid" aria-label="More workout pages">
+        {[
+          { href: '/workout/config', icon: '🏋️', label: 'Gyms & lifts' },
+          { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
+          { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
+          { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
+        ].map((link) => (
+          <a key={link.href} className="workout-action-tile" href={link.href}>
+            <span aria-hidden>{link.icon}</span><span>{link.label}</span>
+          </a>
+        ))}
+      </nav>
+
       {volumeRows.length > 0 && (
         <div className="workout-tile" style={{ marginTop: '1rem' }}>
           <div className="workout-flex-between" style={{ marginBottom: '0.75rem', gap: '0.5rem' }}>
@@ -893,18 +906,6 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
-      <nav className="workout-link-grid" aria-label="More workout pages">
-        {[
-          { href: '/workout/config', icon: '🏋️', label: 'Gyms & lifts' },
-          { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
-          { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
-          { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
-        ].map((link) => (
-          <a key={link.href} className="workout-action-tile" href={link.href}>
-            <span aria-hidden>{link.icon}</span><span>{link.label}</span>
-          </a>
-        ))}
-      </nav>
 
       {isDemo && (
         <div style={{ textAlign: 'center', marginTop: '2rem' }}>

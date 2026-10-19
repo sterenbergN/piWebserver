@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import GymEditor from './GymEditor';
 import WorkoutTypeEditor from './WorkoutTypeEditor';
 import ProgramEditor from './ProgramEditor';
+import PageHeader from '@/components/workout/PageHeader';
 
 type ConfigTab = 'gyms' | 'types' | 'programs';
 
@@ -23,12 +24,7 @@ export default function ConfigPage() {
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '4rem' }}>
-      <div className="workout-flex-between" style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.5rem', margin: 0 }}>Configuration</h1>
-        <button className="btn btn-secondary" onClick={() => window.location.href = '/workout'} style={{ padding: '0.5rem 1rem' }}>
-          Back
-        </button>
-      </div>
+      <PageHeader title="Gyms & lifts" subtitle="Your gyms, equipment, workout types and programs" />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
         {TABS.map((tab) => (

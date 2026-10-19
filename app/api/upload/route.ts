@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { writeFile, readFile, mkdir, unlink, readdir } from 'fs/promises';
+import { writeFile, readFile, mkdir, unlink, readdir, copyFile } from 'fs/promises';
 import path from 'path';
+import { deleteDraft, isDraftId, isInlineImageSrc } from '@/lib/blog/drafts';
 import { isSafeBlogSlug, resolvePathInside } from '@/lib/security/paths';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { queueThumbnails, removeThumbnails } from '@/lib/media/thumbnails';
@@ -250,6 +251,9 @@ export async function POST(request: Request) {
       const category = String(formData.get('category') || '').trim().slice(0, 60) || 'Uncategorized';
       const markdown = String(formData.get('markdown') || '');
       const cover = formData.get('cover') as File | null;
+      // A cover already uploaded while drafting (kept with the draft), used when no new file comes with it.
+      const coverSrc = formData.get('coverSrc');
+      const draftId = formData.get('draftId');
       if (!title || !markdown.trim()) {
         return NextResponse.json({ success: false, message: 'A post needs a title and some text.' }, { status: 400 });
       }
@@ -285,7 +289,13 @@ export async function POST(request: Request) {
         const coverFile = `${slug}-img-${Date.now()}${path.extname(cover.name).toLowerCase() || '.jpg'}`;
         await writeFile(path.join(blogDir, coverFile), Buffer.from(await cover.arrayBuffer()));
         coverPath = `/uploads/blog/${coverFile}`;
+      } else if (isInlineImageSrc(coverSrc)) {
+        const from = path.join(blogDir, 'inline', path.basename(coverSrc));
+        const coverFile = `${slug}-img-${Date.now()}${path.extname(from).toLowerCase() || '.jpg'}`;
+        await copyFile(from, path.join(blogDir, coverFile));
+        coverPath = `/uploads/blog/${coverFile}`;
       }
+      if (coverPath) queueThumbnails(coverPath.slice(1));
 
       const index = posts.findIndex((p) => p.slug === slug);
       const previous = index > -1 ? posts[index] : null;
@@ -315,6 +325,9 @@ export async function POST(request: Request) {
         await saveAlbums(albums);
       }
 
+      // The draft it came from is now published.
+      if (isDraftId(draftId)) await deleteDraft(draftId);
+
       return NextResponse.json({ success: true, slug, post: saved });
     }
 
@@ -328,6 +341,7 @@ export async function POST(request: Request) {
       await mkdir(dir, { recursive: true });
       const name = `${Date.now()}-${image.name.replace(/[^a-zA-Z0-9.]/g, '').slice(-60) || 'image.jpg'}`;
       await writeFile(path.join(dir, name), Buffer.from(await image.arrayBuffer()));
+      queueThumbnails(`uploads/blog/inline/${name}`);
       return NextResponse.json({ success: true, src: `/api/media/uploads/blog/inline/${name}` });
     }
 

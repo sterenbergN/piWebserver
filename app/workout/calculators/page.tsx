@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
+import PageHeader from '@/components/workout/PageHeader';
 import {
   ACTIVITY_LEVELS,
   calculateMifflinStJeor,
@@ -239,20 +240,11 @@ export default function WorkoutCalculatorsPage() {
 
   return (
     <div className="animate-fade-in">
-      <div className="workout-flex-between" style={{ marginBottom: '1rem', alignItems: 'flex-start' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.4rem' }}>Calculators</h1>
-          <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
-            {isSampleMode ? 'Sample mode: inputs are local only and are not saved.' : 'Inputs stay saved to your profile. Results stay local to the page.'}
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {!isSampleMode && <span style={{ fontSize: '0.75rem', color: saving ? 'var(--accent)' : 'var(--muted)' }}>{saving ? 'Saving...' : 'Saved'}</span>}
-          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem' }} onClick={() => { window.location.href = '/workout'; }}>
-            Back
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Calculators"
+        subtitle={isSampleMode ? 'Sample mode: inputs are local only and are not saved.' : 'Inputs are saved to your profile; results stay on this page.'}
+        actions={!isSampleMode ? <span style={{ fontSize: '0.75rem', color: saving ? 'var(--accent)' : 'var(--muted)' }}>{saving ? 'Saving…' : 'Saved'}</span> : undefined}
+      />
 
       <div className="workout-tile" style={{ padding: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem' }}>
         <button className="btn btn-secondary" style={{ padding: '0.85rem', borderRadius: '12px', borderColor: activeTab === 'calorie' ? 'var(--accent)' : 'var(--surface-border)', color: activeTab === 'calorie' ? 'var(--accent)' : 'var(--foreground)' }} onClick={() => setActiveTab('calorie')}>

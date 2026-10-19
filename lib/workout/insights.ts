@@ -85,7 +85,8 @@ export function periodWindow(history: Workout[], period: Period, now = Date.now(
   if (days === null) {
     const first = sorted.length ? time(sorted[0]) : now;
     const span = Math.max(7, Math.ceil((now - first) / DAY));
-    return { current: sorted, previous: null as Workout[] | null, days: span, start: first };
+    // Start just before the first workout: "in the period" checks are `> start`.
+    return { current: sorted, previous: null as Workout[] | null, days: span, start: first - 1 };
   }
   const start = now - days * DAY;
   const prevStart = start - days * DAY;

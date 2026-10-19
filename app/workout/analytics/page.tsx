@@ -22,6 +22,9 @@ import LiftsTab from './LiftsTab';
 import MusclesTab from './MusclesTab';
 import HistoryTab from './HistoryTab';
 import HowItWorksSheet from './HowItWorksSheet';
+import RecapSheet from './RecapSheet';
+import { buildRecap } from '@/lib/workout/recap';
+import PageHeader from '@/components/workout/PageHeader';
 
 type Tab = 'summary' | 'lifts' | 'muscles' | 'history';
 const TABS: { key: Tab; label: string }[] = [
@@ -51,6 +54,7 @@ export default function AnalyticsPage() {
   const [period, setPeriod] = useState<Period>('12w');
   const [openLift, setOpenLift] = useState<string | null>(null);
   const [showHow, setShowHow] = useState(false);
+  const [showRecap, setShowRecap] = useState(false);
 
   // Remember the chosen tab and period on this device; ?tab= deep-links.
   useEffect(() => {
@@ -127,6 +131,10 @@ export default function AnalyticsPage() {
     const entry = engine.overloadTracking.find((o) => exerciseKeyFromName(o.name) === exerciseKeyFromName(name));
     return entry ? reviewProgress(entry.sessions, { intensity: user?.intensityFactor ?? 1, typeIntensity: entry.typeIntensity, profile: entry.profile }) : undefined;
   };
+  const recapSlides = useMemo(
+    () => (showRecap ? buildRecap({ history, period, stats: data.stats, muscles: data.muscles, name: isDemo ? undefined : user?.username }) : []),
+    [showRecap, history, period, data.stats, data.muscles, isDemo, user?.username],
+  );
   const experience = useMemo(() => calculateExperienceScore(user || { weight: 150 }, history, lifts), [user, history, lifts]);
 
   const deleteWorkout = async (id: string) => {
@@ -140,15 +148,12 @@ export default function AnalyticsPage() {
 
   return (
     <div className="animate-fade-in an-page">
-      <header className="an-header">
-        <a href="/workout" className="workout-text-btn">← Workout</a>
-        <div className="workout-flex-between" style={{ gap: '0.5rem' }}>
-          <h1>Analytics</h1>
-          <button type="button" className="workout-button is-small" onClick={() => setShowHow(true)}>ⓘ How it works</button>
-        </div>
-        {isDemo && <p className="workout-hint" style={{ margin: 0 }}>Sample data — log in to see your own.</p>}
-        {offline && <p className="workout-offline-note" style={{ margin: 0 }}>📡 Offline — showing data saved on this phone.</p>}
-      </header>
+      <PageHeader
+        title="Analytics"
+        actions={<button type="button" className="workout-button is-small" onClick={() => setShowHow(true)}>ⓘ How it works</button>}
+        subtitle={isDemo ? 'Sample data — log in to see your own.' : undefined}
+      />
+      {offline && <p className="workout-offline-note" style={{ margin: '0 0 0.75rem' }}>📡 Offline — showing data saved on this phone.</p>}
 
       <div className="an-sticky">
         <nav className="an-tabs" aria-label="Analytics sections">
@@ -172,6 +177,15 @@ export default function AnalyticsPage() {
           <a className="workout-button is-primary" href="/workout">Start a workout</a>
         </div>
       ) : (<>
+        {tab === 'summary' && data.summary.current.workouts > 0 && (
+          <button type="button" className="an-recap-banner" onClick={() => setShowRecap(true)}>
+            <span className="an-recap-banner-text">
+              <strong>✨ Your {period === 'all' ? 'all-time' : periodLabel.replace(/s$/, '').replace(' ', '-')} recap</strong>
+              <span>Story images of your numbers, top lifts and PRs to send to friends</span>
+            </span>
+            <span aria-hidden>›</span>
+          </button>
+        )}
         {tab === 'summary' && (
           <SummaryTab
             history={history}
@@ -222,6 +236,7 @@ export default function AnalyticsPage() {
           onIntensitySaved={(intensityFactor) => setUser((prev: any) => ({ ...prev, intensityFactor }))}
         />
       )}
+      {showRecap && recapSlides.length > 0 && <RecapSheet slides={recapSlides} periodLabel={periodLabel} onClose={() => setShowRecap(false)} />}
       {popup}
     </div>
   );

@@ -20,6 +20,8 @@ export interface Lift {
    * See lib/workout/exercises.ts.
    */
   exercise?: string;
+  /** Id of the lift this was copied from when imported from someone's shared workout. */
+  sourceId?: string;
 }
 
 export interface Station {
@@ -45,6 +47,8 @@ export interface Station {
    * weights. See lib/workout/equipment-kinds.ts.
    */
   kind?: string;
+  /** Id of the station this was copied from when imported from someone's shared workout. */
+  sourceId?: string;
   lifts: Lift[];
 }
 
@@ -57,6 +61,11 @@ export interface Gym {
   stations: Station[];
   /** Secret for share links; only present for the gym's owner. */
   shareToken?: string;
+  /**
+   * Set when this gym was imported from someone else's shared workout, so
+   * later shares from the same gym land here instead of importing it again.
+   */
+  importedFrom?: { ownerId: string; gymId: string; ownerName?: string };
 }
 
 export interface WorkoutType {
