@@ -31,6 +31,11 @@
   background: radial-gradient(circle at center, transparent 0%, var(--background) 100%);
   pointer-events: none;
 }
+.home-edit { position: absolute; top: 1rem; right: 1rem; z-index: 2; padding: 0.4rem 0.85rem; font-size: 0.82rem; }
+@media (max-width: 700px) {
+  /* No room beside the Pi badge: sit above it instead. */
+  .home-edit { position: relative; top: auto; right: auto; display: inline-flex; margin: -1.5rem 0 1rem; }
+}
 .home-hero { text-align: center; padding: clamp(3rem, 10vw, 6rem) clamp(1.25rem, 4vw, 2rem); animation: gradientBG 15s ease infinite, fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .home-name {
   font-size: clamp(2.5rem, 8vw, 4.5rem);
@@ -259,6 +264,18 @@ a.premium-card:hover, .home-project:hover { transform: translateY(-6px); box-sha
 a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: var(--surface-hover); }
 .home-cad-item h3 { margin: 0; font-size: 1.05rem; }
 .home-cad-item p { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.home-cad-cell { position: relative; display: flex; flex-direction: column; }
+.home-cad-cell > .home-cad-item { flex: 1; }
+/* Admin: edit / delete on each model, and the add form. */
+.home-cad-admin { position: absolute; right: 0.6rem; bottom: 0.6rem; display: flex; gap: 0.3rem; }
+.home-cad-admin button { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); cursor: pointer; font-size: 0.85rem; }
+.home-cad-admin button.is-danger { color: var(--danger); }
+.home-cad-cell:has(.home-cad-admin) > .home-cad-item { padding-bottom: 3.25rem; }
+.home-cad-add { margin-top: 0.75rem; border-radius: 30px; }
+.home-cad-editor { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 0.75rem 1rem; padding: 1rem; margin-bottom: 1rem; border-radius: 14px; border: 1px solid rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.05); }
+.home-cad-editor label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; color: var(--muted); }
+.home-cad-editor .is-wide { grid-column: 1 / -1; }
+.home-cad-editor textarea { width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; resize: vertical; }
 
 /* Philosophy */
 .home-philosophy { text-align: center; padding: 2rem 1rem; max-width: 760px; margin: 0 auto; }

@@ -352,6 +352,15 @@ main { min-height: calc(100vh - 120px); }
   .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
 
+/* Progress bars: `is-indeterminate` slides while the length of the job is unknown. */
+.progress { height: 8px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; position: relative; }
+.progress > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-light)); transition: width 0.4s ease; }
+.progress.is-indeterminate > div { position: absolute; width: 35%; animation: progressSlide 1.2s ease-in-out infinite; }
+@keyframes progressSlide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .progress.is-indeterminate > div { animation-duration: 3s; } }
+.progress-label { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 0.4rem; }
+.progress-label span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+
 /* Respect the OS "reduce motion" setting: keep state changes, drop the movement. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

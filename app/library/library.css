@@ -119,3 +119,10 @@
   .lib-list .lib-doc-actions { grid-column: 1 / -1; }
   .lib-list .lib-open { flex: 1; }
 }
+
+/* Admin: add a document */
+.lib-header-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.lib-add-btn { min-height: 44px; }
+.lib-upload { margin-bottom: 1.5rem; max-width: 640px; }
+.lib-file { display: block; padding: 0.75rem 0.9rem; border: 1px dashed var(--surface-border); border-radius: 12px; background: var(--input-bg); }
+.lib-file input { background: transparent !important; border: none !important; padding: 0 !important; width: 100%; }

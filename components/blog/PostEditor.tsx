@@ -81,6 +81,7 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
   const [restorable, setRestorable] = useState<{ draft: Fields; at: string } | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
+  const mdInput = useRef<HTMLInputElement>(null);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   /** Set once we're navigating away on purpose: no more saves, no "leave site?" prompt. */
   const leaving = useRef(false);
@@ -197,6 +198,22 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
       setFields((f) => ({ ...f, markdown: replacement ? f.markdown.replace(holders[i], () => replacement) : f.markdown.replace(`\n\n${holders[i]}`, '').replace(holders[i], '') }));
       setUploads((n) => n - 1);
     }
+  };
+
+  /** Load a .md file written elsewhere; a leading "# Title" becomes the title if there isn't one yet. */
+  const importMarkdown = async (file: File | undefined) => {
+    if (!file) return;
+    let text = (await file.text()).replace(/\r\n/g, '\n');
+    if (fields.markdown.trim() && !window.confirm(`Replace the text with “${file.name}”?`)) return;
+    const heading = text.match(/^\s*#\s+(.+)\n+/);
+    const patch: Partial<Fields> = {};
+    if (heading && !fields.title.trim()) {
+      patch.title = heading[1].trim();
+      text = text.slice(heading[0].length);
+    }
+    set({ ...patch, markdown: text });
+    setView('write');
+    setError('');
   };
 
   const pickCover = async (file: File | undefined) => {
@@ -374,6 +391,8 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
             ))}
             <button type="button" className="pe-photo-btn" title="Insert photos at the cursor (or drag them in, or paste)" onMouseDown={(e) => e.preventDefault()} onClick={() => imageInput.current?.click()}>🖼️ Photos</button>
             <input ref={imageInput} type="file" accept="image/*" multiple hidden onChange={(e) => { insertImages([...(e.target.files || [])]); e.target.value = ''; }} />
+            <button type="button" className="pe-md-btn" title="Load the text from a Markdown (.md) file" onMouseDown={(e) => e.preventDefault()} onClick={() => mdInput.current?.click()}>📄 Import .md</button>
+            <input ref={mdInput} type="file" accept=".md,.markdown,text/markdown" hidden onChange={(e) => { importMarkdown(e.target.files?.[0]); e.target.value = ''; }} />
           </div>
           <textarea
             ref={textRef}

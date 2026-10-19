@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import ProgressBar from './ProgressBar';
+import ProgressBar from '@/components/ProgressBar';
 import CpuBreakdown from '@/components/stats/CpuBreakdown';
 import type { CpuDetail } from '@/lib/cpu-detail';
 
@@ -133,7 +133,7 @@ export default function OverviewPanel() {
                 {summary.topPages.length === 0 ? <p className="adm-muted">No visits yet.</p> : summary.topPages.map(([page, n]) => (
                   <div key={page} title={`${page}: ${n} views`}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{page}</span>
-                    <div className="adm-progress" style={{ height: 8 }}><div style={{ width: `${(n / summary.topPages[0][1]) * 100}%` }} /></div>
+                    <div className="progress" style={{ height: 8 }}><div style={{ width: `${(n / summary.topPages[0][1]) * 100}%` }} /></div>
                     <span style={{ textAlign: 'right', fontWeight: 700 }}>{n}</span>
                   </div>
                 ))}

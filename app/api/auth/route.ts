@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createAdminAuthToken } from '@/lib/security/auth';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { loginRetryAfter, recordLoginFailure, recordLoginSuccess, tooManyAttemptsMessage } from '@/lib/security/rate-limit';
 
 /** Constant-time comparison (hashing first makes the lengths equal). */
@@ -9,6 +10,11 @@ function samePassword(given: string, expected: string) {
   const a = crypto.createHash('sha256').update(given).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   return crypto.timingSafeEqual(a, b);
+}
+
+/** Whether this browser is signed in as the site admin (pages show their admin tools). */
+export async function GET() {
+  return NextResponse.json({ isAdmin: await isAdminAuthenticated() }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 export async function POST(request: Request) {

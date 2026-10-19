@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useSitePopup } from '@/components/SitePopup';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 import PostImage from '@/components/blog/PostImage';
+import ProgressBar from '@/components/ProgressBar';
+import { uploadWithProgress } from '@/lib/upload-client';
 
 type PostLink = { slug: string; title: string };
 type PostClientProps = {
@@ -26,6 +28,13 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
   const [photoIndex, setPhotoIndex] = useState(0);
   const [editingPhoto, setEditingPhoto] = useState<{ src: string; description: string } | null>(null);
   const [savingPhoto, setSavingPhoto] = useState(false);
+
+  // Admin: add a photo to the strip under the post
+  const [addingPhoto, setAddingPhoto] = useState(false);
+  const [newPhoto, setNewPhoto] = useState<File | null>(null);
+  const [newPhotoText, setNewPhotoText] = useState('');
+  const [photoProgress, setPhotoProgress] = useState<number | null>(null);
+  const [photoError, setPhotoError] = useState('');
 
 
 
@@ -58,6 +67,31 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
     }
     setSavingPhoto(false);
   };
+  const handleAddPhoto = async () => {
+    if (!newPhoto) return;
+    setPhotoError('');
+    setPhotoProgress(0);
+    const form = new FormData();
+    form.append('type', 'blog-photo');
+    form.append('slug', slug);
+    form.append('description', newPhotoText.trim());
+    form.append('image', newPhoto);
+    try {
+      const data = await uploadWithProgress(form, setPhotoProgress);
+      if (!data.success || typeof data.src !== 'string') throw new Error(data.message || 'Upload failed');
+      const added = { src: data.src, description: newPhotoText.trim() };
+      setPost((prev: any) => ({ ...prev, photos: [...(prev.photos || []), added] }));
+      setPhotoIndex((post?.photos || []).length);
+      setAddingPhoto(false);
+      setNewPhoto(null);
+      setNewPhotoText('');
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setPhotoProgress(null);
+    }
+  };
+
   const handleDownloadMarkdown = () => {
     const blob = new Blob([markdown], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
@@ -100,9 +134,25 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
                 <Link className="btn btn-primary" href={`/admin/posts/${slug}`} style={{ fontSize: '0.85rem', padding: '0.45rem 0.9rem' }}>
                   ✏️ Edit post
                 </Link>
+                <button className="btn btn-secondary" onClick={() => setAddingPhoto((v) => !v)} aria-expanded={addingPhoto} style={{ fontSize: '0.85rem', padding: '0.45rem 0.9rem' }}>
+                  🖼️ Add photo
+                </button>
                 <button className="btn btn-secondary" onClick={handleDownloadMarkdown} style={{ fontSize: '0.85rem', padding: '0.45rem 0.9rem' }}>
                   ⬇️ Download .md
                 </button>
+              </div>
+            )}
+            {isAdmin && addingPhoto && (
+              <div className="glass-panel animate-fade-in" style={{ maxWidth: 560, margin: '0 auto 2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', textAlign: 'left' }}>
+                <strong>Add a photo below the post</strong>
+                <input type="file" accept="image/*" disabled={photoProgress !== null} onChange={(e) => setNewPhoto(e.target.files?.[0] || null)} aria-label="Photo (max 25 MB)" />
+                <input value={newPhotoText} onChange={(e) => setNewPhotoText(e.target.value)} placeholder="What's in the photo… (optional)" aria-label="Photo description" disabled={photoProgress !== null} />
+                {photoProgress !== null && <ProgressBar value={photoProgress} label={photoProgress >= 100 ? 'Saving on the Pi…' : 'Uploading…'} detail={`${photoProgress}%`} />}
+                {photoError && <p role="alert" style={{ color: 'var(--danger)', margin: 0, fontSize: '0.9rem' }}>{photoError}</p>}
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="btn btn-primary" onClick={handleAddPhoto} disabled={!newPhoto || photoProgress !== null}>{photoProgress !== null ? 'Uploading…' : 'Add photo'}</button>
+                  <button className="btn btn-secondary" onClick={() => { setAddingPhoto(false); setPhotoError(''); }} disabled={photoProgress !== null}>Cancel</button>
+                </div>
               </div>
             )}
 

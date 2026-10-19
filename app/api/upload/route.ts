@@ -441,6 +441,7 @@ export async function POST(request: Request) {
       const file = formData.get('file') as File;
       const docName = formData.get('name') as string;
       const category = (formData.get('category') as string) || 'Uncategorized';
+      const note = String(formData.get('note') || '').trim().slice(0, 1000);
 
       if (!isAllowedPdfFile(file)) return NextResponse.json({ success: false, message: 'Invalid PDF upload' }, { status: 400 });
       if (!docName) return NextResponse.json({ success: false, message: 'A document name is required' }, { status: 400 });
@@ -452,7 +453,7 @@ export async function POST(request: Request) {
       await writeFile(path.join(saveDir, filename), Buffer.from(bytes));
 
       const libraryFile = path.join(saveDir, 'library.json');
-      let libraryMeta: Array<{ url: string; name: string; category: string; date: string }> = [];
+      let libraryMeta: Array<{ url: string; name: string; category: string; note?: string; date: string }> = [];
       try {
         libraryMeta = JSON.parse(await readFile(libraryFile, 'utf-8'));
       } catch {
@@ -463,6 +464,7 @@ export async function POST(request: Request) {
         url: `/api/media/uploads/library/${filename}`,
         name: docName,
         category,
+        ...(note ? { note } : {}),
         date: new Date().toISOString(),
       });
       await writeFile(libraryFile, JSON.stringify(libraryMeta, null, 2));

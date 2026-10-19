@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import ProgressBar from './ProgressBar';
+import ProgressBar from '@/components/ProgressBar';
 
 type Status = {
   current: { id: string; sha?: string; builtAt?: string } | null;

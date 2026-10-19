@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import type { LibraryDocument } from '@/lib/site-content';
+import LibraryUploadForm from './LibraryUploadForm';
 
 type EditState = { url: string; name: string; category: string; note: string };
 type ViewMode = 'cards' | 'list';
@@ -42,6 +43,7 @@ export default function LibraryClient({ initialDocuments, initialIsAdmin }: Libr
   const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     try { if (localStorage.getItem('lib_view') === 'list') setView('list'); } catch { }
@@ -141,13 +143,24 @@ export default function LibraryClient({ initialDocuments, initialIsAdmin }: Libr
           <h1 style={{ marginBottom: 0 }}>Library</h1>
           <p className="lib-sub">Books, manuals and papers worth keeping — {documents.length} document{documents.length === 1 ? '' : 's'}.</p>
         </div>
-        {documents.length > 0 && (
-          <div className="lib-view" role="group" aria-label="Layout">
-            <button aria-pressed={view === 'cards'} onClick={() => changeView('cards')}>Cards</button>
-            <button aria-pressed={view === 'list'} onClick={() => changeView('list')}>List</button>
-          </div>
-        )}
+        <div className="lib-header-actions">
+          {isAdmin && !adding && <button className="btn btn-primary lib-add-btn" onClick={() => setAdding(true)}>＋ Add document</button>}
+          {documents.length > 0 && (
+            <div className="lib-view" role="group" aria-label="Layout">
+              <button aria-pressed={view === 'cards'} onClick={() => changeView('cards')}>Cards</button>
+              <button aria-pressed={view === 'list'} onClick={() => changeView('list')}>List</button>
+            </div>
+          )}
+        </div>
       </header>
+
+      {adding && isAdmin && (
+        <LibraryUploadForm
+          categories={categories.map(([c]) => c).filter((c) => c !== UNCATEGORIZED)}
+          onAdded={(doc) => { setDocuments((prev) => [doc, ...prev]); setAdding(false); }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
 
       {documents.length > 0 && (<>
         <div className="lib-search">
@@ -168,7 +181,7 @@ export default function LibraryClient({ initialDocuments, initialIsAdmin }: Libr
       {documents.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
           <h3>No documents yet</h3>
-          <p style={{ margin: '0.5rem 0 0' }}>{isAdmin ? 'Upload PDFs from the admin dashboard to see them here.' : 'Manuals and reference files will appear here once they are added.'}</p>
+          <p style={{ margin: '0.5rem 0 0' }}>{isAdmin ? 'Use ＋ Add document to put the first PDF on the shelf.' : 'Manuals and reference files will appear here once they are added.'}</p>
         </div>
       ) : visible.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}>

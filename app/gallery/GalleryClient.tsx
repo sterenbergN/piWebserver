@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useSitePopup } from '@/components/SitePopup';
 import Lightbox from '@/components/gallery/Lightbox';
+import GalleryUploadPanel from './GalleryUploadPanel';
+import GalleryPopover from './GalleryPopover';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 
 interface AlbumImage { src: string; caption: string; }
@@ -11,6 +13,8 @@ interface Album { id: string; name: string; images: AlbumImage[]; albums: Album[
 type Photo = AlbumImage & { albumId: string };
 
 const PAGE_SIZE = 60;
+const COLUMN_CHOICES = [0, 2, 3, 4, 5, 6]; // 0 = fit to screen
+const SPEEDS = [3000, 5000, 10000, 30000];
 /** Grid "sizes" for srcset: roughly one column's width. */
 const TILE_SIZES = '(max-width: 600px) 50vw, (max-width: 1100px) 33vw, 300px';
 
@@ -56,7 +60,7 @@ function buildAlbumPathMap(albums: Album[], prefix = '', map: Record<string, str
 type GalleryClientProps = { initialAlbums: Album[]; initialIsAdmin: boolean };
 
 export default function GalleryClient({ initialAlbums, initialIsAdmin }: GalleryClientProps) {
-  const { confirm, popup } = useSitePopup();
+  const { confirm, showAlert, popup } = useSitePopup();
   const [rootAlbums, setRootAlbums] = useState<Album[]>(initialAlbums);
   const [isAdmin, setIsAdmin] = useState(initialIsAdmin);
 
@@ -71,7 +75,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
   const [showCaptions, setShowCaptions] = useState(true);
   const [cycleTime, setCycleTime] = useState(5000);
   const [shuffleMode, setShuffleMode] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   // Grid & viewer
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -89,6 +93,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
   const [addingAlbum, setAddingAlbum] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [albumCreating, setAlbumCreating] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
 
   // Admin: inline caption / album rename editing
   const [editingCaption, setEditingCaption] = useState<{ albumId: string; src: string; value: string; newAlbumId: string } | null>(null);
@@ -338,6 +343,29 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
     setEditorSaving(false);
   };
 
+  const handleRepair = async () => {
+    if (!(await confirm({ title: 'Repair gallery index', message: 'Re-scan the disk and add any photos missing from the gallery lists? Orphaned files go to General.', confirmLabel: 'Run repair' }))) return;
+    setRepairing(true);
+    try {
+      const data = await fetch('/api/gallery/repair', { method: 'POST' }).then(r => r.json());
+      if (data.success) {
+        await loadAlbums();
+        showAlert({ title: 'Repair complete', message: `Added ${data.added} missing photo${data.added === 1 ? '' : 's'}.` });
+      } else showAlert({ title: 'Repair failed', message: data.message || 'Repair failed.' });
+    } catch {
+      showAlert({ title: 'Repair failed', message: 'Network error during repair.' });
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const chooseMode = (mode: 'albums' | 'all' | 'downloads') => {
+    if (mode !== 'downloads') saveSetting('gal_view', mode);
+    setBreadcrumb([]);
+    setViewMode(mode);
+    resetView();
+  };
+
   // ── Photo grid ────────────────────────────────────────────────────────────
   const gridStyle: React.CSSProperties = columns > 0 ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : {};
 
@@ -438,7 +466,6 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
     );
   };
 
-  const modes: ('albums' | 'all' | 'downloads')[] = ['albums', 'all', ...(isAdmin ? ['downloads' as const] : [])];
   const totalPhotos = useMemo(() => rootAlbums.reduce((n, a) => n + countPhotos(a), 0), [rootAlbums]);
 
   return (
@@ -457,25 +484,81 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
               ))}
             </nav>
           )}
-          <h1 style={{ marginBottom: 0 }}>{currentAlbum?.name ?? 'Gallery'}</h1>
+          <h1 style={{ marginBottom: 0 }}>{currentAlbum?.name ?? (viewMode === 'downloads' ? 'Album downloads' : 'Gallery')}</h1>
           <p className="gal-sub">
-            {currentAlbum ? `${countPhotos(currentAlbum)} photos` : `${totalPhotos} photos in ${rootAlbums.length} album${rootAlbums.length === 1 ? '' : 's'}`}
+            {(() => {
+              const n = currentAlbum ? countPhotos(currentAlbum) : totalPhotos;
+              const photos = `${n} photo${n === 1 ? '' : 's'}`;
+              return currentAlbum ? photos : `${photos} in ${rootAlbums.length} album${rootAlbums.length === 1 ? '' : 's'}`;
+            })()}
           </p>
         </div>
 
         <div className="gal-toolbar">
           {!currentAlbum && (
-            <div className="gal-segmented" role="tablist">
-              {modes.map(mode => (
-                <button key={mode} role="tab" aria-selected={viewMode === mode} onClick={() => { setViewMode(mode); saveSetting('gal_view', mode); resetView(); }}>
-                  {mode === 'all' ? 'All photos' : mode === 'albums' ? 'Albums' : 'Downloads'}
+            <div className="gal-segmented" role="tablist" aria-label="Show">
+              {(['albums', 'all'] as const).map(mode => (
+                <button key={mode} role="tab" aria-selected={viewMode === mode} onClick={() => chooseMode(mode)}>
+                  {mode === 'all' ? 'All photos' : 'Albums'}
                 </button>
               ))}
             </div>
           )}
-          {isAdmin && <button className="gal-icon-btn" aria-pressed={addingAlbum} onClick={() => setAddingAlbum(!addingAlbum)} title="New album">＋</button>}
-          {isAdmin && <button className="gal-icon-btn" onClick={handleDownloadAlbum} title="Download album as ZIP">⬇</button>}
-          <button className="gal-icon-btn" aria-pressed={showSettings} onClick={() => setShowSettings(!showSettings)} title="Display settings">⚙</button>
+
+          <GalleryPopover label="View" icon="⚙" kind="dialog">
+            {() => (
+              <div className="gal-options">
+                <div className="gal-option">
+                  <span className="gal-option-name">Columns</span>
+                  <div className="gal-chips" role="radiogroup" aria-label="Columns">
+                    {COLUMN_CHOICES.map(n => (
+                      <button key={n} role="radio" aria-checked={columns === n} onClick={() => { setColumns(n); saveSetting('gal_cols', String(n)); }}>{n === 0 ? 'Auto' : n}</button>
+                    ))}
+                  </div>
+                </div>
+                <label className="gal-option is-row">
+                  <span className="gal-option-name">Captions</span>
+                  <input type="checkbox" role="switch" className="gal-switch" checked={showCaptions} onChange={e => { setShowCaptions(e.target.checked); saveSetting('gal_caps', String(e.target.checked)); }} />
+                </label>
+                <div className="gal-option-group">Slideshow</div>
+                <div className="gal-option">
+                  <span className="gal-option-name">Each photo for</span>
+                  <div className="gal-chips" role="radiogroup" aria-label="Slideshow speed">
+                    {SPEEDS.map(ms => (
+                      <button key={ms} role="radio" aria-checked={cycleTime === ms} onClick={() => { setCycleTime(ms); saveSetting('gal_cycle', String(ms)); }}>{ms / 1000}s</button>
+                    ))}
+                  </div>
+                </div>
+                <label className="gal-option is-row">
+                  <span className="gal-option-name">Shuffle</span>
+                  <input type="checkbox" role="switch" className="gal-switch" checked={shuffleMode} onChange={e => { setShuffleMode(e.target.checked); saveSetting('gal_shuffle', String(e.target.checked)); }} />
+                </label>
+              </div>
+            )}
+          </GalleryPopover>
+
+          {isAdmin && (
+            <GalleryPopover label="Manage" icon="＋" kind="menu">
+              {close => {
+                const item = (icon: string, text: string, onClick: () => void, disabled = false) => (
+                  <button role="menuitem" className="gal-menu-item" disabled={disabled} onClick={() => { close(); onClick(); }}>
+                    <span aria-hidden>{icon}</span>{text}
+                  </button>
+                );
+                return (
+                  <>
+                    {item('📷', currentAlbum ? `Add photos to “${currentAlbum.name}”` : 'Add photos', () => { setShowUpload(true); setAddingAlbum(false); })}
+                    {item('📁', currentAlbum ? `New album inside “${currentAlbum.name}”` : 'New album', () => { setAddingAlbum(true); setShowUpload(false); })}
+                    <div className="gal-menu-sep" role="separator" />
+                    {item('⬇', currentAlbum ? 'Download this album (ZIP)' : 'Download everything (ZIP)', handleDownloadAlbum)}
+                    {item('🗂', 'Saved downloads', () => chooseMode('downloads'))}
+                    {item('🛠', repairing ? 'Repairing index…' : 'Repair index', handleRepair, repairing)}
+                  </>
+                );
+              }}
+            </GalleryPopover>
+          )}
+
           <button className="btn btn-primary gal-frame-btn" onClick={startFrameMode} disabled={frameImages.length === 0} title="Full-screen slideshow" aria-label="Slideshow">▶<span className="gal-frame-label"> Slideshow</span></button>
         </div>
       </header>
@@ -487,34 +570,18 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
           <input value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateAlbum()}
             placeholder="Album name..." style={{ flex: 1, minWidth: '180px', maxWidth: '300px' }} autoFocus />
           <button className="btn btn-primary" onClick={handleCreateAlbum} disabled={albumCreating || !newAlbumName.trim()}>{albumCreating ? 'Creating...' : 'Create'}</button>
+          <button className="btn btn-secondary" onClick={() => { setAddingAlbum(false); setNewAlbumName(''); }} disabled={albumCreating}>Cancel</button>
         </div>
       )}
 
-      {/* Settings */}
-      {showSettings && (
-        <div className="glass-panel animate-fade-in gal-panel">
-          <label>
-            <span className="gal-label">Columns</span>
-            <select className="gal-select" value={columns} onChange={e => { setColumns(Number(e.target.value)); saveSetting('gal_cols', e.target.value); }}>
-              <option value={0}>Fit to screen</option>
-              {[2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
-          <label>
-            <span className="gal-label">Slideshow speed</span>
-            <select className="gal-select" value={cycleTime} onChange={e => { setCycleTime(Number(e.target.value)); saveSetting('gal_cycle', e.target.value); }}>
-              <option value={3000}>3s</option><option value={5000}>5s</option><option value={10000}>10s</option><option value={30000}>30s</option>
-            </select>
-          </label>
-          <div>
-            <span className="gal-label">Captions</span>
-            <button className={showCaptions ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => { setShowCaptions(!showCaptions); saveSetting('gal_caps', (!showCaptions).toString()); }}>{showCaptions ? 'On' : 'Off'}</button>
-          </div>
-          <div>
-            <span className="gal-label">Shuffle slideshow</span>
-            <button className={shuffleMode ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => { setShuffleMode(!shuffleMode); saveSetting('gal_shuffle', (!shuffleMode).toString()); }}>{shuffleMode ? 'On' : 'Off'}</button>
-          </div>
-        </div>
+      {/* Upload photos (admin) */}
+      {showUpload && isAdmin && (
+        <GalleryUploadPanel
+          album={currentAlbum ? { id: currentAlbum.id, name: currentAlbum.name } : null}
+          albums={flattenedAlbums}
+          onUploaded={loadAlbums}
+          onClose={() => setShowUpload(false)}
+        />
       )}
 
       {/* Downloads */}
@@ -569,7 +636,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
       {viewMode !== 'downloads' && shownAlbums.length === 0 && shownImages.length === 0 && (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem 1.5rem' }}>
           <h3>Nothing here yet</h3>
-          <p>{isAdmin ? 'Use ＋ to create an album, or upload photos in Admin.' : 'No photos or albums available.'}</p>
+          <p>{isAdmin ? 'Use ＋ Manage to add an album or photos.' : 'No photos or albums available.'}</p>
         </div>
       )}
 

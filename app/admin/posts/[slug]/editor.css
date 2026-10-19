@@ -72,6 +72,7 @@ textarea.pe-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important; font-size: 0.95rem; line-height: 1.6;
 }
 .pe-toolbar button.pe-photo-btn { margin-left: auto; font-weight: 600; }
+.pe-toolbar button.pe-md-btn { font-weight: 600; }
 textarea.pe-text.is-dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .pe-foot { font-size: 0.78rem; color: var(--muted); margin-top: 0.4rem; }
 .pe-foot code { font-size: 0.75rem; }
