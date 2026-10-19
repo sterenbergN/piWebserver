@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { findPreviousSameType, workoutVolume } from '@/lib/workout/session-insights';
-import { compareWithLastTime, formatClock, sessionVerdict, workoutTotals, type LoggedSet } from '@/lib/workout/tracker-utils';
-import { renderWorkoutCard } from '@/lib/workout/share-card';
+import { compareWithLastTime, formatClock, sessionVerdict, uidOf, workoutTotals, type LoggedSet } from '@/lib/workout/tracker-utils';
+import { renderWorkoutCard, strengthTrend, type CardFormat } from '@/lib/workout/share-card';
 import ShareViewer from '@/components/workout/ShareViewer';
 import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { rirLabel } from '@/components/workout/SetEditSheet';
@@ -59,6 +59,11 @@ export default function FinishScreen(props: FinishScreenProps) {
     volume,
     verdict,
     lifts: comparisons.map((c) => ({ name: c.name, top: `${c.top.weight}×${c.top.reps}`, change: c.change, changeText: c.changeText, pr: prNames.has(c.name) })),
+    trend: (() => {
+      const main = [...comparisons].sort((a, b) => Number(prNames.has(b.name)) - Number(prNames.has(a.name)) || b.e1rm - a.e1rm)[0];
+      const lift = main && plan.lifts.find((l: any) => uidOf(l) === main.uid);
+      return lift ? strengthTrend(pastHistory, [{ id: lift.id, name: lift.name, exercise: lift.exercise, e1rm: main.e1rm }], { timestamp: new Date().toISOString() }, { e1rm: main.e1rm }) : undefined;
+    })(),
   });
 
   const sendLink = async () => {
@@ -153,7 +158,9 @@ export default function FinishScreen(props: FinishScreenProps) {
       {showCard && (
         <ShareViewer
           title="Today’s workout"
-          render={async () => [await renderWorkoutCard(cardData())]}
+          options={[{ key: 'post', label: 'Post 4:5' }, { key: 'story', label: 'Story 9:16' }]}
+          optionPref="workout:cardFormat"
+          render={async (format) => [await renderWorkoutCard(cardData(), format as CardFormat)]}
           fileBase={`workout-${new Date().toISOString().slice(0, 10)}`}
           shareTitle={plan.type?.name || plan.name}
           onClose={() => setShowCard(false)}

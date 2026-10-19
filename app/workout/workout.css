@@ -1266,3 +1266,22 @@
 .share-viewer-status { min-height: 1.2em; margin: 0.35rem 1rem 0.6rem; text-align: center; font-size: 0.8rem; opacity: 0.75; }
 @media (prefers-reduced-motion: reduce) { .share-viewer, .share-viewer-track { animation: none; transition: none; } }
 .share-viewer .workout-button:not(.is-primary) { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.2); color: #fff; }
+.share-viewer-progress { display: flex; gap: 4px; padding: 0 1rem 0.5rem; }
+.share-viewer-progress span { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+.share-viewer-progress i { display: block; height: 100%; width: 0; background: #fff; }
+.share-viewer-progress i.is-done { width: 100%; }
+.share-viewer-progress i.is-playing { animation: shareViewerProgress linear forwards; }
+@keyframes shareViewerProgress { from { width: 0; } to { width: 100%; } }
+.share-viewer-options { display: flex; justify-content: center; gap: 0.35rem; padding: 0 1rem 0.5rem; }
+.share-viewer-options button {
+  min-height: 32px;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.share-viewer-options button[aria-checked="true"] { background: #fff; border-color: #fff; color: #111; font-weight: 600; }

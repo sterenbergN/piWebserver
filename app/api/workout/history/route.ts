@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
 import { stationKindIndex } from '@/lib/workout/equipment-kinds';
-import { HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
+import { applyWorkoutEdit, HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore, inferCalibrationsForWorkout, upsertCalibrationEntries } from '@/lib/workout/calibration';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
@@ -71,6 +71,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, id: entry.id, duplicate });
   } catch (error) {
     return handleApiError(error, 'Save workout failed');
+  }
+}
+
+/** Fix the sets of a saved workout: { logs } replaces its logged sets. */
+export async function PATCH(request: Request) {
+  try {
+    const userId = await requireWorkoutUserId();
+    const id = new URL(request.url).searchParams.get('id');
+    if (!id) throw new ApiError(400, 'ID missing');
+    const payload = await readJsonObject(request);
+
+    const workout = await updateWorkoutData(HISTORY_FILE, { history: [] as any[] }, (data) => {
+      const index = (data.history || []).findIndex((h: any) => h.id === id);
+      if (index === -1) throw new ApiError(404, 'Not found');
+      if (data.history[index].userId !== userId) throw new ApiError(403, 'Forbidden');
+      const edited = applyWorkoutEdit(data.history[index], payload.logs);
+      if (!edited) throw new ApiError(400, 'A workout needs at least one set — delete it instead');
+      data.history[index] = edited;
+      return edited;
+    });
+
+    return NextResponse.json({ success: true, workout });
+  } catch (error) {
+    return handleApiError(error, 'Edit workout failed');
   }
 }
 

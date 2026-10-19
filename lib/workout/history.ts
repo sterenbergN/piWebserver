@@ -153,3 +153,19 @@ export function sanitizeWorkoutPayload(payload: Record<string, any>) {
     intensitySlider: finiteNumber(payload.intensitySlider),
   };
 }
+
+/**
+ * Fix the sets of a saved workout (wrong weight, a missed set, a typo). Only
+ * lifts already in the workout can be edited; a lift left with no sets drops
+ * out, along with its warm-ups and metadata. Returns null if nothing is left.
+ */
+export function applyWorkoutEdit(entry: WorkoutHistoryItem, rawLogs: unknown): WorkoutHistoryItem | null {
+  const { logs } = sanitizeWorkoutPayload({ logs: rawLogs });
+  for (const liftId of Object.keys(logs)) {
+    if (!entry.logs?.[liftId]) delete logs[liftId];
+  }
+  if (Object.keys(logs).length === 0) return null;
+  const keep = <T,>(map: Record<string, T> | undefined) => (map ? Object.fromEntries(Object.entries(map).filter(([id]) => logs[id])) : map);
+  const volume = Object.values(logs).flat().reduce((sum, s: any) => sum + s.weight * s.reps, 0);
+  return { ...entry, logs, liftMeta: keep(entry.liftMeta), warmups: keep(entry.warmups), volume, editedAt: new Date().toISOString() };
+}

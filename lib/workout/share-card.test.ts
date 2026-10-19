@@ -30,3 +30,11 @@ test('the first workout has nothing to compare with', () => {
   assert.ok(card.lifts.every((l) => l.change === 'new' && !l.pr));
   assert.equal(card.verdict, 'A new baseline to beat next time.');
 });
+
+test('the trend follows the day’s headline lift up to that workout', () => {
+  const sessions = [100, 110, 120, 130].map((w, i) => ({ id: `t${i}`, timestamp: day(i + 1), logs: { squat: [{ weight: w, reps: 1 }], press: [{ weight: 300, reps: 1 }] }, liftMeta: { squat: { name: 'Squat' }, press: { name: 'Leg Press' } } }));
+  const card = cardDataForWorkout(sessions[2], sessions);
+  assert.equal(card.trend?.name, 'Squat'); // a PR beats a heavier lift
+  assert.deepEqual(card.trend?.points, [100, 110, 120]); // the session after isn't included
+  assert.equal(cardDataForWorkout(sessions[1], sessions).trend, undefined); // too few sessions yet
+});

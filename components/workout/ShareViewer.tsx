@@ -3,11 +3,18 @@
 import { useCallback, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { canCopyImages, canShareImages, copyImage, shareImages } from '@/lib/workout/share-card';
+import { readPref, savePref } from '@/lib/workout/device-prefs';
 
 type ShareViewerProps = {
   title: string;
-  /** Draws the images; called once when the viewer opens. */
-  render: () => Promise<Blob[]>;
+  /** Draws the images: when the viewer opens, and again for another option. */
+  render: (option?: string) => Promise<Blob[]>;
+  /** Layouts to choose between (e.g. post / story); passed to render. */
+  options?: { key: string; label: string }[];
+  /** Device pref that remembers the chosen option. */
+  optionPref?: string;
+  /** Play through the images like a story, this many ms each. */
+  autoplay?: number;
   /** File name without extension; several images get -1, -2… */
   fileBase: string;
   /** Title passed to the phone's share sheet. */
@@ -22,7 +29,7 @@ type Image = { blob: Blob; url: string };
  * slides): one image at a time, swipe / tap the sides / arrow keys to move,
  * and share or save the one on screen.
  */
-export default function ShareViewer({ title, render, fileBase, shareTitle, onClose }: ShareViewerProps) {
+export default function ShareViewer({ title, render, options, optionPref, autoplay, fileBase, shareTitle, onClose }: ShareViewerProps) {
   const [mounted, setMounted] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [error, setError] = useState('');
@@ -34,6 +41,13 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
   const touch = useRef<{ x: number; y: number; horizontal: boolean | null } | null>(null);
   const thumbs = useRef<HTMLDivElement>(null);
   const renderRef = useRef(render);
+  useEffect(() => { renderRef.current = render; });
+  const [option, setOption] = useState(() => {
+    const saved = optionPref ? readPref(optionPref) : null;
+    return options?.find((o) => o.key === saved)?.key ?? options?.[0]?.key;
+  });
+  const [playing, setPlaying] = useState(false);
+  const [held, setHeld] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -46,7 +60,9 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
   useEffect(() => {
     let cancelled = false;
     let made: Image[] = [];
-    renderRef.current()
+    setError('');
+    setImages([]);
+    renderRef.current(option)
       .then((blobs) => {
         made = blobs.map((blob) => ({ blob, url: URL.createObjectURL(blob) }));
         if (cancelled) made.forEach((m) => URL.revokeObjectURL(m.url));
@@ -57,13 +73,31 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
       cancelled = true;
       made.forEach((m) => URL.revokeObjectURL(m.url));
     };
-  }, []);
+  }, [option]);
+
+  const chooseOption = (key: string) => {
+    setOption(key);
+    if (optionPref) savePref(optionPref, key);
+    setStatus('');
+  };
 
   const count = images.length;
   const go = useCallback((next: number) => {
     setIndex(Math.max(0, Math.min(count - 1, next)));
     setStatus('');
   }, [count]);
+
+  // Story mode starts once the images are drawn (not with reduced motion).
+  useEffect(() => {
+    if (autoplay && count > 1 && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) setPlaying(true);
+  }, [autoplay, count]);
+  const paused = !playing || held || busy;
+  useEffect(() => {
+    if (!autoplay || paused) return;
+    if (index >= count - 1) { setPlaying(false); return; }
+    const timer = setTimeout(() => setIndex((i) => i + 1), autoplay);
+    return () => clearTimeout(timer);
+  }, [autoplay, paused, index, count]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,6 +117,7 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
 
   const onTouchStart = (e: TouchEvent) => {
     touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, horizontal: null };
+    setHeld(true);
   };
   const onTouchMove = (e: TouchEvent) => {
     const t = touch.current;
@@ -97,6 +132,7 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
     }
   };
   const onTouchEnd = () => {
+    setHeld(false);
     const t = touch.current;
     touch.current = null;
     if (t?.horizontal && Math.abs(drag) > 50) go(index + (drag < 0 ? 1 : -1));
@@ -131,12 +167,37 @@ export default function ShareViewer({ title, render, fileBase, shareTitle, onClo
   return createPortal(
     <div className="share-viewer" role="dialog" aria-modal="true" aria-label={title}>
       <div className="share-viewer-top">
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div className="share-viewer-title">{title}</div>
-          {count > 1 && <div className="share-viewer-count">{index + 1} of {count}</div>}
+          {count > 1 && <div className="share-viewer-count">{index + 1} of {count}{autoplay ? (playing ? ' · hold to pause' : '') : ''}</div>}
         </div>
+        {autoplay && count > 1 && (
+          <button type="button" className="share-viewer-close" aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (!playing && index >= count - 1) setIndex(0); setPlaying(!playing); }}>
+            {playing ? '❚❚' : '▶'}
+          </button>
+        )}
         <button type="button" className="share-viewer-close" aria-label="Close" onClick={onClose}>✕</button>
       </div>
+      {autoplay && count > 1 && (
+        <div className="share-viewer-progress" aria-hidden>
+          {images.map((image, i) => (
+            <span key={image.url}>
+              <i
+                key={`${i}-${index}`}
+                className={i < index ? 'is-done' : i === index && playing ? 'is-playing' : ''}
+                style={{ animationDuration: `${autoplay}ms`, animationPlayState: paused ? 'paused' : 'running' }}
+              />
+            </span>
+          ))}
+        </div>
+      )}
+      {options && options.length > 1 && (
+        <div className="share-viewer-options" role="radiogroup" aria-label="Layout">
+          {options.map((o) => (
+            <button key={o.key} type="button" role="radio" aria-checked={option === o.key} onClick={() => chooseOption(o.key)}>{o.label}</button>
+          ))}
+        </div>
+      )}
 
       <div className="share-viewer-stage" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}>
         {error && <p className="share-viewer-note">{error}</p>}

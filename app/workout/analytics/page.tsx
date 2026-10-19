@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './analytics.css';
 import { calculateExperienceScore } from '@/lib/workout/analytics';
 import { buildAnalyticsData } from '@/lib/workout/analytics-data';
@@ -41,7 +41,7 @@ const TABS: { key: Tab; label: string }[] = [
  * balance, and the full history. All numbers come from lib/workout/insights.ts.
  */
 export default function AnalyticsPage() {
-  const { confirm, popup } = useSitePopup();
+  const { popup } = useSitePopup();
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
@@ -139,11 +139,51 @@ export default function AnalyticsPage() {
   );
   const experience = useMemo(() => calculateExperienceScore(user || { weight: 150 }, history, lifts), [user, history, lifts]);
 
-  const deleteWorkout = async (id: string) => {
-    const ok = await confirm({ title: 'Delete workout', message: 'Permanently delete this workout from your history?', confirmLabel: 'Delete', danger: true });
-    if (!ok) return;
-    const res = await fetch(`/api/workout/history?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if ((await res.json().catch(() => ({}))).success) setHistory((prev) => prev.filter((w) => w.id !== id));
+  // Deleting hides the workout straight away with an Undo; it's only removed
+  // on the server after a few seconds (or when leaving the page).
+  const [toast, setToast] = useState<{ text: string; undo?: () => void; error?: boolean } | null>(null);
+  const pendingDelete = useRef<{ workout: Workout; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const commitDelete = useCallback((keepalive = false) => {
+    const pending = pendingDelete.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingDelete.current = null;
+    fetch(`/api/workout/history?id=${encodeURIComponent(pending.workout.id!)}`, { method: 'DELETE', keepalive })
+      .then((res) => res.json())
+      .then((data) => { if (!data.success) throw new Error(); })
+      .catch(() => {
+        if (keepalive) return;
+        setHistory((prev) => [...prev, pending.workout]);
+        setToast({ text: 'Could not delete the workout — it’s back in your history.', error: true });
+      });
+  }, []);
+  useEffect(() => {
+    const flush = () => commitDelete(true);
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, [commitDelete]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), toast.undo ? 6000 : 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const deleteWorkout = (id: string) => {
+    const workout = history.find((w) => w.id === id);
+    if (!workout) return;
+    commitDelete();
+    setHistory((prev) => prev.filter((w) => w.id !== id));
+    pendingDelete.current = { workout, timer: setTimeout(() => commitDelete(), 6000) };
+    setToast({
+      text: `Deleted ${workout.type?.name || workout.name || 'workout'} from ${new Date(workout.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+      undo: () => {
+        if (pendingDelete.current?.workout.id !== id) return;
+        clearTimeout(pendingDelete.current.timer);
+        pendingDelete.current = null;
+        setHistory((prev) => [...prev, workout]);
+        setToast(null);
+      },
+    });
   };
 
   if (loading) return <div className="an-loading">Crunching numbers…</div>;
@@ -223,7 +263,15 @@ export default function AnalyticsPage() {
           />
         )}
         {tab === 'history' && (
-          <HistoryTab history={history} lifts={liftLookup} gymNames={gymNames} canDelete={!isDemo} onDelete={deleteWorkout} />
+          <HistoryTab
+            history={history}
+            lifts={liftLookup}
+            gymNames={gymNames}
+            canEdit={!isDemo}
+            onDelete={deleteWorkout}
+            onUpdated={(updated) => { setHistory((prev) => prev.map((w) => (w.id === updated.id ? updated : w))); setToast({ text: 'Workout updated.' }); }}
+            onOpenLift={(key) => { setOpenLift(key); chooseTab('lifts'); }}
+          />
         )}
       </>)}
 
@@ -242,10 +290,17 @@ export default function AnalyticsPage() {
         <ShareViewer
           title={`Your ${recapName} recap`}
           render={() => renderRecap(recapSlides)}
+          autoplay={5000}
           fileBase={`workout-recap-${new Date().toISOString().slice(0, 10)}`}
           shareTitle={`My ${periodLabel.toLowerCase()} workout recap`}
           onClose={() => setShowRecap(false)}
         />
+      )}
+      {toast && (
+        <div className={`tracker-toast animate-fade-in${toast.error ? ' is-error' : toast.undo ? ' is-quiet' : ''}`} role="status">
+          <span style={{ flex: 1, minWidth: 0 }} onClick={() => setToast(null)}>{toast.text}</span>
+          {toast.undo && <button type="button" className="tracker-toast-action" onClick={toast.undo}>Undo</button>}
+        </div>
       )}
       {popup}
     </div>
