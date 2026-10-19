@@ -17,7 +17,8 @@ export const metadata: Metadata = {
   alternates: { types: { "application/rss+xml": [{ url: "/feed.xml", title: "Posts" }] } },
   openGraph: { type: "website", siteName: "noahstuf.com", title: "Noah Sterenberg", description: "Engineer, maker and tinkerer — projects, photos, games and tools, self-hosted on a Raspberry Pi." },
   appleWebApp: { capable: true, title: "Noah Stuf", statusBarStyle: "black-translucent" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  // Tab and home-screen icons come from app/icon.png and app/apple-icon.png. Don't set `icons`
+  // here: it replaces those file icons, and the tab icon disappears.
 };
 
 export const viewport: Viewport = {

@@ -24,8 +24,12 @@ export default function Navbar({ isAdmin }: { isAdmin: boolean }) {
     ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : [])
   ];
 
+  // Editors live under /admin but belong to the page they edit, so that page stays highlighted.
+  const section = pathname.startsWith('/admin/posts') ? '/blog' : pathname.startsWith('/admin/resume') ? '/' : pathname;
+  const isCurrent = (href: string) => section === href || (href !== '/' && section.startsWith(href));
+
   const getStyle = (href: string) => {
-    const isActive = pathname === href || (href !== '/' && pathname.startsWith(href));
+    const isActive = isCurrent(href);
     return {
       fontWeight: isActive ? '600' : 'normal',
       color: isActive ? 'var(--accent-light)' : 'inherit',
@@ -90,7 +94,7 @@ export default function Navbar({ isAdmin }: { isAdmin: boolean }) {
             <Link
               key={l.href}
               href={l.href}
-              style={{ ...getStyle(l.href), display: 'block', padding: '0.75rem 0', borderBottom: 'none', borderLeft: pathname === l.href || (l.href !== '/' && pathname.startsWith(l.href)) ? '3px solid var(--accent-light)' : '3px solid transparent', paddingLeft: '1rem' }}
+              style={{ ...getStyle(l.href), display: 'block', padding: '0.75rem 0', borderBottom: 'none', borderLeft: isCurrent(l.href) ?'3px solid var(--accent-light)' : '3px solid transparent', paddingLeft: '1rem' }}
               onClick={() => setMenuOpen(false)}
             >
               {l.label}

@@ -108,7 +108,7 @@ export default function ResumeEditor() {
       {popup}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
         <div>
-          <Link href="/admin" style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>← Admin</Link>
+          <Link href="/" style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>← Home page</Link>
           <h1 style={{ margin: '0.25rem 0 0', fontSize: '1.8rem' }}>Resume & Home Page</h1>
           <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.9rem' }}>
             Edit it like a resume — the home page and the printable <Link href="/resume" target="_blank" style={{ color: 'var(--accent)' }}>/resume</Link> update when you save.
