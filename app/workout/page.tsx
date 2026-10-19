@@ -105,6 +105,11 @@ export default function WorkoutDashboard() {
   const [programs, setPrograms] = useState<Program[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [offline, setOffline] = useState(false);
+  // Signed in as the site admin (not a workout user): show the link to manage workout accounts.
+  const [isSiteAdmin, setIsSiteAdmin] = useState(false);
+  useEffect(() => {
+    fetch('/api/auth').then((r) => r.json()).then((d) => setIsSiteAdmin(d.isAdmin === true)).catch(() => {});
+  }, []);
   const [deloadSnoozedUntil, setDeloadSnoozedUntil] = useState(0);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -839,6 +844,11 @@ export default function WorkoutDashboard() {
           </a>
         ))}
       </nav>
+      {isSiteAdmin && (
+        <a href="/workout/users" className="workout-text-btn" style={{ display: 'block', textAlign: 'center', margin: '0.6rem 0 0' }}>
+          👥 Manage workout users (admin)
+        </a>
+      )}
 
       {volumeRows.length > 0 && (
         <div className="workout-tile" style={{ marginTop: '1rem' }}>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
-import ProgressBar from './ProgressBar';
+import ProgressBar from '@/components/ProgressBar';
 
 type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; requireSeparateDrive: boolean; lastAutoBackup?: string };
 type Drive = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };

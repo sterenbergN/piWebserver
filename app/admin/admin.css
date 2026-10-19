@@ -64,7 +64,7 @@
 .adm-stat-value.is-small { font-size: 0.9rem; word-break: break-word; overflow-wrap: anywhere; }
 .adm-stat-sub { font-size: 0.75rem; color: var(--muted); }
 
-/* List rows (CAD projects, workout users, backups) */
+/* List rows (backups) */
 .adm-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .adm-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 0.9rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); }
 .adm-row-main { flex: 1; min-width: 0; }
@@ -95,14 +95,7 @@
 .adm-form .is-wide { grid-column: 1 / -1; }
 .adm-field { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; color: var(--muted); }
 .adm-check { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--foreground); cursor: pointer; }
-.adm-file { padding: 0.9rem; border: 1px dashed var(--surface-border); border-radius: 12px; background: var(--input-bg); }
-.adm-file input { background: transparent !important; border: none !important; padding: 0 !important; }
-.adm-editor { padding: 1rem; border-radius: 12px; border: 1px solid rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.05); }
 
-/* Segmented control (upload type) */
-.adm-seg { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 1.25rem; }
-.adm-seg button { min-height: 38px; padding: 0 0.85rem; border-radius: 999px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); font: inherit; font-size: 0.86rem; cursor: pointer; }
-.adm-seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* Notices */
 .adm-notice { padding: 0.7rem 0.9rem; border-radius: 10px; font-size: 0.9rem; margin-bottom: 1rem; border: 1px solid; }
@@ -114,15 +107,6 @@
 .adm-badge.is-good { color: var(--success-light); border-color: rgba(var(--success-rgb), 0.5); background: rgba(var(--success-rgb), 0.1); }
 .adm-badge.is-new { color: #fff; border-color: var(--accent); background: var(--accent); }
 .adm-badge.is-warn { color: var(--warning); border-color: var(--warning); background: rgba(237, 137, 54, 0.1); }
-
-/* Progress bars: `is-indeterminate` slides while the length of the job is unknown. */
-.adm-progress { height: 8px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; position: relative; }
-.adm-progress > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-light)); transition: width 0.4s ease; }
-.adm-progress.is-indeterminate > div { position: absolute; width: 35%; animation: admSlide 1.2s ease-in-out infinite; }
-@keyframes admSlide { from { left: -35%; } to { left: 100%; } }
-@media (prefers-reduced-motion: reduce) { .adm-progress.is-indeterminate > div { animation-duration: 3s; } }
-.adm-progress-label { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 0.4rem; }
-.adm-progress-label span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Update steps */
 .adm-steps { display: flex; gap: 0.35rem; margin-top: 0.75rem; }

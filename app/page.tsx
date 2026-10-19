@@ -7,6 +7,7 @@ import ExperienceCard from '@/components/home/ExperienceCard';
 import SkillsCard from '@/components/home/SkillsCard';
 import CadSection from '@/components/home/CadSection';
 import PiBadge from '@/components/home/PiBadge';
+import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import './home.css';
 
 // Rendered on the server from the content files, so the page arrives complete
@@ -29,8 +30,8 @@ const Arrow = () => (
 );
 
 export default async function Home() {
-  const [{ profile, experience, skills, projects }, posts, cadProjects, albums, documents] = await Promise.all([
-    getResume(), getPosts(), getCadProjects(), getGalleryAlbums(), getLibraryDocuments(),
+  const [{ profile, experience, skills, projects }, posts, cadProjects, albums, documents, isAdmin] = await Promise.all([
+    getResume(), getPosts(), getCadProjects(), getGalleryAlbums(), getLibraryDocuments(), isAdminAuthenticated(),
   ]);
   const latestPosts = [...posts].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   const photoCount = countPhotos(albums);
@@ -48,6 +49,7 @@ export default async function Home() {
     <div className="home">
       {/* Hero */}
       <section className="hero-gradient home-hero">
+        {isAdmin && <Link href="/admin/resume" className="btn btn-secondary home-edit">✏️ Edit home page</Link>}
         <div style={{ position: 'relative', zIndex: 1 }}>
           <PiBadge />
           <h1 className="home-name">{profile.name}</h1>
@@ -163,7 +165,8 @@ export default async function Home() {
         </section>
       )}
 
-      {cadProjects.length > 0 && <CadSection projects={cadProjects} />}
+      {/* Signed in as admin, the section shows (even empty) so models can be added here. */}
+      {(cadProjects.length > 0 || isAdmin) && <CadSection projects={cadProjects} isAdmin={isAdmin} />}
 
       {/* Philosophy */}
       <section className="home-philosophy">

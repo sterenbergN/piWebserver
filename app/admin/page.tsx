@@ -1,22 +1,15 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import OverviewPanel from '@/components/admin/OverviewPanel';
 import UpdatesPanel from '@/components/admin/UpdatesPanel';
 import BackupsPanel from '@/components/admin/BackupsPanel';
-import UploadsPanel from '@/components/admin/UploadsPanel';
-import CadPanel from '@/components/admin/CadPanel';
-import WorkoutUsersPanel from '@/components/admin/WorkoutUsersPanel';
 import './admin.css';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: '🖥️' },
   { id: 'updates', label: 'Updates', icon: '🚀' },
   { id: 'backups', label: 'Backups', icon: '💾' },
-  { id: 'uploads', label: 'Upload', icon: '⬆️' },
-  { id: 'cad', label: 'CAD', icon: '📐' },
-  { id: 'users', label: 'Workout users', icon: '🏋️' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -46,7 +39,6 @@ export default function AdminDashboard() {
       <div className="adm-top">
         <h1>Admin</h1>
         <div className="adm-actions">
-          <Link href="/admin/resume" className="btn btn-secondary">📄 Edit home page</Link>
           <button className="btn btn-secondary" onClick={handleLogout}>Log out</button>
         </div>
       </div>
@@ -66,9 +58,6 @@ export default function AdminDashboard() {
           {t.id === 'overview' && <OverviewPanel />}
           {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
           {t.id === 'backups' && <BackupsPanel />}
-          {t.id === 'uploads' && <UploadsPanel />}
-          {t.id === 'cad' && <CadPanel />}
-          {t.id === 'users' && <WorkoutUsersPanel />}
         </div>
       ))}
     </div>
