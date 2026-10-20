@@ -32,6 +32,13 @@ export default function AccountMenu({ user }: { user: NavUser }) {
     };
   }, [menuOpen]);
 
+  // Pages can open the sign-in dialog with window.dispatchEvent(new Event('site:sign-in')).
+  useEffect(() => {
+    const open = () => setDialogOpen(true);
+    window.addEventListener('site:sign-in', open);
+    return () => window.removeEventListener('site:sign-in', open);
+  }, []);
+
   const signOut = async () => {
     await fetch('/api/workout/auth', { method: 'DELETE' });
     clearWorkoutCache();
@@ -65,6 +72,7 @@ export default function AccountMenu({ user }: { user: NavUser }) {
         <div className="nav-menu is-right" id="nav-account-menu">
           <div className="nav-menu-panel">
             <p className="nav-menu-note">Signed in as <strong>{user.username}</strong></p>
+            <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
             <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
             <button type="button" onClick={signOut}><span aria-hidden>🚪</span>Sign out</button>
           </div>
