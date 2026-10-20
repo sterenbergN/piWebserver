@@ -10,34 +10,48 @@ export function savePref(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* not remembered, still works */ }
 }
 
-/** Browsers only let audio start from a tap, so create/resume the context on one. */
+/**
+ * Browsers only let audio start from a tap, so create/resume the context on
+ * one. iPhones also suspend ("interrupt") it when the screen locks, another app
+ * plays sound or a call comes in, so this is called on every tap, and a silent
+ * sample is played to fully unlock it.
+ */
 export function unlockAudio(ctx: AudioContext | null) {
   try {
     const context = ctx ?? new (window.AudioContext || (window as any).webkitAudioContext)();
-    if (context.state === 'suspended') context.resume().catch(() => {});
+    if (context.state !== 'running') context.resume().catch(() => {});
+    const silent = context.createBufferSource();
+    silent.buffer = context.createBuffer(1, 1, 22050);
+    silent.connect(context.destination);
+    silent.start(0);
     return context;
   } catch {
     return null;
   }
 }
 
-/** Two short beeps. */
-export function playBeep(ctx: AudioContext | null) {
+/** Two short beeps (one for a quick test). Resumes a suspended context first. */
+export function playBeep(ctx: AudioContext | null, count = 2) {
   if (!ctx) return;
-  try {
-    [0, 0.25].forEach((offset) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.25, ctx.currentTime + offset);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.18);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(ctx.currentTime + offset);
-      osc.stop(ctx.currentTime + offset + 0.2);
-    });
-  } catch {
-    // No audio output — vibration still fires.
-  }
+  const play = () => {
+    try {
+      for (let i = 0; i < count; i++) {
+        const offset = 0.05 + i * 0.25;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + 0.18);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + offset);
+        osc.stop(ctx.currentTime + offset + 0.2);
+      }
+    } catch {
+      // No audio output.
+    }
+  };
+  if (ctx.state === 'running') play();
+  else ctx.resume().then(play, () => {});
 }
 
 export function vibrate(pattern: number | number[]) {

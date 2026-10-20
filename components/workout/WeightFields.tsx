@@ -177,7 +177,7 @@ export function StationWeightFields({ station, onChange }: { station: Partial<St
           onChange={(additionalWeights) => onChange({ additionalWeights, additionalWeight: undefined })}
           suggestions={[2.5, 5]}
           placeholder="e.g. 2.5"
-          hint="Small magnets or pins that sit on top of the stack."
+          hint="Small magnets or pins that sit on top of the stack. Each is its own option and they aren't combined — add 15 as well if 5 + 10 together is possible."
         />
       </>)}
 

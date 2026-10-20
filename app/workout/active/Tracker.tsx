@@ -9,6 +9,7 @@ import { formatProjection, goalLabel, goalProgress, goalsFor, setMeetsGoal, type
 import { isLoadStation, type Gym } from '@/lib/workout/types';
 import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
+import { rankSwapCandidates } from '@/lib/workout/related-exercises';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
 import { vibrate } from '@/lib/workout/device-prefs';
 import { buildSavePayload, estimateCalories, getBaselineReps, newPlanId, uidOf, workoutTotals, type LoggedSet, type WarmupSet } from '@/lib/workout/tracker-utils';
@@ -16,7 +17,8 @@ import { useSitePopup } from '@/components/SitePopup';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
 import SetEditSheet from '@/components/workout/SetEditSheet';
 import ActiveLiftEditor from '@/components/workout/ActiveLiftEditor';
-import { useCompactLayout, useRestTimer, useSuggestions, useWakeLock, useWorkoutClock } from './tracker/hooks';
+import { useWakeLock } from '@/components/useWakeLock';
+import { useCompactLayout, useRestTimer, useSuggestions, useWorkoutClock } from './tracker/hooks';
 import { useSharedSession, type ProgressUpdate } from './tracker/useSharedSession';
 import TopBar from './tracker/TopBar';
 import LiftCard from './tracker/LiftCard';
@@ -126,7 +128,14 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const liftDone = activeLogs.length > 0 && activeRemaining === 0 && !(partner && partnerRemaining > 0);
   const nextLiftIndex = liftDone ? findNextUnfinished(safeLiftIndex) : null;
   const { volume: totalVolume, sets: totalSets } = workoutTotals(logs);
-  const rest = useRestTimer(lastSetAt, suggestedReps, totalSets > 0 && !finished);
+  const rest = useRestTimer({
+    lastSetAt,
+    reps: suggestedReps,
+    enabled: totalSets > 0 && !finished,
+    liftKey: activeLift ? exerciseKey(activeLift) : '',
+    saved: user?.restTimes,
+    syncToServer: !!user?.id && user.id !== DEMO_USER_ID,
+  });
 
   // PRs follow the exercise across gyms, except on stacks/cables whose numbers differ per machine.
   const bestByLift = useMemo(() => bestE1RMByLift(pastHistory), [pastHistory]);
@@ -491,13 +500,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     ? { bar: activeLift.station.baseWeight ?? 45, plates: calculatePlates(currentWeight, activeLift.station.baseWeight ?? 45, activeLift.station.plateSets) }
     : null;
 
-  // Swap candidates: this gym's lifts for the workout's muscles.
-  const targetMuscles: string[] = localPlan.type?.muscles?.length ? localPlan.type.muscles : [activeLift.primaryMuscle];
+  // Swap candidates: every other lift at this gym, closest to the current one first.
   const liftIdsInPlan = new Set(localPlan.lifts.map((lift: any) => lift.id));
-  const alternatives = (allLifts || []).filter((l: any) =>
+  const alternatives = rankSwapCandidates(activeLift, (allLifts || []).filter((l: any) =>
     !liftIdsInPlan.has(l.id)
-    && (!localPlan.gymName || !l.gymName || l.gymName === localPlan.gymName)
-    && (targetMuscles.includes(l.primaryMuscle) || targetMuscles.includes(l.secondaryMuscle)));
+    && (!localPlan.gymName || !l.gymName || l.gymName === localPlan.gymName)), localPlan.type?.muscles || []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>

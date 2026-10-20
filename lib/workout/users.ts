@@ -24,6 +24,25 @@ export function normalizeIntensityFactor(user: WorkoutUser): number {
   return 1.0;
 }
 
+/**
+ * Remember (or forget, with `seconds: null`) the rest time for one exercise,
+ * keyed by its exercise key. Invalid changes leave the map as it was.
+ */
+export function applyRestTime(current: unknown, change: unknown): Record<string, number> {
+  const times: Record<string, number> = current && typeof current === 'object' && !Array.isArray(current) ? { ...(current as Record<string, number>) } : {};
+  if (!change || typeof change !== 'object') return times;
+  const { key, seconds } = change as { key?: unknown; seconds?: unknown };
+  if (typeof key !== 'string' || !key.trim() || key.length > 100) return times;
+  if (seconds === null) {
+    delete times[key];
+    return times;
+  }
+  const value = Number(seconds);
+  if (!Number.isFinite(value)) return times;
+  times[key] = clamp(Math.round(value), 15, 900);
+  return times;
+}
+
 export function normalizeWorkoutUser<T extends WorkoutUser>(user: T): T {
   const intensityFactor = normalizeIntensityFactor(user);
   const normalizedUser = {

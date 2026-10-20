@@ -88,3 +88,54 @@ export function relatedStartingWeight(
   }
   return null;
 }
+
+// ─── Swapping a lift mid-workout ─────────────────────────────────────────────
+
+const MUSCLE_AREA: Record<string, string> = {
+  Chest: 'push', Shoulders: 'push', Triceps: 'push',
+  Back: 'pull', Biceps: 'pull',
+  Quads: 'legs', Hamstrings: 'legs', Glutes: 'legs', Calves: 'legs',
+  Core: 'core',
+};
+
+type SwapLift = { name?: string; exercise?: string; primaryMuscle?: string; secondaryMuscle?: string };
+export type SwapGroup<T> = { label: string; lifts: T[] };
+
+function musclesOf(lift: SwapLift) {
+  return [lift.primaryMuscle, lift.secondaryMuscle].filter((m): m is string => !!m && m !== 'None');
+}
+
+/**
+ * Every other lift, closest to `current` first: the same movement (bench →
+ * chest press), the same main muscle, a shared muscle, the same area of the
+ * body (push / pull / legs / core), today's other muscles, then everything
+ * else — so any lift can be swapped in, but the likely ones are on top.
+ */
+export function rankSwapCandidates<T extends SwapLift>(current: SwapLift, candidates: T[], workoutMuscles: string[] = []): SwapGroup<T>[] {
+  const family = exerciseVariant(exerciseName(current))?.family;
+  const primary = current.primaryMuscle || '';
+  const muscles = musclesOf(current);
+  const areas = new Set(muscles.map((m) => MUSCLE_AREA[m]).filter(Boolean));
+  const areaLabel = areas.size === 1 ? `Other ${[...areas][0]} lifts` : 'Same area of the body';
+
+  const tiers: SwapGroup<T>[] = [
+    { label: 'Same movement', lifts: [] },
+    { label: primary ? `Also ${primary}` : 'Same muscle', lifts: [] },
+    { label: `Works ${muscles.join(' or ') || 'the same muscles'}`, lifts: [] },
+    { label: areaLabel, lifts: [] },
+    { label: "Today's other muscles", lifts: [] },
+    { label: 'Everything else', lifts: [] },
+  ];
+  const tierOf = (lift: T) => {
+    const theirs = musclesOf(lift);
+    if (family && exerciseVariant(exerciseName(lift))?.family === family) return 0;
+    if (primary && lift.primaryMuscle === primary) return 1;
+    if (theirs.some((m) => muscles.includes(m))) return 2;
+    if (theirs.some((m) => areas.has(MUSCLE_AREA[m]))) return 3;
+    if (theirs.some((m) => workoutMuscles.includes(m))) return 4;
+    return 5;
+  };
+  for (const lift of candidates) tiers[tierOf(lift)].lifts.push(lift);
+  for (const tier of tiers) tier.lifts.sort((a, b) => exerciseName(a).localeCompare(exerciseName(b)));
+  return tiers.filter((tier) => tier.lifts.length > 0);
+}

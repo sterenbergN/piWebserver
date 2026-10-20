@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { exerciseVariant, relatedStartingWeight } from './related-exercises';
+import { exerciseVariant, rankSwapCandidates, relatedStartingWeight } from './related-exercises';
 
 test('exercises are grouped into families with rough strength ratios', () => {
   assert.deepEqual(exerciseVariant('Dumbbell Bench Press'), { family: 'press', factor: 0.38 });
@@ -31,4 +31,24 @@ test('no related lift, or an unrelated exercise, gives nothing', () => {
   assert.equal(relatedStartingWeight({ name: 'Front Squat' }, history, { reps: 5 }), null);
   assert.equal(relatedStartingWeight({ name: 'Plank' }, history, { reps: 5 }), null);
   assert.equal(relatedStartingWeight({ name: 'Hammer Curl' }, history, { reps: 10 })?.fromName, 'EZ-Bar Curl');
+});
+
+test('swap choices put the closest lifts first and keep everything else below', () => {
+  const lift = (name: string, primaryMuscle: string, secondaryMuscle = 'None') => ({ name, primaryMuscle, secondaryMuscle });
+  const groups = rankSwapCandidates(lift('Bench Press', 'Chest', 'Triceps'), [
+    lift('Standing Calf Raise', 'Calves'),
+    lift('Tricep Pushdown', 'Triceps'),
+    lift('Pec Deck', 'Chest'),
+    lift('Lateral Raise', 'Shoulders'),
+    lift('Chest Press', 'Chest', 'Triceps'),
+    lift('Lat Pulldown', 'Back', 'Biceps'),
+  ], ['Chest', 'Back']);
+  assert.deepEqual(groups.map((g) => [g.label, g.lifts.map((l) => l.name)]), [
+    ['Same movement', ['Chest Press']],
+    ['Also Chest', ['Pec Deck']],
+    ['Works Chest or Triceps', ['Tricep Pushdown']],
+    ['Other push lifts', ['Lateral Raise']],
+    ["Today's other muscles", ['Lat Pulldown']],
+    ['Everything else', ['Standing Calf Raise']],
+  ]);
 });

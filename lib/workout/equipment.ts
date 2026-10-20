@@ -64,7 +64,9 @@ export function getPossibleWeights(station: StationLike, scaleFactor = 1): numbe
     const increment = Number(station.increment) > 0 ? Number(station.increment) : 10;
     const minWeight = Number.isFinite(Number(station.minWeight)) && Number(station.minWeight) >= 0 ? Number(station.minWeight) : 10;
     const maxWeight = Number(station.maxWeight) > 0 ? Number(station.maxWeight) : 300;
-    const additions = subsetSums(getAdditionalWeights(station));
+    // Add-ons are separate options (a +5 or a +10 magnet), never stacked
+    // together — unlike plates, a 15 only exists if it's listed.
+    const additions = [0, ...getAdditionalWeights(station)];
 
     const possible: number[] = [];
     for (let step = 0; step <= MAX_LADDER_STEPS; step++) {

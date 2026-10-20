@@ -37,32 +37,6 @@ export function useWorkoutClock(activeUid: string, running: boolean, resume?: { 
   return { elapsedSecs, liftElapsedSecsMap };
 }
 
-/** Keep the phone screen on during the workout (where supported). */
-export function useWakeLock(active: boolean) {
-  useEffect(() => {
-    if (!active || typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
-    let lock: { release: () => Promise<void> } | null = null;
-    let cancelled = false;
-    const acquire = async () => {
-      try {
-        const sentinel = await (navigator as any).wakeLock.request('screen');
-        if (cancelled) sentinel.release();
-        else lock = sentinel;
-      } catch {
-        // Denied (e.g. battery saver) — the workout still works.
-      }
-    };
-    const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
-    acquire();
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
-      lock?.release().catch(() => {});
-    };
-  }, [active]);
-}
-
 /** True on phone-width screens (tighter tracker layout). */
 export function useCompactLayout() {
   const [compact, setCompact] = useState(false);
@@ -76,28 +50,118 @@ export function useCompactLayout() {
   return compact;
 }
 
+const REST_TIMES_PREF = 'workout:restTimes';
+
+function readRestTimes(): Record<string, number> {
+  try {
+    const parsed = JSON.parse(readPref(REST_TIMES_PREF) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+type RestTimerOptions = {
+  lastSetAt: number | null;
+  /** Reps planned for the lift you're on; sets the default rest. */
+  reps: number;
+  enabled: boolean;
+  /** The exercise you're on (exerciseKey), so a changed rest is remembered for it. */
+  liftKey: string;
+  /** Rest times saved to the account (user.restTimes). */
+  saved?: Record<string, number>;
+  /** Signed in: also save changes to the account, so other devices get them. */
+  syncToServer: boolean;
+};
+
 /**
  * Rest timer from the last logged set (any lift, so supersets work). The
- * target is rep-based plus your own ±adjustment, remembered on this device;
- * when it's reached the phone buzzes and (if turned on) beeps.
+ * target is rep-based until you change it with ±15 — then that rest is
+ * remembered for the exercise (on this device and, signed in, your account)
+ * and used every time you do it. When the rest is up the phone buzzes
+ * (Android) and, if sound is on, beeps.
  */
-export function useRestTimer(lastSetAt: number | null, reps: number, enabled: boolean) {
-  const [adjust, setAdjust] = useState(() => Number(readPref('workout:restAdjust')) || 0);
+export function useRestTimer({ lastSetAt, reps, enabled, liftKey, saved, syncToServer }: RestTimerOptions) {
+  // The account's times win over this device's (they may be newer, from another phone).
+  const [restTimes, setRestTimes] = useState<Record<string, number>>(() => ({ ...readRestTimes(), ...(saved || {}) }));
   const [sound, setSound] = useState(() => readPref('workout:restSound') === '1');
   const audioRef = useRef<AudioContext | null>(null);
   const notifiedFor = useRef<number | null>(null);
+  const soundRef = useRef(sound);
+  useEffect(() => { soundRef.current = sound; }, [sound]);
 
-  const target = Math.max(15, restTargetSeconds(reps) + adjust);
+  const custom = restTimes[liftKey];
+  const target = custom > 0 ? custom : restTargetSeconds(reps);
   const elapsed = lastSetAt ? Math.max(0, Math.floor((Date.now() - lastSetAt) / 1000)) : 0;
   const visible = enabled && !!lastSetAt && elapsed < 15 * 60;
   const done = elapsed >= target;
 
+  // Alert at the exact moment the rest is up (not on the next clock tick).
+  // Coming back to the page long after it ended doesn't set off a late beep.
   useEffect(() => {
-    if (!visible || !done || notifiedFor.current === lastSetAt) return;
-    notifiedFor.current = lastSetAt;
-    vibrate([200, 100, 200]);
-    if (sound) playBeep(audioRef.current);
-  }, [visible, done, lastSetAt, sound]);
+    if (!enabled || !lastSetAt) return;
+    const due = lastSetAt + target * 1000;
+    const notify = () => {
+      if (notifiedFor.current === lastSetAt) return;
+      notifiedFor.current = lastSetAt;
+      if (Date.now() - due > 15_000) return;
+      vibrate([200, 100, 200]);
+      if (soundRef.current) playBeep(audioRef.current);
+    };
+    const wait = due - Date.now();
+    if (wait <= 0) {
+      notify();
+      return;
+    }
+    notifiedFor.current = null; // e.g. +15 after it went off: alert again at the new time
+    const handle = setTimeout(notify, wait);
+    return () => clearTimeout(handle);
+  }, [enabled, lastSetAt, target]);
+
+  // Every tap re-unlocks audio, which iPhones suspend when the screen locks or
+  // another app plays sound — otherwise the next beep is silently dropped.
+  useEffect(() => {
+    if (!sound || !enabled) return;
+    const unlock = () => { audioRef.current = unlockAudio(audioRef.current); };
+    document.addEventListener('pointerdown', unlock, true);
+    return () => document.removeEventListener('pointerdown', unlock, true);
+  }, [sound, enabled]);
+
+  // Save to the account shortly after the last ±15 tap (one request, not one per tap).
+  const pendingSync = useRef<Record<string, number | null>>({});
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushSync = useCallback(() => {
+    syncTimer.current = null;
+    const changes = pendingSync.current;
+    pendingSync.current = {};
+    Object.entries(changes).forEach(([key, seconds]) => {
+      fetch('/api/workout/auth', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restTime: { key, seconds } }),
+        keepalive: true,
+      }).catch(() => { /* still remembered on this device */ });
+    });
+  }, []);
+  useEffect(() => () => { if (syncTimer.current) { clearTimeout(syncTimer.current); flushSync(); } }, [flushSync]);
+
+  // Read and written straight away, so quick taps each build on the last.
+  const restTimesRef = useRef(restTimes);
+  const remember = (change: (current: number) => number | null) => {
+    if (!liftKey) return;
+    const next = { ...restTimesRef.current };
+    const current = next[liftKey] > 0 ? next[liftKey] : restTargetSeconds(reps);
+    const seconds = change(current);
+    if (seconds === null) delete next[liftKey];
+    else next[liftKey] = seconds;
+    restTimesRef.current = next;
+    setRestTimes(next);
+    savePref(REST_TIMES_PREF, JSON.stringify(next));
+    if (!syncToServer) return;
+    pendingSync.current[liftKey] = seconds;
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(flushSync, 1200);
+  };
 
   return {
     target,
@@ -105,16 +169,18 @@ export function useRestTimer(lastSetAt: number | null, reps: number, enabled: bo
     visible,
     done,
     sound,
-    adjust: (delta: number) => {
-      const next = Math.max(-120, Math.min(300, adjust + delta));
-      setAdjust(next);
-      savePref('workout:restAdjust', String(next));
-    },
+    /** This exercise has its own remembered rest (not the rep-based default). */
+    custom: custom > 0,
+    adjust: (delta: number) => remember((current) => Math.max(15, Math.min(900, current + delta))),
+    resetToDefault: () => remember(() => null),
     toggleSound: () => {
       const next = !sound;
       setSound(next);
       savePref('workout:restSound', next ? '1' : '0');
-      if (next) audioRef.current = unlockAudio(audioRef.current);
+      if (next) {
+        audioRef.current = unlockAudio(audioRef.current);
+        playBeep(audioRef.current, 1); // so you know it can be heard
+      }
     },
     /** Call from a tap (e.g. logging a set) so the beep is allowed to play later. */
     unlock: () => { if (sound) audioRef.current = unlockAudio(audioRef.current); },
