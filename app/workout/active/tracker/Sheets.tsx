@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Sheet from '@/components/workout/Sheet';
 import { AddExerciseForGym } from '@/components/workout/AddExerciseFlow';
 import { uidOf } from '@/lib/workout/tracker-utils';
+import type { SwapGroup } from '@/lib/workout/related-exercises';
 import type { Gym, Lift, Station } from '@/lib/workout/types';
 import InlineGymEditor from '../InlineGymEditor';
 
@@ -130,22 +131,27 @@ export function WorkoutListSheet({ plan, activeIndex, logs, targetSets, partnerO
   );
 }
 
-/** Other lifts at this gym for the workout's muscles. */
-export function SwapLiftSheet({ alternatives, onSwap, onClose }: { alternatives: any[]; onSwap: (lift: any) => void; onClose: () => void }) {
+/** Every other lift at this gym, grouped from most to least like the current one. */
+export function SwapLiftSheet({ alternatives, onSwap, onClose }: { alternatives: SwapGroup<any>[]; onSwap: (lift: any) => void; onClose: () => void }) {
   return (
-    <Sheet title="Swap exercise" subtitle="Lifts at this gym for the same muscles" onClose={onClose}>
-      {alternatives.length === 0 && <p className="workout-hint">No other lifts at this gym match this workout&apos;s muscle groups.</p>}
-      <div className="workout-stack">
-        {alternatives.map((lift) => (
-          <button key={`${lift.gymId || ''}-${lift.id}`} type="button" className="workout-lift-row" onClick={() => onSwap(lift)}>
-            <span className="workout-card-text">
-              <span className="workout-card-title">{lift.name}</span>
-              <span className="workout-card-meta">{lift.station?.name} · {lift.primaryMuscle}{lift.secondaryMuscle && lift.secondaryMuscle !== 'None' ? ` • ${lift.secondaryMuscle}` : ''}</span>
-            </span>
-            <span style={{ flexShrink: 0, fontSize: '0.85rem' }}>Swap 🔄</span>
-          </button>
-        ))}
-      </div>
+    <Sheet title="Swap exercise" subtitle="Closest matches first" onClose={onClose}>
+      {alternatives.length === 0 && <p className="workout-hint">No other lifts are set up at this gym yet.</p>}
+      {alternatives.map((group) => (
+        <section key={group.label} style={{ marginBottom: '0.9rem' }}>
+          <span className="workout-label" style={{ display: 'block', marginBottom: '0.35rem' }}>{group.label}</span>
+          <div className="workout-stack">
+            {group.lifts.map((lift) => (
+              <button key={`${lift.gymId || ''}-${lift.id}`} type="button" className="workout-lift-row" onClick={() => onSwap(lift)}>
+                <span className="workout-card-text">
+                  <span className="workout-card-title">{lift.name}</span>
+                  <span className="workout-card-meta">{lift.station?.name} · {lift.primaryMuscle}{lift.secondaryMuscle && lift.secondaryMuscle !== 'None' ? ` • ${lift.secondaryMuscle}` : ''}</span>
+                </span>
+                <span style={{ flexShrink: 0, fontSize: '0.85rem' }}>Swap 🔄</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
     </Sheet>
   );
 }

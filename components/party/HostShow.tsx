@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useWakeLock } from '@/components/useWakeLock';
 import { line, loadPrefs, partyAudio, type Mood, type SoundPrefs } from './audio';
 
 // Presentation layer for the TV: music, sound effects, a narrator, round title
@@ -31,8 +32,9 @@ export const GAME_TITLES: Record<string, { title: string; tagline: string; color
   'emoji-telephone': { title: 'Emoji Telephone', tagline: 'Words to emojis to total chaos.', color: 'var(--party-green)' },
 };
 
-/** Hide the website chrome so the TV / phone shows only the game. */
+/** Hide the website chrome so the TV / phone shows only the game, and keep its screen on. */
 export function useImmersive(className: 'party-tv' | 'party-phone') {
+  useWakeLock(true);
   useEffect(() => {
     document.body.classList.add(className);
     return () => document.body.classList.remove(className);

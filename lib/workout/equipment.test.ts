@@ -2,9 +2,10 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { calculatePlates, getPossibleWeights, stepWeight } from './equipment';
 
-test('stack weights include every combination of add-on weights', () => {
-  const weights = getPossibleWeights({ type: 'stack', minWeight: 10, maxWeight: 30, increment: 10, additionalWeights: [2.5, 5] });
-  assert.deepEqual(weights, [10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5, 30, 32.5, 35, 37.5]);
+test('stack add-on weights are used one at a time, not combined', () => {
+  const weights = getPossibleWeights({ type: 'stack', minWeight: 20, maxWeight: 40, increment: 20, additionalWeights: [5, 10] });
+  // No +15: that would need both add-ons at once.
+  assert.deepEqual(weights, [20, 25, 30, 40, 45, 50]);
 });
 
 test('legacy single additionalWeight is still honored', () => {

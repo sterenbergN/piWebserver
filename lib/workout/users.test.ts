@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { normalizeIntensityFactor, normalizeWorkoutUser, normalizeUsersData } from './users.js';
+import { applyRestTime, normalizeIntensityFactor, normalizeWorkoutUser, normalizeUsersData } from './users.js';
 
 test('normalizeIntensityFactor - uses valid intensityFactor and clamps it', () => {
   assert.equal(normalizeIntensityFactor({ intensityFactor: 1.0 }), 1.0);
@@ -77,4 +77,13 @@ test('normalizeUsersData - correctly processes an array of users and returns cha
   const result2 = normalizeUsersData(cleanData);
 
   assert.equal(result2.changed, false);
+});
+
+test('applyRestTime - remembers, clamps and forgets one exercise at a time', () => {
+  const saved = applyRestTime(undefined, { key: 'bench press', seconds: 150 });
+  assert.deepEqual(saved, { 'bench press': 150 });
+  assert.deepEqual(applyRestTime(saved, { key: 'leg extension', seconds: 2 }), { 'bench press': 150, 'leg extension': 15 });
+  assert.deepEqual(applyRestTime(saved, { key: 'bench press', seconds: null }), {});
+  assert.deepEqual(applyRestTime(saved, { key: '', seconds: 90 }), saved);
+  assert.deepEqual(applyRestTime(saved, { key: 'squat', seconds: 'soon' }), saved);
 });

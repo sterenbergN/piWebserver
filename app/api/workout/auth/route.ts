@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { createWorkoutAuthToken } from '@/lib/security/auth';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { verifyPassword } from '@/lib/workout/passwords';
-import { findWorkoutUser, loadUsersData, normalizeWorkoutUser, toSafeUser, updateUsersData } from '@/lib/workout/users';
+import { applyRestTime, findWorkoutUser, loadUsersData, normalizeWorkoutUser, toSafeUser, updateUsersData } from '@/lib/workout/users';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { loginRetryAfter, recordLoginFailure, recordLoginSuccess, tooManyAttemptsMessage } from '@/lib/security/rate-limit';
 
@@ -96,6 +96,8 @@ export async function PATCH(request: Request) {
         intensityFactor: updates.intensityFactor !== undefined && Number.isFinite(Number(updates.intensityFactor))
           ? Number(updates.intensityFactor)
           : user.intensityFactor,
+        // One exercise's rest time at a time (changed from the tracker's rest timer).
+        restTimes: updates.restTime !== undefined ? applyRestTime(user.restTimes, updates.restTime) : user.restTimes,
         weeklySetTarget: Number.isFinite(Number(updates.weeklySetTarget))
           ? Math.min(30, Math.max(2, Math.round(Number(updates.weeklySetTarget))))
           : user.weeklySetTarget,
