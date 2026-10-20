@@ -1,0 +1,177 @@
+# Weekly daily-question generator
+
+These are the instructions for the scheduled Claude Code run that keeps the
+site's daily engineering questions topped up. Each run reads how people did
+and what they said, fixes reported problems, writes and **verifies** new days,
+uploads them to the Pi and records what it learned. Nothing goes through git:
+packs live in `daily-packs/` (git-ignored) on this PC and on the Pi.
+
+Work from the repository root. Settings (site address and upload token) are in
+`daily-packs/.env`; see the top of `scripts/daily-pack.ts`.
+
+## 1. Look at where things stand
+
+```bash
+npm run daily -- status
+```
+
+`readyAhead` is how many days from today are ready without a gap, and
+`firstGap` is the first date with no questions. The target is **14 days ahead**
+unless the generator notes say otherwise ("target buffer: N days").
+
+If the status call fails (no token, site down), stop and report it. Don't guess.
+
+## 2. Read the notes
+
+```bash
+npm run daily -- notes
+```
+
+The notes are guidance from the site owner (editable in Admin → Daily) plus
+what earlier runs learned. Follow them; they override the defaults below.
+
+## 3. Learn from feedback
+
+```bash
+npm run daily -- feedback --since <today minus 60 days>
+```
+
+For every question this lists: answered / solved / partial / wrong / studied
+(solution opened without answering), hints used, 👍/👎, easy/right/hard votes
+and problem reports.
+
+1. **Reports first.** For each report (newest first), find the question's
+   source in `daily-packs/src/` (search for its id) and check the claim
+   properly: redo the calculation, re-read the cited source.
+   - If the question is wrong (answer key, wording, units, figure, source),
+     fix it in the source file, rebuild **just that date range** and upload it
+     (step 7). Saved answers are regraded automatically; people see a
+     "regraded" note.
+   - If the report is mistaken, leave the question alone.
+   - Either way, log it in the run log (step 8) with one line on why.
+2. **Calibrate difficulty** per track and topic, from questions with at least
+   2 answers or votes:
+   - mostly "too hard", or a solve rate under 35 %, or many hints and
+     "studied" → aim that topic one difficulty level lower next time, or
+     add a gentler hint;
+   - mostly "too easy", or a solve rate over 85 % with few hints → one
+     level higher, or more steps;
+   - many 👎 → look at what those questions share (wordy, ambiguous,
+     tedious arithmetic) and avoid it.
+   Write the calibration into the run log so the next run keeps it.
+3. With no or little feedback, keep the default difficulty curve.
+
+## 4. See what's been asked recently
+
+```bash
+npm run daily -- history 90
+```
+
+Use it to keep variety: don't repeat a **topic** in the same track within
+21 days, or a near-identical setup ever. Rotate through `syllabus.md`,
+favouring topics with higher weight and topics not seen for longest.
+
+## 5. Plan the new days
+
+Fill from `firstGap` until there are 14 days ready from today (or the
+notes' target). Per day:
+
+- **Core question** (answering it keeps the streak): tracks rotate
+  mechanical → controls → automation, continuing from the last scheduled core.
+- **Two bonus questions**: one from each of the other two tracks.
+- **Fridays are boss days** (`boss: true`): the core is a multi-part problem
+  (3–5 parts) at difficulty 4–5 that walks through a realistic task end to end.
+- **Difficulty** (before calibration): Mon 2, Tue 2–3, Wed 3, Thu 3, Fri 4–5
+  (boss), Sat and Sun 2–3. Bonus questions within one level of the core.
+- **Answer types**: over a week, use at least one choice or multi-select,
+  one ordering question, and at least one range or coefficients question in
+  controls. Numeric is the default for calculations.
+- **Formula of the day**: a different useful formula each day, not repeated
+  within 60 days (check the existing sources in `daily-packs/src/`).
+
+## 6. Write the questions
+
+Create `daily-packs/src/<first date>.mjs` that exports an array of days, using
+the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
+`range`, `coeffs`, `order`, `SRC`). The starter files
+`daily-packs/src/week1.mjs` and `week2.mjs` are the model to follow, and
+`lib/daily/types.ts` is the exact format.
+
+**Rules for every question**
+
+- **Original.** Write new problems in the style of the FE/PE exams and
+  textbooks; never copy problems from exam prep books, practice exams or
+  textbooks.
+- **Ids**: `<date>-<short-slug>`, unique for all time.
+- **Math**: everything containing LaTeX goes in ``R`...` `` templates (the build
+  refuses backslashes inside quoted strings). Put display math on its own
+  line as `$$ ... $$`. Write currency as `\$`.
+- **Units**: say the unit the answer is wanted in (the `unit` of a numeric
+  part). Pick numbers so the default 2 % tolerance can't accept a wrong method;
+  use `abs` for answers at or near zero.
+- **Prompt**: self-contained, realistic numbers, one clear question per part.
+- **Hints**: 1–3, each a step further, never the answer.
+- **Solution**: every step, with the numbers substituted; a quick check at the
+  end (other method, units, sanity); then a short practical takeaway.
+- **Mistakes**: 1–3 per numeric or choice part for the slips people really
+  make (wrong unit conversion, radius vs diameter, open- vs closed-loop, cp vs
+  cv…), each with the value that slip produces **computed**, and a note on
+  what went wrong.
+- **Sources**: 1–3 real references: a textbook (title and chapter name), the
+  NCEES FE Reference Handbook section, the IEC/ISO/ISA standard, or the
+  Siemens manual. Name chapters and sections, not page numbers. Only cite a
+  clause number, edition detail or product behaviour you are sure of; if
+  unsure, leave the fact out of the question.
+- **Formulas**: the day's formula sheet holds every formula the questions use
+  (`formulas: [ids]` on each question), each with its source.
+- **Figures** (optional): SVG markup with `xmlns`, dark lines on white, at
+  most 500 px wide, all text inside the viewBox, arrow markers that point along
+  their line, and a `figureAlt` that says everything the figure shows.
+- **Automation questions** should be the things an automation engineer
+  actually meets: TIA Portal behaviour, PLC data and program structure,
+  standards (IEC 61131-3, IEC 60204-1, ISO 13849-1, IEC 62061, ISA-88/95/18.2/101,
+  IEC 62443), networks, I/O and drives.
+
+## 7. Verify, build, upload
+
+1. **Check every answer independently.** Write `daily-packs/checks/<first
+   date>.mjs` that recomputes each numeric answer (and each mistake value)
+   from the givens in the prompt, without copying from the solution, and
+   prints it next to the answer key. Run it. Anything that doesn't match
+   within tolerance is fixed or dropped. For conceptual questions, re-check
+   each claim against what you know of the cited source. Put the method and
+   the numbers in the question's `check` field (admins see it).
+2. Build and validate:
+   ```bash
+   npm run daily:build -- daily-packs/src/<first date>.mjs
+   npm run daily:validate -- daily-packs/<first>_<last>.json
+   ```
+   Fix every problem it reports.
+3. Upload:
+   ```bash
+   npm run daily -- upload daily-packs/<first>_<last>.json
+   ```
+   Confirm `readyAhead` reached the target. Uploading a date that already
+   exists replaces it, which is how corrections go out.
+
+## 8. Record what was learned
+
+Fetch the current notes into `daily-packs/notes.md`, then edit:
+
+- leave the owner's guidance at the top untouched;
+- under `## Run log`, add a dated entry: days added, reports handled (fixed
+  or not, and why), calibration changes, anything to do differently;
+- keep a short `## Calibration` section current (per track/topic: easier,
+  harder or as is), so a run doesn't need to re-read every old entry;
+- keep the whole file under about 150 lines: fold old log entries into a
+  one-line summary.
+
+```bash
+npm run daily -- notes --set daily-packs/notes.md
+```
+
+## 9. Report
+
+Finish with a short summary: dates added, days ready ahead, reports fixed or
+dismissed, calibration changes, and anything that needs the owner (for
+example a question you dropped and why).

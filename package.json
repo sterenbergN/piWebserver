@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "tsx --test \"lib/**/*.test.ts\"",
     "seed:workout": "tsx scripts/seed-workout-dev.ts",
-    "daily:validate": "tsx scripts/daily-pack.ts"
+    "daily:validate": "tsx scripts/daily-pack.ts validate",
+    "daily": "tsx scripts/daily-pack.ts",
+    "daily:build": "node scripts/daily-generator/build.mjs"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
