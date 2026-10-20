@@ -16,7 +16,8 @@ const ID = /^[\w-]{1,80}$/;
 
 /** Every $…$ and $$…$$ in a markdown string must render. */
 function checkMath(text: string, where: string, errors: Errors) {
-  const pattern = /\$\$([\s\S]+?)\$\$|(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$/g;
+  // An escaped \$ is a literal dollar sign (currency), never a math delimiter.
+  const pattern = /\$\$([\s\S]+?)\$\$|(?<![\\$])\$(?!\s)((?:\\\$|[^$\n])+?)(?<![\s\\])\$/g;
   for (const match of text.matchAll(pattern)) {
     const tex = match[1] ?? match[2];
     try {

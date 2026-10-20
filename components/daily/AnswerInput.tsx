@@ -105,7 +105,7 @@ export default function AnswerInput({ id, input, draft, onChange, locked }: Prop
     case 'numeric':
       return (
         <div className="dq-numeric">
-          <input id={id} inputMode="decimal" autoComplete="off" placeholder="Your answer" value={draft.text ?? ''} disabled={locked}
+          <input id={id} aria-labelledby={`${id}-label`} inputMode="decimal" autoComplete="off" placeholder="Your answer" value={draft.text ?? ''} disabled={locked}
             onChange={(e) => set({ text: e.target.value })} aria-invalid={!!draft.text && readNumber(draft.text) === null} />
           {input.unit && <span className="dq-unit">{input.unit}</span>}
         </div>

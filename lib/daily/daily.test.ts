@@ -49,6 +49,11 @@ test('validateDay reports broken math, bad answers and missing references', () =
   assert.match(text, /latex doesn't render/);
 });
 
+test('validateDay: escaped dollar signs are currency, not math', () => {
+  const { errors } = validateDay(day({ core: question({ prompt: 'It saves **\\$5,000** a year; $P = 5000 \\times 7.36$ is about \\$36,800.' }) }));
+  assert.deepEqual(errors, []);
+});
+
 test('validateDay: zero answers need abs, figures need alt text, ids must be unique', () => {
   const zero = validateDay(day({ core: question({ parts: [{ id: 'a', answer: { type: 'numeric', value: 0 } }] }) }));
   assert.match(zero.errors.join(), /needs an absolute tolerance/);

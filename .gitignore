@@ -58,3 +58,6 @@ next-env.d.ts
 # release packaging output
 /release
 /dist
+
+# Daily question packs (kept on the Pi and on this PC, not in git)
+/daily-packs/

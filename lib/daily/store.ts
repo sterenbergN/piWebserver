@@ -37,10 +37,15 @@ export async function listDates(): Promise<DateKey[]> {
 export type IndexedQuestion = { question: Question; date: DateKey; core: boolean; boss: boolean };
 
 // Every question by id, for regrading. Rebuilt after any change to the days.
-let indexCache: Promise<Map<string, IndexedQuestion>> | null = null;
+// Kept on globalThis: each API route is bundled with its own copy of this
+// module, and an upload through one route must refresh the cache for all.
+const INDEX_KEY = Symbol.for('pi-dashboard.daily.questionIndex');
+type IndexHolder = { [INDEX_KEY]?: Promise<Map<string, IndexedQuestion>> | null };
+const holder = globalThis as IndexHolder;
+const clearIndex = () => { holder[INDEX_KEY] = null; };
 
 export function questionIndex() {
-  indexCache ??= (async () => {
+  holder[INDEX_KEY] ??= (async () => {
     const index = new Map<string, IndexedQuestion>();
     for (const date of await listDates()) {
       const day = await readDay(date);
@@ -50,7 +55,7 @@ export function questionIndex() {
     }
     return index;
   })();
-  return indexCache;
+  return holder[INDEX_KEY]!;
 }
 
 /** Save validated days (replacing those dates). Question ids must not clash with other stored days. */
@@ -64,14 +69,14 @@ export async function saveDays(days: DailyDay[]) {
 
   const existing = new Set(await listDates());
   for (const day of days) await writeJsonAtomic(dayFile(day.date), day, true);
-  indexCache = null;
+  clearIndex();
   return { added: days.filter((d) => !existing.has(d.date)).length, replaced: days.filter((d) => existing.has(d.date)).length };
 }
 
 export async function deleteDay(date: DateKey) {
   if (!isDateKey(date)) throw new ApiError(400, 'Invalid date');
   await fs.rm(dayFile(date), { force: true });
-  indexCache = null;
+  clearIndex();
 }
 
 /** Days ready from today on, counting until the first gap. */

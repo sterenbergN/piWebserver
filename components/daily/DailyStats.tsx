@@ -76,7 +76,7 @@ export default function DailyStats({ progress, today, signedIn, onOpen, onLeader
               <div key={track} className={`dq-track-row is-${track}`}>
                 <span className="dq-track-name"><i className="dq-dot" aria-hidden /> {TRACK_LABEL[track]}</span>
                 <span className="dq-track-bar" aria-hidden><i style={{ width: `${rate * 100}%` }} /></span>
-                <span className="dq-track-num">{t ? `${pct(t.solved, t.answered)} · ${t.solved}/${t.answered}` : 'none yet'}</span>
+                <span className="dq-track-num">{t && t.answered ? `${pct(t.solved, t.answered)} · ${t.solved}/${t.answered}` : 'none answered yet'}</span>
               </div>
             );
           })}
