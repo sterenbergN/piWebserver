@@ -42,6 +42,17 @@ test('save: cleans input, picks a free color and keeps the creation day on edits
   assert.throws(() => apply(data, { type: 'save', habit: { id: 'nope', name: 'X' } }), HabitInputError);
 });
 
+test('save: a new habit uses the suggested id only when it is valid and free', () => {
+  const data = emptyHabitsData();
+  apply(data, { type: 'save', habit: { name: 'A' }, newId: 'client-1' });
+  apply(data, { type: 'save', habit: { name: 'B' }, newId: 'client-1' });
+  apply(data, { type: 'save', habit: { name: 'C' }, newId: '../etc' });
+  const [a, b, c] = data.habits;
+  assert.equal(a.id, 'client-1');
+  assert.notEqual(b.id, 'client-1');
+  assert.ok(/^h\d+$/.test(c.id));
+});
+
 test('save: all seven weekdays is just daily; links only stick to check habits', () => {
   const data = emptyHabitsData();
   apply(data, { type: 'save', habit: { name: 'A', schedule: { type: 'weekdays', days: [0, 1, 2, 3, 4, 5, 6] }, link: 'workout' } });
@@ -98,13 +109,13 @@ test('delete, move and archive', () => {
   assert.equal(data.habits[0].archivedOn, undefined);
 });
 
-test('link-done ticks linked habits on recent days without overwriting', () => {
+test('link-done ticks linked habits on recent days, even from before the habit was made', () => {
   const data = emptyHabitsData();
-  apply(data, { type: 'save', habit: { name: 'Work out', link: 'workout' } }, '2026-10-10');
-  apply(data, { type: 'save', habit: { name: 'Other' } }, '2026-10-10');
+  apply(data, { type: 'save', habit: { name: 'Work out', link: 'workout' } });
+  apply(data, { type: 'save', habit: { name: 'Other' } });
   const [gym, other] = data.habits;
-  apply(data, { type: 'link-done', link: 'workout', dates: ['2026-10-19', TODAY, '2026-10-01', 'junk'] });
-  assert.equal(data.log['2026-10-19'][gym.id], 1);
+  apply(data, { type: 'link-done', link: 'workout', dates: ['2026-10-15', TODAY, '2026-10-01', 'junk'] });
+  assert.equal(data.log['2026-10-15'][gym.id], 1, 'backfilled inside the edit window');
   assert.equal(data.log[TODAY][gym.id], 1);
   assert.equal(data.log['2026-10-01'], undefined, 'outside the edit window');
   assert.equal(data.log[TODAY][other.id], undefined);

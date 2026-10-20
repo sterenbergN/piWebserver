@@ -41,7 +41,8 @@ export type HabitInput = Partial<Omit<Habit, 'createdOn' | 'archivedOn'>>;
 
 export type HabitAction =
   | { type: 'log'; habitId: string; date: DateKey; value: number }
-  | { type: 'save'; habit: HabitInput }
+  /** `newId` lets the browser name a new habit so later changes can refer to it before the server answers. */
+  | { type: 'save'; habit: HabitInput; newId?: string }
   | { type: 'archive'; id: string; archived: boolean }
   | { type: 'delete'; id: string }
   | { type: 'move'; id: string; direction: -1 | 1 }
@@ -191,7 +192,8 @@ export function applyHabitAction(data: HabitsData, action: HabitAction, today: D
         throw new HabitInputError(`You can track up to ${MAX_HABITS} habits at once.`);
       }
       const usedColors = data.habits.filter(isActive).map((h) => h.color);
-      const habit = normalizeHabit(action.habit || {}, existing, existing?.id ?? newId(), today, usedColors);
+      const suggested = typeof action.newId === 'string' && /^[\w-]{1,40}$/.test(action.newId) && !find(action.newId) ? action.newId : undefined;
+      const habit = normalizeHabit(action.habit || {}, existing, existing?.id ?? suggested ?? newId(), today, usedColors);
       if (existing) {
         // A new target or kind changes what old values mean; clear values that no longer fit.
         if (existing.kind !== habit.kind) {
@@ -234,8 +236,9 @@ export function applyHabitAction(data: HabitsData, action: HabitAction, today: D
       const linked = data.habits.filter((h) => isActive(h) && h.link === action.link);
       for (const date of Array.isArray(action.dates) ? action.dates.slice(0, 31) : []) {
         if (!canEdit(date, today)) continue;
+        // Days before the habit was made count too, so a new link picks up the past week.
         for (const habit of linked) {
-          if (date >= habit.createdOn && !data.log[date]?.[habit.id]) setValue(data.log, date, habit.id, 1);
+          if (!data.log[date]?.[habit.id]) setValue(data.log, date, habit.id, 1);
         }
       }
       return data;

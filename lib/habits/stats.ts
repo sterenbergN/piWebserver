@@ -63,6 +63,12 @@ function earliest(data: HabitsData, starts: Starts, today: DateKey) {
   return first;
 }
 
+/** Whether everything due on `date` was done (and something was due). */
+export function isPerfectDay(data: HabitsData, date: DateKey) {
+  const due = dueHabits(data, startsOf(data), date);
+  return due.length > 0 && due.every((h) => doneOn(data.log, date, h));
+}
+
 /**
  * Freezes: walk every finished day. A perfect day (everything due was done)
  * extends the run, and every 7th one earns a freeze. A missed day spends a
