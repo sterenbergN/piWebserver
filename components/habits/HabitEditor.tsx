@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import HabitSheet from './HabitSheet';
-import { COLOR_SLOTS, type Habit, type HabitInput, type HabitKind, type HabitSchedule } from '@/lib/habits/habits';
+import { COLOR_SLOTS, type Habit, type HabitInput, type HabitKind, type HabitLink, type HabitSchedule } from '@/lib/habits/habits';
 
 export const COLOR_NAMES = ['Blue', 'Orange', 'Aqua', 'Yellow', 'Pink', 'Green', 'Violet', 'Red'];
 
 export const TEMPLATES: HabitInput[] = [
   { emoji: '💧', name: 'Drink water', kind: 'count', target: 8, unit: 'glasses' },
   { emoji: '🏋️', name: 'Work out', kind: 'check', schedule: { type: 'weekly', times: 3 }, link: 'workout' },
+  { emoji: '🧠', name: 'Daily engineering question', kind: 'check', link: 'daily-question' },
   { emoji: '📖', name: 'Read', kind: 'duration', target: 20 },
   { emoji: '🧘', name: 'Meditate', kind: 'duration', target: 10 },
   { emoji: '🚶', name: 'Go for a walk', kind: 'check' },
@@ -144,10 +145,14 @@ export default function HabitEditor({ habit, onSave, onClose, onManage }: Props)
       )}
 
       {kind === 'check' && (
-        <label className="hb-check">
-          <input type="checkbox" checked={draft.link === 'workout'} onChange={(e) => set({ link: e.target.checked ? 'workout' : undefined })} />
-          <span>Tick off automatically on days I log a workout</span>
-        </label>
+        <>
+          <label className="hb-label" htmlFor="hb-link">Tick off automatically</label>
+          <select id="hb-link" value={draft.link ?? ''} onChange={(e) => set({ link: (e.target.value || undefined) as HabitLink | undefined })}>
+            <option value="">No, I’ll check it myself</option>
+            <option value="workout">On days I log a workout</option>
+            <option value="daily-question">On days I do the daily question</option>
+          </select>
+        </>
       )}
 
       {habit && onManage && (

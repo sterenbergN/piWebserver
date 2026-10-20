@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addDays, localDayOf, localToday, type DateKey } from '@/lib/habits/dates';
-import { applyHabitAction, EDIT_WINDOW_DAYS, emptyHabitsData, HabitInputError, isActive, normalizeHabitsData, type HabitAction, type HabitsData } from '@/lib/habits/habits';
+import { applyHabitAction, EDIT_WINDOW_DAYS, emptyHabitsData, HabitInputError, isActive, normalizeHabitsData, type HabitAction, type HabitLink, type HabitsData } from '@/lib/habits/habits';
+import { readDeviceAttempts } from '@/components/daily/useDaily';
 
 /** `account`: saved to the signed-in account. `device`: signed out, saved in this browser. */
 export type HabitsMode = 'loading' | 'account' | 'device' | 'error';
@@ -117,27 +118,39 @@ export function useHabits() {
     return true;
   }, [today, load]);
 
-  // Habits linked to workouts tick themselves off on days you logged one.
+  // Linked habits tick themselves off: on days you logged a workout, or did that
+  // day's question on the day. Once per load (and per day, or when a habit is added).
   useEffect(() => {
-    if (mode !== 'account' || !data.habits.some((h) => isActive(h) && h.link === 'workout')) return;
+    if (mode !== 'account' && mode !== 'device') return;
+    const links = new Set(data.habits.filter((h) => isActive(h) && h.link).map((h) => h.link as HabitLink));
+    if (!links.size) return;
     let cancelled = false;
-    fetch('/api/workout/history', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled || !Array.isArray(body.history)) return;
-        const from = addDays(today, -EDIT_WINDOW_DAYS);
-        const days = new Set<DateKey>();
-        for (const w of body.history) {
-          const day = typeof w?.timestamp === 'string' ? localDayOf(w.timestamp) : null;
-          if (day && day >= from && day <= today) days.add(day);
-        }
-        const linked = dataRef.current.habits.filter((h) => isActive(h) && h.link === 'workout');
-        const missing = [...days].filter((d) => linked.some((h) => !dataRef.current.log[d]?.[h.id]));
-        if (missing.length) dispatch({ type: 'link-done', link: 'workout', dates: missing });
-      })
-      .catch(() => { /* try again next visit */ });
+    const from = addDays(today, -EDIT_WINDOW_DAYS);
+    const sync = (link: HabitLink, days: (DateKey | null)[]) => {
+      if (cancelled) return;
+      const linked = dataRef.current.habits.filter((h) => isActive(h) && h.link === link);
+      const missing = [...new Set(days)].filter((d): d is DateKey => !!d && d >= from && d <= today && linked.some((h) => !dataRef.current.log[d]?.[h.id]));
+      if (missing.length) dispatch({ type: 'link-done', link, dates: missing });
+    };
+    const onTime = (attempts: { date: DateKey; answeredOn: DateKey; meta?: { core?: boolean } }[]) =>
+      attempts.filter((a) => a.meta?.core && a.answeredOn === a.date).map((a) => a.date);
+
+    // Signed-out workouts are only a demo, so workouts link only for accounts.
+    if (links.has('workout') && mode === 'account') {
+      fetch('/api/workout/history', { cache: 'no-store' }).then((r) => r.json())
+        .then((body) => { if (Array.isArray(body.history)) sync('workout', body.history.map((w: any) => (typeof w?.timestamp === 'string' ? localDayOf(w.timestamp) : null))); })
+        .catch(() => { /* try again next visit */ });
+    }
+    if (links.has('daily-question')) {
+      if (mode === 'account') {
+        fetch(`/api/daily/progress?today=${today}`, { cache: 'no-store' }).then((r) => r.json())
+          .then((body) => { if (Array.isArray(body.history)) sync('daily-question', onTime(body.history)); })
+          .catch(() => { /* try again next visit */ });
+      } else {
+        sync('daily-question', onTime(readDeviceAttempts()));
+      }
+    }
     return () => { cancelled = true; };
-    // Once per load (and per day, or when a habit is added), not on every change.
   }, [mode, today, data.habits.length]);
 
   const importDevice = useCallback(() => {

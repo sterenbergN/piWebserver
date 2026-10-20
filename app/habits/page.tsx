@@ -13,6 +13,7 @@ import { addDays, type DateKey } from '@/lib/habits/dates';
 import { isActive, type Habit, type HabitInput } from '@/lib/habits/habits';
 import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitStarts, habitStreak, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, weekCount, XP } from '@/lib/habits/stats';
 import { levelFromXp } from '@/lib/progress/levels';
+import { questionsXpElsewhere } from '@/components/progress/otherXp';
 import './habits.css';
 
 const TABS = [
@@ -52,9 +53,15 @@ export default function HabitsPage() {
   }, []);
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
+  // The profile level also counts XP from daily questions.
+  const [questionXp, setQuestionXp] = useState<number | null>(null);
+  useEffect(() => {
+    if (h.mode === 'account' || h.mode === 'device') questionsXpElsewhere().then(setQuestionXp);
+  }, [h.mode]);
+
   const derived = useMemo(() => {
     const freezes = freezeState(data, today);
-    const xp = habitXp(data, today);
+    const xp = habitXp(data, today) + (questionXp ?? 0);
     return {
       ...freezes,
       level: levelFromXp(xp),
@@ -62,12 +69,13 @@ export default function HabitsPage() {
       perfectToday: isPerfectDay(data, today),
       starts: habitStarts(data.habits, data.log),
     };
-  }, [data, today]);
+  }, [data, today, questionXp]);
 
   // Confetti for a perfect day and a level up, but not for what was already true on load.
   const seen = useRef<{ level: number; perfectToday: boolean } | null>(null);
   useEffect(() => {
-    if (h.mode !== 'account' && h.mode !== 'device') return;
+    // Wait for question XP, so it arriving isn't mistaken for a level up.
+    if ((h.mode !== 'account' && h.mode !== 'device') || questionXp === null) return;
     const now = { level: derived.level.level, perfectToday: derived.perfectToday };
     const before = seen.current;
     seen.current = now;
@@ -80,7 +88,7 @@ export default function HabitsPage() {
       setToast(`Perfect day! +${XP.perfectDay} XP`);
       vibrate([30, 60, 30]);
     }
-  }, [derived, h.mode]);
+  }, [derived, h.mode, questionXp]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(''), 3200);
@@ -104,6 +112,7 @@ export default function HabitsPage() {
     if (streak.current > 0) parts.push(`🔥 ${streak.current}-${streak.unit} streak`);
     else if (!parts.length && day === today) parts.push('Start a streak today');
     if (habit.link === 'workout') parts.push('auto from workouts');
+    if (habit.link === 'daily-question') parts.push('auto from daily questions');
     return parts.join(' · ');
   };
 

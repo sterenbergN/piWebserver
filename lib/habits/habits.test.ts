@@ -57,9 +57,13 @@ test('save: all seven weekdays is just daily; links only stick to check habits',
   const data = emptyHabitsData();
   apply(data, { type: 'save', habit: { name: 'A', schedule: { type: 'weekdays', days: [0, 1, 2, 3, 4, 5, 6] }, link: 'workout' } });
   apply(data, { type: 'save', habit: { name: 'B', kind: 'count', link: 'workout' } });
+  apply(data, { type: 'save', habit: { name: 'C', link: 'daily-question' } });
+  apply(data, { type: 'save', habit: { name: 'D', link: 'nonsense' as any } });
   assert.deepEqual(data.habits[0].schedule, { type: 'daily' });
   assert.equal(data.habits[0].link, 'workout');
   assert.equal(data.habits[1].link, undefined);
+  assert.equal(data.habits[2].link, 'daily-question');
+  assert.equal(data.habits[3].link, undefined);
 });
 
 test('log: values per kind, the edit window, and zero clears the day', () => {

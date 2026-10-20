@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from 'react';
 import OverviewPanel from '@/components/admin/OverviewPanel';
 import UpdatesPanel from '@/components/admin/UpdatesPanel';
 import BackupsPanel from '@/components/admin/BackupsPanel';
+import DailyPanel from '@/components/admin/DailyPanel';
 import './admin.css';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: '🖥️' },
   { id: 'updates', label: 'Updates', icon: '🚀' },
   { id: 'backups', label: 'Backups', icon: '💾' },
+  { id: 'daily', label: 'Daily', icon: '🧠' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -58,6 +60,7 @@ export default function AdminDashboard() {
           {t.id === 'overview' && <OverviewPanel />}
           {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
           {t.id === 'backups' && <BackupsPanel />}
+          {t.id === 'daily' && <DailyPanel />}
         </div>
       ))}
     </div>

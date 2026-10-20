@@ -1,11 +1,8 @@
 /* ─── Habits ───────────────────────────────────────────────────────────────── */
 
-/* Habit colors: eight categorical slots, each with its own step for dark and
-   light mode (validated for colorblind separation on both surfaces). Habits
-   always show their emoji and name too, so color is never the only label. */
+/* Habit colors are the site's categorical palette (--habit-1 … 8, in globals.css).
+   Habits always show their emoji and name too, so color is never the only label. */
 :root, [data-theme="dark"] {
-  --habit-1: #3987e5; --habit-2: #d95926; --habit-3: #199e70; --habit-4: #c98500;
-  --habit-5: #d55181; --habit-6: #008300; --habit-7: #9085e9; --habit-8: #e66767;
   /* Heatmap: one blue ramp, dim (little done) to bright (all done) on the dark surface. */
   --hm-0: #3b4252; --hm-1: #1c5cab; --hm-2: #2a78d6; --hm-3: #5598e7; --hm-4: #86b6ef;
   --hm-ink: #1d2a33; /* text on the two brightest steps */
@@ -13,8 +10,6 @@
   --leaf: #7fb069; --leaf-dry: #9c8a63; --stem: #6a9a55; --soil: #5b4636; --trunk: #8a6a4a; --seed: #b08a5e;
 }
 [data-theme="light"] {
-  --habit-1: #2a78d6; --habit-2: #eb6834; --habit-3: #1baf7a; --habit-4: #eda100;
-  --habit-5: #e87ba4; --habit-6: #008300; --habit-7: #6250d6; --habit-8: #e34948;
   --hm-0: #dde3ec; --hm-1: #b7d3f6; --hm-2: #86b6ef; --hm-3: #3987e5; --hm-4: #1c5cab;
   --hm-ink: #ffffff;
   --hb-frost: #6da7ec;
@@ -144,7 +139,6 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); animation: hbToast 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); white-space: nowrap; max-width: calc(100vw - 2rem); overflow: hidden; text-overflow: ellipsis;
 }
 @keyframes hbToast { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
-.hb-confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1050; }
 
 /* Sheets */
 .hb-sheet-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-end; justify-content: center; }

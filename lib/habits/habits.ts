@@ -11,7 +11,8 @@ export type HabitSchedule =
   | { type: 'weekdays'; days: number[] } // 0 = Sunday … 6 = Saturday
   | { type: 'weekly'; times: number }; // any days, this many times a week
 /** Habits that tick themselves off from another part of the site. */
-export type HabitLink = 'workout';
+export const HABIT_LINKS = ['workout', 'daily-question'] as const;
+export type HabitLink = (typeof HABIT_LINKS)[number];
 
 export type Habit = {
   id: string;
@@ -111,7 +112,7 @@ export function normalizeHabit(input: HabitInput, existing: Habit | undefined, i
     target,
     unit,
     schedule: normalizeSchedule(input.schedule),
-    ...(input.link === 'workout' && kind === 'check' ? { link: 'workout' as const } : {}),
+    ...(HABIT_LINKS.includes(input.link as HabitLink) && kind === 'check' ? { link: input.link as HabitLink } : {}),
     createdOn: existing?.createdOn ?? today,
     ...(existing?.archivedOn ? { archivedOn: existing.archivedOn } : {}),
   };
@@ -234,6 +235,7 @@ export function applyHabitAction(data: HabitsData, action: HabitAction, today: D
     }
     case 'link-done': {
       const linked = data.habits.filter((h) => isActive(h) && h.link === action.link);
+      if (!HABIT_LINKS.includes(action.link)) return data;
       for (const date of Array.isArray(action.dates) ? action.dates.slice(0, 31) : []) {
         if (!canEdit(date, today)) continue;
         // Days before the habit was made count too, so a new link picks up the past week.

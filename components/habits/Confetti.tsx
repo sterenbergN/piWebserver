@@ -58,5 +58,6 @@ export default function Confetti({ fire }: { fire: number }) {
     return () => { cancelAnimationFrame(frame); ctx.clearRect(0, 0, w, h); };
   }, [fire]);
 
-  return <canvas ref={canvasRef} className="hb-confetti" aria-hidden />;
+  // Styled inline so it works on any page, whatever stylesheet that page loads.
+  return <canvas ref={canvasRef} aria-hidden style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1050 }} />;
 }
