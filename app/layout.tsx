@@ -2,7 +2,8 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
-import { isAdminAuthenticated } from "@/lib/security/server-auth";
+import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from "@/lib/security/server-auth";
+import { findWorkoutUser } from "@/lib/workout/users";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
@@ -28,12 +29,24 @@ export const viewport: Viewport = {
   ],
 };
 
+/** The account this browser is signed in to, for the navbar (null when signed out or unreadable). */
+async function signedInUser() {
+  try {
+    const userId = await getAuthenticatedWorkoutUserId();
+    const user = userId ? await findWorkoutUser(userId) : null;
+    return user && typeof user.username === "string" ? { username: user.username } : null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   const isAdmin = await isAdminAuthenticated();
+  const user = await signedInUser();
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -44,7 +57,7 @@ export default async function RootLayout({
         <ThemeProvider>
           <AnalyticsTracker />
           <ServiceWorkerRegistrar />
-          <Navbar isAdmin={isAdmin} />
+          <Navbar isAdmin={isAdmin} user={user} />
           <main className="container">
             {children}
           </main>

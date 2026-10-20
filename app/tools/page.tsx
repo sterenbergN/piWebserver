@@ -18,12 +18,23 @@ type ToolId = (typeof TOOLS)[number]['id'];
 export default function ToolsPage() {
   const [tool, setTool] = useState<ToolId>('calculators');
 
-  // The open tool lives in the URL (#golf) so it survives a refresh and can be linked.
+  // The open tool lives in the URL (#golf) so it survives a refresh and can be linked,
+  // and the navbar's tool links can switch it while this page is open.
   useEffect(() => {
-    const fromHash = window.location.hash.slice(1);
-    if (TOOLS.some(t => t.id === fromHash)) setTool(fromHash as ToolId);
+    const fromHash = () => {
+      const id = window.location.hash.slice(1);
+      if (TOOLS.some(t => t.id === id)) setTool(id as ToolId);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
   }, []);
-  const choose = (id: ToolId) => { setTool(id); history.replaceState(null, '', `#${id}`); };
+  const choose = (id: ToolId) => {
+    setTool(id);
+    history.replaceState(history.state, '', `#${id}`);
+    // replaceState is silent; tell the navbar so it highlights the right tool.
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  };
 
   return (
     <div className="tl animate-fade-in">
