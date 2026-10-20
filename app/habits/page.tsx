@@ -11,7 +11,7 @@ import Confetti from '@/components/habits/Confetti';
 import { useHabits } from '@/components/habits/useHabits';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { isActive, type Habit, type HabitInput } from '@/lib/habits/habits';
-import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitStarts, habitStreak, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, weekCount, XP } from '@/lib/habits/stats';
+import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitMeta, habitStarts, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, XP } from '@/lib/habits/stats';
 import { levelFromXp } from '@/lib/progress/levels';
 import { questionsXpElsewhere } from '@/components/progress/otherXp';
 import './habits.css';
@@ -103,18 +103,7 @@ export default function HabitsPage() {
   const doneCount = dailyDue.filter((x) => (data.log[day]?.[x.id] ?? 0) >= x.target).length;
   const editable = day >= addDays(today, -6);
 
-  const metaFor = (habit: Habit) => {
-    const value = Math.max(0, data.log[day]?.[habit.id] ?? 0);
-    const streak = habitStreak(habit, data.log, today, derived.frozen);
-    const parts: string[] = [];
-    if (habit.schedule.type === 'weekly') parts.push(`${weekCount(data.log, habit, day)} of ${habit.schedule.times} this week`);
-    if (habit.kind === 'count' || habit.kind === 'duration') parts.push(`${value} / ${habit.target} ${habit.kind === 'duration' ? 'min' : habit.unit}`);
-    if (streak.current > 0) parts.push(`🔥 ${streak.current}-${streak.unit} streak`);
-    else if (!parts.length && day === today) parts.push('Start a streak today');
-    if (habit.link === 'workout') parts.push('auto from workouts');
-    if (habit.link === 'daily-question') parts.push('auto from daily questions');
-    return parts.join(' · ');
-  };
+  const metaFor = (habit: Habit) => habitMeta(habit, data.log, day, today, derived.frozen);
 
   const save = (input: HabitInput) => h.dispatch({ type: 'save', habit: editing && editing !== 'new' ? { ...input, id: editing.id } : input });
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));

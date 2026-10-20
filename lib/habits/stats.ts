@@ -252,6 +252,20 @@ export function habitXp(data: HabitsData, today: DateKey) {
   return xp;
 }
 
+/** The status line under a habit on a given day: "2 of 3 this week · 🔥 4-day streak". */
+export function habitMeta(habit: Habit, log: HabitLog, day: DateKey, today: DateKey, frozen: Set<DateKey>) {
+  const value = Math.max(0, log[day]?.[habit.id] ?? 0);
+  const streak = habitStreak(habit, log, today, frozen);
+  const parts: string[] = [];
+  if (habit.schedule.type === 'weekly') parts.push(`${weekCount(log, habit, day)} of ${habit.schedule.times} this week`);
+  if (habit.kind === 'count' || habit.kind === 'duration') parts.push(`${value} / ${habit.target} ${habit.kind === 'duration' ? 'min' : habit.unit}`);
+  if (streak.current > 0) parts.push(`🔥 ${streak.current}-${streak.unit} streak`);
+  else if (!parts.length && day === today) parts.push('Start a streak today');
+  if (habit.link === 'workout') parts.push('auto from workouts');
+  if (habit.link === 'daily-question') parts.push('auto from daily questions');
+  return parts.join(' · ');
+}
+
 /** Garden: a plant grows with every completion and wilts when recent days are missed. */
 export const PLANT_STAGES = [
   { at: 0, name: 'Seed' },

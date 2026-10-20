@@ -72,6 +72,7 @@ export default function AccountMenu({ user }: { user: NavUser }) {
         <div className="nav-menu is-right" id="nav-account-menu">
           <div className="nav-menu-panel">
             <p className="nav-menu-note">Signed in as <strong>{user.username}</strong></p>
+            <Link href="/today" onClick={() => setMenuOpen(false)}><span aria-hidden>☀️</span>Today</Link>
             <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
             <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
             <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>

@@ -26,6 +26,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       // Things that remember you: signing in keeps their progress.
       label: 'Daily',
       items: [
+        { href: '/today', label: 'Today', icon: '☀️' },
         { href: '/daily', label: 'Questions', icon: '🧠' },
         { href: '/habits', label: 'Habits', icon: '✅' },
         { href: '/workout', label: 'Workout', icon: '🏋️' },
