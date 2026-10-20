@@ -12,12 +12,15 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
+    "katex": "^0.16.47",
     "next": "16.2.2",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "sharp": "^0.34.5"
   },
   "devDependencies": {
