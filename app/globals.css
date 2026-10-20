@@ -139,6 +139,85 @@ a:hover { color: var(--accent-light); }
   margin-top: 0.25rem;
 }
 
+/* Top-level links and dropdown labels share one look; the current section is underlined. */
+.nav-link {
+  color: inherit; text-decoration: none; white-space: nowrap;
+  padding: 0 0 0.25rem; border: none; border-bottom: 2px solid transparent;
+  background: none; font: inherit; cursor: pointer; transition: color 0.2s ease, border-color 0.2s ease;
+}
+.nav-link:hover { color: var(--accent-light); }
+.nav-link[aria-current="page"], .nav-link[data-current] { font-weight: 600; color: var(--accent-light); border-bottom-color: var(--accent-light); }
+.nav-caret { font-size: 0.7em; margin-left: 0.3rem; opacity: 0.7; }
+
+.nav-group { position: relative; }
+/* Padding on top (not margin) bridges the gap, so the mouse can reach the menu without it closing. */
+.nav-menu {
+  position: absolute; top: 100%; left: -0.75rem; z-index: 120;
+  min-width: 190px; padding-top: 0.6rem;
+}
+.nav-menu.is-right { left: auto; right: 0; }
+.nav-menu-panel {
+  padding: 0.3rem 0; background: var(--background);
+  border: 1px solid var(--surface-border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.nav-menu-panel > a, .nav-menu-panel > button {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%;
+  padding: 0.55rem 0.9rem; border: none; border-radius: 0;
+  background: transparent; color: var(--foreground); font: inherit; font-size: 0.95rem;
+  text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.nav-menu-panel > a:hover, .nav-menu-panel > button:hover { background: var(--surface-hover); }
+.nav-menu-panel > a[aria-current="page"] { color: var(--accent-light); font-weight: 600; }
+.nav-menu-note { margin: 0 0 0.3rem; padding: 0.3rem 0.9rem 0.6rem; font-size: 0.85rem; color: var(--muted); border-bottom: 1px solid var(--surface-border); }
+
+.btn.nav-icon-btn { padding: 0.4rem 0.75rem; font-size: 1rem; line-height: 1; }
+
+/* Account chip: an icon when signed out, initial + name when signed in. */
+.nav-account {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  background: var(--surface-glass); border: 1px solid var(--surface-border); border-radius: 999px;
+  color: var(--foreground); font: inherit; font-size: 0.9rem; line-height: 1;
+  padding: 0.35rem 0.55rem; cursor: pointer; flex-shrink: 0;
+}
+.nav-account:hover { background: var(--surface-hover); }
+.nav-account.is-signed-in { padding: 0.25rem 0.75rem 0.25rem 0.25rem; }
+.nav-avatar {
+  display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 0.85rem;
+}
+.nav-account-name { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Mobile menu: plain links and folding groups */
+.mobile-link {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 0 0.75rem 1rem;
+  color: inherit; text-decoration: none; border-left: 3px solid transparent;
+}
+.mobile-link.is-sub { padding-left: 1.75rem; }
+.mobile-link[aria-current="page"] { font-weight: 600; color: var(--accent-light); border-left-color: var(--accent-light); }
+.mobile-group > summary {
+  list-style: none; cursor: pointer; padding: 0.75rem 1rem; border-left: 3px solid transparent;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.mobile-group > summary::-webkit-details-marker { display: none; }
+.mobile-group > summary::after { content: '▾'; font-size: 0.8em; opacity: 0.6; transition: transform 0.2s ease; }
+.mobile-group[open] > summary::after { transform: rotate(180deg); }
+.mobile-group > summary[data-current] { font-weight: 600; color: var(--accent-light); }
+
+/* Sign-in dialog */
+.signin-backdrop {
+  position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.55);
+  display: flex; justify-content: center; align-items: flex-start; padding: 12vh 1rem 1rem;
+}
+.signin-card {
+  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 0.75rem;
+  background: var(--background); border: 1px solid var(--surface-border); border-radius: 16px; padding: 1.5rem;
+}
+.signin-card h2 { margin: 0; font-size: 1.35rem; }
+.signin-sub, .signin-foot { margin: 0; font-size: 0.85rem; color: var(--muted); line-height: 1.45; }
+.signin-foot { text-align: center; }
+.signin-error { margin: 0; font-size: 0.85rem; color: var(--danger); }
+.signin-card .btn { width: 100%; }
+
 /* ── Forms ── */
 input, textarea, button, select { font-family: inherit; font-size: 1rem; }
 
@@ -298,6 +377,8 @@ main { min-height: calc(100vh - 120px); }
 @media (max-width: 768px) {
   .nav-links { display: none; }
   .nav-mobile-controls { display: flex; }
+  .nav-account-name { display: none; }
+  .nav-account.is-signed-in { padding: 0.25rem; }
   .glass-nav { padding: 0.75rem 1rem; }
 
   .container { padding: 1rem; }
