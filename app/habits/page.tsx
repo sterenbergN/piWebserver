@@ -13,7 +13,7 @@ import { addDays, type DateKey } from '@/lib/habits/dates';
 import { isActive, type Habit, type HabitInput } from '@/lib/habits/habits';
 import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitMeta, habitStarts, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, XP } from '@/lib/habits/stats';
 import { levelFromXp } from '@/lib/progress/levels';
-import { questionsXpElsewhere } from '@/components/progress/otherXp';
+import { choresXpElsewhere, questionsXpElsewhere } from '@/components/progress/otherXp';
 import './habits.css';
 
 const TABS = [
@@ -53,10 +53,10 @@ export default function HabitsPage() {
   }, []);
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
-  // The profile level also counts XP from daily questions.
+  // The profile level also counts XP from daily questions and chores.
   const [questionXp, setQuestionXp] = useState<number | null>(null);
   useEffect(() => {
-    if (h.mode === 'account' || h.mode === 'device') questionsXpElsewhere().then(setQuestionXp);
+    if (h.mode === 'account' || h.mode === 'device') Promise.all([questionsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setQuestionXp(a + b));
   }, [h.mode]);
 
   const derived = useMemo(() => {
@@ -74,7 +74,7 @@ export default function HabitsPage() {
   // Confetti for a perfect day and a level up, but not for what was already true on load.
   const seen = useRef<{ level: number; perfectToday: boolean } | null>(null);
   useEffect(() => {
-    // Wait for question XP, so it arriving isn't mistaken for a level up.
+    // Wait for question and chore XP, so it arriving isn't mistaken for a level up.
     if ((h.mode !== 'account' && h.mode !== 'device') || questionXp === null) return;
     const now = { level: derived.level.level, perfectToday: derived.perfectToday };
     const before = seen.current;

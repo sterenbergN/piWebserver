@@ -12,8 +12,8 @@ function vibrate(pattern: number | number[]) {
   try { navigator.vibrate?.(pattern); } catch { /* not supported */ }
 }
 
-/** A ring that fills while you hold; let go early and nothing happens. */
-function HoldButton({ done, label, symbol, onHold, disabled }: { done: boolean; label: string; symbol: string; onHold: () => void; disabled?: boolean }) {
+/** A ring that fills while you hold; let go early and nothing happens. Chores use it too. */
+export function HoldButton({ done, label, symbol, onHold, disabled }: { done: boolean; label: string; symbol: string; onHold: () => void; disabled?: boolean }) {
   const [holding, setHolding] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 

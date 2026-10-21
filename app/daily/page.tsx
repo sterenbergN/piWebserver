@@ -6,7 +6,7 @@ import FormulaSheet, { FormulaOfTheDay } from '@/components/daily/FormulaSheet';
 import DailyStats from '@/components/daily/DailyStats';
 import { useDaily } from '@/components/daily/useDaily';
 import Confetti from '@/components/habits/Confetti';
-import { habitsXpElsewhere } from '@/components/progress/otherXp';
+import { choresXpElsewhere, habitsXpElsewhere } from '@/components/progress/otherXp';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { levelFromXp } from '@/lib/progress/levels';
 import { TRACK_LABEL } from '@/lib/daily/types';
@@ -46,7 +46,8 @@ export default function DailyPage() {
   }, []);
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
-  useEffect(() => { if (d.state === 'ready') habitsXpElsewhere().then(setHabitXp); }, [d.state, d.signedIn]);
+  // The profile level also counts habits and chores.
+  useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setHabitXp(a + b)); }, [d.state, d.signedIn]);
 
   const questionXp = d.progress?.stats.total.xp ?? 0;
   const level = levelFromXp(questionXp + habitXp);

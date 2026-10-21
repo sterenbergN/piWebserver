@@ -1,0 +1,55 @@
+/* ─── Chores (built on the habits styles) ──────────────────────────────────── */
+
+.ch-badge { display: inline-grid; place-items: center; min-width: 1.25rem; height: 1.25rem; padding: 0 0.3rem; border-radius: 999px; background: var(--danger); color: #fff; font-size: 0.72rem; font-weight: 800; }
+
+.ch-group { margin-bottom: 1.25rem; }
+.ch-group-title { display: flex; align-items: center; gap: 0.45rem; font-size: 1rem; margin: 0 0 0.55rem !important; }
+.ch-group-title span { font-size: 0.78rem; font-weight: 700; color: var(--muted); padding: 0.05rem 0.5rem; border-radius: 999px; background: var(--input-bg); }
+.ch-group.is-overdue .ch-group-title { color: var(--danger); }
+.ch-group.is-later .hb-list, .ch-group.is-anytime .hb-list { opacity: 0.9; }
+
+.ch-card.is-overdue { background: color-mix(in srgb, var(--danger) 7%, var(--surface-glass)); }
+.ch-name { background: none; border: none; padding: 0; color: var(--foreground); font: inherit; font-size: 1rem; font-weight: 700; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.ch-name:hover { text-decoration: underline; }
+.ch-due.is-overdue { color: var(--danger); font-weight: 600; }
+.ch-due.is-today { color: var(--accent-light); font-weight: 600; }
+.ch-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; }
+.ch-notes { white-space: pre-line; overflow-wrap: anywhere; }
+
+.ch-board { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1rem; padding: 0.65rem 0.9rem; margin-bottom: 0.75rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); font-size: 0.9rem; }
+.ch-board-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.ch-board-row small { color: var(--muted); }
+.ch-board-row.is-lead strong { color: var(--accent-light); }
+.ch-filter { margin-bottom: 1rem; }
+.ch-units { margin-top: 0.5rem; }
+.ch-date-row { display: flex; gap: 0.5rem; align-items: center; }
+.ch-date-row input { flex: 1; min-width: 0; }
+.hb-sheet textarea { width: 100%; resize: vertical; font: inherit; }
+.ch-editor-extra { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.25rem; }
+.ch-danger { color: var(--danger); }
+.ch-danger:hover { border-color: var(--danger); }
+
+.ch-finished { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.ch-finished li { display: flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.7rem; border-radius: 12px; border: 1px solid var(--surface-border); border-left: 4px solid var(--hb-color); background: var(--surface-glass); }
+.ch-finished .ch-name { flex: 1; min-width: 0; font-size: 0.92rem; font-weight: 600; text-decoration: line-through; text-decoration-color: var(--muted); }
+
+.ch-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.ch-members li { display: flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.8rem 0.3rem 0.3rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); font-weight: 600; }
+.ch-leave { display: block; margin-top: 0.9rem; color: var(--danger); }
+.ch-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2rem; font-weight: 800; letter-spacing: 0.3em; padding: 0.4rem 0 0.2rem; }
+.ch-code-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.ch-join { display: flex; gap: 0.5rem; }
+.ch-join input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.2em; text-transform: uppercase; }
+
+.ch-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ch-activity li { display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0; border-bottom: 1px solid var(--surface-border); font-size: 0.9rem; }
+.ch-activity li:last-child { border-bottom: none; }
+.ch-activity li.is-skipped { color: var(--muted); }
+.ch-activity-day { flex: 0 0 6.5rem; color: var(--muted); font-size: 0.8rem; }
+.ch-activity-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ch-activity-xp { font-weight: 800; font-size: 0.82rem; color: var(--success); }
+
+@media (max-width: 520px) {
+  .ch-activity-day { flex-basis: 4.8rem; }
+  .ch-code { font-size: 1.6rem; }
+}

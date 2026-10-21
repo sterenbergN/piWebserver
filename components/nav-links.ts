@@ -29,6 +29,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/today', label: 'Today', icon: '☀️' },
         { href: '/daily', label: 'Questions', icon: '🧠' },
         { href: '/habits', label: 'Habits', icon: '✅' },
+        { href: '/chores', label: 'Chores', icon: '🧹' },
         { href: '/workout', label: 'Workout', icon: '🏋️' },
       ],
     },
