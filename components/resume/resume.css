@@ -36,13 +36,36 @@
   .resume-sheet h1 { font-size: 1.7rem; }
 }
 
+/* Print / Save as PDF: a compact letter-size document. Zero page margins stop
+   the browser adding its own header and footer (date, title, URL, page
+   numbers); the sheet's padding is the real margin, repeated on every page. */
 @media print {
-  .glass-nav, .resume-actions, footer { display: none !important; }
-  body { background: #fff !important; }
+  @page { size: letter; margin: 0; }
+  body:has(.resume-sheet) .glass-nav, body:has(.resume-sheet) footer, .resume-actions { display: none !important; }
+  body:has(.resume-sheet), body:has(.resume-sheet) main { background: #fff !important; min-height: 0 !important; }
+  body:has(.resume-sheet) .container { max-width: none !important; margin: 0 !important; padding: 0 !important; }
   .resume-sheet {
-    --foreground: #111; --muted: #444; --accent: #333; --surface-border: #ccc;
-    background: #fff; border: none; padding: 0; color: #111;
+    --foreground: #111; --muted: #4a4a4a; --accent: #1f3a5f; --surface-border: #c9ced6;
+    background: #fff; border: none; border-radius: 0; color: #111;
+    padding: 0.5in 0.6in; font-size: 9.6pt; line-height: 1.36;
+    box-decoration-break: clone; -webkit-box-decoration-break: clone;
+    print-color-adjust: exact; -webkit-print-color-adjust: exact;
   }
+  .resume-sheet h1 { font-size: 20pt; margin: 0 0 1pt; }
+  .resume-headline { font-size: 10pt; margin: 0 0 4pt; }
+  .resume-contact { font-size: 8.8pt; gap: 2pt 12pt; }
   .resume-contact a { color: #111; }
-  .resume-project-links { display: none; }
+  .resume-section { margin-top: 10pt; }
+  .resume-section h2 { font-size: 8pt; letter-spacing: 0.14em; padding-bottom: 2pt; margin: 0 0 5pt; }
+  .resume-job { margin-bottom: 6.5pt; }
+  .resume-job-head h3 { font-size: 10.2pt; }
+  .resume-job-period { font-size: 8.8pt; }
+  .resume-job-company { font-size: 9pt; }
+  .resume-job p { margin-top: 1.5pt; font-size: 9.2pt; }
+  .resume-job ul { margin-top: 1.5pt; padding-left: 13pt; font-size: 9.2pt; }
+  .resume-job li { margin: 0.5pt 0; }
+  .resume-skills { gap: 3pt; }
+  .resume-skills span { font-size: 8.4pt; padding: 0.5pt 6pt; }
+  .resume-section h2, .resume-job-head { break-after: avoid; }
+  .resume-project-links, .resume-updated { display: none; }
 }
