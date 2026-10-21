@@ -2,9 +2,11 @@
 //
 //   node scripts/daily-generator/build.mjs daily-packs/src/2026-11-04.mjs [more.mjs …]
 //
-// Each source file exports an array of days (see INSTRUCTIONS.md and helpers.mjs).
-// Writes daily-packs/<first date>_<last date>.json and prints its path. Check it
-// afterwards with: npm run daily:validate -- <that file>
+// Each source file exports an array of days (see INSTRUCTIONS.md and helpers.mjs),
+// and may also export `practice` = { formulas: [...], questions: [...] } with
+// practice-only questions. Writes daily-packs/<first date>_<last date>.json
+// (or daily-packs/practice-<today>.json with no days) and prints its path.
+// Check it afterwards with: npm run daily:validate -- <that file>
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +20,7 @@ if (!sources.length) {
 
 const problems = [];
 const days = [];
+const practice = { formulas: [], questions: [] };
 for (const source of sources) {
   // A backslash before a letter that isn't a JS escape (\a in \approx) silently
   // vanishes inside '...' or "...", so math must live in R`...` templates.
@@ -27,9 +30,13 @@ for (const source of sources) {
     }
   });
   const mod = await import(pathToFileURL(path.resolve(source)).href);
-  const list = Object.values(mod).find(Array.isArray);
-  if (!list) problems.push(`${source}: exports no array of days`);
-  else days.push(...list);
+  const list = Object.entries(mod).find(([name, v]) => name !== 'practice' && Array.isArray(v))?.[1];
+  if (mod.practice) {
+    practice.formulas.push(...(mod.practice.formulas ?? []));
+    practice.questions.push(...(mod.practice.questions ?? []));
+  }
+  if (list) days.push(...list);
+  else if (!mod.practice) problems.push(`${source}: exports no array of days (or practice set)`);
 }
 
 // …and \t in \tau or \f in \frac becomes a control character that still "renders".
@@ -40,8 +47,9 @@ const walk = (value, where) => {
   else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) walk(v, `${where}.${k}`);
 };
 days.forEach((d, i) => walk(d, d?.date ?? `day ${i}`));
+walk(practice, 'practice');
 
-if (!days.length) problems.push('no days found');
+if (!days.length && !practice.questions.length) problems.push('no days or practice questions found');
 if (problems.length) {
   console.error(problems.join('\n'));
   process.exit(1);
@@ -50,6 +58,8 @@ if (problems.length) {
 days.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 const outDir = path.resolve('daily-packs');
 fs.mkdirSync(outDir, { recursive: true });
-const file = path.join(outDir, `${days[0].date}_${days[days.length - 1].date}.json`);
-fs.writeFileSync(file, JSON.stringify({ version: 1, days }, null, 2));
+const file = days.length
+  ? path.join(outDir, `${days[0].date}_${days[days.length - 1].date}.json`)
+  : path.join(outDir, `practice-${new Date().toISOString().slice(0, 10)}.json`);
+fs.writeFileSync(file, JSON.stringify({ version: 1, days, ...(practice.questions.length ? { practice } : {}) }, null, 2));
 console.log(path.relative(process.cwd(), file));

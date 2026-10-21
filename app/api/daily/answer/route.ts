@@ -4,7 +4,7 @@ import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 import { isDateKey } from '@/lib/habits/dates';
 import { gradeQuestion, parseResponses, revealedQuestion } from '@/lib/daily/grade';
 import { XP_RULES, attemptMeta, attemptXp, type Attempt } from '@/lib/daily/progress';
-import { clampToday, readDay, updateUserDaily } from '@/lib/daily/store';
+import { clampToday, findQuestion, updateUserDaily } from '@/lib/daily/store';
 
 // Check an answer, or open the worked solution without answering (reveal).
 // Up to three checks per question: a check that isn't fully right says which
@@ -12,15 +12,17 @@ import { clampToday, readDay, updateUserDaily } from '@/lib/daily/store';
 // XP each time. The question locks on a full solve, the third check, or a
 // reveal. Signed-in answers are saved; signed-out ones are only graded and
 // kept in the browser (`final` regrades one of those for its solution).
+// Practice-only and generated questions have no day: they count on today.
 
 export async function POST(request: Request) {
   try {
     const body = await readJsonObject(request);
     const today = clampToday(body.today);
-    if (!isDateKey(body.date) || body.date > today) throw new ApiError(400, 'That day’s questions aren’t out yet.');
-    const day = await readDay(body.date);
-    const question = day && [day.core, ...day.bonus].find((q) => q.id === body.questionId);
-    if (!day || !question) throw new ApiError(404, 'Question not found');
+    const found = await findQuestion(body.questionId);
+    if (!found) throw new ApiError(404, 'Question not found');
+    if (found.date && found.date > today) throw new ApiError(400, 'That day’s questions aren’t out yet.');
+    const { question } = found;
+    const date = found.date ?? (isDateKey(body.date) && body.date <= today ? body.date : today);
 
     const reveal = body.reveal === true;
     const responses = reveal ? null : parseResponses(question, body.responses);
@@ -30,14 +32,14 @@ export async function POST(request: Request) {
     const claimedTries = Math.max(0, Math.round(Number(body.tries) || 0));
     const attempt = (tries: number): Attempt => ({
       questionId: question.id,
-      date: day.date,
+      date,
       answeredOn: today,
       at: new Date().toISOString(),
       responses,
       hints,
       tries: Math.min(XP_RULES.maxTries, Math.max(1, tries)),
       result: { correct: graded.correct, total: graded.total, status: graded.status },
-      meta: attemptMeta(question, question.id === day.core.id, !!day.boss),
+      meta: attemptMeta(question, found.core, found.boss, found.practice),
     });
     /** Whether this check ends the question: a reveal, a full solve, the last try, or told to. */
     const ends = (tries: number) => reveal || body.final === true || graded.status === 'solved' || tries >= XP_RULES.maxTries;

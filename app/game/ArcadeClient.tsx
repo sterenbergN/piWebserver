@@ -8,6 +8,7 @@ import BlocksGame from '@/components/games/BlocksGame';
 import FlapGame from '@/components/games/FlapGame';
 import SetpointGame from '@/components/games/SetpointGame';
 import ChainGame from '@/components/games/ChainGame';
+import MergeSnakeGame from '@/components/games/MergeSnakeGame';
 import { GAMES, isGameId, type GameId } from '@/lib/games/registry';
 
 const COMPONENTS: Record<GameId, () => React.ReactElement> = {
@@ -18,6 +19,7 @@ const COMPONENTS: Record<GameId, () => React.ReactElement> = {
   flap: FlapGame,
   setpoint: SetpointGame,
   chain: ChainGame,
+  merge: MergeSnakeGame,
 };
 
 /** Arcade: pick a game (set by ?game=, or remembered on this device). */

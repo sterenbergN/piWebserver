@@ -70,8 +70,14 @@ export type DailyDay = {
   formulaOfTheDay?: Formula;
 };
 
-/** What gets uploaded: any number of days. */
-export type DailyPack = { version: 1; days: DailyDay[] };
+/**
+ * Practice-only questions: not tied to a day, they top up the Practice tab
+ * (the weekly generator aims them at topics people find hard).
+ */
+export type PracticeSet = { formulas: Formula[]; questions: Question[] };
+
+/** What gets uploaded: any number of days, and optionally practice questions. */
+export type DailyPack = { version: 1; days: DailyDay[]; practice?: PracticeSet };
 
 /** What a problem report can be about. */
 export const REPORT_KINDS = ['wrong-answer', 'unclear', 'units', 'typo', 'figure', 'source', 'other'] as const;

@@ -107,3 +107,28 @@ test('the registry knows every game and rejects impossible scores', () => {
   assert.ok(valid('chain', 30) && !valid('chain', 35));
   assert.ok(!valid('flap', 10_000_000));
 });
+
+test('merge snake: eating stacks numbers behind the head and matching fronts cascade', async () => {
+  const ms = await import('./mergesnake');
+  assert.deepEqual(ms.insertAndMerge([2, 4, 8, 16], 2), { values: [32], points: 4 + 8 + 16 + 32, chain: 4 });
+  assert.deepEqual(ms.insertAndMerge([2, 4], 4), { values: [4, 2, 4], points: 0, chain: 0 }, 'the wrong number just adds length');
+
+  let s = ms.createGame(() => 0.3);
+  assert.ok(s.food.some((f) => f.value === 2), 'there is always a 2 to eat');
+  // Put a matching 2 right in front of the head.
+  s = { ...s, food: [{ x: s.cells[0].x, y: s.cells[0].y - 1, value: 2 }], status: 'playing' };
+  s = ms.step(s, () => 0.5);
+  assert.deepEqual(s.values, [4]);
+  assert.equal(s.cells.length, 2, 'a merge cancels the growth');
+  assert.equal(s.score, 2 + 4);
+  assert.equal(s.food.length, 3);
+  // A 2 now doesn't match the 4: the snake grows.
+  s = { ...s, food: [{ x: s.cells[0].x, y: s.cells[0].y - 1, value: 2 }] };
+  s = ms.step(s, () => 0.5);
+  assert.deepEqual(s.values, [2, 4]);
+  assert.equal(s.cells.length, 3);
+  // Into the wall.
+  for (let i = 0; i < ms.GRID; i++) s = ms.step({ ...s, food: [] }, () => 0.5);
+  assert.equal(s.status, 'over');
+  assert.ok(GAMES.find((g) => g.id === 'merge')!.valid(s.score));
+});

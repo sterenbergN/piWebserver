@@ -7,6 +7,8 @@
 //   npm run daily -- history [days]            recent questions (track, topic, difficulty), default 60 days
 //   npm run daily -- upload <pack.json>        validate, then upload (replaces those dates)
 //   npm run daily -- feedback [--since DATE]   per-question results, ratings and reports
+//   npm run daily -- weak                      everyone's weakest topics (where practice questions help most)
+//   npm run daily -- practice                  the practice-only questions already uploaded
 //   npm run daily -- notes                     print the generator notes
 //   npm run daily -- notes --set <file.md>     replace the generator notes
 //
@@ -78,7 +80,8 @@ async function main() {
       const pack = await readPack(args[0]);
       const dates = pack.days.map((d) => d.date).sort();
       const questions = pack.days.reduce((n, d) => n + 1 + d.bonus.length, 0);
-      console.log(`${args[0]}: OK — ${pack.days.length} days (${dates[0]} … ${dates[dates.length - 1]}), ${questions} questions`);
+      const span = dates.length ? ` (${dates[0]} … ${dates[dates.length - 1]})` : '';
+      console.log(`${args[0]}: OK — ${pack.days.length} days${span}, ${questions} questions${pack.practice ? `, ${pack.practice.questions.length} practice questions` : ''}`);
       return;
     }
     case 'status': {
@@ -108,6 +111,7 @@ async function main() {
       const pack = await readPack(args[0]);
       const body = await api(`/api/daily/admin?today=${today}`, { method: 'PUT', body: JSON.stringify(pack) });
       console.log(`Uploaded ${body.dates.length} days (${body.added} new, ${body.replaced} replaced). Ready ahead from today: ${body.buffer} days.`);
+      if (body.practice) console.log(`Practice questions: ${body.practice.added} new, ${body.practice.replaced} replaced, ${body.practice.total} in all.`);
       return;
     }
     case 'feedback': {
@@ -115,6 +119,16 @@ async function main() {
       const since = i >= 0 ? args[i + 1] : '';
       const body = await api(`/api/daily/feedback${since ? `?since=${since}` : ''}`);
       console.log(JSON.stringify(body.questions, null, 2));
+      return;
+    }
+    case 'weak': {
+      const body = await api('/api/daily/feedback');
+      console.log(JSON.stringify(body.topics, null, 2));
+      return;
+    }
+    case 'practice': {
+      const body = await api(`/api/daily/admin?today=${today}`);
+      console.log(JSON.stringify(body.practice, null, 2));
       return;
     }
     case 'notes': {
@@ -132,7 +146,7 @@ async function main() {
       return;
     }
     default:
-      fail('Commands: validate <pack.json> | status | history [days] | upload <pack.json> | feedback [--since DATE] | notes [--set file.md]', 2);
+      fail('Commands: validate <pack.json> | status | history [days] | upload <pack.json> | feedback [--since DATE] | weak | practice | notes [--set file.md]', 2);
   }
 }
 

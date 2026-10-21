@@ -60,6 +60,10 @@ and problem reports.
      tedious arithmetic) and avoid it.
    Write the calibration into the run log so the next run keeps it.
 3. With no or little feedback, keep the default difficulty curve.
+4. **Weak topics.** `npm run daily -- weak` sums up everyone's strengths and
+   weaknesses per track/topic (ability on the 1–5 difficulty scale, share of
+   parts right, how many people it is a weakness for). Use it for the practice
+   questions in step 6b.
 
 ## 4. See what's been asked recently
 
@@ -132,6 +136,28 @@ the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
   standards (IEC 61131-3, IEC 60204-1, ISO 13849-1, IEC 62061, ISA-88/95/18.2/101,
   IEC 62443), networks, I/O and drives.
 
+## 6b. Practice questions
+
+The Practice tab has generated questions (fresh numbers every time, from
+`lib/daily/generated.ts`) plus a pool of practice-only questions you upload.
+Each run, add **8–12 practice questions** to the same source file as
+`export const practice = { formulas: [...], questions: [...] }`:
+
+- Aim most of them at the weakest topics from `npm run daily -- weak`
+  (lowest ability, or a weakness for the most people), at a difficulty about
+  half a level above the topic's ability, so they stretch without crushing.
+- Fill the rest from syllabus topics nobody has tried yet.
+- Same rules as daily questions (original, verified, sources, hints, worked
+  solution, computed mistakes). Ids: `p-<date>-<short-slug>`, unique for all
+  time. Their formulas go in `practice.formulas`.
+- Don't duplicate a generator's exact setup (see `GENERATORS` in
+  `lib/daily/generated.ts`); go for the reasoning-heavy and conceptual kinds a
+  generator can't do: choice, multi-select, ordering, multi-step design.
+- `npm run daily -- practice` lists what is already uploaded; vary from it.
+
+The build puts them in the pack's `practice` set; uploading adds them (an
+existing id is replaced, which is how corrections go out).
+
 ## 7. Verify, build, upload
 
 1. **Check every answer independently.** Write `daily-packs/checks/<first
@@ -172,6 +198,6 @@ npm run daily -- notes --set daily-packs/notes.md
 
 ## 9. Report
 
-Finish with a short summary: dates added, days ready ahead, reports fixed or
+Finish with a short summary: dates added, practice questions added (and which weak topics they target), days ready ahead, reports fixed or
 dismissed, calibration changes, and anything that needs the owner (for
 example a question you dropped and why).

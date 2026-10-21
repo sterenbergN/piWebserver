@@ -5,7 +5,7 @@
 
 import katex from 'katex';
 import { isDateKey } from '@/lib/habits/dates';
-import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type Question, type Source } from './types';
+import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type Source } from './types';
 
 type Errors = string[];
 
@@ -170,9 +170,36 @@ export function validateDay(raw: any, where = 'day'): { day: DailyDay | null; er
   };
 }
 
+/** Practice-only questions: { formulas, questions }, each question's formulas from that list. */
+export function validatePractice(raw: any, where = 'practice'): { practice: PracticeSet | null; errors: string[] } {
+  const errors: Errors = [];
+  if (!Array.isArray(raw?.questions) || !raw.questions.length || raw.questions.length > 300) {
+    return { practice: null, errors: [`${where}: needs a questions list (1–300)`] };
+  }
+  const formulaIds = new Set<string>();
+  const formulas = (Array.isArray(raw.formulas) ? raw.formulas : []).flatMap((f: unknown, i: number) => {
+    const formula = checkFormula(f, `${where}.formulas[${i}]`, errors);
+    if (!formula) return [];
+    if (formulaIds.has(formula.id)) { errors.push(`${where}.formulas[${i}]: duplicate id ${formula.id}`); return []; }
+    formulaIds.add(formula.id);
+    return [formula];
+  });
+  const ids = new Set<string>();
+  const questions = raw.questions.flatMap((q: unknown, i: number) => {
+    const question = checkQuestion(q, `${where}.questions[${i}]`, formulaIds, errors);
+    if (!question) return [];
+    if (question.id.startsWith('gen-')) { errors.push(`${where}.questions[${i}]: ids starting gen- are reserved for generated questions`); return []; }
+    if (ids.has(question.id)) { errors.push(`${where}.questions[${i}]: duplicate id ${question.id}`); return []; }
+    ids.add(question.id);
+    return [question];
+  });
+  return errors.length ? { practice: null, errors } : { practice: { formulas, questions }, errors };
+}
+
 export function validatePack(raw: any): { pack: DailyPack | null; errors: string[] } {
-  if (raw?.version !== 1 || !Array.isArray(raw?.days) || !raw.days.length || raw.days.length > 400) {
-    return { pack: null, errors: ['pack must be { version: 1, days: [...] } with 1–400 days'] };
+  const hasPractice = raw?.practice !== undefined;
+  if (raw?.version !== 1 || !Array.isArray(raw?.days) || (!raw.days.length && !hasPractice) || raw.days.length > 400) {
+    return { pack: null, errors: ['pack must be { version: 1, days: [...] } with 1–400 days (or no days and a practice set)'] };
   }
   const errors: Errors = [];
   const days: DailyDay[] = [];
@@ -190,5 +217,14 @@ export function validatePack(raw: any): { pack: DailyPack | null; errors: string
     }
     days.push(day);
   });
-  return errors.length ? { pack: null, errors } : { pack: { version: 1, days }, errors };
+  let practice: PracticeSet | undefined;
+  if (hasPractice) {
+    const checked = validatePractice(raw.practice);
+    errors.push(...checked.errors);
+    for (const q of checked.practice?.questions ?? []) {
+      if (questionIds.has(q.id)) errors.push(`practice: question id ${q.id} is also used on a day`);
+    }
+    practice = checked.practice ?? undefined;
+  }
+  return errors.length ? { pack: null, errors } : { pack: { version: 1, days, ...(practice ? { practice } : {}) }, errors };
 }

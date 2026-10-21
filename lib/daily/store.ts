@@ -8,10 +8,13 @@ import { ApiError } from '@/lib/workout/api';
 import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
 import { scoreAttempt, type Attempt } from './progress';
 import { gradeQuestion, revealedQuestion } from './grade';
-import type { DailyDay, Question } from './types';
+import { generatedQuestion } from './generated';
+import type { AnalysisAttempt } from './analysis';
+import type { DailyDay, Formula, PracticeSet, Question } from './types';
 
 // Daily questions on disk, all under .data/daily (kept by backups):
 //   days/YYYY-MM-DD.json   one day each, uploaded ahead of time
+//   practice.json          practice-only questions (not tied to a day)
 //   attempts/<user>.json   each user's answers
 //   feedback.json          ratings and problem reports
 //   notes.md               guidance the weekly generator reads every run
@@ -59,19 +62,110 @@ export function questionIndex() {
   return holder[INDEX_KEY]!;
 }
 
-/** Save validated days (replacing those dates). Question ids must not clash with other stored days. */
+/** Save validated days (replacing those dates). Question ids must not clash with other stored days or practice questions. */
 export async function saveDays(days: DailyDay[]) {
-  const index = await questionIndex();
+  const [index, practice] = await Promise.all([questionIndex(), practiceSet()]);
+  const practiceIds = new Set(practice.questions.map((q) => q.id));
   const incomingDates = new Set(days.map((d) => d.date));
   const clashes = days.flatMap((d) => [d.core, ...d.bonus]
-    .filter((q) => { const at = index.get(q.id); return at && !incomingDates.has(at.date); })
-    .map((q) => `${d.date}: question id ${q.id} is already used on ${index.get(q.id)!.date}`));
+    .filter((q) => { const at = index.get(q.id); return (at && !incomingDates.has(at.date)) || practiceIds.has(q.id); })
+    .map((q) => `${d.date}: question id ${q.id} is already used ${index.get(q.id) ? `on ${index.get(q.id)!.date}` : 'by a practice question'}`));
   if (clashes.length) throw new ApiError(400, clashes.join('\n'));
 
   const existing = new Set(await listDates());
   for (const day of days) await writeJsonAtomic(dayFile(day.date), day, true);
   clearIndex();
   return { added: days.filter((d) => !existing.has(d.date)).length, replaced: days.filter((d) => existing.has(d.date)).length };
+}
+
+/* ── Practice questions ─────────────────────────────────────────────────── */
+
+const practiceFile = () => path.join(root(), 'practice.json');
+const PRACTICE_KEY = Symbol.for('pi-dashboard.daily.practice');
+type PracticeHolder = { [PRACTICE_KEY]?: Promise<PracticeSet> | null };
+const practiceHolder = globalThis as PracticeHolder;
+
+/** Every practice-only question, with the formulas they use. */
+export function practiceSet() {
+  practiceHolder[PRACTICE_KEY] ??= readJson<PracticeSet>(practiceFile(), { formulas: [], questions: [] }).then((set) => ({
+    formulas: Array.isArray(set?.formulas) ? set.formulas : [],
+    questions: Array.isArray(set?.questions) ? set.questions : [],
+  }));
+  return practiceHolder[PRACTICE_KEY]!;
+}
+
+/** Add practice questions (a question with an existing id replaces it). Ids must not clash with day questions. */
+export async function savePractice(incoming: PracticeSet) {
+  const [index, current] = await Promise.all([questionIndex(), practiceSet()]);
+  const clashes = incoming.questions.filter((q) => index.has(q.id)).map((q) => `practice: question id ${q.id} is already used on ${index.get(q.id)!.date}`);
+  if (clashes.length) throw new ApiError(400, clashes.join('\n'));
+  const have = new Set(current.questions.map((q) => q.id));
+  const ids = new Set(incoming.questions.map((q) => q.id));
+  const formulaIds = new Set(incoming.formulas.map((f) => f.id));
+  const next: PracticeSet = {
+    formulas: [...current.formulas.filter((f) => !formulaIds.has(f.id)), ...incoming.formulas],
+    questions: [...current.questions.filter((q) => !ids.has(q.id)), ...incoming.questions],
+  };
+  await writeJsonAtomic(practiceFile(), next, true);
+  practiceHolder[PRACTICE_KEY] = null;
+  return { added: incoming.questions.filter((q) => !have.has(q.id)).length, replaced: incoming.questions.filter((q) => have.has(q.id)).length, total: next.questions.length };
+}
+
+export type FoundQuestion = {
+  question: Question;
+  /** The question's day; null for practice-only and generated questions. */
+  date: DateKey | null;
+  core: boolean;
+  boss: boolean;
+  /** A practice question (uploaded or generated), not one from a day. */
+  practice: boolean;
+  generated: boolean;
+  formulas: Formula[];
+};
+
+/** Any question by id: from a day, the practice set, or a generator. */
+export async function findQuestion(id: unknown): Promise<FoundQuestion | null> {
+  if (typeof id !== 'string') return null;
+  const at = (await questionIndex()).get(id);
+  if (at) {
+    const used = new Set(at.question.formulas ?? []);
+    const day = await readDay(at.date);
+    return { question: at.question, date: at.date, core: at.core, boss: at.boss, practice: false, generated: false, formulas: (day?.formulas ?? []).filter((f) => used.has(f.id)) };
+  }
+  const practice = await practiceSet();
+  const q = practice.questions.find((x) => x.id === id);
+  if (q) {
+    const used = new Set(q.formulas ?? []);
+    return { question: q, date: null, core: false, boss: false, practice: true, generated: false, formulas: practice.formulas.filter((f) => used.has(f.id)) };
+  }
+  const made = generatedQuestion(id);
+  return made ? { question: made.question, date: null, core: false, boss: false, practice: true, generated: true, formulas: made.formulas } : null;
+}
+
+/** Stored questions by id, for regrading attempts (generated ones keep their saved grade). */
+export async function gradingMap() {
+  const [index, practice] = await Promise.all([questionIndex(), practiceSet()]);
+  return new Map<string, Question>([...[...index].map(([id, at]) => [id, at.question] as const), ...practice.questions.map((q) => [q.id, q] as const)]);
+}
+
+/**
+ * Attempts graded part by part against the current questions (with any
+ * "common slip" each wrong part matched), ready for analyze().
+ */
+export async function analysisAttempts(attempts: Attempt[]): Promise<AnalysisAttempt[]> {
+  const [index, practice] = await Promise.all([questionIndex(), practiceSet()]);
+  const lookup = (id: string) => index.get(id)?.question ?? practice.questions.find((q) => q.id === id) ?? generatedQuestion(id)?.question;
+  return attempts.map((a) => {
+    const q = lookup(a.questionId);
+    const { result } = scoreAttempt(a, q);
+    const parts = q && a.responses ? gradeQuestion(q, a.responses).parts.map((p) => ({
+      correct: p.correct, type: q.parts.find((x) => x.id === p.id)!.answer.type, ...(p.mistake ? { mistake: p.mistake } : {}),
+    })) : undefined;
+    return {
+      questionId: a.questionId, at: a.at, answeredOn: a.answeredOn, meta: q ? { ...a.meta, track: q.track, topic: q.topic, difficulty: q.difficulty } : a.meta,
+      status: result.status, correct: result.correct, total: result.total, hints: a.hints, tries: a.tries, ...(parts ? { parts } : {}),
+    };
+  });
 }
 
 export async function deleteDay(date: DateKey) {

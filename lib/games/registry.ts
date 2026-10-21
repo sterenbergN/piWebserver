@@ -8,6 +8,7 @@ import { MAX_BLOCKS_SCORE } from './blocks';
 import { MAX_FLAP_SCORE } from './flap';
 import { MAX_SETPOINT_SCORE } from './setpoint';
 import { MAX_CHAIN_SCORE } from './chain';
+import { MAX_MERGE_SCORE } from './mergesnake';
 
 export type GameInfo = {
   id: string;
@@ -28,6 +29,7 @@ export const GAMES = [
   { id: 'flap', emoji: '🐤', label: 'Flap', kind: 'classic', blurb: 'Tap to flap through the gaps.', valid: (s: number) => s <= MAX_FLAP_SCORE },
   { id: 'setpoint', emoji: '🎛️', label: 'Setpoint', kind: 'original', blurb: 'You’re the controller: hold the process in the band.', valid: (s: number) => s <= MAX_SETPOINT_SCORE },
   { id: 'chain', emoji: '💥', label: 'Chain Reaction', kind: 'original', blurb: 'One tap. Set off the biggest chain you can.', valid: (s: number) => s <= MAX_CHAIN_SCORE && s % 10 === 0 },
+  { id: 'merge', emoji: '🔗', label: 'Merge Snake', kind: 'original', blurb: 'Snake meets 2048: eat numbers in the right order and your body merges.', valid: (s: number) => s <= MAX_MERGE_SCORE && s % 2 === 0 },
 ] as const satisfies readonly GameInfo[];
 
 export type GameId = (typeof GAMES)[number]['id'];

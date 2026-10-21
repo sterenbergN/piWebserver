@@ -7,7 +7,8 @@ import { addDays, weekStart, type DateKey } from '@/lib/habits/dates';
 import { gradeQuestion, type QuestionResult, type QuestionStatus } from './grade';
 import type { PartResponse, Question, Track } from './types';
 
-export type AttemptMeta = { track: Track; topic: string; difficulty: number; title: string; core: boolean; boss: boolean };
+/** `practice`: a practice-only or generated question (half XP, never the streak). */
+export type AttemptMeta = { track: Track; topic: string; difficulty: number; title: string; core: boolean; boss: boolean; practice?: boolean };
 
 export type Attempt = {
   questionId: string;
@@ -42,11 +43,13 @@ export const XP_RULES = {
   minHintFactor: 0.5,
   /** Catching up on an earlier day. */
   late: 0.5,
+  /** Practice-only and generated questions. */
+  practice: 0.5,
   boss: 1.5,
 };
 
-export function attemptMeta(q: Question, core: boolean, boss: boolean): AttemptMeta {
-  return { track: q.track, topic: q.topic, difficulty: q.difficulty, title: q.title, core, boss: core && boss };
+export function attemptMeta(q: Question, core: boolean, boss: boolean, practice = false): AttemptMeta {
+  return { track: q.track, topic: q.topic, difficulty: q.difficulty, title: q.title, core, boss: core && boss, ...(practice ? { practice: true } : {}) };
 }
 
 /** An attempt's result, regraded if the question is at hand. */
@@ -70,6 +73,7 @@ export function attemptXp(attempt: Pick<Attempt, 'meta' | 'hints' | 'date' | 'an
     xp *= Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * attempt.hints);
   }
   if (attempt.answeredOn > attempt.date) xp *= XP_RULES.late;
+  if (attempt.meta.practice) xp *= XP_RULES.practice;
   if (attempt.meta.boss) xp *= XP_RULES.boss;
   return Math.round(xp);
 }

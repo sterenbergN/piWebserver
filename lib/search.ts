@@ -69,6 +69,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Flap', url: '/game?game=flap', subtitle: 'Tap to flap through the pipes', body: 'game play arcade bird' },
   { kind: 'page', title: 'Setpoint', url: '/game?game=setpoint', subtitle: 'Be the controller: hold the process in the band', body: 'game play arcade controls pid' },
   { kind: 'page', title: 'Chain Reaction', url: '/game?game=chain', subtitle: 'One tap, the biggest chain you can', body: 'game play arcade explosion' },
+  { kind: 'page', title: 'Merge Snake', url: '/game?game=merge', subtitle: 'Snake meets 2048: eat in order and merge', body: 'game play arcade snake 2048 numbers' },
   { kind: 'page', title: 'Party games', url: '/party', subtitle: 'Quip Clash, The Faker, Trivia Death, Bracket Battles, Ready Set Bet', body: 'jackbox party host join' },
   { kind: 'page', title: 'Workout tracker', url: '/workout', subtitle: 'Gym log, analytics and reports', body: 'gym lift fitness training' },
   { kind: 'page', title: 'Unit converter', url: '/tools', subtitle: 'Tools', body: 'calculator convert length weight temperature' },

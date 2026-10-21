@@ -2,42 +2,50 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { ApiError, handleApiError } from '@/lib/workout/api';
 import { publicQuestion } from '@/lib/daily/grade';
+import { generatorList } from '@/lib/daily/generated';
 import { scoreAttempt } from '@/lib/daily/progress';
-import { answeredView, clampToday, questionIndex, readDay, readFeedback, readUserDaily } from '@/lib/daily/store';
+import { answeredView, clampToday, findQuestion, practiceSet, questionIndex, readFeedback, readUserDaily } from '@/lib/daily/store';
 
-// Practice: every question from past days (core and bonus) to work through as
-// many as you like. Without `id`, the list to pick from (with how you did on
-// each, signed in); with `id`, one question ready to answer. Answers go through
-// /api/daily/answer like any other, so they count as catching up (half XP).
+// Practice: as many questions as you like.
+//   - every question from past days (core and bonus): half XP, as catching up
+//   - practice-only questions uploaded by the weekly generator
+//   - generated questions (fresh numbers every time) from the generators listed
+// Without `id`: the pool to choose from, with how you did on each (signed in).
+// With `id`: one question ready to answer. Answers go through /api/daily/answer.
 
 export async function GET(request: Request) {
   try {
     const params = new URL(request.url).searchParams;
     const today = clampToday(params.get('today'));
-    const index = await questionIndex();
     const userId = await getAuthenticatedWorkoutUserId();
     const mine = userId ? await readUserDaily(userId) : null;
     const id = params.get('id');
 
     if (!id) {
-      const questions = [...index.values()]
+      const [index, practice] = await Promise.all([questionIndex(), practiceSet()]);
+      const status = (qid: string, q: Parameters<typeof scoreAttempt>[1]) => {
+        const attempt = mine?.attempts.find((a) => a.questionId === qid);
+        return attempt ? scoreAttempt(attempt, q).result.status : null;
+      };
+      const past = [...index.values()]
         .filter((at) => at.date <= today)
-        .map((at) => {
-          const attempt = mine?.attempts.find((a) => a.questionId === at.question.id);
-          return {
-            id: at.question.id, date: at.date, core: at.core, boss: at.boss,
-            track: at.question.track, topic: at.question.topic, difficulty: at.question.difficulty, title: at.question.title,
-            status: attempt ? scoreAttempt(attempt, at.question).result.status : null,
-          };
-        })
-        .sort((a, b) => b.date.localeCompare(a.date) || Number(b.core) - Number(a.core));
-      return NextResponse.json({ success: true, signedIn: !!userId, questions }, { headers: { 'Cache-Control': 'no-store' } });
+        .map((at) => ({
+          id: at.question.id, date: at.date as string | null, source: 'day' as const, core: at.core, boss: at.boss,
+          track: at.question.track, topic: at.question.topic, difficulty: at.question.difficulty, title: at.question.title,
+          status: status(at.question.id, at.question),
+        }))
+        .sort((a, b) => b.date!.localeCompare(a.date!) || Number(b.core) - Number(a.core));
+      const pool = practice.questions.map((q) => ({
+        id: q.id, date: null, source: 'pool' as const, core: false, boss: false,
+        track: q.track, topic: q.topic, difficulty: q.difficulty, title: q.title, status: status(q.id, q),
+      }));
+      // Generated questions you've done, so the tally counts them.
+      const generatedDone = (mine?.attempts ?? []).filter((a) => a.questionId.startsWith('gen-')).length;
+      return NextResponse.json({ success: true, signedIn: !!userId, questions: [...pool, ...past], generators: generatorList(), generatedDone }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const at = index.get(id);
-    if (!at || at.date > today) throw new ApiError(404, 'Question not found');
-    const day = await readDay(at.date);
-    const used = new Set(at.question.formulas ?? []);
+    const at = await findQuestion(id);
+    if (!at || (at.date && at.date > today)) throw new ApiError(404, 'Question not found');
     const attempt = mine?.attempts.find((a) => a.questionId === id);
     const fb = attempt && userId ? (await readFeedback()).entries.find((e) => e.questionId === id && e.userId === userId) : undefined;
     return NextResponse.json({
@@ -45,8 +53,9 @@ export async function GET(request: Request) {
       date: at.date,
       core: at.core,
       boss: at.boss,
+      source: at.generated ? 'generated' : at.practice ? 'pool' : 'day',
       question: publicQuestion(at.question),
-      formulas: (day?.formulas ?? []).filter((f) => used.has(f.id)),
+      formulas: at.formulas,
       answered: attempt ? answeredView(at.question, attempt, fb) : null,
       tries: mine?.pending?.[id] ?? 0,
     }, { headers: { 'Cache-Control': 'no-store' } });

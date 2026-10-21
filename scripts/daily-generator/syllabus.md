@@ -3,7 +3,8 @@
 Topics per track, with a weight (how often relative to the others: 3 = often,
 1 = now and then). The generator rotates through them, favouring higher
 weights and topics not seen for longest. Use the topic names as written, so
-stats group them consistently.
+stats group them consistently. The site keeps the same list in
+`lib/daily/syllabus.ts` (for "topics you haven't tried"): change both together.
 
 ## Mechanical
 What a mechanical engineering bachelor's covers, the FE Mechanical and PE

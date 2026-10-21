@@ -11,7 +11,7 @@ import Confetti from '@/components/habits/Confetti';
 import { choresXpElsewhere, habitsXpElsewhere } from '@/components/progress/otherXp';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { levelFromXp } from '@/lib/progress/levels';
-import { TRACK_LABEL } from '@/lib/daily/types';
+import { TRACKS, TRACK_LABEL, type Track } from '@/lib/daily/types';
 import type { PartResponse } from '@/lib/daily/types';
 import 'katex/dist/katex.min.css';
 import './daily.css';
@@ -38,6 +38,8 @@ export default function DailyPage() {
   const [otherXp, setOtherXp] = useState<{ habits: number; chores: number } | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [toast, setToast] = useState('');
+  /** ?focus=track|topic (from the report's "Practise this") opens Practice filtered to it. */
+  const [focus, setFocus] = useState<{ track: Track; topic: string } | null>(null);
 
   useEffect(() => {
     const fromHash = () => {
@@ -45,6 +47,8 @@ export default function DailyPage() {
       if (TABS.some((t) => t.id === id)) setTab(id as TabId);
     };
     fromHash();
+    const [track, topic] = (new URLSearchParams(window.location.search).get('focus') || '').split('|');
+    if ((TRACKS as readonly string[]).includes(track) && topic) { setFocus({ track: track as Track, topic }); setTab('practice'); }
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
   }, []);
@@ -238,8 +242,14 @@ export default function DailyPage() {
             )
           )}
 
-          {tab === 'practice' && <Practice today={d.today} signedIn={d.signedIn} onAnswered={d.reloadProgress} />}
+          {tab === 'practice' && <Practice key={focus ? `${focus.track}|${focus.topic}` : 'all'} today={d.today} signedIn={d.signedIn} onAnswered={d.reloadProgress} initialFocus={focus} />}
 
+          {tab === 'stats' && (
+            <a className="dq-report-link" href="/daily/report">
+              <span><strong>📊 Strengths &amp; weaknesses report</strong><small>Ability per topic, slips you repeat, what to practise next</small></span>
+              <span aria-hidden>→</span>
+            </a>
+          )}
           {tab === 'stats' && (
             <LevelInfo sources={{ questions: questionXp, habits: otherXp?.habits ?? 0, chores: otherXp?.chores ?? 0 }} weeks={d.progress?.stats.weeks} />
           )}

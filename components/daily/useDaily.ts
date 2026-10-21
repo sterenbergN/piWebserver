@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { localToday, type DateKey } from '@/lib/habits/dates';
 import { attemptXp, questionStats, scoreAll, type Attempt, type ScoredAttempt } from '@/lib/daily/progress';
 import type { PartResult, PublicDay } from '@/lib/daily/grade';
+import type { Analysis } from '@/lib/daily/analysis';
 import type { PartResponse, Track } from '@/lib/daily/types';
 import type { Answered, Feedback } from './QuestionCard';
 
@@ -57,6 +58,18 @@ export async function sendAnswer(args: { date: DateKey; questionId: string; resp
     writeDeviceAttempts([...attempts, data.attempt]);
   }
   return data.final ? { ...data, feedback: { rating: null, difficulty: null, report: null } } : data;
+}
+
+/** Your strengths and weaknesses: from your account, or from the answers kept on this device. */
+export async function fetchAnalysis(today: DateKey): Promise<{ analysis: Analysis; signedIn: boolean }> {
+  const res = await fetch(`/api/daily/analysis?today=${today}`, { cache: 'no-store' });
+  if (res.status === 401) {
+    const data = await post('/api/daily/analysis', { attempts: readDeviceAttempts(), today });
+    return { analysis: data.analysis, signedIn: false };
+  }
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Couldn’t load the analysis.');
+  return { analysis: data.analysis, signedIn: true };
 }
 
 /** Rate or report a question (signed in). Returns the saved feedback. */

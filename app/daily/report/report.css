@@ -1,0 +1,76 @@
+/* Strengths & weaknesses report. Builds on daily.css (.dq, .dq-panel, .dq-tiles). */
+.rp { max-width: 960px; }
+.rp-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.rp-head h1 { margin: 0.3rem 0 0.2rem; }
+.rp-head .dq-hint { margin: 0; }
+.rp-summary p { margin: 0 0 0.9rem; line-height: 1.55; }
+.rp-note { margin: -0.4rem 0 0.75rem !important; font-size: 0.82rem; }
+
+.rp-ability { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 7rem; }
+.rp-ability-track { flex: 1; height: 8px; border-radius: 999px; background: var(--input-bg); overflow: hidden; min-width: 3.5rem; }
+.rp-ability-track i { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); }
+.rp-ability strong { font-size: 0.85rem; min-width: 1.8rem; text-align: right; }
+
+.rp-focus { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.55rem; }
+.rp-focus li > * { vertical-align: middle; }
+.rp-focus li { padding-left: 0.2rem; }
+.rp-focus li { display: list-item; }
+.rp-focus li > div { display: inline-flex; flex-direction: column; gap: 0.1rem; width: calc(100% - 7rem); }
+.rp-focus li small { color: var(--muted); font-size: 0.82rem; }
+.rp-focus .btn { float: right; padding: 0.35rem 0.9rem; font-size: 0.85rem; }
+
+.rp-tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.6rem; }
+.rp-track { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0.85rem; border-radius: 12px; background: var(--input-bg); border-left: 4px solid var(--dq-track, var(--accent)); }
+.rp-track small { color: var(--muted); font-size: 0.8rem; }
+
+.rp-table-wrap { overflow-x: auto; margin: 0 -0.25rem; }
+.rp-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 640px; }
+.rp-table th { text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--surface-border); }
+.rp-table td { padding: 0.5rem; border-bottom: 1px solid var(--surface-border); vertical-align: middle; }
+.rp-table td small { color: var(--muted); }
+.rp-table td:first-child { display: flex; flex-direction: column; gap: 0.1rem; }
+.rp-track-tag { font-size: 0.72rem; color: var(--dq-track) !important; }
+.rp-table tr.is-weakness td:first-child strong { color: var(--danger); }
+.rp-table tr.is-strength td:first-child strong { color: var(--success); }
+.rp-label { white-space: nowrap; font-size: 0.8rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--input-bg); }
+.rp-label.is-strength { background: rgba(var(--success-rgb), 0.18); }
+.rp-label.is-weakness { background: rgba(var(--danger-rgb), 0.16); }
+.rp-practise { margin-left: 0.5rem; font-size: 0.8rem; }
+
+.rp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 1rem; }
+.rp-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.rp-bars li { display: grid; grid-template-columns: 8.5rem 1fr 5.5rem; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.rp-bars small { color: var(--muted); text-align: right; }
+.rp-bar { height: 10px; border-radius: 999px; background: var(--input-bg); overflow: hidden; }
+.rp-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); }
+.rp-dim { opacity: 0.25; }
+
+.rp-slips { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.88rem; }
+.rp-slips li { display: flex; gap: 0.6rem; align-items: baseline; }
+.rp-slips small { color: var(--muted); }
+.rp-count { flex-shrink: 0; font-weight: 800; color: var(--danger); min-width: 2rem; }
+
+.rp-weeks { display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.3rem; align-items: end; height: 120px; }
+.rp-weeks > div { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; gap: 0.25rem; min-width: 0; }
+.rp-week-bar { width: 100%; min-height: 2px; border-radius: 6px 6px 2px 2px; background: var(--accent); }
+.rp-weeks small { font-size: 0.6rem; color: var(--muted); white-space: nowrap; overflow: hidden; max-width: 100%; }
+.rp-untried { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0 0 0.6rem; font-size: 0.88rem; }
+.rp-untried .dq-chip { text-decoration: none; align-self: auto; }
+
+@media (max-width: 520px) {
+  .rp-bars li { grid-template-columns: 6.5rem 1fr 4.5rem; }
+  .rp-focus li > div { width: 100%; }
+  .rp-focus .btn { float: none; margin-top: 0.3rem; }
+  .rp-weeks small { display: none; }
+}
+
+/* Printing: a clean sheet without the site around it. */
+@media print {
+  body:has(.rp) .glass-nav, body:has(.rp) footer, .rp-noprint { display: none !important; }
+  body:has(.rp), body:has(.rp) main { background: #fff !important; color: #000 !important; }
+  .rp { max-width: none; padding: 0; }
+  .dq-panel, .dq-tile, .rp-track { background: #fff !important; border-color: #ccc !important; break-inside: avoid; }
+  .rp-table-wrap { overflow: visible; }
+  .rp-table { min-width: 0; }
+  .rp * { color: #000 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

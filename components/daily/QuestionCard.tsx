@@ -48,7 +48,8 @@ const RESULT_TEXT: Record<QuestionStatus, { icon: string; title: string }> = {
 
 type Props = {
   q: PublicQuestion;
-  kind: 'core' | 'bonus';
+  /** practice: a practice-only or generated question (half XP). */
+  kind: 'core' | 'bonus' | 'practice';
   boss: boolean;
   /** Answering a past day's question (half XP). */
   late: boolean;
@@ -79,7 +80,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
     if (r) responses[p.id] = r;
   }
   const complete = Object.keys(responses).length === q.parts.length;
-  const multiplier = (late ? XP_RULES.late : 1) * (kind === 'core' && boss ? XP_RULES.boss : 1);
+  const multiplier = (late ? XP_RULES.late : 1) * (kind === 'practice' ? XP_RULES.practice : 1) * (kind === 'core' && boss ? XP_RULES.boss : 1);
   const maxXp = Math.round((XP_RULES.base + XP_RULES.perDifficulty * q.difficulty) * multiplier
     * Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * hintsShown) * triesFactor(tries + 1));
   const studyXp = Math.round(XP_RULES.studied * multiplier);
@@ -96,7 +97,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
     <article className={`dq-card is-${q.track}${kind === 'core' ? ' is-core' : ''}${answered ? ` is-${answered.status}` : ''}`}>
       <header className="dq-card-head">
         <div className="dq-badges">
-          <span className="dq-badge is-kind">{kind === 'core' ? (boss ? '👹 Boss problem' : '⭐ Today’s question') : '🎁 Bonus'}</span>
+          <span className="dq-badge is-kind">{kind === 'core' ? (boss ? '👹 Boss problem' : '⭐ Today’s question') : kind === 'practice' ? '🎲 Practice' : '🎁 Bonus'}</span>
           <span className={`dq-badge is-track is-${q.track}`}>{TRACK_LABEL[q.track]}</span>
           <span className="dq-badge">{q.topic}</span>
           <span className="dq-difficulty" title={`Difficulty ${q.difficulty} of 5`} aria-label={`Difficulty ${q.difficulty} of 5`}>
@@ -182,7 +183,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
             </p>
           )}
           <p className="dq-hint dq-worth">
-            Worth up to <strong>{maxXp} XP</strong>{late ? ' (half, catching up on an earlier day)' : ''}{kind === 'core' && boss ? ' (×1.5 boss bonus)' : ''}.
+            Worth up to <strong>{maxXp} XP</strong>{late ? ' (half, catching up on an earlier day)' : ''}{kind === 'practice' ? ' (half, practice question)' : ''}{kind === 'core' && boss ? ' (×1.5 boss bonus)' : ''}.
             {' '}Up to {XP_RULES.maxTries} checks, −{Math.round(XP_RULES.retryCost * 100)}% XP for each one after the first. Stuck? The worked solution is {studyXp} XP.
           </p>
         </>

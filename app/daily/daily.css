@@ -286,3 +286,15 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
   .lv-sources li { grid-template-columns: 1fr auto 2.4rem; }
   .lv-source-bar { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* Practice: focus topics from the analysis, and the source/track switches */
+.dq-practice-filters > .dq-seg { flex: none; }
+.dq-practice-focus { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.dq-practice-focus .dq-hint { margin: 0; font-weight: 700; }
+.dq-practice-focus .dq-chip { align-self: center; }
+.dq-practice-focus .dq-chip small { color: var(--muted); }
+.dq-practice-focus .dq-text-btn { margin-left: auto; font-size: 0.85rem; }
+.dq-report-link { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 1rem; border-radius: 16px; border: 1px solid var(--accent-light); background: rgba(var(--accent-rgb), 0.12); color: var(--foreground); text-decoration: none; }
+.dq-report-link:hover { background: rgba(var(--accent-rgb), 0.2); }
+.dq-report-link span { display: flex; flex-direction: column; gap: 0.1rem; }
+.dq-report-link small { color: var(--muted); }

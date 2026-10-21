@@ -3,12 +3,13 @@ import { ApiError, handleApiError } from '@/lib/workout/api';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { isDateKey } from '@/lib/habits/dates';
 import { validatePack } from '@/lib/daily/validate';
-import { bufferDays, clampToday, deleteDay, listDates, readDay, requireDailyManager, saveDays } from '@/lib/daily/store';
+import { bufferDays, clampToday, deleteDay, listDates, practiceSet, readDay, requireDailyManager, saveDays, savePractice } from '@/lib/daily/store';
 
 // Managing questions: the admin page, and the weekly generator with the upload token.
 //   GET            every stored day (summary) and how many days are ready ahead
 //   GET ?date=     one full day, answer key and check notes included
-//   PUT            a pack { version: 1, days: [...] }: checked, then saved (replacing those dates)
+//   PUT            a pack { version: 1, days: [...], practice? }: checked, then saved (replacing those dates;
+//                  practice questions are added, replacing any with the same id)
 //   DELETE ?date=  remove a day (signed-in admin only)
 
 export async function GET(request: Request) {
@@ -32,7 +33,8 @@ export async function GET(request: Request) {
         questions: [day.core, ...day.bonus].map((q, i) => ({ id: q.id, title: q.title, track: q.track, topic: q.topic, difficulty: q.difficulty, core: i === 0 })),
       });
     }
-    return NextResponse.json({ success: true, today, buffer: await bufferDays(today), days }, { headers: { 'Cache-Control': 'no-store' } });
+    const practice = (await practiceSet()).questions.map((q) => ({ id: q.id, title: q.title, track: q.track, topic: q.topic, difficulty: q.difficulty }));
+    return NextResponse.json({ success: true, today, buffer: await bufferDays(today), days, practice }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Load daily questions failed');
   }
@@ -45,9 +47,10 @@ export async function PUT(request: Request) {
     try { body = await request.json(); } catch { throw new ApiError(400, 'Invalid JSON'); }
     const { pack, errors } = validatePack(body);
     if (!pack) return NextResponse.json({ success: false, message: 'The pack has problems.', errors }, { status: 400 });
-    const saved = await saveDays(pack.days);
+    const saved = pack.days.length ? await saveDays(pack.days) : { added: 0, replaced: 0 };
+    const practice = pack.practice ? await savePractice(pack.practice) : null;
     const today = clampToday(new URL(request.url).searchParams.get('today'));
-    return NextResponse.json({ success: true, ...saved, dates: pack.days.map((d) => d.date), buffer: await bufferDays(today) });
+    return NextResponse.json({ success: true, ...saved, dates: pack.days.map((d) => d.date), buffer: await bufferDays(today), practice });
   } catch (error) {
     return handleApiError(error, 'Upload daily questions failed');
   }
