@@ -15,6 +15,7 @@ import type { DateKey } from '@/lib/habits/dates';
 import type { Habit, HabitLog } from '@/lib/habits/habits';
 import type { Chore, ChoresData } from '@/lib/chores/chores';
 import { levelFromXp } from '@/lib/progress/levels';
+import LevelInfo from '@/components/progress/LevelInfo';
 import { isOpen as choreOpen } from '@/lib/chores/chores';
 import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
@@ -24,7 +25,7 @@ import '../habits/habits.css';
 import '../chores/chores.css';
 import './today.css';
 
-type QuestionState = { day: PublicDay | null; status: QuestionStatus | null; streak: number; doneToday: boolean; xp: number };
+type QuestionState = { day: PublicDay | null; status: QuestionStatus | null; streak: number; doneToday: boolean; xp: number; weeks?: { week: string; xp: number }[] };
 type WorkoutState = { thisWeek: number; weekStreak: number; last: { name: string; when: string } | null };
 
 const STATUS: Record<QuestionStatus, string> = { solved: '✅ Solved', partial: '🟡 Partly right', wrong: '❌ Answered', studied: '📖 Studied' };
@@ -43,6 +44,9 @@ export default function TodayPage() {
   const signedIn = h.mode === 'account';
   const [question, setQuestion] = useState<QuestionState | null>(null);
   const [workout, setWorkout] = useState<WorkoutState | null>(null);
+  /** The level panel, opened from the level badge (or /today#level). */
+  const [showLevel, setShowLevel] = useState(false);
+  useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
 
   // Today's question, and how the question streak stands.
   useEffect(() => {
@@ -53,13 +57,13 @@ export default function TodayPage() {
         const body = await fetch(`/api/daily?today=${today}`, { cache: 'no-store' }).then((r) => r.json());
         const day: PublicDay | null = body.day ?? null;
         let status: QuestionStatus | null = day ? body.answered?.[day.core.id]?.status ?? null : null;
-        let progress = { streak: 0, doneToday: false, xp: 0 };
+        let progress: Pick<QuestionState, 'streak' | 'doneToday' | 'xp' | 'weeks'> = { streak: 0, doneToday: false, xp: 0 };
         if (body.signedIn) {
           const p = await fetch(`/api/daily/progress?today=${today}`, { cache: 'no-store' }).then((r) => r.json());
-          if (p.success) progress = { streak: p.stats.streak.current, doneToday: p.stats.streak.doneToday, xp: p.stats.total.xp };
+          if (p.success) progress = { streak: p.stats.streak.current, doneToday: p.stats.streak.doneToday, xp: p.stats.total.xp, weeks: p.stats.weeks };
         } else {
           const p = deviceProgress(today);
-          progress = { streak: p.stats.streak.current, doneToday: p.stats.streak.doneToday, xp: p.stats.total.xp };
+          progress = { streak: p.stats.streak.current, doneToday: p.stats.streak.doneToday, xp: p.stats.total.xp, weeks: p.stats.weeks };
           if (day) status = readDeviceAttempts().find((a) => a.questionId === day.core.id)?.result.status ?? null;
         }
         if (!cancelled) setQuestion({ day, status, ...progress });
@@ -84,7 +88,8 @@ export default function TodayPage() {
   }, [signedIn]);
 
   const frozen = useMemo(() => freezeState(data, today).frozen, [data, today]);
-  const level = levelFromXp(habitXp(data, today) + (question?.xp ?? 0) + choreXp(ch.data, me));
+  const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me) };
+  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores);
   // Chores due in the next week, overdue first (yours or anyone's).
   const openChores = ch.data.chores.filter(choreOpen);
   const dueChores = byUrgency(openChores.filter((x) => ['overdue', 'today', 'soon'].includes(dueStatus(x, today).status) && (!x.assignee || x.assignee === me)));
@@ -105,7 +110,8 @@ export default function TodayPage() {
           <p>{dateText}</p>
         </div>
         {h.mode !== 'loading' && h.mode !== 'error' && (
-          <div className="hb-level" title={`${level.xp} XP total`}>
+          <button type="button" className="hb-level td-level" aria-expanded={showLevel} aria-controls="level"
+            title={`${level.xp} XP total. Tap for what your level means.`} onClick={() => setShowLevel((v) => !v)}>
             <span className="hb-level-badge">Lv {level.level}</span>
             <div className="hb-level-text">
               <strong>{level.title}</strong>
@@ -114,9 +120,14 @@ export default function TodayPage() {
               </div>
               <small>{level.into} / {level.size} XP to level {level.level + 1}</small>
             </div>
-          </div>
+            <span className="td-level-more" aria-hidden>{showLevel ? '▲' : 'ⓘ'}</span>
+          </button>
         )}
       </header>
+
+      {showLevel && h.mode !== 'loading' && h.mode !== 'error' && (
+        <LevelInfo sources={xpSources} weeks={question?.weeks} onClose={() => setShowLevel(false)} />
+      )}
 
       {h.mode === 'device' && (
         <div className="hb-banner">

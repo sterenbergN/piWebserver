@@ -4,12 +4,15 @@ import { LEVEL_TITLES, levelFromXp, nextTitle, xpForLevel } from '@/lib/progress
 import { XP_RULES } from '@/lib/daily/progress';
 import { XP as HABIT_XP } from '@/lib/habits/stats';
 import { CHORE_XP } from '@/lib/chores/stats';
+import './level-info.css';
 
 type Props = {
   /** XP by where it came from. */
   sources: { questions: number; habits: number; chores: number };
   /** Question XP per week, oldest first (the last is this week). */
   weeks?: { week: string; xp: number }[];
+  /** Shows a close button (when the panel was opened from a level badge). */
+  onClose?: () => void;
 };
 
 const SOURCES = [
@@ -23,7 +26,7 @@ const SOURCES = [
  * level and title, every title on the way, and how each part of the site
  * earns XP.
  */
-export default function LevelInfo({ sources, weeks }: Props) {
+export default function LevelInfo({ sources, weeks, onClose }: Props) {
   const total = sources.questions + sources.habits + sources.chores;
   const level = levelFromXp(total);
   const title = nextTitle(level.level);
@@ -35,20 +38,23 @@ export default function LevelInfo({ sources, weeks }: Props) {
   const ranks = LEVEL_TITLES.map(([at, name], i) => ({ at, name, until: LEVEL_TITLES[i + 1] ? LEVEL_TITLES[i + 1][0] - 1 : null, xp: xpForLevel(at) }));
 
   return (
-    <section className="dq-panel lv-info" id="level">
-      <h3>🏅 Your level</h3>
+    <section className="lv-info" id="level" aria-labelledby="level-title">
+      <div className="lv-title">
+        <h3 id="level-title">🏅 Your level</h3>
+        {onClose && <button type="button" className="lv-close" onClick={onClose} aria-label="Close level info">✕</button>}
+      </div>
       <div className="lv-head">
-        <span className="dq-level-badge">Lv {level.level}</span>
+        <span className="lv-badge">Lv {level.level}</span>
         <div>
           <strong>{level.title}</strong>
-          <span className="dq-hint">{total.toLocaleString()} XP in all · {level.toNext.toLocaleString()} XP to level {level.level + 1}</span>
-          {title && <span className="dq-hint">{title.title} at level {title.level} ({(title.xp - total).toLocaleString()} XP to go)</span>}
+          <span className="lv-muted">{total.toLocaleString()} XP in all · {level.toNext.toLocaleString()} XP to level {level.level + 1}</span>
+          {title && <span className="lv-muted">{title.title} at level {title.level} ({(title.xp - total).toLocaleString()} XP to go)</span>}
         </div>
       </div>
-      <div className="dq-level-bar" role="progressbar" aria-label="XP to next level" aria-valuemin={0} aria-valuemax={level.size} aria-valuenow={level.into}>
+      <div className="lv-bar" role="progressbar" aria-label="XP to next level" aria-valuemin={0} aria-valuemax={level.size} aria-valuenow={level.into}>
         <span style={{ width: `${(level.into / level.size) * 100}%` }} />
       </div>
-      <p className="dq-hint lv-pace">
+      <p className="lv-muted">
         Level {level.level + 1} comes at {xpForLevel(level.level + 1).toLocaleString()} XP in all; each level takes 100 XP more than the one before.
         {toNext !== null && ` At your question pace (about ${Math.round(pace)} XP a week lately), the next level is ${toNext <= 1 ? 'about a week' : `about ${toNext} weeks`} away from questions alone.`}
       </p>
