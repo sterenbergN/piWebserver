@@ -52,6 +52,51 @@ export const CATEGORIES: Category[] = [
     { id: 'km2', label: 'Square kilometres', short: 'km²', factor: 1e6 },
     { id: 'mi2', label: 'Square miles', short: 'mi²', factor: 2589988.110336 },
   ] },
+  { id: 'pressure', label: 'Pressure', units: [
+    { id: 'pa', label: 'Pascals', short: 'Pa', factor: 1 },
+    { id: 'kpa', label: 'Kilopascals', short: 'kPa', factor: 1000 },
+    { id: 'mpa', label: 'Megapascals', short: 'MPa', factor: 1e6 },
+    { id: 'bar', label: 'Bar', short: 'bar', factor: 1e5 },
+    { id: 'psi', label: 'Pounds / sq inch', short: 'psi', factor: 6894.757293168 },
+    { id: 'atm', label: 'Atmospheres', short: 'atm', factor: 101325 },
+    { id: 'inh2o', label: 'Inches of water', short: 'inH₂O', factor: 249.08891 },
+    { id: 'inhg', label: 'Inches of mercury', short: 'inHg', factor: 3386.389 },
+    { id: 'mmhg', label: 'mm of mercury', short: 'mmHg', factor: 133.322387415 },
+  ] },
+  { id: 'flow', label: 'Flow', units: [
+    { id: 'lpm', label: 'Litres / minute', short: 'L/min', factor: 1 / 60000 },
+    { id: 'm3h', label: 'Cubic metres / hour', short: 'm³/h', factor: 1 / 3600 },
+    { id: 'gpm', label: 'Gallons / minute (US)', short: 'gpm', factor: 3.785411784 / 60000 },
+    { id: 'cfm', label: 'Cubic feet / minute', short: 'cfm', factor: 0.028316846592 / 60 },
+    { id: 'bpd', label: 'Barrels / day (oil)', short: 'bbl/d', factor: 0.158987294928 / 86400 },
+  ] },
+  { id: 'torque', label: 'Torque', units: [
+    { id: 'nm', label: 'Newton metres', short: 'N·m', factor: 1 },
+    { id: 'lbft', label: 'Pound-feet', short: 'lb·ft', factor: 1.3558179483314004 },
+    { id: 'lbin', label: 'Pound-inches', short: 'lb·in', factor: 0.1129848290276167 },
+    { id: 'kgfm', label: 'Kilogram-force metres', short: 'kgf·m', factor: 9.80665 },
+  ] },
+  { id: 'power', label: 'Power', units: [
+    { id: 'w', label: 'Watts', short: 'W', factor: 1 },
+    { id: 'kw', label: 'Kilowatts', short: 'kW', factor: 1000 },
+    { id: 'hp', label: 'Horsepower (mech.)', short: 'hp', factor: 745.69987158227 },
+    { id: 'btuh', label: 'BTU / hour', short: 'BTU/h', factor: 0.29307107 },
+    { id: 'ton', label: 'Tons of cooling', short: 'TR', factor: 3516.8528 },
+  ] },
+  { id: 'energy', label: 'Energy', units: [
+    { id: 'j', label: 'Joules', short: 'J', factor: 1 },
+    { id: 'kj', label: 'Kilojoules', short: 'kJ', factor: 1000 },
+    { id: 'kwh', label: 'Kilowatt-hours', short: 'kWh', factor: 3.6e6 },
+    { id: 'btu', label: 'BTU', short: 'BTU', factor: 1055.05585262 },
+    { id: 'kcal', label: 'Food calories', short: 'kcal', factor: 4184 },
+  ] },
+  { id: 'data', label: 'Data', units: [
+    { id: 'kb', label: 'Kilobytes', short: 'KB', factor: 1e3 },
+    { id: 'mb', label: 'Megabytes', short: 'MB', factor: 1e6 },
+    { id: 'gb', label: 'Gigabytes', short: 'GB', factor: 1e9 },
+    { id: 'tb', label: 'Terabytes', short: 'TB', factor: 1e12 },
+    { id: 'gib', label: 'Gibibytes', short: 'GiB', factor: 2 ** 30 },
+  ] },
 ];
 
 const toCelsius: Record<string, (v: number) => number> = { c: (v) => v, f: (v) => ((v - 32) * 5) / 9, k: (v) => v - 273.15 };

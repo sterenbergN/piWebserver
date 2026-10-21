@@ -125,3 +125,51 @@
 
 .tl-round { display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.85rem 0.95rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--card-bg); color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
 .tl-round + .tl-round { margin-top: 0.5rem; }
+
+/* Spin wheel (restaurants) */
+.tl-spin-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.5rem; }
+.tl-spin { display: flex; flex-direction: column; align-items: center; gap: 1rem; margin-top: 0.75rem; }
+.tl-spin-wheel { position: relative; width: min(100%, 340px); aspect-ratio: 1; }
+.tl-spin-wheel svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.35)); }
+.tl-spin-pointer { position: absolute; top: -6px; left: 50%; z-index: 1; transform: translateX(-50%); width: 0; height: 0; border-left: 13px solid transparent; border-right: 13px solid transparent; border-top: 24px solid var(--foreground); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)); }
+.tl-spin-label { fill: #fff; font-weight: 700; paint-order: stroke; stroke: rgba(0, 0, 0, 0.45); stroke-width: 2.2px; stroke-linejoin: round; }
+.tl-spin-winner { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; margin-top: 1rem; padding: 0.9rem; border-radius: 14px; border: 1px solid var(--accent); background: rgba(var(--accent-rgb), 0.1); text-align: center; animation: tlPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.tl-spin-winner strong { font-size: 1.3rem; }
+@keyframes tlPop { from { transform: scale(0.9); opacity: 0; } to { transform: none; opacity: 1; } }
+.tl-place-links button.btn { min-height: 36px; padding: 0 0.8rem; font-size: 0.85rem; border-radius: 10px; }
+@media (prefers-reduced-motion: reduce) { .tl-spin-winner { animation: none; } }
+
+/* Calculators */
+.tl-calc-pick { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0.35rem; margin-bottom: 1.1rem; }
+.tl-calc-pick button { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.55rem 0.2rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--muted); font: inherit; font-size: 0.72rem; font-weight: 600; cursor: pointer; line-height: 1.15; text-align: center; }
+.tl-calc-pick button span { font-size: 1.25rem; line-height: 1; }
+.tl-calc-pick button[aria-selected="true"] { color: var(--foreground); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.16); box-shadow: inset 0 0 0 1px var(--accent); }
+@media (max-width: 640px) { .tl-calc-pick { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tl-calc-title { margin-bottom: 0.9rem !important; }
+.tl-calc-display { border-radius: 14px; background: var(--input-bg); border: 1px solid var(--surface-border); padding: 0.25rem 0.25rem 0.55rem; }
+.tl-calc-display input { width: 100%; background: transparent !important; border: none !important; box-shadow: none !important; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tl-calc-preview { text-align: right; padding: 0 0.9rem; font-size: 1.05rem; font-weight: 700; color: var(--accent-light); font-variant-numeric: tabular-nums; min-height: 1.5em; overflow-wrap: anywhere; }
+.tl-calc-preview.is-error { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
+.tl-calc-modes { display: flex; gap: 0.4rem; margin: 0.75rem 0 0.5rem; }
+.tl-calc-modes .tl-chip { min-height: 34px; font-size: 0.82rem; }
+.tl-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.4rem; }
+.tl-keys.is-fn { margin-bottom: 0.4rem; }
+.tl-keys button { min-height: 54px; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 1.2rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.tl-keys.is-fn button { min-height: 40px; font-size: 0.9rem; background: var(--input-bg); }
+.tl-keys button:active { transform: scale(0.96); }
+.tl-keys button.is-op { color: var(--accent-light); background: var(--input-bg); }
+.tl-keys button.is-equals { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tl-link-btn { background: none; border: none; color: var(--accent-light); font: inherit; font-size: 0.82rem; cursor: pointer; padding: 0; }
+.tl-result-btn { cursor: pointer; font: inherit; color: inherit; text-align: left; width: 100%; }
+.tl-details { margin-top: 1rem; }
+.tl-details summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 0.9rem; }
+.tl-amort th:first-child, .tl-amort td:first-child { min-width: 50px !important; }
+.tl-amort td { text-align: right !important; padding-right: 0.7rem !important; }
+.tl-ohm.is-input input { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+.tl-ohm:not(.is-input) input { font-weight: 700; color: var(--accent-light); }
+.tl-price-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.6rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); }
+.tl-price-row input { flex: 1 1 5rem; min-width: 0; }
+.tl-price-row.is-best { border-color: rgba(var(--success-rgb), 0.7); background: rgba(var(--success-rgb), 0.08); }
+.tl-price-tag { width: 1.6rem; text-align: center; color: var(--muted); }
+.tl-price-per { flex: 1 1 6rem; display: flex; flex-direction: column; align-items: flex-end; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.tl-price-per small { font-size: 0.72rem; font-weight: 700; color: var(--success-light); }
