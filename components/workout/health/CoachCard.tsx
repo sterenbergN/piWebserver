@@ -4,14 +4,34 @@ import './health.css';
 import { useState } from 'react';
 import type { CoachInsight } from '@/lib/workout/health-coach';
 
-const ICON: Record<CoachInsight['category'], string> = { sleep: '🌙', recovery: '♥', body: '⚖', rest: '⏱', activity: '👣' };
+export const COACH_ICON: Record<CoachInsight['category'], string> = {
+  sleep: '🌙', recovery: '♥', body: '⚖', rest: '⏱', activity: '👣',
+  effort: '🔥', load: '🏋', progression: '📈', warmup: '☀', suggestions: '🎯', volume: '🧩',
+};
 const SHOWN = 4;
+
+/** One finding: what was noticed, what to do about it, and what it's based on. */
+export function CoachItem({ insight: i }: { insight: CoachInsight }) {
+  return (
+    <li className={`hc-coach-item is-${i.tone}`}>
+      <span className="hc-coach-icon" aria-hidden>{COACH_ICON[i.category]}</span>
+      <div>
+        <strong>{i.title}</strong>
+        <p>{i.detail}</p>
+        {i.steps?.length ? (
+          <ol className="hc-coach-steps">{i.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+        ) : i.tip ? <p className="hc-coach-tip"><span aria-hidden>→ </span>{i.tip}</p> : null}
+        <small>Based on {i.evidence}</small>
+      </div>
+    </li>
+  );
+}
 
 /**
  * What the health data says about your training: each finding with what to
  * do about it and what it's based on. Warnings first.
  */
-export default function CoachCard({ insights, building }: { insights: CoachInsight[]; building?: boolean }) {
+export default function CoachCard({ insights, building, more }: { insights: CoachInsight[]; building?: boolean; more?: React.ReactNode }) {
   const [all, setAll] = useState(false);
   const shown = all ? insights : insights.slice(0, SHOWN);
   return (
@@ -29,21 +49,14 @@ export default function CoachCard({ insights, building }: { insights: CoachInsig
       ) : (
         <ul className="hc-coach-list">
           {shown.map((i) => (
-            <li key={i.id} className={`hc-coach-item is-${i.tone}`}>
-              <span className="hc-coach-icon" aria-hidden>{ICON[i.category]}</span>
-              <div>
-                <strong>{i.title}</strong>
-                <p>{i.detail}</p>
-                {i.tip && <p className="hc-coach-tip"><span aria-hidden>→ </span>{i.tip}</p>}
-                <small>Based on {i.evidence}</small>
-              </div>
-            </li>
+            <CoachItem key={i.id} insight={i} />
           ))}
         </ul>
       )}
       {insights.length > SHOWN && (
         <button type="button" className="workout-text-btn" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show ${insights.length - SHOWN} more`}</button>
       )}
+      {more}
     </section>
   );
 }

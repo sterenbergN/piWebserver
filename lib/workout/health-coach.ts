@@ -11,11 +11,13 @@ import type { HealthDay, WorkoutHealth } from './health';
 
 export type CoachInsight = {
   id: string;
-  category: 'sleep' | 'recovery' | 'body' | 'rest' | 'activity';
+  category: 'sleep' | 'recovery' | 'body' | 'rest' | 'activity' | 'effort' | 'load' | 'progression' | 'warmup' | 'suggestions' | 'volume';
   tone: 'good' | 'warn' | 'info';
   title: string;
   detail: string;
   tip?: string;
+  /** Concrete things to do, in order (shown as a checklist instead of the tip). */
+  steps?: string[];
   /** What it's based on, e.g. "12 workouts with sleep data". */
   evidence: string;
   /** Higher shows first. */

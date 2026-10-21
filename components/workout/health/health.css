@@ -184,3 +184,5 @@
 .hc-coach-item .hc-coach-tip { color: var(--foreground); }
 .hc-coach-item small { font-size: 0.68rem; color: var(--muted); opacity: 0.85; }
 .hc-coach > .workout-text-btn { margin-top: 0.5rem; }
+.hc-coach-steps { margin: 0.1rem 0 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; line-height: 1.45; color: var(--foreground); }
+.hc-coach-steps li::marker { color: var(--accent-light); font-weight: 700; }

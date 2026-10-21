@@ -295,3 +295,9 @@
 .an-recap-banner > span[aria-hidden] { font-size: 1.6rem; line-height: 1; opacity: 0.85; }
 .an-recap-banner-text { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
 .an-recap-banner-text span { font-size: 0.8rem; opacity: 0.85; }
+
+/* Coach tab */
+.an-pending { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+.an-pending li { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.an-pending-bar { height: 6px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; }
+.an-pending-bar > div { height: 100%; border-radius: 999px; background: var(--accent); }

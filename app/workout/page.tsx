@@ -27,7 +27,8 @@ import DeloadSuggestion from '@/components/workout/DeloadSuggestion';
 import { clearWorkoutCache, fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { suggestDeload } from '@/lib/workout/deload';
 import { recoveryDeloadReason } from '@/lib/workout/health-coach';
-import type { HealthDay } from '@/lib/workout/health';
+import type { PublicHealth } from '@/lib/workout/health';
+import CoachHomeCard from '@/components/workout/CoachHomeCard';
 import { nextProgramDay, programDeloadDue, type Program } from '@/lib/workout/programs';
 import { exerciseLibrary } from '@/lib/workout/exercises';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
@@ -119,7 +120,8 @@ export default function WorkoutDashboard() {
   const chooseTodayIntensity = (value: number | null) => { saveTodayIntensity(value); setTodayIntensity(value); };
   const startIntensity = todayIntensity ?? user?.intensityFactor ?? 1.0;
   // Synced Apple Health days (from the health card), for a recovery-based deload reason.
-  const [healthDays, setHealthDays] = useState<Record<string, HealthDay> | null>(null);
+  const [homeHealth, setHomeHealth] = useState<PublicHealth | null>(null);
+  const healthDays = homeHealth?.days || null;
   const [deloadSnoozedUntil, setDeloadSnoozedUntil] = useState(0);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -556,8 +558,9 @@ export default function WorkoutDashboard() {
       </div>
 
       {!isDemo && user && (
-        <HealthHomeCard defaultIntensity={user.intensityFactor ?? 1.0} todayIntensity={todayIntensity} onUseIntensity={chooseTodayIntensity} onLoaded={(h) => setHealthDays(h.days)} />
+        <HealthHomeCard defaultIntensity={user.intensityFactor ?? 1.0} todayIntensity={todayIntensity} onUseIntensity={chooseTodayIntensity} onLoaded={setHomeHealth} />
       )}
+      {!isDemo && user && <CoachHomeCard history={history} health={homeHealth} />}
 
       <div className="workout-tile" style={{ cursor: 'pointer', transition: 'all 0.3s ease', marginTop: '1rem' }} onClick={() => setExpandAnalytics(!expandAnalytics)}>
         <div className="workout-flex-between">

@@ -22,6 +22,8 @@ import SummaryTab from './SummaryTab';
 import LiftsTab from './LiftsTab';
 import MusclesTab from './MusclesTab';
 import HistoryTab from './HistoryTab';
+import CoachTab from './CoachTab';
+import { sortInsights, trainingAdvice } from '@/lib/workout/training-coach';
 import HowItWorksSheet from './HowItWorksSheet';
 import ShareViewer from '@/components/workout/ShareViewer';
 import { renderRecap } from '@/lib/workout/recap-cards';
@@ -30,9 +32,10 @@ import PageHeader from '@/components/workout/PageHeader';
 import type { PublicHealth, WorkoutHealth } from '@/lib/workout/health';
 import { coachInsights } from '@/lib/workout/health-coach';
 
-type Tab = 'summary' | 'lifts' | 'muscles' | 'history';
+type Tab = 'summary' | 'coach' | 'lifts' | 'muscles' | 'history';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'summary', label: 'Summary' },
+  { key: 'coach', label: 'Coach' },
   { key: 'lifts', label: 'Lifts' },
   { key: 'muscles', label: 'Muscles' },
   { key: 'history', label: 'History' },
@@ -134,13 +137,22 @@ export default function AnalyticsPage() {
       daysSinceLast: last === null ? null : Math.floor((Date.now() - last) / 86_400_000),
       periodLabel,
     });
-    // The two most important findings from health data join the training insights.
-    const coach = health && Object.keys(health.days).length
-      ? coachInsights({ history: history as any, days: health.days, workoutHealth: health.workouts }).slice(0, 2)
-        .map((c): Insight => ({ tone: c.tone, text: `${c.title}. ${c.tip || c.detail}` }))
+    return { summary, stats, muscles, balance, insights, prs: recentPRs(stats, period, history) };
+  }, [history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
+
+  // The coach: training advice from the last 6 weeks, plus health findings when synced.
+  const coach = useMemo(() => {
+    const training = trainingAdvice(history as any);
+    const fromHealth = health && Object.keys(health.days).length
+      ? coachInsights({ history: history as any, days: health.days, workoutHealth: health.workouts })
       : [];
-    return { summary, stats, muscles, balance, insights: [...coach, ...insights], prs: recentPRs(stats, period, history) };
-  }, [health, history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
+    return { ...training, insights: sortInsights([...training.insights, ...fromHealth]) };
+  }, [history, health]);
+  // The two most important points lead the Summary insights.
+  const summaryInsights: Insight[] = [
+    ...coach.insights.filter((c) => c.tone !== 'good').slice(0, 2).map((c): Insight => ({ tone: c.tone, text: `${c.title}. ${c.steps?.[0] || c.tip || c.detail}` })),
+    ...data.insights,
+  ];
 
   // Engine view (fatigue, recovery, "vs plan" per lift) from the shared analytics builder.
   const engine = useMemo(() => buildAnalyticsData(history as any, lifts, calibrations), [history, lifts, calibrations]);
@@ -234,7 +246,7 @@ export default function AnalyticsPage() {
             <button key={t.key} type="button" aria-pressed={tab === t.key} onClick={() => chooseTab(t.key)}>{t.label}</button>
           ))}
         </nav>
-        {tab !== 'history' && (
+        {tab !== 'history' && tab !== 'coach' && (
           <div className="an-periods" role="radiogroup" aria-label="Period">
             {PERIODS.map((p) => (
               <button key={p.key} type="button" role="radio" aria-checked={period === p.key} onClick={() => choosePeriod(p.key)}>{p.label}</button>
@@ -265,7 +277,7 @@ export default function AnalyticsPage() {
             period={period}
             periodLabel={periodLabel}
             summary={data.summary}
-            insights={data.insights}
+            insights={summaryInsights}
             prs={data.prs}
             goals={goals}
             onOpenLift={(key) => { setOpenLift(key); chooseTab('lifts'); }}
@@ -282,6 +294,9 @@ export default function AnalyticsPage() {
             onOpen={setOpenLift}
             reviewFor={reviewFor}
           />
+        )}
+        {tab === 'coach' && (
+          <CoachTab insights={coach.insights} pending={coach.pending} fine={coach.fine} workouts={coach.workouts} healthConnected={!!health && (health.connected || Object.keys(health.days).length > 0)} />
         )}
         {tab === 'muscles' && (
           <MusclesTab

@@ -182,7 +182,11 @@ export default function HealthPage() {
           </section>
         )}
 
-        <CoachCard insights={coach} building={Object.keys(h?.days || {}).length < 21} />
+        <CoachCard
+          insights={coach}
+          building={Object.keys(h?.days || {}).length < 21}
+          more={<a href="/workout/analytics?tab=coach" className="workout-text-btn" style={{ display: 'block', marginTop: '0.6rem' }}>Training advice (effort, load, rest…) in Analytics › Coach</a>}
+        />
 
         <div className="an-periods" role="radiogroup" aria-label="Range">
           {RANGES.map((r) => (
