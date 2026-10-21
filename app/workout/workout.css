@@ -858,8 +858,8 @@
 .workout-action-tile span:first-child { font-size: 1.15rem; line-height: 1; }
 
 /* Home: more pages as a compact grid instead of a stack of full-width buttons */
-.workout-link-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; margin: 1rem 0 0.25rem; }
-@media (max-width: 360px) { .workout-link-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.workout-link-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.4rem; margin: 1rem 0 0.25rem; }
+@media (max-width: 360px) { .workout-link-grid { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 /* Home: one-tap "repeat a recent workout" buttons under Start */
 .workout-quick-starts { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0 0.25rem; }

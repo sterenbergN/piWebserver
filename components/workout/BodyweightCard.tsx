@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { bodyweightTrend } from '@/lib/workout/session-insights';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 
 type Entry = { id: string; weight: number; date: string };
 
@@ -12,12 +13,19 @@ export default function BodyweightCard({ onWeightChange }: { onWeightChange?: (w
   const [input, setInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Latest body fat from a smart scale via Apple Health, if synced.
+  const [bodyFat, setBodyFat] = useState<{ value: number; date: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/workout/bodyweight')
       .then((r) => r.json())
       .then((d) => { if (d.success) setEntries(d.entries); })
       .catch(() => {});
+    fetchWorkoutJson('/api/workout/health').then((res) => {
+      const days = res.data?.health?.days || {};
+      const latest = Object.keys(days).sort().reverse().find((k) => typeof days[k].bodyFat === 'number');
+      if (latest) setBodyFat({ value: days[latest].bodyFat, date: latest });
+    });
   }, []);
 
   const trend = bodyweightTrend(entries);
@@ -53,6 +61,7 @@ export default function BodyweightCard({ onWeightChange }: { onWeightChange?: (w
         {trend.latest && (
           <span style={{ fontSize: '0.85rem' }}>
             <strong>{trend.latest.weight}</strong> lbs
+            {bodyFat && <span className="workout-hint"> · {bodyFat.value}% fat</span>}
             {trend.change30 !== null && (
               <span className="workout-hint"> · {trend.change30 > 0 ? '+' : ''}{trend.change30} in 30d</span>
             )}

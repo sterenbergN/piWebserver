@@ -27,6 +27,7 @@ import ShareViewer from '@/components/workout/ShareViewer';
 import { renderRecap } from '@/lib/workout/recap-cards';
 import { buildRecap } from '@/lib/workout/recap';
 import PageHeader from '@/components/workout/PageHeader';
+import type { WorkoutHealth } from '@/lib/workout/health';
 
 type Tab = 'summary' | 'lifts' | 'muscles' | 'history';
 const TABS: { key: Tab; label: string }[] = [
@@ -52,6 +53,7 @@ export default function AnalyticsPage() {
   const [gymNames, setGymNames] = useState<Map<string, string>>(new Map());
   const [calibrations, setCalibrations] = useState<any[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [heart, setHeart] = useState<Record<string, WorkoutHealth>>({});
   const [tab, setTab] = useState<Tab>('summary');
   const [period, setPeriod] = useState<Period>('12w');
   const [openLift, setOpenLift] = useState<string | null>(null);
@@ -91,6 +93,8 @@ export default function AnalyticsPage() {
         if (getQueuedChanges(uid).length > 0 && navigator.onLine) flushChangeQueue(uid).catch(() => {});
         setCalibrations(calib.data?.calibrations || []);
         setGoals(goalsRes.data?.goals || []);
+        // Optional Apple Health heart rate per workout (shown in History).
+        fetchWorkoutJson('/api/workout/health').then((res) => { if (res.data?.success) setHeart(res.data.health.workouts || {}); });
       } else {
         setIsDemo(true);
         setUser(DEMO_USER);
@@ -295,6 +299,7 @@ export default function AnalyticsPage() {
               setToast({ text: queued ? 'Saved on this phone — it syncs when you’re back online.' : 'Workout updated.' });
             }}
             onOpenLift={(key) => { setOpenLift(key); chooseTab('lifts'); }}
+            heart={heart}
           />
         )}
       </>)}

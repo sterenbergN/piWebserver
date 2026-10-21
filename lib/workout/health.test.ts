@@ -1,0 +1,130 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { applyHealthImport, dayKeyAt, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+
+const NOW = Date.parse('2026-10-20T20:00:00-05:00');
+
+test('lists come as arrays or newline text, numbers tolerate units and separators', () => {
+  assert.deepEqual(parseList('1\n2\r\n\n3'), ['1', '2', '3']);
+  assert.deepEqual(parseList([1, 2]), ['1', '2']);
+  assert.deepEqual(parseList(undefined), []);
+  assert.equal(parseNumber('10,234'), 10234);
+  assert.equal(parseNumber('72 count/min'), 72);
+  assert.equal(parseNumber('0.18'), 0.18);
+  assert.ok(Number.isNaN(parseNumber('n/a')));
+});
+
+test('dates keep the phone time zone when ISO, and Shortcuts default text still parses', () => {
+  const iso = parseHealthDate('2026-10-19T23:30:00-05:00')!;
+  assert.equal(iso.offsetMin, -300);
+  assert.equal(dayKeyAt(iso.ms, iso.offsetMin), '2026-10-19'); // 04:30 UTC on the 20th
+  const plain = parseHealthDate('Oct 19, 2026 at 11:30 PM')!;
+  assert.equal(plain.offsetMin, null);
+  assert.equal(parseHealthDate('soon'), null);
+});
+
+test('steps, weight and body fat land on their days; re-sending replaces instead of adding', () => {
+  const body = {
+    stepsValues: '8123\n10,422',
+    stepsDates: '2026-10-18T00:00:00-05:00\n2026-10-19T00:00:00-05:00',
+    weightValues: '182.4\n181.9',
+    weightDates: '2026-10-19T06:40:00-05:00\n2026-10-19T07:10:00-05:00',
+    bodyFat: { values: ['0.186'], dates: ['2026-10-19T07:10:00-05:00'] },
+  };
+  const first = applyHealthImport(emptyUserHealth(), body, NOW);
+  assert.deepEqual(first.health.days['2026-10-18'], { steps: 8123 });
+  assert.deepEqual(first.health.days['2026-10-19'], { steps: 10422, weight: 181.9, bodyFat: 18.6 });
+  assert.deepEqual(first.weights, [{ date: '2026-10-19', weight: 181.9 }]);
+  const again = applyHealthImport(first.health, body, NOW);
+  assert.equal(again.health.days['2026-10-19'].steps, 10422);
+});
+
+test('weight in kg is converted and nonsense values are skipped', () => {
+  const { health } = applyHealthImport(emptyUserHealth(), { weightValues: '82.5\n4', weightDates: '2026-10-18T07:00:00Z\n2026-10-19T07:00:00Z', weightUnit: 'kg' }, NOW);
+  assert.equal(health.days['2026-10-18'].weight, 181.9);
+  assert.equal(health.days['2026-10-19'], undefined);
+});
+
+test('sleep stages become one night, overlapping phone and watch segments counted once', () => {
+  assert.equal(sleepStage('Asleep (Core)'), 'core');
+  assert.equal(sleepStage('REM'), 'rem');
+  assert.equal(sleepStage('In Bed'), 'inBed');
+  const { health } = applyHealthImport(emptyUserHealth(), {
+    sleepValues: 'In Bed\nCore\nDeep\nREM\nAwake\nAsleep',
+    sleepStarts: ['2026-10-19T22:45:00-05:00', '2026-10-19T23:00:00-05:00', '2026-10-20T01:00:00-05:00', '2026-10-20T02:00:00-05:00', '2026-10-20T03:00:00-05:00', '2026-10-19T23:00:00-05:00'].join('\n'),
+    sleepEnds: ['2026-10-20T06:45:00-05:00', '2026-10-20T01:00:00-05:00', '2026-10-20T02:00:00-05:00', '2026-10-20T03:00:00-05:00', '2026-10-20T03:10:00-05:00', '2026-10-20T06:30:00-05:00'].join('\n'),
+  }, NOW);
+  const night = health.days['2026-10-20'].sleep!;
+  // Core/deep/REM sit inside the phone's 23:00–06:30 "Asleep", so asleep is 7.5 h, not more.
+  assert.equal(night.asleepMin, 450);
+  assert.equal(night.deepMin, 60);
+  assert.equal(night.remMin, 60);
+  assert.equal(night.inBedMin, 480);
+  assert.equal(night.awakeMin, 10);
+});
+
+test('a night cut short by the upload range does not replace a fuller one', () => {
+  const full = applyHealthImport(emptyUserHealth(), { sleepValues: 'Core', sleepStarts: '2026-10-19T23:00:00-05:00', sleepEnds: '2026-10-20T06:00:00-05:00' }, NOW);
+  const partial = applyHealthImport(full.health, { sleepValues: 'Core', sleepStarts: '2026-10-20T04:00:00-05:00', sleepEnds: '2026-10-20T06:00:00-05:00' }, NOW);
+  assert.equal(partial.health.days['2026-10-20'].sleep!.asleepMin, 420);
+});
+
+const workout = {
+  id: 'w1',
+  timestamp: '2026-10-20T18:00:00-05:00',
+  durationSecs: 3600,
+  logs: { bench: [{ timestamp: Date.parse('2026-10-20T17:05:00-05:00') }] },
+};
+
+test('a workout runs from end minus duration (or its first set) to when it was saved', () => {
+  assert.deepEqual(workoutWindow(workout), [Date.parse('2026-10-20T17:00:00-05:00'), Date.parse('2026-10-20T18:00:00-05:00')]);
+  assert.deepEqual(workoutWindow({ timestamp: '2026-10-20T18:00:00Z', logs: { a: [{ timestamp: Date.parse('2026-10-20T17:30:00Z') }] } }), [Date.parse('2026-10-20T17:29:00Z'), Date.parse('2026-10-20T18:00:00Z')]);
+});
+
+test('heart rate and active energy during the workout are summarised', () => {
+  const t0 = Date.parse('2026-10-20T17:00:00-05:00') / 1000;
+  const { health } = applyHealthImport(emptyUserHealth(), {
+    heartRateValues: [80, 120, 150, 130, 110, 140, 90].join('\n'),
+    heartRateDates: [-600, 0, 60, 600, 1200, 2400, 7200].map((s) => new Date((t0 + s) * 1000).toISOString()).join('\n'),
+    activeEnergyValues: '100\n100',
+    activeEnergyStarts: `${new Date((t0 - 1800) * 1000).toISOString()}\n${new Date((t0 + 1800) * 1000).toISOString()}`,
+    activeEnergyEnds: `${new Date((t0 + 1800) * 1000).toISOString()}\n${new Date((t0 + 1900) * 1000).toISOString()}`,
+  }, NOW);
+  const result = workoutHealth(workout, health)!;
+  assert.equal(result.avgHr, 130); // 120, 150, 130, 110, 140 — not the 80 before or 90 after
+  assert.equal(result.maxHr, 150);
+  assert.equal(result.kcal, 150); // half of the first sample + all of the second
+  assert.deepEqual(result.trace?.[0], [0, 120]);
+  assert.equal(refreshWorkoutHealth(health, [workout], NOW), true);
+  assert.equal(refreshWorkoutHealth(health, [workout], NOW), false);
+});
+
+test('a watch session sets the window and its calories win', () => {
+  const { health } = applyHealthImport(emptyUserHealth(), {
+    workoutsNames: 'Traditional Strength Training',
+    workoutsStarts: '2026-10-20T16:55:00-05:00',
+    workoutsEnds: '2026-10-20T17:58:00-05:00',
+    workoutsCalories: '412',
+  }, NOW);
+  const result = workoutHealth(workout, health)!;
+  assert.equal(result.watch, true);
+  assert.equal(result.kcal, 412);
+  assert.equal(result.start, new Date('2026-10-20T16:55:00-05:00').toISOString());
+});
+
+test('raw samples older than two weeks are dropped', () => {
+  const { health } = applyHealthImport(emptyUserHealth(), { heartRateValues: '70\n71', heartRateDates: '2026-09-01T10:00:00Z\n2026-10-20T10:00:00Z' }, NOW);
+  assert.equal(health.hr.length, 1);
+});
+
+test('resting heart rate and HRV are averaged per day', () => {
+  const { health, summary } = applyHealthImport(emptyUserHealth(), {
+    restingHeartRateValues: '52\n54',
+    restingHeartRateDates: '2026-10-18T08:00:00-05:00\n2026-10-19T08:00:00-05:00',
+    hrvValues: '40\n60\n55',
+    hrvDates: '2026-10-19T02:00:00-05:00\n2026-10-19T04:00:00-05:00\n2026-10-18T03:00:00-05:00',
+  }, NOW);
+  assert.equal(health.days['2026-10-18'].restingHr, 52);
+  assert.equal(health.days['2026-10-19'].hrv, 50);
+  assert.equal(summary.hrv, 2);
+});

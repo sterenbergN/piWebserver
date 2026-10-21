@@ -4,6 +4,7 @@ import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { hashPassword } from '@/lib/workout/passwords';
 import { loadUsersData, normalizeWorkoutUser, toSafeUser, updateUsersData } from '@/lib/workout/users';
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
+import { deleteUserHealth } from '@/lib/workout/health-store';
 
 // Only system admins should be able to create, edit, and delete workout users.
 async function requireAdmin() {
@@ -102,6 +103,7 @@ export async function DELETE(request: Request) {
     await updateUsersData((data) => {
       data.users = data.users.filter((u) => u.id !== id);
     });
+    await deleteUserHealth(id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

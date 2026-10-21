@@ -1,0 +1,429 @@
+// Optional Apple Health data, sent from the phone by an iOS Shortcut (or any
+// app that can POST JSON): daily steps, sleep, weight and body fat, plus heart
+// rate and active energy that are matched to logged workouts. Nothing else in
+// the tracker needs it; it only adds detail where it exists.
+//
+// Shortcuts work in lists, so each metric arrives as columns: `values` and
+// `dates` (or `starts`/`ends`), each a JSON array or newline-separated text,
+// e.g. { "stepsValues": "8123\n10422", "stepsDates": "2026-10-19T00:00:00-05:00\n…" }.
+// The nested form { "steps": { "values": …, "dates": … } } works too.
+
+export type SleepNight = {
+  asleepMin: number;
+  inBedMin: number;
+  awakeMin: number;
+  deepMin: number;
+  coreMin: number;
+  remMin: number;
+  /** ISO times of falling asleep and waking. */
+  bedtime: string;
+  wake: string;
+};
+
+export type HealthDay = {
+  steps?: number;
+  sleep?: SleepNight;
+  weight?: number;
+  bodyFat?: number;
+  /** Resting heart rate (bpm) and heart rate variability (SDNN, ms): the day's average. */
+  restingHr?: number;
+  hrv?: number;
+};
+
+/** A workout session recorded by the watch (if the sender can read workouts). */
+export type WatchWorkout = { start: string; end: string; name?: string; kcal?: number };
+
+/** Heart rate and calories during one logged workout (keyed by its history id). */
+export type WorkoutHealth = {
+  start: string;
+  end: string;
+  avgHr?: number;
+  maxHr?: number;
+  minHr?: number;
+  kcal?: number;
+  /** Heart rate every 30 seconds: [seconds from start, bpm]. */
+  trace?: [number, number][];
+  /** A watch session matched this workout. */
+  watch?: boolean;
+};
+
+export type SyncSummary = { at: string; steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number; heartRate: number; activeEnergy: number; workouts: number };
+
+export type UserHealth = {
+  keyHash?: string;
+  keyHint?: string;
+  keyCreatedAt?: string;
+  lastSync?: SyncSummary;
+  days: Record<string, HealthDay>;
+  /** Recent heart rate samples [epoch seconds, bpm], kept RAW_DAYS for matching to workouts. */
+  hr: [number, number][];
+  /** Recent active energy samples [start s, end s, kcal]. */
+  energy: [number, number, number][];
+  watchWorkouts: WatchWorkout[];
+  workouts: Record<string, WorkoutHealth>;
+};
+
+export type HealthStore = { users: Record<string, UserHealth> };
+
+export const HEALTH_FILE = 'health.json';
+/** How long raw heart rate / energy samples are kept (a workout saved late still gets matched). */
+export const RAW_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+export function emptyUserHealth(): UserHealth {
+  return { days: {}, hr: [], energy: [], watchWorkouts: [], workouts: {} };
+}
+
+// ─── Parsing what the phone sends ────────────────────────────────────────────
+
+/** A JSON array, newline-separated text, or a single value → list of strings. */
+export function parseList(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item ?? '').trim());
+  return String(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+/** "10,234", "72 count/min", "0.18" → number (NaN when there's none). */
+export function parseNumber(text: string): number {
+  const match = text.replace(/(\d),(?=\d{3}(\D|$))/g, '$1').match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+}
+
+type ParsedDate = { ms: number; offsetMin: number | null };
+
+/**
+ * ISO 8601 (best: keeps the phone's time zone) or Shortcuts' default
+ * "Oct 20, 2026 at 7:15 AM" (read in the server's time zone).
+ */
+export function parseHealthDate(text: string): ParsedDate | null {
+  const clean = text.trim().replace(/ /g, ' ');
+  if (!clean) return null;
+  let ms = Date.parse(clean);
+  if (Number.isNaN(ms)) ms = Date.parse(clean.replace(/ at /i, ' '));
+  if (Number.isNaN(ms)) return null;
+  const zone = clean.match(/T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|([+-])(\d{2}):?(\d{2}))$/);
+  const offsetMin = !zone ? null : zone[1] === 'Z' ? 0 : (zone[2] === '-' ? -1 : 1) * (Number(zone[3]) * 60 + Number(zone[4]));
+  return { ms, offsetMin };
+}
+
+/** The calendar day (YYYY-MM-DD) a moment falls on where the phone was. */
+export function dayKeyAt(ms: number, offsetMin: number | null): string {
+  if (offsetMin === null) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  return new Date(ms + offsetMin * 60_000).toISOString().slice(0, 10);
+}
+
+type Column = { values: string[]; starts: string[]; ends: string[]; unit: string };
+
+function column(body: Record<string, any>, name: string): Column {
+  const nested = body[name] && typeof body[name] === 'object' && !Array.isArray(body[name]) ? body[name] : {};
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = nested[key] ?? body[`${name}${key[0].toUpperCase()}${key.slice(1)}`];
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  };
+  return {
+    values: parseList(pick('values', 'names')),
+    starts: parseList(pick('starts', 'dates')),
+    ends: parseList(pick('ends')),
+    unit: String(pick('unit') ?? '').toLowerCase(),
+  };
+}
+
+type Sample = { value: string; start: ParsedDate; end: ParsedDate | null };
+
+function samples(col: Column): Sample[] {
+  const out: Sample[] = [];
+  const count = Math.min(col.values.length, col.starts.length);
+  for (let i = 0; i < count; i++) {
+    const start = parseHealthDate(col.starts[i]);
+    if (!start) continue;
+    out.push({ value: col.values[i], start, end: col.ends[i] ? parseHealthDate(col.ends[i]) : null });
+  }
+  return out;
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+// ─── Sleep ───────────────────────────────────────────────────────────────────
+
+type Stage = 'deep' | 'core' | 'rem' | 'asleep' | 'awake' | 'inBed';
+
+export function sleepStage(value: string): Stage | null {
+  const v = value.toLowerCase();
+  if (v.includes('deep')) return 'deep';
+  if (/\brem\b/.test(v)) return 'rem';
+  if (v.includes('core') || v.includes('light')) return 'core';
+  if (v.includes('awake')) return 'awake';
+  if (v.includes('bed')) return 'inBed';
+  if (v.includes('asleep') || v.includes('unspecified') || v.includes('sleep')) return 'asleep';
+  return null;
+}
+
+/** Total minutes covered by intervals, counting overlaps (watch + phone) once. */
+function unionMinutes(intervals: [number, number][]): number {
+  const sorted = intervals.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let current: [number, number] | null = null;
+  for (const [a, b] of sorted) {
+    if (!current || a > current[1]) {
+      if (current) total += current[1] - current[0];
+      current = [a, b];
+    } else current[1] = Math.max(current[1], b);
+  }
+  if (current) total += current[1] - current[0];
+  return Math.round(total / 60_000);
+}
+
+/** Sleep segments grouped into nights, each filed under the day you woke up. */
+export function sleepNights(segments: { stage: Stage; start: number; end: number; offsetMin: number | null }[]): Record<string, SleepNight> {
+  const byNight = new Map<string, typeof segments>();
+  for (const seg of segments) {
+    // Noon-to-noon: a night that starts at 11pm or 1am counts for the next/same morning.
+    const key = dayKeyAt(seg.start + 12 * 3_600_000, seg.offsetMin);
+    byNight.set(key, [...(byNight.get(key) || []), seg]);
+  }
+  const nights: Record<string, SleepNight> = {};
+  for (const [key, segs] of byNight) {
+    const of = (...stages: Stage[]) => segs.filter((s) => stages.includes(s.stage)).map((s) => [s.start, s.end] as [number, number]);
+    const asleep = of('deep', 'core', 'rem', 'asleep');
+    if (asleep.length === 0) continue;
+    const bedtime = Math.min(...asleep.map(([a]) => a));
+    const wake = Math.max(...asleep.map(([, b]) => b));
+    const inBed = of('inBed');
+    nights[key] = {
+      asleepMin: unionMinutes(asleep),
+      inBedMin: inBed.length ? unionMinutes([...inBed, ...asleep]) : Math.round((wake - bedtime) / 60_000),
+      awakeMin: unionMinutes(of('awake')),
+      deepMin: unionMinutes(of('deep')),
+      coreMin: unionMinutes(of('core')),
+      remMin: unionMinutes(of('rem')),
+      bedtime: new Date(bedtime).toISOString(),
+      wake: new Date(wake).toISOString(),
+    };
+  }
+  return nights;
+}
+
+// ─── Applying an upload ──────────────────────────────────────────────────────
+
+export type ImportResult = { health: UserHealth; summary: SyncSummary; weights: { date: string; weight: number }[] };
+
+/**
+ * Merge one upload into a user's health data. Re-sending the same days is
+ * safe: each day's value is replaced, and samples are de-duplicated by time.
+ */
+export function applyHealthImport(current: UserHealth, body: Record<string, any>, now = Date.now()): ImportResult {
+  const health: UserHealth = { ...emptyUserHealth(), ...current, days: { ...current.days } };
+  const day = (key: string) => (health.days[key] = { ...health.days[key] });
+  const summary: SyncSummary = { at: new Date(now).toISOString(), steps: 0, sleep: 0, weight: 0, bodyFat: 0, restingHr: 0, hrv: 0, heartRate: 0, activeEnergy: 0, workouts: 0 };
+
+  // Steps: one total per day (send them grouped by day; ungrouped samples are added up).
+  const steps = new Map<string, number>();
+  for (const s of samples(column(body, 'steps'))) {
+    const n = parseNumber(s.value);
+    if (!(n >= 0)) continue;
+    const key = dayKeyAt(s.start.ms, s.start.offsetMin);
+    steps.set(key, (steps.get(key) || 0) + n);
+  }
+  for (const [key, total] of steps) {
+    if (total > 200_000) continue;
+    day(key).steps = Math.round(total);
+    summary.steps++;
+  }
+
+  // Weight and body fat: the day's last reading.
+  const lastPerDay = (name: string, convert: (n: number, unit: string) => number | null) => {
+    const col = column(body, name);
+    const latest = new Map<string, { ms: number; value: number }>();
+    for (const s of samples(col)) {
+      const value = convert(parseNumber(s.value), col.unit || s.value.toLowerCase());
+      if (value === null) continue;
+      const key = dayKeyAt(s.start.ms, s.start.offsetMin);
+      if (!latest.has(key) || latest.get(key)!.ms <= s.start.ms) latest.set(key, { ms: s.start.ms, value });
+    }
+    return latest;
+  };
+  const weights = lastPerDay('weight', (n, unit) => {
+    const lbs = /kg|kilo/.test(unit) ? n * 2.20462 : n;
+    return lbs >= 50 && lbs <= 800 ? round1(lbs) : null;
+  });
+  for (const [key, { value }] of weights) { day(key).weight = value; summary.weight++; }
+  const fat = lastPerDay('bodyFat', (n) => {
+    const pct = n > 0 && n <= 1 ? n * 100 : n; // Health stores 0.18 for 18%
+    return pct >= 2 && pct <= 70 ? round1(pct) : null;
+  });
+  for (const [key, { value }] of fat) { day(key).bodyFat = value; summary.bodyFat++; }
+
+  // Resting heart rate and HRV: the day's average (one reading or several).
+  const dailyAverage = (name: string, min: number, max: number, set: (key: string, value: number) => void) => {
+    const perDay = new Map<string, number[]>();
+    for (const s of samples(column(body, name))) {
+      const n = parseNumber(s.value);
+      if (!(n >= min && n <= max)) continue;
+      const key = dayKeyAt(s.start.ms, s.start.offsetMin);
+      perDay.set(key, [...(perDay.get(key) || []), n]);
+    }
+    for (const [key, list] of perDay) set(key, Math.round(list.reduce((a, b) => a + b, 0) / list.length));
+    return perDay.size;
+  };
+  summary.restingHr = dailyAverage('restingHeartRate', 25, 150, (key, v) => { day(key).restingHr = v; });
+  summary.hrv = dailyAverage('hrv', 3, 300, (key, v) => { day(key).hrv = v; });
+
+  // Sleep: rebuild each night from its segments. A night cut off by the
+  // edge of the upload's date range never replaces a longer one already saved.
+  const segments = samples(column(body, 'sleep')).flatMap((s) => {
+    const stage = sleepStage(s.value);
+    return stage && s.end ? [{ stage, start: s.start.ms, end: s.end.ms, offsetMin: s.start.offsetMin }] : [];
+  });
+  for (const [key, night] of Object.entries(sleepNights(segments))) {
+    const saved = health.days[key]?.sleep;
+    if (saved && saved.asleepMin > night.asleepMin) continue;
+    day(key).sleep = night;
+    summary.sleep++;
+  }
+
+  // Heart rate and active energy: kept raw for a while, for matching to workouts.
+  const cutoff = Math.floor((now - RAW_DAYS * DAY_MS) / 1000);
+  const hr = new Map(health.hr.map(([t, bpm]) => [t, bpm]));
+  for (const s of samples(column(body, 'heartRate'))) {
+    const bpm = parseNumber(s.value);
+    if (!(bpm >= 25 && bpm <= 250)) continue;
+    hr.set(Math.floor(s.start.ms / 1000), Math.round(bpm));
+    summary.heartRate++;
+  }
+  health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
+
+  const energyCol = column(body, 'activeEnergy');
+  const energy = new Map(health.energy.map((e) => [e[0], e]));
+  for (const s of samples(energyCol)) {
+    let kcal = parseNumber(s.value);
+    if (/kj|kilojoule/.test(energyCol.unit)) kcal /= 4.184;
+    if (!(kcal >= 0 && kcal <= 2000)) continue;
+    const start = Math.floor(s.start.ms / 1000);
+    const end = s.end ? Math.max(start, Math.floor(s.end.ms / 1000)) : start + 60;
+    energy.set(start, [start, end, Math.round(kcal * 100) / 100]);
+    summary.activeEnergy++;
+  }
+  health.energy = [...energy.values()].filter(([, end]) => end >= cutoff).sort((a, b) => a[0] - b[0]);
+
+  // Watch workouts, if the sender can read them (`workoutsStarts`, `workoutsEnds`, names, calories).
+  const wcol = column(body, 'workouts');
+  const kcals = parseList(body.workouts?.calories ?? body.workoutsCalories);
+  const watch = new Map(health.watchWorkouts.map((w) => [w.start, w]));
+  wcol.starts.forEach((startText, i) => {
+    const start = parseHealthDate(startText);
+    const end = wcol.ends[i] ? parseHealthDate(wcol.ends[i]) : null;
+    if (!start || !end || end.ms <= start.ms || end.ms - start.ms > 6 * 3_600_000) return;
+    const kcal = kcals[i] ? parseNumber(kcals[i]) : NaN;
+    const entry: WatchWorkout = { start: new Date(start.ms).toISOString(), end: new Date(end.ms).toISOString() };
+    if (wcol.values[i]) entry.name = wcol.values[i].slice(0, 80);
+    if (kcal >= 0 && kcal < 5000) entry.kcal = Math.round(kcal);
+    watch.set(entry.start, entry);
+    summary.workouts++;
+  });
+  health.watchWorkouts = [...watch.values()].sort((a, b) => a.start.localeCompare(b.start)).slice(-1000);
+
+  health.lastSync = summary;
+  return { health, summary, weights: [...weights.entries()].map(([date, { value }]) => ({ date, weight: value })) };
+}
+
+// ─── Matching to logged workouts ─────────────────────────────────────────────
+
+type LoggedWorkout = { id?: string; timestamp?: string; durationSecs?: number; logs?: Record<string, { timestamp?: number }[]> };
+
+/** When a logged workout ran: from its start (end − duration, or the first set) to when it was saved. */
+export function workoutWindow(workout: LoggedWorkout): [number, number] | null {
+  const end = Date.parse(workout.timestamp || '');
+  if (Number.isNaN(end)) return null;
+  const setTimes = Object.values(workout.logs || {}).flat().map((s) => Number(s?.timestamp)).filter((t) => t > 0 && t <= end);
+  const fromDuration = workout.durationSecs ? end - workout.durationSecs * 1000 : end;
+  const start = Math.min(fromDuration, setTimes.length ? Math.min(...setTimes) - 60_000 : end);
+  return start < end ? [start, end] : null;
+}
+
+const overlap = (a: [number, number], b: [number, number]) => Math.max(0, Math.min(a[1], b[1]) - Math.max(a[0], b[0]));
+
+/** Heart rate and calories for one logged workout, or null if nothing was recorded then. */
+export function workoutHealth(workout: LoggedWorkout, health: Pick<UserHealth, 'hr' | 'energy' | 'watchWorkouts'>): WorkoutHealth | null {
+  let window = workoutWindow(workout);
+  if (!window) return null;
+  // A watch session covering most of the workout gives the real start and end.
+  const session = health.watchWorkouts.find((w) => {
+    const span: [number, number] = [Date.parse(w.start), Date.parse(w.end)];
+    return overlap(span, window!) > 0.5 * Math.min(span[1] - span[0], window![1] - window![0]);
+  });
+  if (session) window = [Date.parse(session.start), Date.parse(session.end)];
+  const [from, to] = window;
+
+  const beats = health.hr.filter(([t]) => t * 1000 >= from && t * 1000 <= to);
+  const result: WorkoutHealth = { start: new Date(from).toISOString(), end: new Date(to).toISOString() };
+  if (session) result.watch = true;
+  if (beats.length >= 5) {
+    const bpms = beats.map(([, bpm]) => bpm);
+    result.avgHr = Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length);
+    result.maxHr = Math.max(...bpms);
+    result.minHr = Math.min(...bpms);
+    const buckets = new Map<number, number[]>();
+    for (const [t, bpm] of beats) {
+      const bucket = Math.floor((t * 1000 - from) / 30_000) * 30;
+      buckets.set(bucket, [...(buckets.get(bucket) || []), bpm]);
+    }
+    result.trace = [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([sec, list]) => [sec, Math.round(list.reduce((a, b) => a + b, 0) / list.length)]);
+  }
+  if (session?.kcal !== undefined) {
+    result.kcal = session.kcal;
+  } else {
+    // Energy samples overlapping the workout, counted for the part inside it.
+    let kcal = 0;
+    let any = false;
+    for (const [s, e, value] of health.energy) {
+      const span: [number, number] = [s * 1000, Math.max(e * 1000, s * 1000 + 1)];
+      const inside = overlap(span, window);
+      if (inside <= 0) continue;
+      any = true;
+      kcal += value * (inside / (span[1] - span[0]));
+    }
+    if (any) result.kcal = Math.round(kcal);
+  }
+  return result.avgHr !== undefined || result.kcal !== undefined ? result : null;
+}
+
+/**
+ * Match recent logged workouts to the samples on hand (a workout saved after
+ * the last upload is matched by the next one, or when the page loads).
+ * Returns true if anything changed.
+ */
+export function refreshWorkoutHealth(health: UserHealth, history: LoggedWorkout[], now = Date.now()): boolean {
+  let changed = false;
+  for (const workout of history) {
+    const at = Date.parse(workout.timestamp || '');
+    if (!workout.id || !(at >= now - RAW_DAYS * DAY_MS)) continue;
+    const result = workoutHealth(workout, health);
+    if (!result) continue;
+    if (JSON.stringify(health.workouts[workout.id]) === JSON.stringify(result)) continue;
+    health.workouts = { ...health.workouts, [workout.id]: result };
+    changed = true;
+  }
+  return changed;
+}
+
+/** What the page gets: everything except the key and the raw samples. */
+export function publicHealth(health: UserHealth | undefined) {
+  const h = health || emptyUserHealth();
+  return {
+    connected: !!h.keyHash,
+    keyHint: h.keyHint || null,
+    keyCreatedAt: h.keyCreatedAt || null,
+    lastSync: h.lastSync || null,
+    days: h.days,
+    workouts: h.workouts,
+    watchWorkouts: h.watchWorkouts.slice(-60),
+  };
+}
+
+export type PublicHealth = ReturnType<typeof publicHealth>;

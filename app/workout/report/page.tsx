@@ -6,6 +6,8 @@ import { monthlyStrength, weeklyReport, type ReportWorkout } from '@/lib/workout
 import { DEMO_HISTORY } from '@/lib/workout/demo-data';
 import PageHeader from '@/components/workout/PageHeader';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
+import { formatMinutes, lastKeys, localKey, rangeStats } from '@/lib/workout/health-insights';
+import type { PublicHealth } from '@/lib/workout/health';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const fmt = (n: number) => n.toLocaleString();
@@ -39,13 +41,15 @@ export default function ReportPage() {
   const [view, setView] = useState<'week' | 'month'>('week');
   const [offset, setOffset] = useState(0); // 0 = this week/month, 1 = previous, ...
   const [copied, setCopied] = useState(false);
+  const [health, setHealth] = useState<PublicHealth | null>(null);
 
   useEffect(() => {
     (async () => {
       const { data: auth } = await fetchWorkoutJson('/api/workout/auth');
       if (!auth?.authenticated) { setIsDemo(true); setHistory(DEMO_HISTORY as unknown as ReportWorkout[]); return; }
-      const { data: hist } = await fetchWorkoutJson('/api/workout/history');
+      const [{ data: hist }, { data: h }] = await Promise.all([fetchWorkoutJson('/api/workout/history'), fetchWorkoutJson('/api/workout/health')]);
       setHistory(hist?.history || []);
+      if (h?.success && Object.keys(h.health.days || {}).length) setHealth(h.health);
     })();
   }, []);
 
@@ -58,6 +62,16 @@ export default function ReportPage() {
 
   const week = useMemo(() => (history ? weeklyReport(history, anchor) : null), [history, anchor]);
   const month = useMemo(() => (history ? monthlyStrength(history, anchor) : null), [history, anchor]);
+
+  // Sleep, steps, resting HR and weight that week (Apple Health), plus Watch calories in its workouts.
+  const body = useMemo(() => {
+    if (!health || !week) return null;
+    const keys = lastKeys(localKey(new Date(week.weekEnd)), 7);
+    const stats = rangeStats(health.days, keys);
+    const inWeek = (history || []).filter((w: any) => w.id && keys.includes(localKey(new Date(w.timestamp))) && health.workouts[w.id]?.kcal !== undefined);
+    const kcal = inWeek.reduce((sum: number, w: any) => sum + (health.workouts[w.id].kcal || 0), 0);
+    return { stats, kcal, kcalWorkouts: inWeek.length };
+  }, [health, week, history]);
 
   if (!history || !week || !month) return <p style={{ color: 'var(--muted)' }}>Building your report…</p>;
 
@@ -72,6 +86,7 @@ export default function ReportPage() {
         `${week.current.sessions} workouts · ${week.current.sets} sets · ${fmt(week.current.volume)} lb moved`,
         week.prs.length ? `🏆 PRs: ${week.prs.map((p) => `${p.lift} ${p.weight}×${p.reps}`).join(', ')}` : '',
         `🔥 ${week.weekStreak}-week streak`,
+        body?.stats.sleepMin != null ? `😴 ${formatMinutes(body.stats.sleepMin)} sleep a night${body.stats.steps != null ? ` · 👣 ${fmt(body.stats.steps)} steps a day` : ''}` : '',
       ].filter(Boolean).join('\n')
     : [
         `💪 Strength ${title}`,
@@ -154,6 +169,29 @@ export default function ReportPage() {
               </div>
             ))}
           </div>
+
+          {body && (
+            <div className="workout-tile">
+              <div className="workout-flex-between" style={{ marginBottom: '0.75rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem' }}>Recovery &amp; activity</h3>
+                <Link href="/workout/health" className="workout-text-btn">Health ›</Link>
+              </div>
+              <div className="workout-grid-2" style={{ gap: '0.5rem' }}>
+                {[
+                  { label: 'Sleep a night', value: body.stats.sleepMin != null ? formatMinutes(body.stats.sleepMin) : '—' },
+                  { label: 'Steps a day', value: body.stats.steps != null ? fmt(body.stats.steps) : '—' },
+                  { label: 'Resting HR', value: body.stats.restingHr != null ? `${body.stats.restingHr} bpm` : '—' },
+                  { label: 'Weight', value: body.stats.weight ? `${body.stats.weight.latest} lb${body.stats.weight.change ? ` (${body.stats.weight.change > 0 ? '+' : ''}${body.stats.weight.change})` : ''}` : '—' },
+                ].map((item) => (
+                  <div key={item.label} style={{ padding: '0.6rem 0.7rem', borderRadius: 10, background: 'var(--input-bg)' }}>
+                    <div className="workout-hint" style={{ fontSize: '0.68rem' }}>{item.label}</div>
+                    <strong style={{ fontSize: '1rem' }}>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+              {body.kcalWorkouts > 0 && <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>⌚ {fmt(body.kcal)} kcal burned across {body.kcalWorkouts} workout{body.kcalWorkouts === 1 ? '' : 's'} (Apple Watch)</p>}
+            </div>
+          )}
 
           {week.topLifts.length > 0 && (
             <div className="workout-tile">

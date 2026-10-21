@@ -11,6 +11,8 @@ import { compact } from './charts';
 import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { cardDataForWorkout, renderWorkoutCard, type CardFormat } from '@/lib/workout/share-card';
 import ShareViewer from '@/components/workout/ShareViewer';
+import { HeartRateChart, setMarks } from '@/components/workout/health/HealthCharts';
+import type { WorkoutHealth } from '@/lib/workout/health';
 import EditWorkoutSheet from './EditWorkoutSheet';
 import CompareSheet from './CompareSheet';
 
@@ -27,6 +29,8 @@ type HistoryTabProps = {
   onUpdated: (workout: Workout, queued?: boolean) => void;
   /** Open an exercise on the Lifts tab. */
   onOpenLift: (key: string) => void;
+  /** Heart rate and calories from Apple Health, by workout id (when synced). */
+  heart?: Record<string, WorkoutHealth>;
 };
 
 type View = 'list' | 'calendar';
@@ -51,7 +55,7 @@ function stats(w: Workout) {
 }
 
 /** Every saved workout, newest first, grouped by week or on a calendar; tap one for its sets. */
-export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId, onDelete, onUpdated, onOpenLift }: HistoryTabProps) {
+export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId, onDelete, onUpdated, onOpenLift, heart = {} }: HistoryTabProps) {
   const [query, setQuery] = useState('');
   const [gym, setGym] = useState('');
   const [type, setType] = useState('');
@@ -126,6 +130,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
     const id = w.id || w.timestamp;
     const s = stats(w);
     const isOpen = open === id;
+    const hr = w.id ? heart[w.id] : undefined;
     return (
       <div key={id} className={`an-workout${isOpen ? ' is-open' : ''}`}>
         <button type="button" className="an-workout-head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : id)}>
@@ -136,6 +141,8 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
               {gymOf(w, gymNames) ? ` · ${gymOf(w, gymNames)}` : ''}
               {` · ${s.sets} sets · ${compact(s.volume)} lb`}
               {w.durationSecs ? ` · ${Math.round(w.durationSecs / 60)} min` : ''}
+              {hr?.avgHr !== undefined ? ` · ♥ ${hr.avgHr}` : ''}
+              {hr?.kcal !== undefined ? ` · ${hr.kcal} kcal` : ''}
             </span>
           </span>
           <span className={`workout-chevron${isOpen ? ' is-open' : ''}`} aria-hidden>›</span>
@@ -143,6 +150,15 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
         {isOpen && (
           <div className="an-workout-body animate-fade-in">
             {w.notes && <p className="an-workout-notes">📝 {w.notes}</p>}
+            {hr?.trace && hr.trace.length > 1 && (
+              <div className="an-workout-heart">
+                <div className="workout-flex-between" style={{ gap: '0.5rem' }}>
+                  <strong style={{ fontSize: '0.82rem' }}>Heart rate</strong>
+                  <span className="workout-hint">avg {hr.avgHr} · max {hr.maxHr}{hr.kcal !== undefined ? ` · ${hr.kcal} kcal` : ''}</span>
+                </div>
+                <HeartRateChart trace={hr.trace} sets={setMarks(w as any, hr.start)} avg={hr.avgHr} height={130} />
+              </div>
+            )}
             {Object.entries(w.logs || {}).map(([liftId, sets]) => {
               const valid = (sets || []).filter((set) => Number(set.reps) > 0);
               const best = valid.reduce((m, set) => Math.max(m, calcAverage1RM(Number(set.weight) || 0, Number(set.reps))), 0);

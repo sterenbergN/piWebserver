@@ -57,3 +57,20 @@ export function playBeep(ctx: AudioContext | null, count = 2) {
 export function vibrate(pattern: number | number[]) {
   if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(pattern);
 }
+
+/** Starting intensity chosen for today only (e.g. from a low readiness day); null if none. */
+export function readTodayIntensity(): number | null {
+  try {
+    const saved = JSON.parse(readPref('workout:todayIntensity') || 'null');
+    const d = new Date();
+    const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    return saved && saved.date === today && typeof saved.value === 'number' ? saved.value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveTodayIntensity(value: number | null) {
+  const d = new Date();
+  savePref('workout:todayIntensity', JSON.stringify(value === null ? null : { date: `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`, value }));
+}

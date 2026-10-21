@@ -28,7 +28,8 @@ import { clearWorkoutCache, fetchWorkoutJson } from '@/lib/workout/offline-cache
 import { suggestDeload } from '@/lib/workout/deload';
 import { nextProgramDay, programDeloadDue, type Program } from '@/lib/workout/programs';
 import { exerciseLibrary } from '@/lib/workout/exercises';
-import { readPref, savePref } from '@/lib/workout/device-prefs';
+import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
+import HealthHomeCard from '@/components/workout/health/HealthHomeCard';
 import type { Goal } from '@/lib/workout/goals';
 import { useSitePopup } from '@/components/SitePopup';
 
@@ -110,6 +111,11 @@ export default function WorkoutDashboard() {
   useEffect(() => {
     fetch('/api/auth').then((r) => r.json()).then((d) => setIsSiteAdmin(d.isAdmin === true)).catch(() => {});
   }, []);
+  // A lower intensity picked for today only (from the readiness card).
+  const [todayIntensity, setTodayIntensity] = useState<number | null>(null);
+  useEffect(() => { setTodayIntensity(readTodayIntensity()); }, []);
+  const chooseTodayIntensity = (value: number | null) => { saveTodayIntensity(value); setTodayIntensity(value); };
+  const startIntensity = todayIntensity ?? user?.intensityFactor ?? 1.0;
   const [deloadSnoozedUntil, setDeloadSnoozedUntil] = useState(0);
   const [showJoinShared, setShowJoinShared] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -423,7 +429,7 @@ export default function WorkoutDashboard() {
     const params = new URLSearchParams({
       gym: workout.gymId,
       repeat: workout.id,
-      intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)),
+      intensity: String(isDeload ? 0.5 : startIntensity),
       isDemo: String(isDemo),
     });
     if (isDeload) params.set('deload', '1');
@@ -439,7 +445,7 @@ export default function WorkoutDashboard() {
       setStartError(`Pick a gym first, then start ${program.name} again.`);
       return;
     }
-    const params = new URLSearchParams({ program: program.id, gym, intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)) });
+    const params = new URLSearchParams({ program: program.id, gym, intensity: String(isDeload ? 0.5 : startIntensity) });
     if (isDeload) params.set('deload', '1');
     window.location.href = `/workout/active?${params.toString()}`;
   };
@@ -540,7 +546,11 @@ export default function WorkoutDashboard() {
         </div>
       </div>
 
-      <div className="workout-tile" style={{ cursor: 'pointer', transition: 'all 0.3s ease' }} onClick={() => setExpandAnalytics(!expandAnalytics)}>
+      {!isDemo && user && (
+        <HealthHomeCard defaultIntensity={user.intensityFactor ?? 1.0} todayIntensity={todayIntensity} onUseIntensity={chooseTodayIntensity} />
+      )}
+
+      <div className="workout-tile" style={{ cursor: 'pointer', transition: 'all 0.3s ease', marginTop: '1rem' }} onClick={() => setExpandAnalytics(!expandAnalytics)}>
         <div className="workout-flex-between">
           <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Experience Profile</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -752,7 +762,7 @@ export default function WorkoutDashboard() {
                  gym: selectedGym,
                  type: selectedType,
                  lifts: liftCount,
-                 intensity: String(isDeload ? 0.5 : (user?.intensityFactor ?? 1.0)),
+                 intensity: String(isDeload ? 0.5 : startIntensity),
                  isDemo: String(isDemo),
                });
                if (isDeload) params.set('deload', '1');
@@ -783,7 +793,7 @@ export default function WorkoutDashboard() {
                     gymId = d.gym.id;
                   }
                   rememberStart({ gym: gymId, type: selectedType, lifts: liftCount });
-                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(user?.intensityFactor ?? 1.0) });
+                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(startIntensity) });
                   if (selectedType) params.set('type', selectedType);
                   window.location.href = `/workout/active?${params.toString()}`;
                 } catch (err) {
@@ -839,6 +849,7 @@ export default function WorkoutDashboard() {
           { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
           { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
           { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
+          ...(isDemo ? [] : [{ href: '/workout/health', icon: '❤️', label: 'Health' }]),
         ].map((link) => (
           <a key={link.href} className="workout-action-tile" href={link.href}>
             <span aria-hidden>{link.icon}</span><span>{link.label}</span>

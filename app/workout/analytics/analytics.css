@@ -242,6 +242,7 @@
 .an-set-chip.is-add { border-style: dashed; background: transparent; color: var(--accent-light); }
 .an-edit-when { display: grid; grid-template-columns: minmax(0, 1fr) 90px; gap: 0.5rem; margin-bottom: 0.75rem; }
 .an-workout-notes { margin: 0 0 0.2rem; padding: 0.45rem 0.6rem; border-radius: 8px; background: var(--input-bg); font-size: 0.85rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.an-workout-heart { padding: 0.5rem 0.6rem 0.35rem; border-radius: 10px; background: var(--input-bg); display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.2rem; }
 
 /* How it works sheet */
 .an-section { border-top: 1px solid var(--surface-border); }
