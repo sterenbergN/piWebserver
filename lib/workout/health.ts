@@ -28,6 +28,8 @@ export type HealthDay = {
   /** Resting heart rate (bpm) and heart rate variability (SDNN, ms): the day's average. */
   restingHr?: number;
   hrv?: number;
+  /** Active calories burned that day (from the watch), as far as uploads have covered it. */
+  activeKcal?: number;
 };
 
 /** A workout session recorded by the watch (if the sender can read workouts). */
@@ -361,6 +363,7 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
 
   const energyCol = column(body, 'activeEnergy', diag);
+  let energyOffset: number | null | undefined;
   const energy = new Map(health.energy.map((e) => [e[0], e]));
   for (const s of samples(energyCol, diag)) {
     let kcal = parseNumber(s.value);
@@ -370,8 +373,21 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
     const end = s.end ? Math.max(start, Math.floor(s.end.ms / 1000)) : start + 60;
     energy.set(start, [start, end, Math.round(kcal * 100) / 100]);
     summary.activeEnergy++;
+    if (energyOffset === undefined) energyOffset = s.start.offsetMin;
   }
   health.energy = [...energy.values()].filter(([, end]) => end >= cutoff).sort((a, b) => a[0] - b[0]);
+  // Daily active calories (for your activity level). An upload may cover only part
+  // of a day, so a day's total only ever grows as later uploads fill it in.
+  if (energyOffset !== undefined) {
+    const totals = new Map<string, number>();
+    for (const [start, , kcal] of health.energy) {
+      const key = dayKeyAt(start * 1000, energyOffset);
+      totals.set(key, (totals.get(key) || 0) + kcal);
+    }
+    for (const [key, total] of totals) {
+      if (total > (health.days[key]?.activeKcal || 0)) day(key).activeKcal = Math.round(total);
+    }
+  }
 
   // Watch workouts, if the sender can read them (`workoutsStarts`, `workoutsEnds`, names, calories).
   const wcol = column(body, 'workouts', diag);

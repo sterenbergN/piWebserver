@@ -22,6 +22,8 @@ export type CoachInsight = {
   evidence: string;
   /** Higher shows first. */
   priority: number;
+  /** Draws on Apple Health data (shown with a badge, and on the Health page). */
+  usesHealth?: boolean;
 };
 
 type SetLog = { weight?: number; reps?: number; timestamp?: number };
@@ -243,6 +245,10 @@ function bodyVsStrength(history: CoachWorkout[], days: Days, now: number): Coach
   if (ratePct <= -1 && strength <= -2) {
     return { id: 'body-strength', category: 'body', tone: 'warn', priority: 90, title: 'Cutting fast enough to lose strength', detail, evidence,
       tip: 'Slow the loss to about 0.5–1% of bodyweight a week (eat ~200–300 kcal more), keep protein high and keep some heavy sets in every workout.' };
+  }
+  if (ratePct <= -1 && strength >= -1) {
+    return { id: 'body-strength', category: 'body', tone: 'info', priority: 58, title: 'Losing fast, strength holding so far', detail, evidence,
+      tip: 'Over 1% of bodyweight a week is on the fast side. Keep going while lifts hold; at the first sign of stalling, eat ~200–300 kcal more.' };
   }
   if (ratePct < -0.2 && strength >= -1) {
     return { id: 'body-strength', category: 'body', tone: 'good', priority: 55, title: 'Losing weight and keeping your strength', detail, evidence,

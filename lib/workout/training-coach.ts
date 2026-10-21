@@ -394,7 +394,10 @@ function muscles(history: TrainingWorkout[], now: number, pending: CoachPending[
 }
 
 /** Everything the training log says, plus what's still being learned. */
-export function trainingAdvice(history: TrainingWorkout[], now = Date.now()): TrainingAdvice {
+export function trainingAdvice(history: TrainingWorkout[], now = Date.now(), { easyDays }: {
+  /** Local days (YYYY-MM-DD) when easing off was right (low readiness): left out of the effort check. */
+  easyDays?: Set<string>;
+} = {}): TrainingAdvice {
   const since = now - COACH_WINDOW_DAYS * DAY_MS;
   const sessions = liftSessions(history.filter((w) => Date.parse(w.timestamp) <= now));
   const recent = sessions.filter((s) => s.at >= since);
@@ -409,7 +412,13 @@ export function trainingAdvice(history: TrainingWorkout[], now = Date.now()): Tr
     return found;
   };
   const insights = [
-    ...check('How hard you train', () => effort(recent, pending)),
+    ...check('How hard you train', () => {
+      const dayOf = (s: LiftSession) => { const d = new Date(s.at); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const skipped = new Set(recent.filter((s) => easyDays?.has(dayOf(s))).map(dayOf));
+      const found = effort(skipped.size ? recent.filter((s) => !skipped.has(dayOf(s))) : recent, pending);
+      if (found && skipped.size) found.evidence += ` (leaving out ${skipped.size} low-readiness day${skipped.size === 1 ? '' : 's'})`;
+      return found;
+    }),
     ...check('Adding weight when lifts get easy', () => progression(sessions, since, pending)),
     ...check('How heavy your main lifts are', () => heaviness(recent, before, best, pending)),
     ...check('Following the suggested weights', () => suggestions(recent, pending)),

@@ -17,6 +17,7 @@ export function CoachItem({ insight: i }: { insight: CoachInsight }) {
       <span className="hc-coach-icon" aria-hidden>{COACH_ICON[i.category]}</span>
       <div>
         <strong>{i.title}</strong>
+        {i.usesHealth && <span className="hc-coach-badge">♥ Uses Apple Health</span>}
         <p>{i.detail}</p>
         {i.steps?.length ? (
           <ol className="hc-coach-steps">{i.steps.map((step) => <li key={step}>{step}</li>)}</ol>

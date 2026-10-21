@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { COACH_ICON } from '@/components/workout/health/CoachCard';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
-import { coachInsights } from '@/lib/workout/health-coach';
-import { sortInsights, trainingAdvice, type TrainingWorkout } from '@/lib/workout/training-coach';
+import { fullCoach, profileFromUser } from '@/lib/workout/coach';
+import type { TrainingWorkout } from '@/lib/workout/training-coach';
 import type { PublicHealth } from '@/lib/workout/health';
 
 const SNOOZE_PREF = 'workout:coachSnoozed';
@@ -19,15 +19,13 @@ function readSnoozed(): Record<string, number> {
  * on and its first step. "Got it" hides that point for two weeks; it comes
  * back if it's still true.
  */
-export default function CoachHomeCard({ history, health }: { history: TrainingWorkout[]; health: PublicHealth | null }) {
+export default function CoachHomeCard({ history, health, user }: { history: TrainingWorkout[]; health: PublicHealth | null; user?: Record<string, any> | null }) {
   const [snoozed, setSnoozed] = useState<Record<string, number>>({});
   useEffect(() => { setSnoozed(readSnoozed()); }, []);
 
   const all = useMemo(() => {
-    const training = trainingAdvice(history).insights;
-    const fromHealth = health && Object.keys(health.days).length ? coachInsights({ history, days: health.days, workoutHealth: health.workouts }) : [];
-    return sortInsights([...training, ...fromHealth]).filter((i) => i.tone === 'warn');
-  }, [history, health]);
+    return fullCoach({ history, health, profile: profileFromUser(user) }).insights.filter((i) => i.tone === 'warn');
+  }, [history, health, user]);
   const now = Date.now();
   const top = all.find((i) => !(snoozed[i.id] > now));
   if (!top) return null;

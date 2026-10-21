@@ -41,3 +41,7 @@
 
 .wp-start { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--surface-border); }
 .wp-start p { margin: 0; }
+
+/* Calculator: activity level as the Watch measures it */
+.calc-watch { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin: -0.35rem 0 0.85rem; padding: 0.55rem 0.7rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); font-size: 0.8rem; line-height: 1.4; }
+.calc-watch button { flex-shrink: 0; }

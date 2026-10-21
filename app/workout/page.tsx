@@ -560,7 +560,7 @@ export default function WorkoutDashboard() {
       {!isDemo && user && (
         <HealthHomeCard defaultIntensity={user.intensityFactor ?? 1.0} todayIntensity={todayIntensity} onUseIntensity={chooseTodayIntensity} onLoaded={setHomeHealth} />
       )}
-      {!isDemo && user && <CoachHomeCard history={history} health={homeHealth} />}
+      {!isDemo && user && <CoachHomeCard history={history} health={homeHealth} user={user} />}
 
       <div className="workout-tile" style={{ cursor: 'pointer', transition: 'all 0.3s ease', marginTop: '1rem' }} onClick={() => setExpandAnalytics(!expandAnalytics)}>
         <div className="workout-flex-between">

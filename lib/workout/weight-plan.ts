@@ -100,6 +100,12 @@ export type PlanProgress = {
   neededCalories: number | null;
   pace: number | null;
   plannedPace: number;
+  /**
+   * Maintenance calories your weigh-ins imply (eating the plan's calories and
+   * changing at your real pace), next to what the calculator assumed. Needs
+   * two weeks of weigh-ins.
+   */
+  realMaintenance: { kcal: number; calculator: number } | null;
 };
 
 /** How a plan is going, given every bodyweight entry. */
@@ -137,6 +143,7 @@ export function planProgress(plan: WeightPlan, entries: WeighIn[], todayKey: str
   const projectedEnd = reprojection.length ? reprojection[reprojection.length - 1].weight : null;
   const neededCalories = current && remaining >= 7 ? caloriesToReach(profile, current.weight, plannedEnd, remaining) : null;
 
+  const pace = paceLbsPerWeek(weighIns);
   const status: PlanProgress['status'] = today < 0 ? 'not-started'
     : !current ? 'no-data'
     : today > totalDays ? 'finished'
@@ -157,7 +164,14 @@ export function planProgress(plan: WeightPlan, entries: WeighIn[], todayKey: str
     reprojection,
     projectedEnd,
     neededCalories,
-    pace: paceLbsPerWeek(weighIns),
+    pace,
+    realMaintenance: current && pace !== null && weighIns.length >= 4 && weighIns[weighIns.length - 1].day - weighIns[0].day >= 14
+      ? {
+        // 3,500 kcal ≈ 1 lb: losing x lb/day on the plan's calories means burning x × 3,500 more than that.
+        kcal: Math.round((plan.targetCalories - (pace / 7) * 3500) / 10) * 10,
+        calculator: Math.round(calculateMifflinStJeor({ ...profile, weightLbs: current.weight }).maintenanceCalories / 10) * 10,
+      }
+      : null,
     plannedPace: Math.round(((plannedEnd - plan.startWeightLbs) / totalDays) * 7 * 100) / 100,
   };
 }

@@ -23,14 +23,13 @@ import LiftsTab from './LiftsTab';
 import MusclesTab from './MusclesTab';
 import HistoryTab from './HistoryTab';
 import CoachTab from './CoachTab';
-import { sortInsights, trainingAdvice } from '@/lib/workout/training-coach';
+import { fullCoach, profileFromUser } from '@/lib/workout/coach';
 import HowItWorksSheet from './HowItWorksSheet';
 import ShareViewer from '@/components/workout/ShareViewer';
 import { renderRecap } from '@/lib/workout/recap-cards';
 import { buildRecap } from '@/lib/workout/recap';
 import PageHeader from '@/components/workout/PageHeader';
 import type { PublicHealth, WorkoutHealth } from '@/lib/workout/health';
-import { coachInsights } from '@/lib/workout/health-coach';
 
 type Tab = 'summary' | 'coach' | 'lifts' | 'muscles' | 'history';
 const TABS: { key: Tab; label: string }[] = [
@@ -141,13 +140,7 @@ export default function AnalyticsPage() {
   }, [history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
 
   // The coach: training advice from the last 6 weeks, plus health findings when synced.
-  const coach = useMemo(() => {
-    const training = trainingAdvice(history as any);
-    const fromHealth = health && Object.keys(health.days).length
-      ? coachInsights({ history: history as any, days: health.days, workoutHealth: health.workouts })
-      : [];
-    return { ...training, insights: sortInsights([...training.insights, ...fromHealth]) };
-  }, [history, health]);
+  const coach = useMemo(() => fullCoach({ history: history as any, health, profile: profileFromUser(user) }), [history, health, user]);
   // The two most important points lead the Summary insights.
   const summaryInsights: Insight[] = [
     ...coach.insights.filter((c) => c.tone !== 'good').slice(0, 2).map((c): Insight => ({ tone: c.tone, text: `${c.title}. ${c.steps?.[0] || c.tip || c.detail}` })),

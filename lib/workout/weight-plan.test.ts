@@ -46,6 +46,9 @@ test('progress compares the latest average with the plan and re-projects from it
   assert.ok(p.projectedEnd! < p.plannedEnd); // ahead now, so ahead at the end on the same calories
   assert.ok(p.neededCalories! > plan.targetCalories); // could eat a bit more and still finish on plan
   assert.equal(p.pace, -2.1);
+  // Losing 2.1 lb/week on 2,300 kcal means burning about 2,300 + 1,050 a day.
+  assert.equal(p.realMaintenance!.kcal, 3350);
+  assert.ok(p.realMaintenance!.calculator > 2500 && p.realMaintenance!.calculator < 3000);
 });
 
 test('behind and not started', () => {

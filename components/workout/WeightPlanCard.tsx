@@ -139,6 +139,12 @@ export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, on
           <small>{neededCalories !== null ? `${signed(neededCalories - plan.targetCalories, 0)} vs plan a day` : 'needs a week left'}</small>
         </div>
       </div>
+      {progress.realMaintenance && Math.abs(progress.realMaintenance.kcal - progress.realMaintenance.calculator) >= 100 && (
+        <p className="workout-hint wp-note">
+          <strong>Your real maintenance looks like about {progress.realMaintenance.kcal.toLocaleString()} kcal</strong> a day — the calculator assumes {progress.realMaintenance.calculator.toLocaleString()}.
+          That's worked out from your weigh-ins, assuming you've been eating about {plan.targetCalories.toLocaleString()} a day; if you've eaten more or less, adjust for that.
+        </p>
+      )}
       {status === 'behind' && neededCalories !== null && (
         <p className="workout-hint wp-note">
           Your weight is {losing ? 'higher' : 'lower'} than planned. Eating about <strong>{neededCalories.toLocaleString()}</strong> kcal a day from now would still reach {plannedEnd} lb by {fmtDate(endDate)} — or keep the plan and expect to finish near {projectedEnd} lb.

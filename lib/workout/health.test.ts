@@ -161,3 +161,16 @@ test('the sync message points at what to fix in the shortcut', () => {
   assert.match(message, /ISO 8601/);
   assert.match(message, /caloriesEaten/);
 });
+
+test('daily active calories add up energy samples and only grow as the day fills in', () => {
+  const first = applyHealthImport(emptyUserHealth(), {
+    activeEnergyValues: '100\n150\n80',
+    activeEnergyStarts: '2026-10-19T09:00:00-05:00\n2026-10-19T18:00:00-05:00\n2026-10-20T08:00:00-05:00',
+  }, NOW);
+  assert.equal(first.health.days['2026-10-19'].activeKcal, 250);
+  // A later upload that only covers the evening doesn't shrink the day.
+  const later = applyHealthImport({ ...first.health, energy: [] }, {
+    activeEnergyValues: '150', activeEnergyStarts: '2026-10-19T18:00:00-05:00',
+  }, NOW);
+  assert.equal(later.health.days['2026-10-19'].activeKcal, 250);
+});

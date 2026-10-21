@@ -7,6 +7,8 @@ import PageHeader from '@/components/workout/PageHeader';
 import WeightPlanCard from '@/components/workout/WeightPlanCard';
 import { useSitePopup } from '@/components/SitePopup';
 import type { WeighIn, WeightPlan } from '@/lib/workout/weight-plan';
+import type { HealthDay } from '@/lib/workout/health';
+import { watchActivity } from '@/lib/workout/coach';
 import {
   ACTIVITY_LEVELS,
   calculateMifflinStJeor,
@@ -77,6 +79,8 @@ export default function WorkoutCalculatorsPage() {
   const { confirm, popup } = useSitePopup();
   // Weigh-ins (typed in, or from a smart scale via Apple Health) for the plan.
   const [weighIns, setWeighIns] = useState<WeighIn[]>([]);
+  // Synced Apple Health days, for the activity level your Watch actually shows.
+  const [healthDays, setHealthDays] = useState<Record<string, HealthDay>>({});
   const [showCalculator, setShowCalculator] = useState(false);
   const calculatorRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString('en-CA');
@@ -103,6 +107,8 @@ export default function WorkoutCalculatorsPage() {
         }
         const weights = await fetch('/api/workout/bodyweight').then((r) => r.json()).catch(() => null);
         if (weights?.success) setWeighIns(weights.entries);
+        const health = await fetch('/api/workout/health').then((r) => r.json()).catch(() => null);
+        if (health?.success) setHealthDays(health.health.days || {});
       } finally {
         setLoading(false);
       }
@@ -238,6 +244,13 @@ export default function WorkoutCalculatorsPage() {
   }, [bodyFatForm]);
 
   const plan = calorieForm.plan;
+  const fromWatch = (() => {
+    const age = asNumber(calorieForm.age);
+    const heightInches = asNumber(calorieForm.heightInches);
+    const weightLbs = asNumber(calorieForm.weightLbs);
+    if (!age || !heightInches || !weightLbs || !Object.keys(healthDays).length) return null;
+    return watchActivity(healthDays, { sex: calorieForm.sex || 'male', age, heightInches, weightLbs });
+  })();
   /** Freeze the calculator's numbers as a plan starting on the projection start date (or today). */
   const startPlan = async () => {
     if (!calorieMetrics) return;
@@ -370,6 +383,17 @@ export default function WorkoutCalculatorsPage() {
             <p style={{ margin: '0.35rem 0 0.75rem 0', color: 'var(--muted)', fontSize: '0.75rem' }}>
               {ACTIVITY_LEVELS.find((level) => level.value === calorieForm.activityLevel)?.description}
             </p>
+            {fromWatch?.level && (
+              <div className="calc-watch">
+                <span>
+                  ⌚ Your Watch: about <strong>{fromWatch.avgActive?.toLocaleString()}</strong> active kcal a day (last {fromWatch.days} days)
+                  {fromWatch.level.value === calorieForm.activityLevel ? <> — matches <strong>{fromWatch.level.label}</strong>.</> : <> — that&apos;s <strong>{fromWatch.level.label}</strong>.</>}
+                </span>
+                {fromWatch.level.value !== calorieForm.activityLevel && (
+                  <button type="button" className="workout-button is-small" onClick={() => setCalorieForm({ ...calorieForm, activityLevel: fromWatch.level!.value })}>Use it</button>
+                )}
+              </div>
+            )}
 
             <label htmlFor="calorie-goal" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.2rem' }}>Goal</label>
             <select id="calorie-goal" className="workout-input" value={calorieForm.goalRate} onChange={(e) => setCalorieForm({ ...calorieForm, goalRate: Number(e.target.value) })}>
