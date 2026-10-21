@@ -161,7 +161,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
           />
           <PromptCard
             title={SHORTCUT_NAMES.backfill}
-            about="Run once. Sends 30 days of steps, sleep, weight, body fat, resting heart rate and HRV, then heart rate and energy one day at a time for two weeks (14 small uploads, so the phone doesn’t run out of memory). Made one before? Delete it and copy this again."
+            about="Run once. Sends 30 days of steps, sleep, daily calories, weight, body fat, resting heart rate and HRV, then heart rate and energy one day at a time for two weeks (14 small uploads, so the phone doesn’t run out of memory). Made one before? Delete it and copy this again."
             prompt={shortcutPrompt('backfill', { url, key })}
           />
           <p className="workout-hint">
@@ -202,7 +202,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
             <ol className="hc-list" start={5}>
               <li>Add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it.</li>
             </ol>
-            <p className="workout-hint">For the 30-day version, use 30 days for the first six rows. Then send Heart Rate and Active Energy one day at a time: a Repeat 14 times that finds each type between DayStart and DayEnd (Current Date minus Repeat Index days, and one day before that) and uploads them.</p>
+            <p className="workout-hint">For the 30-day version, use 30 days for the first eight rows. Then send Heart Rate and Active Energy one day at a time: a Repeat 14 times that finds each type between DayStart and DayEnd (Current Date minus Repeat Index days, and one day before that) and uploads them.</p>
           </details>
         </Step>
 

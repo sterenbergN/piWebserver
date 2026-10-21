@@ -142,6 +142,8 @@ export type RangeStats = {
   steps: number | null;
   restingHr: number | null;
   hrv: number | null;
+  /** Average calories burned a day (resting + active). */
+  burnKcal: number | null;
   /** Latest reading in the range and its change from the first one. */
   weight: { latest: number; change: number | null } | null;
   bodyFat: { latest: number; change: number | null } | null;
@@ -165,6 +167,7 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
     steps: round(mean(steps)),
     restingHr: round(mean(values((d) => d.restingHr))),
     hrv: round(mean(values((d) => d.hrv))),
+    burnKcal: round(mean(values((d) => (d.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : undefined)))),
     weight: trend((d) => d.weight),
     bodyFat: trend((d) => d.bodyFat),
     nights: sleep.length,
@@ -172,7 +175,7 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
   };
 }
 
-export type SeriesPoint = { key: string; label: string; days: number } & Partial<Record<'steps' | 'sleepHours' | 'deepMin' | 'remMin' | 'coreMin' | 'awakeMin' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat', number>> & { bedtime?: string; wake?: string };
+export type SeriesPoint = { key: string; label: string; days: number } & Partial<Record<'steps' | 'sleepHours' | 'deepMin' | 'remMin' | 'coreMin' | 'awakeMin' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal', number>> & { bedtime?: string; wake?: string };
 
 const label = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
@@ -197,6 +200,7 @@ function point(key: string, list: HealthDay[]): SeriesPoint {
     hrv: avg((d) => d.hrv),
     weight: avg((d) => d.weight, 1),
     bodyFat: avg((d) => d.bodyFat, 1),
+    burnKcal: avg((d) => (d.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : undefined)),
     bedtime: night?.bedtime,
     wake: night?.wake,
   };

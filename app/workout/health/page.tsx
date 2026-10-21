@@ -5,6 +5,9 @@ import PageHeader from '@/components/workout/PageHeader';
 import ReadinessCard from '@/components/workout/health/ReadinessCard';
 import HealthSetupSheet from '@/components/workout/health/HealthSetupSheet';
 import CoachCard from '@/components/workout/health/CoachCard';
+import PlanPanel from '@/components/workout/health/PlanPanel';
+import type { CalculatorDefaults } from '@/lib/workout/calculators';
+import type { WeightPlan } from '@/lib/workout/weight-plan';
 import { fullCoach, profileFromUser } from '@/lib/workout/coach';
 import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, setMarks } from '@/components/workout/health/HealthCharts';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
@@ -15,6 +18,14 @@ import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
 
 type Range = '14d' | '30d' | '90d' | '1y';
+type Tab = 'today' | 'plan' | 'trends';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'plan', label: 'Plan' },
+  { key: 'trends', label: 'Trends' },
+];
+type Calorie = NonNullable<CalculatorDefaults['calorie']>;
+const burnOf = (d?: HealthDay) => (d?.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : null);
 const RANGES: { key: Range; label: string; days: number }[] = [
   { key: '14d', label: '2 weeks', days: 14 },
   { key: '30d', label: 'Month', days: 30 },
@@ -63,12 +74,18 @@ export default function HealthPage() {
   const [openWorkout, setOpenWorkout] = useState<string | null>(null);
   const [todayIntensity, setTodayIntensity] = useState<number | null>(null);
   const [offline, setOffline] = useState(false);
+  const [tab, setTab] = useState<Tab>('today');
+  // The calorie calculator's saved settings, which hold the weight plan.
+  const [calorie, setCalorie] = useState<Calorie | null>(null);
 
   useEffect(() => {
     const saved = readPref('workout:healthRange');
     if (RANGES.some((r) => r.key === saved)) setRange(saved as Range);
     setTodayIntensity(readTodayIntensity());
-    if (new URLSearchParams(window.location.search).get('setup') === '1') setSetupOpen(true);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('setup') === '1') setSetupOpen(true);
+    const wanted = params.get('tab') || readPref('workout:healthTab');
+    if (TABS.some((t) => t.key === wanted)) setTab(wanted as Tab);
   }, []);
 
   const loadHealth = useCallback(async () => {
@@ -83,7 +100,8 @@ export default function HealthPage() {
       if (!auth.data?.authenticated) { setLoading(false); return; }
       setSignedIn(true);
       setUser(auth.data.user);
-      const [h, hist, bw] = await Promise.all([loadHealth(), fetchWorkoutJson('/api/workout/history'), fetchWorkoutJson('/api/workout/bodyweight')]);
+      const [h, hist, bw, calc] = await Promise.all([loadHealth(), fetchWorkoutJson('/api/workout/history'), fetchWorkoutJson('/api/workout/bodyweight'), fetchWorkoutJson('/api/workout/calculator-settings')]);
+      setCalorie(calc.data?.calculatorDefaults?.calorie || {});
       setOffline([h, hist, bw].some((r) => r.offline));
       setHistory(hist.data?.history || []);
       setWeights(bw.data?.entries || []);
@@ -92,6 +110,18 @@ export default function HealthPage() {
   }, [loadHealth]);
 
   const chooseRange = (next: Range) => { setRange(next); savePref('workout:healthRange', next); };
+  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:healthTab', next); window.scrollTo({ top: 0 }); };
+  /** Save plan/calculator settings; an ended plan is sent as null so it's removed, not kept. */
+  const savePlan = async (patch: Omit<Partial<Calorie>, 'plan'> & { plan?: WeightPlan | null }) => {
+    const res = await fetch('/api/workout/calculator-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculatorDefaults: { calorie: patch } }) });
+    const data = await res.json().catch(() => ({}));
+    if (data.success) setCalorie(data.calculatorDefaults.calorie);
+  };
+  const logWeight = async (weight: number) => {
+    const res = await fetch('/api/workout/bodyweight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ weight, date: localKey(new Date()) }) });
+    const data = await res.json().catch(() => ({}));
+    if (data.success) setWeights(data.entries);
+  };
   const useIntensity = (value: number | null) => { saveTodayIntensity(value); setTodayIntensity(value); };
 
   // Typed-in bodyweight entries count as weight readings too.
@@ -102,6 +132,7 @@ export default function HealthPage() {
   }, [health, weights]);
 
   const today = localKey(new Date());
+  const yesterday = shiftKey(today, 1);
   const spec = RANGES.find((r) => r.key === range)!;
   const keys = useMemo(() => lastKeys(today, spec.days), [today, spec.days]);
   const view = useMemo(() => {
@@ -140,12 +171,12 @@ export default function HealthPage() {
   const status = !h?.connected && !h?.lastSync ? 'Not connected'
     : h?.lastSync ? `Synced ${timeAgo(h.lastSync.at)}${!h.connected ? ' · syncing stopped' : ''}` : 'Waiting for the first sync';
   const { stats, before, series, typical } = view;
-  const has = (key: 'steps' | 'sleepHours' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat') => series.some((p) => typeof p[key] === 'number');
+  const has = (key: 'steps' | 'sleepHours' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal') => series.some((p) => typeof p[key] === 'number');
 
   return (
     <div className="animate-fade-in an-page hc-page">
       <PageHeader
-        title="Health"
+        title="Health & plan"
         subtitle={<span className={`hc-status${stale !== null && stale >= 2 ? ' is-stale' : h?.lastSync ? ' is-ok' : ''}`}><span className="hc-dot" aria-hidden /> {status}{stale !== null && stale >= 2 ? ' — check your automation' : ''}</span>}
         actions={<button type="button" className="workout-button is-small" onClick={() => setSetupOpen(true)}>{h?.connected ? '⚙︎ Sync' : 'Connect'}</button>}
       />
@@ -157,7 +188,13 @@ export default function HealthPage() {
         </p>
       ) : null}
 
-      {!hasData && (
+      <nav className="an-tabs hc-tabs" aria-label="Health sections">
+        {TABS.map((t) => (
+          <button key={t.key} type="button" aria-pressed={tab === t.key} onClick={() => chooseTab(t.key)}>{t.label}</button>
+        ))}
+      </nav>
+
+      {tab === 'today' && (!hasData ? (
         <section className="workout-tile hc-hero">
           <span className="hc-hero-icon" aria-hidden>❤️</span>
           <h2>Bring in Apple Health</h2>
@@ -170,9 +207,7 @@ export default function HealthPage() {
           </ul>
           <button type="button" className="workout-button is-primary is-block" onClick={() => setSetupOpen(true)}>Set up the sync (about 10 minutes)</button>
         </section>
-      )}
-
-      {hasData && (<div className="an-stack">
+      ) : (<div className="an-stack">
         {ready ? (
           <ReadinessCard readiness={ready} todayIntensity={todayIntensity} onUseIntensity={useIntensity} />
         ) : (
@@ -182,12 +217,33 @@ export default function HealthPage() {
           </section>
         )}
 
+        <section className="an-tiles hc-tiles" aria-label="At a glance">
+          <Tile icon="🌙" label="Last night" value={days[today]?.sleep ? formatMinutes(days[today].sleep!.asleepMin) : '—'} sub="asleep" />
+          <Tile icon="👣" label="Steps yesterday" value={days[yesterday]?.steps !== undefined ? fmtSteps(days[yesterday].steps!) : '—'} />
+          <Tile icon="🔥" label="Burned yesterday" value={burnOf(days[yesterday]) !== null ? `${burnOf(days[yesterday])!.toLocaleString()}` : '—'} sub={burnOf(days[yesterday]) !== null ? 'kcal, resting + active' : undefined} />
+          <Tile icon="⚖" label="Weight" value={weights.length ? `${weights[weights.length - 1].weight} lb` : '—'} sub={weights.length ? 'latest weigh-in' : undefined} />
+        </section>
+
         <CoachCard
           insights={coach}
           building={Object.keys(h?.days || {}).length < 21}
           more={<a href="/workout/analytics?tab=coach" className="workout-text-btn" style={{ display: 'block', marginTop: '0.6rem' }}>Training advice (effort, load, rest…) in Analytics › Coach</a>}
         />
+      </div>))}
 
+      {tab === 'plan' && (
+        calorie ? (
+          <PlanPanel calorie={calorie} onSave={savePlan} days={days} weighIns={weights} onLog={logWeight} today={today} />
+        ) : <p className="workout-hint">Loading your plan…</p>
+      )}
+
+      {tab === 'trends' && (!hasData ? (
+        <section className="workout-tile an-empty">
+          <strong>No health data yet</strong>
+          <p className="workout-hint">Connect Apple Health to see sleep, steps, calories, heart and body trends.</p>
+          <button type="button" className="workout-button is-primary" onClick={() => setSetupOpen(true)}>Connect</button>
+        </section>
+      ) : (<div className="an-stack">
         <div className="an-periods" role="radiogroup" aria-label="Range">
           {RANGES.map((r) => (
             <button key={r.key} type="button" role="radio" aria-checked={range === r.key} onClick={() => chooseRange(r.key)}>{r.label}</button>
@@ -226,6 +282,12 @@ export default function HealthPage() {
         </section>
 
         <section className="workout-tile an-card">
+          <div className="an-card-head"><h2>Calories burned</h2>{stats.burnKcal !== null && <span className="workout-hint">avg {stats.burnKcal.toLocaleString()} a day</span>}</div>
+          {has('burnKcal') ? <TrendLine data={series} dataKey="burnKcal" unit="kcal" /> : <Empty what="daily calories" add="Active Energy and Resting Energy (grouped by day)" />}
+          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. This is what your activity level in the plan is measured from.</p>
+        </section>
+
+        <section className="workout-tile an-card">
           <h2>Heart</h2>
           <h3 className="hc-sub">Resting heart rate</h3>
           {has('restingHr') ? <TrendLine data={series} dataKey="restingHr" unit="bpm" /> : <Empty what="resting heart rate" add="Resting Heart Rate" />}
@@ -235,7 +297,7 @@ export default function HealthPage() {
         </section>
 
         <section className="workout-tile an-card">
-          <div className="an-card-head"><h2>Body</h2><a href="/workout/calculators" className="workout-text-btn">Weight plan ›</a></div>
+          <div className="an-card-head"><h2>Body</h2><button type="button" className="workout-text-btn" onClick={() => chooseTab('plan')}>Weight plan ›</button></div>
           <h3 className="hc-sub">Weight</h3>
           {has('weight') ? <TrendLine data={series} dataKey="weight" unit="lb" digits={1} /> : <Empty what="weight" add="Weight" />}
           <h3 className="hc-sub">Body fat</h3>
@@ -285,7 +347,7 @@ export default function HealthPage() {
         </section>
 
         <p className="workout-hint hc-privacy">🔒 Health data is private to your account. It&apos;s never in shared workouts, links or partner mode.</p>
-      </div>)}
+      </div>))}
 
       {setupOpen && h && <HealthSetupSheet health={h} onChanged={loadHealth} onClose={() => setSetupOpen(false)} />}
     </div>

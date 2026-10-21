@@ -30,6 +30,10 @@ export type HealthDay = {
   hrv?: number;
   /** Active calories burned that day (from the watch), as far as uploads have covered it. */
   activeKcal?: number;
+  /** activeKcal came from Health's own daily total (exact), not added up from readings. */
+  activeExact?: boolean;
+  /** Resting (basal) calories that day: with activeKcal, your total burn. */
+  restingKcal?: number;
 };
 
 /** A workout session recorded by the watch (if the sender can read workouts). */
@@ -51,7 +55,7 @@ export type WorkoutHealth = {
 
 export type SyncSummary = {
   at: string;
-  steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number;
+  steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number; dailyCalories: number;
   heartRate: number; activeEnergy: number; workouts: number;
   /** Fields in the upload that were not recognised, and dates that could not be read. */
   ignored?: string[];
@@ -138,6 +142,8 @@ const ALIASES: Record<string, string[]> = {
   heartRate: ['heartRate'],
   activeEnergy: ['activeEnergy', 'activeEnergyBurned', 'activeCalories'],
   workouts: ['workouts'],
+  activeEnergyDaily: ['activeEnergyDaily', 'activeCaloriesDaily'],
+  restingEnergy: ['restingEnergy', 'basalEnergy', 'basalEnergyBurned'],
 };
 
 /** What an upload contained that couldn't be used, so the sender can be fixed. */
@@ -281,7 +287,7 @@ export type ImportResult = { health: UserHealth; summary: SyncSummary; weights: 
 export function applyHealthImport(current: UserHealth, body: Record<string, any>, now = Date.now()): ImportResult {
   const health: UserHealth = { ...emptyUserHealth(), ...current, days: { ...current.days } };
   const day = (key: string) => (health.days[key] = { ...health.days[key] });
-  const summary: SyncSummary = { at: new Date(now).toISOString(), steps: 0, sleep: 0, weight: 0, bodyFat: 0, restingHr: 0, hrv: 0, heartRate: 0, activeEnergy: 0, workouts: 0 };
+  const summary: SyncSummary = { at: new Date(now).toISOString(), steps: 0, sleep: 0, weight: 0, bodyFat: 0, restingHr: 0, hrv: 0, dailyCalories: 0, heartRate: 0, activeEnergy: 0, workouts: 0 };
   const diag: Diagnostics = { used: new Set(['key']), unreadableDates: 0, mismatched: [] };
 
   // Steps: one total per day (send them grouped by day; ungrouped samples are added up).
@@ -336,6 +342,29 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   summary.restingHr = dailyAverage('restingHeartRate', 25, 150, (key, v) => { day(key).restingHr = v; });
   summary.hrv = dailyAverage('hrv', 3, 300, (key, v) => { day(key).hrv = v; });
 
+  // Daily calorie totals (send them grouped by day): active and resting burn.
+  // Today's total grows through the day, so a day's value is only ever raised.
+  const dailyTotal = (name: string, set: (key: string, kcal: number) => void) => {
+    const col = column(body, name, diag);
+    const perDay = new Map<string, number>();
+    for (const s of samples(col, diag)) {
+      let kcal = parseNumber(s.value);
+      if (/kj|kilojoule/.test(col.unit || s.value.toLowerCase())) kcal /= 4.184;
+      if (!(kcal >= 0 && kcal <= 10_000)) continue;
+      const key = dayKeyAt(s.start.ms, s.start.offsetMin);
+      perDay.set(key, (perDay.get(key) || 0) + kcal);
+    }
+    for (const [key, kcal] of perDay) set(key, Math.round(kcal));
+    return perDay.size;
+  };
+  summary.dailyCalories += dailyTotal('activeEnergyDaily', (key, kcal) => {
+    const d = health.days[key];
+    if (!d?.activeExact || kcal > (d.activeKcal || 0)) { day(key).activeKcal = kcal; day(key).activeExact = true; }
+  });
+  summary.dailyCalories += dailyTotal('restingEnergy', (key, kcal) => {
+    if (kcal > (health.days[key]?.restingKcal || 0)) day(key).restingKcal = kcal;
+  });
+
   // Sleep: rebuild each night from its segments. A night cut off by the
   // edge of the upload's date range never replaces a longer one already saved.
   const segments = samples(column(body, 'sleep', diag), diag).flatMap((s) => {
@@ -385,7 +414,8 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
       totals.set(key, (totals.get(key) || 0) + kcal);
     }
     for (const [key, total] of totals) {
-      if (total > (health.days[key]?.activeKcal || 0)) day(key).activeKcal = Math.round(total);
+      // Health's exact daily total wins over a sum of readings (which can count a reading from phone and watch twice).
+      if (!health.days[key]?.activeExact && total > (health.days[key]?.activeKcal || 0)) day(key).activeKcal = Math.round(total);
     }
   }
 
@@ -503,6 +533,7 @@ export function describeSync(summary: SyncSummary): string {
     n(summary.bodyFat, 'body fat reading', 'body fat readings'),
     n(summary.restingHr, 'day of resting heart rate', 'days of resting heart rate'),
     n(summary.hrv, 'day of HRV', 'days of HRV'),
+    n(summary.dailyCalories, 'daily calorie total', 'daily calorie totals'),
     n(summary.heartRate, 'heart rate reading', 'heart rate readings'),
     n(summary.activeEnergy, 'energy reading', 'energy readings'),
     n(summary.workouts, 'workout', 'workouts'),

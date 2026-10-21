@@ -8,6 +8,16 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
   return [
     { label: 'About', items: [{ href: '/', label: 'About', icon: '👋' }] },
     {
+      // The workout tracker and everything around it — the most used part of the site.
+      label: 'Fitness',
+      items: [
+        { href: '/workout', label: 'Workout', icon: '🏋️' },
+        { href: '/workout/health', label: 'Health & plan', icon: '❤️' },
+        { href: '/workout/analytics', label: 'Progress & coach', icon: '📈' },
+        { href: '/workout/calculators', label: 'Calculators', icon: '🧮' },
+      ],
+    },
+    {
       label: 'Media',
       items: [
         { href: '/gallery', label: 'Gallery', icon: '🖼️' },
@@ -30,7 +40,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/daily', label: 'Questions', icon: '🧠' },
         { href: '/habits', label: 'Habits', icon: '✅' },
         { href: '/chores', label: 'Chores', icon: '🧹' },
-        { href: '/workout', label: 'Workout', icon: '🏋️' },
       ],
     },
     {
@@ -60,7 +69,10 @@ export function sectionOf(pathname: string) {
  */
 export function isCurrentItem(item: NavItem, section: string, hash: string, siblings: NavItem[]) {
   const [path, itemHash] = item.href.split('#');
-  const onPage = section === path || (path !== '/' && section.startsWith(`${path}/`));
+  const within = (p: string) => section === p || (p !== '/' && section.startsWith(`${p}/`));
+  const onPage = within(path);
+  // /workout/health is "Health & plan", not also "Workout": the most specific item wins.
+  if (onPage && siblings.some((s) => { const sp = s.href.split('#')[0]; return sp.length > path.length && sp.startsWith(`${path}/`) && within(sp); })) return false;
   if (!onPage || !itemHash) return onPage;
   if (hash) return hash === itemHash;
   return siblings.find((s) => s.href.split('#')[0] === path) === item;

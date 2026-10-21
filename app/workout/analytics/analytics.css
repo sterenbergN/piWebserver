@@ -18,7 +18,9 @@
   margin-bottom: 0.5rem;
   background: var(--background);
 }
-.an-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.25rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); }
+/* Tabs share the row by label length, so no label wraps. */
+.an-tabs { display: flex; gap: 0.2rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); overflow-x: auto; scrollbar-width: none; }
+.an-tabs::-webkit-scrollbar { display: none; }
 .an-tabs button {
   min-height: 40px;
   border: none;
@@ -29,7 +31,11 @@
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
+  padding: 0 0.35rem;
+  flex: 1 1 auto;
+  white-space: nowrap;
 }
+@media (max-width: 420px) { .an-tabs button { font-size: 0.78rem; } }
 .an-tabs button[aria-pressed="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
 .an-periods { display: flex; gap: 0.35rem; overflow-x: auto; scrollbar-width: none; }
 .an-periods::-webkit-scrollbar { display: none; }

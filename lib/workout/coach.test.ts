@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fullCoach, profileFromUser, watchActivity } from './coach';
+import { fullCoach, measuredActivity, profileFromUser } from './coach';
 import { lastKeys, localKey, shiftKey } from './health-insights';
 import type { HealthDay } from './health';
 import type { TrainingWorkout } from './training-coach';
@@ -22,14 +22,20 @@ test('the calculator profile comes from saved inputs or the user profile', () =>
   assert.equal(profileFromUser({ weight: 180 }), null);
 });
 
-test('the Watch’s active calories pick an activity level', () => {
+test('total burn (resting + active) picks an activity level; steps do when there are no calories', () => {
   const days: Record<string, HealthDay> = {};
-  lastKeys(shiftKey(TODAY, 1), 14).forEach((k) => { days[k] = { activeKcal: 1150 }; });
-  const w = watchActivity(days, profile, NOW);
-  assert.equal(w.avgActive, 1150);
-  assert.equal(w.level?.value, 'very-active');
-  const advice = fullCoach({ history: [], health: { days, workouts: {} }, profile, now: NOW });
-  assert.match(advice.insights.find((i) => i.id === 'activity-level')!.title, /Very Active/);
+  lastKeys(shiftKey(TODAY, 1), 14).forEach((k) => { days[k] = { activeKcal: 900, restingKcal: 1800, steps: 13000 }; });
+  const m = measuredActivity(days, profile, NOW);
+  assert.equal(m.basis, 'calories');
+  assert.equal(m.maintenance, 2700); // 1,800 resting + 900 active
+  assert.equal(m.level?.value, 'moderate');
+  const advice = fullCoach({ history: [], health: { days, workouts: {} }, profile: { ...profile, activityLevel: 'sedentary' }, now: NOW });
+  assert.match(advice.insights.find((i) => i.id === 'activity-level')!.title, /Moderate/);
+  const stepsOnly: Record<string, HealthDay> = {};
+  lastKeys(shiftKey(TODAY, 1), 10).forEach((k) => { stepsOnly[k] = { steps: 11000 }; });
+  const s = measuredActivity(stepsOnly, profile, NOW);
+  assert.equal(s.basis, 'steps');
+  assert.equal(s.level?.value, 'very-active');
 });
 
 test('a stall during short sleep and a fast cut puts those fixes first', () => {

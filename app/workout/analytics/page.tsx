@@ -32,6 +32,13 @@ import PageHeader from '@/components/workout/PageHeader';
 import type { PublicHealth, WorkoutHealth } from '@/lib/workout/health';
 
 type Tab = 'summary' | 'coach' | 'lifts' | 'muscles' | 'history';
+/** Put the tab in the address (so it can be shared, and the bottom tab bar can follow it). */
+function showTabInUrl(tab: Tab) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', tab);
+  window.history.replaceState(window.history.state, '', url);
+  window.dispatchEvent(new Event('workout:tabchange'));
+}
 const TABS: { key: Tab; label: string }[] = [
   { key: 'summary', label: 'Summary' },
   { key: 'coach', label: 'Coach' },
@@ -69,11 +76,11 @@ export default function AnalyticsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const wantedTab = params.get('tab') || readPref('workout:analyticsTab');
-    if (TABS.some((t) => t.key === wantedTab)) setTab(wantedTab as Tab);
+    if (TABS.some((t) => t.key === wantedTab)) { setTab(wantedTab as Tab); showTabInUrl(wantedTab as Tab); }
     const savedPeriod = readPref('workout:analyticsPeriod');
     if (PERIODS.some((p) => p.key === savedPeriod)) setPeriod(savedPeriod as Period);
   }, []);
-  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:analyticsTab', next); window.scrollTo({ top: 0 }); };
+  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:analyticsTab', next); showTabInUrl(next); window.scrollTo({ top: 0 }); };
   const choosePeriod = (next: Period) => { setPeriod(next); savePref('workout:analyticsPeriod', next); };
 
   useEffect(() => {

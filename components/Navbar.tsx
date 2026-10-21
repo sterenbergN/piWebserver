@@ -140,9 +140,12 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
 
       <AccountMenu user={user} />
 
-      {/* Mobile Right: Theme Toggle + Hamburger */}
+      {/* Mobile Right: Workout shortcut + Hamburger (the theme toggle is in the menu) */}
       <div className="nav-mobile-controls">
-        {themeButton}
+        <Link href="/workout" className="btn btn-secondary nav-icon-btn nav-workout-btn" aria-label="Workout" title="Workout"
+          aria-current={section === '/workout' || section.startsWith('/workout/') ? 'page' : undefined}>
+          🏋️
+        </Link>
         <button
           className="hamburger"
           onClick={() => setMenuOpen(!menuOpen)}
@@ -172,6 +175,9 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
               ))}
             </details>
           ))}
+          <button type="button" className="mobile-link mobile-theme" onClick={toggleTheme}>
+            <span aria-hidden>{theme === 'dark' ? '☀️' : '🌙'}</span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
         </div>
       )}
     </nav>

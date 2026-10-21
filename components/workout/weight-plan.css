@@ -45,3 +45,10 @@
 /* Calculator: activity level as the Watch measures it */
 .calc-watch { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin: -0.35rem 0 0.85rem; padding: 0.55rem 0.7rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); font-size: 0.8rem; line-height: 1.4; }
 .calc-watch button { flex-shrink: 0; }
+
+/* Calculator: link to the running plan in Health & plan */
+.calc-plan-link { display: flex; align-items: center; gap: 0.7rem; color: inherit; text-decoration: none; border-color: rgba(var(--accent-rgb), 0.5); }
+.calc-plan-link > span:first-child { font-size: 1.3rem; }
+.calc-plan-link strong { display: block; font-size: 0.95rem; }
+.calc-plan-link small { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.4; }
+.calc-plan-link > span:last-child { margin-left: auto; color: var(--muted); font-size: 1.2rem; }

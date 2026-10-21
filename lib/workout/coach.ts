@@ -33,21 +33,64 @@ export function profileFromUser(user: Record<string, any> | null | undefined): C
   return { sex: c.sex === 'female' ? 'female' : 'male', age, heightInches, weightLbs, activityLevel: c.activityLevel || 'moderate' };
 }
 
+/** Daily steps that roughly match each activity level, when there's no calorie data. */
+const STEP_LEVELS: [number, ActivityLevel][] = [[5000, 'sedentary'], [7500, 'light'], [10000, 'moderate'], [12500, 'very-active'], [Infinity, 'extra-active']];
+
+export type MeasuredActivity = {
+  /** Complete days the estimate is based on. */
+  days: number;
+  basis: 'calories' | 'steps' | null;
+  avgActive: number | null;
+  avgResting: number | null;
+  avgSteps: number | null;
+  level: (typeof ACTIVITY_LEVELS)[number] | null;
+  multiplier: number | null;
+  /** Calories a day to stay the same weight, from what was measured. */
+  maintenance: number | null;
+  bmr: number;
+};
+
 /**
- * Your activity level as your Watch measures it: average active calories over
- * the last two weeks (complete days only), turned into the calculator's
- * activity multiplier. Null with fewer than 7 days of data.
+ * Your activity level from Apple Health over the last two weeks (complete
+ * days only): total burn — resting plus active calories (your formula BMR
+ * stands in for resting if Health hasn't sent it) — over your formula BMR
+ * gives the calculator's activity multiplier. Without calorie data, average daily
+ * steps pick a level instead. Needs 7 days of either.
  */
-export function watchActivity(days: Days, profile: Omit<CoachProfile, 'activityLevel'>, now = Date.now()) {
+export function measuredActivity(days: Days, profile: Omit<CoachProfile, 'activityLevel'>, now = Date.now()): MeasuredActivity {
   const keys = lastKeys(localKey(now - DAY_MS), 14); // yesterday back: today isn't finished
-  const kcal = keys.map((k) => days[k]?.activeKcal).filter((v): v is number => typeof v === 'number' && v > 50);
-  if (kcal.length < 7) return { days: kcal.length, avgActive: null, level: null, multiplier: null, maintenance: null, bmr: null };
-  const avgActive = Math.round(mean(kcal));
+  const pick = (f: (d: HealthDay) => number | undefined, min: number) => keys.map((k) => (days[k] ? f(days[k]) : undefined)).filter((v): v is number => typeof v === 'number' && v >= min);
+  const active = pick((d) => d.activeKcal, 50);
+  const resting = pick((d) => d.restingKcal, 800);
+  const steps = pick((d) => d.steps, 200);
   const { bmr } = calculateMifflinStJeor({ ...profile, activityLevel: 'sedentary' });
-  // Total burn ≈ resting (BMR) + digesting food (~10%) + everything the Watch counts as active.
-  const multiplier = (bmr * 1.1 + avgActive) / bmr;
-  const level = ACTIVITY_LEVELS.reduce((best, l) => (Math.abs(l.multiplier - multiplier) < Math.abs(best.multiplier - multiplier) ? l : best));
-  return { days: kcal.length, avgActive, level, multiplier, maintenance: Math.round(bmr * multiplier), bmr: Math.round(bmr) };
+  const nearest = (m: number) => ACTIVITY_LEVELS.reduce((best, l) => (Math.abs(l.multiplier - m) < Math.abs(best.multiplier - m) ? l : best));
+  const avgSteps = steps.length ? Math.round(mean(steps)) : null;
+  if (active.length >= 7) {
+    const avgActive = Math.round(mean(active));
+    const avgResting = resting.length >= 7 ? Math.round(mean(resting)) : null;
+    // Watch active calories tend to run high, which roughly covers digestion (TEF) that Health doesn't count.
+    const total = (avgResting ?? bmr) + avgActive;
+    const multiplier = total / bmr;
+    return { days: active.length, basis: 'calories', avgActive, avgResting, avgSteps, level: nearest(multiplier), multiplier, maintenance: Math.round(total / 10) * 10, bmr: Math.round(bmr) };
+  }
+  if (steps.length >= 7) {
+    const value = STEP_LEVELS.find(([max]) => avgSteps! < max)![1];
+    const level = ACTIVITY_LEVELS.find((l) => l.value === value)!;
+    return { days: steps.length, basis: 'steps', avgActive: null, avgResting: null, avgSteps, level, multiplier: level.multiplier, maintenance: Math.round(bmr * level.multiplier / 10) * 10, bmr: Math.round(bmr) };
+  }
+  return { days: Math.max(active.length, steps.length), basis: null, avgActive: null, avgResting: null, avgSteps, level: null, multiplier: null, maintenance: null, bmr: Math.round(bmr) };
+}
+
+/** What the measurement was, in words, e.g. "2,710 kcal a day (1,850 resting + 610 active)". */
+export function describeActivity(m: MeasuredActivity) {
+  if (m.basis === 'calories') {
+    return m.avgResting !== null
+      ? `you burn about ${m.maintenance!.toLocaleString()} kcal a day (${m.avgResting.toLocaleString()} resting + ${m.avgActive!.toLocaleString()} active, over ${m.days} days)`
+      : `you burn about ${m.avgActive!.toLocaleString()} active kcal a day on top of resting (over ${m.days} days)`;
+  }
+  if (m.basis === 'steps') return `you average ${m.avgSteps!.toLocaleString()} steps a day (over ${m.days} days)`;
+  return '';
 }
 
 /** Body weight trend over the last `days` days, as % of bodyweight per week (null without data). */
@@ -107,20 +150,20 @@ function sleepVsSchedule(history: TrainingWorkout[], days: Days, now: number, pe
 
 function activityLevelCheck(days: Days, profile: CoachProfile | null, now: number, pending: CoachPending[]): CoachInsight | null {
   if (!profile) return null;
-  const w = watchActivity(days, profile, now);
-  if (!w.level || w.avgActive === null) {
-    pending.push({ area: 'Your activity level from the Watch', need: 'days of active calories', have: w.days, of: 7 });
+  const m = measuredActivity(days, profile, now);
+  if (!m.level) {
+    pending.push({ area: 'Your activity level from Apple Health', need: 'days of calories burned (or steps)', have: m.days, of: 7 });
     return null;
   }
-  if (w.level.value === profile.activityLevel) return null;
+  if (m.level.value === profile.activityLevel) return null;
   const chosen = ACTIVITY_LEVELS.find((l) => l.value === profile.activityLevel)!;
-  const current = Math.round(w.bmr! * chosen.multiplier);
+  const current = Math.round(m.bmr * chosen.multiplier / 10) * 10;
   return {
     id: 'activity-level', category: 'activity', tone: 'info', priority: 48, usesHealth: true,
-    title: `Your Watch says your activity level is “${w.level.label}”`,
-    detail: `You burn about ${w.avgActive.toLocaleString()} active calories a day (last ${w.days} days), putting your total near ${w.maintenance!.toLocaleString()} kcal — closer to ${w.level.label} than the ${chosen.label} the calorie calculator uses (${current.toLocaleString()} kcal).`,
-    steps: [`Set Activity Level to ${w.level.label} in Calculators → Calories (there's a one-tap button by the field).`, 'Your calorie targets and weight projection then match how active you really are.'],
-    evidence: `${w.days} days of Apple Watch active calories`,
+    title: `Your data says your activity level is “${m.level.label}”`,
+    detail: `Apple Health shows ${describeActivity(m)} — that fits ${m.level.label}, not the ${chosen.label} your calorie plan uses (${current.toLocaleString()} vs about ${m.maintenance!.toLocaleString()} kcal to maintain).`,
+    steps: [`Switch to ${m.level.label} in Health → Plan (or the calorie calculator); there's a one-tap button.`, 'Your calorie target and weight projection then match how active you really are.'],
+    evidence: m.basis === 'calories' ? `${m.days} days of calories from Apple Health` : `${m.days} days of steps`,
   };
 }
 

@@ -449,3 +449,8 @@ main { min-height: calc(100vh - 120px); }
     scroll-behavior: auto !important;
   }
 }
+
+/* Theme toggle inside the mobile menu */
+.mobile-theme { width: 100%; border: none; background: none; font: inherit; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; }
+/* The header's workout shortcut only fits beside the menu from ~340px; below that it's in the menu. */
+@media (max-width: 340px) { .nav-workout-btn { display: none; } }

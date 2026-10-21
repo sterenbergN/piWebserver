@@ -174,3 +174,16 @@ test('daily active calories add up energy samples and only grow as the day fills
   }, NOW);
   assert.equal(later.health.days['2026-10-19'].activeKcal, 250);
 });
+
+test('daily active and resting calorie totals are stored, and the exact total beats summed readings', () => {
+  const { health, summary } = applyHealthImport(emptyUserHealth(), {
+    activeEnergyDailyValues: '640\n710',
+    activeEnergyDailyDates: '2026-10-18T00:00:00-05:00\n2026-10-19T00:00:00-05:00',
+    restingEnergyValues: '1850\n1846',
+    restingEnergyDates: '2026-10-18T00:00:00-05:00\n2026-10-19T00:00:00-05:00',
+    activeEnergyValues: '900', activeEnergyStarts: '2026-10-19T12:00:00-05:00',
+  }, NOW);
+  assert.deepEqual(health.days['2026-10-19'], { activeKcal: 710, activeExact: true, restingKcal: 1846 });
+  assert.equal(summary.dailyCalories, 4);
+  assert.match(describeSync(summary), /4 daily calorie totals/);
+});

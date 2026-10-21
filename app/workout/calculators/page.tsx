@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import PageHeader from '@/components/workout/PageHeader';
-import WeightPlanCard from '@/components/workout/WeightPlanCard';
+import '@/components/workout/weight-plan.css';
 import { useSitePopup } from '@/components/SitePopup';
-import type { WeighIn, WeightPlan } from '@/lib/workout/weight-plan';
+import type { WeightPlan } from '@/lib/workout/weight-plan';
 import type { HealthDay } from '@/lib/workout/health';
-import { watchActivity } from '@/lib/workout/coach';
+import { describeActivity, measuredActivity } from '@/lib/workout/coach';
 import {
   ACTIVITY_LEVELS,
   calculateMifflinStJeor,
@@ -77,12 +77,8 @@ export default function WorkoutCalculatorsPage() {
   const [bodyFatForm, setBodyFatForm] = useState(EMPTY_DEFAULTS.bodyFat);
   const initializedRef = useRef(false);
   const { confirm, popup } = useSitePopup();
-  // Weigh-ins (typed in, or from a smart scale via Apple Health) for the plan.
-  const [weighIns, setWeighIns] = useState<WeighIn[]>([]);
   // Synced Apple Health days, for the activity level your Watch actually shows.
   const [healthDays, setHealthDays] = useState<Record<string, HealthDay>>({});
-  const [showCalculator, setShowCalculator] = useState(false);
-  const calculatorRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString('en-CA');
 
   useEffect(() => {
@@ -105,8 +101,6 @@ export default function WorkoutCalculatorsPage() {
           setBodyFatForm({ ...EMPTY_DEFAULTS.bodyFat, ...data.calculatorDefaults.bodyFat });
           initializedRef.current = true;
         }
-        const weights = await fetch('/api/workout/bodyweight').then((r) => r.json()).catch(() => null);
-        if (weights?.success) setWeighIns(weights.entries);
         const health = await fetch('/api/workout/health').then((r) => r.json()).catch(() => null);
         if (health?.success) setHealthDays(health.health.days || {});
       } finally {
@@ -249,7 +243,7 @@ export default function WorkoutCalculatorsPage() {
     const heightInches = asNumber(calorieForm.heightInches);
     const weightLbs = asNumber(calorieForm.weightLbs);
     if (!age || !heightInches || !weightLbs || !Object.keys(healthDays).length) return null;
-    return watchActivity(healthDays, { sex: calorieForm.sex || 'male', age, heightInches, weightLbs });
+    return measuredActivity(healthDays, { sex: calorieForm.sex || 'male', age, heightInches, weightLbs });
   })();
   /** Freeze the calculator's numbers as a plan starting on the projection start date (or today). */
   const startPlan = async () => {
@@ -272,19 +266,15 @@ export default function WorkoutCalculatorsPage() {
       createdAt: new Date().toISOString(),
     };
     setCalorieForm({ ...calorieForm, plan: next });
-    setShowCalculator(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (isSampleMode) return;
+    // Save now (not on the usual delay) and follow the plan in Health & plan.
+    await fetch('/api/workout/calculator-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calculatorDefaults: { calorie: { ...calorieForm, plan: next } } }),
+    }).catch(() => {});
+    window.location.href = '/workout/health?tab=plan';
   };
-  const endPlan = async () => {
-    if (!(await confirm({ title: 'End plan', message: 'End this plan? Your weigh-ins are kept.', confirmLabel: 'End plan', danger: true }))) return;
-    setCalorieForm({ ...calorieForm, plan: undefined });
-  };
-  const logWeighIn = async (weight: number) => {
-    const res = await fetch('/api/workout/bodyweight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ weight, date: today }) });
-    const data = await res.json().catch(() => ({}));
-    if (data.success) setWeighIns(data.entries);
-  };
-  const calculatorOpen = !plan || showCalculator;
 
   if (loading) {
     return <div className="workout-tile" style={{ textAlign: 'center' }}>Loading calculators...</div>;
@@ -321,22 +311,18 @@ export default function WorkoutCalculatorsPage() {
 
       {activeTab === 'calorie' ? (
         <div>
-          {plan && (
-            <WeightPlanCard
-              plan={plan}
-              entries={weighIns}
-              today={today}
-              onLog={isSampleMode ? undefined : logWeighIn}
-              onEdit={() => { setShowCalculator(true); setTimeout(() => calculatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}
-              onEnd={endPlan}
-            />
+          {plan && !isSampleMode && (
+            <a className="workout-tile calc-plan-link" href="/workout/health?tab=plan">
+              <span aria-hidden>📋</span>
+              <span>
+                <strong>Your plan is running</strong>
+                <small>{plan.targetCalories.toLocaleString()} kcal a day for {plan.weeks} weeks · track it, log weigh-ins and see your real calories in Health &amp; plan.</small>
+              </span>
+              <span aria-hidden>›</span>
+            </a>
           )}
-          {plan && !showCalculator && (
-            <button type="button" className="btn btn-secondary" style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', marginBottom: '1rem' }} onClick={() => setShowCalculator(true)}>
-              Show calorie calculator
-            </button>
-          )}
-          {calculatorOpen && (<div ref={calculatorRef}>
+          <p className="workout-hint" style={{ margin: '0 0 0.75rem' }}>Try out numbers here — nothing changes your plan unless you start a new one.</p>
+          {(<div>
           <div className="workout-tile">
             <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
               <h3 style={{ margin: 0 }}>Calorie Calculator</h3>
@@ -386,7 +372,7 @@ export default function WorkoutCalculatorsPage() {
             {fromWatch?.level && (
               <div className="calc-watch">
                 <span>
-                  ⌚ Your Watch: about <strong>{fromWatch.avgActive?.toLocaleString()}</strong> active kcal a day (last {fromWatch.days} days)
+                  ⌚ Apple Health: {describeActivity(fromWatch)}
                   {fromWatch.level.value === calorieForm.activityLevel ? <> — matches <strong>{fromWatch.level.label}</strong>.</> : <> — that&apos;s <strong>{fromWatch.level.label}</strong>.</>}
                 </span>
                 {fromWatch.level.value !== calorieForm.activityLevel && (

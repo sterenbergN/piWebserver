@@ -33,6 +33,14 @@ export const SHORTCUT_SAMPLES: ShortcutSample[] = [
     fields: [{ key: 'sleepValues', property: 'Value' }, { key: 'sleepStarts', property: 'Start Date' }, { key: 'sleepEnds', property: 'End Date' }],
   },
   {
+    variable: 'ActiveDaily', type: 'Active Energy', days: 7, backfillDays: 30, groupByDay: true, why: 'Calories burned moving, per day',
+    fields: [{ key: 'activeEnergyDailyValues', property: 'Value' }, { key: 'activeEnergyDailyDates', property: 'Start Date' }],
+  },
+  {
+    variable: 'Resting', type: 'Resting Energy', days: 7, backfillDays: 30, groupByDay: true, why: 'Resting calories, per day',
+    fields: [{ key: 'restingEnergyValues', property: 'Value' }, { key: 'restingEnergyDates', property: 'Start Date' }],
+  },
+  {
     variable: 'Weight', type: 'Weight', days: 30, backfillDays: 30, why: 'Scale weight (Renpho)',
     fields: [{ key: 'weightValues', property: 'Value' }, { key: 'weightDates', property: 'Start Date' }, { key: 'weightUnit', property: 'Unit' }],
   },

@@ -163,7 +163,7 @@ export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, on
         </div>
       )}
       <div className="wp-actions">
-        <button type="button" className="workout-text-btn" onClick={onEdit}>Adjust in the calculator</button>
+        <button type="button" className="workout-text-btn" onClick={onEdit}>Change plan</button>
         <button type="button" className="workout-text-btn danger" onClick={onEnd}>End plan</button>
       </div>
     </section>
