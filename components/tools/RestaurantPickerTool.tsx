@@ -51,6 +51,7 @@ export default function RestaurantPickerTool() {
   const [results, setResults] = useState<Place[]>([]);
   const [where, setWhere] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
+  const [partial, setPartial] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const search = async (useTyped: boolean) => {
@@ -72,6 +73,7 @@ export default function RestaurantPickerTool() {
       const d = await res.json();
       if (!d.success) { setStatus('error'); setError(d.message || 'Search failed.'); return; }
       setResults(d.results);
+      setPartial(d.partial === true);
       setWhere(d.place || 'you');
       setStatus('done');
       setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
@@ -125,6 +127,7 @@ export default function RestaurantPickerTool() {
           <input value={place} onChange={e => setPlace(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && place.trim()) search(true); }} placeholder="…or type a city, area or ZIP" aria-label="Place to search near" style={{ flex: 1 }} />
           <button className="btn btn-secondary" disabled={busy || !place.trim()} onClick={() => search(true)}>Search</button>
         </div>
+        {status === 'searching' && <p className="tl-muted" role="status" style={{ margin: '0.6rem 0 0', fontSize: '0.85rem' }}>The map servers can be slow at busy times; this can take up to half a minute.</p>}
         {error && <p role="alert" style={{ color: 'var(--danger)', margin: '0.75rem 0 0', fontSize: '0.9rem' }}>{error}</p>}
       </section>
 
@@ -163,6 +166,7 @@ export default function RestaurantPickerTool() {
               ))}
             </div>
           )}
+          {partial && results.length > 0 && <p className="tl-muted" style={{ fontSize: '0.8rem', margin: '0.9rem 0 0' }}>The full map search was busy, so this is a quicker, shorter list. Search again in a minute for everything nearby.</p>}
           <p className="tl-muted" style={{ fontSize: '0.75rem', margin: '0.9rem 0 0' }}>Data © OpenStreetMap contributors. Hours can be out of date.</p>
         </section>
       )}
