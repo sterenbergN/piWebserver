@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { applyHealthImport, refreshWorkoutHealth } from '@/lib/workout/health';
+import { applyHealthImport, describeSync, refreshWorkoutHealth } from '@/lib/workout/health';
 import { updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
 import { loadUserHistory } from '@/lib/workout/history';
 import { logBodyweights } from '@/lib/workout/bodyweight';
@@ -27,22 +27,8 @@ export async function POST(request: Request) {
     // Scale readings join the bodyweight log (and set the profile weight).
     await logBodyweights(userId, weights);
 
-    const parts = [
-      summary.steps && `${summary.steps} days of steps`,
-      summary.sleep && `${summary.sleep} nights of sleep`,
-      summary.weight && `${summary.weight} weights`,
-      summary.bodyFat && `${summary.bodyFat} body fat readings`,
-      summary.restingHr && `${summary.restingHr} days of resting heart rate`,
-      summary.hrv && `${summary.hrv} days of HRV`,
-      summary.heartRate && `${summary.heartRate} heart rate readings`,
-      summary.activeEnergy && `${summary.activeEnergy} energy readings`,
-      summary.workouts && `${summary.workouts} workouts`,
-    ].filter(Boolean);
-    return NextResponse.json({
-      success: true,
-      received: summary,
-      message: parts.length ? `Synced ${parts.join(', ')}.` : 'Nothing recognised in this upload. Check the field names.',
-    });
+    // The shortcut shows this as a notification, so problems are spelled out.
+    return NextResponse.json({ success: true, received: summary, message: describeSync(summary) });
   } catch (error) {
     return handleApiError(error, 'Health import failed');
   }

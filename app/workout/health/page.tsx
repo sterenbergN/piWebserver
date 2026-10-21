@@ -8,7 +8,7 @@ import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, setMarks } 
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import { daysSince, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
-import type { HealthDay, PublicHealth } from '@/lib/workout/health';
+import { describeSync, type HealthDay, type PublicHealth } from '@/lib/workout/health';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
 
@@ -147,6 +147,12 @@ export default function HealthPage() {
         actions={<button type="button" className="workout-button is-small" onClick={() => setSetupOpen(true)}>{h?.connected ? '⚙︎ Sync' : 'Connect'}</button>}
       />
       {offline && <p className="workout-offline-note" style={{ margin: '0 0 0.75rem' }}>📡 Offline — showing data saved on this phone.</p>}
+      {h?.lastSync && (h.lastSync.unreadableDates || h.lastSync.mismatched?.length || h.lastSync.ignored?.length) ? (
+        <p className="hc-warn" style={{ marginBottom: '0.9rem' }}>
+          ⚠︎ The last sync had problems. {describeSync(h.lastSync)}{' '}
+          <button type="button" className="workout-text-btn" style={{ textDecoration: 'underline' }} onClick={() => setSetupOpen(true)}>Fix the shortcut</button>
+        </p>
+      ) : null}
 
       {!hasData && (
         <section className="workout-tile hc-hero">

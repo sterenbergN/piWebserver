@@ -47,7 +47,15 @@ export type WorkoutHealth = {
   watch?: boolean;
 };
 
-export type SyncSummary = { at: string; steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number; heartRate: number; activeEnergy: number; workouts: number };
+export type SyncSummary = {
+  at: string;
+  steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number;
+  heartRate: number; activeEnergy: number; workouts: number;
+  /** Fields in the upload that were not recognised, and dates that could not be read. */
+  ignored?: string[];
+  unreadableDates?: number;
+  mismatched?: string[];
+};
 
 export type UserHealth = {
   keyHash?: string;
@@ -115,33 +123,84 @@ export function dayKeyAt(ms: number, offsetMin: number | null): string {
   return new Date(ms + offsetMin * 60_000).toISOString().slice(0, 10);
 }
 
-type Column = { values: string[]; starts: string[]; ends: string[]; unit: string };
+type Column = { values: string[]; starts: string[]; ends: string[]; unit: string; calories: string[] };
 
-function column(body: Record<string, any>, name: string): Column {
-  const nested = body[name] && typeof body[name] === 'object' && !Array.isArray(body[name]) ? body[name] : {};
-  const pick = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = nested[key] ?? body[`${name}${key[0].toUpperCase()}${key.slice(1)}`];
-      if (value !== undefined) return value;
+/** Other names a sender (or an AI-built shortcut) might use for each metric. */
+const ALIASES: Record<string, string[]> = {
+  steps: ['steps', 'stepCount'],
+  sleep: ['sleep', 'sleepAnalysis'],
+  weight: ['weight', 'bodyMass'],
+  bodyFat: ['bodyFat', 'bodyFatPercentage'],
+  restingHeartRate: ['restingHeartRate', 'restingHr'],
+  hrv: ['hrv', 'heartRateVariability'],
+  heartRate: ['heartRate'],
+  activeEnergy: ['activeEnergy', 'activeEnergyBurned', 'activeCalories'],
+  workouts: ['workouts'],
+};
+
+/** What an upload contained that couldn't be used, so the sender can be fixed. */
+type Diagnostics = { used: Set<string>; unreadableDates: number; mismatched: string[] };
+
+const firstDefined = (o: Record<string, any>, keys: string[]) => {
+  for (const key of keys) if (o[key] !== undefined && o[key] !== null) return o[key];
+  return undefined;
+};
+
+/**
+ * One metric's columns. Accepts flat fields (`stepsValues`, `stepsDates`…),
+ * a nested object ({ steps: { values, dates } }) or a list of samples
+ * ({ steps: [{ value, startDate, endDate }] }).
+ */
+function column(body: Record<string, any>, name: string, diag: Diagnostics): Column {
+  for (const alias of ALIASES[name] || [name]) {
+    const own = body[alias];
+    if (Array.isArray(own) && own.some((item) => item && typeof item === 'object')) {
+      diag.used.add(alias);
+      const list = own.filter((item) => item && typeof item === 'object');
+      const get = (keys: string[]) => list.map((item) => String(firstDefined(item, keys) ?? '').trim());
+      return {
+        values: get(['value', 'Value', 'qty', 'quantity', 'name', 'Name']),
+        starts: get(['start', 'startDate', 'Start Date', 'date', 'Date']),
+        ends: get(['end', 'endDate', 'End Date']),
+        unit: String(firstDefined(list[0], ['unit', 'Unit', 'units']) ?? '').toLowerCase(),
+        calories: get(['calories', 'kcal', 'activeEnergy', 'Active Energy']),
+      };
     }
-    return undefined;
-  };
-  return {
-    values: parseList(pick('values', 'names')),
-    starts: parseList(pick('starts', 'dates')),
-    ends: parseList(pick('ends')),
-    unit: String(pick('unit') ?? '').toLowerCase(),
-  };
+    const nested = own && typeof own === 'object' && !Array.isArray(own) ? own : null;
+    const pick = (...suffixes: string[]) => {
+      for (const suffix of suffixes) {
+        const flatKey = `${alias}${suffix[0].toUpperCase()}${suffix.slice(1)}`;
+        const value = nested?.[suffix] ?? body[flatKey];
+        if (value !== undefined) {
+          diag.used.add(nested?.[suffix] !== undefined ? alias : flatKey);
+          return value;
+        }
+      }
+      return undefined;
+    };
+    const col: Column = {
+      values: parseList(pick('values', 'names')),
+      starts: parseList(pick('starts', 'dates', 'startDates')),
+      ends: parseList(pick('ends', 'endDates')),
+      unit: String(pick('unit', 'units') ?? '').toLowerCase(),
+      calories: parseList(pick('calories')),
+    };
+    if (col.values.length || col.starts.length) {
+      if (col.values.length !== col.starts.length) diag.mismatched.push(name);
+      return col;
+    }
+  }
+  return { values: [], starts: [], ends: [], unit: '', calories: [] };
 }
 
 type Sample = { value: string; start: ParsedDate; end: ParsedDate | null };
 
-function samples(col: Column): Sample[] {
+function samples(col: Column, diag: Diagnostics): Sample[] {
   const out: Sample[] = [];
   const count = Math.min(col.values.length, col.starts.length);
   for (let i = 0; i < count; i++) {
     const start = parseHealthDate(col.starts[i]);
-    if (!start) continue;
+    if (!start) { diag.unreadableDates++; continue; }
     out.push({ value: col.values[i], start, end: col.ends[i] ? parseHealthDate(col.ends[i]) : null });
   }
   return out;
@@ -221,10 +280,11 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   const health: UserHealth = { ...emptyUserHealth(), ...current, days: { ...current.days } };
   const day = (key: string) => (health.days[key] = { ...health.days[key] });
   const summary: SyncSummary = { at: new Date(now).toISOString(), steps: 0, sleep: 0, weight: 0, bodyFat: 0, restingHr: 0, hrv: 0, heartRate: 0, activeEnergy: 0, workouts: 0 };
+  const diag: Diagnostics = { used: new Set(['key']), unreadableDates: 0, mismatched: [] };
 
   // Steps: one total per day (send them grouped by day; ungrouped samples are added up).
   const steps = new Map<string, number>();
-  for (const s of samples(column(body, 'steps'))) {
+  for (const s of samples(column(body, 'steps', diag), diag)) {
     const n = parseNumber(s.value);
     if (!(n >= 0)) continue;
     const key = dayKeyAt(s.start.ms, s.start.offsetMin);
@@ -238,9 +298,9 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
 
   // Weight and body fat: the day's last reading.
   const lastPerDay = (name: string, convert: (n: number, unit: string) => number | null) => {
-    const col = column(body, name);
+    const col = column(body, name, diag);
     const latest = new Map<string, { ms: number; value: number }>();
-    for (const s of samples(col)) {
+    for (const s of samples(col, diag)) {
       const value = convert(parseNumber(s.value), col.unit || s.value.toLowerCase());
       if (value === null) continue;
       const key = dayKeyAt(s.start.ms, s.start.offsetMin);
@@ -262,7 +322,7 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   // Resting heart rate and HRV: the day's average (one reading or several).
   const dailyAverage = (name: string, min: number, max: number, set: (key: string, value: number) => void) => {
     const perDay = new Map<string, number[]>();
-    for (const s of samples(column(body, name))) {
+    for (const s of samples(column(body, name, diag), diag)) {
       const n = parseNumber(s.value);
       if (!(n >= min && n <= max)) continue;
       const key = dayKeyAt(s.start.ms, s.start.offsetMin);
@@ -276,13 +336,15 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
 
   // Sleep: rebuild each night from its segments. A night cut off by the
   // edge of the upload's date range never replaces a longer one already saved.
-  const segments = samples(column(body, 'sleep')).flatMap((s) => {
+  const segments = samples(column(body, 'sleep', diag), diag).flatMap((s) => {
     const stage = sleepStage(s.value);
     return stage && s.end ? [{ stage, start: s.start.ms, end: s.end.ms, offsetMin: s.start.offsetMin }] : [];
   });
   for (const [key, night] of Object.entries(sleepNights(segments))) {
     const saved = health.days[key]?.sleep;
-    if (saved && saved.asleepMin > night.asleepMin) continue;
+    // Only a night that starts later than the saved one (cut off by the range) is kept back;
+    // a complete night replaces whatever was there, even a longer, wrong one.
+    if (saved && saved.asleepMin > night.asleepMin && Date.parse(night.bedtime) > Date.parse(saved.bedtime) + 30 * 60_000) continue;
     day(key).sleep = night;
     summary.sleep++;
   }
@@ -290,7 +352,7 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   // Heart rate and active energy: kept raw for a while, for matching to workouts.
   const cutoff = Math.floor((now - RAW_DAYS * DAY_MS) / 1000);
   const hr = new Map(health.hr.map(([t, bpm]) => [t, bpm]));
-  for (const s of samples(column(body, 'heartRate'))) {
+  for (const s of samples(column(body, 'heartRate', diag), diag)) {
     const bpm = parseNumber(s.value);
     if (!(bpm >= 25 && bpm <= 250)) continue;
     hr.set(Math.floor(s.start.ms / 1000), Math.round(bpm));
@@ -298,9 +360,9 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   }
   health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
 
-  const energyCol = column(body, 'activeEnergy');
+  const energyCol = column(body, 'activeEnergy', diag);
   const energy = new Map(health.energy.map((e) => [e[0], e]));
-  for (const s of samples(energyCol)) {
+  for (const s of samples(energyCol, diag)) {
     let kcal = parseNumber(s.value);
     if (/kj|kilojoule/.test(energyCol.unit)) kcal /= 4.184;
     if (!(kcal >= 0 && kcal <= 2000)) continue;
@@ -312,8 +374,8 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   health.energy = [...energy.values()].filter(([, end]) => end >= cutoff).sort((a, b) => a[0] - b[0]);
 
   // Watch workouts, if the sender can read them (`workoutsStarts`, `workoutsEnds`, names, calories).
-  const wcol = column(body, 'workouts');
-  const kcals = parseList(body.workouts?.calories ?? body.workoutsCalories);
+  const wcol = column(body, 'workouts', diag);
+  const kcals = wcol.calories;
   const watch = new Map(health.watchWorkouts.map((w) => [w.start, w]));
   wcol.starts.forEach((startText, i) => {
     const start = parseHealthDate(startText);
@@ -328,6 +390,9 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   });
   health.watchWorkouts = [...watch.values()].sort((a, b) => a.start.localeCompare(b.start)).slice(-1000);
 
+  summary.ignored = Object.keys(body).filter((k) => !diag.used.has(k)).slice(0, 20);
+  summary.unreadableDates = diag.unreadableDates;
+  summary.mismatched = [...new Set(diag.mismatched)];
   health.lastSync = summary;
   return { health, summary, weights: [...weights.entries()].map(([date, { value }]) => ({ date, weight: value })) };
 }
@@ -410,6 +475,29 @@ export function refreshWorkoutHealth(health: UserHealth, history: LoggedWorkout[
     changed = true;
   }
   return changed;
+}
+
+/** One-paragraph result of an upload: what arrived, and anything that needs fixing in the shortcut. */
+export function describeSync(summary: SyncSummary): string {
+  const n = (count: number, one: string, many: string) => count && `${count} ${count === 1 ? one : many}`;
+  const parts = [
+    n(summary.steps, 'day of steps', 'days of steps'),
+    n(summary.sleep, 'night of sleep', 'nights of sleep'),
+    n(summary.weight, 'weight', 'weights'),
+    n(summary.bodyFat, 'body fat reading', 'body fat readings'),
+    n(summary.restingHr, 'day of resting heart rate', 'days of resting heart rate'),
+    n(summary.hrv, 'day of HRV', 'days of HRV'),
+    n(summary.heartRate, 'heart rate reading', 'heart rate readings'),
+    n(summary.activeEnergy, 'energy reading', 'energy readings'),
+    n(summary.workouts, 'workout', 'workouts'),
+  ].filter(Boolean);
+  const problems = [
+    summary.unreadableDates ? `${summary.unreadableDates} date${summary.unreadableDates === 1 ? '' : 's'} couldn't be read (set Date Format to ISO 8601)` : '',
+    summary.mismatched?.length ? `values and dates don't line up for ${summary.mismatched.join(', ')}` : '',
+    summary.ignored?.length ? `unknown fields ignored: ${summary.ignored.join(', ')}` : '',
+  ].filter(Boolean);
+  const head = parts.length ? `Synced ${parts.join(', ')}.` : 'Nothing usable in this upload.';
+  return problems.length ? `${head} Check: ${problems.join('; ')}.` : head;
 }
 
 /** What the page gets: everything except the key and the raw samples. */

@@ -4,9 +4,9 @@ import './health.css';
 import { useState } from 'react';
 import Sheet from '@/components/workout/Sheet';
 import { useSitePopup } from '@/components/SitePopup';
-import { SHORTCUT_SAMPLES, shortcutFieldList } from '@/lib/workout/health-shortcut';
+import { KEY_PLACEHOLDER, SHORTCUT_NAMES, SHORTCUT_SAMPLES, shortcutFieldList, shortcutPrompt } from '@/lib/workout/health-shortcut';
 import { timeAgo } from '@/lib/workout/health-insights';
-import type { PublicHealth } from '@/lib/workout/health';
+import { describeSync, type PublicHealth } from '@/lib/workout/health';
 
 type Props = {
   health: PublicHealth;
@@ -28,6 +28,31 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
         <code className={secret ? 'is-secret' : ''}>{value}</code>
         <button type="button" className="workout-button is-small" onClick={copy}>{copied ? '✓ Copied' : 'Copy'}</button>
       </div>
+    </div>
+  );
+}
+
+/** A ready-made prompt for building one of the shortcuts, with copy and preview. */
+function PromptCard({ title, about, prompt }: { title: string; about: string; prompt: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard?.writeText(prompt).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+  return (
+    <div className="hc-prompt">
+      <div className="hc-prompt-head">
+        <div>
+          <strong>{title}</strong>
+          <small>{about}</small>
+        </div>
+        <button type="button" className="workout-button is-small is-primary" onClick={copy}>{copied ? '✓ Copied' : 'Copy prompt'}</button>
+      </div>
+      <details className="hc-more">
+        <summary>Show prompt</summary>
+        <pre className="hc-prompt-text">{prompt}</pre>
+      </details>
     </div>
   );
 }
@@ -57,6 +82,8 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
   const [listCopied, setListCopied] = useState(false);
   const url = typeof window === 'undefined' ? '/api/workout/health/import' : `${window.location.origin}/api/workout/health/import`;
   const synced = !!health.lastSync;
+  const last = health.lastSync;
+  const hasProblems = !!last && (!!last.unreadableDates || !!last.mismatched?.length || !!last.ignored?.length);
 
   const call = async (init: RequestInit) => {
     setBusy(true);
@@ -104,7 +131,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
         <Step n={1} title="Make your sync key" done={health.connected}>
           {key ? (<>
             <CopyField label="Sync key (shown only now)" value={key} secret />
-            <p className="workout-hint">Copy it into the shortcut in step 2. If you lose it, just make a new one.</p>
+            <p className="workout-hint">It is now filled into the prompts in step 2. If you lose it, just make a new one.</p>
           </>) : health.connected ? (
             <p className="workout-hint">You have a key ending in <strong>…{health.keyHint}</strong>{health.keyCreatedAt ? `, made ${timeAgo(health.keyCreatedAt)}` : ''}. Keys are only shown once — make a new one if you need it again.</p>
           ) : (
@@ -116,85 +143,88 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
           </button>
         </Step>
 
-        <Step n={2} title="Build the shortcut">
-          <ol className="hc-list">
-            <li>Open <strong>Shortcuts</strong>, tap <strong>+</strong> and name it <em>Sync Health</em>.</li>
-            <li>
-              For each row below, add <strong>Find Health Samples</strong>: set the type, then <em>Start Date is in the last …</em>.
-              For <strong>Steps</strong> also turn on <em>Group By: Day</em>. After each one add <strong>Set Variable</strong> with the name shown, so they’re easy to pick out below.
-            </li>
-          </ol>
-          <div className="hc-table" role="table" aria-label="Health samples to find">
-            <div className="hc-table-row is-head" role="row"><span role="columnheader">Type</span><span role="columnheader">Last</span><span role="columnheader">Variable</span></div>
-            {SHORTCUT_SAMPLES.map((s) => (
-              <div key={s.variable} className="hc-table-row" role="row">
-                <span role="cell"><strong>{s.type}</strong><small>{s.why}{s.groupByDay ? ' · Group by Day' : ''}</small></span>
-                <span role="cell">{s.range}</span>
-                <span role="cell"><code>{s.variable}</code></span>
-              </div>
-            ))}
-          </div>
-          <ol className="hc-list" start={3}>
-            <li>
-              Add <strong>Get Contents of URL</strong> and paste the upload address. Tap <em>Show More</em>:
-              <ul>
-                <li>Method: <strong>POST</strong></li>
-                <li>Headers: add <code>Authorization</code> with the value <code>Bearer </code> followed by your key (one space after <em>Bearer</em>)</li>
-                <li>Request Body: <strong>JSON</strong>, then add one <strong>Text</strong> field per line below</li>
-              </ul>
-            </li>
-            <li>
-              In each field, insert the variable, tap it and choose the property (<em>Value</em>, <em>Start Date</em>…).
-              For dates also set <em>Date Format</em> to <strong>ISO 8601</strong> and turn on <em>Include Time</em>.
-            </li>
-          </ol>
-          <div className="hc-fields">
-            {SHORTCUT_SAMPLES.flatMap((s) => s.fields.map((f) => (
-              <div key={f.key} className="hc-field">
-                <code>{f.key}</code>
-                <span>{s.variable} › {f.property}{f.property.endsWith('Date') ? ' · ISO 8601' : ''}</span>
-              </div>
-            )))}
-          </div>
-          <button type="button" className="workout-button is-small" onClick={copyList}>{listCopied ? '✓ Copied' : 'Copy this list'}</button>
-          <ol className="hc-list" start={5}>
-            <li>Last, add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it — you&apos;ll see what was synced.</li>
-          </ol>
-          <details className="hc-more">
-            <summary>Optional: Watch workouts</summary>
-            <p className="workout-hint">
-              Heart rate and calories are matched to your logged workouts by time, so this isn&apos;t needed. If your Shortcuts can find
-              <em> Workouts</em> samples, you can also send <code>workoutsStarts</code>, <code>workoutsEnds</code>, <code>workoutsNames</code> and
-              <code> workoutsCalories</code>; a Watch session then sets the exact start and end, and its calorie total is used.
+        <Step n={2} title="Make the two shortcuts">
+          <p className="workout-hint">
+            Copy a prompt into the AI in the Shortcuts app (or any AI assistant) and it builds the shortcut for you. You want both:
+            a <strong>daily</strong> one that runs automatically, and a <strong>30-day</strong> one you run once to fill in history.
+          </p>
+          {!key && (
+            <p className="hc-warn">
+              The prompts say <code>{KEY_PLACEHOLDER}</code> where your key goes, because keys are only shown once.
+              Make a new key in step 1 to have it filled in (then put the new key in any shortcut you already made).
             </p>
+          )}
+          <PromptCard
+            title={SHORTCUT_NAMES.daily}
+            about="The last few days of everything, in one upload. Set it to run every morning and evening."
+            prompt={shortcutPrompt('daily', { url, key })}
+          />
+          <PromptCard
+            title={SHORTCUT_NAMES.backfill}
+            about="Run once. Sends 30 days of steps, sleep, weight, body fat, resting heart rate and HRV, then two weeks of heart rate and energy as a second upload."
+            prompt={shortcutPrompt('backfill', { url, key })}
+          />
+          <p className="workout-hint">
+            When it is built, check that every date field uses <strong>ISO 8601</strong>. If anything is off, the notification after a run says exactly what to fix.
+          </p>
+          <details className="hc-more">
+            <summary>Build it by hand instead</summary>
+            <ol className="hc-list" style={{ marginTop: '0.5rem' }}>
+              <li>Open <strong>Shortcuts</strong>, tap <strong>+</strong> and name it <em>{SHORTCUT_NAMES.daily}</em>.</li>
+              <li>
+                For each row below, add <strong>Find Health Samples</strong>: set the type, then <em>Start Date is in the last N days</em>.
+                For <strong>Steps</strong> also set <em>Group By: Day</em>. After each one add <strong>Set Variable</strong> with the name shown.
+              </li>
+            </ol>
+            <div className="hc-table" role="table" aria-label="Health samples to find">
+              <div className="hc-table-row is-head" role="row"><span role="columnheader">Type</span><span role="columnheader">Last</span><span role="columnheader">Variable</span></div>
+              {SHORTCUT_SAMPLES.map((s) => (
+                <div key={s.variable} className="hc-table-row" role="row">
+                  <span role="cell"><strong>{s.type}</strong><small>{s.why}{s.groupByDay ? ' · Group by Day' : ''}</small></span>
+                  <span role="cell">{s.days} days</span>
+                  <span role="cell"><code>{s.variable}</code></span>
+                </div>
+              ))}
+            </div>
+            <ol className="hc-list" start={3}>
+              <li>Add <strong>Get Contents of URL</strong> with the upload address, Method <strong>POST</strong>, Request Body <strong>JSON</strong>.</li>
+              <li>Add a Text field <code>key</code> with your sync key, then one Text field per line below: insert the variable, tap it and choose the property. For dates set <em>Date Format</em> to <strong>ISO 8601</strong> with <em>Include Time</em> on.</li>
+            </ol>
+            <div className="hc-fields">
+              {SHORTCUT_SAMPLES.flatMap((s) => s.fields.map((f) => (
+                <div key={f.key} className="hc-field">
+                  <code>{f.key}</code>
+                  <span>{s.variable} › {f.property}{f.property.endsWith('Date') ? ' · ISO 8601' : ''}</span>
+                </div>
+              )))}
+            </div>
+            <button type="button" className="workout-button is-small" onClick={copyList}>{listCopied ? '✓ Copied' : 'Copy this list'}</button>
+            <ol className="hc-list" start={5}>
+              <li>Add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it.</li>
+            </ol>
+            <p className="workout-hint">For the 30-day version, use 30 days for the first six rows, and send Heart Rate and Active Energy (14 days) in a second Get Contents of URL.</p>
           </details>
         </Step>
 
-        <Step n={3} title="Run it once" done={synced}>
+        <Step n={3} title="Run both once" done={synced}>
           <p className="workout-hint">
-            Tap ▶︎ in the shortcut. iOS asks to let Shortcuts read each Health type: allow them all. The notification says what arrived, and it shows up here.
+            Run the 30-day shortcut, then the daily one. iOS asks to let Shortcuts read each Health type: allow them all. The notification says what arrived.
           </p>
-          {health.lastSync ? (
-            <p className="hc-ok">✓ Last sync {timeAgo(health.lastSync.at)}</p>
-          ) : (
+          {last ? (<>
+            <p className={hasProblems ? 'hc-warn' : 'hc-ok'}>{hasProblems ? '⚠︎' : '✓'} Last sync {timeAgo(last.at)}: {describeSync(last)}</p>
+            <button type="button" className="workout-button is-small" onClick={onChanged}>Refresh</button>
+          </>) : (
             <button type="button" className="workout-button is-small" onClick={onChanged}>Check again</button>
           )}
         </Step>
 
-        <Step n={4} title="Make it automatic">
+        <Step n={4} title="Make the daily one automatic">
           <ol className="hc-list">
             <li>In Shortcuts go to <strong>Automation</strong> → <strong>+</strong> → <strong>Time of Day</strong>.</li>
             <li>Pick <strong>7:30 AM</strong>, <em>Daily</em>, and choose <strong>Run Immediately</strong> (not “Ask Before Running”).</li>
-            <li>Choose the <em>Sync Health</em> shortcut. Make a second automation for the evening (e.g. <strong>9:00 PM</strong>) so that day&apos;s workouts get their heart rate.</li>
+            <li>Choose <em>{SHORTCUT_NAMES.daily}</em>. Make a second automation for the evening (e.g. <strong>9:00 PM</strong>) so that day&apos;s workouts get their heart rate.</li>
           </ol>
-          <p className="workout-hint">The morning run brings in last night&apos;s sleep for today&apos;s readiness. You can also run it any time from the Shortcuts widget, e.g. right after the gym.</p>
-          <details className="hc-more">
-            <summary>Bring in past data</summary>
-            <p className="workout-hint">
-              Duplicate the shortcut, change the ranges for steps, sleep, weight, body fat, resting heart rate and HRV to <em>1 year</em> and run it once.
-              Heart rate and active energy only matter for the last two weeks, so leave those at 2 days.
-            </p>
-          </details>
+          <p className="workout-hint">The morning run brings in last night&apos;s sleep for today&apos;s readiness. Run the 30-day one again any time you want to fill gaps.</p>
         </Step>
 
         {error && <p className="workout-error">{error}</p>}

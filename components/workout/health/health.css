@@ -157,3 +157,16 @@
 /* Under-chart legend for a dashed reference line */
 .hc-legend { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem; }
 .hc-legend-dash { width: 18px; border-top: 2px dashed var(--muted); opacity: 0.8; }
+
+/* Setup: AI prompts and sync problems */
+.hc-prompt { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.7rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); }
+.hc-prompt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; }
+.hc-prompt-head strong { display: block; font-size: 0.9rem; }
+.hc-prompt-head small { display: block; color: var(--muted); font-size: 0.75rem; line-height: 1.35; margin-top: 0.1rem; }
+.hc-prompt-head button { flex-shrink: 0; }
+.hc-prompt-text {
+  margin: 0.4rem 0 0; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; line-height: 1.45;
+  padding: 0.6rem; border-radius: 10px; background: var(--background); border: 1px solid var(--surface-border);
+}
+.hc-warn { margin: 0; padding: 0.5rem 0.65rem; border-radius: 10px; font-size: 0.8rem; line-height: 1.4; color: var(--foreground); background: color-mix(in srgb, var(--warning) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); }

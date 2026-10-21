@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyHealthImport, dayKeyAt, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { applyHealthImport, dayKeyAt, describeSync, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -67,6 +67,9 @@ test('a night cut short by the upload range does not replace a fuller one', () =
   const full = applyHealthImport(emptyUserHealth(), { sleepValues: 'Core', sleepStarts: '2026-10-19T23:00:00-05:00', sleepEnds: '2026-10-20T06:00:00-05:00' }, NOW);
   const partial = applyHealthImport(full.health, { sleepValues: 'Core', sleepStarts: '2026-10-20T04:00:00-05:00', sleepEnds: '2026-10-20T06:00:00-05:00' }, NOW);
   assert.equal(partial.health.days['2026-10-20'].sleep!.asleepMin, 420);
+  // A complete night with the same bedtime corrects an earlier, wrong (longer) one.
+  const corrected = applyHealthImport(full.health, { sleepValues: 'Core', sleepStarts: '2026-10-19T23:00:00-05:00', sleepEnds: '2026-10-20T05:30:00-05:00' }, NOW);
+  assert.equal(corrected.health.days['2026-10-20'].sleep!.asleepMin, 390);
 });
 
 const workout = {
@@ -127,4 +130,34 @@ test('resting heart rate and HRV are averaged per day', () => {
   assert.equal(health.days['2026-10-18'].restingHr, 52);
   assert.equal(health.days['2026-10-19'].hrv, 50);
   assert.equal(summary.hrv, 2);
+});
+
+test('lists of sample objects and other metric names are accepted too', () => {
+  const { health, summary } = applyHealthImport(emptyUserHealth(), {
+    stepCount: [{ value: '9,500', startDate: '2026-10-19T00:00:00-05:00' }],
+    bodyMass: { values: ['180.2'], dates: ['2026-10-19T07:00:00-05:00'], unit: 'lb' },
+    sleep: [{ Value: 'Core', 'Start Date': '2026-10-19T23:00:00-05:00', 'End Date': '2026-10-20T06:00:00-05:00' }],
+  }, NOW);
+  assert.equal(health.days['2026-10-19'].steps, 9500);
+  assert.equal(health.days['2026-10-19'].weight, 180.2);
+  assert.equal(health.days['2026-10-20'].sleep?.asleepMin, 420);
+  assert.deepEqual(summary.ignored, []);
+});
+
+test('the sync message points at what to fix in the shortcut', () => {
+  const { summary } = applyHealthImport(emptyUserHealth(), {
+    key: 'nsh_x',
+    stepsValues: '100\n200',
+    stepsDates: 'yesterday\n2026-10-19T00:00:00-05:00',
+    weightValues: '180\n181',
+    weightDates: '2026-10-19T07:00:00-05:00',
+    caloriesEaten: '2000',
+  }, NOW);
+  assert.equal(summary.unreadableDates, 1);
+  assert.deepEqual(summary.mismatched, ['weight']);
+  assert.deepEqual(summary.ignored, ['caloriesEaten']);
+  const message = describeSync(summary);
+  assert.match(message, /^Synced 1 day of steps, 1 weight\./);
+  assert.match(message, /ISO 8601/);
+  assert.match(message, /caloriesEaten/);
 });
