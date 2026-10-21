@@ -82,6 +82,12 @@ export function HowToPlayModal({
   const validInitial = (initialGameType in GAME_GUIDES ? initialGameType : 'quip-clash') as GameType;
   const [selected, setSelected] = useState<GameType>(validInitial);
   const guide = GAME_GUIDES[selected] || GAME_GUIDES['quip-clash'];
+  const activePill = useRef<HTMLButtonElement>(null);
+
+  // Games late in the list start off-screen in the pill row; bring the chosen one into view.
+  useEffect(() => {
+    activePill.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selected]);
 
   if (typeof document === 'undefined') return null;
 
@@ -120,15 +126,18 @@ export function HowToPlayModal({
           gap: '0.9rem',
         }}
       >
-        {/* Game Switcher Pills */}
-        <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+        {/* Game Switcher Pills. flexShrink 0: as a scrolling flex item it would otherwise
+            be squashed to nothing when a long guide overflows the modal. */}
+        <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', flexShrink: 0, paddingBottom: '0.35rem', scrollbarWidth: 'thin' }}>
           {GUIDE_ORDER.map((gid) => {
             const g = GAME_GUIDES[gid];
             const active = gid === selected;
             return (
               <button
                 key={gid}
+                ref={active ? activePill : undefined}
                 type="button"
+                aria-pressed={active}
                 onClick={() => setSelected(gid)}
                 style={{
                   background: active ? 'var(--party-purple, #7c3aed)' : 'rgba(255,255,255,0.06)',
