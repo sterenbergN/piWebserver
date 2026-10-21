@@ -3,13 +3,26 @@
 import { useRef, useState } from 'react';
 import type { ExperienceEntry } from '@/lib/resume';
 
+/** "4 roles · 3 companies · since 2022", from the years written in each period. */
+function careerSummary(experience: ExperienceEntry[]) {
+  const years = experience.flatMap((e) => e.period.match(/(?:19|20)\d{2}/g) ?? []).map(Number);
+  // "AWC Inc." and "AWC Inc" are one company.
+  const companies = new Set(experience.map((e) => e.company.toLowerCase().replace(/[.,]/g, '').replace(/ (inc|llc|ltd|corp)$/, '').trim()).filter(Boolean)).size;
+  const parts = [`${experience.length} role${experience.length === 1 ? '' : 's'}`];
+  if (companies > 1) parts.push(`${companies} companies`);
+  if (years.length) parts.push(`since ${Math.min(...years)}`);
+  return parts.join(' · ');
+}
+
 /**
- * The two latest roles, expanding in place into a vertical career timeline.
+ * The current role with its highlights and a line for each earlier one, expanding in place into the full vertical career timeline.
  * `experience` is ordered newest first, and the timeline keeps that order so the
  * current role is always at the top.
  */
 export default function ExperienceCard({ experience }: { experience: ExperienceEntry[] }) {
   const [expanded, setExpanded] = useState(false);
+  const [current, ...earlier] = experience;
+  const summary = careerSummary(experience);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const toggle = () => {
@@ -43,14 +56,37 @@ export default function ExperienceCard({ experience }: { experience: ExperienceE
       </button>
 
       {!expanded ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
-          {experience.slice(0, 2).map((exp, i) => (
-            <div key={exp.id} className={`exp-item${i === 0 ? ' is-current' : ''}`}>
-              <h3>{exp.role}</h3>
-              <p className="exp-where">{exp.company} · {exp.period}</p>
-              <p className="exp-desc">{exp.description}</p>
+        <div className="exp-compact">
+          {summary && <p className="exp-stats">{summary}</p>}
+          {current && (
+            <div className="exp-item is-current">
+              <h3>{current.role}</h3>
+              <p className="exp-where">{current.company} · {current.period}</p>
+              {current.description && <p className="exp-desc">{current.description}</p>}
+              {current.details?.length > 0 && (
+                <ul className="exp-highlights">
+                  {current.details.slice(0, 2).map((d, i) => <li key={i}>{d}</li>)}
+                </ul>
+              )}
             </div>
-          ))}
+          )}
+          {earlier.length > 0 && (
+            <div className="exp-earlier">
+              <span className="exp-earlier-label">Before that</span>
+              <ol className="exp-mini">
+                {earlier.slice(0, 4).map((exp) => (
+                  <li key={exp.id}>
+                    <span className="exp-mini-role">{exp.role}</span>
+                    <span className="exp-mini-where">{exp.company}</span>
+                    <span className="exp-mini-period">{exp.period}</span>
+                  </li>
+                ))}
+              </ol>
+              {earlier.length > 4 && (
+                <button type="button" className="exp-more" onClick={toggle}>+{earlier.length - 4} more in the timeline</button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <ol className="vtl animate-fade-in">
