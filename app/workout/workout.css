@@ -34,6 +34,7 @@
 .workout-input {
   width: 100%;
   padding: 0.8rem 1rem;
+  line-height: 1.25;
   background: var(--input-bg);
   border: 1px solid var(--surface-border);
   border-radius: 8px;
@@ -44,6 +45,17 @@
   max-width: 100%;
   min-width: 0;
 }
+
+/* iPhone Safari draws date/time boxes natively: they ignore the width (spilling out of
+   their column) and shrink when empty. Make them plain boxes like the other inputs. */
+.workout-input[type="date"], .workout-input[type="time"], .workout-input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  min-height: calc(1.6rem + 1.25em + 2px);
+}
+.workout-input::-webkit-date-and-time-value { text-align: left; min-height: 1.25em; margin: 0; }
+.workout-input::-webkit-datetime-edit { padding: 0; }
 
 .workout-flex-between {
   display: flex;
@@ -858,8 +870,11 @@
 .workout-action-tile span:first-child { font-size: 1.15rem; line-height: 1; }
 
 /* Home: more pages as a compact grid instead of a stack of full-width buttons */
-.workout-link-grid { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.4rem; margin: 1rem 0 0.25rem; }
-@media (max-width: 360px) { .workout-link-grid { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Three to a row on a phone (a short last row stretches to fill), all in one row when there's room. */
+.workout-link-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0.25rem; }
+.workout-link-grid > * { flex: 1 1 28%; min-width: 0; }
+@media (min-width: 560px) { .workout-link-grid > * { flex-basis: 15%; } }
+.workout-action-tile span:last-child { overflow-wrap: break-word; text-align: center; line-height: 1.2; }
 
 /* Home: one-tap "repeat a recent workout" buttons under Start */
 .workout-quick-starts { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0 0.25rem; }

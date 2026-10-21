@@ -111,15 +111,23 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
       'STEP 3: Show the result', notify('the Contents of URL result'),
     ].join('\n');
   }
+  // Two weeks of watch heart rate and energy is tens of thousands of readings —
+  // more than Shortcuts can turn into text at once — so it goes one day per upload.
   const summary = SHORTCUT_SAMPLES.filter((s) => !s.detail);
   const detail = SHORTCUT_SAMPLES.filter((s) => s.detail);
+  const loopDays = Math.max(...detail.map((s) => s.backfillDays));
   return [
     intro, '',
     'STEP 1: Read 30 days of daily data', find, rows(summary), '',
     'STEP 2: Upload the daily data', upload(summary, ' (the first upload)'), '',
-    'STEP 3: Show the first result', notify('the first Contents of URL result'), '',
-    'STEP 4: Read two weeks of heart rate and energy', find, rows(detail, summary.length + 1), '',
-    'STEP 5: Upload it separately', upload(detail, ' (a second, separate upload with only these fields)'), '',
-    'STEP 6: Show the second result', notify('the second Contents of URL result'),
+    'STEP 3: Show the first result', notify('this Contents of URL result'), '',
+    `STEP 4: Heart rate and energy, one day at a time (${loopDays} days)`,
+    `Add a "Repeat" action that repeats ${loopDays} times. Put all of the following inside the Repeat:`,
+    '1. Add "Adjust Date": Subtract, number = Repeat Index, unit = days, from Current Date. Then add "Set Variable" named "DayEnd".',
+    '2. Add another "Adjust Date": Subtract 1 day from DayEnd. Then add "Set Variable" named "DayStart".',
+    ...detail.map((s, i) => `${3 + i}. Add "Find Health Samples" of type ${s.type}, with two filters (match All): "Start Date is after DayStart" and "Start Date is before DayEnd". Leave Limit off and sort by Start Date, oldest first. Then add "Set Variable" named "${s.variable}".`),
+    `${3 + detail.length}. ${upload(detail, ' with only these fields')}`,
+    'Do not show a notification inside the Repeat.', '',
+    'STEP 5: After the Repeat ends, add "Show Notification" with the text "Heart rate and energy backfill finished".',
   ].join('\n');
 }
