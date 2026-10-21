@@ -15,6 +15,8 @@ const OVERPASS_TIMEOUT_MS = 30000;
 /** How long to wait on Overpass alone before asking Nominatim too. */
 const FALLBACK_AFTER_MS = 5000;
 const CACHE_MS = 15 * 60 * 1000;
+/** Enough for "pick from everything nearby"; the page shows them a page at a time. */
+const MAX_RESULTS = 200;
 
 const KINDS: Record<string, string> = {
   any: 'restaurant|fast_food|cafe',
@@ -93,7 +95,7 @@ async function nominatim(kinds: string[], lat: number, lng: number, radius: numb
 /** Overpass if it answers quickly; otherwise whichever of Overpass and Nominatim comes back with something. */
 async function findPlaces(kinds: string, cuisine: string, lat: number, lng: number, radius: number) {
   const cuisineFilter = cuisine ? `["cuisine"~"(^|;)\\s*(${cuisine})\\s*($|;)",i]` : '';
-  const query = `[out:json][timeout:25];nwr["amenity"~"^(${kinds})$"]["name"]${cuisineFilter}(around:${radius},${lat},${lng});out center tags 300;`;
+  const query = `[out:json][timeout:25];nwr["amenity"~"^(${kinds})$"]["name"]${cuisineFilter}(around:${radius},${lat},${lng});out center tags 1500;`;
   const full = overpass(query);
   const quick = await Promise.race([full, sleep(FALLBACK_AFTER_MS).then(() => undefined)]);
   if (quick) return { found: quick, complete: true };
@@ -195,11 +197,12 @@ export async function POST(request: Request) {
       });
     }
 
+    // Closest first, always. "Open now" only drops places known to be closed; unknown hours stay.
     const openOnly = body.openNow === true;
     const results = places
-      .filter((p) => !openOnly || p.open !== false) // unknown hours stay, listed after known-open ones
-      .sort((a, b) => (openOnly ? Number(b.open === true) - Number(a.open === true) : 0) || a.distance - b.distance)
-      .slice(0, 40);
+      .filter((p) => !openOnly || p.open !== false)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, MAX_RESULTS);
 
     return NextResponse.json({ success: true, results, total: places.length, place: placeLabel, partial: !result.complete });
   } catch (err) {
