@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { GRID_SIZE, createGame, queueDirection, step, tickMs, type Direction, type SnakeState } from '@/lib/games/snake';
-import { LeaderboardPanel, useLeaderboard } from './leaderboard';
+import { LeaderboardPanel, ScoreForm, useLeaderboard } from './leaderboard';
 
 const KEY_DIRECTIONS: Record<string, Direction> = {
   ArrowUp: 'up', w: 'up', W: 'up',
@@ -103,10 +103,7 @@ export default function SnakeGame() {
   const { snake, food, score, status } = game;
   const isEligibleHighScore = status === 'over' && !nameSubmitted && qualifies(score);
 
-  const handleNameSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (submittingName) return;
-    const name = String(new FormData(e.currentTarget).get('playername') || '');
+  const handleNameSubmit = async (name: string) => {
     if (await submit(name, score)) setNameSubmitted(true);
   };
 
@@ -177,16 +174,7 @@ export default function SnakeGame() {
                   <p style={{ fontSize: '1.2rem', marginBottom: '1.25rem', color: 'white' }}>Final Score: <span style={{ color: 'var(--accent-light)' }}>{score}</span></p>
 
                   {isEligibleHighScore ? (
-                    <form onSubmit={handleNameSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '85%', maxWidth: '280px', background: 'rgba(0,0,0,0.5)', padding: '1.25rem', borderRadius: '12px' }}>
-                      <p style={{ color: 'var(--accent-light)', textAlign: 'center', fontWeight: 'bold', margin: 0 }}>New High Score!</p>
-                      <input type="text" name="playername" placeholder="Enter your name" required maxLength={20} disabled={submittingName} autoFocus
-                        style={{ padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--accent)', background: 'transparent', color: 'white', textAlign: 'center', fontSize: '1.1rem' }} />
-                      <button type="submit" className="btn btn-primary" disabled={submittingName}>
-                        {submittingName ? 'Saving...' : 'Submit Score'}
-                      </button>
-                      {submitError && <p style={{ color: '#fc8181', fontSize: '0.8rem', margin: 0, textAlign: 'center' }}>{submitError}</p>}
-                      <button type="button" className="btn btn-secondary" onClick={restart}>Skip</button>
-                    </form>
+                    <ScoreForm score={score} submitting={submittingName} error={submitError} onSubmit={handleNameSubmit} onSkip={restart} />
                   ) : (
                     <button className="btn btn-primary" onClick={restart}>Reboot Sequence</button>
                   )}

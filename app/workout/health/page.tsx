@@ -12,7 +12,7 @@ import { fullCoach, profileFromUser } from '@/lib/workout/coach';
 import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, setMarks } from '@/components/workout/health/HealthCharts';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
-import { daysSince, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
+import { dailyBurn, daysSince, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
 import { describeSync, type HealthDay, type PublicHealth } from '@/lib/workout/health';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
@@ -25,7 +25,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'trends', label: 'Trends' },
 ];
 type Calorie = NonNullable<CalculatorDefaults['calorie']>;
-const burnOf = (d?: HealthDay) => (d?.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : null);
+const burnOf = (d?: HealthDay) => dailyBurn(d) ?? null;
 const RANGES: { key: Range; label: string; days: number }[] = [
   { key: '14d', label: '2 weeks', days: 14 },
   { key: '30d', label: 'Month', days: 30 },
@@ -284,7 +284,7 @@ export default function HealthPage() {
         <section className="workout-tile an-card">
           <div className="an-card-head"><h2>Calories burned</h2>{stats.burnKcal !== null && <span className="workout-hint">avg {stats.burnKcal.toLocaleString()} a day</span>}</div>
           {has('burnKcal') ? <TrendLine data={series} dataKey="burnKcal" unit="kcal" /> : <Empty what="daily calories" add="Active Energy and Resting Energy (grouped by day)" />}
-          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. This is what your activity level in the plan is measured from.</p>
+          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. Days with 0 active calories (Watch not worn) are left out. This is what your activity level in the plan is measured from.</p>
         </section>
 
         <section className="workout-tile an-card">

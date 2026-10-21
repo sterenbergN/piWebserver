@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { localToday, type DateKey } from '@/lib/habits/dates';
 import { attemptXp, questionStats, scoreAll, type Attempt, type ScoredAttempt } from '@/lib/daily/progress';
-import type { PublicDay } from '@/lib/daily/grade';
+import type { PartResult, PublicDay } from '@/lib/daily/grade';
 import type { PartResponse, Track } from '@/lib/daily/types';
 import type { Answered, Feedback } from './QuestionCard';
 
@@ -41,6 +41,36 @@ async function post(url: string, body: unknown) {
   return data;
 }
 
+/** A check that wasn't fully right: which parts are wrong (not the answers), and how many checks are left. */
+export type CheckResult = { final: false; tries: number; triesLeft: number; parts: PartResult[]; correct: number; total: number };
+export type AnswerResult = CheckResult | ({ final: true } & Answered & { attempt: Attempt; saved: boolean });
+
+/**
+ * Check an answer (or reveal the solution when `responses` is null). Signed
+ * out, a finished answer is kept on this device. `tries` is how many checks
+ * were used before this one.
+ */
+export async function sendAnswer(args: { date: DateKey; questionId: string; responses: Record<string, PartResponse> | null; hints: number; tries: number; today: DateKey }): Promise<AnswerResult> {
+  const data = await post('/api/daily/answer', { ...args, reveal: args.responses === null });
+  if (data.final && !data.saved) {
+    const attempts = readDeviceAttempts().filter((a) => a.questionId !== args.questionId);
+    writeDeviceAttempts([...attempts, data.attempt]);
+  }
+  return data.final ? { ...data, feedback: { rating: null, difficulty: null, report: null } } : data;
+}
+
+/** Rate or report a question (signed in). Returns the saved feedback. */
+export async function sendFeedback(questionId: string, patch: Partial<Feedback>): Promise<Feedback> {
+  return (await post('/api/daily/feedback', { questionId, ...patch })).feedback;
+}
+
+/** The solution for an answer kept on this device (signed out), graded again by the server. */
+export async function regradeDeviceAttempt(a: Attempt): Promise<Answered> {
+  const graded = await post('/api/daily/answer', { date: a.date, questionId: a.questionId, responses: a.responses, reveal: a.responses === null, hints: a.hints, tries: a.tries ?? 1, final: true, today: a.answeredOn });
+  // XP from the stored attempt: the server only knows today's date, not when you answered.
+  return { ...graded, late: a.answeredOn > a.date, xp: attemptXp(a, graded) };
+}
+
 export function useDaily() {
   const [today, setToday] = useState<DateKey>(() => localToday());
   const [date, setDate] = useState<DateKey | null>(null);
@@ -48,6 +78,8 @@ export function useDaily() {
   const [day, setDay] = useState<PublicDay | null>(null);
   const [archive, setArchive] = useState<ArchiveDay[]>([]);
   const [answered, setAnswered] = useState<Record<string, Answered>>({});
+  /** Checks used on questions not finished yet. */
+  const [tries, setTries] = useState<Record<string, number>>({});
   const [signedIn, setSignedIn] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [deviceCount, setDeviceCount] = useState(0);
@@ -82,14 +114,13 @@ export function useDaily() {
         const mine = readDeviceAttempts().filter((a) => a.date === data.date);
         for (const a of mine) {
           try {
-            const graded = await post('/api/daily/answer', { date: a.date, questionId: a.questionId, responses: a.responses, reveal: a.responses === null, hints: a.hints, today: a.answeredOn });
-            // XP from the stored attempt: the server only knows today's date, not when you answered.
-            known[a.questionId] = { ...graded, late: a.answeredOn > a.date, xp: attemptXp(a, graded) };
+            known[a.questionId] = await regradeDeviceAttempt(a);
           } catch { /* the question may have been removed */ }
         }
       }
       if (id !== loadId.current) return;
       setAnswered(known);
+      setTries((all) => (data.signedIn ? data.tries ?? {} : all));
       setDeviceCount(data.signedIn ? readDeviceAttempts().length : 0);
       setState('ready');
       loadProgress(data.signedIn, now);
@@ -102,26 +133,28 @@ export function useDaily() {
 
   const open = useCallback((d: DateKey) => { setError(''); load(d); }, [load]);
 
-  const submit = useCallback(async (questionId: string, responses: Record<string, PartResponse> | null, hints: number) => {
-    if (!date) return;
+  const submit = useCallback(async (questionId: string, responses: Record<string, PartResponse> | null, hints: number): Promise<AnswerResult | null> => {
+    if (!date) return null;
     setError('');
     try {
-      const data = await post('/api/daily/answer', { date, questionId, responses, reveal: responses === null, hints, today });
-      if (!data.saved) {
-        const attempts = readDeviceAttempts().filter((a) => a.questionId !== questionId);
-        writeDeviceAttempts([...attempts, data.attempt]);
+      const data = await sendAnswer({ date, questionId, responses, hints, tries: tries[questionId] ?? 0, today });
+      if (!data.final) {
+        setTries((all) => ({ ...all, [questionId]: data.tries }));
+        return data;
       }
-      setAnswered((all) => ({ ...all, [questionId]: { ...data, feedback: { rating: null, difficulty: null, report: null } } }));
+      setAnswered((all) => ({ ...all, [questionId]: data }));
       loadProgress(signedIn, today);
+      return data;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t check that answer.');
+      return null;
     }
-  }, [date, today, signedIn, loadProgress]);
+  }, [date, today, signedIn, tries, loadProgress]);
 
   const feedback = useCallback(async (questionId: string, patch: Partial<Feedback>) => {
     try {
-      const data = await post('/api/daily/feedback', { questionId, ...patch });
-      setAnswered((all) => all[questionId] ? { ...all, [questionId]: { ...all[questionId], feedback: data.feedback } } : all);
+      const saved = await sendFeedback(questionId, patch);
+      setAnswered((all) => all[questionId] ? { ...all, [questionId]: { ...all[questionId], feedback: saved } } : all);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t save that.');
     }
@@ -151,6 +184,6 @@ export function useDaily() {
 
   const dismissDevice = useCallback(() => { writeDeviceAttempts(null); setDeviceCount(0); }, []);
 
-  return { today, date, state, day, archive, answered, signedIn, progress, error, clearError: () => setError(''), deviceCount,
-    open, submit, feedback, setLeaderboard, importDevice, dismissDevice, reload: () => load(date) };
+  return { today, date, state, day, archive, answered, tries, signedIn, progress, error, clearError: () => setError(''), deviceCount,
+    open, submit, feedback, setLeaderboard, importDevice, dismissDevice, reload: () => load(date), reloadProgress: () => loadProgress(signedIn, today) };
 }

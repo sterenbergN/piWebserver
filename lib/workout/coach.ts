@@ -93,6 +93,45 @@ export function describeActivity(m: MeasuredActivity) {
   return '';
 }
 
+export type RestingCompare = {
+  /** The Watch's average resting (basal) calories, and over how many worn days. */
+  watch: number;
+  days: number;
+  /** Body fat used for the lean-mass formulas (latest scale reading in the last 60 days). */
+  bodyFat: number | null;
+  formulas: { key: string; name: string; kcal: number; note: string }[];
+  /** The formula that fits you best: lean-mass based when body fat is known. */
+  best: { name: string; kcal: number };
+};
+
+/**
+ * The Watch's resting calories against what formulas give for your size:
+ * Mifflin-St Jeor (age, height, weight, sex) and, with a body fat reading,
+ * Katch-McArdle and Cunningham (lean mass). Days the Watch wasn't worn
+ * (0 active calories, or no resting reading) are left out. Needs 7 days.
+ */
+export function restingVsFormula(days: Days, profile: Omit<CoachProfile, 'activityLevel'>, now = Date.now()): RestingCompare | null {
+  const keys = lastKeys(localKey(now - DAY_MS), 30);
+  const worn = keys.map((k) => days[k]).filter((d) => d && (d.activeKcal ?? 0) > 0 && (d.restingKcal ?? 0) >= 800);
+  if (worn.length < 7) return null;
+  const watch = Math.round(mean(worn.map((d) => d.restingKcal!)));
+  const fat = lastKeys(localKey(now), 60).map((k) => days[k]?.bodyFat).filter((v): v is number => typeof v === 'number' && v > 2 && v < 60);
+  const bodyFat = fat.length ? fat[fat.length - 1] : null;
+  const kg = profile.weightLbs * 0.45359237;
+  const mifflin = Math.round(calculateMifflinStJeor({ ...profile, activityLevel: 'sedentary' }).bmr);
+  const formulas = [{ key: 'mifflin', name: 'Mifflin-St Jeor', kcal: mifflin, note: `age ${profile.age}, ${Math.floor(profile.heightInches / 12)}′${Math.round(profile.heightInches % 12)}″, ${Math.round(profile.weightLbs)} lb` }];
+  if (bodyFat !== null) {
+    const lean = kg * (1 - bodyFat / 100);
+    const leanLbs = Math.round(lean / 0.45359237);
+    formulas.push(
+      { key: 'katch', name: 'Katch-McArdle', kcal: Math.round(370 + 21.6 * lean), note: `${leanLbs} lb lean mass at ${bodyFat}% body fat` },
+      { key: 'cunningham', name: 'Cunningham', kcal: Math.round(500 + 22 * lean), note: 'lean mass, tends to suit people who train' },
+    );
+  }
+  const best = formulas.find((f) => f.key === 'katch') ?? formulas[0];
+  return { watch, days: worn.length, bodyFat, formulas, best: { name: best.name, kcal: best.kcal } };
+}
+
 /** Body weight trend over the last `days` days, as % of bodyweight per week (null without data). */
 function weightRatePct(days: Days, now: number, span = 42) {
   const pts = lastKeys(localKey(now), span).map((k, i) => ({ x: i, y: days[k]?.weight })).filter((p): p is { x: number; y: number } => typeof p.y === 'number');

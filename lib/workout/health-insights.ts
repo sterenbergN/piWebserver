@@ -137,6 +137,15 @@ export function readiness(days: Days, today: string, defaultIntensity = 1): Read
 
 // ─── Ranges and series ───────────────────────────────────────────────────────
 
+/**
+ * Calories burned that day (resting + active), or undefined when there's no
+ * real reading: a day with 0 active calories is a day the Watch wasn't worn.
+ */
+export function dailyBurn(d: HealthDay | undefined): number | undefined {
+  if (!d || !(typeof d.activeKcal === 'number' && d.activeKcal > 0)) return undefined;
+  return (d.restingKcal ?? 0) + d.activeKcal;
+}
+
 export type RangeStats = {
   sleepMin: number | null;
   steps: number | null;
@@ -167,7 +176,7 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
     steps: round(mean(steps)),
     restingHr: round(mean(values((d) => d.restingHr))),
     hrv: round(mean(values((d) => d.hrv))),
-    burnKcal: round(mean(values((d) => (d.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : undefined)))),
+    burnKcal: round(mean(values(dailyBurn))),
     weight: trend((d) => d.weight),
     bodyFat: trend((d) => d.bodyFat),
     nights: sleep.length,
@@ -200,7 +209,7 @@ function point(key: string, list: HealthDay[]): SeriesPoint {
     hrv: avg((d) => d.hrv),
     weight: avg((d) => d.weight, 1),
     bodyFat: avg((d) => d.bodyFat, 1),
-    burnKcal: avg((d) => (d.activeKcal !== undefined ? (d.restingKcal ?? 0) + d.activeKcal : undefined)),
+    burnKcal: avg(dailyBurn),
     bedtime: night?.bedtime,
     wake: night?.wake,
   };

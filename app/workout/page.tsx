@@ -17,7 +17,8 @@ interface UserData {
   weeklySetTarget?: number;
 }
 
-import { calculateExperienceScore, computeMuscleFatigue } from '@/lib/workout/analytics';
+import { calculateExperienceScore, computeMuscleFatigue, type ExperienceResult } from '@/lib/workout/analytics';
+import ExperienceLevels from '@/components/workout/ExperienceLevels';
 import { newRecordId } from '@/lib/workout/stations';
 import { getIntensityLabel } from '@/lib/workout/intensity';
 import IntensitySlider from '@/components/workout/IntensitySlider';
@@ -81,6 +82,7 @@ export default function WorkoutDashboard() {
   const [rankSymbol, setRankSymbol] = useState('⚪');
   const [rankName, setRankName] = useState('Beginner');
   const [rankScore, setRankScore] = useState(0);
+  const [rankBreakdown, setRankBreakdown] = useState<ExperienceResult['breakdown'] | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const [liftLookup, setLiftLookup] = useState<Record<string, { primaryMuscle?: string; secondaryMuscle?: string }>>({});
@@ -223,6 +225,7 @@ export default function WorkoutDashboard() {
             setRankSymbol(exp.symbol);
             setRankName(exp.level);
             setRankScore(exp.score);
+            setRankBreakdown(exp.breakdown);
           }
         }
       } catch {
@@ -578,6 +581,7 @@ export default function WorkoutDashboard() {
         {levelProgress.next && (
           <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>Score {rankScore.toFixed(1)} · {levelProgress.remaining.toFixed(1)} to {levelProgress.next}</p>
         )}
+        {!expandAnalytics && <p className="workout-hint" style={{ margin: '0.35rem 0 0' }}>Tap to see what each level means for your training</p>}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem', marginTop: '1rem' }}>
           {[
@@ -606,6 +610,9 @@ export default function WorkoutDashboard() {
                       {getIntensityLabel(user?.intensityFactor || 1.0).emoji} {getIntensityLabel(user?.intensityFactor || 1.0).label}
                     </div>
                  </div>
+              </div>
+              <div onClick={(e) => e.stopPropagation()}>
+                <ExperienceLevels current={rankName as ExperienceResult['level']} score={rankScore} breakdown={rankBreakdown} />
               </div>
               <button 
                 className="btn btn-secondary" 

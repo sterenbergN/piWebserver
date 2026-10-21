@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { isDateKey } from '@/lib/habits/dates';
 import { gradeQuestion, parseResponses } from '@/lib/daily/grade';
-import { attemptMeta, questionStats, scoreAll, type Attempt } from '@/lib/daily/progress';
+import { XP_RULES, attemptMeta, questionStats, scoreAll, type Attempt } from '@/lib/daily/progress';
 import { clampToday, questionIndex, readUserDaily, updateUserDaily } from '@/lib/daily/store';
 
 // Your question history and stats (signed in). POST changes leaderboard
@@ -55,6 +55,7 @@ export async function POST(request: Request) {
             at: typeof raw.at === 'string' && !Number.isNaN(Date.parse(raw.at)) ? raw.at : new Date().toISOString(),
             responses,
             hints: Math.min(at.question.hints?.length ?? 0, Math.max(0, Math.round(Number(raw.hints) || 0))),
+            tries: Math.min(XP_RULES.maxTries, Math.max(1, Math.round(Number(raw.tries) || 1))),
             result: { correct: result.correct, total: result.total, status: result.status },
             meta: attemptMeta(at.question, at.core, at.boss),
           };

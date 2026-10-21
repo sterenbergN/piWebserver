@@ -132,7 +132,10 @@ test('XP: difficulty, hints, catching up and boss problems', () => {
   assert.equal(attemptXp(attempt({ meta: { ...attempt().meta, boss: true } }), solved), 45);
   assert.equal(attemptXp(attempt(), { correct: 0, total: 1, status: 'wrong' }), 5);
   assert.equal(attemptXp(attempt(), { correct: 1, total: 2, status: 'partial' }), 15);
-  assert.equal(attemptXp(attempt(), { correct: 0, total: 1, status: 'studied' }), 0);
+  assert.equal(attemptXp(attempt(), { correct: 0, total: 1, status: 'studied' }), 3, 'reading the solution earns a little');
+  assert.equal(attemptXp(attempt({ tries: 2 }), solved), 26, 'each extra check costs 15%');
+  assert.equal(attemptXp(attempt({ tries: 3 }), solved), 21);
+  assert.equal(attemptXp(attempt({ tries: 9 }), solved), 21, 'never more than three checks');
 });
 
 test('streak counts core questions done on their own day; today pending keeps it', () => {
@@ -167,6 +170,6 @@ test('questionStats tallies tracks, topics and achievements', () => {
   assert.equal(stats.byTrack.find((t) => t.track === 'controls')!.answered, 1);
   assert.equal(stats.streak.current, 2);
   assert.equal(stats.achievements.find((a) => a.id === 'first')!.earned, true);
-  assert.equal(stats.xpThisWeek, 60);
+  assert.equal(stats.xpThisWeek, 63); // two solves and one studied
   assert.equal(attemptMeta(validateDay(day()).day!.core, true, true).boss, true);
 });

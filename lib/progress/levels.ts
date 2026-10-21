@@ -6,7 +6,8 @@ export function xpForLevel(level: number) {
   return 50 * level * (level - 1);
 }
 
-const TITLES: [number, string][] = [
+/** Titles by the level they start at. */
+export const LEVEL_TITLES: [number, string][] = [
   [1, 'Seedling'],
   [3, 'Sprout'],
   [5, 'Sapling'],
@@ -25,10 +26,20 @@ export function levelFromXp(xp: number) {
   const next = xpForLevel(level + 1);
   return {
     level,
-    title: TITLES.filter(([at]) => level >= at).pop()![1],
+    title: titleFor(level),
     xp: total,
     into: total - floor,
     size: next - floor,
     toNext: next - total,
   };
+}
+
+export function titleFor(level: number) {
+  return LEVEL_TITLES.filter(([at]) => level >= at).pop()![1];
+}
+
+/** The next title up, the level it comes at, and the total XP that takes (null at the top). */
+export function nextTitle(level: number) {
+  const next = LEVEL_TITLES.find(([at]) => at > level);
+  return next ? { level: next[0], title: next[1], xp: xpForLevel(next[0]) } : null;
 }

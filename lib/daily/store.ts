@@ -6,7 +6,8 @@ import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { loginRetryAfter, recordLoginFailure, tooManyAttemptsMessage } from '@/lib/security/rate-limit';
 import { ApiError } from '@/lib/workout/api';
 import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
-import type { Attempt } from './progress';
+import { scoreAttempt, type Attempt } from './progress';
+import { gradeQuestion, revealedQuestion } from './grade';
 import type { DailyDay, Question } from './types';
 
 // Daily questions on disk, all under .data/daily (kept by backups):
@@ -89,7 +90,8 @@ export async function bufferDays(today: DateKey) {
 
 /* ── Attempts ───────────────────────────────────────────────────────────── */
 
-export type UserDaily = { attempts: Attempt[]; leaderboard?: boolean };
+/** `pending`: checks used so far on questions not finished yet, by question id. */
+export type UserDaily = { attempts: Attempt[]; leaderboard?: boolean; pending?: Record<string, number> };
 
 function attemptsFile(userId: string) {
   if (!/^[\w-]{1,64}$/.test(userId)) throw new ApiError(400, 'Invalid account');
@@ -98,7 +100,8 @@ function attemptsFile(userId: string) {
 
 export async function readUserDaily(userId: string): Promise<UserDaily> {
   const data = await readJson<UserDaily>(attemptsFile(userId), { attempts: [] });
-  return { attempts: Array.isArray(data.attempts) ? data.attempts : [], leaderboard: !!data.leaderboard };
+  const pending = data.pending && typeof data.pending === 'object' ? data.pending : {};
+  return { attempts: Array.isArray(data.attempts) ? data.attempts : [], leaderboard: !!data.leaderboard, pending };
 }
 
 export function updateUserDaily<R>(userId: string, mutate: (data: UserDaily) => R) {
@@ -114,6 +117,16 @@ export async function listUserIds() {
   } catch {
     return [];
   }
+}
+
+/** A finished question as the page shows it: your answers and grade, the answer key and solution, your feedback. */
+export function answeredView(q: Question, attempt: Attempt, fb?: Feedback) {
+  const { result, regraded, xp } = scoreAttempt(attempt, q);
+  return {
+    ...result, parts: gradeQuestion(q, attempt.responses).parts, responses: attempt.responses, hints: attempt.hints, tries: attempt.tries ?? 1, xp, regraded,
+    late: attempt.answeredOn > attempt.date, question: revealedQuestion(q),
+    feedback: { rating: fb?.rating ?? null, difficulty: fb?.difficulty ?? null, report: fb?.report ?? null },
+  };
 }
 
 /* ── Feedback and generator notes ───────────────────────────────────────── */

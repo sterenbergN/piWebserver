@@ -4,7 +4,8 @@ import { useState } from 'react';
 import AnswerInput, { AnswerText, toResponse, type Draft } from './AnswerInput';
 import { MathText } from './MathText';
 import type { PartResult, PublicInput, PublicQuestion, QuestionStatus } from '@/lib/daily/grade';
-import { XP_RULES } from '@/lib/daily/progress';
+import { XP_RULES, triesFactor } from '@/lib/daily/progress';
+import type { CheckResult } from './useDaily';
 import { REPORT_KINDS, REPORT_LABEL, TRACK_LABEL, type Formula, type PartResponse, type Question } from '@/lib/daily/types';
 
 export type Feedback = { rating: 'up' | 'down' | null; difficulty: 'easy' | 'right' | 'hard' | null; report: { kind: string; note: string } | null };
@@ -16,6 +17,8 @@ export type Answered = {
   parts: PartResult[];
   responses: Record<string, PartResponse> | null;
   hints: number;
+  /** Checks it took (1–3). */
+  tries?: number;
   xp: number;
   regraded?: boolean;
   late?: boolean;
@@ -50,18 +53,23 @@ type Props = {
   /** Answering a past day's question (half XP). */
   late: boolean;
   answered?: Answered;
+  /** Checks already used (when the question isn't finished). */
+  tries?: number;
   formulas: Formula[];
   signedIn: boolean;
-  onAnswer: (responses: Record<string, PartResponse>, hints: number) => Promise<void>;
-  onReveal: (hints: number) => Promise<void>;
+  /** Check the answer: resolves with a CheckResult when there are checks left and it wasn't fully right. */
+  onAnswer: (responses: Record<string, PartResponse>, hints: number) => Promise<unknown>;
+  onReveal: (hints: number) => Promise<unknown>;
   onFeedback: (patch: Partial<Feedback>) => Promise<void>;
 };
 
-export default function QuestionCard({ q, kind, boss, late, answered, formulas, signedIn, onAnswer, onReveal, onFeedback }: Props) {
+export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [hintsShown, setHintsShown] = useState(0);
   const [busy, setBusy] = useState(false);
   const [confirmReveal, setConfirmReveal] = useState(false);
+  /** The last check that wasn't fully right; a part's mark clears once you change it. */
+  const [lastCheck, setLastCheck] = useState<CheckResult | null>(null);
   const hints = answered ? answered.hints : hintsShown;
   const locked = !!answered;
 
@@ -71,10 +79,17 @@ export default function QuestionCard({ q, kind, boss, late, answered, formulas, 
     if (r) responses[p.id] = r;
   }
   const complete = Object.keys(responses).length === q.parts.length;
-  const maxXp = Math.round((XP_RULES.base + XP_RULES.perDifficulty * q.difficulty) * (late ? XP_RULES.late : 1) * (kind === 'core' && boss ? XP_RULES.boss : 1)
-    * Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * hintsShown));
+  const multiplier = (late ? XP_RULES.late : 1) * (kind === 'core' && boss ? XP_RULES.boss : 1);
+  const maxXp = Math.round((XP_RULES.base + XP_RULES.perDifficulty * q.difficulty) * multiplier
+    * Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * hintsShown) * triesFactor(tries + 1));
+  const studyXp = Math.round(XP_RULES.studied * multiplier);
+  const triesLeft = XP_RULES.maxTries - tries;
 
-  const run = async (fn: () => Promise<void>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
+  const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
+  const check = () => run(async () => {
+    const res = await onAnswer(responses, hintsShown) as CheckResult | null | undefined;
+    setLastCheck(res && res.final === false ? res : null);
+  });
   const usedFormulas = (q.formulas ?? []).map((id) => formulas.find((f) => f.id === id)).filter(Boolean) as Formula[];
 
   return (
@@ -101,7 +116,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, formulas, 
 
       <div className="dq-parts">
         {q.parts.map((p, i) => {
-          const result = answered?.parts.find((r) => r.id === p.id);
+          const result = answered ? answered.parts.find((r) => r.id === p.id) : lastCheck?.parts.find((r) => r.id === p.id);
           const draft = answered ? draftFrom(p.input, answered.responses?.[p.id]) : drafts[p.id] ?? {};
           const key = answered?.question.parts.find((x) => x.id === p.id)?.answer;
           return (
@@ -112,12 +127,21 @@ export default function QuestionCard({ q, kind, boss, late, answered, formulas, 
               </div>
               {(!answered || answered.responses) && (
                 <AnswerInput id={`${q.id}-${p.id}`} input={p.input} draft={draft} locked={locked}
-                  onChange={(d) => setDrafts((all) => ({ ...all, [p.id]: d }))} />
+                  onChange={(d) => {
+                    setDrafts((all) => ({ ...all, [p.id]: d }));
+                    setLastCheck((c) => (c ? { ...c, parts: c.parts.filter((r) => r.id !== p.id) } : c));
+                  }} />
               )}
               {answered && key && (
                 <div className="dq-key">
                   {result && <span className="dq-mark" aria-label={result.correct ? 'Correct' : 'Incorrect'}>{result.correct ? '✓' : '✗'}</span>}
                   <span>{result?.correct ? 'Correct:' : 'Answer:'}</span> <AnswerText answer={key} />
+                </div>
+              )}
+              {!answered && result && (
+                <div className="dq-key">
+                  <span className="dq-mark" aria-label={result.correct ? 'Correct' : 'Incorrect'}>{result.correct ? '✓' : '✗'}</span>
+                  <span>{result.correct ? 'That part’s right.' : 'Not this one — have another go.'}</span>
                 </div>
               )}
               {result?.mistake && <div className="dq-mistake"><strong>Common slip:</strong> <MathText className="is-inline">{result.mistake}</MathText></div>}
@@ -139,21 +163,27 @@ export default function QuestionCard({ q, kind, boss, late, answered, formulas, 
             </div>
           )}
           <div className="dq-actions">
-            <button type="button" className="btn btn-primary" disabled={!complete || busy} onClick={() => run(() => onAnswer(responses, hintsShown))}>
-              {busy ? 'Checking…' : 'Check my answer'}
+            <button type="button" className="btn btn-primary" disabled={!complete || busy} onClick={check}>
+              {busy ? 'Checking…' : tries === 0 ? 'Check my answer' : `Check again (${triesLeft} left)`}
             </button>
             {!confirmReveal ? (
-              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setConfirmReveal(true)}>Just show me the work</button>
+              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setConfirmReveal(true)}>{tries ? 'Give up, show me the work' : 'Just show me the work'}</button>
             ) : (
               <div className="dq-confirm" role="alert">
-                <span>{kind === 'core' ? 'This counts for your streak but earns no XP, and the question locks.' : 'This earns no XP, and the question locks.'}</span>
+                <span>{kind === 'core' ? `This counts for your streak and earns ${studyXp} XP for studying it, and the question locks.` : `This earns ${studyXp} XP for studying it, and the question locks.`}</span>
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirmReveal(false)}>Back</button>
                 <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => onReveal(hintsShown))}>Show it</button>
               </div>
             )}
           </div>
+          {lastCheck && (
+            <p className="dq-check-note" role="status">
+              {lastCheck.correct} of {lastCheck.total} part{lastCheck.total === 1 ? '' : 's'} right. {triesLeft === 1 ? 'Last check left' : `${triesLeft} checks left`} — fix the ✗ and try again, or give up and see the work.
+            </p>
+          )}
           <p className="dq-hint dq-worth">
-            Worth up to <strong>{maxXp} XP</strong>{late ? ' (half, catching up on an earlier day)' : ''}{kind === 'core' && boss ? ' (×1.5 boss bonus)' : ''}. One try, then you see the full worked solution.
+            Worth up to <strong>{maxXp} XP</strong>{late ? ' (half, catching up on an earlier day)' : ''}{kind === 'core' && boss ? ' (×1.5 boss bonus)' : ''}.
+            {' '}Up to {XP_RULES.maxTries} checks, −{Math.round(XP_RULES.retryCost * 100)}% XP for each one after the first. Stuck? The worked solution is {studyXp} XP.
           </p>
         </>
       )}
@@ -165,8 +195,8 @@ export default function QuestionCard({ q, kind, boss, late, answered, formulas, 
             <div>
               <strong>{RESULT_TEXT[answered.status].title}</strong>
               <span>
-                {answered.status === 'studied' ? 'You read the worked solution. No XP, but it counts as practice.'
-                  : `${answered.correct} of ${answered.total} part${answered.total === 1 ? '' : 's'} right · +${answered.xp} XP${answered.hints ? ` · ${answered.hints} hint${answered.hints === 1 ? '' : 's'}` : ''}${answered.late ? ' · caught up' : ''}`}
+                {answered.status === 'studied' ? `You read the worked solution · +${answered.xp} XP for studying it.`
+                  : `${answered.correct} of ${answered.total} part${answered.total === 1 ? '' : 's'} right · +${answered.xp} XP${(answered.tries ?? 1) > 1 ? ` · check ${answered.tries}` : ''}${answered.hints ? ` · ${answered.hints} hint${answered.hints === 1 ? '' : 's'}` : ''}${answered.late ? ' · caught up' : ''}`}
               </span>
               {answered.regraded && <span className="dq-regraded">🔁 Regraded after the answer key was corrected.</span>}
             </div>

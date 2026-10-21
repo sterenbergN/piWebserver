@@ -6,7 +6,7 @@ import Sheet from '@/components/workout/Sheet';
 import WeightPlanCard from '@/components/workout/WeightPlanCard';
 import { useSitePopup } from '@/components/SitePopup';
 import { ACTIVITY_LEVELS, calculateMifflinStJeor, type ActivityLevel, type CalculatorDefaults } from '@/lib/workout/calculators';
-import { describeActivity, measuredActivity } from '@/lib/workout/coach';
+import { describeActivity, measuredActivity, restingVsFormula } from '@/lib/workout/coach';
 import { addDays, planProgress, projectDaily, type WeighIn, type WeightPlan } from '@/lib/workout/weight-plan';
 import type { HealthDay } from '@/lib/workout/health';
 
@@ -35,6 +35,42 @@ type Props = {
 
 const num = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
 const fmtDate = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
+
+/** The Watch's resting calories next to the BMR formulas, and what a gap means for your numbers. */
+function RestingCard({ resting }: { resting: NonNullable<ReturnType<typeof restingVsFormula>> }) {
+  const gap = resting.watch - resting.best.kcal;
+  const pct = Math.round((gap / resting.best.kcal) * 100);
+  return (
+    <section className="workout-tile an-card">
+      <div className="an-card-head"><h2>Resting calories</h2><span className="workout-hint">Watch vs formula</span></div>
+      <div className="pp-estimates">
+        <div className="is-best">
+          <span>⌚ Apple Watch</span>
+          <strong>{resting.watch.toLocaleString()} <small>kcal a day at rest</small></strong>
+          <small>average of {resting.days} days you wore it (last 30)</small>
+        </div>
+        {resting.formulas.map((f) => {
+          const d = resting.watch - f.kcal;
+          return (
+            <div key={f.key}>
+              <span>{f.name}{f.name === resting.best.name && resting.formulas.length > 1 ? ' · best fit for you' : ''}</span>
+              <strong>{f.kcal.toLocaleString()} <small>kcal · Watch is {Math.abs(d) < 15 ? 'about the same' : `${Math.abs(d).toLocaleString()} ${d > 0 ? 'higher' : 'lower'}`}</small></strong>
+              <small>{f.note}</small>
+            </div>
+          );
+        })}
+      </div>
+      <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>
+        {Math.abs(pct) <= 5
+          ? `Your Watch agrees with ${resting.best.name} to within ${Math.max(1, Math.abs(pct))}%, so its calorie numbers look trustworthy for you.`
+          : gap > 0
+            ? `Your Watch reads ${pct}% above ${resting.best.name}. Watches often run high; if your weight doesn't move the way Apple Health's burn says it should, this is likely part of why — your real burn may be about ${gap.toLocaleString()} kcal a day lower.`
+            : `Your Watch reads ${-pct}% below ${resting.best.name}. That's unusual — it can mean wrist fit, an out-of-date age, height or weight in the Health app, or genuinely low resting burn. Your weigh-in trend is the tiebreaker.`}
+        {resting.bodyFat === null && ' Log body fat from your scale to compare against the lean-mass formulas too.'}
+      </p>
+    </section>
+  );
+}
 
 /** The form for starting or changing a plan, with a live preview of what it means. */
 function PlanForm({ calorie, latestWeight, measured, plan, today, onSubmit, submitLabel }: {
@@ -167,6 +203,7 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
     return age && heightInches && weightLbs ? { sex: (plan?.sex ?? calorie.sex ?? 'male') as 'male' | 'female', age, heightInches, weightLbs } : null;
   }, [plan, calorie, latestWeight]);
   const measured = useMemo(() => (profile ? measuredActivity(days, profile) : null), [days, profile]);
+  const resting = useMemo(() => (profile ? restingVsFormula(days, profile) : null), [days, profile]);
   const progress = useMemo(() => (plan ? planProgress(plan, weighIns, today) : null), [plan, weighIns, today]);
 
   const chosenLevel = plan?.activityLevel ?? calorie.activityLevel ?? 'moderate';
@@ -232,6 +269,8 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
           </p>
         )}
       </section>
+
+      {resting && <RestingCard resting={resting} />}
 
       <section className="workout-tile an-card">
         <h2>Activity level</h2>

@@ -1,0 +1,20 @@
+/* Arcade game picker: a wrapping row of game chips. */
+.arcade-picker { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
+.arcade-pick { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 0.9rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-weight: 600; font-size: 0.92rem; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.arcade-pick:hover { border-color: var(--accent-light); }
+.arcade-pick.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.arcade-pick-emoji { font-size: 1.1rem; }
+.arcade-pick-tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.05rem 0.35rem; border-radius: 6px; background: rgba(var(--accent-rgb), 0.25); }
+.arcade-pick.is-active .arcade-pick-tag { background: rgba(255, 255, 255, 0.25); }
+@media (max-width: 480px) {
+  /* One swipeable row on phones, so the board stays near the top. */
+  .arcade-picker { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; gap: 0.35rem; padding: 0 0.25rem 0.35rem; scrollbar-width: none; }
+  .arcade-picker::-webkit-scrollbar { display: none; }
+  .arcade-pick { flex-shrink: 0; }
+  .arcade-pick { padding: 0.45rem 0.7rem; font-size: 0.85rem; }
+}
+
+/* On-screen game pads are for touch screens; mouse-and-keyboard players use keys. */
+@media (hover: hover) and (pointer: fine) {
+  .arcade-pad { display: none !important; }
+}

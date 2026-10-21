@@ -5,6 +5,7 @@ import Sheet from '@/components/workout/Sheet';
 import IntensitySlider from '@/components/workout/IntensitySlider';
 import { getTargetRir } from '@/lib/workout/progression';
 import EngineExplainer from './EngineExplainer';
+import { EXPERIENCE_LEVELS } from '@/components/workout/ExperienceLevels';
 
 type HowItWorksProps = {
   user: any;
@@ -68,7 +69,7 @@ export default function HowItWorksSheet({ user, isDemo, experience, calibrations
             <div><span>Strength</span><strong>{experience.breakdown.strength.toFixed(2)}</strong></div>
             <div><span>Progression</span><strong>{experience.breakdown.progression.toFixed(2)}</strong></div>
           </div>
-          <p className="workout-hint">Levels: Beginner under 2 · Novice 2–4 · Intermediate 4–6 · Advanced 6–8 · Elite 8+.</p>
+          <p className="workout-hint">Levels: {EXPERIENCE_LEVELS.map((l) => `${l.level} ${l.range}`).join(' · ')}. What each means for your training is on the workout home page, under Experience Profile.</p>
         </Section>
       )}
 

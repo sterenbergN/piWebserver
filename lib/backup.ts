@@ -1,22 +1,20 @@
 import fs from 'fs/promises';
 import path from 'path';
-import AdmZip from 'adm-zip';
+import { ZipWriter, extractZipEntry, readZipEntries, readZipEntry } from './zip-stream';
 
 // Backups of everything the site stores: private data (.data), home-page
 // content (public/content) and the uploads metadata (album lists, blog posts
 // and markdown, library index). Photos/PDFs are optional because they're big.
 // Backups are zip files in a configurable folder — point it at a USB drive.
+// Zips stream to and from disk (see zip-stream.ts), so photos of any size fit.
 
 // Data lives next to the running app; tell the bundler not to trace it as code.
 const root = () => path.resolve(/*turbopackIgnore: true*/ process.cwd());
 const SETTINGS_FILE = () => path.join(root(), '.data', 'backup-settings.json');
 const NAME_RE = /^backup-\d{4}-\d{2}-\d{2}-\d{6}(-[a-z0-9-]{1,30})?\.zip$/;
 const DATA_EXTENSIONS = new Set(['.json', '.md', '.txt']);
-/**
- * Zips are built in memory, so photos/PDFs are included only up to this much
- * per backup (a Pi can run out of RAM otherwise). Data files always go in.
- */
-export const MEDIA_BUDGET_BYTES = 512 * 1024 * 1024;
+/** Space to leave free on the backup drive after a backup. */
+const FREE_MARGIN_BYTES = 50 * 1024 * 1024;
 /** Where restores may write, relative to the project root. */
 const RESTORE_PREFIXES = ['.data/', 'public/content/', 'public/uploads/'];
 
@@ -153,41 +151,49 @@ export async function listBackups(settings?: BackupSettings): Promise<BackupInfo
   return (infos.filter(Boolean) as BackupInfo[]).sort((a, b) => b.name.localeCompare(a.name));
 }
 
-export async function createBackup(label = 'manual'): Promise<BackupInfo> {
+export type BackupProgress = { done: number; total: number; bytes: number };
+type OnProgress = (progress: BackupProgress) => void;
+
+export async function createBackup(label = 'manual', onProgress?: OnProgress): Promise<BackupInfo> {
   const settings = await getBackupSettings();
   const safeLabel = label.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 30);
   const name = `backup-${stamp()}${safeLabel ? `-${safeLabel}` : ''}.zip`;
   const files = await collectBackupFiles(settings.includeMedia);
 
-  const zip = new AdmZip();
-  let mediaBytes = 0;
-  let added = 0;
-  const skippedMedia: string[] = [];
-  for (const file of files) {
-    const isMedia = file.startsWith('public/uploads/') && !DATA_EXTENSIONS.has(path.extname(file).toLowerCase());
-    if (isMedia) {
-      const size = (await fs.stat(path.join(root(), file)).catch(() => null))?.size ?? 0;
-      if (mediaBytes + size > MEDIA_BUDGET_BYTES) { skippedMedia.push(file); continue; }
-      mediaBytes += size;
-    }
-    const buffer = await fs.readFile(path.join(root(), file)).catch(() => null);
-    if (buffer) { zip.addFile(file, buffer); added++; }
-  }
-  if (skippedMedia.length) console.warn(`Backup ${name}: left out ${skippedMedia.length} media files over the ${MEDIA_BUDGET_BYTES / 1024 / 1024} MB limit`);
-  zip.addFile('backup-manifest.json', Buffer.from(JSON.stringify({
-    createdAt: new Date().toISOString(),
-    label: safeLabel,
-    files: added,
-    includeMedia: settings.includeMedia,
-    skippedMedia: skippedMedia.length,
-  }, null, 2)));
-
   const drive = await checkBackupDrive(settings);
   if (!drive.ok) throw new Error(drive.message);
+  if (drive.freeBytes !== undefined) {
+    let needed = 0;
+    for (const file of files) needed += (await fs.stat(path.join(root(), file)).catch(() => null))?.size ?? 0;
+    if (needed + FREE_MARGIN_BYTES > drive.freeBytes) {
+      const mb = (n: number) => `${Math.ceil(n / 1024 / 1024)} MB`;
+      throw new Error(`Not enough room on the backup drive: this backup needs about ${mb(needed)} and ${mb(drive.freeBytes)} is free.`);
+    }
+  }
   await fs.mkdir(settings.dir, { recursive: true });
   const target = path.join(settings.dir, name);
   const tmp = `${target}.tmp`;
-  await fs.writeFile(tmp, zip.toBuffer());
+  const zip = await ZipWriter.create(tmp);
+  let added = 0;
+  let bytes = 0;
+  try {
+    for (const [i, file] of files.entries()) {
+      const size = await zip.addFile(file, path.join(root(), file));
+      if (size !== null) { added++; bytes += size; }
+      onProgress?.({ done: i + 1, total: files.length, bytes });
+    }
+    await zip.addBuffer('backup-manifest.json', Buffer.from(JSON.stringify({
+      createdAt: new Date().toISOString(),
+      label: safeLabel,
+      files: added,
+      includeMedia: settings.includeMedia,
+    }, null, 2)));
+    await zip.close();
+  } catch (error) {
+    await zip.abort();
+    await fs.unlink(tmp).catch(() => {});
+    throw error;
+  }
   await fs.rename(tmp, target);
   await pruneBackups(settings, name);
   const stat = await fs.stat(target);
@@ -226,33 +232,84 @@ export function isRestorablePath(entry: string) {
  * state is taken first. Files that didn't exist when the backup was made are
  * left alone (nothing is deleted).
  */
-export async function restoreBackup(name: string): Promise<{ restored: number; safetyBackup: string }> {
+export async function restoreBackup(name: string, onProgress?: OnProgress): Promise<{ restored: number; safetyBackup: string }> {
   const file = await resolveBackup(name);
-  const zip = new AdmZip(file);
+  const entries = (await readZipEntries(file)).filter((e) => !e.isDirectory && isRestorablePath(e.name));
   const safety = await createBackup('pre-restore');
   let restored = 0;
-  for (const entry of zip.getEntries()) {
-    if (entry.isDirectory || !isRestorablePath(entry.entryName)) continue;
-    const target = path.join(root(), ...entry.entryName.split('/'));
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    const tmp = `${target}.restore.tmp`;
-    await fs.writeFile(tmp, entry.getData());
-    await fs.rename(tmp, target);
+  let bytes = 0;
+  for (const entry of entries) {
+    await extractZipEntry(file, entry, path.join(root(), ...entry.name.split('/')));
     restored++;
+    bytes += entry.size;
+    onProgress?.({ done: restored, total: entries.length, bytes });
   }
   return { restored, safetyBackup: safety.name };
 }
 
-/** Save an uploaded backup zip into the backup folder (after a sanity check). */
-export async function importBackup(buffer: Buffer): Promise<BackupInfo> {
-  const zip = new AdmZip(buffer);
-  if (!zip.getEntry('backup-manifest.json')) throw new Error('That file is not a site backup');
+/** Where an upload is written while it arrives: the backup folder, so a rename finishes it. */
+export async function uploadTempPath() {
   const settings = await getBackupSettings();
+  const drive = await checkBackupDrive(settings);
+  if (!drive.ok) throw new Error(drive.message);
   await fs.mkdir(settings.dir, { recursive: true });
-  const name = `backup-${stamp()}-uploaded.zip`;
-  await fs.writeFile(path.join(settings.dir, name), buffer);
-  const stat = await fs.stat(path.join(settings.dir, name));
-  return { name, size: stat.size, createdAt: stat.mtime.toISOString(), label: 'uploaded' };
+  return path.join(settings.dir, `upload-${Date.now()}.zip.tmp`);
+}
+
+/** Move an uploaded zip (already on disk) into the backup list, after checking it's a site backup. */
+export async function importBackup(upload: string): Promise<BackupInfo> {
+  try {
+    const entries = await readZipEntries(upload).catch(() => []);
+    const manifest = entries.find((e) => e.name === 'backup-manifest.json');
+    const parsed = manifest ? await readZipEntry(upload, manifest).then((b) => JSON.parse(b.toString('utf-8'))).catch(() => null) : null;
+    if (!parsed) throw new Error('That file is not a site backup');
+    const settings = await getBackupSettings();
+    const name = `backup-${stamp()}-uploaded.zip`;
+    const target = path.join(settings.dir, name);
+    await fs.rename(upload, target).catch(() => fs.copyFile(upload, target));
+    const stat = await fs.stat(target);
+    return { name, size: stat.size, createdAt: stat.mtime.toISOString(), label: 'uploaded' };
+  } finally {
+    await fs.unlink(upload).catch(() => {});
+  }
+}
+
+// ─── Background jobs ───────────────────────────────────────────────────────────
+// A backup with photos can take minutes — longer than a web request should
+// wait — so it runs in the background and the admin page polls for progress.
+
+export type BackupJob = BackupProgress & {
+  kind: 'create' | 'restore' | 'nightly';
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  result?: Record<string, unknown>;
+};
+
+// On globalThis: the scheduler and the API route can each load their own copy of this module.
+const jobs = globalThis as typeof globalThis & { __backupJob?: BackupJob };
+
+export function getBackupJob(): BackupJob | null {
+  return jobs.__backupJob ?? null;
+}
+
+export function isBackupRunning() {
+  return !!jobs.__backupJob && !jobs.__backupJob.finishedAt;
+}
+
+/** Run `work` in the background. Throws if a backup or restore is already running. */
+export function startBackupJob(kind: BackupJob['kind'], work: (onProgress: OnProgress) => Promise<Record<string, unknown>>): BackupJob {
+  if (isBackupRunning()) throw new Error('A backup or restore is already running');
+  const job: BackupJob = { kind, startedAt: new Date().toISOString(), done: 0, total: 0, bytes: 0 };
+  jobs.__backupJob = job;
+  work((progress) => Object.assign(job, progress))
+    .then((result) => { job.result = result; })
+    .catch((error) => {
+      job.error = error instanceof Error ? error.message : 'Backup failed';
+      console.error(`Backup (${kind}) failed:`, error);
+    })
+    .finally(() => { job.finishedAt = new Date().toISOString(); });
+  return job;
 }
 
 // ─── Nightly schedule ──────────────────────────────────────────────────────────
@@ -273,10 +330,13 @@ export function startBackupScheduler() {
   const tick = async () => {
     try {
       const settings = await getBackupSettings();
-      if (!isNightlyDue(settings)) return;
-      const info = await createBackup('nightly');
-      await saveBackupSettings({ ...(await getBackupSettings()), lastAutoBackup: new Date().toISOString() });
-      console.log(`Nightly backup written: ${info.name}`);
+      if (!isNightlyDue(settings) || isBackupRunning()) return;
+      startBackupJob('nightly', async (onProgress) => {
+        const info = await createBackup('nightly', onProgress);
+        await saveBackupSettings({ ...(await getBackupSettings()), lastAutoBackup: new Date().toISOString() });
+        console.log(`Nightly backup written: ${info.name}`);
+        return { backup: info };
+      });
     } catch (error) {
       console.error('Nightly backup failed:', error);
     }

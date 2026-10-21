@@ -19,6 +19,8 @@ export type Attempt = {
   /** null: you opened the worked solution without answering. */
   responses: Record<string, PartResponse> | null;
   hints: number;
+  /** Checks it took (1–3); each one after the first costs some XP. Missing on old attempts: 1. */
+  tries?: number;
   /** The grade when you answered; a later correction shows as "regraded". */
   result: Pick<QuestionResult, 'correct' | 'total' | 'status'>;
   meta: AttemptMeta;
@@ -30,7 +32,13 @@ export const XP_RULES = {
   perDifficulty: 10,
   /** For answering, even when wrong. */
   effort: 5,
+  /** For giving up and reading the worked solution. */
+  studied: 3,
   hintCost: 0.2,
+  /** How many times you may check an answer before it locks. */
+  maxTries: 3,
+  /** XP lost for each check after the first. */
+  retryCost: 0.15,
   minHintFactor: 0.5,
   /** Catching up on an earlier day. */
   late: 0.5,
@@ -48,11 +56,19 @@ export function scoreAttempt(attempt: Attempt, question?: Question) {
   return { result, regraded, xp: attemptXp(attempt, result) };
 }
 
-export function attemptXp(attempt: Pick<Attempt, 'meta' | 'hints' | 'date' | 'answeredOn'>, result: Pick<QuestionResult, 'correct' | 'total' | 'status'>) {
-  if (result.status === 'studied') return 0;
-  const full = XP_RULES.base + XP_RULES.perDifficulty * attempt.meta.difficulty;
-  let xp = result.correct === 0 ? XP_RULES.effort : full * (result.correct / result.total);
-  xp *= Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * attempt.hints);
+/** The XP multiplier for solving on check number `tries` (1 = first go). */
+export function triesFactor(tries = 1) {
+  return 1 - XP_RULES.retryCost * (Math.min(XP_RULES.maxTries, Math.max(1, tries)) - 1);
+}
+
+export function attemptXp(attempt: Pick<Attempt, 'meta' | 'hints' | 'date' | 'answeredOn' | 'tries'>, result: Pick<QuestionResult, 'correct' | 'total' | 'status'>) {
+  let xp: number;
+  if (result.status === 'studied') xp = XP_RULES.studied;
+  else {
+    const full = XP_RULES.base + XP_RULES.perDifficulty * attempt.meta.difficulty;
+    xp = result.correct === 0 ? XP_RULES.effort : full * (result.correct / result.total) * triesFactor(attempt.tries);
+    xp *= Math.max(XP_RULES.minHintFactor, 1 - XP_RULES.hintCost * attempt.hints);
+  }
   if (attempt.answeredOn > attempt.date) xp *= XP_RULES.late;
   if (attempt.meta.boss) xp *= XP_RULES.boss;
   return Math.round(xp);
@@ -106,7 +122,7 @@ function achievements(scored: ScoredAttempt[], best: number): Achievement[] {
   let bestClean = 0;
   for (const a of [...scored].sort((x, y) => x.at.localeCompare(y.at))) {
     if (a.status === 'studied') continue;
-    cleanRun = a.status === 'solved' && a.hints === 0 ? cleanRun + 1 : 0;
+    cleanRun = a.status === 'solved' && a.hints === 0 && (a.tries ?? 1) === 1 ? cleanRun + 1 : 0;
     bestClean = Math.max(bestClean, cleanRun);
   }
   const byDay = new Map<DateKey, ScoredAttempt[]>();
@@ -124,7 +140,7 @@ function achievements(scored: ScoredAttempt[], best: number): Achievement[] {
     count('mech', '⚙️', 'Gearhead', 'Solve 10 mechanical questions.', solvedIn('mechanical'), 10),
     count('controls', '📈', 'Closed loop', 'Solve 10 controls questions.', solvedIn('controls'), 10),
     count('automation', '🤖', 'PLC whisperer', 'Solve 10 automation questions.', solvedIn('automation'), 10),
-    count('clean', '🧼', 'No training wheels', 'Solve 5 in a row without hints.', bestClean, 5),
+    count('clean', '🧼', 'No training wheels', 'Solve 5 in a row first time, without hints.', bestClean, 5),
     count('bonus', '🎁', 'Overachiever', 'Solve 20 bonus questions.', solved.filter((a) => !a.meta.core).length, 20),
     { id: 'sweep', icon: '🏆', title: 'Clean sweep', description: 'Solve the core and every bonus question of a day (3 or more).', earned: sweptDay },
     count('catchup', '🔁', 'Catching up', 'Answer 5 questions from earlier days.', late, 5),

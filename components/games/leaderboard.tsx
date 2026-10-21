@@ -1,11 +1,38 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import type { GameId } from '@/lib/games/registry';
 
 export type LeaderboardEntry = { name: string; score: number; date: string };
 
+const NAME_KEY = 'arcadeName';
+let accountName: Promise<string | null> | null = null;
+
+/**
+ * The name to put on a high score: your account's username when signed in,
+ * else the name you used last time on this device. Empty until known.
+ */
+export function usePlayerName() {
+  const [name, setName] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    try { const saved = localStorage.getItem(NAME_KEY); if (saved) setName(saved); } catch { /* storage blocked */ }
+    accountName ??= fetch('/api/workout/auth', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => (d.authenticated && typeof d.user?.username === 'string' ? d.user.username.slice(0, 20) : null))
+      .catch(() => null);
+    accountName.then((n) => { if (n && !cancelled) setName(n); });
+    return () => { cancelled = true; };
+  }, []);
+  return name;
+}
+
+function rememberName(name: string) {
+  try { localStorage.setItem(NAME_KEY, name); } catch { /* storage blocked */ }
+}
+
 /** Load and submit to one game's global top-10. */
-export function useLeaderboard(game: 'snake' | '2048') {
+export function useLeaderboard(game: GameId) {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -25,6 +52,7 @@ export function useLeaderboard(game: 'snake' | '2048') {
       const data = await res.json();
       if (!data.success) { setError(data.message || 'Could not save score.'); return false; }
       setLeaderboard(data.leaderboard);
+      rememberName(name.trim());
       return true;
     } catch {
       setError('Network error — score not saved.');
@@ -35,6 +63,39 @@ export function useLeaderboard(game: 'snake' | '2048') {
   }, [game]);
 
   return { leaderboard, qualifies, submit, submitting, error, setError };
+}
+
+/**
+ * The "new high score" form on a game-over screen. The name starts as your
+ * account name (or the last one used here) and can be changed before saving.
+ */
+export function ScoreForm({ score, submitting, error, onSubmit, onSkip }: {
+  score: number;
+  submitting: boolean;
+  error: string;
+  onSubmit: (name: string) => void;
+  onSkip: () => void;
+}) {
+  const known = usePlayerName();
+  const [name, setName] = useState<string | null>(null);
+  const value = name ?? known;
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); if (!submitting && value.trim()) onSubmit(value.trim()); }}
+      style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '85%', maxWidth: 280, background: 'rgba(0,0,0,0.5)', padding: '1.1rem', borderRadius: 12 }}
+    >
+      <p style={{ color: 'var(--accent-light)', textAlign: 'center', fontWeight: 700, margin: 0 }}>New high score! {score.toLocaleString()}</p>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', color: '#ddd', fontSize: '0.8rem' }}>
+        Name on the leaderboard
+        <input name="playername" placeholder="Your name" required maxLength={20} autoFocus={!known} disabled={submitting}
+          value={value} onChange={(e) => setName(e.target.value)} onFocus={(e) => e.currentTarget.select()}
+          style={{ padding: '0.7rem', borderRadius: 8, border: '1px solid var(--accent)', background: 'transparent', color: '#fff', textAlign: 'center', fontSize: '1.05rem' }} />
+      </label>
+      <button type="submit" className="btn btn-primary" disabled={submitting || !value.trim()} autoFocus={!!known}>{submitting ? 'Saving…' : 'Submit score'}</button>
+      {error && <p style={{ color: '#fc8181', fontSize: '0.8rem', margin: 0, textAlign: 'center' }}>{error}</p>}
+      <button type="button" className="btn btn-secondary" onClick={onSkip}>Skip</button>
+    </form>
+  );
 }
 
 export function LeaderboardPanel({ title, entries, empty }: { title: string; entries: LeaderboardEntry[]; empty: React.ReactNode }) {

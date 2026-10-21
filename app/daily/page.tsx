@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import QuestionCard from '@/components/daily/QuestionCard';
 import FormulaSheet, { FormulaOfTheDay } from '@/components/daily/FormulaSheet';
 import DailyStats from '@/components/daily/DailyStats';
+import Practice from '@/components/daily/Practice';
+import LevelInfo from '@/components/progress/LevelInfo';
 import { useDaily } from '@/components/daily/useDaily';
 import Confetti from '@/components/habits/Confetti';
 import { choresXpElsewhere, habitsXpElsewhere } from '@/components/progress/otherXp';
@@ -16,6 +18,7 @@ import './daily.css';
 
 const TABS = [
   { id: 'today', icon: '🧠', label: 'Questions' },
+  { id: 'practice', icon: '🎲', label: 'Practice' },
   { id: 'archive', icon: '🗂️', label: 'Archive' },
   { id: 'stats', icon: '📈', label: 'Stats' },
 ] as const;
@@ -31,7 +34,8 @@ function vibrate(pattern: number | number[]) {
 export default function DailyPage() {
   const d = useDaily();
   const [tab, setTab] = useState<TabId>('today');
-  const [habitXp, setHabitXp] = useState(0);
+  /** XP from habits and chores; null until it has loaded. */
+  const [otherXp, setOtherXp] = useState<{ habits: number; chores: number } | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [toast, setToast] = useState('');
 
@@ -47,22 +51,23 @@ export default function DailyPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts habits and chores.
-  useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setHabitXp(a + b)); }, [d.state, d.signedIn]);
+  useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setOtherXp({ habits: a, chores: b })); }, [d.state, d.signedIn]);
 
   const questionXp = d.progress?.stats.total.xp ?? 0;
-  const level = levelFromXp(questionXp + habitXp);
+  const level = levelFromXp(questionXp + (otherXp ? otherXp.habits + otherXp.chores : 0));
   const streak = d.progress?.stats.streak;
 
   // Celebrate a level up (not what was already true when the page opened).
+  // Wait for both XP sources, or the habit XP arriving looks like a level up.
   const seenLevel = useRef<number | null>(null);
   useEffect(() => {
-    if (!d.progress) return;
+    if (!d.progress || otherXp === null) return;
     if (seenLevel.current !== null && level.level > seenLevel.current) {
       setConfetti(Date.now());
       setToast(`Level ${level.level}! You’re a ${level.title.toLowerCase()} now.`);
     }
     seenLevel.current = level.level;
-  }, [level.level, level.title, d.progress]);
+  }, [level.level, level.title, d.progress, otherXp]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(''), 3400);
@@ -71,13 +76,16 @@ export default function DailyPage() {
 
   const answer = async (questionId: string, responses: Record<string, PartResponse> | null, hints: number, isCore: boolean) => {
     const alreadyCounted = d.progress?.stats.streak.doneToday;
-    await d.submit(questionId, responses, hints);
+    const result = await d.submit(questionId, responses, hints);
+    if (!result) return null;
+    if (!result.final) { vibrate([20, 60, 20]); return result; }
     vibrate(30);
     // Today's core question, the first time: the streak goes up.
     if (isCore && d.date === d.today && !alreadyCounted) {
       const next = (streak?.current ?? 0) + 1;
       setToast(`🔥 Streak: ${next} day${next === 1 ? '' : 's'}!`);
     }
+    return result;
   };
 
   // Confetti when a question comes back fully solved.
@@ -104,7 +112,8 @@ export default function DailyPage() {
           <p>One engineering question a day: mechanical, controls and automation.</p>
         </div>
         {d.state === 'ready' && (
-          <div className="dq-level" title={`${level.xp} XP total (questions and habits)`}>
+          <button type="button" className="dq-level" title={`${level.xp} XP total (questions, habits and chores). Tap for what your level means.`}
+            onClick={() => { chooseTab('stats'); setTimeout(() => document.getElementById('level')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}>
             <span className="dq-level-badge">Lv {level.level}</span>
             <div className="dq-level-text">
               <strong>{level.title}</strong>
@@ -113,7 +122,8 @@ export default function DailyPage() {
               </div>
               <small>{level.into} / {level.size} XP · 🔥 {streak?.current ?? 0} day streak</small>
             </div>
-          </div>
+            <span className="dq-level-more" aria-hidden>ⓘ</span>
+          </button>
         )}
       </header>
 
@@ -184,7 +194,7 @@ export default function DailyPage() {
                 <>
                   {d.day.formulaOfTheDay && <FormulaOfTheDay formula={d.day.formulaOfTheDay} />}
                   <FormulaSheet formulas={d.day.formulas} />
-                  <QuestionCard key={d.day.core.id} q={d.day.core} kind="core" boss={!!d.day.boss} late={isPast} answered={d.answered[d.day.core.id]}
+                  <QuestionCard key={d.day.core.id} q={d.day.core} kind="core" boss={!!d.day.boss} late={isPast} answered={d.answered[d.day.core.id]} tries={d.tries[d.day.core.id]}
                     formulas={d.day.formulas} signedIn={d.signedIn}
                     onAnswer={(r, h) => answer(d.day!.core.id, r, h, true)} onReveal={(h) => answer(d.day!.core.id, null, h, true)}
                     onFeedback={(p) => d.feedback(d.day!.core.id, p)} />
@@ -192,7 +202,7 @@ export default function DailyPage() {
                     <>
                       <h2 className="dq-section">Bonus questions <span className="dq-hint">optional, for extra XP</span></h2>
                       {d.day.bonus.map((q) => (
-                        <QuestionCard key={q.id} q={q} kind="bonus" boss={false} late={isPast} answered={d.answered[q.id]}
+                        <QuestionCard key={q.id} q={q} kind="bonus" boss={false} late={isPast} answered={d.answered[q.id]} tries={d.tries[q.id]}
                           formulas={d.day!.formulas} signedIn={d.signedIn}
                           onAnswer={(r, h) => answer(q.id, r, h, false)} onReveal={(h) => answer(q.id, null, h, false)}
                           onFeedback={(p) => d.feedback(q.id, p)} />
@@ -228,6 +238,11 @@ export default function DailyPage() {
             )
           )}
 
+          {tab === 'practice' && <Practice today={d.today} signedIn={d.signedIn} onAnswered={d.reloadProgress} />}
+
+          {tab === 'stats' && (
+            <LevelInfo sources={{ questions: questionXp, habits: otherXp?.habits ?? 0, chores: otherXp?.chores ?? 0 }} weeks={d.progress?.stats.weeks} />
+          )}
           {tab === 'stats' && <DailyStats progress={d.progress} today={d.today} signedIn={d.signedIn} onOpen={openDay} onLeaderboard={d.setLeaderboard} />}
         </>
       )}

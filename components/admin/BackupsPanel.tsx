@@ -1,21 +1,31 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import ProgressBar from '@/components/ProgressBar';
 
 type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; requireSeparateDrive: boolean; lastAutoBackup?: string };
 type Drive = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };
 type Backup = { name: string; size: number; createdAt: string; label: string };
+type Job = {
+  kind: 'create' | 'restore' | 'nightly'; startedAt: string; finishedAt?: string; error?: string;
+  done: number; total: number; bytes: number; result?: { restored?: number; safetyBackup?: string };
+};
+
+const JOB_LABELS: Record<Job['kind'], string> = {
+  create: 'Making a backup…',
+  restore: 'Restoring (a safety backup is made first)…',
+  nightly: 'Nightly backup running…',
+};
 
 const sizeLabel = (bytes: number) =>
   bytes > 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
     : bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 const BUSY_LABELS: Record<string, string> = {
-  create: 'Making a backup…',
+  create: 'Starting the backup…',
   settings: 'Saving settings…',
-  restore: 'Restoring (a safety backup is made first)…',
+  restore: 'Starting the restore…',
   delete: 'Deleting…',
   upload: 'Uploading backup…',
 };
@@ -29,11 +39,28 @@ export default function BackupsPanel() {
   const [drive, setDrive] = useState<Drive | null>(null);
   const [busy, setBusy] = useState('');
   const [loadError, setLoadError] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
+  /** The job this page started, so we can say how it went when it finishes. */
+  const watching = useRef<string | null>(null);
 
-  const load = () => fetch('/api/backups').then((r) => r.json()).then((d) => {
-    if (d.success) { setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive); setLoadError(false); } else setLoadError(true);
+  const load = (keepDraft = false) => fetch('/api/backups').then((r) => r.json()).then((d) => {
+    if (!d.success) { setLoadError(true); return; }
+    setSettings(d.settings); if (!keepDraft) setDraft(d.settings); setBackups(d.backups); setDrive(d.drive); setLoadError(false);
+    const j: Job | null = d.job;
+    setJob(j);
+    if (j?.finishedAt && watching.current === j.startedAt) {
+      watching.current = null;
+      if (j.error) showAlert({ title: j.kind === 'restore' ? 'Restore failed' : 'Backup failed', message: j.error });
+      else if (j.kind === 'restore') showAlert({ title: 'Restored', message: `Restored ${j.result?.restored ?? 0} files. Safety backup: ${j.result?.safetyBackup}` });
+    }
   }).catch(() => setLoadError(true));
   useEffect(() => { load(); }, []);
+  const jobRunning = !!job && !job.finishedAt;
+  useEffect(() => {
+    if (!jobRunning) return;
+    const t = setTimeout(() => load(true), 1500);
+    return () => clearTimeout(t);
+  }, [jobRunning, job]);
 
   const post = async (body: Record<string, unknown>) => {
     const res = await fetch('/api/backups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -46,7 +73,12 @@ export default function BackupsPanel() {
     try { await action(); } catch (err) { showAlert({ title: 'Backup', message: err instanceof Error ? err.message : 'Failed' }); } finally { setBusy(''); }
   };
 
-  const backUpNow = () => run('create', async () => { await post({ action: 'create' }); await load(); });
+  const startJob = (body: Record<string, unknown>) => run(String(body.action), async () => {
+    const d = await post(body);
+    watching.current = d.job.startedAt;
+    setJob(d.job);
+  });
+  const backUpNow = () => startJob({ action: 'create' });
   const saveSettings = () => run('settings', async () => {
     const d = await post({ action: 'settings', settings: draft });
     setSettings(d.settings); setDraft(d.settings); setBackups(d.backups); setDrive(d.drive);
@@ -58,20 +90,16 @@ export default function BackupsPanel() {
       confirmLabel: 'Restore', danger: true,
     });
     if (!ok) return;
-    run('restore', async () => {
-      const d = await post({ action: 'restore', name: b.name });
-      await load();
-      showAlert({ title: 'Restored', message: `Restored ${d.restored} files. Safety backup: ${d.safetyBackup}` });
-    });
+    startJob({ action: 'restore', name: b.name });
   };
   const remove = async (b: Backup) => {
     if (!(await confirm({ title: 'Delete backup?', message: b.name, confirmLabel: 'Delete', danger: true }))) return;
     run('delete', async () => { await post({ action: 'delete', name: b.name }); await load(); });
   };
   const upload = (file: File | undefined) => file && run('upload', async () => {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch('/api/backups', { method: 'PUT', body: form });
+    if (!file.name.endsWith('.zip')) throw new Error('Choose a .zip backup file');
+    // Sent as the raw file so the server can stream a big zip straight to disk.
+    const res = await fetch('/api/backups', { method: 'PUT', headers: { 'Content-Type': 'application/zip' }, body: file });
     const d = await res.json().catch(() => ({}));
     if (!d.success) throw new Error(d.error || 'Upload failed');
     await load();
@@ -86,6 +114,7 @@ export default function BackupsPanel() {
     );
   }
   const dirty = JSON.stringify(settings) !== JSON.stringify(draft);
+  const locked = !!busy || jobRunning;
 
   return (
     <section className="adm-card" aria-labelledby="backups-title">
@@ -99,15 +128,23 @@ export default function BackupsPanel() {
           </p>
         </div>
         <div className="adm-actions">
-          <label className="btn btn-secondary" style={{ cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          <label className="btn btn-secondary" style={{ cursor: locked ? 'default' : 'pointer', opacity: locked ? 0.5 : 1 }}>
             ⬆ Upload
-            <input type="file" accept=".zip" disabled={!!busy} style={{ display: 'none' }} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
+            <input type="file" accept=".zip" disabled={locked} style={{ display: 'none' }} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
-          <button className="btn btn-primary" disabled={!!busy} onClick={backUpNow}>{busy === 'create' ? 'Backing up…' : 'Back up now'}</button>
+          <button className="btn btn-primary" disabled={locked} onClick={backUpNow}>{jobRunning && job?.kind !== 'restore' ? 'Backing up…' : 'Back up now'}</button>
         </div>
       </div>
 
-      {busy && <div style={{ marginBottom: '1rem' }}><ProgressBar label={BUSY_LABELS[busy] || 'Working…'} /></div>}
+      {jobRunning && job ? (
+        <div style={{ marginBottom: '1rem' }}>
+          <ProgressBar
+            label={JOB_LABELS[job.kind]}
+            value={job.total ? (job.done / job.total) * 100 : undefined}
+            detail={job.total ? `${job.done} / ${job.total} files · ${sizeLabel(job.bytes)}` : undefined}
+          />
+        </div>
+      ) : busy && <div style={{ marginBottom: '1rem' }}><ProgressBar label={BUSY_LABELS[busy] || 'Working…'} /></div>}
 
       {drive && (
         <div role="status" className={`adm-notice ${drive.ok ? 'is-success' : 'is-error'}`}>
@@ -135,7 +172,7 @@ export default function BackupsPanel() {
             <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> Nightly backups on
           </label>
           <label className="adm-check">
-            <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs (up to 500 MB)
+            <input type="checkbox" checked={draft.includeMedia} onChange={(e) => setDraft({ ...draft, includeMedia: e.target.checked })} /> Include photos &amp; PDFs
           </label>
           <label className="adm-check is-wide">
             <input type="checkbox" checked={draft.requireSeparateDrive} onChange={(e) => setDraft({ ...draft, requireSeparateDrive: e.target.checked })} />
@@ -144,7 +181,7 @@ export default function BackupsPanel() {
         </div>
         {dirty && (
           <div className="adm-actions" style={{ marginTop: '0.9rem' }}>
-            <button className="btn btn-primary" disabled={!!busy} onClick={saveSettings}>Save settings</button>
+            <button className="btn btn-primary" disabled={locked} onClick={saveSettings}>Save settings</button>
             <button className="btn btn-secondary" disabled={!!busy} onClick={() => setDraft(settings)}>Undo</button>
           </div>
         )}
@@ -161,8 +198,8 @@ export default function BackupsPanel() {
               </div>
               <div className="adm-actions">
                 <a className="btn btn-secondary adm-small-btn" href={`/api/backups?download=${encodeURIComponent(b.name)}`}>Download</a>
-                <button className="btn btn-secondary adm-small-btn" disabled={!!busy} onClick={() => restore(b)}>Restore</button>
-                <button className="adm-icon-btn is-danger" disabled={!!busy} onClick={() => remove(b)} aria-label={`Delete ${b.name}`} title="Delete">✕</button>
+                <button className="btn btn-secondary adm-small-btn" disabled={locked} onClick={() => restore(b)}>Restore</button>
+                <button className="adm-icon-btn is-danger" disabled={locked} onClick={() => remove(b)} aria-label={`Delete ${b.name}`} title="Delete">✕</button>
               </div>
             </div>
           ))}

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import path from 'path';
-import { MAX_SCORE, POINTS_PER_FOOD } from '@/lib/games/snake';
-import { MAX_2048_SCORE } from '@/lib/games/g2048';
+import { GAMES, isGameId, type GameId } from '@/lib/games/registry';
 import { readJson, updateJson } from '@/lib/json-store';
 import { clientAddress, createLimiter } from '@/lib/security/rate-limit';
 
@@ -11,26 +10,16 @@ const submissions = createLimiter({ max: 5, windowMs: 10 * 60_000 });
 const saveDir = path.join(process.cwd(), 'public', 'uploads', 'leaderboard');
 type Entry = { name: string; score: number; date: string };
 
-// Each game has its own top-10 file and its own idea of a possible score.
-const GAMES = {
-  snake: {
-    file: path.join(saveDir, 'leaderboard.json'),
-    // Whole food multiples up to a full board.
-    valid: (score: number) => score <= MAX_SCORE && score % POINTS_PER_FOOD === 0,
-  },
-  '2048': {
-    file: path.join(saveDir, 'leaderboard-2048.json'),
-    // Every merge adds an even tile value.
-    valid: (score: number) => score <= MAX_2048_SCORE && score % 2 === 0,
-  },
-} as const;
+// Each game has its own top-10 file (Snake's predates the others) and its own idea of a possible score.
+const fileFor = (id: GameId) => path.join(saveDir, id === 'snake' ? 'leaderboard.json' : `leaderboard-${id}.json`);
 
 function gameFrom(value: unknown) {
-  return (typeof value === 'string' && value in GAMES ? value : 'snake') as keyof typeof GAMES;
+  const id: GameId = isGameId(value) ? value : 'snake';
+  return { file: fileFor(id), valid: GAMES.find((g) => g.id === id)!.valid as (score: number) => boolean };
 }
 
 export async function GET(request: Request) {
-  const game = GAMES[gameFrom(new URL(request.url).searchParams.get('game'))];
+  const game = gameFrom(new URL(request.url).searchParams.get('game'));
   return NextResponse.json({ success: true, leaderboard: await readJson<Entry[]>(game.file, []) });
 }
 
@@ -42,7 +31,7 @@ export async function POST(request: Request) {
     }
     submissions.hit(ip);
     const data = await request.json().catch(() => null);
-    const game = GAMES[gameFrom(data?.game)];
+    const game = gameFrom(data?.game);
     const name = typeof data?.name === 'string' ? data.name.trim().substring(0, 20) : '';
     const score = data?.score;
 

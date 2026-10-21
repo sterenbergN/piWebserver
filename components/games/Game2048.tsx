@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SIZE, createGame, maxTile, move, type Direction, type G2048State } from '@/lib/games/g2048';
-import { LeaderboardPanel, useLeaderboard } from './leaderboard';
+import { LeaderboardPanel, ScoreForm, useLeaderboard } from './leaderboard';
 
 const KEYS: Record<string, Direction> = {
   ArrowUp: 'up', w: 'up', W: 'up',
@@ -103,10 +103,7 @@ export default function Game2048() {
   };
 
   const eligible = game.over && !nameSubmitted && qualifies(game.score);
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (submitting) return;
-    const name = String(new FormData(e.currentTarget).get('playername') || '');
+  const handleSubmit = async (name: string) => {
     if (await submit(name, game.score)) setNameSubmitted(true);
   };
 
@@ -152,14 +149,7 @@ export default function Game2048() {
                     <button className="btn btn-secondary" onClick={restart}>New game</button>
                   </div>
                 ) : eligible ? (
-                  <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '85%', maxWidth: 280 }}>
-                    <p style={{ color: '#fff', textAlign: 'center', fontWeight: 700, margin: 0 }}>New high score!</p>
-                    <input name="playername" placeholder="Your name" required maxLength={20} autoFocus disabled={submitting}
-                      style={{ padding: '0.7rem', borderRadius: 8, border: '1px solid #fff', background: 'transparent', color: '#fff', textAlign: 'center', fontSize: '1.05rem' }} />
-                    <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? 'Saving…' : 'Submit score'}</button>
-                    {error && <p style={{ color: '#fc8181', fontSize: '0.8rem', margin: 0, textAlign: 'center' }}>{error}</p>}
-                    <button type="button" className="btn btn-secondary" onClick={restart}>Skip</button>
-                  </form>
+                  <ScoreForm score={game.score} submitting={submitting} error={error} onSubmit={handleSubmit} onSkip={restart} />
                 ) : (
                   <button className="btn btn-primary" onClick={restart}>Try again</button>
                 )}

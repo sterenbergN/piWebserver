@@ -1329,3 +1329,18 @@
   .wtb a.is-current > span:first-child { filter: none; opacity: 1; }
   .wtb-spacer { display: block; height: calc(64px + env(safe-area-inset-bottom)); }
 }
+
+/* Experience profile: what each lifter level means */
+.xp-levels { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem; cursor: default; }
+.xp-breakdown { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; }
+.xp-breakdown > div { background: var(--background); border-radius: 10px; padding: 0.5rem 0.35rem; text-align: center; min-width: 0; }
+.xp-breakdown span { display: block; font-size: 0.62rem; color: var(--muted); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; }
+.xp-breakdown strong { font-size: 0.95rem; }
+.xp-level-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.xp-level-list > li { background: var(--background); border: 1px solid transparent; border-radius: 12px; padding: 0.7rem 0.8rem; }
+.xp-level-list > li.is-current { border-color: var(--accent); }
+.xp-level-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.xp-level-head span { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.xp-level-list p { margin: 0.3rem 0 0.35rem; font-size: 0.82rem; color: var(--muted); }
+.xp-level-list ul { margin: 0; padding-left: 1.1rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.15rem; }
+@media (max-width: 420px) { .xp-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { handleApiError } from '@/lib/workout/api';
 import { isDateKey } from '@/lib/habits/dates';
-import { publicDay, revealedQuestion, gradeQuestion } from '@/lib/daily/grade';
-import { scoreAttempt } from '@/lib/daily/progress';
-import { clampToday, questionIndex, readDay, readFeedback, readUserDaily } from '@/lib/daily/store';
+import { publicDay } from '@/lib/daily/grade';
+import { answeredView, clampToday, questionIndex, readDay, readFeedback, readUserDaily } from '@/lib/daily/store';
 
 // A day's questions as anyone may see them. Questions you've already answered
 // (or given up on) come with their answer key, worked solution and your grade.
@@ -24,22 +23,18 @@ export async function GET(request: Request) {
     const day = await readDay(date);
     const userId = await getAuthenticatedWorkoutUserId();
     const answered: Record<string, unknown> = {};
+    /** Checks already used on questions not finished yet. */
+    const tries: Record<string, number> = {};
     if (day && userId) {
-      const [{ attempts }, { entries }] = await Promise.all([readUserDaily(userId), readFeedback()]);
+      const [{ attempts, pending }, { entries }] = await Promise.all([readUserDaily(userId), readFeedback()]);
+      for (const q of [day.core, ...day.bonus]) if (pending?.[q.id]) tries[q.id] = pending[q.id];
       for (const q of [day.core, ...day.bonus]) {
         const attempt = attempts.find((a) => a.questionId === q.id);
-        if (!attempt) continue;
-        const { result, regraded, xp } = scoreAttempt(attempt, q);
-        const fb = entries.find((e) => e.questionId === q.id && e.userId === userId);
-        answered[q.id] = {
-          ...result, parts: gradeQuestion(q, attempt.responses).parts, responses: attempt.responses, hints: attempt.hints, xp, regraded,
-          late: attempt.answeredOn > attempt.date, question: revealedQuestion(q),
-          feedback: { rating: fb?.rating ?? null, difficulty: fb?.difficulty ?? null, report: fb?.report ?? null },
-        };
+        if (attempt) answered[q.id] = answeredView(q, attempt, entries.find((e) => e.questionId === q.id && e.userId === userId));
       }
     }
     return NextResponse.json(
-      { success: true, date, today, archive, signedIn: !!userId, day: day ? publicDay(day) : null, answered },
+      { success: true, date, today, archive, signedIn: !!userId, day: day ? publicDay(day) : null, answered, tries },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {

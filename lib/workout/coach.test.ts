@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fullCoach, measuredActivity, profileFromUser } from './coach';
-import { lastKeys, localKey, shiftKey } from './health-insights';
+import { fullCoach, measuredActivity, profileFromUser, restingVsFormula } from './coach';
+import { dailyBurn, lastKeys, localKey, rangeStats, shiftKey } from './health-insights';
 import type { HealthDay } from './health';
 import type { TrainingWorkout } from './training-coach';
 
@@ -76,4 +76,29 @@ test('the heaviest day after the worst night of the week is flagged', () => {
   const s = fullCoach({ history, health: { days, workouts: {} }, now: NOW }).insights.find((i) => i.id === 'sleep-schedule')!;
   assert.match(s.detail, /^Monday is your biggest training day/);
   assert.match(s.steps![0], /Sunday nights/);
+});
+
+test('days with 0 active calories (Watch not worn) are left out of the burn', () => {
+  assert.equal(dailyBurn({ activeKcal: 0, restingKcal: 0 }), undefined);
+  assert.equal(dailyBurn({ activeKcal: 500, restingKcal: 1800 }), 2300);
+  const days: Record<string, HealthDay> = { a: { activeKcal: 0, restingKcal: 0 }, b: { activeKcal: 500, restingKcal: 1800 } };
+  assert.equal(rangeStats(days, ['a', 'b']).burnKcal, 2300);
+});
+
+test('Watch resting calories are compared with Mifflin-St Jeor and, with body fat, the lean-mass formulas', () => {
+  const days: Record<string, HealthDay> = {};
+  lastKeys(shiftKey(TODAY, 1), 10).forEach((k) => { days[k] = { activeKcal: 600, restingKcal: 2000 }; });
+  days[shiftKey(TODAY, 11)] = { activeKcal: 0, restingKcal: 300 }; // not worn
+  const noFat = restingVsFormula(days, profile, NOW)!;
+  assert.equal(noFat.days, 10);
+  assert.equal(noFat.watch, 2000);
+  assert.deepEqual(noFat.formulas.map((f) => f.key), ['mifflin']);
+  assert.equal(noFat.formulas[0].kcal, 1783); // 10×81.6 + 6.25×177.8 − 5×30 + 5
+
+  days[shiftKey(TODAY, 2)].bodyFat = 15;
+  const withFat = restingVsFormula(days, profile, NOW)!;
+  assert.equal(withFat.bodyFat, 15);
+  assert.equal(withFat.best.name, 'Katch-McArdle');
+  assert.equal(withFat.formulas.find((f) => f.key === 'katch')!.kcal, Math.round(370 + 21.6 * 180 * 0.45359237 * 0.85));
+  assert.equal(restingVsFormula({}, profile, NOW), null);
 });
