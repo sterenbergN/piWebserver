@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import PageHeader from '@/components/workout/PageHeader';
+import WeightPlanCard from '@/components/workout/WeightPlanCard';
+import { useSitePopup } from '@/components/SitePopup';
+import type { WeighIn, WeightPlan } from '@/lib/workout/weight-plan';
 import {
   ACTIVITY_LEVELS,
   calculateMifflinStJeor,
@@ -71,6 +74,12 @@ export default function WorkoutCalculatorsPage() {
   const [calorieForm, setCalorieForm] = useState(EMPTY_DEFAULTS.calorie);
   const [bodyFatForm, setBodyFatForm] = useState(EMPTY_DEFAULTS.bodyFat);
   const initializedRef = useRef(false);
+  const { confirm, popup } = useSitePopup();
+  // Weigh-ins (typed in, or from a smart scale via Apple Health) for the plan.
+  const [weighIns, setWeighIns] = useState<WeighIn[]>([]);
+  const [showCalculator, setShowCalculator] = useState(false);
+  const calculatorRef = useRef<HTMLDivElement>(null);
+  const today = new Date().toLocaleDateString('en-CA');
 
   useEffect(() => {
     async function loadDefaults() {
@@ -92,6 +101,8 @@ export default function WorkoutCalculatorsPage() {
           setBodyFatForm({ ...EMPTY_DEFAULTS.bodyFat, ...data.calculatorDefaults.bodyFat });
           initializedRef.current = true;
         }
+        const weights = await fetch('/api/workout/bodyweight').then((r) => r.json()).catch(() => null);
+        if (weights?.success) setWeighIns(weights.entries);
       } finally {
         setLoading(false);
       }
@@ -111,7 +122,7 @@ export default function WorkoutCalculatorsPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             calculatorDefaults: {
-              calorie: calorieForm,
+              calorie: { ...calorieForm, plan: calorieForm.plan ?? null },
               bodyFat: bodyFatForm,
             },
           }),
@@ -226,6 +237,42 @@ export default function WorkoutCalculatorsPage() {
     };
   }, [bodyFatForm]);
 
+  const plan = calorieForm.plan;
+  /** Freeze the calculator's numbers as a plan starting on the projection start date (or today). */
+  const startPlan = async () => {
+    if (!calorieMetrics) return;
+    const weightLbs = asNumber(calorieForm.weightLbs);
+    const age = asNumber(calorieForm.age);
+    const heightInches = asNumber(calorieForm.heightInches);
+    if (!weightLbs || !age || !heightInches) return;
+    if (plan && !(await confirm({ title: 'Replace plan', message: 'Start a new plan with these numbers? The current plan is replaced; your weigh-ins are kept.', confirmLabel: 'Replace plan' }))) return;
+    const next: WeightPlan = {
+      startDate: calorieForm.startDate || today,
+      startWeightLbs: weightLbs,
+      targetCalories: calorieMetrics.targetCalories,
+      goalRate: calorieForm.goalRate || 0,
+      weeks: calorieMetrics.timelineWeeks,
+      sex: calorieForm.sex || 'male',
+      age,
+      heightInches,
+      activityLevel: calorieForm.activityLevel || 'moderate',
+      createdAt: new Date().toISOString(),
+    };
+    setCalorieForm({ ...calorieForm, plan: next });
+    setShowCalculator(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const endPlan = async () => {
+    if (!(await confirm({ title: 'End plan', message: 'End this plan? Your weigh-ins are kept.', confirmLabel: 'End plan', danger: true }))) return;
+    setCalorieForm({ ...calorieForm, plan: undefined });
+  };
+  const logWeighIn = async (weight: number) => {
+    const res = await fetch('/api/workout/bodyweight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ weight, date: today }) });
+    const data = await res.json().catch(() => ({}));
+    if (data.success) setWeighIns(data.entries);
+  };
+  const calculatorOpen = !plan || showCalculator;
+
   if (loading) {
     return <div className="workout-tile" style={{ textAlign: 'center' }}>Loading calculators...</div>;
   }
@@ -261,6 +308,22 @@ export default function WorkoutCalculatorsPage() {
 
       {activeTab === 'calorie' ? (
         <div>
+          {plan && (
+            <WeightPlanCard
+              plan={plan}
+              entries={weighIns}
+              today={today}
+              onLog={isSampleMode ? undefined : logWeighIn}
+              onEdit={() => { setShowCalculator(true); setTimeout(() => calculatorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}
+              onEnd={endPlan}
+            />
+          )}
+          {plan && !showCalculator && (
+            <button type="button" className="btn btn-secondary" style={{ width: '100%', padding: '0.75rem', borderRadius: '12px', marginBottom: '1rem' }} onClick={() => setShowCalculator(true)}>
+              Show calorie calculator
+            </button>
+          )}
+          {calculatorOpen && (<div ref={calculatorRef}>
           <div className="workout-tile">
             <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
               <h3 style={{ margin: 0 }}>Calorie Calculator</h3>
@@ -411,6 +474,15 @@ export default function WorkoutCalculatorsPage() {
                     </tbody>
                   </table>
                 </details>
+                <div className="wp-start">
+                  <button type="button" className={plan ? 'btn btn-secondary' : 'workout-btn-primary'} style={{ margin: 0, width: '100%', padding: '0.8rem', borderRadius: '12px' }} onClick={startPlan}>
+                    {plan ? 'Replace my plan with these numbers' : 'Start a plan with these numbers'}
+                  </button>
+                  <p className="workout-hint">
+                    Starts {calorieForm.startDate ? new Date(`${calorieForm.startDate}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'today'} at {calorieForm.weightLbs} lb on {calorieMetrics.targetCalories.toLocaleString()} kcal a day for {calorieMetrics.timelineWeeks} weeks.
+                    Your weigh-ins (typed in, or from your scale via Apple Health) are then tracked against it.
+                  </p>
+                </div>
               </div>
             </>
           ) : (
@@ -418,6 +490,7 @@ export default function WorkoutCalculatorsPage() {
               <p style={{ margin: 0, color: 'var(--muted)' }}>Enter height, weight, age, sex, activity level, and a weekly goal to calculate calories and build your projection timeline.</p>
             </div>
           )}
+          </div>)}
         </div>
       ) : (
         <div>
@@ -540,6 +613,7 @@ export default function WorkoutCalculatorsPage() {
           )}
         </div>
       )}
+      {popup}
     </div>
   );
 }

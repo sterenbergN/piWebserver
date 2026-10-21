@@ -226,7 +226,7 @@ export default function HealthPage() {
         </section>
 
         <section className="workout-tile an-card">
-          <h2>Body</h2>
+          <div className="an-card-head"><h2>Body</h2><a href="/workout/calculators" className="workout-text-btn">Weight plan ›</a></div>
           <h3 className="hc-sub">Weight</h3>
           {has('weight') ? <TrendLine data={series} dataKey="weight" unit="lb" digits={1} /> : <Empty what="weight" add="Weight" />}
           <h3 className="hc-sub">Body fat</h3>

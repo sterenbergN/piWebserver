@@ -1,0 +1,43 @@
+/* Weight plan card on the calculators page */
+
+.wp-card { display: flex; flex-direction: column; gap: 0.75rem; }
+.wp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; }
+.wp-head h3 { margin: 0.15rem 0 0.1rem; font-size: 1.05rem; line-height: 1.25; }
+.wp-kicker { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.wp-status {
+  flex-shrink: 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+  color: var(--muted);
+}
+.wp-status.is-ahead, .wp-status.is-on-track { color: var(--success); border-color: rgba(var(--success-rgb), 0.4); background: rgba(var(--success-rgb), 0.12); }
+.wp-status.is-behind { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+
+.wp-chart { height: 220px; width: 100%; }
+.wp-legend { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; font-size: 0.72rem; color: var(--muted); margin-top: -0.35rem; }
+.wp-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.wp-key { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--muted); }
+.wp-key.is-trend { border-top: 2.5px solid var(--accent); }
+.wp-key.is-plan { opacity: 0.75; }
+.wp-key.is-projection { border-top: 2px dashed var(--accent-light); }
+.wp-key.is-dot { width: 8px; height: 8px; border: none; border-radius: 50%; background: var(--accent); }
+
+.wp-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.45rem; }
+.wp-stats > div { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; padding: 0.6rem 0.7rem; border-radius: 12px; background: var(--input-bg); }
+.wp-stats span { font-size: 0.7rem; color: var(--muted); }
+.wp-stats strong { font-size: 1.05rem; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wp-stats small { font-size: 0.7rem; color: var(--muted); }
+.wp-note { margin: 0; line-height: 1.45; }
+
+.wp-log { display: flex; gap: 0.5rem; }
+.wp-log .workout-input { margin: 0; flex: 1; min-width: 0; }
+.wp-log button { flex-shrink: 0; }
+.wp-actions { display: flex; justify-content: space-between; gap: 0.75rem; }
+
+.wp-start { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--surface-border); }
+.wp-start p { margin: 0; }

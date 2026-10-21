@@ -1,4 +1,5 @@
 import { normalizeBirthdate, parseBirthdateParts } from '@/lib/workout/birthdate';
+import type { WeightPlan } from '@/lib/workout/weight-plan';
 
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'very-active' | 'extra-active';
 
@@ -12,6 +13,8 @@ export type CalculatorDefaults = {
     goalRate?: number;
     timelineWeeks?: number;
     startDate?: string;
+    /** A saved weight plan (the calculator's numbers frozen on a start date). */
+    plan?: WeightPlan;
   };
   bodyFat?: {
     heightInches?: number | '';
@@ -89,6 +92,7 @@ export function normalizeCalculatorDefaults(defaults: unknown): CalculatorDefaul
       goalRate: normalizeGoalRate(calorie.goalRate),
       timelineWeeks: normalizeTimelineWeeks(calorie.timelineWeeks),
       startDate: normalizeDateString(calorie.startDate),
+      plan: normalizePlan(calorie.plan),
     },
     bodyFat: {
       heightInches: normalizeNumberField(bodyFat.heightInches),
@@ -123,6 +127,7 @@ export function buildSeededCalculatorDefaults(user: Record<string, any>): Calcul
       goalRate: normalizedDefaults.calorie?.goalRate ?? 0,
       timelineWeeks: normalizedDefaults.calorie?.timelineWeeks ?? 12,
       startDate: normalizedDefaults.calorie?.startDate ?? '',
+      plan: normalizedDefaults.calorie?.plan,
     },
     bodyFat: {
       heightInches: normalizedDefaults.bodyFat?.heightInches ?? profileHeight ?? '',
@@ -317,4 +322,32 @@ function formatShortDate(date: Date) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+/** A plan from saved settings, or null if anything needed is missing or invalid. */
+export function normalizePlan(value: unknown): WeightPlan | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const p = value as Record<string, unknown>;
+  const num = (v: unknown, min: number, max: number) => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : null);
+  const startWeightLbs = num(p.startWeightLbs, 50, 800);
+  const targetCalories = num(p.targetCalories, 800, 8000);
+  const weeks = num(p.weeks, 1, 104);
+  const age = num(p.age, 10, 120);
+  const heightInches = num(p.heightInches, 36, 96);
+  const goalRate = num(p.goalRate, -3, 3) ?? 0;
+  const levels: ActivityLevel[] = ['sedentary', 'light', 'moderate', 'very-active', 'extra-active'];
+  if (typeof p.startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(p.startDate)) return undefined;
+  if (startWeightLbs === null || targetCalories === null || weeks === null || age === null || heightInches === null) return undefined;
+  return {
+    startDate: p.startDate,
+    startWeightLbs,
+    targetCalories: Math.round(targetCalories),
+    goalRate,
+    weeks: Math.round(weeks),
+    sex: p.sex === 'female' ? 'female' : 'male',
+    age,
+    heightInches,
+    activityLevel: levels.includes(p.activityLevel as ActivityLevel) ? (p.activityLevel as ActivityLevel) : 'moderate',
+    createdAt: typeof p.createdAt === 'string' ? p.createdAt : undefined,
+  };
 }
