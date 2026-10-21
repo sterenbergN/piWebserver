@@ -13,17 +13,23 @@ import type { PublicHealth } from '@/lib/workout/health';
  * night / yesterday at a glance, linking to the health page. Before it's set
  * up, a small prompt you can dismiss.
  */
-export default function HealthHomeCard({ defaultIntensity, todayIntensity, onUseIntensity }: {
+export default function HealthHomeCard({ defaultIntensity, todayIntensity, onUseIntensity, onLoaded }: {
   defaultIntensity: number;
   todayIntensity: number | null;
   onUseIntensity: (value: number | null) => void;
+  /** The health data once loaded (e.g. for the deload suggestion). */
+  onLoaded?: (health: PublicHealth) => void;
 }) {
   const [health, setHealth] = useState<PublicHealth | null>(null);
   const [dismissed, setDismissed] = useState(true);
 
   useEffect(() => {
     setDismissed(readPref('workout:healthPromptHidden') === '1');
-    fetchWorkoutJson('/api/workout/health').then((res) => { if (res.data?.success) setHealth(res.data.health); });
+    fetchWorkoutJson('/api/workout/health').then((res) => {
+      if (!res.data?.success) return;
+      setHealth(res.data.health);
+      onLoaded?.(res.data.health);
+    });
   }, []);
 
   const today = localKey(new Date());

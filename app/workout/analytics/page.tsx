@@ -14,7 +14,7 @@ import type { Goal } from '@/lib/workout/goals';
 import { applyQueuedChanges, enqueueChange, flushChangeQueue, getQueuedChanges, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
 import {
   buildInsights, exerciseStats, muscleBalance, muscleSetsPerWeek, periodSummary, PERIODS, recentPRs,
-  type Period, type ScaleFor, type Workout,
+  type Insight, type Period, type ScaleFor, type Workout,
 } from '@/lib/workout/insights';
 import { useSitePopup } from '@/components/SitePopup';
 import { DEMO_GYMS, DEMO_HISTORY, DEMO_USER } from '@/lib/workout/demo-data';
@@ -27,7 +27,8 @@ import ShareViewer from '@/components/workout/ShareViewer';
 import { renderRecap } from '@/lib/workout/recap-cards';
 import { buildRecap } from '@/lib/workout/recap';
 import PageHeader from '@/components/workout/PageHeader';
-import type { WorkoutHealth } from '@/lib/workout/health';
+import type { PublicHealth, WorkoutHealth } from '@/lib/workout/health';
+import { coachInsights } from '@/lib/workout/health-coach';
 
 type Tab = 'summary' | 'lifts' | 'muscles' | 'history';
 const TABS: { key: Tab; label: string }[] = [
@@ -53,7 +54,9 @@ export default function AnalyticsPage() {
   const [gymNames, setGymNames] = useState<Map<string, string>>(new Map());
   const [calibrations, setCalibrations] = useState<any[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [heart, setHeart] = useState<Record<string, WorkoutHealth>>({});
+  // Optional Apple Health data: heart rate per workout (History) and findings for the Summary.
+  const [health, setHealth] = useState<PublicHealth | null>(null);
+  const heart: Record<string, WorkoutHealth> = health?.workouts || {};
   const [tab, setTab] = useState<Tab>('summary');
   const [period, setPeriod] = useState<Period>('12w');
   const [openLift, setOpenLift] = useState<string | null>(null);
@@ -93,8 +96,7 @@ export default function AnalyticsPage() {
         if (getQueuedChanges(uid).length > 0 && navigator.onLine) flushChangeQueue(uid).catch(() => {});
         setCalibrations(calib.data?.calibrations || []);
         setGoals(goalsRes.data?.goals || []);
-        // Optional Apple Health heart rate per workout (shown in History).
-        fetchWorkoutJson('/api/workout/health').then((res) => { if (res.data?.success) setHeart(res.data.health.workouts || {}); });
+        fetchWorkoutJson('/api/workout/health').then((res) => { if (res.data?.success) setHealth(res.data.health); });
       } else {
         setIsDemo(true);
         setUser(DEMO_USER);
@@ -132,8 +134,13 @@ export default function AnalyticsPage() {
       daysSinceLast: last === null ? null : Math.floor((Date.now() - last) / 86_400_000),
       periodLabel,
     });
-    return { summary, stats, muscles, balance, insights, prs: recentPRs(stats, period, history) };
-  }, [history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
+    // The two most important findings from health data join the training insights.
+    const coach = health && Object.keys(health.days).length
+      ? coachInsights({ history: history as any, days: health.days, workoutHealth: health.workouts }).slice(0, 2)
+        .map((c): Insight => ({ tone: c.tone, text: `${c.title}. ${c.tip || c.detail}` }))
+      : [];
+    return { summary, stats, muscles, balance, insights: [...coach, ...insights], prs: recentPRs(stats, period, history) };
+  }, [health, history, period, scaleFor, liftLookup, user?.weeklySetTarget, periodLabel]);
 
   // Engine view (fatigue, recovery, "vs plan" per lift) from the shared analytics builder.
   const engine = useMemo(() => buildAnalyticsData(history as any, lifts, calibrations), [history, lifts, calibrations]);

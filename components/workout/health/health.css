@@ -170,3 +170,17 @@
   padding: 0.6rem; border-radius: 10px; background: var(--background); border: 1px solid var(--surface-border);
 }
 .hc-warn { margin: 0; padding: 0.5rem 0.65rem; border-radius: 10px; font-size: 0.8rem; line-height: 1.4; color: var(--foreground); background: color-mix(in srgb, var(--warning) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); }
+
+/* Coach: findings from health data + training log */
+.hc-coach-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+.hc-coach-item { display: flex; gap: 0.65rem; padding: 0.7rem 0.75rem; border-radius: 12px; background: var(--input-bg); border-left: 3px solid var(--surface-border); }
+.hc-coach-item.is-warn { border-left-color: var(--warning); }
+.hc-coach-item.is-good { border-left-color: var(--success); }
+.hc-coach-item.is-info { border-left-color: var(--accent); }
+.hc-coach-icon { flex-shrink: 0; width: 1.6rem; height: 1.6rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; background: var(--surface-glass); color: var(--accent-light); }
+.hc-coach-item > div { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.hc-coach-item strong { font-size: 0.9rem; line-height: 1.3; }
+.hc-coach-item p { margin: 0; font-size: 0.82rem; line-height: 1.45; color: var(--muted); }
+.hc-coach-item .hc-coach-tip { color: var(--foreground); }
+.hc-coach-item small { font-size: 0.68rem; color: var(--muted); opacity: 0.85; }
+.hc-coach > .workout-text-btn { margin-top: 0.5rem; }

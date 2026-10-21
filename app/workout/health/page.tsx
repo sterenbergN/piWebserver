@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/workout/PageHeader';
 import ReadinessCard from '@/components/workout/health/ReadinessCard';
 import HealthSetupSheet from '@/components/workout/health/HealthSetupSheet';
+import CoachCard from '@/components/workout/health/CoachCard';
+import { coachInsights } from '@/lib/workout/health-coach';
 import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, setMarks } from '@/components/workout/health/HealthCharts';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
@@ -110,6 +112,7 @@ export default function HealthPage() {
     return { stats, before, series, typical };
   }, [days, keys, today, spec.days, range]);
   const ready = useMemo(() => readiness(days, today, user?.intensityFactor ?? 1), [days, today, user?.intensityFactor]);
+  const coach = useMemo(() => coachInsights({ history, days, workoutHealth: health?.workouts || {} }), [history, days, health]);
 
   const matched = useMemo(() => history
     .filter((w) => health?.workouts?.[w.id])
@@ -178,6 +181,8 @@ export default function HealthPage() {
             <p className="workout-hint">It compares last night&apos;s sleep, resting heart rate and HRV with your usual, so it starts once there&apos;s a baseline.</p>
           </section>
         )}
+
+        <CoachCard insights={coach} building={Object.keys(h?.days || {}).length < 21} />
 
         <div className="an-periods" role="radiogroup" aria-label="Range">
           {RANGES.map((r) => (
