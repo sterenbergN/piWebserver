@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseOnshapeLink } from './onshape';
-import { assemblyExportResult, exportPartStudioStl, looksLikeGltf, looksLikeStl, OnshapeError, startAssemblyExport, tabKind } from './onshape-export';
+import AdmZip from 'adm-zip';
+import { assemblyExportResult, exportPartStudioStl, gltfFromZip, looksLikeGltf, looksLikeStl, OnshapeError, startAssemblyExport, tabKind } from './onshape-export';
 
 const D = '0123456789abcdef01234567';
 const W = 'abcdef0123456789abcdef01';
@@ -31,14 +32,16 @@ test('looksLikeStl knows binary and text STL', () => {
 });
 
 /** Runs `fn` with fake API keys and a stand-in fetch that answers from `reply`. */
-async function withFakeOnshape(reply: (url: string) => Response, fn: (calls: { url: string; auth: string | null }[]) => Promise<void>) {
+type Call = { url: string; auth: string | null; type: string | null; body: unknown };
+async function withFakeOnshape(reply: (url: string) => Response, fn: (calls: Call[]) => Promise<void>) {
   const realFetch = globalThis.fetch;
-  const calls: { url: string; auth: string | null }[] = [];
+  const calls: Call[] = [];
   process.env.ONSHAPE_ACCESS_KEY = 'access';
   process.env.ONSHAPE_SECRET_KEY = 'secret';
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
-    calls.push({ url, auth: new Headers(init?.headers).get('authorization') });
+    const h = new Headers(init?.headers);
+    calls.push({ url, auth: h.get('authorization'), type: h.get('content-type'), body: init?.body ? JSON.parse(String(init.body)) : undefined });
     return reply(url);
   }) as typeof fetch;
   try { await fn(calls); } finally {
@@ -132,5 +135,43 @@ test('exportPartStudioStl explains refused keys and non-Part-Studio tabs', async
   });
   await withFakeOnshape(() => new Response('{}', { status: 404 }), async () => {
     await assert.rejects(exportPartStudioStl(ref), /Part Studio/);
+  });
+});
+
+test('the assembly export asks for one grouped, Y-up file', async () => {
+  await withFakeOnshape(() => Response.json({ id: 'a'.repeat(24) }), async (calls) => {
+    await startAssemblyExport(ref);
+    const body = calls[0].body as Record<string, unknown>;
+    assert.equal(body.grouping, true);
+    assert.equal(body.isYAxisUp, true);
+    assert.equal(body.storeInDocument, false);
+    assert.match(calls[0].type ?? '', /^application\/json/);
+  });
+});
+
+test('gltfFromZip takes a .glb as is, and embeds a .gltf and its .bin', () => {
+  const glb = new TextEncoder().encode('glTF\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000');
+  const one = new AdmZip();
+  one.addFile('model.glb', Buffer.from(glb));
+  assert.deepEqual(gltfFromZip(new Uint8Array(one.toBuffer())), glb);
+
+  const split = new AdmZip();
+  split.addFile('out/model.gltf', Buffer.from(JSON.stringify({ asset: { version: '2.0' }, buffers: [{ uri: 'model.bin', byteLength: 3 }] })));
+  split.addFile('out/model.bin', Buffer.from([1, 2, 3]));
+  const merged = gltfFromZip(new Uint8Array(split.toBuffer()));
+  assert.equal(looksLikeGltf(merged), true);
+  assert.equal(JSON.parse(new TextDecoder().decode(merged)).buffers[0].uri, 'data:application/octet-stream;base64,AQID');
+});
+
+test('gltfFromZip refuses a zip of separate parts', () => {
+  const parts = new AdmZip();
+  parts.addFile('a.glb', Buffer.from('glTF....'));
+  parts.addFile('b.glb', Buffer.from('glTF....'));
+  assert.throws(() => gltfFromZip(new Uint8Array(parts.toBuffer())), /2 separate files/);
+});
+
+test('errors pass on what Onshape said', async () => {
+  await withFakeOnshape(() => Response.json({ message: 'Export permission required' }, { status: 403 }), async () => {
+    await assert.rejects(startAssemblyExport(ref), /Export permission required/);
   });
 });
