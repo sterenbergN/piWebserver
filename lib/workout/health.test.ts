@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignSets, applyHealthImport, dayKeyAt, describeSync, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { alignSets, applyHealthImport, dayKeyAt, describeSync, detailSinceMinutes, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -234,4 +234,14 @@ test('an automatic sync only alerts when something needs fixing', () => {
   assert.equal(syncAlert(ok), '');
   assert.match(syncAlert({ ...ok, unreadableDates: 3 }), /Check: 3 dates couldn't be read/);
   assert.equal(syncAlert({ ...ok, steps: 0, sleep: 0, restingHr: 0, hrv: 0, dailyCalories: 0, heartRate: 0, activeEnergy: 0, workouts: 0 }), 'Nothing usable in this upload.');
+});
+
+test('the daily shortcut sends heart rate and energy from shortly before the newest reading on hand', () => {
+  const now = Date.parse('2026-10-22T12:00:00Z');
+  const s = (iso: string) => Date.parse(iso) / 1000;
+  assert.equal(detailSinceMinutes({ hr: [], energy: [] }, now), 3 * 24 * 60);
+  // Newest: heart rate 10:00, energy 9:00 → from 9:00 less 6 hours.
+  assert.equal(detailSinceMinutes({ hr: [[s('2026-10-22T10:00:00Z'), 80]], energy: [[s('2026-10-22T08:59:00Z'), s('2026-10-22T09:00:00Z'), 2]] }, now), 180 + 360);
+  // A week without a sync: capped at 3 days.
+  assert.equal(detailSinceMinutes({ hr: [[s('2026-10-15T10:00:00Z'), 80]], energy: [[s('2026-10-15T10:00:00Z'), s('2026-10-15T10:01:00Z'), 2]] }, now), 3 * 24 * 60);
 });

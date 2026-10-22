@@ -181,7 +181,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
               {SHORTCUT_SAMPLES.map((s) => (
                 <div key={s.variable} className="hc-table-row" role="row">
                   <span role="cell"><strong>{s.type}</strong><small>{s.why}{s.groupByDay ? ' · Group by Day' : ''}</small></span>
-                  <span role="cell">{s.days} days</span>
+                  <span role="cell">{s.detail ? `since last sync (≤${s.days} days)` : `${s.days} days`}</span>
                   <span role="cell"><code>{s.variable}</code></span>
                 </div>
               ))}
@@ -203,6 +203,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
               <li>Add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it (fine for a first test run).</li>
             </ol>
             <p className="workout-hint">
+              Heart Rate and Active Energy (per reading) only need what&apos;s new: the prompt first asks <code>…/import/since</code> (POST with your key) for <code>minutes</code> and finds readings after Current Date minus that many minutes.
               To run it from {SYNC_TRIGGER_APP} without uploading every time, the prompt also adds a check at the top (stop if <code>{SYNC_STAMP_FILE}</code> in iCloud Drive › Shortcuts is under {SYNC_EVERY_HOURS} hours old),
               saves the time there after uploading, and shows the <code>alert</code> value instead of <code>message</code>, only when it isn&apos;t empty.
             </p>

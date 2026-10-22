@@ -88,6 +88,9 @@ export type HealthStore = { users: Record<string, UserHealth> };
 export const HEALTH_FILE = 'health.json';
 /** How long raw heart rate / energy samples are kept (a workout saved late still gets matched). */
 export const RAW_DAYS = 14;
+/** The daily shortcut's per-reading data: at most this far back, and always this much before the newest reading on hand. */
+export const DETAIL_MAX_MINUTES = 3 * 24 * 60;
+export const DETAIL_OVERLAP_MINUTES = 6 * 60;
 const DAY_MS = 86_400_000;
 
 export function emptyUserHealth(): UserHealth {
@@ -626,6 +629,23 @@ export function syncAlert(summary: SyncSummary): string {
     || summary.dailyCalories || summary.heartRate || summary.activeEnergy || summary.workouts);
   const problems = !!(summary.unreadableDates || summary.mismatched?.length || summary.ignored?.length);
   return empty || problems ? describeSync(summary) : '';
+}
+
+/**
+ * How many minutes of heart rate and energy readings the daily shortcut
+ * should send: from the newest reading already here (the older of the two
+ * kinds), less 6 hours because the Watch hands readings to the phone late
+ * sometimes, and at most 3 days. Turning thousands of readings into text is
+ * what makes a sync slow, so this keeps it to a few hours' worth.
+ */
+export function detailSinceMinutes(health: Pick<UserHealth, 'hr' | 'energy'>, now = Date.now()) {
+  const newest = [
+    health.hr.length ? health.hr[health.hr.length - 1][0] : null,
+    health.energy.length ? Math.max(...health.energy.slice(-50).map(([, end]) => end)) : null,
+  ];
+  if (newest.some((t) => t === null)) return DETAIL_MAX_MINUTES;
+  const since = Math.ceil((now / 1000 - Math.min(...(newest as number[]))) / 60) + DETAIL_OVERLAP_MINUTES;
+  return Math.max(DETAIL_OVERLAP_MINUTES, Math.min(DETAIL_MAX_MINUTES, since));
 }
 
 /** What the page gets: everything except the key and the raw samples. */

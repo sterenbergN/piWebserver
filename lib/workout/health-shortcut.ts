@@ -88,6 +88,9 @@ export const SYNC_TRIGGER_APP = 'Messages';
 export const SYNC_STAMP_FILE = 'health-sync-last.txt';
 export const SYNC_EVERY_HOURS = 3;
 
+/** Where the daily shortcut asks how many minutes of heart rate and energy to send. */
+export const sinceUrl = (importUrl: string) => `${importUrl.replace(/\/+$/, '')}/since`;
+
 /**
  * Plain-language instructions for an AI shortcut builder (or a person) to make
  * one of the two shortcuts exactly as the import expects. The daily one sends
@@ -97,8 +100,10 @@ export const SYNC_EVERY_HOURS = 3;
 export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; key?: string | null }) {
   const daily = kind === 'daily';
   const days = (s: ShortcutSample) => (daily ? s.days : s.backfillDays);
+  // The daily shortcut reads per-reading data only from "Since" (asked from the website first).
+  const range = (s: ShortcutSample) => (daily && s.detail ? 'instead of "in the last N days", use the filter "Start Date is after Since" (the variable from STEP 2)' : `last ${days(s)} days`);
   const rows = (list: ShortcutSample[], start = 1) => list.map((s, i) =>
-    `${start + i}. ${s.type}: last ${days(s)} days${s.groupByDay ? ', Group By set to Day' : ''}. Save it with Set Variable as "${s.variable}".`).join('\n');
+    `${start + i}. ${s.type}: ${range(s)}${s.groupByDay ? ', Group By set to Day' : ''}. Save it with Set Variable as "${s.variable}".`).join('\n');
   const fields = (list: ShortcutSample[]) => list.flatMap((s) => s.fields.map((f) => fieldLine(s, f))).join('\n');
   const upload = (list: ShortcutSample[], label: string) => [
     `Add "Get Contents of URL"${label}:`,
@@ -133,12 +138,16 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
       '   c. Add "Get Time Between Dates": the time between Dates and Current Date, in Minutes.',
       `   d. Add another "If": Time Between Dates "is less than" ${minutes}. Inside it, add "Stop This Shortcut". Then End If.`,
       '3. End the first If (leave its Otherwise empty).', '',
-      'STEP 2: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
-      'STEP 3: Upload it', upload(SHORTCUT_SAMPLES, ''), '',
-      'STEP 4: Remember when it ran',
+      'STEP 2: Ask the website how far back to read heart rate',
+      `1. Add "Get Contents of URL": URL ${sinceUrl(url)}, Method POST, Request Body JSON, with one Text field: key = ${key || KEY_PLACEHOLDER}`,
+      '2. Add "Get Dictionary Value" to get the value for the key "minutes" from that Contents of URL result.',
+      '3. Add "Adjust Date": Subtract, number = Dictionary Value, unit = minutes, from Current Date. Then add "Set Variable" named "Since".', '',
+      'STEP 3: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
+      'STEP 4: Upload it', upload(SHORTCUT_SAMPLES, ''), '',
+      'STEP 5: Remember when it ran',
       '1. Add "Format Date" on Current Date, with Date Format: Medium and Time Format: Short.',
       `2. Add "Save File" to save the Formatted Date into the Shortcuts folder (iCloud Drive) with the file path ${SYNC_STAMP_FILE}. Turn "Ask Where to Save" off and turn "Overwrite If File Exists" on.`, '',
-      'STEP 5: Only speak up if something is wrong',
+      'STEP 6: Only speak up if something is wrong',
       'Add "Get Dictionary Value" to get the value for the key "alert" from the Contents of URL result. Then add "If" Dictionary Value "has any value", and inside it add "Show Notification" that shows the Dictionary Value. Leave Otherwise empty. Do not show any other notification.',
     ].join('\n');
   }

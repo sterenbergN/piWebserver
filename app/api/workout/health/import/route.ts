@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { applyHealthImport, describeSync, refreshWorkoutHealth, syncAlert } from '@/lib/workout/health';
-import { updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
+import { importKeyFrom, updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
 import { loadUserHistory } from '@/lib/workout/history';
 import { logBodyweights } from '@/lib/workout/bodyweight';
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
@@ -12,8 +12,7 @@ import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 export async function POST(request: Request) {
   try {
     const body = await readJsonObject(request);
-    const bearer = (request.headers.get('authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
-    const key = (bearer || request.headers.get('x-health-key') || String(body.key || '')).trim();
+    const key = importKeyFrom(request, body);
     const userId = key ? await userForImportKey(key) : null;
     if (!userId) throw new ApiError(401, 'Unknown or revoked health sync key');
 

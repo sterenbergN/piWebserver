@@ -40,6 +40,12 @@ export async function createImportKey(userId: string) {
   return key;
 }
 
+/** The sync key a shortcut sent: "Authorization: Bearer", "x-health-key", or "key" in the JSON body. */
+export function importKeyFrom(request: Request, body: Record<string, unknown>) {
+  const bearer = (request.headers.get('authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
+  return (bearer || request.headers.get('x-health-key') || String(body.key || '')).trim();
+}
+
 /** Whose key this is, or null. */
 export async function userForImportKey(key: string): Promise<string | null> {
   if (!/^nsh_[\w-]{20,}$/.test(key)) return null;

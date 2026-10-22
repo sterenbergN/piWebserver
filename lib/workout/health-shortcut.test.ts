@@ -12,7 +12,10 @@ test('the daily shortcut skips recent runs, remembers when it ran, and only noti
   assert.ok(prompt.indexOf('Save File') > prompt.indexOf('Get Contents of URL'));
   assert.ok(prompt.includes('the key "alert"'));
   assert.ok(!prompt.includes('the key "message"'));
-  assert.ok(prompt.includes('Heart Rate: last 3 days'));
+  assert.ok(prompt.includes(`URL ${url}/since`));
+  assert.ok(prompt.includes('Heart Rate: instead of "in the last N days", use the filter "Start Date is after Since"'));
+  assert.ok(prompt.includes('Steps: last 7 days'));
+  assert.ok(prompt.indexOf('"Since"') < prompt.indexOf('Find Health Samples'));
   assert.ok(prompt.includes('- key: nsh_abc'));
 });
 
