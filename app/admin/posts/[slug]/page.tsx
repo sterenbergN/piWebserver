@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getPost, getPosts } from '@/lib/site-content';
+import { getCadProjects, getPost, getPosts } from '@/lib/site-content';
 import { listDrafts } from '@/lib/blog/drafts';
 import PostEditor from '@/components/blog/PostEditor';
 import './editor.css';
@@ -15,12 +15,12 @@ export default async function EditPostPage({ params, searchParams }: {
 }) {
   const { slug } = await params;
   const { draft: draftParam } = await searchParams;
-  const [posts, drafts] = await Promise.all([getPosts(), listDrafts()]);
+  const [posts, drafts, cadProjects] = await Promise.all([getPosts(), listDrafts(), getCadProjects()]);
   const categories = [...new Set(posts.map((p) => p.category).filter((c): c is string => !!c))].sort();
   const titles = Object.fromEntries(posts.map((p) => [p.slug, p.title]));
   const draft = drafts.find((d) => d.id === draftParam && d.slug === (slug === 'new' ? '' : slug)) || null;
 
-  if (slug === 'new') return <PostEditor key={draft?.id || 'new'} categories={categories} drafts={drafts} postTitles={titles} draft={draft} />;
+  if (slug === 'new') return <PostEditor key={draft?.id || 'new'} categories={categories} drafts={drafts} postTitles={titles} draft={draft} cadProjects={cadProjects} />;
 
   const post = await getPost(slug);
   if (!post) notFound();
@@ -31,6 +31,7 @@ export default async function EditPostPage({ params, searchParams }: {
       drafts={drafts}
       postTitles={titles}
       draft={draft}
+      cadProjects={cadProjects}
       initial={{ slug: post.slug, title: post.title, description: post.description || '', category: post.category || '', markdown: post.content, cover: post.image || null }}
     />
   );

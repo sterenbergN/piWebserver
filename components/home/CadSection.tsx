@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CadProject } from '@/lib/site-content';
 import { useSitePopup } from '@/components/SitePopup';
 import { MAX_MODEL_BYTES, MODEL_EXTENSIONS, formatBytes, modelExtension } from '@/lib/cad/models';
 import { parseOnshapeLink } from '@/lib/cad/onshape';
-import ModelViewer from './ModelViewer';
+import { cadAnchor } from '@/lib/cad/embeds';
+import CadCard from './CadCard';
 
 const PREVIEW = 4;
 const EMPTY: CadProject = { id: '', name: '', description: '', link: '' };
@@ -33,6 +34,24 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const shown = expanded || isAdmin ? projects : projects.slice(0, PREVIEW);
+  /** The model a link (/#cad-<id>, e.g. from a post) pointed at, glowing briefly. */
+  const [linked, setLinked] = useState<string | null>(null);
+
+  useEffect(() => {
+    const open = () => {
+      const m = window.location.hash.match(/^#cad-(.+)$/);
+      const id = m ? decodeURIComponent(m[1]) : '';
+      const at = initial.findIndex((p) => p.id === id);
+      if (at < 0) return;
+      if (at >= PREVIEW) setExpanded(true);
+      setLinked(id);
+      setTimeout(() => document.getElementById(cadAnchor(id))?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+      setTimeout(() => setLinked(null), 2600);
+    };
+    open();
+    window.addEventListener('hashchange', open);
+    return () => window.removeEventListener('hashchange', open);
+  }, [initial]);
 
   /**
    * Ask the server to export a model's Onshape tab as its 3D file. A Part
@@ -192,19 +211,8 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
       <div className="home-cad-grid">
         {shown.map(cad => {
           if (editing?.id === cad.id) return <div key={cad.id} style={{ gridColumn: '1 / -1' }}>{editor}</div>;
-          const Tag = cad.link ? 'a' : 'div';
           return (
-            <div key={cad.id} className={`home-cad-cell${cad.model ? ' has-model' : ''}`}>
-              {cad.model && <ModelViewer src={`/api/media${cad.model}`} name={cad.name} size={cad.modelSize} />}
-              <Tag className="home-cad-item" {...(cad.link ? { href: cad.link, target: '_blank', rel: 'noreferrer' } : {})}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
-                  <h3>{cad.name}</h3>
-                  {cad.link && (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: 'var(--accent-light)' }} aria-hidden><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
-                  )}
-                </div>
-                {cad.description && <p>{cad.description}</p>}
-              </Tag>
+            <CadCard key={cad.id} cad={cad} id={cadAnchor(cad.id)} className={linked === cad.id ? 'is-linked' : ''}>
               {isAdmin && (
                 <div className="home-cad-admin">
                   <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
@@ -214,7 +222,7 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
                   <button onClick={() => remove(cad)} title="Delete" aria-label={`Delete ${cad.name}`} className="is-danger">✕</button>
                 </div>
               )}
-            </div>
+            </CadCard>
           );
         })}
       </div>

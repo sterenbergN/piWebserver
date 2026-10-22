@@ -7,6 +7,9 @@ import { mediaSrc } from '@/lib/media-url';
 import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
 import type { PostDraft } from '@/lib/blog/drafts';
 import PostImage from './PostImage';
+import { cadPre } from './CadEmbed';
+import { cadBlock, cadHref } from '@/lib/cad/embeds';
+import type { CadProject } from '@/lib/site-content';
 
 type Fields = { title: string; description: string; category: string; markdown: string };
 type Initial = Fields & { slug: string; cover: string | null };
@@ -52,9 +55,11 @@ async function uploadImage(file: File): Promise<string> {
  * the server while typing, so several posts can be on the go at once and
  * picked up again from any device.
  */
-export default function PostEditor({ initial, categories, drafts: initialDrafts, postTitles, draft: openDraft }: {
+export default function PostEditor({ initial, categories, drafts: initialDrafts, postTitles, draft: openDraft, cadProjects = [] }: {
   initial?: Initial;
   categories: string[];
+  /** The CAD section's models, to show or link to in the post. */
+  cadProjects?: CadProject[];
   drafts: PostDraft[];
   postTitles: Record<string, string>;
   /** The saved draft being continued, if any. */
@@ -160,6 +165,31 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
       el.setSelectionRange(next.selStart, next.selEnd);
     });
   }, []);
+
+  /** The CAD model menu on the toolbar. */
+  const [cadMenu, setCadMenu] = useState(false);
+  const cadPreview = useMemo(() => cadPre(cadProjects), [cadProjects]);
+
+  /** Put a CAD model's card (its own paragraph) or a link to it (around the selection) at the cursor. */
+  const insertCad = (cad: CadProject, as: 'card' | 'link') => {
+    const el = textRef.current;
+    const start = el ? el.selectionStart : fields.markdown.length;
+    const end = el ? el.selectionEnd : start;
+    const text = fields.markdown;
+    let insert: string;
+    if (as === 'card') {
+      const before = text.slice(0, start).replace(/\n*$/, '');
+      const lead = before ? '\n\n' : '';
+      insert = `${lead}${cadBlock(cad.id)}\n\n`;
+      edit({ text: before + insert + text.slice(end).replace(/^\n*/, ''), selStart: before.length + insert.length, selEnd: before.length + insert.length });
+    } else {
+      const label = (text.slice(start, end) || cad.name).replace(/[[\]]/g, '');
+      insert = `[${label}](${cadHref(cad.id)})`;
+      edit({ text: text.slice(0, start) + insert + text.slice(end), selStart: start + insert.length, selEnd: start + insert.length });
+    }
+    setCadMenu(false);
+    setView('write');
+  };
 
   const format = (action: FormatAction) => {
     const el = textRef.current;
@@ -298,6 +328,7 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
       {fields.markdown.trim() ? (
         <Markdown components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+          pre: cadPreview,
           img: ({ node: _node, src, alt, title }) => typeof src === 'string' && src.startsWith('uploading-')
             ? <span className="pe-uploading">{alt}</span>
             : <PostImage src={src} alt={alt} title={title} />,
@@ -388,6 +419,27 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
             {TOOLS.map((t) => (
               <button key={t.action} type="button" title={t.title} aria-label={t.title} onMouseDown={(e) => e.preventDefault()} onClick={() => format(t.action)}>{t.label}</button>
             ))}
+            <span className="pe-cad">
+              <button type="button" className="pe-cad-btn" title="Show a CAD model in the post, or link to it" aria-expanded={cadMenu} onMouseDown={(e) => e.preventDefault()} onClick={() => setCadMenu((v) => !v)}>🧊 CAD</button>
+              {cadMenu && (
+                <div className="pe-cad-menu" role="menu" aria-label="CAD models">
+                  {cadProjects.length === 0 ? <p>No CAD models yet. Add them in the CAD section on the home page.</p> : (
+                    <>
+                      <p>From the CAD section: a card shows it as it is there (3D view included); a link goes to it.</p>
+                      <ul>
+                        {cadProjects.map((cad) => (
+                          <li key={cad.id}>
+                            <span>{cad.model ? '🧊' : '📐'} {cad.name}</span>
+                            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertCad(cad, 'card')}>Card</button>
+                            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertCad(cad, 'link')}>Link</button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+            </span>
             <button type="button" className="pe-photo-btn" title="Insert photos at the cursor (or drag them in, or paste)" onMouseDown={(e) => e.preventDefault()} onClick={() => imageInput.current?.click()}>🖼️ Photos</button>
             <input ref={imageInput} type="file" accept="image/*" multiple hidden onChange={(e) => { insertImages([...(e.target.files || [])]); e.target.value = ''; }} />
             <button type="button" className="pe-md-btn" title="Load the text from a Markdown (.md) file" onMouseDown={(e) => e.preventDefault()} onClick={() => mdInput.current?.click()}>📄 Import .md</button>

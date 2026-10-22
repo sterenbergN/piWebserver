@@ -76,6 +76,16 @@ textarea.pe-text {
 }
 .pe-toolbar button.pe-photo-btn { margin-left: auto; font-weight: 600; }
 .pe-toolbar button.pe-md-btn { font-weight: 600; }
+/* The CAD model menu: a card or a link for each model in the CAD section. */
+.pe-cad { position: relative; }
+.pe-toolbar .pe-cad > button.pe-cad-btn { font-weight: 600; }
+.pe-cad-menu { position: absolute; z-index: 20; top: calc(100% + 0.35rem); left: 0; width: min(340px, 80vw); max-height: 320px; overflow-y: auto; padding: 0.6rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); }
+.pe-cad-menu p { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+.pe-cad-menu ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.pe-cad-menu li { display: flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.3rem; border-radius: 8px; }
+.pe-cad-menu li:hover { background: var(--surface-hover); }
+.pe-cad-menu li span { flex: 1; min-width: 0; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pe-toolbar .pe-cad-menu button { padding: 0.2rem 0.55rem; border: 1px solid var(--surface-border); border-radius: 7px; font-size: 0.78rem; font-weight: 600; }
 textarea.pe-text.is-dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .pe-foot { font-size: 0.78rem; color: var(--muted); margin-top: 0.4rem; }
 .pe-foot code { font-size: 0.75rem; }

@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useSitePopup } from '@/components/SitePopup';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 import PostImage from '@/components/blog/PostImage';
+import { cadPre } from '@/components/blog/CadEmbed';
+import type { CadProject } from '@/lib/site-content';
 import ProgressBar from '@/components/ProgressBar';
 import { uploadWithProgress } from '@/lib/upload-client';
 
@@ -16,9 +18,11 @@ type PostClientProps = {
   initialPost: any;
   isAdmin: boolean;
   neighbors: { newer?: PostLink; older?: PostLink };
+  /** The CAD models the post shows as cards (```cad blocks). */
+  cadProjects: CadProject[];
 };
 
-export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin, neighbors }: PostClientProps) {
+export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin, neighbors, cadProjects }: PostClientProps) {
   const { popup } = useSitePopup();
   const markdown = initialMarkdown;
   const [linkCopied, setLinkCopied] = useState(false);
@@ -170,12 +174,13 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
         <div className="glass-panel markdown-body post-body">
           <Markdown
             components={{
-              a: ({ node, ...props}) => (
+              // Links out open in a new tab; links within the site (e.g. to a CAD model) don't.
+              a: ({ node: _node, ...props }) => (
                 <a {...props}
-                target="_blank"
-                rel="noopener noreferrer"
+                {...(/^[/#]/.test(String(props.href ?? '')) ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
                 style={{ color: 'var(--accent)', textDecoration: 'underline' }} />
               ),
+              pre: cadPre(cadProjects),
               // Pictures in the text: a screen-sized copy, loaded as they scroll into view.
               img: ({ node: _node, src, alt, title }) => <PostImage src={src} alt={alt} title={title} />,
             }}
