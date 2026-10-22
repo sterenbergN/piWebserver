@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { applyHealthImport, describeSync, refreshWorkoutHealth } from '@/lib/workout/health';
+import { applyHealthImport, describeSync, refreshWorkoutHealth, syncAlert } from '@/lib/workout/health';
 import { updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
 import { loadUserHistory } from '@/lib/workout/history';
 import { logBodyweights } from '@/lib/workout/bodyweight';
@@ -27,9 +27,12 @@ export async function POST(request: Request) {
     // Scale readings join the bodyweight log (and set the profile weight).
     await logBodyweights(userId, weights);
 
-    // The shortcut shows this as a notification, so problems are spelled out.
-    return NextResponse.json({ success: true, received: summary, message: describeSync(summary) });
+    // "message" is what arrived (the 30-day shortcut shows it). The daily one
+    // runs on its own and only shows "alert", which is empty when all is well.
+    return NextResponse.json({ success: true, received: summary, message: describeSync(summary), alert: syncAlert(summary) });
   } catch (error) {
-    return handleApiError(error, 'Health import failed');
+    const response = handleApiError(error, 'Health import failed');
+    const { message } = await response.json();
+    return NextResponse.json({ success: false, message, alert: `Health sync failed: ${message}` }, { status: response.status });
   }
 }

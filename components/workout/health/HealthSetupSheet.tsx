@@ -4,7 +4,7 @@ import './health.css';
 import { useState } from 'react';
 import Sheet from '@/components/workout/Sheet';
 import { useSitePopup } from '@/components/SitePopup';
-import { KEY_PLACEHOLDER, SHORTCUT_NAMES, SHORTCUT_SAMPLES, shortcutFieldList, shortcutPrompt } from '@/lib/workout/health-shortcut';
+import { KEY_PLACEHOLDER, SHORTCUT_NAMES, SHORTCUT_SAMPLES, SYNC_EVERY_HOURS, SYNC_STAMP_FILE, SYNC_TRIGGER_APP, shortcutFieldList, shortcutPrompt } from '@/lib/workout/health-shortcut';
 import { timeAgo } from '@/lib/workout/health-insights';
 import { describeSync, type PublicHealth } from '@/lib/workout/health';
 
@@ -156,7 +156,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
           )}
           <PromptCard
             title={SHORTCUT_NAMES.daily}
-            about="The last few days of everything, in one upload. Set it to run every morning and evening."
+            about={`The last week of everything, in one upload. Runs when you open ${SYNC_TRIGGER_APP} (at most every ${SYNC_EVERY_HOURS} hours) and only notifies you if something's wrong. Made one before? Delete it and copy this again.`}
             prompt={shortcutPrompt('daily', { url, key })}
           />
           <PromptCard
@@ -200,8 +200,12 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
             </div>
             <button type="button" className="workout-button is-small" onClick={copyList}>{listCopied ? '✓ Copied' : 'Copy this list'}</button>
             <ol className="hc-list" start={5}>
-              <li>Add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it.</li>
+              <li>Add <strong>Get Dictionary Value</strong> for <code>message</code> from <em>Contents of URL</em>, then <strong>Show Notification</strong> with it (fine for a first test run).</li>
             </ol>
+            <p className="workout-hint">
+              To run it from {SYNC_TRIGGER_APP} without uploading every time, the prompt also adds a check at the top (stop if <code>{SYNC_STAMP_FILE}</code> in iCloud Drive › Shortcuts is under {SYNC_EVERY_HOURS} hours old),
+              saves the time there after uploading, and shows the <code>alert</code> value instead of <code>message</code>, only when it isn&apos;t empty.
+            </p>
             <p className="workout-hint">For the 30-day version, use 30 days for the first eight rows. Then send Heart Rate and Active Energy one day at a time: a Repeat 14 times that finds each type between DayStart and DayEnd (Current Date minus Repeat Index days, and one day before that) and uploads them.</p>
           </details>
         </Step>
@@ -218,13 +222,22 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
           )}
         </Step>
 
-        <Step n={4} title="Make the daily one automatic">
+        <Step n={4} title={`Run it when you open ${SYNC_TRIGGER_APP}`}>
+          <p className="workout-hint">
+            iPhone only lets Shortcuts read Health while it&apos;s unlocked, so a sync at a set time fails whenever the phone is locked.
+            {' '}{SYNC_TRIGGER_APP} only opens on an unlocked phone.
+          </p>
           <ol className="hc-list">
-            <li>In Shortcuts go to <strong>Automation</strong> → <strong>+</strong> → <strong>Time of Day</strong>.</li>
-            <li>Pick <strong>7:30 AM</strong>, <em>Daily</em>, and choose <strong>Run Immediately</strong> (not “Ask Before Running”).</li>
-            <li>Choose <em>{SHORTCUT_NAMES.daily}</em>. Make a second automation for the evening (e.g. <strong>9:00 PM</strong>) so that day&apos;s workouts get their heart rate.</li>
+            <li>In Shortcuts go to <strong>Automation</strong> → <strong>+</strong> → <strong>App</strong>.</li>
+            <li>Choose <strong>{SYNC_TRIGGER_APP}</strong>, tick <strong>Is Opened</strong> only, and tap <strong>Next</strong>.</li>
+            <li>Choose <strong>Run Immediately</strong> and turn <strong>Notify When Run</strong> off.</li>
+            <li>Pick <em>{SHORTCUT_NAMES.daily}</em>.</li>
+            <li>Delete any old <strong>Time of Day</strong> automations for it.</li>
           </ol>
-          <p className="workout-hint">The morning run brings in last night&apos;s sleep for today&apos;s readiness. Run the 30-day one again any time you want to fill gaps.</p>
+          <p className="workout-hint">
+            {`It syncs at most every ${SYNC_EVERY_HOURS} hours, so opening ${SYNC_TRIGGER_APP} after you wake up brings in last night's sleep, and workouts get their heart rate a few hours later at most.`}{' '}
+            Each sync covers the last week (workout heart rate: 3 days), so a quiet day catches up on the next one. Run the 30-day one any time to fill older gaps.
+          </p>
         </Step>
 
         {error && <p className="workout-error">{error}</p>}

@@ -616,6 +616,18 @@ export function describeSync(summary: SyncSummary): string {
   return problems.length ? `${head} Check: ${problems.join('; ')}.` : head;
 }
 
+/**
+ * The notification for an automatic sync: the upload's description when
+ * something needs fixing (or nothing usable arrived), else empty, so a
+ * good sync stays quiet.
+ */
+export function syncAlert(summary: SyncSummary): string {
+  const empty = !(summary.steps || summary.sleep || summary.weight || summary.bodyFat || summary.restingHr || summary.hrv
+    || summary.dailyCalories || summary.heartRate || summary.activeEnergy || summary.workouts);
+  const problems = !!(summary.unreadableDates || summary.mismatched?.length || summary.ignored?.length);
+  return empty || problems ? describeSync(summary) : '';
+}
+
 /** What the page gets: everything except the key and the raw samples. */
 export function publicHealth(health: UserHealth | undefined) {
   const h = health || emptyUserHealth();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignSets, applyHealthImport, dayKeyAt, describeSync, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { alignSets, applyHealthImport, dayKeyAt, describeSync, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -227,4 +227,11 @@ test('a workout keeps the shift, and its window starts early enough for it', () 
   const result = workoutHealth(workout, { hr: setHeartRate(ends), energy: [], watchWorkouts: [] })!;
   assert.ok(Math.abs(result.setOffsetSec! + 90) <= 10, `offset ${result.setOffsetSec}`);
   assert.ok(Date.parse(result.start) <= (ends[0] - 30) * 1000);
+});
+
+test('an automatic sync only alerts when something needs fixing', () => {
+  const ok = { at: '', steps: 7, sleep: 7, weight: 0, bodyFat: 0, restingHr: 7, hrv: 7, dailyCalories: 14, heartRate: 900, activeEnergy: 800, workouts: 1 };
+  assert.equal(syncAlert(ok), '');
+  assert.match(syncAlert({ ...ok, unreadableDates: 3 }), /Check: 3 dates couldn't be read/);
+  assert.equal(syncAlert({ ...ok, steps: 0, sleep: 0, restingHr: 0, hrv: 0, dailyCalories: 0, heartRate: 0, activeEnergy: 0, workouts: 0 }), 'Nothing usable in this upload.');
 });

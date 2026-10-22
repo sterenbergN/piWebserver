@@ -57,11 +57,11 @@ export const SHORTCUT_SAMPLES: ShortcutSample[] = [
     fields: [{ key: 'hrvValues', property: 'Value' }, { key: 'hrvDates', property: 'Start Date' }],
   },
   {
-    variable: 'HeartRate', type: 'Heart Rate', days: 2, backfillDays: 14, detail: true, why: 'Heart rate during workouts',
+    variable: 'HeartRate', type: 'Heart Rate', days: 3, backfillDays: 14, detail: true, why: 'Heart rate during workouts',
     fields: [{ key: 'heartRateValues', property: 'Value' }, { key: 'heartRateDates', property: 'Start Date' }],
   },
   {
-    variable: 'Energy', type: 'Active Energy', days: 2, backfillDays: 14, detail: true, why: 'Calories burned in workouts',
+    variable: 'Energy', type: 'Active Energy', days: 3, backfillDays: 14, detail: true, why: 'Calories burned in workouts',
     fields: [{ key: 'activeEnergyValues', property: 'Value' }, { key: 'activeEnergyStarts', property: 'Start Date' }, { key: 'activeEnergyEnds', property: 'End Date' }],
   },
 ];
@@ -77,6 +77,16 @@ export function shortcutFieldList() {
 export type ShortcutKind = 'daily' | 'backfill';
 export const SHORTCUT_NAMES: Record<ShortcutKind, string> = { daily: 'Sync Health – Daily', backfill: 'Sync Health – Last 30 Days' };
 export const KEY_PLACEHOLDER = 'PASTE-YOUR-SYNC-KEY-HERE';
+
+/**
+ * Health can only be read while the phone is unlocked, so the daily shortcut
+ * runs when Messages is opened (always unlocked) instead of at set times. It
+ * keeps its last run time in this file (iCloud Drive › Shortcuts) and skips
+ * runs less than SYNC_EVERY_HOURS apart.
+ */
+export const SYNC_TRIGGER_APP = 'Messages';
+export const SYNC_STAMP_FILE = 'health-sync-last.txt';
+export const SYNC_EVERY_HOURS = 3;
 
 /**
  * Plain-language instructions for an AI shortcut builder (or a person) to make
@@ -105,18 +115,31 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
   const intro = [
     `Build an Apple Shortcut named "${SHORTCUT_NAMES[kind]}".`,
     daily
-      ? 'It reads my recent Apple Health data and uploads it to my website. I will run it automatically every morning and evening.'
+      ? `It reads my recent Apple Health data and uploads it to my website. It will run automatically whenever I open ${SYNC_TRIGGER_APP}, so it must skip itself if it already ran in the last ${SYNC_EVERY_HOURS} hours, and stay silent unless something is wrong.`
       : 'It reads the last 30 days of my Apple Health data and uploads it to my website once, to fill in history.',
     'Follow these steps exactly, in order, and do not add any other actions.',
   ].join(' ');
   const find = 'Add one "Find Health Samples" action for each item below. In each one, choose the sample type shown, add the filter "Start Date is in the last N days" with the number of days shown, leave Limit off, and sort by Start Date, oldest first. Directly after each one, add "Set Variable" to save its result under the variable name shown.';
 
   if (daily) {
+    const minutes = SYNC_EVERY_HOURS * 60;
     return [
       intro, '',
-      'STEP 1: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
-      'STEP 2: Upload it', upload(SHORTCUT_SAMPLES, ''), '',
-      'STEP 3: Show the result', notify('the Contents of URL result'),
+      `STEP 1: Skip if it already ran in the last ${SYNC_EVERY_HOURS} hours`,
+      `1. Add "Get File from Folder". Folder: Shortcuts (in iCloud Drive). File Path: ${SYNC_STAMP_FILE}. Turn "Error If Not Found" off.`,
+      '2. Add "If" with the condition: File "has any value". Inside this If:',
+      '   a. Add "Get Text from Input" with the File as input.',
+      '   b. Add "Get Dates from Input" with that Text as input.',
+      '   c. Add "Get Time Between Dates": the time between Dates and Current Date, in Minutes.',
+      `   d. Add another "If": Time Between Dates "is less than" ${minutes}. Inside it, add "Stop This Shortcut". Then End If.`,
+      '3. End the first If (leave its Otherwise empty).', '',
+      'STEP 2: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
+      'STEP 3: Upload it', upload(SHORTCUT_SAMPLES, ''), '',
+      'STEP 4: Remember when it ran',
+      '1. Add "Format Date" on Current Date, with Date Format: Medium and Time Format: Short.',
+      `2. Add "Save File" to save the Formatted Date into the Shortcuts folder (iCloud Drive) with the file path ${SYNC_STAMP_FILE}. Turn "Ask Where to Save" off and turn "Overwrite If File Exists" on.`, '',
+      'STEP 5: Only speak up if something is wrong',
+      'Add "Get Dictionary Value" to get the value for the key "alert" from the Contents of URL result. Then add "If" Dictionary Value "has any value", and inside it add "Show Notification" that shows the Dictionary Value. Leave Otherwise empty. Do not show any other notification.',
     ].join('\n');
   }
   // Two weeks of watch heart rate and energy is tens of thousands of readings —
