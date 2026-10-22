@@ -111,6 +111,16 @@ export function TrendLine({ data, dataKey, unit, digits = 0, height = 120 }: { d
 
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
 
+/** Under a heart rate chart whose sets were moved to match it: by how much. */
+export function alignNote(offsetSec?: number) {
+  if (!offsetSec) return '';
+  const secs = Math.abs(offsetSec);
+  const span = secs >= 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : `${secs} s`;
+  return offsetSec < 0
+    ? `Sets moved ${span} earlier to match your heart rate: you tend to tap a set done about that long after finishing it.`
+    : `Sets moved ${span} later to match your heart rate.`;
+}
+
 /** Heart rate through a workout, with a faint mark where each set was logged. */
 export function HeartRateChart({ trace, sets = [], avg, height = 150 }: { trace: [number, number][]; sets?: { at: number; label: string }[]; avg?: number; height?: number }) {
   const data = trace.map(([t, bpm]) => ({ t, bpm }));
@@ -144,9 +154,12 @@ export function HeartRateChart({ trace, sets = [], avg, height = 150 }: { trace:
   );
 }
 
-/** Sets logged in a workout as chart marks: seconds from `start`, labelled "Bench 185×5". */
-export function setMarks(workout: { logs?: Record<string, { weight?: number; reps?: number; timestamp?: number }[]>; liftMeta?: Record<string, { name?: string }> }, startIso: string) {
-  const start = Date.parse(startIso);
+/**
+ * Sets logged in a workout as chart marks: seconds from `start`, labelled
+ * "Bench 185×5", moved by `offsetSec` to where the heart rate shows them.
+ */
+export function setMarks(workout: { logs?: Record<string, { weight?: number; reps?: number; timestamp?: number }[]>; liftMeta?: Record<string, { name?: string }> }, startIso: string, offsetSec = 0) {
+  const start = Date.parse(startIso) - offsetSec * 1000;
   return Object.entries(workout.logs || {}).flatMap(([liftId, sets]) => (sets || [])
     .filter((s) => typeof s.timestamp === 'number')
     .map((s) => ({ at: Math.round((s.timestamp! - start) / 1000), label: `${workout.liftMeta?.[liftId]?.name || 'Set'} ${s.weight}×${s.reps}` })))

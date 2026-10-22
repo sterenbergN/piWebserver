@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fullCoach, measuredActivity, profileFromUser, restingVsFormula } from './coach';
-import { dailyBurn, lastKeys, localKey, rangeStats, shiftKey } from './health-insights';
+import { dailyBurn, fullWearDays, healthSeries, lastKeys, localKey, rangeStats, shiftKey } from './health-insights';
 import type { HealthDay } from './health';
 import type { TrainingWorkout } from './training-coach';
 
@@ -101,4 +101,20 @@ test('Watch resting calories are compared with Mifflin-St Jeor and, with body fa
   assert.equal(withFat.best.name, 'Katch-McArdle');
   assert.equal(withFat.formulas.find((f) => f.key === 'katch')!.kcal, Math.round(370 + 21.6 * 180 * 0.45359237 * 0.85));
   assert.equal(restingVsFormula({}, profile, NOW), null);
+});
+
+test('days the Watch was off for part of the day are left out of the burn and the activity level', () => {
+  const days: Record<string, HealthDay> = {};
+  const keys = lastKeys(shiftKey(TODAY, 1), 14);
+  keys.forEach((k) => { days[k] = { activeKcal: 700, restingKcal: 1800, steps: 9000 }; });
+  days[keys[3]] = { activeKcal: 160, restingKcal: 450 }; // half a day
+  days[keys[8]] = { activeKcal: 350, restingKcal: 1790 }; // a lazy day, worn all day
+  days[TODAY] = { activeKcal: 300, restingKcal: 1100 }; // not over yet
+  const worn = fullWearDays(days);
+  assert.equal(worn.has(keys[3]), false);
+  assert.equal(worn.has(keys[8]), true);
+  assert.equal(worn.has(TODAY), false);
+  assert.equal(rangeStats(days, [keys[2], keys[3], keys[4]]).burnKcal, 2500);
+  assert.equal(healthSeries(days, keys[3], 1)[0].burnKcal, undefined);
+  assert.equal(measuredActivity(days, profile, NOW).days, 13);
 });

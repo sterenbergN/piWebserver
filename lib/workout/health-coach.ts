@@ -330,7 +330,7 @@ export function restRecovery(history: CoachWorkout[], workoutHealth: Record<stri
   for (const w of history) {
     const wh = w.id ? workoutHealth[w.id] : undefined;
     if (!wh?.trace || wh.trace.length < 6) continue;
-    const start = Date.parse(wh.start);
+    const start = Date.parse(wh.start) - (wh.setOffsetSec ?? 0) * 1000; // set times, lined up with the heart rate
     const rhr = days[localKey(new Date(w.timestamp))]?.restingHr ?? 60;
     const at = (sec: number) => wh.trace!.reduce((best, p) => (Math.abs(p[0] - sec) < Math.abs(best[0] - sec) ? p : best))[1];
     const peak = (from: number, to: number) => Math.max(0, ...wh.trace!.filter(([t]) => t >= from && t <= to).map(([, b]) => b));

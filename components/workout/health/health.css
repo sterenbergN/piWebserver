@@ -60,8 +60,11 @@
 
 /* Health page */
 .hc-page .an-periods { margin: 0; }
-.hc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (min-width: 560px) { .hc-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* The workout column is phone-width even on a desktop, so columns go by that, not the screen. */
+.an-tiles.hc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 420px) { .an-tiles.hc-tiles.is-six { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.hc-tile .an-tile-value { white-space: nowrap; overflow-wrap: normal; }
+.hc-unit { font-size: 0.62em; font-weight: 600; color: var(--muted); margin-left: 0.2em; }
 .hc-tile .an-tile-label { display: inline-flex; align-items: center; gap: 0.3rem; }
 .hc-tile-icon { width: 1rem; text-align: center; color: var(--accent-light); }
 .hc-delta { font-size: 0.7rem; font-weight: 700; color: var(--muted); }

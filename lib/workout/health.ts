@@ -51,6 +51,12 @@ export type WorkoutHealth = {
   trace?: [number, number][];
   /** A watch session matched this workout. */
   watch?: boolean;
+  /**
+   * Seconds to add to the logged set times to line them up with the heart
+   * rate (negative: sets were tapped done a while after they finished).
+   * Missing when they already line up or there's too little data to tell.
+   */
+  setOffsetSec?: number;
 };
 
 export type SyncSummary = {
@@ -459,6 +465,64 @@ export function workoutWindow(workout: LoggedWorkout): [number, number] | null {
 
 const overlap = (a: [number, number], b: [number, number]) => Math.max(0, Math.min(a[1], b[1]) - Math.max(a[0], b[0]));
 
+/** Heart rate tops out about this long after the last rep. */
+const PEAK_AFTER_SET = 15;
+
+/**
+ * How far the logged set times sit from the sets the heart rate shows, in
+ * seconds (negative: sets were tapped done after they finished). Heart rate
+ * climbs through a set, peaks just after it and falls through the rest, so
+ * the shift that puts the most sets on a peak wins. The gaps between sets
+ * are right whatever the shift, so one shift fits the whole workout. Searched
+ * within 3 minutes and under half the usual rest (so it can't slip a whole
+ * set), and only kept when it fits clearly better than none. Needs a reading
+ * every few seconds (a Watch workout) and 4 timed sets; otherwise 0.
+ */
+export function alignSets(beats: [number, number][], setTimes: number[]): number {
+  const sets = setTimes.filter((t) => t > 0).map((t) => t / 1000).sort((a, b) => a - b);
+  if (sets.length < 4) return 0;
+  const gaps = sets.slice(1).map((t, i) => t - sets[i]).filter((g) => g > 20).sort((a, b) => a - b);
+  const maxShift = Math.min(180, gaps.length ? gaps[Math.floor(gaps.length / 2)] / 2 : 0);
+  if (maxShift < 30) return 0;
+  const from = sets[0] - maxShift - 300;
+  const to = sets[sets.length - 1] + maxShift + 300;
+  const near = beats.filter(([t]) => t >= from && t <= to).sort((a, b) => a[0] - b[0]);
+  const during = near.filter(([t]) => t >= sets[0] - 60 && t <= sets[sets.length - 1] + 60).length;
+  if (during < (sets[sets.length - 1] - sets[0] + 120) / 20) return 0; // fewer than one reading per 20 s
+
+  // Heart rate every 5 s (gaps over a minute left empty), minus its 5-minute average so only the set-by-set swings remain.
+  const STEP = 5;
+  const grid: number[] = [];
+  let j = 0;
+  for (let t = from; t <= to; t += STEP) {
+    while (j < near.length - 1 && near[j + 1][0] < t) j++;
+    const [t0, b0] = near[j];
+    const [t1, b1] = near[Math.min(j + 1, near.length - 1)];
+    if (t < t0 || t > t1 || t1 - t0 > 60) grid.push(NaN);
+    else grid.push(t1 === t0 ? b0 : b0 + ((b1 - b0) * (t - t0)) / (t1 - t0));
+  }
+  const HALF = 150 / STEP;
+  const swing = grid.map((v, i) => {
+    if (Number.isNaN(v)) return NaN;
+    const around = grid.slice(Math.max(0, i - HALF), i + HALF + 1).filter((x) => !Number.isNaN(x));
+    return v - around.reduce((a, b) => a + b, 0) / around.length;
+  });
+  const at = (t: number) => swing[Math.round((t - from) / STEP)] ?? NaN;
+  // How far above its local average heart rate is, on average, around each set's peak.
+  const fit = (shift: number) => {
+    const values = sets.flatMap((s) => [-10, -5, 0, 5, 10].map((d) => at(s + shift + d))).filter((v) => !Number.isNaN(v));
+    return values.length >= sets.length * 2 ? values.reduce((a, b) => a + b, 0) / values.length : -Infinity;
+  };
+  let best = PEAK_AFTER_SET;
+  for (let shift = -Math.round(maxShift / STEP) * STEP; shift <= maxShift; shift += STEP) {
+    if (fit(shift) > fit(best)) best = shift;
+  }
+  const offset = best - PEAK_AFTER_SET;
+  // Not worth moving for a few seconds, and only when it fits clearly better (2+ bpm) than as logged.
+  if (Math.abs(offset) < 20 || !(fit(best) > 0) || fit(best) - fit(PEAK_AFTER_SET) < 2) return 0;
+  return offset;
+}
+
 /** Heart rate and calories for one logged workout, or null if nothing was recorded then. */
 export function workoutHealth(workout: LoggedWorkout, health: Pick<UserHealth, 'hr' | 'energy' | 'watchWorkouts'>): WorkoutHealth | null {
   let window = workoutWindow(workout);
@@ -469,11 +533,16 @@ export function workoutHealth(workout: LoggedWorkout, health: Pick<UserHealth, '
     return overlap(span, window!) > 0.5 * Math.min(span[1] - span[0], window![1] - window![0]);
   });
   if (session) window = [Date.parse(session.start), Date.parse(session.end)];
+  // Line the logged sets up with the heart rate they caused; without a watch session the start moves with them.
+  const setTimes = Object.values(workout.logs || {}).flat().map((s) => Number(s?.timestamp)).filter((t) => t > 0);
+  const offsetSec = setTimes.length >= 4 ? alignSets(health.hr, setTimes) : 0;
+  if (!session && offsetSec < 0) window = [window[0] + offsetSec * 1000, window[1]];
   const [from, to] = window;
 
   const beats = health.hr.filter(([t]) => t * 1000 >= from && t * 1000 <= to);
   const result: WorkoutHealth = { start: new Date(from).toISOString(), end: new Date(to).toISOString() };
   if (session) result.watch = true;
+  if (offsetSec) result.setOffsetSec = offsetSec;
   if (beats.length >= 5) {
     const bpms = beats.map(([, bpm]) => bpm);
     result.avgHr = Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyHealthImport, dayKeyAt, describeSync, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { alignSets, applyHealthImport, dayKeyAt, describeSync, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -186,4 +186,45 @@ test('daily active and resting calorie totals are stored, and the exact total be
   assert.deepEqual(health.days['2026-10-19'], { activeKcal: 710, activeExact: true, restingKcal: 1846 });
   assert.equal(summary.dailyCalories, 4);
   assert.match(describeSync(summary), /4 daily calorie totals/);
+});
+
+/** Watch heart rate every 5 s through sets ending at `ends` (seconds): up through each set, peak just after, down through the rest. */
+function setHeartRate(ends: number[]): [number, number][] {
+  const beats: [number, number][] = [];
+  for (let t = ends[0] - 600; t <= ends[ends.length - 1] + 600; t += 5) {
+    let bpm = 95;
+    for (const end of ends) {
+      if (t >= end - 40 && t <= end + 15) bpm = Math.max(bpm, 95 + 40 * (t - end + 40) / 55);
+      else if (t > end + 15) bpm = Math.max(bpm, 95 + 40 * Math.exp(-(t - end - 15) / 40));
+    }
+    beats.push([t, Math.round(bpm)]);
+  }
+  return beats;
+}
+
+test('logged sets are lined up with the heart rate they caused', () => {
+  const t0 = Date.parse('2026-10-20T17:00:00Z') / 1000;
+  const ends = [0, 170, 360, 540, 745, 920, 1100, 1310].map((s) => t0 + s);
+  const beats = setHeartRate(ends);
+  // Tapped done 75 s after each set finished.
+  const late = alignSets(beats, ends.map((e) => (e + 75) * 1000));
+  assert.ok(Math.abs(late + 75) <= 10, `offset ${late}`);
+  // Tapped right away: nothing to move.
+  assert.equal(alignSets(beats, ends.map((e) => (e + 5) * 1000)), 0);
+  // A reading every 5 minutes (no Watch workout) can't place sets.
+  assert.equal(alignSets(beats.filter(([t]) => t % 300 === 0), ends.map((e) => (e + 75) * 1000)), 0);
+  // Flat heart rate: no shift fits better than none.
+  assert.equal(alignSets(beats.map(([t]) => [t, 100]), ends.map((e) => (e + 75) * 1000)), 0);
+});
+
+test('a workout keeps the shift, and its window starts early enough for it', () => {
+  const t0 = Date.parse('2026-10-20T17:00:00Z') / 1000;
+  const ends = [0, 170, 360, 540, 745, 920].map((s) => t0 + s);
+  const workout = {
+    id: 'w', timestamp: new Date((t0 + 1100) * 1000).toISOString(),
+    logs: { a: ends.map((e) => ({ timestamp: (e + 90) * 1000 })) },
+  };
+  const result = workoutHealth(workout, { hr: setHeartRate(ends), energy: [], watchWorkouts: [] })!;
+  assert.ok(Math.abs(result.setOffsetSec! + 90) <= 10, `offset ${result.setOffsetSec}`);
+  assert.ok(Date.parse(result.start) <= (ends[0] - 30) * 1000);
 });

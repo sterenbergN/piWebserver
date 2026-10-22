@@ -11,7 +11,7 @@ import { compact } from './charts';
 import { createWorkoutLink, shareLink } from '@/lib/workout/share-link';
 import { cardDataForWorkout, renderWorkoutCard, type CardFormat } from '@/lib/workout/share-card';
 import ShareViewer from '@/components/workout/ShareViewer';
-import { HeartRateChart, setMarks } from '@/components/workout/health/HealthCharts';
+import { HeartRateChart, alignNote, setMarks } from '@/components/workout/health/HealthCharts';
 import type { WorkoutHealth } from '@/lib/workout/health';
 import EditWorkoutSheet from './EditWorkoutSheet';
 import CompareSheet from './CompareSheet';
@@ -156,7 +156,8 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
                   <strong style={{ fontSize: '0.82rem' }}>Heart rate</strong>
                   <span className="workout-hint">avg {hr.avgHr} · max {hr.maxHr}{hr.kcal !== undefined ? ` · ${hr.kcal} kcal` : ''}</span>
                 </div>
-                <HeartRateChart trace={hr.trace} sets={setMarks(w as any, hr.start)} avg={hr.avgHr} height={130} />
+                <HeartRateChart trace={hr.trace} sets={setMarks(w as any, hr.start, hr.setOffsetSec)} avg={hr.avgHr} height={130} />
+                {hr.setOffsetSec ? <p className="workout-hint" style={{ margin: '0.25rem 0 0' }}>{alignNote(hr.setOffsetSec)}</p> : null}
               </div>
             )}
             {Object.entries(w.logs || {}).map(([liftId, sets]) => {

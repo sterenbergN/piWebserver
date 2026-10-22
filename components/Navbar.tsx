@@ -119,7 +119,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
             <div key={group.label} className="nav-group" onPointerEnter={hoverOpen(group.label)} onPointerLeave={hoverClose}>
               <button type="button" className="nav-link" onClick={() => toggleGroup(group.label)}
                 aria-expanded={open} aria-controls={menuId} data-current={groupIsCurrent(group) || undefined}>
-                {group.label}<span className="nav-caret" aria-hidden>▾</span>
+                {group.label}
+                <svg className="nav-caret" viewBox="0 0 10 6" aria-hidden><path d="M1 1l4 4 4-4" /></svg>
               </button>
               {open && (
                 <div className="nav-menu" id={menuId}>

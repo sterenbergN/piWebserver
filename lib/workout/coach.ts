@@ -1,7 +1,7 @@
 import { calcAverage1RM } from './analytics';
 import { ACTIVITY_LEVELS, buildSeededCalculatorDefaults, calculateMifflinStJeor, type ActivityLevel } from './calculators';
 import { exerciseKey, exerciseName } from './exercises';
-import { formatMinutes, lastKeys, localKey, readiness } from './health-insights';
+import { formatMinutes, fullWearDays, lastKeys, localKey, readiness } from './health-insights';
 import { coachInsights, restRecovery, type CoachInsight } from './health-coach';
 import { exerciseVariant } from './related-exercises';
 import { sortInsights, trainingAdvice, type CoachPending, type TrainingAdvice, type TrainingWorkout } from './training-coach';
@@ -59,9 +59,12 @@ export type MeasuredActivity = {
  */
 export function measuredActivity(days: Days, profile: Omit<CoachProfile, 'activityLevel'>, now = Date.now()): MeasuredActivity {
   const keys = lastKeys(localKey(now - DAY_MS), 14); // yesterday back: today isn't finished
-  const pick = (f: (d: HealthDay) => number | undefined, min: number) => keys.map((k) => (days[k] ? f(days[k]) : undefined)).filter((v): v is number => typeof v === 'number' && v >= min);
-  const active = pick((d) => d.activeKcal, 50);
-  const resting = pick((d) => d.restingKcal, 800);
+  const pick = (f: (d: HealthDay) => number | undefined, min: number, list = keys) => list.map((k) => (days[k] ? f(days[k]) : undefined)).filter((v): v is number => typeof v === 'number' && v >= min);
+  // Calories only from days the Watch was on all day: half a day's would read as a lazy day.
+  const worn = fullWearDays(days);
+  const wornKeys = keys.filter((k) => worn.has(k));
+  const active = pick((d) => d.activeKcal, 50, wornKeys);
+  const resting = pick((d) => d.restingKcal, 800, wornKeys);
   const steps = pick((d) => d.steps, 200);
   const { bmr } = calculateMifflinStJeor({ ...profile, activityLevel: 'sedentary' });
   const nearest = (m: number) => ACTIVITY_LEVELS.reduce((best, l) => (Math.abs(l.multiplier - m) < Math.abs(best.multiplier - m) ? l : best));
@@ -107,12 +110,13 @@ export type RestingCompare = {
 /**
  * The Watch's resting calories against what formulas give for your size:
  * Mifflin-St Jeor (age, height, weight, sex) and, with a body fat reading,
- * Katch-McArdle and Cunningham (lean mass). Days the Watch wasn't worn
- * (0 active calories, or no resting reading) are left out. Needs 7 days.
+ * Katch-McArdle and Cunningham (lean mass). Days the Watch wasn't worn all
+ * day (or no resting reading) are left out. Needs 7 days.
  */
 export function restingVsFormula(days: Days, profile: Omit<CoachProfile, 'activityLevel'>, now = Date.now()): RestingCompare | null {
   const keys = lastKeys(localKey(now - DAY_MS), 30);
-  const worn = keys.map((k) => days[k]).filter((d) => d && (d.activeKcal ?? 0) > 0 && (d.restingKcal ?? 0) >= 800);
+  const full = fullWearDays(days);
+  const worn = keys.filter((k) => full.has(k)).map((k) => days[k]).filter((d) => (d.restingKcal ?? 0) >= 800);
   if (worn.length < 7) return null;
   const watch = Math.round(mean(worn.map((d) => d.restingKcal!)));
   const fat = lastKeys(localKey(now), 60).map((k) => days[k]?.bodyFat).filter((v): v is number => typeof v === 'number' && v > 2 && v < 60);

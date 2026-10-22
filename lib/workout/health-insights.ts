@@ -146,12 +146,34 @@ export function dailyBurn(d: HealthDay | undefined): number | undefined {
   return (d.restingKcal ?? 0) + d.activeKcal;
 }
 
+/**
+ * Days the Watch was worn all day. Resting calories barely change from day
+ * to day, so a day more than 10% under your usual (the median of the month
+ * either side) means the Watch was off for part of it: its calories would
+ * read as a very lazy day. Without resting readings, active calories under a
+ * quarter of usual stand in. Today isn't complete until it's over, so it
+ * drops out the same way.
+ */
+export function fullWearDays(days: Days): Set<string> {
+  const keys = Object.keys(days).filter((k) => (days[k].activeKcal ?? 0) > 0).sort();
+  const usual = (key: string, pick: (d: HealthDay) => number | undefined) => {
+    const lo = shiftKey(key, 30);
+    const hi = shiftKey(key, -30);
+    return median(keys.filter((k) => k >= lo && k <= hi).map((k) => pick(days[k])).filter((v): v is number => typeof v === 'number' && v > 0)) ?? 0;
+  };
+  return new Set(keys.filter((k) => {
+    const d = days[k];
+    if ((d.restingKcal ?? 0) > 0) return d.restingKcal! >= 0.9 * usual(k, (x) => x.restingKcal);
+    return d.activeKcal! >= 0.25 * usual(k, (x) => x.activeKcal);
+  }));
+}
+
 export type RangeStats = {
   sleepMin: number | null;
   steps: number | null;
   restingHr: number | null;
   hrv: number | null;
-  /** Average calories burned a day (resting + active). */
+  /** Average calories burned a day (resting + active), over days the Watch was worn all day. */
   burnKcal: number | null;
   /** Latest reading in the range and its change from the first one. */
   weight: { latest: number; change: number | null } | null;
@@ -168,6 +190,8 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
     if (!list.length) return null;
     return { latest: list[list.length - 1], change: list.length > 1 ? Math.round((list[list.length - 1] - list[0]) * 10) / 10 : null };
   };
+  const worn = fullWearDays(days);
+  const burns = keys.filter((k) => worn.has(k)).map((k) => dailyBurn(days[k])!);
   const sleep = values((d) => d.sleep?.asleepMin);
   const steps = values((d) => d.steps);
   const round = (n: number | null) => (n === null ? null : Math.round(n));
@@ -176,7 +200,7 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
     steps: round(mean(steps)),
     restingHr: round(mean(values((d) => d.restingHr))),
     hrv: round(mean(values((d) => d.hrv))),
-    burnKcal: round(mean(values(dailyBurn))),
+    burnKcal: round(mean(burns)),
     weight: trend((d) => d.weight),
     bodyFat: trend((d) => d.bodyFat),
     nights: sleep.length,
@@ -191,7 +215,7 @@ const label = (key: string) => {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-function point(key: string, list: HealthDay[]): SeriesPoint {
+function point(key: string, list: HealthDay[], burns: number[]): SeriesPoint {
   const avg = (pick: (d: HealthDay) => number | undefined, digits = 0) => {
     const v = mean(list.map(pick).filter((n): n is number => typeof n === 'number'));
     return v === null ? undefined : Math.round(v * 10 ** digits) / 10 ** digits;
@@ -209,7 +233,7 @@ function point(key: string, list: HealthDay[]): SeriesPoint {
     hrv: avg((d) => d.hrv),
     weight: avg((d) => d.weight, 1),
     bodyFat: avg((d) => d.bodyFat, 1),
-    burnKcal: avg(dailyBurn),
+    burnKcal: burns.length ? Math.round(mean(burns)!) : undefined,
     bedtime: night?.bedtime,
     wake: night?.wake,
   };
@@ -218,11 +242,13 @@ function point(key: string, list: HealthDay[]): SeriesPoint {
 /** One point per day, or per week (averaged) when `weekly`, for the last `n` days ending `end`. */
 export function healthSeries(days: Days, end: string, n: number, weekly = false): SeriesPoint[] {
   const keys = lastKeys(end, n);
-  if (!weekly) return keys.map((k) => point(k, days[k] ? [days[k]] : []));
+  const worn = fullWearDays(days);
+  const burns = (list: string[]) => list.filter((k) => worn.has(k)).map((k) => dailyBurn(days[k])!);
+  if (!weekly) return keys.map((k) => point(k, days[k] ? [days[k]] : [], burns([k])));
   const out: SeriesPoint[] = [];
   for (let i = 0; i < keys.length; i += 7) {
     const chunk = keys.slice(i, i + 7);
-    out.push(point(chunk[0], chunk.map((k) => days[k]).filter(Boolean)));
+    out.push(point(chunk[0], chunk.map((k) => days[k]).filter(Boolean), burns(chunk)));
   }
   return out;
 }

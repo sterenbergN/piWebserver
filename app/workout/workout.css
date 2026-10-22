@@ -1344,3 +1344,18 @@
 .xp-level-list p { margin: 0.3rem 0 0.35rem; font-size: 0.82rem; color: var(--muted); }
 .xp-level-list ul { margin: 0; padding-left: 1.1rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.15rem; }
 @media (max-width: 420px) { .xp-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Home: a workout's already done today; the start button below still starts another. */
+.workout-done-today {
+  display: flex; gap: 0.75rem; align-items: flex-start;
+  border-color: rgba(var(--success-rgb), 0.45);
+  background: rgba(var(--success-rgb), 0.07);
+  margin: 0.5rem 0 0;
+}
+.workout-done-today > div { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.workout-done-today strong { font-size: 1rem; }
+.workout-done-today-icon {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 2rem; height: 2rem; border-radius: 50%;
+  background: var(--success); color: #fff; font-weight: 800; font-size: 1rem;
+}

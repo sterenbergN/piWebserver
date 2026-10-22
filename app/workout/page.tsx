@@ -432,6 +432,11 @@ export default function WorkoutDashboard() {
   const recentWorkouts = [...history]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 3);
+  // Workouts already finished today (oldest first): acknowledged above the start button, which still starts another.
+  const doneToday = history
+    .filter((w) => new Date(w.timestamp).toDateString() === now.toDateString())
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const trainedToday = doneToday.length > 0 && !pendingWorkout;
   const canRepeat = (workout: any) => availableGyms.some((g) => g.id === workout.gymId) && Object.keys(workout.logs || {}).length > 0;
   /** Start the same lifts, in the same order, as a past workout. */
   const repeatWorkout = (workout: any) => {
@@ -689,8 +694,28 @@ export default function WorkoutDashboard() {
           {(deloadSuggestion || isDeload) && (
             <DeloadSuggestion suggestion={deloadSuggestion || { reasons: [] }} chosen={isDeload} onChoose={setIsDeload} onDismiss={snoozeDeload} />
           )}
-          <button className="workout-btn-primary" style={{ padding: '1.25rem', fontSize: '1.25rem', marginTop: '0.5rem' }} onClick={() => setShowStartMenu(true)}>
-            Start a workout ⚡
+          {trainedToday && (
+            <div className="workout-tile workout-done-today animate-fade-in">
+              <span className="workout-done-today-icon" aria-hidden>✓</span>
+              <div>
+                <strong>{doneToday.length === 1 ? 'You trained today' : `${doneToday.length} workouts today`}</strong>
+                {doneToday.map((w) => {
+                  const sets = Object.values(w.logs || {}).reduce((sum: number, list: any) => sum + (list?.length || 0), 0);
+                  const volume = Math.round(w.volume ?? workoutVolume(w.logs));
+                  const length = w.durationSecs ? `${Math.round(w.durationSecs / 60)} min` : w.duration;
+                  return (
+                    <span key={w.id} className="workout-hint">
+                      {w.isDeload ? '🧘 ' : ''}{w.type?.name || w.name || 'Workout'} at {new Date(w.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                      {length ? ` · ${length}` : ''} · {sets} sets{volume ? ` · ${volume.toLocaleString()} lb` : ''}
+                    </span>
+                  );
+                })}
+                <span className="workout-hint">Recovery is where the gains happen — but another session is fine if you planned one.</span>
+              </div>
+            </div>
+          )}
+          <button className="workout-btn-primary" style={{ padding: trainedToday ? '0.95rem' : '1.25rem', fontSize: trainedToday ? '1.05rem' : '1.25rem', marginTop: '0.5rem' }} onClick={() => setShowStartMenu(true)}>
+            {trainedToday ? 'Start another workout' : 'Start a workout ⚡'}
           </button>
           {programs.length > 0 && !isDemo && (
             <div className="workout-quick-starts">

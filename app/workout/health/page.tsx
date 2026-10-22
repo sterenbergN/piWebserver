@@ -9,10 +9,10 @@ import PlanPanel from '@/components/workout/health/PlanPanel';
 import type { CalculatorDefaults } from '@/lib/workout/calculators';
 import type { WeightPlan } from '@/lib/workout/weight-plan';
 import { fullCoach, profileFromUser } from '@/lib/workout/coach';
-import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, setMarks } from '@/components/workout/health/HealthCharts';
+import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, alignNote, setMarks } from '@/components/workout/health/HealthCharts';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
-import { dailyBurn, daysSince, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
+import { dailyBurn, daysSince, fullWearDays, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
 import { describeSync, type HealthDay, type PublicHealth } from '@/lib/workout/health';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
@@ -25,7 +25,6 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'trends', label: 'Trends' },
 ];
 type Calorie = NonNullable<CalculatorDefaults['calorie']>;
-const burnOf = (d?: HealthDay) => dailyBurn(d) ?? null;
 const RANGES: { key: Range; label: string; days: number }[] = [
   { key: '14d', label: '2 weeks', days: 14 },
   { key: '30d', label: 'Month', days: 30 },
@@ -38,11 +37,11 @@ type Workout = { id: string; timestamp: string; name?: string; type?: { name?: s
 const fmtSteps = (n: number) => n.toLocaleString();
 
 /** A headline number with how it moved against the range before. */
-function Tile({ icon, label, value, delta, sub }: { icon: string; label: string; value: string; delta?: { text: string; tone: 'good' | 'warn' | 'neutral' } | null; sub?: string }) {
+function Tile({ icon, label, value, unit, delta, sub }: { icon: string; label: string; value: string; unit?: string; delta?: { text: string; tone: 'good' | 'warn' | 'neutral' } | null; sub?: string }) {
   return (
     <div className="an-tile hc-tile">
       <span className="an-tile-label"><span aria-hidden className="hc-tile-icon">{icon}</span>{label}</span>
-      <strong className="an-tile-value">{value}</strong>
+      <strong className="an-tile-value">{value}{unit && value !== '—' && <span className="hc-unit">{unit}</span>}</strong>
       {delta ? <span className={`hc-delta is-${delta.tone}`}>{delta.text}</span> : sub ? <span className="an-tile-sub">{sub}</span> : <span className="an-tile-sub">&nbsp;</span>}
     </div>
   );
@@ -133,6 +132,7 @@ export default function HealthPage() {
 
   const today = localKey(new Date());
   const yesterday = shiftKey(today, 1);
+  const burnYesterday = useMemo(() => (fullWearDays(days).has(yesterday) ? dailyBurn(days[yesterday])! : null), [days, yesterday]);
   const spec = RANGES.find((r) => r.key === range)!;
   const keys = useMemo(() => lastKeys(today, spec.days), [today, spec.days]);
   const view = useMemo(() => {
@@ -220,8 +220,9 @@ export default function HealthPage() {
         <section className="an-tiles hc-tiles" aria-label="At a glance">
           <Tile icon="🌙" label="Last night" value={days[today]?.sleep ? formatMinutes(days[today].sleep!.asleepMin) : '—'} sub="asleep" />
           <Tile icon="👣" label="Steps yesterday" value={days[yesterday]?.steps !== undefined ? fmtSteps(days[yesterday].steps!) : '—'} />
-          <Tile icon="🔥" label="Burned yesterday" value={burnOf(days[yesterday]) !== null ? `${burnOf(days[yesterday])!.toLocaleString()}` : '—'} sub={burnOf(days[yesterday]) !== null ? 'kcal, resting + active' : undefined} />
-          <Tile icon="⚖" label="Weight" value={weights.length ? `${weights[weights.length - 1].weight} lb` : '—'} sub={weights.length ? 'latest weigh-in' : undefined} />
+          <Tile icon="🔥" label="Burned yesterday" value={burnYesterday !== null ? burnYesterday.toLocaleString() : '—'} unit="kcal"
+            sub={burnYesterday !== null ? 'resting + active' : days[yesterday]?.activeKcal ? 'Watch off part of the day' : undefined} />
+          <Tile icon="⚖" label="Weight" value={weights.length ? String(weights[weights.length - 1].weight) : '—'} unit="lb" sub={weights.length ? 'latest weigh-in' : undefined} />
         </section>
 
         <CoachCard
@@ -250,18 +251,18 @@ export default function HealthPage() {
           ))}
         </div>
 
-        <section className="an-tiles hc-tiles" aria-label={`Averages over ${spec.label.toLowerCase()}`}>
+        <section className="an-tiles hc-tiles is-six" aria-label={`Averages over ${spec.label.toLowerCase()}`}>
           <Tile icon="🌙" label="Sleep" value={stats.sleepMin !== null ? formatMinutes(stats.sleepMin) : '—'}
             delta={deltaOf(stats.sleepMin, before.sleepMin, { unit: '', higherIsBetter: true, format: (n) => formatMinutes(n) })} sub="a night" />
           <Tile icon="👣" label="Steps" value={stats.steps !== null ? fmtSteps(stats.steps) : '—'}
             delta={deltaOf(stats.steps, before.steps, { unit: '', higherIsBetter: true, format: fmtSteps })} sub="a day" />
-          <Tile icon="♥" label="Resting HR" value={stats.restingHr !== null ? `${stats.restingHr} bpm` : '—'}
+          <Tile icon="♥" label="Resting HR" value={stats.restingHr !== null ? String(stats.restingHr) : '—'} unit="bpm"
             delta={deltaOf(stats.restingHr, before.restingHr, { unit: ' bpm', higherIsBetter: false })} />
-          <Tile icon="〰" label="HRV" value={stats.hrv !== null ? `${stats.hrv} ms` : '—'}
+          <Tile icon="〰" label="HRV" value={stats.hrv !== null ? String(stats.hrv) : '—'} unit="ms"
             delta={deltaOf(stats.hrv, before.hrv, { unit: ' ms', higherIsBetter: true })} />
-          <Tile icon="⚖" label="Weight" value={stats.weight ? `${stats.weight.latest} lb` : '—'}
+          <Tile icon="⚖" label="Weight" value={stats.weight ? String(stats.weight.latest) : '—'} unit="lb"
             delta={stats.weight?.change != null ? { text: `${stats.weight.change > 0 ? '+' : stats.weight.change < 0 ? '−' : ''}${Math.abs(stats.weight.change)} lb this ${spec.key === '1y' ? 'year' : 'range'}`, tone: 'neutral' } : null} sub="latest" />
-          <Tile icon="◔" label="Body fat" value={stats.bodyFat ? `${stats.bodyFat.latest}%` : '—'}
+          <Tile icon="◔" label="Body fat" value={stats.bodyFat ? String(stats.bodyFat.latest) : '—'} unit="%"
             delta={stats.bodyFat?.change != null ? { text: `${stats.bodyFat.change > 0 ? '+' : stats.bodyFat.change < 0 ? '−' : ''}${Math.abs(stats.bodyFat.change)} pts this ${spec.key === '1y' ? 'year' : 'range'}`, tone: 'neutral' } : null} sub="latest" />
         </section>
 
@@ -284,7 +285,7 @@ export default function HealthPage() {
         <section className="workout-tile an-card">
           <div className="an-card-head"><h2>Calories burned</h2>{stats.burnKcal !== null && <span className="workout-hint">avg {stats.burnKcal.toLocaleString()} a day</span>}</div>
           {has('burnKcal') ? <TrendLine data={series} dataKey="burnKcal" unit="kcal" /> : <Empty what="daily calories" add="Active Energy and Resting Energy (grouped by day)" />}
-          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. Days with 0 active calories (Watch not worn) are left out. This is what your activity level in the plan is measured from.</p>
+          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. Days the Watch was off for part of the day (resting calories well under your usual) are left out, today included until it&apos;s over. This is what your activity level in the plan is measured from.</p>
         </section>
 
         <section className="workout-tile an-card">
@@ -332,11 +333,12 @@ export default function HealthPage() {
                     {open && (
                       <div className="an-workout-body animate-fade-in">
                         {wh.trace && wh.trace.length > 1 ? (
-                          <HeartRateChart trace={wh.trace} sets={setMarks(w, wh.start)} avg={wh.avgHr} />
+                          <HeartRateChart trace={wh.trace} sets={setMarks(w, wh.start, wh.setOffsetSec)} avg={wh.avgHr} />
                         ) : <p className="workout-hint">No heart rate readings during this one — only calories.</p>}
                         <p className="workout-hint" style={{ margin: '0.4rem 0 0' }}>
                           {Math.round((Date.parse(wh.end) - Date.parse(wh.start)) / 60_000)} min{wh.watch ? ' (Watch session)' : ''} · dashed lines are your logged sets
                         </p>
+                        {wh.setOffsetSec ? <p className="workout-hint" style={{ margin: '0.25rem 0 0' }}>{alignNote(wh.setOffsetSec)}</p> : null}
                       </div>
                     )}
                   </div>
