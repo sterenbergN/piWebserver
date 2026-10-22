@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseOnshapeLink } from './onshape';
-import { exportPartStudioStl, looksLikeStl, OnshapeError } from './onshape-export';
+import { assemblyExportResult, exportPartStudioStl, looksLikeGltf, looksLikeStl, OnshapeError, startAssemblyExport, tabKind } from './onshape-export';
 
 const D = '0123456789abcdef01234567';
 const W = 'abcdef0123456789abcdef01';
@@ -73,6 +73,57 @@ test('exportPartStudioStl never sends the keys off Onshape', async () => {
       assert.equal(calls.length, 1);
     },
   );
+});
+
+test('looksLikeGltf takes binary and self-contained JSON glTF only', () => {
+  assert.equal(looksLikeGltf(new TextEncoder().encode('glTF\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000')), true);
+  assert.equal(looksLikeGltf(new TextEncoder().encode('{"asset":{"version":"2.0"},"buffers":[{"uri":"data:application/octet-stream;base64,AAAA"}]}')), true);
+  assert.equal(looksLikeGltf(new TextEncoder().encode('{"asset":{"version":"2.0"},"buffers":[{"uri":"model.bin"}]}')), false);
+  assert.equal(looksLikeGltf(new TextEncoder().encode('{"message":"nope"}')), false);
+});
+
+test('tabKind tells Part Studios from assemblies', async () => {
+  for (const [type, kind] of [['PARTSTUDIO', 'partstudio'], ['ASSEMBLY', 'assembly']] as const) {
+    await withFakeOnshape(() => Response.json([{ id: E, elementType: type }]), async (calls) => {
+      assert.equal(await tabKind(ref), kind);
+      assert.match(calls[0].url, new RegExp(`/documents/d/${D}/w/${W}/elements[?]elementId=${E}`));
+    });
+  }
+  await withFakeOnshape(() => Response.json([{ id: E, elementType: 'BILLOFMATERIALS' }]), async () => {
+    await assert.rejects(tabKind(ref), /Part Studio or an assembly/);
+  });
+});
+
+test('assembly export: start, wait while active, then download the glTF', async () => {
+  const T = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+  const glb = new TextEncoder().encode('glTF\u0002\u0000\u0000\u0000\u0000\u0000\u0000\u0000');
+  let state = 'ACTIVE';
+  await withFakeOnshape((url) => {
+    if (url.endsWith('/export/gltf')) return Response.json({ id: T });
+    if (url.includes(`/translations/${T}`)) return Response.json({ requestState: state, documentId: D, resultExternalDataIds: ['file1'] });
+    if (url.endsWith(`/documents/d/${D}/externaldata/file1`)) return new Response(null, { status: 307, headers: { location: 'https://cad.onshape.com/blob/file1' } });
+    if (url === 'https://cad.onshape.com/blob/file1') return new Response(glb);
+    return new Response(null, { status: 500 });
+  }, async (calls) => {
+    assert.equal(await startAssemblyExport(ref), T);
+    assert.match(calls[0].url, new RegExp(`/assemblies/d/${D}/w/${W}/e/${E}/export/gltf$`));
+    assert.equal(await assemblyExportResult(ref, T), null);
+    state = 'DONE';
+    assert.equal((await assemblyExportResult(ref, T))?.byteLength, glb.byteLength);
+  });
+});
+
+test('assembly export reports failures and refuses odd ids', async () => {
+  await withFakeOnshape(() => Response.json({ requestState: 'FAILED', failureReason: 'Too big', documentId: D }), async () => {
+    await assert.rejects(assemblyExportResult(ref, 'aaaaaaaaaaaaaaaaaaaaaaaa'), /Too big/);
+  });
+  await withFakeOnshape(() => Response.json({ requestState: 'DONE', documentId: 'b'.repeat(24), resultExternalDataIds: ['f'] }), async () => {
+    await assert.rejects(assemblyExportResult(ref, 'aaaaaaaaaaaaaaaaaaaaaaaa'), /another document/);
+  });
+  await withFakeOnshape(() => Response.json({}), async (calls) => {
+    await assert.rejects(assemblyExportResult(ref, '../../etc'), OnshapeError);
+    assert.equal(calls.length, 0);
+  });
 });
 
 test('exportPartStudioStl explains refused keys and non-Part-Studio tabs', async () => {

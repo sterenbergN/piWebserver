@@ -1,5 +1,5 @@
 // Onshape links: which document, version and tab a CAD entry's link points at,
-// so its Part Studio can be exported as the 3D model (see onshape-export.ts).
+// so its Part Studio or assembly can be exported as the 3D model (see onshape-export.ts).
 
 export type OnshapeRef = {
   host: string;

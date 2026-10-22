@@ -14,7 +14,7 @@ const EMPTY: CadProject = { id: '', name: '', description: '', link: '' };
  * CAD models: the first few, with a button to show the rest. A model with a 3D
  * file gets an interactive viewer. Signed in as admin, models (and their
  * files) are added and edited here; with Onshape API keys on the server
- * (`onshape`), a model linked to an Onshape Part Studio can have its 3D file
+ * (`onshape`), a model linked to an Onshape Part Studio or assembly can have its 3D file
  * exported from Onshape instead of uploaded.
  */
 export default function CadSection({ projects: initial, isAdmin = false, onshape = false }: { projects: CadProject[]; isAdmin?: boolean; onshape?: boolean }) {
@@ -34,13 +34,23 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
   const [error, setError] = useState('');
   const shown = expanded || isAdmin ? projects : projects.slice(0, PREVIEW);
 
-  /** Ask the server to export a model's Onshape Part Studio as its 3D file. */
+  /**
+   * Ask the server to export a model's Onshape tab as its 3D file. A Part
+   * Studio comes straight back; an assembly is a background export on
+   * Onshape's side, checked every few seconds (for up to ten minutes).
+   */
   const fetchFromOnshape = async (id: string) => {
-    const res = await fetch('/api/cad/onshape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).catch(() => null);
-    const data = await res?.json().catch(() => ({}));
-    if (!res?.ok || !data?.success) throw new Error(data?.message || 'Couldn’t reach the server');
-    setProjects((prev) => prev.map((p) => (p.id === id ? data.project : p)));
-    return data.project as CadProject;
+    let translation: string | undefined;
+    for (let checks = 0; checks < 120; checks++) {
+      if (translation) await new Promise((r) => setTimeout(r, 5000));
+      const res = await fetch('/api/cad/onshape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, translation }) }).catch(() => null);
+      const data = await res?.json().catch(() => ({}));
+      if (!res?.ok || !data?.success) throw new Error(data?.message || 'Couldn’t reach the server');
+      if (data.pending) { translation = data.translation; continue; }
+      setProjects((prev) => prev.map((p) => (p.id === id ? data.project : p)));
+      return data.project as CadProject;
+    }
+    throw new Error('Onshape is still exporting the assembly. Try 🔄 again in a few minutes.');
   };
 
   const refresh = async (p: CadProject) => {
@@ -140,7 +150,7 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
         onshape ? (
           <label className="is-wide home-cad-onshape">
             <input type="checkbox" checked={fromOnshape && !modelFile} disabled={!!modelFile} onChange={(e) => setFromOnshape(e.target.checked)} />
-            <span>Get the 3D model from this Onshape Part Studio when I save{modelFile ? ' (off while a file is chosen below)' : ''}</span>
+            <span>Get the 3D model from this Onshape tab (Part Studio or assembly) when I save{modelFile ? ' (off while a file is chosen below)' : ''}</span>
           </label>
         ) : (
           <p className="is-wide home-cad-onshape-hint">This is an Onshape link. With <code>ONSHAPE_ACCESS_KEY</code> and <code>ONSHAPE_SECRET_KEY</code> set on the server, the 3D model can come straight from it.</p>
@@ -199,7 +209,7 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
                 <div className="home-cad-admin">
                   <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
                   {onshape && parseOnshapeLink(cad.link) && (
-                    <button onClick={() => refresh(cad)} disabled={refreshing !== null} title="Refresh the 3D model from Onshape" aria-label={`Refresh ${cad.name} from Onshape`}>{refreshing === cad.id ? '…' : '🔄'}</button>
+                    <button onClick={() => refresh(cad)} disabled={refreshing !== null} title="Refresh the 3D model from Onshape (assemblies can take a minute)" aria-label={`Refresh ${cad.name} from Onshape`}>{refreshing === cad.id ? '…' : '🔄'}</button>
                   )}
                   <button onClick={() => remove(cad)} title="Delete" aria-label={`Delete ${cad.name}`} className="is-danger">✕</button>
                 </div>
