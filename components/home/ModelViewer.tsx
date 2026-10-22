@@ -7,12 +7,15 @@ import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 type Status = 'idle' | 'loading' | 'ready' | 'error';
 type Controls = { reset: () => void; setSpin: (on: boolean) => void; snapshot: () => Promise<Blob | null> };
 
-/** Small files without a still picture load as soon as they're on screen; the rest wait for a tap. */
+/**
+ * Models up to this size load and spin as soon as they're on screen. Bigger
+ * ones show their still picture and wait for a tap, and only they take stills.
+ */
 const AUTO_LOAD_BYTES = 4 * 1024 * 1024;
 
 type Props = {
   src: string; name: string; size?: number;
-  /** A still picture of the model, shown until the 3D view is opened. */
+  /** A still picture of the model, shown until the 3D view is opened (big models only). */
   poster?: string;
   /** Given a picture of the current view (admin: saved as the still); `byHand` when 📷 was pressed. */
   onSnapshot?: (image: Blob, byHand: boolean) => Promise<void>;
@@ -24,16 +27,21 @@ type Props = {
 
 /**
  * An interactive 3D view of a model file (STL, 3MF, OBJ, GLB or PLY): drag to
- * turn it, scroll or pinch to zoom. Until it's opened it shows the model's
- * still picture, so the file (and three.js) only download when someone wants
- * the 3D view. Rendering pauses while the viewer is off screen.
+ * turn it, scroll or pinch to zoom. Small models load and spin by themselves;
+ * a big one shows its still picture until it's opened, so the file (and
+ * three.js) only download when someone wants the 3D view. Rendering pauses
+ * while the viewer is off screen.
  */
-export default function ModelViewer({ src, name, size, poster, onSnapshot, wantsSnapshot, autoStart }: Props) {
+export default function ModelViewer({ src, name, size, poster: savedPoster, onSnapshot: saveSnapshot, wantsSnapshot, autoStart }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const controls = useRef<Controls | null>(null);
+  const large = (size ?? 0) > AUTO_LOAD_BYTES;
+  // Stills are only for big models: small ones are spinning before a picture would matter.
+  const poster = large ? savedPoster : undefined;
+  const onSnapshot = large ? saveSnapshot : undefined;
   // The latest snapshot wishes, read once the model has loaded.
-  const snap = useRef({ onSnapshot, wantsSnapshot });
-  snap.current = { onSnapshot, wantsSnapshot };
+  const snap = useRef({ onSnapshot, wantsSnapshot: large && wantsSnapshot });
+  snap.current = { onSnapshot, wantsSnapshot: large && wantsSnapshot };
   const [snapping, setSnapping] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   /** Each load (or retry) bumps this; 0 until the model is asked for. */
@@ -46,13 +54,13 @@ export default function ModelViewer({ src, name, size, poster, onSnapshot, wants
   // Load now when asked to.
   useEffect(() => { if (autoStart && status === 'idle') load(); }, [autoStart, status]);
 
-  // Small models without a still start loading when they scroll into view.
+  // Small models start loading (and spinning) when they scroll into view.
   useEffect(() => {
-    if (status !== 'idle' || poster || (size ?? 0) > AUTO_LOAD_BYTES || !box.current) return;
+    if (status !== 'idle' || large || !box.current) return;
     const seen = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { seen.disconnect(); load(); } }, { rootMargin: '200px' });
     seen.observe(box.current);
     return () => seen.disconnect();
-  }, [status, size, poster]);
+  }, [status, large]);
 
   useEffect(() => {
     if (!attempt || !box.current || !ext) return;
