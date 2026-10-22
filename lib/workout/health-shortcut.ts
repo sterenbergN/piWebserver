@@ -143,12 +143,12 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
       '2. Add "Get Dictionary Value" to get the value for the key "minutes" from that Contents of URL result.',
       '3. Add "Adjust Date": Subtract, number = Dictionary Value, unit = minutes, from Current Date. Then add "Set Variable" named "Since".', '',
       'STEP 3: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
-      'STEP 4: Upload it', upload(SHORTCUT_SAMPLES, ''), '',
+      'STEP 4: Upload it', upload(SHORTCUT_SAMPLES, ''), 'Directly after this Get Contents of URL, add "Set Variable" named "Response".', '',
       'STEP 5: Remember when it ran',
       '1. Add "Format Date" on Current Date, with Date Format: Medium and Time Format: Short.',
       `2. Add "Save File" to save the Formatted Date into the Shortcuts folder (iCloud Drive) with the file path ${SYNC_STAMP_FILE}. Turn "Ask Where to Save" off and turn "Overwrite If File Exists" on.`, '',
       'STEP 6: Only speak up if something is wrong',
-      'Add "Get Dictionary Value" to get the value for the key "alert" from the Contents of URL result. Then add "If" Dictionary Value "has any value", and inside it add "Show Notification" that shows the Dictionary Value. Leave Otherwise empty. Do not show any other notification.',
+      'Add "Get Dictionary Value" to get the value for the key "alert" from the variable Response (the upload's result, not the one from STEP 2). Then add "If" Dictionary Value "has any value", and inside it add "Show Notification" that shows the Dictionary Value. Leave Otherwise empty. Do not show any other notification.',
     ].join('\n');
   }
   // Two weeks of watch heart rate and energy is tens of thousands of readings —

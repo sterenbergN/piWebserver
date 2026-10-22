@@ -10,7 +10,7 @@ test('the daily shortcut skips recent runs, remembers when it ran, and only noti
   assert.ok(prompt.includes(`"is less than" ${SYNC_EVERY_HOURS * 60}`));
   assert.ok(prompt.indexOf('Stop This Shortcut') < prompt.indexOf('Find Health Samples'));
   assert.ok(prompt.indexOf('Save File') > prompt.indexOf('Get Contents of URL'));
-  assert.ok(prompt.includes('the key "alert"'));
+  assert.ok(prompt.includes('the key "alert" from the variable Response'));
   assert.ok(!prompt.includes('the key "message"'));
   assert.ok(prompt.includes(`URL ${url}/since`));
   assert.ok(prompt.includes('Heart Rate: instead of "in the last N days", use the filter "Start Date is after Since"'));
