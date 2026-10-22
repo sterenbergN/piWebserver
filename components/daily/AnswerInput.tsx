@@ -1,6 +1,7 @@
 'use client';
 
 import { MathText, Tex } from './MathText';
+import { evaluateValue } from '@/lib/daily/expr';
 import type { PublicInput } from '@/lib/daily/grade';
 import type { Answer, PartResponse } from '@/lib/daily/types';
 
@@ -27,6 +28,20 @@ export function readNumber(text: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A plain number, or an expression like sqrt(2) or 3pi/4 worked out to one. */
+export function readValue(text: string | undefined): number | null {
+  return readNumber(text) ?? evaluateValue(text);
+}
+
+/** What an expression works out to, shown under the box (nothing for a plain number). */
+function ValuePreview({ text }: { text: string | undefined }) {
+  if (!text?.trim() || readNumber(text) !== null) return null;
+  const value = evaluateValue(text);
+  return value === null
+    ? <span className="dq-value-preview is-bad">Can’t work that out yet</span>
+    : <span className="dq-value-preview">= {+value.toPrecision(6)}</span>;
+}
+
 function readList(text: string | undefined): number[] | null {
   if (!text?.trim()) return null;
   const parts = text.split(/[,;\s]+/).filter(Boolean).map(readNumber);
@@ -37,7 +52,7 @@ function readList(text: string | undefined): number[] | null {
 export function toResponse(input: PublicInput, draft: Draft): PartResponse | null {
   switch (input.type) {
     case 'numeric': {
-      const value = readNumber(draft.text);
+      const value = readValue(draft.text);
       return value === null ? null : { type: 'numeric', value };
     }
     case 'choice':
@@ -45,8 +60,8 @@ export function toResponse(input: PublicInput, draft: Draft): PartResponse | nul
     case 'multi':
       return draft.options?.length ? { type: 'multi', options: draft.options } : null;
     case 'range': {
-      const min = draft.minOpen ? null : readNumber(draft.min);
-      const max = draft.maxOpen ? null : readNumber(draft.max);
+      const min = draft.minOpen ? null : readValue(draft.min);
+      const max = draft.maxOpen ? null : readValue(draft.max);
       if ((!draft.minOpen && min === null) || (!draft.maxOpen && max === null) || (draft.minOpen && draft.maxOpen)) return null;
       return { type: 'range', min, max };
     }
@@ -105,9 +120,13 @@ export default function AnswerInput({ id, input, draft, onChange, locked }: Prop
     case 'numeric':
       return (
         <div className="dq-numeric">
-          <input id={id} aria-labelledby={`${id}-label`} inputMode="decimal" autoComplete="off" placeholder="Your answer" value={draft.text ?? ''} disabled={locked}
-            onChange={(e) => set({ text: e.target.value })} aria-invalid={!!draft.text && readNumber(draft.text) === null} />
-          {input.unit && <span className="dq-unit">{input.unit}</span>}
+          <div className="dq-numeric-row">
+            <input id={id} aria-labelledby={`${id}-label`} aria-describedby={`${id}-value`} autoComplete="off" autoCapitalize="off" spellCheck={false}
+              placeholder="e.g. 1.41 or sqrt(2)" value={draft.text ?? ''} disabled={locked}
+              onChange={(e) => set({ text: e.target.value })} aria-invalid={!!draft.text?.trim() && readValue(draft.text) === null} />
+            {input.unit && <span className="dq-unit">{input.unit}</span>}
+          </div>
+          {!locked && <span id={`${id}-value`} aria-live="polite"><ValuePreview text={draft.text} /></span>}
         </div>
       );
     case 'choice':
@@ -136,13 +155,15 @@ export default function AnswerInput({ id, input, draft, onChange, locked }: Prop
         <div className="dq-range">
           <label className="dq-range-side">
             <span>Lower bound</span>
-            <input inputMode="decimal" autoComplete="off" value={draft.minOpen ? '−∞' : draft.min ?? ''} disabled={locked || draft.minOpen} onChange={(e) => set({ min: e.target.value })} />
+            <input autoComplete="off" autoCapitalize="off" spellCheck={false} value={draft.minOpen ? '−∞' : draft.min ?? ''} disabled={locked || draft.minOpen} onChange={(e) => set({ min: e.target.value })} />
+            {!locked && !draft.minOpen && <ValuePreview text={draft.min} />}
             <button type="button" className="dq-chip" aria-pressed={!!draft.minOpen} disabled={locked} onClick={() => set({ minOpen: !draft.minOpen })}>No lower bound</button>
           </label>
           <span className="dq-range-x" aria-hidden><Tex latex="< x <" /></span>
           <label className="dq-range-side">
             <span>Upper bound</span>
-            <input inputMode="decimal" autoComplete="off" value={draft.maxOpen ? '+∞' : draft.max ?? ''} disabled={locked || draft.maxOpen} onChange={(e) => set({ max: e.target.value })} />
+            <input autoComplete="off" autoCapitalize="off" spellCheck={false} value={draft.maxOpen ? '+∞' : draft.max ?? ''} disabled={locked || draft.maxOpen} onChange={(e) => set({ max: e.target.value })} />
+            {!locked && !draft.maxOpen && <ValuePreview text={draft.max} />}
             <button type="button" className="dq-chip" aria-pressed={!!draft.maxOpen} disabled={locked} onClick={() => set({ maxOpen: !draft.maxOpen })}>No upper bound</button>
           </label>
         </div>

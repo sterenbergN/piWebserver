@@ -5,6 +5,7 @@ import QuestionCard from '@/components/daily/QuestionCard';
 import FormulaSheet, { FormulaOfTheDay } from '@/components/daily/FormulaSheet';
 import DailyStats from '@/components/daily/DailyStats';
 import Practice from '@/components/daily/Practice';
+import Calculator from '@/components/daily/Calculator';
 import LevelInfo from '@/components/progress/LevelInfo';
 import { useDaily } from '@/components/daily/useDaily';
 import Confetti from '@/components/habits/Confetti';
@@ -257,6 +258,7 @@ export default function DailyPage() {
         </>
       )}
 
+      {d.state === 'ready' && (tab === 'today' || tab === 'practice') && <Calculator />}
       {toast && <div className="dq-toast" role="status">{toast}</div>}
     </div>
   );
