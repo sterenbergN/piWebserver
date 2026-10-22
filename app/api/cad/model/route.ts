@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
-import { MODEL_FIELDS, readCadEntries, removeModelFile, storeModel, writeCadEntries } from '@/lib/cad/files';
+import { MODEL_FIELDS, readCadEntries, removeModelFiles, storeModel, writeCadEntries } from '@/lib/cad/files';
 import { MAX_MODEL_BYTES, MODEL_EXTENSIONS, modelExtension } from '@/lib/cad/models';
 
 // A CAD entry's 3D model file (admin only). POST multipart { id, file } stores
@@ -27,7 +27,7 @@ export async function DELETE(request: Request) {
   const entries = await readCadEntries();
   const entry = entries.find((e) => e.id === id);
   if (!entry) return NextResponse.json({ success: false, message: 'Not found' }, { status: 404 });
-  await removeModelFile(entry.model);
+  await removeModelFiles(entry);
   for (const field of MODEL_FIELDS) delete entry[field];
   await writeCadEntries(entries);
   return NextResponse.json({ success: true, project: entry });

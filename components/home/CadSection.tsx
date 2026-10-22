@@ -32,6 +32,20 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
   /** The model being refreshed from Onshape. */
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  /** The model whose 3D view opens by itself (just saved), so its still picture gets taken. */
+  const [justSaved, setJustSaved] = useState<string | null>(null);
+
+  /** Save a picture of a model's current view as its still. */
+  const saveStill = async (id: string, image: Blob, announce: boolean) => {
+    const form = new FormData();
+    form.append('id', id);
+    form.append('file', image, `still.${image.type === 'image/png' ? 'png' : 'webp'}`);
+    const res = await fetch('/api/cad/poster', { method: 'POST', body: form }).catch(() => null);
+    const data = await res?.json().catch(() => ({}));
+    if (!data?.success) { setNotice(data?.message || 'Couldn’t save the still picture'); return; }
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, poster: data.project.poster, posterFor: data.project.posterFor } : p)));
+    if (announce) setNotice('Saved this view as the still picture.');
+  };
   const [error, setError] = useState('');
   const shown = expanded || isAdmin ? projects : projects.slice(0, PREVIEW);
   /** The model a link (/#cad-<id>, e.g. from a post) pointed at, glowing briefly. */
@@ -77,6 +91,7 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
     setNotice('');
     try {
       await fetchFromOnshape(p.id);
+      setJustSaved(p.id);
       setNotice(`Updated the 3D model of “${p.name}” from Onshape.`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'The Onshape export failed');
@@ -126,6 +141,7 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
           throw new Error(`Saved, but the Onshape export didn’t work: ${err instanceof Error ? err.message : 'try again'}`);
         }
       }
+      if (saved.model) setJustSaved(saved.id);
       setModelFile(null);
       setFromOnshape(false);
       setEditing(null);
@@ -212,7 +228,12 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
         {shown.map(cad => {
           if (editing?.id === cad.id) return <div key={cad.id} style={{ gridColumn: '1 / -1' }}>{editor}</div>;
           return (
-            <CadCard key={cad.id} cad={cad} id={cadAnchor(cad.id)} className={linked === cad.id ? 'is-linked' : ''}>
+            <CadCard key={cad.id} cad={cad} id={cadAnchor(cad.id)} className={linked === cad.id ? 'is-linked' : ''}
+              still={isAdmin && cad.model ? {
+                onSnapshot: (image, byHand) => saveStill(cad.id, image, byHand),
+                wantsSnapshot: cad.posterFor !== cad.model,
+                autoStart: justSaved === cad.id,
+              } : undefined}>
               {isAdmin && (
                 <div className="home-cad-admin">
                   <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>

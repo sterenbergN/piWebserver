@@ -2,21 +2,39 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatBytes, modelExtension } from '@/lib/cad/models';
+import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 
 type Status = 'idle' | 'loading' | 'ready' | 'error';
-type Controls = { reset: () => void; setSpin: (on: boolean) => void };
+type Controls = { reset: () => void; setSpin: (on: boolean) => void; snapshot: () => Promise<Blob | null> };
 
-/** Small files load as soon as they're on screen; bigger ones wait for a tap. */
+/** Small files without a still picture load as soon as they're on screen; the rest wait for a tap. */
 const AUTO_LOAD_BYTES = 4 * 1024 * 1024;
+
+type Props = {
+  src: string; name: string; size?: number;
+  /** A still picture of the model, shown until the 3D view is opened. */
+  poster?: string;
+  /** Given a picture of the current view (admin: saved as the still); `byHand` when 📷 was pressed. */
+  onSnapshot?: (image: Blob, byHand: boolean) => Promise<void>;
+  /** Take that picture by itself once the model has loaded (there's no still for this model yet). */
+  wantsSnapshot?: boolean;
+  /** Load straight away (e.g. just after the model was saved, so its still gets taken). */
+  autoStart?: boolean;
+};
 
 /**
  * An interactive 3D view of a model file (STL, 3MF, OBJ, GLB or PLY): drag to
- * turn it, scroll or pinch to zoom. three.js is only downloaded once a model
- * is shown, and rendering pauses while the viewer is off screen.
+ * turn it, scroll or pinch to zoom. Until it's opened it shows the model's
+ * still picture, so the file (and three.js) only download when someone wants
+ * the 3D view. Rendering pauses while the viewer is off screen.
  */
-export default function ModelViewer({ src, name, size }: { src: string; name: string; size?: number }) {
+export default function ModelViewer({ src, name, size, poster, onSnapshot, wantsSnapshot, autoStart }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const controls = useRef<Controls | null>(null);
+  // The latest snapshot wishes, read once the model has loaded.
+  const snap = useRef({ onSnapshot, wantsSnapshot });
+  snap.current = { onSnapshot, wantsSnapshot };
+  const [snapping, setSnapping] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   /** Each load (or retry) bumps this; 0 until the model is asked for. */
   const [attempt, setAttempt] = useState(0);
@@ -25,13 +43,16 @@ export default function ModelViewer({ src, name, size }: { src: string; name: st
   const [spin, setSpin] = useState(true);
   const ext = modelExtension(src);
 
-  // Small models start loading when they scroll into view.
+  // Load now when asked to.
+  useEffect(() => { if (autoStart && status === 'idle') load(); }, [autoStart, status]);
+
+  // Small models without a still start loading when they scroll into view.
   useEffect(() => {
-    if (status !== 'idle' || (size ?? 0) > AUTO_LOAD_BYTES || !box.current) return;
+    if (status !== 'idle' || poster || (size ?? 0) > AUTO_LOAD_BYTES || !box.current) return;
     const seen = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { seen.disconnect(); load(); } }, { rootMargin: '200px' });
     seen.observe(box.current);
     return () => seen.disconnect();
-  }, [status, size]);
+  }, [status, size, poster]);
 
   useEffect(() => {
     if (!attempt || !box.current || !ext) return;
@@ -139,8 +160,24 @@ export default function ModelViewer({ src, name, size }: { src: string; name: st
       const onScreen = new IntersectionObserver((entries) => renderer.setAnimationLoop(entries.some((e) => e.isIntersecting) ? frame : null));
       onScreen.observe(host);
 
-      controls.current = { reset, setSpin: (on) => { orbit.autoRotate = on; } };
+      // A picture of what's on screen, drawn at least 1200px wide whatever the screen
+      // (the canvas is copied as toBlob is called, so the size goes straight back).
+      const snapshot = () => new Promise<Blob | null>((done) => {
+        const ratio = renderer.getPixelRatio();
+        const sharp = Math.min(4, Math.max(ratio, 1200 / Math.max(1, host.clientWidth)));
+        if (sharp !== ratio) renderer.setPixelRatio(sharp);
+        renderer.render(scene, camera);
+        renderer.domElement.toBlob(done, 'image/webp', 0.85);
+        if (sharp !== ratio) { renderer.setPixelRatio(ratio); renderer.render(scene, camera); }
+      });
+      controls.current = { reset, setSpin: (on) => { orbit.autoRotate = on; }, snapshot };
       setStatus('ready');
+
+      // No still for this model yet: take one from the starting view.
+      if (snap.current.wantsSnapshot && snap.current.onSnapshot) {
+        const image = await snapshot();
+        if (image && !disposed) snap.current.onSnapshot(image, false).catch(() => { /* the 📷 button can try again */ });
+      }
 
       cleanup = () => {
         onScreen.disconnect();
@@ -162,6 +199,17 @@ export default function ModelViewer({ src, name, size }: { src: string; name: st
     return () => { disposed = true; cleanup(); };
   }, [attempt, src, ext, size]);
 
+  const takeSnapshot = async () => {
+    if (!controls.current || !onSnapshot) return;
+    setSnapping(true);
+    try {
+      const image = await controls.current.snapshot();
+      if (image) await onSnapshot(image, true);
+    } finally {
+      setSnapping(false);
+    }
+  };
+
   const fullscreen = () => {
     const el = box.current?.parentElement;
     if (!el) return;
@@ -172,15 +220,22 @@ export default function ModelViewer({ src, name, size }: { src: string; name: st
   return (
     <div className="mv">
       <div ref={box} className="mv-stage" aria-label={`3D view of ${name}`} role="img">
-        {status === 'idle' && (
+        {poster && status !== 'ready' && (
+          <img className="mv-poster" src={mediaSrc(poster, 960)} srcSet={mediaSrcSet(poster, [640, 960, 1280])} sizes="(max-width: 700px) 100vw, 420px" alt={`${name} (still picture)`} loading="lazy" decoding="async" />
+        )}
+        {status === 'idle' && (poster ? (
+          <button type="button" className="mv-start has-poster" onClick={load} aria-label={`Open the 3D view of ${name}`}>
+            <span className="mv-play"><span aria-hidden>🧊</span> View in 3D<small>{size ? ` · ${formatBytes(size)}` : ''}</small></span>
+          </button>
+        ) : (
           <button type="button" className="mv-start" onClick={load}>
             <span aria-hidden>🧊</span>
             <strong>View in 3D</strong>
             <small>{ext?.slice(1).toUpperCase()}{size ? ` · ${formatBytes(size)}` : ''}</small>
           </button>
-        )}
+        ))}
         {status === 'loading' && (
-          <div className="mv-loading">
+          <div className={`mv-loading${poster ? ' over-poster' : ''}`}>
             <span>Loading model… {progress > 0 ? `${Math.round(progress * 100)}%` : ''}</span>
             <span className="mv-bar"><i style={{ width: `${Math.round(progress * 100)}%` }} /></span>
           </div>
@@ -196,6 +251,7 @@ export default function ModelViewer({ src, name, size }: { src: string; name: st
         <div className="mv-tools">
           <button type="button" className="mv-tool" onClick={() => controls.current?.reset()} title="Reset the view">⟲</button>
           <button type="button" className="mv-tool" aria-pressed={spin} onClick={() => { controls.current?.setSpin(!spin); setSpin(!spin); }} title={spin ? 'Stop spinning' : 'Spin'}>{spin ? '⏸' : '▶'}</button>
+          {onSnapshot && <button type="button" className="mv-tool" onClick={takeSnapshot} disabled={snapping} title="Use this view as the still picture">{snapping ? '…' : '📷'}</button>}
           <button type="button" className="mv-tool" onClick={fullscreen} title="Full screen">⛶</button>
         </div>
       )}

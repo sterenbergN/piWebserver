@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
-import { MODEL_FIELDS, removeModelFile } from '@/lib/cad/files';
+import { MODEL_FIELDS, removeModelFiles } from '@/lib/cad/files';
 
 const cadFile = path.join(process.cwd(), 'public', 'content', 'cad.json');
 
@@ -58,7 +58,7 @@ export async function DELETE(request: Request) {
 
   const { id } = await request.json();
   let projects = await readCADProjects();
-  await removeModelFile(projects.find((p: any) => p.id === id)?.model);
+  await removeModelFiles(projects.find((p: any) => p.id === id));
   projects = projects.filter((p: any) => p.id !== id);
   await fs.writeFile(cadFile, JSON.stringify(projects, null, 2));
   return NextResponse.json({ success: true });

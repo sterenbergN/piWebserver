@@ -16,9 +16,16 @@ a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: 
 .mv-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; cursor: grab; }
 .mv-canvas:active { cursor: grabbing; }
 .mv-start { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.2rem; width: 100%; border: none; background: none; color: var(--foreground); font: inherit; cursor: pointer; }
-.mv-start span { font-size: 2.4rem; transition: transform 0.2s; }
-.mv-start:hover span { transform: scale(1.12) rotate(-8deg); }
+.mv-start > span[aria-hidden] { font-size: 2.4rem; transition: transform 0.2s; }
+.mv-start:hover > span[aria-hidden] { transform: scale(1.12) rotate(-8deg); }
 .mv-start small { color: var(--muted); font-size: 0.78rem; }
+.mv-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.mv-start.has-poster { justify-content: flex-end; padding-bottom: 0.9rem; }
+.mv-play { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.45rem 0.9rem; border-radius: 999px; border: 1px solid var(--surface-border); background: color-mix(in srgb, var(--background) 82%, transparent); backdrop-filter: blur(6px); font-size: 0.85rem; font-weight: 700; transition: transform 0.15s, border-color 0.15s; }
+.mv-play span { font-size: 1rem; }
+.mv-play small { font-weight: 500; }
+.mv-start.has-poster:hover .mv-play { transform: translateY(-2px); border-color: var(--accent-light); }
+.mv-loading.over-poster { background: color-mix(in srgb, var(--background) 45%, transparent); color: var(--foreground); }
 .mv-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem; color: var(--muted); font-size: 0.85rem; }
 .mv-bar { width: 55%; height: 5px; border-radius: 999px; background: var(--surface-border); overflow: hidden; }
 .mv-bar i { display: block; height: 100%; background: var(--accent-light); transition: width 0.2s; }
@@ -26,7 +33,7 @@ a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: 
 .mv-tool { min-width: 32px; height: 32px; padding: 0 0.5rem; border-radius: 9px; border: 1px solid var(--surface-border); background: color-mix(in srgb, var(--background) 85%, transparent); color: var(--foreground); font: inherit; font-size: 0.9rem; cursor: pointer; }
 .mv-tool:hover { border-color: var(--accent-light); }
 .mv-hint { position: absolute; left: 0.6rem; bottom: 0.45rem; font-size: 0.7rem; color: var(--muted); pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .mv-start span { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .mv-start > span[aria-hidden] { transition: none; } }
 
 /* Opened from a link to it (/#cad-<id>): a brief glow. */
 .home-cad-cell { scroll-margin-top: 5rem; }

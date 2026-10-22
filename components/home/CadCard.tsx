@@ -3,16 +3,19 @@ import type { CadProject } from '@/lib/site-content';
 import ModelViewer from './ModelViewer';
 import './cad.css';
 
+/** For admins: what the viewer should do about the model's still picture. */
+export type StillOptions = { onSnapshot: (image: Blob, byHand: boolean) => Promise<void>; wantsSnapshot: boolean; autoStart: boolean };
+
 /**
  * One CAD model: its 3D view (when it has a model file), name and description,
  * linking out to where it's hosted. Used by the home page's CAD section and by
  * posts that show the model. `children` sit on the card (e.g. admin buttons).
  */
-export default function CadCard({ cad, id, className = '', children }: { cad: CadProject; id?: string; className?: string; children?: ReactNode }) {
+export default function CadCard({ cad, id, className = '', still, children }: { cad: CadProject; id?: string; className?: string; still?: StillOptions; children?: ReactNode }) {
   const Tag = cad.link ? 'a' : 'div';
   return (
     <div id={id} className={`home-cad-cell${cad.model ? ' has-model' : ''} ${className}`.trim()}>
-      {cad.model && <ModelViewer src={`/api/media${cad.model}`} name={cad.name} size={cad.modelSize} />}
+      {cad.model && <ModelViewer key={cad.model} src={`/api/media${cad.model}`} name={cad.name} size={cad.modelSize} poster={cad.poster} {...still} />}
       <Tag className="home-cad-item" {...(cad.link ? { href: cad.link, target: '_blank', rel: 'noreferrer' } : {})}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
           <h3>{cad.name}</h3>
