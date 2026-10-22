@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { CadProject } from '@/lib/site-content';
 import { useSitePopup } from '@/components/SitePopup';
 import { MAX_MODEL_BYTES, MODEL_EXTENSIONS, formatBytes, modelExtension } from '@/lib/cad/models';
+import { parseOnshapeLink } from '@/lib/cad/onshape';
 import ModelViewer from './ModelViewer';
 
 const PREVIEW = 4;
@@ -12,9 +13,11 @@ const EMPTY: CadProject = { id: '', name: '', description: '', link: '' };
 /**
  * CAD models: the first few, with a button to show the rest. A model with a 3D
  * file gets an interactive viewer. Signed in as admin, models (and their
- * files) are added and edited here.
+ * files) are added and edited here; with Onshape API keys on the server
+ * (`onshape`), a model linked to an Onshape Part Studio can have its 3D file
+ * exported from Onshape instead of uploaded.
  */
-export default function CadSection({ projects: initial, isAdmin = false }: { projects: CadProject[]; isAdmin?: boolean }) {
+export default function CadSection({ projects: initial, isAdmin = false, onshape = false }: { projects: CadProject[]; isAdmin?: boolean; onshape?: boolean }) {
   const { confirm, popup } = useSitePopup();
   const [projects, setProjects] = useState(initial);
   const [expanded, setExpanded] = useState(false);
@@ -23,8 +26,44 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
   const [saving, setSaving] = useState(false);
   /** A 3D file picked in the editor, uploaded when it's saved. */
   const [modelFile, setModelFile] = useState<File | null>(null);
+  /** Export the 3D model from the Onshape link when the editor is saved. */
+  const [fromOnshape, setFromOnshape] = useState(false);
+  /** The model being refreshed from Onshape. */
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const shown = expanded || isAdmin ? projects : projects.slice(0, PREVIEW);
+
+  /** Ask the server to export a model's Onshape Part Studio as its 3D file. */
+  const fetchFromOnshape = async (id: string) => {
+    const res = await fetch('/api/cad/onshape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).catch(() => null);
+    const data = await res?.json().catch(() => ({}));
+    if (!res?.ok || !data?.success) throw new Error(data?.message || 'Couldn’t reach the server');
+    setProjects((prev) => prev.map((p) => (p.id === id ? data.project : p)));
+    return data.project as CadProject;
+  };
+
+  const refresh = async (p: CadProject) => {
+    setRefreshing(p.id);
+    setNotice('');
+    try {
+      await fetchFromOnshape(p.id);
+      setNotice(`Updated the 3D model of “${p.name}” from Onshape.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'The Onshape export failed');
+    } finally {
+      setRefreshing(null);
+    }
+  };
+
+  /** Open the editor; a new link (or no model yet) defaults to fetching from Onshape. */
+  const edit = (p: CadProject) => {
+    setError('');
+    setNotice('');
+    setModelFile(null);
+    setFromOnshape(onshape && !p.model);
+    setEditing(p);
+  };
 
   const save = async () => {
     if (!editing?.name.trim()) return;
@@ -50,8 +89,16 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
         }
         saved = upData.project;
         setProjects((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
+      } else if (fromOnshape && onshape && parseOnshapeLink(saved.link)) {
+        try {
+          await fetchFromOnshape(saved.id);
+        } catch (err) {
+          setEditing(saved);
+          throw new Error(`Saved, but the Onshape export didn’t work: ${err instanceof Error ? err.message : 'try again'}`);
+        }
       }
       setModelFile(null);
+      setFromOnshape(false);
       setEditing(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -87,8 +134,18 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
     <div className="home-cad-editor animate-fade-in">
       {error && <p role="alert" style={{ color: 'var(--danger)', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
       <label>Name<input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} autoFocus /></label>
-      <label>Link (e.g. Onshape)<input value={editing.link} onChange={(e) => setEditing({ ...editing, link: e.target.value })} placeholder="https://…" /></label>
+      <label>Link (e.g. Onshape)<input value={editing.link} onChange={(e) => { setEditing({ ...editing, link: e.target.value }); if (onshape && !modelFile && parseOnshapeLink(e.target.value) && e.target.value !== projects.find((p) => p.id === editing.id)?.link) setFromOnshape(true); }} placeholder="https://…" /></label>
       <label className="is-wide">Description<textarea value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} rows={3} /></label>
+      {parseOnshapeLink(editing.link) && (
+        onshape ? (
+          <label className="is-wide home-cad-onshape">
+            <input type="checkbox" checked={fromOnshape && !modelFile} disabled={!!modelFile} onChange={(e) => setFromOnshape(e.target.checked)} />
+            <span>Get the 3D model from this Onshape Part Studio when I save{modelFile ? ' (off while a file is chosen below)' : ''}</span>
+          </label>
+        ) : (
+          <p className="is-wide home-cad-onshape-hint">This is an Onshape link. With <code>ONSHAPE_ACCESS_KEY</code> and <code>ONSHAPE_SECRET_KEY</code> set on the server, the 3D model can come straight from it.</p>
+        )
+      )}
       <div className="is-wide home-cad-file">
         <span>3D model ({MODEL_EXTENSIONS.map((x) => x.slice(1).toUpperCase()).join(', ')} · up to 50 MB)</span>
         <div>
@@ -97,14 +154,14 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
             <input type="file" accept={MODEL_EXTENSIONS.join(',')} hidden onChange={(e) => { pickModel(e.target.files?.[0]); e.target.value = ''; }} />
           </label>
           {modelFile ? <small>{modelFile.name} · {formatBytes(modelFile.size)} (uploads when you save)</small>
-            : editing.model ? <small>{editing.modelName || 'Model'}{editing.modelSize ? ` · ${formatBytes(editing.modelSize)}` : ''}</small>
+            : editing.model ? <small>{editing.modelSource === 'onshape' ? 'From Onshape' : editing.modelName || 'Model'}{editing.modelSize ? ` · ${formatBytes(editing.modelSize)}` : ''}{editing.modelUpdatedAt ? ` · ${new Date(editing.modelUpdatedAt).toLocaleDateString()}` : ''}</small>
               : <small>None yet. STEP files: export as STL or 3MF first.</small>}
           {modelFile && <button type="button" className="btn btn-secondary" onClick={() => setModelFile(null)}>✕</button>}
           {!modelFile && editing.model && <button type="button" className="btn btn-secondary" onClick={() => removeModel(editing)}>Remove</button>}
         </div>
       </div>
       <div className="is-wide" style={{ display: 'flex', gap: '0.5rem' }}>
-        <button className="btn btn-primary" onClick={save} disabled={saving || !editing.name.trim()}>{saving ? 'Saving…' : editing.id ? 'Save' : 'Add model'}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || !editing.name.trim()}>{saving ? (fromOnshape && !modelFile && onshape && parseOnshapeLink(editing.link) ? 'Exporting from Onshape…' : 'Saving…') : editing.id ? 'Save' : 'Add model'}</button>
         <button className="btn btn-secondary" onClick={() => { setEditing(null); setModelFile(null); }} disabled={saving}>Cancel</button>
       </div>
     </div>
@@ -116,9 +173,10 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
         <h2>CAD models &amp; designs</h2>
         <p className="home-muted">3D parts and models. Drag the ones with a 3D view to turn them.</p>
         {isAdmin && !editing && (
-          <button className="btn btn-secondary home-cad-add" onClick={() => { setError(''); setModelFile(null); setEditing(EMPTY); }}>＋ Add model</button>
+          <button className="btn btn-secondary home-cad-add" onClick={() => edit(EMPTY)}>＋ Add model</button>
         )}
       </div>
+      {notice && <p className="home-cad-notice" role="status">{notice} <button type="button" onClick={() => setNotice('')} aria-label="Dismiss">✕</button></p>}
       {editing && !editing.id && editor}
       {projects.length === 0 && !editing && <p className="home-muted" style={{ textAlign: 'center' }}>No models yet. Only you can see this section until one is added.</p>}
       <div className="home-cad-grid">
@@ -139,7 +197,10 @@ export default function CadSection({ projects: initial, isAdmin = false }: { pro
               </Tag>
               {isAdmin && (
                 <div className="home-cad-admin">
-                  <button onClick={() => { setError(''); setModelFile(null); setEditing(cad); }} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
+                  <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
+                  {onshape && parseOnshapeLink(cad.link) && (
+                    <button onClick={() => refresh(cad)} disabled={refreshing !== null} title="Refresh the 3D model from Onshape" aria-label={`Refresh ${cad.name} from Onshape`}>{refreshing === cad.id ? '…' : '🔄'}</button>
+                  )}
                   <button onClick={() => remove(cad)} title="Delete" aria-label={`Delete ${cad.name}`} className="is-danger">✕</button>
                 </div>
               )}

@@ -52,6 +52,7 @@ Set these in the environment of the server process (e.g. a systemd unit or `.env
 | `SITE_URL` | Public address (default `https://noahstuf.com`) — used for link previews, the sitemap, RSS and robots.txt. |
 | `BACKUP_DIR` | Default backup folder (can be changed in Admin → Backups), e.g. a USB drive. |
 | `NEXT_DIST_DIR` | Optional build output folder (defaults to `.next`). |
+| `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY` | Optional Onshape API keys (from the Onshape developer portal). With them, a CAD model whose link is an Onshape Part Studio gets its 3D view exported straight from Onshape. |
 
 ## Raspberry Pi: updates without unplugging anything
 

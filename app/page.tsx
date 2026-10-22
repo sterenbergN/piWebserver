@@ -9,6 +9,7 @@ import CadSection from '@/components/home/CadSection';
 import PiBadge from '@/components/home/PiBadge';
 import HomeWidgets from '@/components/home/HomeWidgets';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { onshapeConfigured } from '@/lib/cad/onshape-export';
 import './home.css';
 
 // Rendered on the server from the content files, so the page arrives complete
@@ -171,7 +172,7 @@ export default async function Home() {
       )}
 
       {/* Signed in as admin, the section shows (even empty) so models can be added here. */}
-      {(cadProjects.length > 0 || isAdmin) && <CadSection projects={cadProjects} isAdmin={isAdmin} />}
+      {(cadProjects.length > 0 || isAdmin) && <CadSection projects={cadProjects} isAdmin={isAdmin} onshape={isAdmin && onshapeConfigured()} />}
 
       {/* Philosophy */}
       <section className="home-philosophy">

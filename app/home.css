@@ -301,6 +301,11 @@ a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: 
 .home-cad-admin button.is-danger { color: var(--danger); }
 .home-cad-cell:has(.home-cad-admin) > .home-cad-item { padding-bottom: 3.25rem; }
 .home-cad-add { margin-top: 0.75rem; border-radius: 30px; }
+.home-cad-onshape { flex-direction: row !important; align-items: center; gap: 0.5rem !important; color: var(--foreground) !important; }
+.home-cad-onshape-hint { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.home-cad-onshape-hint code { font-size: 0.78rem; }
+.home-cad-notice { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0 0 1rem; padding: 0.5rem 0.8rem; border-radius: 10px; background: rgba(var(--accent-rgb), 0.12); font-size: 0.88rem; }
+.home-cad-notice button { border: none; background: none; color: var(--muted); cursor: pointer; }
 .home-cad-file { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; color: var(--muted); }
 .home-cad-file > div { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .home-cad-file label { cursor: pointer; }

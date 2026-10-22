@@ -64,6 +64,7 @@ export type CadProject = {
   id: string; name: string; description: string; link: string;
   /** A 3D model file under /uploads/cad, shown in the viewer. */
   model?: string; modelName?: string; modelSize?: number;
+  modelSource?: 'upload' | 'onshape'; modelUpdatedAt?: string;
 };
 
 export async function getCadProjects(): Promise<CadProject[]> {
