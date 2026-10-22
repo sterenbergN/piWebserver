@@ -36,6 +36,10 @@ test('evaluate handles functions, constants and implied multiplication', () => {
   close('log(8, 2)', 3);
   close('sin(pi/6)', 0.5);
   close('sin(30°)', 0.5);
+  close('sin(30deg)', 0.5);
+  close('sin 30 deg', 0.5);
+  close('cos(60degrees)', 0.5);
+  close('2sin(30deg)', 1);
   close('sin(30)', 0.5, { angle: 'deg' });
   close('asin(0.5)', 30, { angle: 'deg' });
   close('4²', 16);

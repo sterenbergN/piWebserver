@@ -127,9 +127,15 @@ class Parser {
     return base;
   }
 
+  /** Degrees: 30° or 30deg (for keyboards without a ° key). */
+  private isDeg() {
+    const p = this.peek();
+    return !!p && ((p.t === 'op' && p.v === '°') || (p.t === 'id' && (p.v === 'deg' || p.v === 'degrees')));
+  }
+
   private postfix(): number {
     let v = this.primary();
-    while (this.isOp('°')) { this.i++; v = (v * Math.PI) / 180; }
+    while (this.isDeg()) { this.i++; v = (v * Math.PI) / 180; }
     return v;
   }
 
@@ -165,7 +171,7 @@ class Parser {
   }
 }
 
-/** Work out an expression like "sqrt(2)", "3pi/4", "1.2e3", "sin(30°)". Trig is in radians unless `angle` is 'deg'. */
+/** Work out an expression like "sqrt(2)", "3pi/4", "1.2e3", "sin(30deg)". Trig is in radians unless `angle` is 'deg'. */
 export function evaluate(text: string, opts: { angle?: AngleMode; vars?: Record<string, number> } = {}): EvalResult {
   const tokens = tokenize(text);
   if (typeof tokens === 'string') return { error: tokens };
