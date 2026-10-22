@@ -21,7 +21,8 @@ export default function SiteSearch() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      // defaultPrevented: a widget already used the key (the daily calculator's / makes a fraction).
+      const typing = e.defaultPrevented || (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
       if ((e.key === '/' && !typing) || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         setOpen(true);

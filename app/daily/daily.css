@@ -248,7 +248,7 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
   background: var(--card-bg); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 0.4rem;
   animation: popIn 0.18s ease-out;
 }
-.dq-calc-spacer { height: 500px; }
+.dq-calc-spacer { height: 560px; }
 .dq-calc-head { display: flex; align-items: center; gap: 0.5rem; }
 .dq-calc-angle { flex: 0 0 auto; }
 .dq-calc-angle button { min-height: 28px; padding: 0 0.7rem; }
@@ -256,20 +256,40 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-calc-close:hover { background: var(--surface-hover); color: var(--foreground); }
 .dq-calc-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .dq-calc-history button { width: 100%; display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0.3rem; border: none; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; cursor: pointer; text-align: left; }
-.dq-calc-history button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dq-calc-history .dq-mf { flex: 1; min-width: 0; justify-content: flex-start; overflow: hidden; font-size: 0.8rem; }
 .dq-calc-history button strong { white-space: nowrap; color: var(--foreground); font-weight: 600; }
 .dq-calc-history button:hover { background: var(--surface-hover); }
-.dq .dq-calc-input { font-size: 1.05rem; text-align: right; font-variant-numeric: tabular-nums; }
+.dq-calc-input { min-height: 3.2rem; padding: 0.55rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); cursor: text; font-size: 1.15rem; }
+.dq-calc-input:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 1px; }
+/* The expression, with fractions, roots and powers drawn as boxes. */
+.dq-mf { display: flex; align-items: center; justify-content: flex-end; overflow-x: auto; overflow-y: hidden; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dq-mf-row { display: inline-flex; align-items: center; min-height: 1.15em; }
+.dq-mf-row.is-empty { min-width: 0.65em; min-height: 0.95em; border: 1px dashed var(--muted); border-radius: 3px; opacity: 0.75; }
+.dq-mf-ch { padding: 0 0.02em; }
+.dq-mf-frac { display: inline-flex; flex-direction: column; align-items: stretch; margin: 0 0.15em; font-size: 0.9em; }
+.dq-mf-num, .dq-mf-den { display: flex; justify-content: center; padding: 0.05em 0.2em; }
+.dq-mf-num { border-bottom: 1.5px solid currentColor; }
+.dq-mf-frac.is-icon { font-size: 0.75rem; line-height: 1; margin: 0; }
+.dq-mf-root { display: inline-flex; align-items: stretch; }
+.dq-mf-radical { display: flex; align-items: center; font-size: 1.05em; }
+.dq-mf-radicand { display: inline-flex; align-items: center; border-top: 1.5px solid currentColor; padding: 0.1em 0.1em 0; }
+.dq-mf-sup { position: relative; top: -0.55em; font-size: 0.7em; line-height: 1; }
+.dq-mf-caret { display: inline-block; width: 0; height: 1.1em; margin: 0 -1px; border-left: 2px solid var(--accent-light); animation: dqBlink 1.1s steps(1) infinite; }
+@keyframes dqBlink { 50% { opacity: 0; } }
+.dq-mf-placeholder { margin-left: 0.4rem; color: var(--muted); font-size: 0.85rem; }
 .dq-calc-result { min-height: 1.6rem; text-align: right; font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .dq-calc-result button { border: none; background: none; padding: 0; color: var(--accent-light); font: inherit; cursor: pointer; }
 .dq-calc-result small { font-size: 0.75rem; font-weight: 400; color: var(--muted); }
 .dq-calc-result .is-bad { color: var(--muted); }
 .dq-calc-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.3rem; }
-.dq-calc-keys button { min-height: 38px; border: 1px solid var(--surface-border); border-radius: 10px; background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.dq-calc-keys button { min-height: 36px; border: 1px solid var(--surface-border); border-radius: 10px; background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
 .dq-calc-keys button:hover { background: var(--surface-hover); }
 .dq-calc-keys button.is-fn { font-size: 0.8rem; color: var(--accent-light); }
 .dq-calc-keys button.is-op { background: var(--surface-glass); }
 .dq-calc-keys button.is-eq { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.dq-calc-keys button.is-nav { background: var(--surface-glass); color: var(--muted); }
+.dq-calc-keys button.is-wide { grid-column: span 2; }
+.dq-calc-keys button.is-tall { grid-row: span 2; }
 .dq-calc-keys button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 @media (max-width: 520px) {
