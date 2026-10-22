@@ -367,8 +367,7 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
         <input className="pe-title" value={fields.title} onChange={(e) => set({ title: e.target.value })} placeholder="Post title" aria-label="Title" />
         <input value={fields.description} onChange={(e) => set({ description: e.target.value })} placeholder="One-line summary (shown on cards and link previews)" aria-label="Summary" />
         <div className="pe-row">
-          <input value={fields.category} onChange={(e) => set({ category: e.target.value })} placeholder="Category" list="pe-categories" aria-label="Category" />
-          <datalist id="pe-categories">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+          <CategoryPicker value={fields.category} categories={categories} onChange={(category) => set({ category })} />
           <label className="btn btn-secondary pe-cover-btn">
             {coverShown ? 'Change cover' : 'Add cover image'}
             <input type="file" accept="image/*" hidden onChange={(e) => { pickCover(e.target.files?.[0]); e.target.value = ''; }} />
@@ -429,5 +428,48 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
         {preview}
       </div>
     </div>
+  );
+}
+
+const NEW_CATEGORY = '__new-category__';
+
+/**
+ * Pick one of the categories the posts already use, or type a new one. A new
+ * name that matches an existing category apart from case becomes that one.
+ */
+function CategoryPicker({ value, categories, onChange }: { value: string; categories: string[]; onChange: (category: string) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [typed, setTyped] = useState('');
+  // Includes a category that's only on this post so far (a new one, or from a draft).
+  const options = useMemo(() => [...new Set([...categories, ...(value ? [value] : [])])].sort((a, b) => a.localeCompare(b)), [categories, value]);
+
+  const finish = (name = typed) => {
+    const trimmed = name.trim().replace(/\s+/g, ' ');
+    if (trimmed) onChange(categories.find((c) => c.toLowerCase() === trimmed.toLowerCase()) ?? trimmed);
+    setAdding(false);
+    setTyped('');
+  };
+
+  if (adding) {
+    return (
+      <span className="pe-category is-new">
+        <input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="New category name" aria-label="New category name" maxLength={60}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); finish(); }
+            if (e.key === 'Escape') { e.preventDefault(); setAdding(false); setTyped(''); }
+          }} />
+        <button type="button" className="btn btn-primary" onClick={() => finish()} disabled={!typed.trim()}>Add</button>
+        <button type="button" className="btn btn-secondary" onClick={() => { setAdding(false); setTyped(''); }} title="Back to the list">✕</button>
+      </span>
+    );
+  }
+  return (
+    <span className="pe-category">
+      <select value={value} aria-label="Category" onChange={(e) => (e.target.value === NEW_CATEGORY ? setAdding(true) : onChange(e.target.value))}>
+        <option value="">No category</option>
+        {options.map((c) => <option key={c} value={c}>{c}{categories.includes(c) ? '' : ' (new)'}</option>)}
+        <option value={NEW_CATEGORY}>＋ New category…</option>
+      </select>
+    </span>
   );
 }
