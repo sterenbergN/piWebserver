@@ -7,6 +7,7 @@ import ExperienceCard from '@/components/home/ExperienceCard';
 import SkillsCard from '@/components/home/SkillsCard';
 import CadSection from '@/components/home/CadSection';
 import PiBadge from '@/components/home/PiBadge';
+import HomeWidgets from '@/components/home/HomeWidgets';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import './home.css';
 
@@ -38,8 +39,6 @@ export default async function Home() {
   const photoCount = countPhotos(albums);
 
   const explore = [
-    { href: '/workout', icon: '🏋️', title: 'Fitness', text: 'Workouts & health' },
-    { href: '/today', icon: '☀️', title: 'Daily', text: 'Questions, habits & chores' },
     { href: '/gallery', icon: '📷', title: 'Gallery', text: photoCount ? plural(photoCount, 'photo') : 'Photo albums' },
     { href: '/blog', icon: '✍️', title: 'Posts', text: posts.length ? plural(posts.length, 'write-up') : 'Write-ups' },
     { href: '/library', icon: '📚', title: 'Library', text: documents.length ? plural(documents.length, 'document') : 'Books & manuals' },
@@ -65,6 +64,9 @@ export default async function Home() {
           <ContactLinks links={profile.links} email={profile.email} />
         </div>
       </section>
+
+      {/* Daily and Fitness, the parts used every day */}
+      <HomeWidgets />
 
       {/* Explore the site */}
       <section aria-label="Explore">

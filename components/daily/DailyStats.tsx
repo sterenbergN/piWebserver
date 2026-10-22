@@ -158,7 +158,7 @@ export default function DailyStats({ progress, today, signedIn, onOpen, onLeader
         {signedIn ? (
           <label className="dq-check">
             <input type="checkbox" checked={progress.leaderboard} onChange={(e) => onLeaderboard(e.target.checked)} />
-            <span>Show me on the leaderboard (your username, XP and streak)</span>
+            <span>Show me on the leaderboard (your username, level, and XP and streaks from questions, habits and chores)</span>
           </label>
         ) : <p className="dq-hint">Sign in to join the leaderboard.</p>}
         {board && board.length > 0 ? (
@@ -175,6 +175,7 @@ export default function DailyStats({ progress, today, signedIn, onOpen, onLeader
             </table>
           </div>
         ) : <p className="dq-hint">Nobody has joined yet.</p>}
+        <a className="dq-text-btn" href="/daily/leaderboard">Habits, chores and overall leaderboards →</a>
       </section>
     </div>
   );

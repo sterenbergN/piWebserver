@@ -9,7 +9,7 @@ import FlapGame from '@/components/games/FlapGame';
 import SetpointGame from '@/components/games/SetpointGame';
 import ChainGame from '@/components/games/ChainGame';
 import MergeSnakeGame from '@/components/games/MergeSnakeGame';
-import { GAMES, isGameId, type GameId } from '@/lib/games/registry';
+import { GAMES, gameInfo, isGameId, type GameId } from '@/lib/games/registry';
 
 const COMPONENTS: Record<GameId, () => React.ReactElement> = {
   snake: SnakeGame,
@@ -22,7 +22,15 @@ const COMPONENTS: Record<GameId, () => React.ReactElement> = {
   merge: MergeSnakeGame,
 };
 
-/** Arcade: pick a game (set by ?game=, or remembered on this device). */
+const SHELVES = [
+  { kind: 'original', title: 'Made here', note: 'Games you won’t find anywhere else' },
+  { kind: 'classic', title: 'Classics', note: 'The old favourites' },
+] as const;
+
+/**
+ * Arcade: the game being played, with a bar to switch to another. The game
+ * comes from ?game=, or the last one played on this device.
+ */
 export default function ArcadeClient({ initialGame }: { initialGame?: string }) {
   const fromUrl = isGameId(initialGame);
   const [game, setGame] = useState<GameId>(fromUrl ? initialGame : 'snake');
@@ -34,13 +42,18 @@ export default function ArcadeClient({ initialGame }: { initialGame?: string }) 
     if (isGameId(saved)) setGame(saved);
   }, [fromUrl]);
 
-  // Keep the chosen game's chip in view (the picker scrolls sideways on phones).
+  // The game shelf, opened from the bar; Escape closes it.
+  const [picking, setPicking] = useState(false);
   useEffect(() => {
-    document.querySelector('.arcade-pick.is-active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
-  }, [game]);
+    if (!picking) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPicking(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [picking]);
 
   const choose = (id: GameId) => {
     setGame(id);
+    setPicking(false);
     try { localStorage.setItem('arcadeGame', id); } catch { /* ignore */ }
     const url = new URL(window.location.href);
     url.searchParams.set('game', id);
@@ -48,17 +61,40 @@ export default function ArcadeClient({ initialGame }: { initialGame?: string }) 
   };
 
   const Game = COMPONENTS[game];
+  const current = gameInfo(game);
   return (
     <div>
-      <div role="tablist" aria-label="Games" className="arcade-picker">
-        {GAMES.map((g) => (
-          <button key={g.id} type="button" role="tab" aria-selected={game === g.id} className={`arcade-pick${game === g.id ? ' is-active' : ''}`} onClick={() => choose(g.id)} title={g.blurb}>
-            <span className="arcade-pick-emoji" aria-hidden>{g.emoji}</span>
-            <span className="arcade-pick-name">{g.label}</span>
-            {g.kind === 'original' && <span className="arcade-pick-tag">new</span>}
-          </button>
-        ))}
+      <div className="arcade-bar">
+        <span className="arcade-bar-emoji" aria-hidden>{current.emoji}</span>
+        <span className="arcade-bar-text">
+          <strong>{current.label}</strong>
+          <small>{current.blurb}</small>
+        </span>
+        <button type="button" className="btn btn-secondary arcade-bar-switch" aria-expanded={picking} aria-controls="arcade-shelf" onClick={() => setPicking((v) => !v)}>
+          {picking ? 'Close' : <>🎮 <span>All {GAMES.length} games</span></>}
+        </button>
       </div>
+
+      {picking && (
+        <div id="arcade-shelf" className="arcade-shelf animate-fade-in">
+          {SHELVES.map((shelf) => (
+            <section key={shelf.kind} aria-label={shelf.title}>
+              <h2 className="arcade-shelf-title">{shelf.title} <small>{shelf.note}</small></h2>
+              <div className="arcade-cards">
+                {GAMES.filter((g) => g.kind === shelf.kind).map((g) => (
+                  <button key={g.id} type="button" className={`arcade-card${game === g.id ? ' is-active' : ''}`} aria-current={game === g.id} onClick={() => choose(g.id)}>
+                    <span className="arcade-card-emoji" aria-hidden>{g.emoji}</span>
+                    <strong>{g.label}</strong>
+                    <small>{g.blurb}</small>
+                    {game === g.id && <span className="arcade-card-tag">Playing</span>}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
       <Game key={game} />
     </div>
   );

@@ -8,6 +8,17 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
   return [
     { label: 'About', items: [{ href: '/', label: 'About', icon: '👋' }] },
     {
+      // Things that remember you: signing in keeps their progress.
+      label: 'Daily',
+      items: [
+        { href: '/today', label: 'Today', icon: '☀️' },
+        { href: '/daily', label: 'Questions', icon: '🧠' },
+        { href: '/habits', label: 'Habits', icon: '✅' },
+        { href: '/chores', label: 'Chores', icon: '🧹' },
+        { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆' },
+      ],
+    },
+    {
       // The workout tracker and everything around it — the most used part of the site.
       label: 'Fitness',
       items: [
@@ -26,23 +37,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       ],
     },
     {
-      label: 'Play',
-      items: [
-        { href: '/game', label: 'Arcade', icon: '🕹️' },
-        { href: '/party', label: 'Party', icon: '🎉' },
-      ],
-    },
-    {
-      // Things that remember you: signing in keeps their progress.
-      label: 'Daily',
-      items: [
-        { href: '/today', label: 'Today', icon: '☀️' },
-        { href: '/daily', label: 'Questions', icon: '🧠' },
-        { href: '/habits', label: 'Habits', icon: '✅' },
-        { href: '/chores', label: 'Chores', icon: '🧹' },
-      ],
-    },
-    {
       label: 'Tools',
       items: [
         { href: '/tools#calculators', label: 'Calculators', icon: '🧮' },
@@ -50,6 +44,13 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️' },
         { href: '/tools#golf', label: 'Golf scores', icon: '⛳' },
         { href: '/stats', label: 'Pi stats', icon: '📊' },
+      ],
+    },
+    {
+      label: 'Play',
+      items: [
+        { href: '/game', label: 'Arcade', icon: '🕹️' },
+        { href: '/party', label: 'Party', icon: '🎉' },
       ],
     },
     ...(isAdmin ? [{ label: 'Admin', items: [{ href: '/admin', label: 'Admin', icon: '🔧' }] }] : []),

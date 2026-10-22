@@ -29,6 +29,11 @@ function newCode() {
   return Array.from(bytes, (b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
 }
 
+/** The user's household if they have one (without making one). */
+export async function findHousehold(userId: string): Promise<Household | null> {
+  return (await readJson(INDEX(), empty())).households?.find((h) => h.members.includes(userId)) ?? null;
+}
+
 /** The user's household, made for them if they don't have one yet. */
 export async function householdFor(userId: string): Promise<Household> {
   const found = (await readJson(INDEX(), empty())).households?.find((h) => h.members.includes(userId));

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { removeModelFile } from '@/lib/cad/files';
 
 const cadFile = path.join(process.cwd(), 'public', 'content', 'cad.json');
 
@@ -44,7 +45,9 @@ export async function PATCH(request: Request) {
   const idx = projects.findIndex((p: any) => p.id === body.id);
   if (idx === -1) return NextResponse.json({ success: false, message: 'Not found' }, { status: 404 });
 
-  projects[idx] = { ...projects[idx], ...body };
+  // The model file is only changed through /api/cad/model.
+  const { model: _model, modelName: _name, modelSize: _size, ...fields } = body;
+  projects[idx] = { ...projects[idx], ...fields };
   await fs.writeFile(cadFile, JSON.stringify(projects, null, 2));
   return NextResponse.json({ success: true });
 }
@@ -54,6 +57,7 @@ export async function DELETE(request: Request) {
 
   const { id } = await request.json();
   let projects = await readCADProjects();
+  await removeModelFile(projects.find((p: any) => p.id === id)?.model);
   projects = projects.filter((p: any) => p.id !== id);
   await fs.writeFile(cadFile, JSON.stringify(projects, null, 2));
   return NextResponse.json({ success: true });

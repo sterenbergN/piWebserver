@@ -60,7 +60,11 @@ export async function getLibraryDocuments(): Promise<LibraryDocument[]> {
   }
 }
 
-export type CadProject = { id: string; name: string; description: string; link: string };
+export type CadProject = {
+  id: string; name: string; description: string; link: string;
+  /** A 3D model file under /uploads/cad, shown in the viewer. */
+  model?: string; modelName?: string; modelSize?: number;
+};
 
 export async function getCadProjects(): Promise<CadProject[]> {
   try {
