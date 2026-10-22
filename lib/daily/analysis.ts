@@ -1,7 +1,7 @@
 // Strengths and weaknesses from someone's answers: accuracy and an ability
 // estimate per track and topic, how difficulty affects them, which answer
 // types and slips trip them up, how it's trending, which topics they haven't
-// met, and what to practise next. Pure, so the server and tests share it.
+// met, and what to practice next. Pure, so the server and tests share it.
 //
 // Ability is an Elo-style estimate on the 1–5 difficulty scale: the
 // difficulty at which you'd fully solve about half the questions. Each

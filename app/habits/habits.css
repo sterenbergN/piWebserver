@@ -28,6 +28,10 @@
 .hb-level-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .hb-level-text small { color: var(--muted); font-size: 0.78rem; }
 .hb-level-bar { height: 6px; border-radius: 999px; background: var(--input-bg); overflow: hidden; }
+/* A level badge that opens the level panel. */
+.hb-level-btn { color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.hb-level-btn:hover { border-color: var(--accent-light); }
+.hb-level-more { color: var(--muted); font-size: 0.9rem; align-self: flex-start; }
 .hb-level-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
 
 /* Banners */

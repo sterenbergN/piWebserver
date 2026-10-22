@@ -14,6 +14,7 @@ import { isActive, type Habit, type HabitInput } from '@/lib/habits/habits';
 import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitMeta, habitStarts, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, XP } from '@/lib/habits/stats';
 import { levelFromXp } from '@/lib/progress/levels';
 import { choresXpElsewhere, questionsXpElsewhere } from '@/components/progress/otherXp';
+import LevelInfo from '@/components/progress/LevelInfo';
 import './habits.css';
 
 const TABS = [
@@ -54,14 +55,18 @@ export default function HabitsPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts XP from daily questions and chores.
-  const [questionXp, setQuestionXp] = useState<number | null>(null);
+  const [otherXp, setOtherXp] = useState<{ questions: number; chores: number } | null>(null);
   useEffect(() => {
-    if (h.mode === 'account' || h.mode === 'device') Promise.all([questionsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setQuestionXp(a + b));
+    if (h.mode === 'account' || h.mode === 'device') Promise.all([questionsXpElsewhere(), choresXpElsewhere()]).then(([questions, chores]) => setOtherXp({ questions, chores }));
   }, [h.mode]);
+  const elsewhereXp = otherXp ? otherXp.questions + otherXp.chores : null;
+  /** The level panel, opened from the level badge (or /habits#level). */
+  const [showLevel, setShowLevel] = useState(false);
+  useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
 
   const derived = useMemo(() => {
     const freezes = freezeState(data, today);
-    const xp = habitXp(data, today) + (questionXp ?? 0);
+    const xp = habitXp(data, today) + (elsewhereXp ?? 0);
     return {
       ...freezes,
       level: levelFromXp(xp),
@@ -69,13 +74,13 @@ export default function HabitsPage() {
       perfectToday: isPerfectDay(data, today),
       starts: habitStarts(data.habits, data.log),
     };
-  }, [data, today, questionXp]);
+  }, [data, today, elsewhereXp]);
 
   // Confetti for a perfect day and a level up, but not for what was already true on load.
   const seen = useRef<{ level: number; perfectToday: boolean } | null>(null);
   useEffect(() => {
     // Wait for question and chore XP, so it arriving isn't mistaken for a level up.
-    if ((h.mode !== 'account' && h.mode !== 'device') || questionXp === null) return;
+    if ((h.mode !== 'account' && h.mode !== 'device') || elsewhereXp === null) return;
     const now = { level: derived.level.level, perfectToday: derived.perfectToday };
     const before = seen.current;
     seen.current = now;
@@ -88,7 +93,7 @@ export default function HabitsPage() {
       setToast(`Perfect day! +${XP.perfectDay} XP`);
       vibrate([30, 60, 30]);
     }
-  }, [derived, h.mode, questionXp]);
+  }, [derived, h.mode, elsewhereXp]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(''), 3200);
@@ -119,7 +124,8 @@ export default function HabitsPage() {
           <p>Small things, every day. Keep the streak, grow the garden.</p>
         </div>
         {h.mode !== 'loading' && h.mode !== 'error' && (
-          <div className="hb-level" title={`${derived.level.xp} XP total`}>
+          <button type="button" className="hb-level hb-level-btn" aria-expanded={showLevel} aria-controls="level"
+            title={`${derived.level.xp} XP total. Tap for what your level means.`} onClick={() => setShowLevel((v) => !v)}>
             <span className="hb-level-badge">Lv {derived.level.level}</span>
             <div className="hb-level-text">
               <strong>{derived.level.title}</strong>
@@ -128,9 +134,14 @@ export default function HabitsPage() {
               </div>
               <small>{derived.level.into} / {derived.level.size} XP · 🔥 {derived.perfect.current} · ❄️ {derived.available}</small>
             </div>
-          </div>
+            <span className="hb-level-more" aria-hidden>{showLevel ? '▲' : 'ⓘ'}</span>
+          </button>
         )}
       </header>
+
+      {showLevel && h.mode !== 'loading' && h.mode !== 'error' && (
+        <LevelInfo sources={{ questions: otherXp?.questions ?? 0, habits: habitXp(data, today), chores: otherXp?.chores ?? 0 }} onClose={() => setShowLevel(false)} />
+      )}
 
       {h.mode === 'device' && (
         <div className="hb-banner">

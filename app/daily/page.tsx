@@ -38,7 +38,7 @@ export default function DailyPage() {
   const [otherXp, setOtherXp] = useState<{ habits: number; chores: number } | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [toast, setToast] = useState('');
-  /** ?focus=track|topic (from the report's "Practise this") opens Practice filtered to it. */
+  /** ?focus=track|topic (from the report's "Practice this") opens Practice filtered to it. */
   const [focus, setFocus] = useState<{ track: Track; topic: string } | null>(null);
 
   useEffect(() => {
@@ -246,7 +246,7 @@ export default function DailyPage() {
 
           {tab === 'stats' && (
             <a className="dq-report-link" href="/daily/report">
-              <span><strong>📊 Strengths &amp; weaknesses report</strong><small>Ability per topic, slips you repeat, what to practise next</small></span>
+              <span><strong>📊 Strengths &amp; weaknesses report</strong><small>Ability per topic, slips you repeat, what to practice next</small></span>
               <span aria-hidden>→</span>
             </a>
           )}

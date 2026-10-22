@@ -93,7 +93,7 @@ export default function ReportPage() {
 
           {a.focus.length > 0 && (
             <section className="dq-panel">
-              <h3>🎯 What to practise next</h3>
+              <h3>🎯 What to practice next</h3>
               <ol className="rp-focus">
                 {a.focus.map((f) => (
                   <li key={`${f.track}/${f.topic}`}>
@@ -101,7 +101,7 @@ export default function ReportPage() {
                       <strong>{f.topic}</strong> <span className="dq-hint">· {TRACK_LABEL[f.track]} · at difficulty {f.difficulty}</span>
                       <small>{f.reason}</small>
                     </div>
-                    <Link className="btn btn-primary rp-noprint" href={practiceHref(f.track, f.topic)}>Practise</Link>
+                    <Link className="btn btn-primary rp-noprint" href={practiceHref(f.track, f.topic)}>Practice</Link>
                   </li>
                 ))}
               </ol>
@@ -140,7 +140,7 @@ export default function ReportPage() {
                       <td>{t.trend === 'up' ? '↗ improving' : t.trend === 'down' ? '↘ slipping' : t.trend === 'flat' ? '→ steady' : '—'}</td>
                       <td>
                         <span className={`rp-label is-${t.label}`}>{LABEL[t.label].icon} {LABEL[t.label].text}</span>
-                        <Link className="dq-text-btn rp-noprint rp-practise" href={practiceHref(t.track, t.topic)}>Practise</Link>
+                        <Link className="dq-text-btn rp-noprint rp-practice" href={practiceHref(t.track, t.topic)}>Practice</Link>
                       </td>
                     </tr>
                   ))}

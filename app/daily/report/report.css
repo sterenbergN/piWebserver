@@ -35,7 +35,7 @@
 .rp-label { white-space: nowrap; font-size: 0.8rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--input-bg); }
 .rp-label.is-strength { background: rgba(var(--success-rgb), 0.18); }
 .rp-label.is-weakness { background: rgba(var(--danger-rgb), 0.16); }
-.rp-practise { margin-left: 0.5rem; font-size: 0.8rem; }
+.rp-practice { margin-left: 0.5rem; font-size: 0.8rem; }
 
 .rp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 1rem; }
 .rp-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }

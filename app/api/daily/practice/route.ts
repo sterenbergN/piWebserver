@@ -8,7 +8,7 @@ import { answeredView, clampToday, findQuestion, practiceSet, questionIndex, rea
 
 // Practice: as many questions as you like.
 //   - every question from past days (core and bonus): half XP, as catching up
-//   - practice-only questions uploaded by the weekly generator
+//   - saved practice-only questions uploaded with the weekly pack (newest first)
 //   - generated questions (fresh numbers every time) from the generators listed
 // Without `id`: the pool to choose from, with how you did on each (signed in).
 // With `id`: one question ready to answer. Answers go through /api/daily/answer.
@@ -35,10 +35,11 @@ export async function GET(request: Request) {
           status: status(at.question.id, at.question),
         }))
         .sort((a, b) => b.date!.localeCompare(a.date!) || Number(b.core) - Number(a.core));
+      // Newest uploads first (the file keeps upload order; older questions have no date).
       const pool = practice.questions.map((q) => ({
-        id: q.id, date: null, source: 'pool' as const, core: false, boss: false,
+        id: q.id, date: null, added: practice.added?.[q.id] ?? null, source: 'pool' as const, core: false, boss: false,
         track: q.track, topic: q.topic, difficulty: q.difficulty, title: q.title, status: status(q.id, q),
-      }));
+      })).reverse();
       // Generated questions you've done, so the tally counts them.
       const generatedDone = (mine?.attempts ?? []).filter((a) => a.questionId.startsWith('gen-')).length;
       return NextResponse.json({ success: true, signedIn: !!userId, questions: [...pool, ...past], generators: generatorList(), generatedDone }, { headers: { 'Cache-Control': 'no-store' } });

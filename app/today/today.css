@@ -55,8 +55,3 @@
   .td .hb-level { min-width: 0; width: 100%; }
   .td-card { padding: 1rem; }
 }
-
-/* The level badge opens the level panel. */
-.td-level { color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
-.td-level:hover { border-color: var(--accent-light); }
-.td-level-more { color: var(--muted); font-size: 0.9rem; align-self: flex-start; }

@@ -110,7 +110,7 @@ export default function TodayPage() {
           <p>{dateText}</p>
         </div>
         {h.mode !== 'loading' && h.mode !== 'error' && (
-          <button type="button" className="hb-level td-level" aria-expanded={showLevel} aria-controls="level"
+          <button type="button" className="hb-level hb-level-btn" aria-expanded={showLevel} aria-controls="level"
             title={`${level.xp} XP total. Tap for what your level means.`} onClick={() => setShowLevel((v) => !v)}>
             <span className="hb-level-badge">Lv {level.level}</span>
             <div className="hb-level-text">
@@ -120,7 +120,7 @@ export default function TodayPage() {
               </div>
               <small>{level.into} / {level.size} XP to level {level.level + 1}</small>
             </div>
-            <span className="td-level-more" aria-hidden>{showLevel ? '▲' : 'ⓘ'}</span>
+            <span className="hb-level-more" aria-hidden>{showLevel ? '▲' : 'ⓘ'}</span>
           </button>
         )}
       </header>

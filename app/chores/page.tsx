@@ -13,6 +13,7 @@ import { addDays, type DateKey } from '@/lib/habits/dates';
 import { applyChoreAction, isOpen, type Chore, type ChoreInput, type ChoresData } from '@/lib/chores/chores';
 import { byUrgency, choreXp, chorePlant, dueStatus, entryXp, recentEntries, weekBoard, type DueStatus } from '@/lib/chores/stats';
 import { levelFromXp } from '@/lib/progress/levels';
+import LevelInfo from '@/components/progress/LevelInfo';
 import '../habits/habits.css';
 import './chores.css';
 
@@ -64,11 +65,15 @@ export default function ChoresPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts habits and daily questions.
-  const [otherXp, setOtherXp] = useState<number | null>(null);
+  const [otherXp, setOtherXp] = useState<{ habits: number; questions: number } | null>(null);
   useEffect(() => {
-    if (ready) Promise.all([habitsXpElsewhere(), questionsXpElsewhere()]).then(([a, b]) => setOtherXp(a + b));
+    if (ready) Promise.all([habitsXpElsewhere(), questionsXpElsewhere()]).then(([habits, questions]) => setOtherXp({ habits, questions }));
   }, [ready]);
-  const level = levelFromXp(choreXp(data, me) + (otherXp ?? 0));
+  const xpSources = { questions: otherXp?.questions ?? 0, habits: otherXp?.habits ?? 0, chores: choreXp(data, me) };
+  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores);
+  /** The level panel, opened from the level badge (or /chores#level). */
+  const [showLevel, setShowLevel] = useState(false);
+  useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
 
   // Confetti on a level up, but not for the level the page opened at.
   const seenLevel = useRef<number | null>(null);
@@ -131,7 +136,8 @@ export default function ChoresPage() {
           <p>Keep the house running together. Every chore grows its plant.</p>
         </div>
         {ready && (
-          <div className="hb-level" title={`${level.xp} XP total`}>
+          <button type="button" className="hb-level hb-level-btn" aria-expanded={showLevel} aria-controls="level"
+            title={`${level.xp} XP total. Tap for what your level means.`} onClick={() => setShowLevel((v) => !v)}>
             <span className="hb-level-badge">Lv {level.level}</span>
             <div className="hb-level-text">
               <strong>{level.title}</strong>
@@ -140,9 +146,12 @@ export default function ChoresPage() {
               </div>
               <small>{level.into} / {level.size} XP to level {level.level + 1}</small>
             </div>
-          </div>
+            <span className="hb-level-more" aria-hidden>{showLevel ? '▲' : 'ⓘ'}</span>
+          </button>
         )}
       </header>
+
+      {showLevel && ready && <LevelInfo sources={xpSources} onClose={() => setShowLevel(false)} />}
 
       {c.mode === 'device' && (
         <div className="hb-banner">

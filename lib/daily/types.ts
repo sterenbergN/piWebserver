@@ -74,7 +74,12 @@ export type DailyDay = {
  * Practice-only questions: not tied to a day, they top up the Practice tab
  * (the weekly generator aims them at topics people find hard).
  */
-export type PracticeSet = { formulas: Formula[]; questions: Question[] };
+export type PracticeSet = {
+  formulas: Formula[];
+  questions: Question[];
+  /** The day each question was first uploaded, by id (set by the server, not the pack). */
+  added?: Record<string, string>;
+};
 
 /** What gets uploaded: any number of days, and optionally practice questions. */
 export type DailyPack = { version: 1; days: DailyDay[]; practice?: PracticeSet };

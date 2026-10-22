@@ -264,6 +264,45 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-practice-focus .dq-chip { align-self: center; }
 .dq-practice-focus .dq-chip small { color: var(--muted); }
 .dq-practice-focus .dq-text-btn { margin-left: auto; font-size: 0.85rem; }
+/* Practice: source tabs, search, grouped list, and the one-question view */
+.dq-pq-sources { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; }
+.dq-pq-sources button { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; padding: 0.55rem 0.3rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--muted); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.dq-pq-sources button > span:first-child { font-size: 1.15rem; line-height: 1.2; }
+.dq-pq-sources button small { font-size: 0.72rem; font-weight: 700; padding: 0 0.45rem; border-radius: 999px; background: var(--background); color: var(--muted); }
+.dq-pq-sources button:hover { border-color: var(--accent-light); }
+.dq-pq-sources button[aria-selected="true"] { border-color: var(--accent-light); background: rgba(var(--accent-rgb), 0.2); color: var(--foreground); }
+.dq-pq-sources button[aria-selected="true"] small { background: var(--accent); color: #fff; }
+.dq-pq-source-hint { margin: -0.2rem 0 0 !important; font-size: 0.8rem; }
+.dq-pq-search { display: flex; align-items: center; gap: 0.5rem; padding-left: 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.dq-pq-search:focus-within { border-color: var(--accent-light); }
+.dq-pq-search input { flex: 1; min-width: 0; border: none !important; background: none !important; box-shadow: none !important; padding-left: 0 !important; }
+.dq-pq-summary { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.4rem 0.8rem; font-size: 0.86rem; color: var(--muted); }
+.dq-pq-summary strong { color: var(--foreground); }
+.dq-pq-progress { height: 6px; border-radius: 999px; background: var(--input-bg); overflow: hidden; margin-top: -0.3rem; }
+.dq-pq-progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); transition: width 0.4s ease; }
+.dq-pq-session { font-weight: 700; color: var(--foreground); }
+.dq-pq-list-top { scroll-margin-top: 5rem; height: 0; margin-bottom: -1rem; }
+.dq-pq-group { display: flex; align-items: baseline; gap: 0.45rem; margin: 0.7rem 0.2rem 0.15rem; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: pre; }
+.dq-practice-list li:first-child .dq-pq-group { margin-top: 0; }
+.dq-pq-group small { font-size: 0.72rem; font-weight: 700; padding: 0 0.45rem; border-radius: 999px; background: var(--input-bg); letter-spacing: 0; }
+.dq-practice-list button:disabled { opacity: 0.6; cursor: wait; }
+.dq-pq-new { display: inline-block; margin-left: 0.45rem; padding: 0 0.4rem; border-radius: 999px; background: var(--accent); color: #fff; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; vertical-align: 0.15em; }
+.dq-pq-dots { letter-spacing: 0.05em; font-size: 0.72rem; color: var(--dq-track); }
+.dq-pq-empty { text-align: center; padding: 1.5rem 0.5rem; margin: 0; }
+.dq-pq-more { align-self: center; min-width: 220px; }
+.dq-pq-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--background); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08); }
+.dq-pq-from { flex: 1; min-width: 0; text-align: center; font-size: 0.82rem; color: var(--muted); }
+.dq-pq-after { margin-top: 0; }
+@media (max-width: 480px) {
+  .dq-pq-sources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dq-pq-sources button { flex-direction: row; justify-content: center; gap: 0.35rem; }
+  .dq-pq-bar { flex-wrap: wrap; }
+  .dq-pq-from { order: 3; flex-basis: 100%; }
+  .dq-pq-bar .dq-small-btn + .dq-small-btn { margin-left: auto; }
+  .dq-practice-filters .dq-practice-field { flex: 1 1 calc(50% - 0.3rem); }
+  .dq-practice-list button { gap: 0.6rem; padding: 0.65rem 0.75rem; }
+  .dq-practice-list .dq-archive-date { width: 3.6rem; font-size: 0.74rem; }
+}
 .dq-report-link { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 1rem; border-radius: 16px; border: 1px solid var(--accent-light); background: rgba(var(--accent-rgb), 0.12); color: var(--foreground); text-decoration: none; }
 .dq-report-link:hover { background: rgba(var(--accent-rgb), 0.2); }
 .dq-report-link span { display: flex; flex-direction: column; gap: 0.1rem; }

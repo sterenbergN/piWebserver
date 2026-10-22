@@ -5,7 +5,7 @@ import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { loginRetryAfter, recordLoginFailure, tooManyAttemptsMessage } from '@/lib/security/rate-limit';
 import { ApiError } from '@/lib/workout/api';
-import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
+import { addDays, isDateKey, localToday, type DateKey } from '@/lib/habits/dates';
 import { scoreAttempt, type Attempt } from './progress';
 import { gradeQuestion, revealedQuestion } from './grade';
 import { generatedQuestion } from './generated';
@@ -90,6 +90,7 @@ export function practiceSet() {
   practiceHolder[PRACTICE_KEY] ??= readJson<PracticeSet>(practiceFile(), { formulas: [], questions: [] }).then((set) => ({
     formulas: Array.isArray(set?.formulas) ? set.formulas : [],
     questions: Array.isArray(set?.questions) ? set.questions : [],
+    added: set?.added && typeof set.added === 'object' ? set.added : {},
   }));
   return practiceHolder[PRACTICE_KEY]!;
 }
@@ -102,9 +103,11 @@ export async function savePractice(incoming: PracticeSet) {
   const have = new Set(current.questions.map((q) => q.id));
   const ids = new Set(incoming.questions.map((q) => q.id));
   const formulaIds = new Set(incoming.formulas.map((f) => f.id));
+  const today = localToday();
   const next: PracticeSet = {
     formulas: [...current.formulas.filter((f) => !formulaIds.has(f.id)), ...incoming.formulas],
     questions: [...current.questions.filter((q) => !ids.has(q.id)), ...incoming.questions],
+    added: { ...current.added, ...Object.fromEntries(incoming.questions.filter((q) => !current.added?.[q.id]).map((q) => [q.id, today])) },
   };
   await writeJsonAtomic(practiceFile(), next, true);
   practiceHolder[PRACTICE_KEY] = null;
