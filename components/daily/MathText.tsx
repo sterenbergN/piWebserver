@@ -2,6 +2,7 @@
 
 import katex from 'katex';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
@@ -14,11 +15,14 @@ export function fenceDisplayMath(text: string) {
   return text.replace(/^[ \t]*\$\$(?!\s*$)([^\n]*?)\$\$[ \t]*$/gm, (_, tex: string) => `$$\n${tex.trim()}\n$$`);
 }
 
-/** Markdown with $inline$ and $$display$$ math. Raw HTML in the text is not rendered. */
+// Tables (and ~~strikethrough~~); a single ~ stays a tilde, so "~5 kN" is left alone.
+const REMARK = [[remarkGfm, { singleTilde: false }], remarkMath] as Parameters<typeof ReactMarkdown>[0]['remarkPlugins'];
+
+/** Markdown with $inline$ and $$display$$ math, and tables. Raw HTML in the text is not rendered. */
 export function MathText({ children, className }: { children: string; className?: string }) {
   return (
     <div className={`dq-md${className ? ` ${className}` : ''}`}>
-      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}
+      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={[rehypeKatex]}
         components={{ a: ({ href, children: text }) => <a href={href} target="_blank" rel="noopener noreferrer">{text}</a> }}>
         {fenceDisplayMath(children)}
       </ReactMarkdown>

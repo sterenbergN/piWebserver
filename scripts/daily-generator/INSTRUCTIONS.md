@@ -110,6 +110,13 @@ the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
 - **Math**: everything containing LaTeX goes in ``R`...` `` templates (the build
   refuses backslashes inside quoted strings). Put display math on its own
   line as `$$ ... $$`. Write currency as `\$`.
+- **Tables**: Markdown tables render (a header row, then a `|---|---|`
+  row; `---:` right-aligns a number column). Use them for data read across
+  rows: property tables, data-type ranges, SIL bands, I/O lists. Keep to about
+  5 columns so they fit a phone (wider ones scroll sideways). Math works in
+  cells, but a `|` inside a cell ends the cell: write `\lvert x \rvert`, not
+  `|x|`. Routh arrays and matrices are math, so they stay `\begin{array}` in
+  `$$ ... $$`.
 - **Units**: say the unit the answer is wanted in (the `unit` of a numeric
   part). Pick numbers so the default 2 % tolerance can't accept a wrong method;
   use `abs` for answers at or near zero.

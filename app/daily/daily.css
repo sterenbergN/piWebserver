@@ -76,8 +76,11 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-md > :first-child { margin-top: 0.6rem; }
 .dq-md p { margin: 0.6rem 0; }
 .dq-md ul, .dq-md ol { padding-left: 1.4rem; }
-.dq-md table { border-collapse: collapse; margin: 0.6rem 0; display: block; overflow-x: auto; }
-.dq-md th, .dq-md td { border: 1px solid var(--surface-border); padding: 0.3rem 0.6rem; }
+/* Tables scroll sideways on their own rather than widening the card. */
+.dq-md table { border-collapse: collapse; margin: 0.75rem 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.dq-md th, .dq-md td { border: 1px solid var(--surface-border); padding: 0.35rem 0.7rem; text-align: left; vertical-align: middle; overflow-wrap: normal; }
+.dq-md th { background: var(--input-bg); font-weight: 700; }
+.dq-md tbody tr:nth-child(even) td { background: rgba(var(--accent-rgb), 0.05); }
 .dq-md code { background: var(--input-bg); padding: 0.1rem 0.35rem; border-radius: 5px; font-size: 0.9em; }
 .dq-md pre { background: var(--input-bg); padding: 0.75rem; border-radius: 10px; overflow-x: auto; }
 .dq-md pre code { background: none; padding: 0; }
