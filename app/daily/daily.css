@@ -75,6 +75,7 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-md { line-height: 1.65; overflow-wrap: anywhere; }
 .dq-md > :first-child { margin-top: 0.6rem; }
 .dq-md p { margin: 0.6rem 0; }
+.dq-md h4 { margin: 1.3rem 0 0.4rem; font-size: 1rem; color: var(--accent-light); }
 .dq-md ul, .dq-md ol { padding-left: 1.4rem; }
 /* Tables scroll sideways on their own rather than widening the card. */
 .dq-md table { border-collapse: collapse; margin: 0.75rem 0; display: block; width: max-content; max-width: 100%; overflow-x: auto; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
@@ -86,8 +87,9 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-md pre code { background: none; padding: 0; }
 .dq-md.is-inline { display: inline; }
 .dq-md.is-inline > p, .dq-md.is-inline > :first-child { display: inline; margin: 0; }
-.dq-figure { margin: 0.75rem 0; padding: 0.75rem; border-radius: 12px; background: #fff; text-align: center; }
-.dq-figure img { max-width: 100%; height: auto; }
+.dq-figure { display: block; margin: 0.75rem 0; padding: 0.75rem; border-radius: 12px; background: #fff; text-align: center; }
+.dq-figure img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.dq-figcaption { display: block; margin-top: 0.4rem; color: #4b5563; font-size: 0.82rem; line-height: 1.4; }
 
 .dq-parts { display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.9rem; }
 .dq-part { padding: 0.8rem 0.9rem; border-radius: 14px; background: var(--input-bg); border: 1px solid transparent; }

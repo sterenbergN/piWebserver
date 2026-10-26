@@ -63,6 +63,20 @@ test('validateDay: zero answers need abs, figures need alt text, ids must be uni
   assert.match(dupe.errors.join(), /ids must be unique/);
 });
 
+test('validateDay: solution figures must be SVG with alt text, and placed in the solution', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+  const placed = 'Work.\n\n![](figure:resp)\n\nMore.';
+  const ok = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg, alt: 'A step response', caption: 'Marked', junk: 1 }] }) }));
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.day!.core.solutionFigures, [{ id: 'resp', svg, alt: 'A step response', caption: 'Marked' }]);
+  const unplaced = validateDay(day({ core: question({ solutionFigures: [{ id: 'resp', svg, alt: 'x' }] }) }));
+  assert.match(unplaced.errors.join(), /isn't placed/);
+  const missing = validateDay(day({ core: question({ solution: placed }) }));
+  assert.match(missing.errors.join(), /figure:resp, which isn't in solutionFigures/);
+  const bad = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg: '<img>' }] }) }));
+  assert.match(bad.errors.join(), /SVG markup and an alt/);
+});
+
 test('validatePack rejects repeated dates and question ids across days', () => {
   const ok = validatePack({ version: 1, days: [day(), day({ date: '2026-10-22', core: question({ id: 'q3' }), bonus: [] })] });
   assert.deepEqual(ok.errors, []);
@@ -104,10 +118,13 @@ test('gradeQuestion: partial credit and known-mistake notes; parseResponses drop
 });
 
 test('publicDay hides answers, solutions and check notes', () => {
-  const d = validateDay(day({ core: question({ check: 'computed twice', parts: [{ id: 'a', answer: { type: 'order', items: ['1', '2', '3', '4'] } }] }) })).day!;
+  const d = validateDay(day({ core: question({
+    check: 'computed twice', parts: [{ id: 'a', answer: { type: 'order', items: ['1', '2', '3', '4'] } }],
+    solution: 'Moments about B.\n\n![](figure:fbd)', solutionFigures: [{ id: 'fbd', svg: '<svg></svg>', alt: 'Secret diagram' }],
+  }) })).day!;
   const pub = publicDay(d);
   const text = JSON.stringify(pub);
-  assert.doesNotMatch(text, /computed twice|Moments about B|"correct"|"value"/);
+  assert.doesNotMatch(text, /computed twice|Moments about B|Secret diagram|"correct"|"value"/);
   const items = (pub.core.parts[0].input as any).items;
   assert.notDeepEqual(items, ['1', '2', '3', '4'], 'order items are never shown in the answer order');
   assert.deepEqual([...items].sort(), ['1', '2', '3', '4']);

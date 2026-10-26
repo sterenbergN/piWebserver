@@ -52,7 +52,7 @@ function QuestionPreview({ q, kind }: { q: Question; kind: string }) {
         ))}
       </div>
       {q.hints?.map((h, i) => <div key={i} className="dq-hint-box" style={{ marginTop: '0.5rem' }}><strong>Hint {i + 1}:</strong> <MathText className="is-inline">{h}</MathText></div>)}
-      <section className="dq-solution"><h3>Worked solution</h3><MathText>{q.solution}</MathText></section>
+      <section className="dq-solution"><h3>Worked solution</h3><MathText figures={q.solutionFigures}>{q.solution}</MathText></section>
       <section className="dq-sources"><h3>Sources</h3><ul>{q.sources.map((s, i) => <li key={i}>{s.title}{s.detail ? ` — ${s.detail}` : ''}{s.url ? ` (${s.url})` : ''}</li>)}</ul></section>
       {q.check && <section className="dq-sources"><h3>How it was checked</h3><MathText>{q.check}</MathText></section>}
     </article>

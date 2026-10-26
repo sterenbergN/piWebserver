@@ -97,9 +97,11 @@ notes' target). Per day:
 
 Create `daily-packs/src/<first date>.mjs` that exports an array of days, using
 the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
-`range`, `coeffs`, `order`, `SRC`). The starter files
-`daily-packs/src/week1.mjs` and `week2.mjs` are the model to follow, and
-`lib/daily/types.ts` is the exact format.
+`range`, `coeffs`, `order`, `SRC`, and `fig`, `plot`, `step1`, `step2` for
+diagrams). The starter files `daily-packs/src/week1.mjs` and `week2.mjs` show
+the format, `lib/daily/types.ts` is the exact shape, and
+**`scripts/daily-generator/example-solution.mjs` is the model for how a
+solution should read** (working, meaning, real-world use, computed diagrams).
 
 **Rules for every question**
 
@@ -109,7 +111,8 @@ the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
 - **Ids**: `<date>-<short-slug>`, unique for all time.
 - **Math**: everything containing LaTeX goes in ``R`...` `` templates (the build
   refuses backslashes inside quoted strings). Put display math on its own
-  line as `$$ ... $$`. Write currency as `\$`.
+  line as `$$ ... $$`. Write currency as `\$`. In running text use `rac` or
+  `a/b`; keep `\dfrac` for display math, or the line spacing blows up.
 - **Tables**: Markdown tables render (a header row, then a `|---|---|`
   row; `---:` right-aligns a number column). Use them for data read across
   rows: property tables, data-type ranges, SIL bands, I/O lists. Keep to about
@@ -122,8 +125,25 @@ the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
   use `abs` for answers at or near zero.
 - **Prompt**: self-contained, realistic numbers, one clear question per part.
 - **Hints**: 1–3, each a step further, never the answer.
-- **Solution**: every step, with the numbers substituted; a quick check at the
-  end (other method, units, sanity); then a short practical takeaway.
+- **Solution**: teach the idea, not just the answer. Three parts, each under
+  a `####` heading (see `example-solution.mjs`):
+  1. `#### Working`: every step with the numbers substituted, then a quick
+     check (another method, units, a sanity check).
+  2. `#### What the numbers tell you`: what each result means physically, why
+     it matters, and how it moves when the design changes (more stiffness,
+     a bigger pipe, more gain…). A small table (quantity | this problem |
+     what it tells you) works well when there are several results. Point out
+     the insight a good engineer would take away (for example "overshoot
+     depends only on ζ").
+  3. `#### On a real job` (or "On a real loop", "On the machine"…): how this
+     is used in practice. Tuning a real controller, sizing or selecting a
+     part, commissioning and reading a trend, what goes wrong on site, rules of
+     thumb, and where the textbook model stops being accurate (with a short
+     caveat).
+  Core and boss questions get all three in full (roughly 250–500 words beyond
+  the working, more for a boss). Bonus and practice questions keep the same
+  three parts, but shorter (a few sentences each). Be concrete and use this
+  problem's numbers; no padding or generic advice.
 - **Mistakes**: 1–3 per numeric or choice part for the slips people really
   make (wrong unit conversion, radius vs diameter, open- vs closed-loop, cp vs
   cv…), each with the value that slip produces **computed**, and a note on
@@ -137,7 +157,27 @@ the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
   (`formulas: [ids]` on each question), each with its source.
 - **Figures** (optional): SVG markup with `xmlns`, dark lines on white, at
   most 500 px wide, all text inside the viewBox, arrow markers that point along
-  their line, and a `figureAlt` that says everything the figure shows.
+  their line, and a `figureAlt` that says everything the figure shows. The
+  question's `figure` shows before answering, so it must not give away the
+  answer.
+- **Solution diagrams**: add 1–3 to most core and boss solutions, and to
+  bonus or practice ones where a picture teaches more than a paragraph. Put
+  them in `solutionFigures: [fig(id, svg, alt, caption)]` and place each one in
+  the solution text with `![](figure:<id>)` on its own line, right after the
+  step it illustrates (the build fails if one is missing or unplaced).
+  - **Graphs are computed, never drawn by eye.** Use `plot()` from
+    helpers.mjs with the same numbers as the answer key: step responses
+    (`step1`, `step2`), a family of curves showing what changes when a
+    parameter changes, pump and system curves, stress or moment along a beam,
+    temperature through a wall, S-N or fatigue lines, Bode magnitude
+    (`fn` over log frequency). Mark the answers on the graph (`marks`,
+    `vlines`, `hlines`, `bands`). Use `equalAspect: true` for an s-plane or
+    anything where angles and circles must look right.
+  - Hand-written SVG for everything else: free-body and block diagrams,
+    ladder rungs, timing diagrams, P&ID snippets, wiring, state machines. Same
+    style rules as figures.
+  - The `alt` describes what the diagram shows in words, and the caption is
+    one plain-text line (no math).
 - **Automation questions** should be the things an automation engineer
   actually meets: TIA Portal behaviour, PLC data and program structure,
   standards (IEC 61131-3, IEC 60204-1, ISO 13849-1, IEC 62061, ISA-88/95/18.2/101,

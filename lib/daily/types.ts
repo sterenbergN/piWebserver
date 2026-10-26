@@ -34,6 +34,9 @@ export type Part = {
 
 export type Source = { title: string; detail?: string; url?: string };
 
+/** A diagram in the worked solution, shown where the solution text has ![](figure:<id>). */
+export type SolutionFigure = { id: string; svg: string; alt: string; caption?: string };
+
 export type Question = {
   id: string;
   track: Track;
@@ -50,6 +53,8 @@ export type Question = {
   hints?: string[];
   /** The full worked solution (markdown with math). */
   solution: string;
+  /** Diagrams for the solution (SVG, shown as images); each is placed by ![](figure:<id>) in `solution`. */
+  solutionFigures?: SolutionFigure[];
   sources: Source[];
   /** Ids of the day's formulas this question uses. */
   formulas?: string[];

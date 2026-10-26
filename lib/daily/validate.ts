@@ -5,7 +5,7 @@
 
 import katex from 'katex';
 import { isDateKey } from '@/lib/habits/dates';
-import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type Source } from './types';
+import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type SolutionFigure, type Source } from './types';
 
 type Errors = string[];
 
@@ -101,6 +101,21 @@ function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors:
   if (raw?.figure !== undefined && (!isText(raw.figure, 80000) || !/^\s*<svg[\s>]/.test(raw.figure) || !isText(raw.figureAlt, 400))) {
     fail('figure must be SVG markup with a figureAlt description');
   }
+  const figIds = new Set<string>();
+  const rawFigs = raw?.solutionFigures ?? [];
+  const solutionFigures: SolutionFigure[] = Array.isArray(rawFigs) && rawFigs.length <= 6 ? rawFigs.flatMap((f: any, i: number) => {
+    if (!ID.test(f?.id ?? '') || figIds.has(f.id) || !isText(f.svg, 80000) || !/^\s*<svg[\s>]/.test(f.svg) || !isText(f.alt, 600) || (f.caption !== undefined && !isText(f.caption, 300))) {
+      fail(`solutionFigures[${i}] needs a unique id, SVG markup and an alt description`);
+      return [];
+    }
+    figIds.add(f.id);
+    return [{ id: f.id, svg: f.svg, alt: f.alt, ...(f.caption ? { caption: f.caption } : {}) }];
+  }) : (fail('solutionFigures must be a list of up to 6'), []);
+  if (typeof raw?.solution === 'string') {
+    const placed = new Set([...raw.solution.matchAll(/!\[[^\]]*\]\(figure:([\w-]+)\)/g)].map((m: RegExpMatchArray) => m[1]));
+    for (const id of placed) if (!figIds.has(id)) fail(`solution shows figure:${id}, which isn't in solutionFigures`);
+    for (const id of figIds) if (!placed.has(id)) fail(`solution figure ${id} isn't placed (write ![](figure:${id}) where it goes)`);
+  }
   const hints = raw?.hints ?? [];
   if (!Array.isArray(hints) || hints.length > 5 || !hints.every((h: unknown) => isText(h, 1500))) fail('hints must be up to 5 strings');
   const sources: Source[] = Array.isArray(raw?.sources) ? raw.sources.flatMap((s: any, i: number) => {
@@ -136,7 +151,7 @@ function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors:
   return {
     id: raw.id, track: raw.track, topic: raw.topic.trim(), difficulty: raw.difficulty, title: raw.title.trim(), prompt: raw.prompt,
     ...(raw.figure ? { figure: raw.figure, figureAlt: raw.figureAlt } : {}),
-    parts, ...(hints.length ? { hints } : {}), solution: raw.solution, sources,
+    parts, ...(hints.length ? { hints } : {}), solution: raw.solution, ...(solutionFigures.length ? { solutionFigures } : {}), sources,
     ...(formulas.length ? { formulas } : {}), ...(isText(raw.check, 4000) ? { check: raw.check } : {}),
   };
 }

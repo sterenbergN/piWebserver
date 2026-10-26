@@ -205,7 +205,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
 
           <section className="dq-solution">
             <h3>Worked solution</h3>
-            <MathText>{answered.question.solution}</MathText>
+            <MathText figures={answered.question.solutionFigures}>{answered.question.solution}</MathText>
           </section>
 
           {usedFormulas.length > 0 && (

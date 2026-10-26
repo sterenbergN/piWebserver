@@ -127,7 +127,7 @@ export type PublicInput =
   | { type: 'coefficients' }
   | { type: 'order'; items: string[] };
 
-export type PublicQuestion = Omit<Question, 'parts' | 'solution' | 'check'> & {
+export type PublicQuestion = Omit<Question, 'parts' | 'solution' | 'solutionFigures' | 'check'> & {
   parts: { id: string; prompt?: string; input: PublicInput }[];
 };
 
@@ -157,7 +157,7 @@ function publicInput(answer: Answer, seed: string): PublicInput {
 }
 
 export function publicQuestion(q: Question): PublicQuestion {
-  const { parts, solution, check, ...rest } = q;
+  const { parts, solution, solutionFigures, check, ...rest } = q;
   return { ...rest, parts: parts.map((p) => ({ id: p.id, ...(p.prompt ? { prompt: p.prompt } : {}), input: publicInput(p.answer, `${q.id}/${p.id}`) })) };
 }
 
