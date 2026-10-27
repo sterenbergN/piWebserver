@@ -97,11 +97,11 @@ notes' target). Per day:
 
 Create `daily-packs/src/<first date>.mjs` that exports an array of days, using
 the builders in `scripts/daily-generator/helpers.mjs` (`num`, `choice`, `multi`,
-`range`, `coeffs`, `order`, `SRC`, and `fig`, `plot`, `step1`, `step2` for
-diagrams). The starter files `daily-packs/src/week1.mjs` and `week2.mjs` show
+`range`, `coeffs`, `order`, `SRC`, `fig`, `plot`, `step1`, `step2` for
+diagrams, and `widget` for interactive simulators). The starter files `daily-packs/src/week1.mjs` and `week2.mjs` show
 the format, `lib/daily/types.ts` is the exact shape, and
 **`scripts/daily-generator/example-solution.mjs` is the model for how a
-solution should read** (working, meaning, real-world use, computed diagrams).
+solution should read** (working, meaning, real-world use, computed diagrams, a simulator).
 
 **Rules for every question**
 
@@ -178,6 +178,37 @@ solution should read** (working, meaning, real-world use, computed diagrams).
     style rules as figures.
   - The `alt` describes what the diagram shows in words, and the caption is
     one plain-text line (no math).
+- **Interactive simulators** (`solutionWidgets`): a solution can hold up to 3
+  live widgets the site draws itself: sliders, a plot that redraws as they
+  move (with the question's own curve dashed for comparison) and live
+  readouts. Add one to most core and boss questions whose topic has a kind
+  below, and to bonus or practice ones where playing with the numbers teaches
+  the idea. Use `widget(id, kind, params, { caption, ranges })` from
+  helpers.mjs, put it in `solutionWidgets: [...]`, and place it in the
+  solution with `![](widget:<id>)` on its own line, after a sentence that says
+  what to try ("drag ζ down and watch the overshoot grow; drag ωn and only the
+  time scale changes"). The build fails if one is missing or unplaced. A pack
+  only picks a kind and numbers: never put markup or code in a widget.
+
+  | kind | system | params (sliders **bold**) | readouts |
+  |---|---|---|---|
+  | `step2` | $K\omega_n^2/(s^2+2\zeta\omega_n s+\omega_n^2)$, unit step | **`zeta`** (0.01–5), **`wn`** rad/s, `K` (default 1), `tMax` s (time axis; default about 1.5 × settling) | overshoot, peak time, rise time 10–90 % (and 0–100 %), exact 2 % settling time next to the 4/ζωn estimate, poles and ωd |
+  | `step1` | $Ke^{-\theta s}/(\tau s+1)$, unit step | **`tau`** s, **`theta`** s (default 0), `K` (default 1), `tMax` s | 63 % point θ + τ, rise time, exact settling θ + τ ln 50 next to θ + 4τ, θ/τ |
+  | `bode2` | the same second-order system, magnitude and phase | **`zeta`**, **`wn`** rad/s, `K` (default 1) | resonant peak and ωr, −3 dB bandwidth, phase at ωn, step overshoot for the same ζ |
+
+  - Start the sliders at **this problem's numbers** (the same constants as the
+    answer key), so the widget opens on the answer and the readouts match the
+    working. Because the widget shows the answers, it is only shown after
+    answering, like the rest of the solution.
+  - By default ζ runs 0.05–2, ωn and τ from a quarter (τ: a fifth) to 4× (5×)
+    their starting value, and θ from 0 to 4θ (at least 2τ). Give
+    `ranges: { zeta: [0.1, 1] }` to focus a slider on what the question is
+    about; the starting value must sit inside the range.
+  - Readouts use exact definitions (10–90 % rise, true 2 % settling), so they
+    can differ a little from textbook estimates in the working (4/ζωn,
+    0–100 % rise). Say which one the working uses.
+  - The caption is one plain-text line (no math), such as what the dashed
+    curve is or what to look for.
 - **Automation questions** should be the things an automation engineer
   actually meets: TIA Portal behaviour, PLC data and program structure,
   standards (IEC 61131-3, IEC 60204-1, ISO 13849-1, IEC 62061, ISA-88/95/18.2/101,

@@ -37,6 +37,16 @@ export type Source = { title: string; detail?: string; url?: string };
 /** A diagram in the worked solution, shown where the solution text has ![](figure:<id>). */
 export type SolutionFigure = { id: string; svg: string; alt: string; caption?: string };
 
+/** The built-in interactive widgets (see lib/daily/widgets.ts for each kind's params). */
+export type WidgetKind = 'step2' | 'step1' | 'bode2';
+
+/**
+ * An interactive simulator in the worked solution, shown where the solution text
+ * has ![](widget:<id>). The pack only picks a built-in kind and its starting
+ * numbers; the site draws it. `ranges` overrides a slider's [min, max].
+ */
+export type SolutionWidget = { id: string; kind: WidgetKind; params: Record<string, number>; ranges?: Record<string, [number, number]>; caption?: string };
+
 export type Question = {
   id: string;
   track: Track;
@@ -55,6 +65,8 @@ export type Question = {
   solution: string;
   /** Diagrams for the solution (SVG, shown as images); each is placed by ![](figure:<id>) in `solution`. */
   solutionFigures?: SolutionFigure[];
+  /** Interactive simulators for the solution; each is placed by ![](widget:<id>) in `solution`. */
+  solutionWidgets?: SolutionWidget[];
   sources: Source[];
   /** Ids of the day's formulas this question uses. */
   formulas?: string[];

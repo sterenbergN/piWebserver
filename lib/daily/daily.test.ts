@@ -77,6 +77,32 @@ test('validateDay: solution figures must be SVG with alt text, and placed in the
   assert.match(bad.errors.join(), /SVG markup and an alt/);
 });
 
+test('validateDay: solution widgets are built-in kinds with checked numbers, placed in the solution', () => {
+  const placed = 'Work.\n\n![](widget:explore)\n\nMore.';
+  const ok = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'step2', params: { zeta: 0.4, wn: 5, script: 1 }, ranges: { zeta: [0.1, 1.5] }, caption: 'Drag ζ', html: '<b>' }] as any }) }));
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.day!.core.solutionWidgets, [{ id: 'explore', kind: 'step2', params: { zeta: 0.4, wn: 5 }, ranges: { zeta: [0.1, 1.5] }, caption: 'Drag ζ' }]);
+  const fopdt = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'step1', params: { tau: 8 } }] }) }));
+  assert.deepEqual(fopdt.errors, []);
+
+  const kind = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'eval', params: {} }] as any }) }));
+  assert.match(kind.errors.join(), /kind must be one of step2, step1, bode2/);
+  const missing = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'step2', params: { zeta: 0.4 } }] }) }));
+  assert.match(missing.errors.join(), /needs params\.wn/);
+  const outOfRange = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'bode2', params: { zeta: -1, wn: '5' } }] as any }) }));
+  assert.match(outOfRange.errors.join(), /params\.zeta .* must be a number/);
+  assert.match(outOfRange.errors.join(), /params\.wn .* must be a number/);
+  const badRange = validateDay(day({ core: question({ solution: placed, solutionWidgets: [{ id: 'explore', kind: 'step2', params: { zeta: 0.4, wn: 5 }, ranges: { zeta: [0.5, 1], K: [1, 2] } }] }) }));
+  assert.match(badRange.errors.join(), /ranges\.zeta must be \[min, max\]/);
+  assert.match(badRange.errors.join(), /has no K slider/);
+  const unplaced = validateDay(day({ core: question({ solutionWidgets: [{ id: 'explore', kind: 'step2', params: { zeta: 0.4, wn: 5 } }] }) }));
+  assert.match(unplaced.errors.join(), /widget explore isn't placed/);
+  const unknown = validateDay(day({ core: question({ solution: placed }) }));
+  assert.match(unknown.errors.join(), /widget:explore, which isn't in solutionWidgets/);
+  const many = validateDay(day({ core: question({ solutionWidgets: [1, 2, 3, 4].map((i) => ({ id: `w${i}`, kind: 'step1', params: { tau: 1 } })) }) }));
+  assert.match(many.errors.join(), /up to 3/);
+});
+
 test('validatePack rejects repeated dates and question ids across days', () => {
   const ok = validatePack({ version: 1, days: [day(), day({ date: '2026-10-22', core: question({ id: 'q3' }), bonus: [] })] });
   assert.deepEqual(ok.errors, []);
@@ -120,11 +146,13 @@ test('gradeQuestion: partial credit and known-mistake notes; parseResponses drop
 test('publicDay hides answers, solutions and check notes', () => {
   const d = validateDay(day({ core: question({
     check: 'computed twice', parts: [{ id: 'a', answer: { type: 'order', items: ['1', '2', '3', '4'] } }],
-    solution: 'Moments about B.\n\n![](figure:fbd)', solutionFigures: [{ id: 'fbd', svg: '<svg></svg>', alt: 'Secret diagram' }],
+    solution: 'Moments about B.\n\n![](figure:fbd)\n\n![](widget:sim)', solutionFigures: [{ id: 'fbd', svg: '<svg></svg>', alt: 'Secret diagram' }],
+    solutionWidgets: [{ id: 'sim', kind: 'step2', params: { zeta: 0.123, wn: 5 }, caption: 'Secret simulator' }],
   }) })).day!;
+  assert.equal(d.core.solutionWidgets?.length, 1);
   const pub = publicDay(d);
   const text = JSON.stringify(pub);
-  assert.doesNotMatch(text, /computed twice|Moments about B|Secret diagram|"correct"|"value"/);
+  assert.doesNotMatch(text, /computed twice|Moments about B|Secret diagram|Secret simulator|0\.123|solutionWidgets|"correct"|"value"/);
   const items = (pub.core.parts[0].input as any).items;
   assert.notDeepEqual(items, ['1', '2', '3', '4'], 'order items are never shown in the answer order');
   assert.deepEqual([...items].sort(), ['1', '2', '3', '4']);

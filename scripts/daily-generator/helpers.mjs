@@ -42,6 +42,17 @@ export const order = (id, items, opts = {}) => ({
 /** A solution diagram: put ![](figure:<id>) in the solution where it should appear. */
 export const fig = (id, svg, alt, caption) => ({ id, svg, alt, ...(caption ? { caption } : {}) });
 
+/**
+ * An interactive simulator for the solution: put ![](widget:<id>) in the solution where it
+ * should appear. The site draws it; the pack only picks the kind and its starting numbers.
+ *   widget('explore', 'step2', { zeta: 0.4, wn: 5 })            // ζ and ωn sliders
+ *   widget('lag', 'step1', { tau: 8, theta: 2 }, { caption: '…' }) // τ and θ sliders
+ *   widget('freq', 'bode2', { zeta: 0.4, wn: 5 }, { ranges: { zeta: [0.1, 1] } })
+ */
+export const widget = (id, kind, params, opts = {}) => ({
+  id, kind, params, ...(opts.ranges ? { ranges: opts.ranges } : {}), ...(opts.caption ? { caption: opts.caption } : {}),
+});
+
 // ─── Plots ───────────────────────────────────────────────────────────────────
 // Graphs in figures are computed, never drawn by eye: give plot() the function
 // (or the points) and it draws them to scale.

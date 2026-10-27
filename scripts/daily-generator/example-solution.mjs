@@ -1,10 +1,11 @@
 // A model question for how solutions should read: the working, then what the
-// numbers mean, then how you'd use them on a real loop, with computed diagrams.
+// numbers mean, then how you'd use them on a real loop, with computed diagrams
+// and an interactive simulator.
 // INSTRUCTIONS.md points here. Build it on its own to check it:
 //   node scripts/daily-generator/build.mjs scripts/daily-generator/example-solution.mjs
 // (run from a scratch folder: it writes ./daily-packs/practice-<today>.json).
 
-import { num, fig, plot, step2, SRC } from './helpers.mjs';
+import { num, fig, plot, step2, widget, SRC } from './helpers.mjs';
 
 const R = String.raw;
 
@@ -131,6 +132,10 @@ On the s-plane, $\omega_n$ is the distance of the poles from the origin and $\ze
 
 ![](figure:poles)
 
+Try it below. Drag $\omega_n$ and the curve only stretches or squeezes in time: the overshoot doesn't move. Drag $\zeta$ and the overshoot changes, and so does the settling time, because $\zeta\omega_n$ changes with it.
+
+![](widget:explore)
+
 #### On a real loop
 
 This $T(s)$ is what you get from a P controller with gain $K_p = 25$ on a plant $1/[s(s+4)]$ (a motor position loop, say): the closed loop is $K_p/(s^2+4s+K_p)$. So $\omega_n=\sqrt{K_p}$ and $\zeta = 2/\sqrt{K_p}$, which explains the usual tuning trade-off:
@@ -149,6 +154,7 @@ Why it matters: commanding 100 psi on a pressure loop with this response peaks a
         fig('family', family, 'Step responses with ωn = 5 rad/s and ζ = 0.2, 0.4, 0.7 and 1: lower ζ overshoots and rings more; ζ = 1 rises slowest with no overshoot.', 'Same ωn, different damping.'),
         fig('poles', poles, `s-plane: the poles at −${sigma} ± j${r(wd, 2)} sit on a circle of radius ωn = 5, on lines at angle arccos(0.4) ≈ 66° from the negative real axis.`, 'The closed-loop poles on the s-plane.'),
       ],
+      solutionWidgets: [widget('explore', 'step2', { zeta, wn }, { caption: 'Start from this loop (ζ = 0.4, ωn = 5 rad/s); the dashed curve stays put so you can compare.' })],
       sources: [SRC.nise('Ch. 4, Time Response: second-order systems'), SRC.ogata('Ch. 5, Transient and Steady-State Response Analyses')],
       formulas: ['second-order', 'overshoot'],
     },

@@ -5,7 +5,8 @@
 
 import katex from 'katex';
 import { isDateKey } from '@/lib/habits/dates';
-import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type SolutionFigure, type Source } from './types';
+import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type SolutionFigure, type SolutionWidget, type Source, type WidgetKind } from './types';
+import { WIDGET_KINDS, WIDGETS } from './widgets';
 
 type Errors = string[];
 
@@ -76,6 +77,36 @@ function checkMistakes(raw: unknown, answer: Answer, where: string, errors: Erro
   });
 }
 
+/** A solution widget: a built-in kind, its numbers within each param's limits, and slider ranges around them. */
+function checkWidget(raw: any, where: string, errors: Errors): SolutionWidget | null {
+  const before = errors.length;
+  const fail = (msg: string) => errors.push(`${where}: ${msg}`);
+  if (!ID.test(raw?.id ?? '')) fail('needs an id (letters, digits, - or _)');
+  if (raw?.caption !== undefined && !isText(raw.caption, 300)) fail('caption must be one short line of text');
+  const spec = WIDGET_KINDS.includes(raw?.kind) ? WIDGETS[raw.kind as WidgetKind] : null;
+  if (!spec) { fail(`kind must be one of ${WIDGET_KINDS.join(', ')}`); return null; }
+  const params: Record<string, number> = {};
+  for (const [key, p] of Object.entries(spec.params)) {
+    const v = raw.params?.[key];
+    if (v === undefined) { if (p.fallback === undefined && !p.optional) fail(`${raw.kind} needs params.${key} (${p.label})`); continue; }
+    if (!isNum(v) || v < p.min || v > p.max) { fail(`params.${key} (${p.label}) must be a number from ${p.min} to ${p.max}`); continue; }
+    params[key] = v;
+  }
+  const ranges: Record<string, [number, number]> = {};
+  for (const [key, r] of Object.entries(raw.ranges ?? {})) {
+    const p = spec.params[key];
+    if (!p?.slider) { fail(`ranges.${key}: ${raw.kind} has no ${key} slider`); continue; }
+    const v = params[key] ?? p.fallback;
+    if (!Array.isArray(r) || r.length !== 2 || !r.every(isNum) || r[0] >= r[1] || r[0] < p.min || r[1] > p.max || (v !== undefined && (v < r[0] || v > r[1]))) {
+      fail(`ranges.${key} must be [min, max] within ${p.min}–${p.max}, around the starting value`);
+      continue;
+    }
+    ranges[key] = [r[0], r[1]];
+  }
+  if (errors.length > before) return null;
+  return { id: raw.id, kind: raw.kind, params, ...(Object.keys(ranges).length ? { ranges } : {}), ...(raw.caption ? { caption: raw.caption } : {}) };
+}
+
 function checkFormula(raw: any, where: string, errors: Errors): Formula | null {
   if (!ID.test(raw?.id ?? '') || !isText(raw.name, 120) || !isText(raw.latex, 2000) || !isText(raw.source, 300) || (raw.note !== undefined && !isText(raw.note, 600))) {
     errors.push(`${where}: a formula needs an id, name, latex and source`);
@@ -111,10 +142,21 @@ function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors:
     figIds.add(f.id);
     return [{ id: f.id, svg: f.svg, alt: f.alt, ...(f.caption ? { caption: f.caption } : {}) }];
   }) : (fail('solutionFigures must be a list of up to 6'), []);
+  const widgetIds = new Set<string>();
+  const rawWidgets = raw?.solutionWidgets ?? [];
+  const solutionWidgets: SolutionWidget[] = Array.isArray(rawWidgets) && rawWidgets.length <= 3 ? rawWidgets.flatMap((w: any, i: number) => {
+    const widget = checkWidget(w, `${where}.solutionWidgets[${i}]`, errors);
+    if (!widget) return [];
+    if (widgetIds.has(widget.id)) { fail(`solutionWidgets[${i}]: duplicate id ${widget.id}`); return []; }
+    widgetIds.add(widget.id);
+    return [widget];
+  }) : (fail('solutionWidgets must be a list of up to 3'), []);
   if (typeof raw?.solution === 'string') {
-    const placed = new Set([...raw.solution.matchAll(/!\[[^\]]*\]\(figure:([\w-]+)\)/g)].map((m: RegExpMatchArray) => m[1]));
-    for (const id of placed) if (!figIds.has(id)) fail(`solution shows figure:${id}, which isn't in solutionFigures`);
-    for (const id of figIds) if (!placed.has(id)) fail(`solution figure ${id} isn't placed (write ![](figure:${id}) where it goes)`);
+    for (const [kind, ids, field] of [['figure', figIds, 'solutionFigures'], ['widget', widgetIds, 'solutionWidgets']] as const) {
+      const placed = new Set([...raw.solution.matchAll(new RegExp(`!\\[[^\\]]*\\]\\(${kind}:([\\w-]+)\\)`, 'g'))].map((m: RegExpMatchArray) => m[1]));
+      for (const id of placed) if (!ids.has(id)) fail(`solution shows ${kind}:${id}, which isn't in ${field}`);
+      for (const id of ids) if (!placed.has(id)) fail(`solution ${kind} ${id} isn't placed (write ![](${kind}:${id}) where it goes)`);
+    }
   }
   const hints = raw?.hints ?? [];
   if (!Array.isArray(hints) || hints.length > 5 || !hints.every((h: unknown) => isText(h, 1500))) fail('hints must be up to 5 strings');
@@ -151,7 +193,8 @@ function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors:
   return {
     id: raw.id, track: raw.track, topic: raw.topic.trim(), difficulty: raw.difficulty, title: raw.title.trim(), prompt: raw.prompt,
     ...(raw.figure ? { figure: raw.figure, figureAlt: raw.figureAlt } : {}),
-    parts, ...(hints.length ? { hints } : {}), solution: raw.solution, ...(solutionFigures.length ? { solutionFigures } : {}), sources,
+    parts, ...(hints.length ? { hints } : {}), solution: raw.solution, ...(solutionFigures.length ? { solutionFigures } : {}),
+    ...(solutionWidgets.length ? { solutionWidgets } : {}), sources,
     ...(formulas.length ? { formulas } : {}), ...(isText(raw.check, 4000) ? { check: raw.check } : {}),
   };
 }

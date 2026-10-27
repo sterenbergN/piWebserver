@@ -91,6 +91,42 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-figure img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
 .dq-figcaption { display: block; margin-top: 0.4rem; color: #4b5563; font-size: 0.82rem; line-height: 1.4; }
 
+/* Interactive solution widgets (simulators). They follow the theme, unlike the white SVG figures. */
+.dq-md-p { margin: 0.6rem 0; }
+.dq-widget { margin: 0.9rem 0; padding: 0.8rem 0.9rem 0.9rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--input-bg); line-height: 1.4; overflow-wrap: normal; }
+.dq-widget-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.6rem; }
+.dq-widget-head strong { display: block; font-size: 0.98rem; }
+.dq-widget-head .dq-small-btn:disabled { opacity: 0.45; cursor: default; }
+.dq-w-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 0.4rem 1.2rem; margin-bottom: 0.4rem; }
+.dq-w-slider { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 0 0.5rem; }
+.dq-w-slider-name { font-weight: 700; }
+.dq-w-slider-name .dq-hint { font-weight: 400; }
+.dq-w-slider output { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent-light); }
+.dq-w-slider input { grid-column: 1 / -1; width: 100%; margin: 0.35rem 0 0.2rem; accent-color: var(--accent-light); min-height: 28px; cursor: pointer; }
+.dq-w-chart { width: 100%; margin-top: 0.3rem; }
+.dq-w-chart svg { display: block; overflow: visible; font-family: inherit; }
+.dq-w-grid line { stroke: var(--surface-border); stroke-width: 1; }
+.dq-w-ticks text, .dq-w-labels text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dq-w-ticks .dq-w-axis-label { fill: var(--foreground); font-size: 12px; }
+.dq-w-band { fill: rgba(var(--success-rgb), 0.16); }
+.dq-w-guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+.dq-w-curve { fill: none; stroke: var(--habit-1); stroke-width: 2.5; stroke-linejoin: round; }
+.dq-w-ghost { fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 6 5; opacity: 0.8; }
+.dq-w-mark { fill: var(--habit-2); stroke: var(--input-bg); stroke-width: 1.5; }
+.dq-w-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.3rem 0 0.6rem; font-size: 0.8rem; color: var(--muted); }
+.dq-w-key { display: inline-block; width: 1.4rem; height: 0; border-top: 2.5px solid var(--habit-1); }
+.dq-w-key.is-ghost { margin-left: 0.6rem; border-top: 2px dashed var(--muted); }
+.dq-w-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: 0.45rem; margin: 0; }
+.dq-w-stats > div { padding: 0.45rem 0.6rem; border-radius: 10px; background: var(--surface-glass); border: 1px solid var(--surface-border); min-width: 0; }
+.dq-w-stats dt { font-size: 0.74rem; color: var(--muted); }
+.dq-w-stats dd { margin: 0; font-weight: 800; font-size: 1.02rem; font-variant-numeric: tabular-nums; }
+.dq-w-stats dd.dq-w-sub { font-weight: 400; font-size: 0.74rem; color: var(--muted); }
+.dq-w-caption { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--muted); }
+@media (max-width: 480px) {
+  .dq-widget { padding: 0.7rem 0.65rem 0.75rem; margin-left: -0.3rem; margin-right: -0.3rem; }
+  .dq-w-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .dq-parts { display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.9rem; }
 .dq-part { padding: 0.8rem 0.9rem; border-radius: 14px; background: var(--input-bg); border: 1px solid transparent; }
 .dq-part.is-right { border-color: rgba(var(--success-rgb), 0.6); }
