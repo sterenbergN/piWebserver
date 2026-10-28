@@ -7,7 +7,7 @@ import {
 } from '@/lib/loop-lab/controllers';
 import { defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { PROCESSES } from '@/lib/loop-lab/processes';
-import { TUNING_RULES, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
+import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
 
 /** A number input that lets you type freely and reports only valid numbers. */
@@ -33,18 +33,33 @@ export function NumField({ value, onChange, min, max, step, label, unit, title }
   );
 }
 
+/** The process, as one menu grouped by what it teaches. */
 export function ProcessPicker({ value, onChange }: { value: ProcessDef['id']; onChange: (id: ProcessDef['id']) => void }) {
+  const groups = [
+    { label: 'Where PID is the answer', list: PROCESSES.filter((p) => p.family === 'pid-wins') },
+    { label: 'Where PID falls short', list: PROCESSES.filter((p) => p.family === 'escalation' && p.id !== 'custom') },
+    { label: 'Your own data', list: PROCESSES.filter((p) => p.id === 'custom') },
+  ];
   return (
-    <div className="ll-procs">
-      {PROCESSES.map((p) => (
-        <button key={p.id} className="ll-proc" aria-pressed={p.id === value} onClick={() => onChange(p.id)}>
-          <strong>{p.icon} {p.name}</strong>
-          <span>{p.family === 'pid-wins' ? 'Where PID is the answer' : 'Where PID falls short'}</span>
-        </button>
+    <select className="ll-big-select" value={value} onChange={(e) => onChange(e.target.value as ProcessDef['id'])} aria-label="Process">
+      {groups.map((g) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.list.map((p) => <option key={p.id} value={p.id}>{p.icon} {p.name}</option>)}
+        </optgroup>
       ))}
-    </div>
+    </select>
   );
 }
+
+/** What each controller does, in a line. */
+const KIND_HINT: Record<ControllerKind, string> = {
+  onoff: 'Fully on below the setpoint, off above it.',
+  pid: 'Proportional, integral and derivative action: the default.',
+  schedule: 'A PID whose gains change with the operating point.',
+  characterized: 'A PID on a straightened-out measurement or output.',
+  feedforward: 'A PID plus action on measured disturbances, before they arrive.',
+  cascade: 'A fast inner loop inside the main one.',
+};
 
 const GROUPS: { id: ParamGroup; label: string }[] = [
   { id: 'process', label: 'Process' },
@@ -169,16 +184,14 @@ export function ControllerEditor({ proc, params, config, onChange }: {
   return (
     <div>
       <div className="ll-seg" role="tablist" aria-label="Controller">
-        {CONTROLLER_KINDS.map((k) => {
-          const ok = isAvailable(proc, k.kind);
-          return (
-            <button key={k.kind} role="tab" aria-selected={config.kind === k.kind} disabled={!ok} onClick={() => switchKind(k.kind)}
-              title={ok ? k.name : k.kind === 'cascade' ? 'Needs an inner measurement (e.g. steam flow)' : k.kind === 'feedforward' ? 'Needs a measured disturbance' : 'This process has no known nonlinearity to invert'}>
-              {k.short}
-            </button>
-          );
-        })}
+        {CONTROLLER_KINDS.filter((k) => isAvailable(proc, k.kind)).map((k) => (
+          <button key={k.kind} role="tab" aria-selected={config.kind === k.kind} onClick={() => switchKind(k.kind)} title={k.name}>
+            {k.short}
+          </button>
+        ))}
       </div>
+      <p className="ll-note" style={{ marginTop: '0.4rem' }}>{KIND_HINT[config.kind]}</p>
+      {config.kind !== 'onoff' && <AutoTune proc={proc} params={params} config={config} onChange={onChange} />}
       <div style={{ marginTop: '0.7rem' }}>
         {config.kind === 'onoff' && (
           <div className="ll-fields is-3">
@@ -291,6 +304,25 @@ function FeedforwardEditor({ proc, params, config, terms, unit, onChange, sugges
   );
 }
 
+/** One button: a robust starting tuning from the process model. */
+function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
+  // The explanation belongs to the tuning it produced: once anything changes, it goes.
+  const [tuned, setTuned] = useState<{ key: string; note: string } | null>(null);
+  const note = tuned && tuned.key === JSON.stringify([proc.id, params, config]) ? tuned.note : '';
+  return (
+    <div className="ll-autotune">
+      <button className="ll-btn is-primary" onClick={() => {
+        const r = autoTune(proc, params, config);
+        if (r) {
+          onChange(r.config);
+          setTuned({ key: JSON.stringify([proc.id, params, r.config]), note: r.note });
+        }
+      }}>✨ Auto-tune</button>
+      <span className="ll-small">{note || 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.'}</span>
+    </div>
+  );
+}
+
 function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
   const [pv, setPv] = useState(proc.opPoints[0]);
   const [ruleId, setRuleId] = useState<TuningRuleId>('simc');
@@ -329,7 +361,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
 
   return (
     <details className="ll-tuner" style={{ marginTop: '0.8rem' }}>
-      <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '0.88rem' }}>Tune from the model</summary>
+      <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>Tune by hand: rule, operating point, speed</summary>
       {config.kind === 'cascade' && (
         <div className="ll-seg" role="group" aria-label="Which loop" style={{ marginTop: '0.6rem' }}>
           <button aria-pressed={loop === 'inner'} onClick={() => setLoopSel('inner')}>Slave (inner) first</button>

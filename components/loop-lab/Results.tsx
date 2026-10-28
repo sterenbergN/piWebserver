@@ -204,3 +204,68 @@ export function TestDetail({ proc, test }: { proc: ProcessDef; test: TestScore }
     </div>
   );
 }
+
+// ─── At a glance ────────────────────────────────────────────────────────────
+
+type Tone = 'good' | 'warn' | 'bad' | '';
+
+function Stat({ title, value, sub, tone }: { title: string; value: string; sub: string; tone: Tone }) {
+  return (
+    <div className={`ll-stat${tone ? ` is-${tone}` : ''}`}>
+      <span className="ll-stat-title">{title}</span>
+      <strong>{value}</strong>
+      <span className="ll-stat-sub">{sub}</span>
+    </div>
+  );
+}
+
+/** The scorecard in four numbers and a sentence. */
+export function ResultSummary({ proc, score }: { proc: ProcessDef; score: Scorecard }) {
+  const span = proc.pv.hi - proc.pv.lo;
+  const inUnits = (pct: number) => `${fmt((pct / 100) * span, 2)} ${proc.pv.unit}`;
+  // Judge performance on the normal tests; the deliberately-wrong-plant test belongs to robustness.
+  const normal = score.tests.filter((t) => t.scenarioId !== 'mismatch');
+  const mismatch = score.tests.find((t) => t.scenarioId === 'mismatch');
+  const steps = normal.flatMap((t) => t.steps);
+  const upsets = normal.flatMap((t) => t.upsets);
+  const hasSteps = steps.length > 0;
+  const hasUpsets = upsets.length > 0;
+  const overshoot = Math.max(0, ...steps.map((s) => s.overshoot));
+  const settling = steps.some((s) => s.settling === null) ? Infinity : Math.max(0, ...steps.map((s) => s.settling ?? 0));
+  const peak = Math.max(0, ...upsets.map((u) => u.peak));
+  const recovery = upsets.some((u) => u.recovery === null && !u.limited) ? Infinity : Math.max(0, ...upsets.map((u) => u.recovery ?? 0));
+  const neverSettles = !Number.isFinite(settling);
+  const neverRecovers = !Number.isFinite(recovery);
+  const mismatchOs = mismatch ? Math.max(0, ...mismatch.steps.map((s) => s.overshoot)) : NaN;
+  const ms = score.worstMs;
+  const robustTone: Tone = !score.robust ? '' : !score.stableAll || ms > 2 ? 'bad' : ms > 1.6 ? 'warn' : 'good';
+
+  const verdict: string[] = [];
+  if (score.robust && !score.stableAll) verdict.push('Goes unstable when the plant drifts within its normal spread.');
+  else if (score.robust && ms > 2) verdict.push('Works on paper but fragile: a modest change in the plant could make it ring or go unstable.');
+  if (neverSettles) verdict.push('Some setpoint changes never settle.');
+  else if (overshoot > 15) verdict.push('Setpoint changes overshoot a lot.');
+  if (neverRecovers) verdict.push('Some upsets are never fully corrected.');
+  if (!verdict.length) verdict.push(score.robust ? 'Solid: it settles, recovers from every upset and keeps healthy margins.' : 'It settles and recovers; on-off has no margins to check, it just cycles.');
+  const good = verdict[0].startsWith('Solid') || verdict[0].startsWith('It settles');
+
+  return (
+    <div>
+      <div className="ll-stats">
+        {hasSteps && (
+          <Stat title="Setpoint changes" tone={neverSettles ? 'bad' : overshoot > 15 ? 'warn' : 'good'}
+            value={`${fmt(overshoot, 2)} % overshoot`} sub={neverSettles ? 'some never settle' : `settles within ${dur(settling)}`} />
+        )}
+        {hasUpsets && (
+          <Stat title="Upsets" tone={neverRecovers ? 'bad' : ''}
+            value={`${inUnits(peak)} worst`} sub={neverRecovers ? 'some never recover' : `back on setpoint within ${dur(recovery)}`} />
+        )}
+        <Stat title="Valve" tone="" value={`${fmt(score.travel, 2)} strokes/h`} sub={`output moves ${fmt(score.cvActivity, 2)} %/min`} />
+        <Stat title="Robustness" tone={robustTone}
+          value={score.robust ? `Ms ${fmt(ms, 3)}` : 'n/a'}
+          sub={`${!score.robust ? 'on-off has no linear model' : !score.stableAll ? 'unstable over the spread' : ms > 2 ? 'fragile (aim below 1.6)' : ms > 1.6 ? 'acceptable' : 'robust'}${Number.isFinite(mismatchOs) ? ` · wrong-plant test: ${fmt(mismatchOs, 2)} % overshoot` : ''}`} />
+      </div>
+      <p className={`ll-verdict-line${good ? ' is-good' : ''}`}>{verdict.join(' ')}</p>
+    </div>
+  );
+}

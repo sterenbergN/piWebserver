@@ -192,3 +192,81 @@ export const TUNING_RULES: TuningRule[] = [
 ];
 
 export const getRule = (id: TuningRuleId) => TUNING_RULES.find((r) => r.id === id) ?? TUNING_RULES[0];
+
+// ─── One-click tuning ───────────────────────────────────────────────────────
+
+const round3 = (v: number) => Number(v.toPrecision(3));
+const tidy = (t: Tuning) => ({ Kc: round3(t.Kc), Ti: round3(t.Ti), Td: round3(t.Td) });
+
+/** Measurement noise passed straight to the output by the proportional gain, at most (% σ). */
+const NOISE_TO_OUTPUT = 2;
+
+/**
+ * The closed-loop time constant auto-tuning aims for: 3θ (robust: Ms about
+ * 1.4–1.5 on every process here), slowed down if needed so the gain
+ * Kc ≈ τ/(K(τc + θ)) doesn't pass more than NOISE_TO_OUTPUT % of measurement
+ * noise to the valve.
+ */
+function autoSpeed(m: TuningModel, noisePct: number) {
+  const byNoise = noisePct > 0 && m.K > 0 ? (m.tau / m.K) * (noisePct / NOISE_TO_OUTPUT) - m.theta : 0;
+  return Math.max(3 * m.theta, byNoise);
+}
+
+/**
+ * A sensible starting tuning in one step: SIMC at the nominal operating
+ * point with a noise-aware closed-loop speed, P/PI/PID kept as it is; the
+ * slave then the master in cascade; schedules at each breakpoint with the
+ * same closed-loop speed; feedforward terms designed from the model.
+ */
+export function autoTune(proc: ProcessDef, params: Params, config: ControllerConfig): { config: ControllerConfig; note: string } | null {
+  if (config.kind === 'onoff') return null;
+  const rule = getRule('simc');
+  const pv = proc.nominalPv;
+  const noise = cleanParams(proc, params).txNoise;
+  const at = (cfg: ControllerConfig, loop: TuningLoop, type: ControlType, x = pv, speed?: number) => {
+    const m = tuningModel(proc, params, cfg, x, loop);
+    const tc = speed ?? autoSpeed(m, noise);
+    const t = rule.tune(m, type, tc);
+    return t ? { t: tidy(t), m, tc, slowed: tc > 3 * m.theta * 1.01 } : null;
+  };
+  const slowNote = (slowed: boolean) => (slowed ? ' Slowed down to keep the measurement noise off the valve.' : '');
+  const typeOf = (p: { Ti: number; Td: number }): ControlType => (p.Td > 0 ? 'PID' : 'PI');
+  const withFf = (cfg: ControllerConfig) => {
+    if ((cfg.kind !== 'feedforward' && cfg.kind !== 'cascade') || !cfg.ff.length) return cfg;
+    const ff = cfg.ff.map((term) => {
+      const r = feedforwardDesign(proc, params, cfg, pv, term.from);
+      return r ? { ...term, gain: round3(r.gain), lead: round3(r.lead), lag: round3(r.lag) } : term;
+    });
+    return { ...cfg, ff };
+  };
+  const where = `${round3(pv)} ${proc.pv.unit}`;
+
+  if (config.kind === 'cascade') {
+    const inner = at(config, 'inner', typeOf(config.inner));
+    if (!inner) return null;
+    const step1 = { ...config, inner: { ...config.inner, ...inner.t } };
+    const outer = at(step1, 'outer', typeOf(config.outer));
+    if (!outer) return null;
+    const done = withFf({ ...step1, outer: { ...config.outer, ...outer.t } });
+    return { config: done, note: `SIMC at ${where}: slave first (Kc ${inner.t.Kc}, Ti ${inner.t.Ti} s), then the master with the slave closed (Kc ${outer.t.Kc}, Ti ${outer.t.Ti} s).${slowNote(inner.slowed || outer.slowed)}` };
+  }
+  if (config.kind === 'schedule') {
+    // One closed-loop speed, chosen at the nominal point, for every breakpoint: the point of scheduling.
+    const ref = at(config, 'main', 'PI');
+    if (!ref) return null;
+    const points = config.points.map((p) => {
+      const r = at(config, 'main', typeOf(p), p.at, ref.tc);
+      return r ? { ...p, ...r.t } : p;
+    });
+    return { config: { ...config, points }, note: `SIMC at each breakpoint (${points.map((p) => `${round3(p.at)} ${proc.pv.unit}`).join(', ')}) with the same closed-loop time constant, ${round3(ref.tc)} s.${slowNote(ref.slowed)}` };
+  }
+  const type = typeOf(config.pid);
+  const r = at(config, 'main', type);
+  if (!r) return null;
+  const pid = { ...config.pid, ...r.t, invert: r.m.negative, a: type === 'PID' ? Math.max(config.pid.a, 0.3) : config.pid.a };
+  const done = withFf({ ...config, pid });
+  return {
+    config: done,
+    note: `SIMC ${type} at ${where} from K ${round3(r.m.K)}, τ ${round3(r.m.tau)} s, θ ${round3(r.m.theta)} s, aiming for a closed-loop time constant of ${round3(r.tc)} s.${slowNote(r.slowed)}${type === 'PID' ? ' Derivative filter ratio at least 0.3.' : ''}${r.m.negative ? ' The process gain is negative, so the action is inverted.' : ''}`,
+  };
+}

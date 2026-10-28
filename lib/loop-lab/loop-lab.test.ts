@@ -330,3 +330,21 @@ test('exports: cascade has a master and a slave, feedforward a lead-lag block', 
   assert.match(st, /Feedforward := FF_F.Out \+ FF_Tin.Out/);
   assert.equal(pidCompactParams(proc, defaultController('cascade', proc), params)![0].name, 'Cascade');
 });
+
+test('auto-tune gives a stable, robust starting point for every process and controller', async () => {
+  const { autoTune } = await import('./tuning');
+  const { PROCESSES } = await import('./processes');
+  const { isAvailable } = await import('./controllers');
+  const { robustness } = await import('./linear');
+  for (const proc of PROCESSES) {
+    for (const kind of ['pid', 'schedule', 'characterized', 'feedforward', 'cascade'] as const) {
+      if (!isAvailable(proc, kind)) continue;
+      const params = defaultParams(proc);
+      const r = autoTune(proc, params, defaultController(kind, proc));
+      assert.ok(r, `${proc.id} ${kind}`);
+      const pts = robustness(proc, params, r.config, 8);
+      assert.ok(pts.every((p) => p.stableAll), `${proc.id} ${kind} unstable`);
+      assert.ok(Math.max(...pts.map((p) => p.worst?.ms ?? 0)) < 1.8, `${proc.id} ${kind} fragile`);
+    }
+  }
+});
