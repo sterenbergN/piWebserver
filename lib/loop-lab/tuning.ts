@@ -235,7 +235,10 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
     if ((cfg.kind !== 'feedforward' && cfg.kind !== 'cascade') || !cfg.ff.length) return cfg;
     const ff = cfg.ff.map((term) => {
       const r = feedforwardDesign(proc, params, cfg, pv, term.from);
-      return r ? { ...term, gain: round3(r.gain), lead: round3(r.lead), lag: round3(r.lag) } : term;
+      if (!r) return term;
+      // Nearly equal lead and lag cancel: keep it a plain gain.
+      const cancel = r.lead > 0 && r.lag > 0 && Math.abs(r.lead - r.lag) <= 0.15 * Math.max(r.lead, r.lag);
+      return { ...term, gain: round3(r.gain), lead: cancel ? 0 : round3(r.lead), lag: cancel ? 0 : round3(r.lag) };
     });
     return { ...cfg, ff };
   };

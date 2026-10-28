@@ -254,3 +254,14 @@ a.ll-chip:hover { border-color: var(--accent-light); }
 .ll-setting-text p { margin: 0 0 0.25rem; font-size: 0.84rem; color: var(--muted); line-height: 1.45; }
 .ll-setting-text .ll-setting-effect { color: var(--foreground); }
 @media (max-width: 640px) { .ll-setting { grid-template-columns: minmax(0, 1fr); } }
+
+/* Fields line up on their inputs, however long their labels or units wrap. */
+.ll-fields { align-items: end; }
+.ll-field > span { flex-wrap: wrap; column-gap: 0.4rem; }
+.ll-field > span em { white-space: nowrap; }
+
+/* Feedforward terms */
+.ll-ff-term { border-top: 1px solid var(--surface-border); padding-top: 0.5rem; margin-top: 0.5rem; }
+.ll-ff-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; margin-bottom: 0.2rem; }
+.ll-ff-head strong { font-size: 0.88rem; }
+.ll-ff-head .ll-link { white-space: nowrap; }

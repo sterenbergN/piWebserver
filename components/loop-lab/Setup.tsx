@@ -163,7 +163,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
           <>
             <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
             <div className="ll-sub">Feedforward to the valve</div>
-            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} unit="% output" onChange={(ff) => onChange({ ...config, ff })} />
+            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} target="the valve output" onChange={(ff) => onChange({ ...config, ff })} />
           </>
         )}
         {config.kind === 'cascade' && proc.secondary && (
@@ -174,7 +174,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
             <div className="ll-sub">Slave: {proc.secondary.loopTag} ({proc.secondary.label.toLowerCase()})</div>
             <PidFields pid={config.inner} onChange={(inner) => onChange({ ...config, inner })} />
             <div className="ll-sub">Feedforward into the slave setpoint</div>
-            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} unit={`% of ${proc.secondary.label.toLowerCase()}`}
+            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} target={`the ${proc.secondary.label.toLowerCase()} setpoint's span`}
               onChange={(ff) => onChange({ ...config, ff })} suggest={defaultInnerFeedforward(proc)} />
           </>
         )}
@@ -210,8 +210,10 @@ export function ControllerEditor({ proc, params, config, onChange }: {
 }
 
 /** Feedforward terms: one per measured disturbance, each a gain and a lead-lag, with a design-from-the-model button. */
-function FeedforwardEditor({ proc, params, config, terms, unit, onChange, suggest }: {
-  proc: ProcessDef; params: Params; config: ControllerConfig; terms: FeedforwardTerm[]; unit: string;
+function FeedforwardEditor({ proc, params, config, terms, target, onChange, suggest }: {
+  proc: ProcessDef; params: Params; config: ControllerConfig; terms: FeedforwardTerm[];
+  /** What the feedforward adds to, for the gain's unit ("the valve output"). */
+  target: string;
   onChange: (t: FeedforwardTerm[]) => void; suggest?: FeedforwardTerm[];
 }) {
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -223,8 +225,15 @@ function FeedforwardEditor({ proc, params, config, terms, unit, onChange, sugges
     const r = feedforwardDesign(proc, params, config, proc.nominalPv, t.from);
     if (!r) { setNotes({ ...notes, [t.from]: 'No usable model for this path.' }); return; }
     const round = (v: number) => Number(v.toPrecision(3));
-    set(i, { gain: round(r.gain), lead: round(r.lead), lag: round(r.lag) });
-    setNotes({ ...notes, [t.from]: `Valve path K ${round(r.u.K)}, τ ${round(r.u.tau)} s, θ ${round(r.u.theta)} s; disturbance path K ${round(r.d.K)}, τ ${round(r.d.tau)} s, θ ${round(r.d.theta)} s. ${r.note ?? ''}` });
+    // A lead and lag this close cancel each other: a plain gain does the same, more simply.
+    const cancel = r.lead > 0 && r.lag > 0 && Math.abs(r.lead - r.lag) <= 0.15 * Math.max(r.lead, r.lag);
+    set(i, cancel ? { gain: round(r.gain), lead: 0, lag: 0 } : { gain: round(r.gain), lead: round(r.lead), lag: round(r.lag) });
+    setNotes({
+      ...notes,
+      [t.from]: `From the model: valve → PV K ${round(r.u.K)}, τ ${round(r.u.tau)} s, θ ${round(r.u.theta)} s; disturbance → PV K ${round(r.d.K)}, τ ${round(r.d.tau)} s, θ ${round(r.d.theta)} s.`
+        + (cancel ? ` The two time constants are nearly equal (${round(r.lead)} and ${round(r.lag)} s), so the lead-lag would cancel itself: a static gain does the job.` : '')
+        + (r.note ? ` ${r.note}` : ''),
+    });
   };
   return (
     <div>
@@ -232,20 +241,24 @@ function FeedforwardEditor({ proc, params, config, terms, unit, onChange, sugges
       {terms.map((t, i) => {
         const d = proc.disturbances.find((x) => x.key === t.from);
         return (
-          <div key={t.from} style={{ borderTop: '1px solid var(--surface-border)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
-              <strong style={{ fontSize: '0.85rem' }}>{d?.label} <span className="ll-small">({d?.measured})</span></strong>
-              <span style={{ display: 'flex', gap: '0.4rem' }}>
-                <button className="ll-link" onClick={() => design(i)}>Design from model</button>
-                <button className="ll-link" aria-label={`Remove feedforward from ${d?.label}`} onClick={() => onChange(terms.filter((_, j) => j !== i))}>✕</button>
-              </span>
+          <div key={t.from} className="ll-ff-term">
+            <div className="ll-ff-head">
+              <strong>{d?.label}</strong>
+              <button className="ll-link" aria-label={`Remove feedforward from ${d?.label}`} title="Remove" onClick={() => onChange(terms.filter((_, j) => j !== i))}>✕</button>
             </div>
-            <div className="ll-fields is-3" style={{ marginTop: '0.3rem' }}>
-              <NumField label="Gain" unit={`${unit}/${d?.unit ?? ''}`} value={t.gain} onChange={(v) => set(i, { gain: v })} title="Output change per unit change of the disturbance" />
+            <div className="ll-ff-head">
+              <span className="ll-small">measured by {d?.measured}</span>
+              <button className="ll-link" onClick={() => design(i)}>✨ Design from model</button>
+            </div>
+            <div className="ll-fields is-3">
+              <NumField label="Gain" unit={gainUnit(d?.unit ?? '')} value={t.gain} onChange={(v) => set(i, { gain: v })}
+                title={`Added to ${target}, in %, per ${d?.unit ?? 'unit'} the ${d?.label.toLowerCase() ?? 'disturbance'} changes`} />
               <NumField label="Lead" unit="s" value={t.lead} min={0} onChange={(v) => set(i, { lead: v })} />
               <NumField label="Lag" unit="s" value={t.lag} min={0} onChange={(v) => set(i, { lag: v })} />
             </div>
-            {notes[t.from] && <p className="ll-note">{notes[t.from]}</p>}
+            <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+              {notes[t.from] ?? `Gain: % of ${target} per ${d?.unit}. Lead and lag shape the timing; 0 and 0 is a plain gain.`}
+            </p>
           </div>
         );
       })}
@@ -261,6 +274,9 @@ function FeedforwardEditor({ proc, params, config, terms, unit, onChange, sugges
     </div>
   );
 }
+
+/** "%/°C", or "%/(m³/h)" when the unit is itself a ratio. */
+const gainUnit = (u: string) => `%/${u.includes('/') ? `(${u})` : u}`;
 
 /** One button: a robust starting tuning from the process model. */
 function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
