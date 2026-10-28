@@ -1,36 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { mediaSrc } from '@/lib/media-url';
-import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
 import type { PostDraft } from '@/lib/blog/drafts';
-import PostImage from './PostImage';
-import { cadPre } from './CadEmbed';
-import { cadBlock, cadHref } from '@/lib/cad/embeds';
+import MarkdownWriter from './MarkdownWriter';
 import type { CadProject } from '@/lib/site-content';
 
 type Fields = { title: string; description: string; category: string; markdown: string };
 type Initial = Fields & { slug: string; cover: string | null };
 
 const EMPTY: Fields = { title: '', description: '', category: '', markdown: '' };
-const TOOLS: { action: FormatAction; label: string; title: string }[] = [
-  { action: 'bold', label: 'B', title: 'Bold (Ctrl+B)' },
-  { action: 'italic', label: 'I', title: 'Italic (Ctrl+I)' },
-  { action: 'h2', label: 'H2', title: 'Heading' },
-  { action: 'h3', label: 'H3', title: 'Subheading' },
-  { action: 'link', label: '🔗', title: 'Link (Ctrl+K)' },
-  { action: 'ul', label: '•', title: 'Bulleted list' },
-  { action: 'ol', label: '1.', title: 'Numbered list' },
-  { action: 'quote', label: '❝', title: 'Quote' },
-  { action: 'code', label: '</>', title: 'Code' },
-];
 
 const key = (f: Fields, cover: string) => JSON.stringify([f.title, f.description, f.category, f.markdown, cover]);
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const editorHref = (d: { id: string; slug: string }) => `/admin/posts/${d.slug || 'new'}?draft=${d.id}`;
-const isImage = (f: File) => f.type.startsWith('image/');
 
 function ago(iso: string) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -78,15 +62,10 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
   const [savedAt, setSavedAt] = useState(openDraft?.updatedAt || '');
   const [draftState, setDraftState] = useState<'idle' | 'saving' | 'error'>('idle');
   const [showDrafts, setShowDrafts] = useState(!openDraft && !slug && initialDrafts.length > 0);
-  const [view, setView] = useState<'write' | 'preview'>('write');
   const [status, setStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const [uploads, setUploads] = useState(0);
-  const [dropping, setDropping] = useState(false);
   const [error, setError] = useState('');
   const [restorable, setRestorable] = useState<{ draft: Fields; at: string } | null>(null);
-  const textRef = useRef<HTMLTextAreaElement>(null);
-  const imageInput = useRef<HTMLInputElement>(null);
-  const mdInput = useRef<HTMLInputElement>(null);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   /** Set once we're navigating away on purpose: no more saves, no "leave site?" prompt. */
   const leaving = useRef(false);
@@ -155,96 +134,8 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
 
   const set = (patch: Partial<Fields>) => setFields((f) => ({ ...f, ...patch }));
 
-  /** Replace the textarea selection and keep the caret where the formatter says. */
-  const edit = useCallback((next: { text: string; selStart: number; selEnd: number }) => {
-    setFields((f) => ({ ...f, markdown: next.text }));
-    requestAnimationFrame(() => {
-      const el = textRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(next.selStart, next.selEnd);
-    });
-  }, []);
-
-  /** The CAD model menu on the toolbar. */
-  const [cadMenu, setCadMenu] = useState(false);
-  const cadPreview = useMemo(() => cadPre(cadProjects), [cadProjects]);
-
-  /** Put a CAD model's card (its own paragraph) or a link to it (around the selection) at the cursor. */
-  const insertCad = (cad: CadProject, as: 'card' | 'link') => {
-    const el = textRef.current;
-    const start = el ? el.selectionStart : fields.markdown.length;
-    const end = el ? el.selectionEnd : start;
-    const text = fields.markdown;
-    let insert: string;
-    if (as === 'card') {
-      const before = text.slice(0, start).replace(/\n*$/, '');
-      const lead = before ? '\n\n' : '';
-      insert = `${lead}${cadBlock(cad.id)}\n\n`;
-      edit({ text: before + insert + text.slice(end).replace(/^\n*/, ''), selStart: before.length + insert.length, selEnd: before.length + insert.length });
-    } else {
-      const label = (text.slice(start, end) || cad.name).replace(/[[\]]/g, '');
-      insert = `[${label}](${cadHref(cad.id)})`;
-      edit({ text: text.slice(0, start) + insert + text.slice(end), selStart: start + insert.length, selEnd: start + insert.length });
-    }
-    setCadMenu(false);
-    setView('write');
-  };
-
-  const format = (action: FormatAction) => {
-    const el = textRef.current;
-    if (!el) return;
-    setView('write');
-    edit(applyFormat(fields.markdown, el.selectionStart, el.selectionEnd, action));
-  };
-
-  /**
-   * Upload pictures and put them in the text at the cursor. A placeholder
-   * holds each one's spot, so typing carries on while they upload.
-   */
-  const insertImages = async (files: File[]) => {
-    const images = files.filter(isImage);
-    if (images.length === 0) return;
-    const el = textRef.current;
-    const at = el ? el.selectionEnd : fields.markdown.length;
-    const tag = Date.now().toString(36);
-    const holders = images.map((f, i) => `![Uploading ${f.name.replace(/[[\]]/g, '')}…](uploading-${tag}-${i})`);
-    const block = `\n\n${holders.join('\n\n')}\n\n`;
-    edit({ text: fields.markdown.slice(0, at) + block + fields.markdown.slice(at), selStart: at + block.length, selEnd: at + block.length });
-    setView('write');
-    setError('');
-    setUploads((n) => n + images.length);
-    // One at a time: kinder to the Pi than several big photos at once.
-    for (const [i, file] of images.entries()) {
-      let replacement = '';
-      try {
-        const src = await uploadImage(file);
-        const alt = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').replace(/[[\]]/g, '').trim();
-        replacement = `![${alt}](${src})`;
-      } catch (err) {
-        setError(`${file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`);
-      }
-      // A failed upload takes its placeholder (and the blank line before it) away again.
-      setFields((f) => ({ ...f, markdown: replacement ? f.markdown.replace(holders[i], () => replacement) : f.markdown.replace(`\n\n${holders[i]}`, '').replace(holders[i], '') }));
-      setUploads((n) => n - 1);
-    }
-  };
-
-  /** Load a .md file written elsewhere; a leading "# Title" becomes the title if there isn't one yet. */
-  const importMarkdown = async (file: File | undefined) => {
-    if (!file) return;
-    let text = (await file.text()).replace(/\r\n/g, '\n');
-    if (fields.markdown.trim() && !window.confirm(`Replace the text with “${file.name}”?`)) return;
-    const heading = text.match(/^\s*#\s+(.+)\n+/);
-    const patch: Partial<Fields> = {};
-    if (heading && !fields.title.trim()) {
-      patch.title = heading[1].trim();
-      text = text.slice(heading[0].length);
-    }
-    set({ ...patch, markdown: text });
-    setView('write');
-    setError('');
-  };
+  const setMarkdown = useCallback((update: SetStateAction<string>) =>
+    setFields((f) => ({ ...f, markdown: typeof update === 'function' ? update(f.markdown) : update })), []);
 
   const pickCover = async (file: File | undefined) => {
     if (!file) return;
@@ -302,16 +193,6 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    const k = e.key.toLowerCase();
-    const action = k === 'b' ? 'bold' : k === 'i' ? 'italic' : k === 'k' ? 'link' : k === 's' ? 'save' : null;
-    if (!action) return;
-    e.preventDefault();
-    if (action === 'save') { if (worthSaving && uploads === 0) saveDraft(); } else format(action);
-  };
-
-  const words = useMemo(() => fields.markdown.replace(/[#*_`>\[\]()!-]/g, ' ').split(/\s+/).filter(Boolean).length, [fields.markdown]);
   const coverShown = coverSrc ? mediaSrc(coverSrc, 1280) : initial?.cover ? mediaSrc(initial.cover, 1280) : null;
   const busy = status === 'saving' || uploads > 0;
 
@@ -322,20 +203,6 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
     : unsaved && worthSaving ? 'Unsaved changes'
     : savedAt ? `Draft saved ${new Date(savedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
     : slug ? 'No changes' : '';
-
-  const preview = (
-    <div className="glass-panel markdown-body post-body pe-preview">
-      {fields.markdown.trim() ? (
-        <Markdown components={{
-          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-          pre: cadPreview,
-          img: ({ node: _node, src, alt, title }) => typeof src === 'string' && src.startsWith('uploading-')
-            ? <span className="pe-uploading">{alt}</span>
-            : <PostImage src={src} alt={alt} title={title} />,
-        }}>{fields.markdown}</Markdown>
-      ) : <p className="pe-muted">Nothing to preview yet.</p>}
-    </div>
-  );
 
   return (
     <div className="pe animate-fade-in">
@@ -408,77 +275,9 @@ export default function PostEditor({ initial, categories, drafts: initialDrafts,
         {coverShown && <img className="pe-cover" src={coverShown} alt="Cover" />}
       </div>
 
-      <div className="pe-tabs" role="tablist" aria-label="Editor view">
-        <button role="tab" aria-selected={view === 'write'} onClick={() => setView('write')}>Write</button>
-        <button role="tab" aria-selected={view === 'preview'} onClick={() => setView('preview')}>Preview</button>
-      </div>
-
-      <div className={`pe-panes is-${view}`}>
-        <div className="pe-write">
-          <div className="pe-toolbar" role="toolbar" aria-label="Formatting">
-            {TOOLS.map((t) => (
-              <button key={t.action} type="button" title={t.title} aria-label={t.title} onMouseDown={(e) => e.preventDefault()} onClick={() => format(t.action)}>{t.label}</button>
-            ))}
-            <span className="pe-cad">
-              <button type="button" className="pe-cad-btn" title="Show a CAD model in the post, or link to it" aria-expanded={cadMenu} onMouseDown={(e) => e.preventDefault()} onClick={() => setCadMenu((v) => !v)}>🧊 CAD</button>
-              {cadMenu && (
-                <div className="pe-cad-menu" role="menu" aria-label="CAD models">
-                  {cadProjects.length === 0 ? <p>No CAD models yet. Add them in the CAD section on the home page.</p> : (
-                    <>
-                      <p>From the CAD section: a card shows it as it is there (3D view included); a link goes to it.</p>
-                      <ul>
-                        {cadProjects.map((cad) => (
-                          <li key={cad.id}>
-                            <span>{cad.model ? '🧊' : '📐'} {cad.name}</span>
-                            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertCad(cad, 'card')}>Card</button>
-                            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insertCad(cad, 'link')}>Link</button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </div>
-              )}
-            </span>
-            <button type="button" className="pe-photo-btn" title="Insert photos at the cursor (or drag them in, or paste)" onMouseDown={(e) => e.preventDefault()} onClick={() => imageInput.current?.click()}>🖼️ Photos</button>
-            <input ref={imageInput} type="file" accept="image/*" multiple hidden onChange={(e) => { insertImages([...(e.target.files || [])]); e.target.value = ''; }} />
-            <button type="button" className="pe-md-btn" title="Load the text from a Markdown (.md) file" onMouseDown={(e) => e.preventDefault()} onClick={() => mdInput.current?.click()}>📄 Import .md</button>
-            <input ref={mdInput} type="file" accept=".md,.markdown,text/markdown" hidden onChange={(e) => { importMarkdown(e.target.files?.[0]); e.target.value = ''; }} />
-          </div>
-          <textarea
-            ref={textRef}
-            className={`pe-text${dropping ? ' is-dropping' : ''}`}
-            value={fields.markdown}
-            onChange={(e) => set({ markdown: e.target.value })}
-            onKeyDown={onKeyDown}
-            onPaste={(e) => {
-              // Pasting a screenshot uploads it and inserts it where the cursor is.
-              const files = [...e.clipboardData.files].filter(isImage);
-              if (files.length) { e.preventDefault(); insertImages(files); }
-            }}
-            onDragOver={(e) => {
-              if (![...e.dataTransfer.items].some((i) => i.kind === 'file')) return;
-              e.preventDefault();
-              setDropping(true);
-            }}
-            onDragLeave={() => setDropping(false)}
-            onDrop={(e) => {
-              setDropping(false);
-              const files = [...e.dataTransfer.files].filter(isImage);
-              if (!files.length) return;
-              e.preventDefault();
-              insertImages(files);
-            }}
-            placeholder={'Write in Markdown…\n\n## A heading\n\nSome **bold** text, a [link](https://…), and a list:\n\n- one\n- two\n\nDrag photos in, paste them, or use 🖼️ Photos.'}
-            aria-label="Post text (Markdown)"
-            spellCheck
-          />
-          <div className="pe-foot">
-            {words} words · {Math.max(1, Math.round(words / 220))} min read · Ctrl+S saves the draft · Caption a photo: <code>![alt](link &quot;Caption&quot;)</code>
-          </div>
-        </div>
-        {preview}
-      </div>
+      <MarkdownWriter markdown={fields.markdown} setMarkdown={setMarkdown} title={fields.title} setTitle={(title) => set({ title })}
+        upload={uploadImage} setUploads={setUploads} setError={setError} cadProjects={cadProjects}
+        onSave={() => { if (worthSaving && uploads === 0) saveDraft(); }} />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { getCadProjects, getPost, getPosts } from '@/lib/site-content';
 import { listDrafts } from '@/lib/blog/drafts';
 import PostEditor from '@/components/blog/PostEditor';
-import './editor.css';
+import '@/components/blog/editor.css';
 
 export const metadata: Metadata = { title: 'Write a post', robots: { index: false, follow: false } };
 
