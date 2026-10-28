@@ -36,7 +36,7 @@ function CaseRuns({ proc, presets, scenarios, colorOf, compact = true }: { proc:
       )}
       <p className="ll-small" style={{ marginTop: 0 }}>{results[0].runs[idx].scenario.purpose}</p>
       <TrendPanel proc={proc} entries={results.map((r, i) => ({ label: presets[i].label, color: colorOf(presets[i].label), run: r.runs[idx] }))} />
-      <ScorecardTable compact={compact} entries={results.map((r, i) => ({ label: presets[i].label, color: colorOf(presets[i].label), score: r.score }))} />
+      <ScorecardTable compact={compact} proc={proc} entries={results.map((r, i) => ({ label: presets[i].label, color: colorOf(presets[i].label), score: r.score }))} />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.6rem' }}>
         {exps.map((e, i) => <Link key={i} className="ll-btn is-small" href={benchLink(e)}>Open “{presets[i].label}” in the bench</Link>)}
       </div>

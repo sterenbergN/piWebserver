@@ -1,6 +1,8 @@
 'use client';
 
-import { Fragment, useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+import { MathText } from '@/components/daily/MathText';
+import { MEASURES, SPREAD_NOTE } from '@/lib/loop-lab/measures';
 import type { ProcessDef } from '@/lib/loop-lab/model';
 import type { Run } from '@/lib/loop-lab/sim';
 import { BETTER, type Scorecard, type TestScore } from '@/lib/loop-lab/score';
@@ -101,9 +103,60 @@ export type ScoreEntry = { label: string; color: string; score: Scorecard };
 /** The rows a compact scorecard keeps: one or two per group. */
 const COMPACT = new Set(['iae', 'worstOvershoot', 'worstRecovery', 'travel', 'cvActivity', 'worstMs']);
 
-export function ScorecardTable({ entries, compact = false }: { entries: ScoreEntry[]; compact?: boolean }) {
+/** One row of the scorecard: a measure, how to show it, and how to rank it. */
+type TableRow = {
+  key: string;
+  label: string;
+  note?: string;
+  cell: (s: Scorecard) => React.ReactNode;
+  /** For highlighting the best and worst when comparing. */
+  rank?: Row;
+};
+
+const ROBUST_KEYS = new Set(['worstPm', 'worstGm', 'worstMs', 'stableAll']);
+
+/** The explanation under a measure: what, how, what's good, what moves it. */
+function MeasureExplain({ id, proc }: { id: string; proc?: ProcessDef }) {
+  const info = MEASURES[id];
+  if (!info) return null;
+  const spread = proc && ROBUST_KEYS.has(id) ? proc.uncertain.map((u) => {
+    const spec = proc.params.find((x) => x.key === u.key);
+    return `${spec?.label ?? u.key} ±${Math.round(u.spread * 100)} %`;
+  }) : [];
+  return (
+    <div className="ll-measure-info">
+      <p className="ll-measure-what">{info.what}</p>
+      <div className="ll-sub">How it is calculated</div>
+      <MathText className="ll-prose">{info.how}</MathText>
+      {spread.length > 0 && <p className="ll-note">{SPREAD_NOTE} For the {proc!.name.toLowerCase()}: {spread.join(', ')}; at {proc!.opPoints.map((x) => `${fmt(x, 3)} ${proc!.pv.unit}`).join(', ')}.</p>}
+      <div className="ll-split">
+        <div><div className="ll-sub">What to aim for</div><p>{info.good}</p></div>
+        <div><div className="ll-sub">What changes it</div><p>{info.improve}</p></div>
+      </div>
+    </div>
+  );
+}
+
+export function ScorecardTable({ entries, compact = false, proc }: { entries: ScoreEntry[]; compact?: boolean; proc?: ProcessDef }) {
+  const [open, setOpen] = useState<string | null>(null);
   if (!entries.length) return <div className="ll-empty">Run the tests to see a scorecard.</div>;
-  const groups = compact ? [{ group: 'Key measures', rows: ROWS.flatMap((g) => g.rows).filter((r) => COMPACT.has(r.key as string)) }] : ROWS;
+  const measured = (row: Row): TableRow => ({ key: row.key as string, label: row.label, note: row.note, cell: (sc) => row.show(row.get(sc)), rank: row });
+  const stable: TableRow = {
+    key: 'stableAll', label: 'Stable over the spread', note: 'every operating point, plant parameters varied',
+    cell: (sc) => (sc.robust ? (sc.stableAll ? 'yes' : <span className="ll-badge is-bad">no</span>) : '—'),
+  };
+  const complexityRows: TableRow[] = [
+    { key: 'tuningParams', label: 'Tuning parameters', note: 'numbers someone has to set and keep right', cell: (sc) => sc.complexity.tuningParams },
+    { key: 'needsModel', label: 'Needs a model of', cell: (sc) => sc.complexity.needsModel ?? 'nothing beyond a bump test' },
+    { key: 'commissioning', label: 'Commissioning effort', note: '1 switch on and tune … 5 needs an engineer', cell: (sc) => <span title={`${sc.complexity.commissioning} of 5`}>{dots(sc.complexity.commissioning)}</span> },
+    { key: 'maintainability', label: 'Maintainability', note: '5 any technician … 1 only its designer', cell: (sc) => <span title={`${sc.complexity.maintainability} of 5`}>{dots(sc.complexity.maintainability)}</span> },
+  ];
+  const groups: { group: string; rows: TableRow[] }[] = compact
+    ? [{ group: 'Key measures', rows: [...ROWS.flatMap((g) => g.rows).filter((r) => COMPACT.has(r.key as string)).map(measured), complexityRows[0]] }]
+    : [
+        ...ROWS.map((g, i) => ({ group: g.group, rows: [...g.rows.map(measured), ...(i === ROWS.length - 1 ? [stable] : [])] })),
+        { group: 'Cost of complexity', rows: complexityRows },
+      ];
   const compare = entries.length > 1;
   const cls = (row: Row, v: number, all: number[]) => {
     const better = row.better ?? BETTER[row.key as string];
@@ -118,10 +171,10 @@ export function ScorecardTable({ entries, compact = false }: { entries: ScoreEnt
   };
   return (
     <div className="ll-table-wrap">
-      <table className="ll-table">
+      <table className="ll-table ll-scorecard">
         <thead>
           <tr>
-            <th>Measure</th>
+            <th>Measure <span className="ll-row-note">tap one to see what it means</span></th>
             {entries.map((e, i) => <th key={i}><span className="ll-swatch" style={{ background: e.color }} />{e.label}</th>)}
           </tr>
         </thead>
@@ -130,46 +183,31 @@ export function ScorecardTable({ entries, compact = false }: { entries: ScoreEnt
             <Fragment key={g.group}>
               <tr><th colSpan={entries.length + 1} style={{ textAlign: 'left', paddingTop: '0.7rem' }}>{g.group}</th></tr>
               {g.rows.map((row) => {
-                const vals = entries.map((e) => row.get(e.score));
+                const vals = row.rank ? entries.map((e) => row.rank!.get(e.score)) : [];
+                const isOpen = open === row.key;
                 return (
-                  <tr key={row.key as string}>
-                    <td>{row.label}<span className="ll-row-note">{row.note}</span></td>
-                    {vals.map((v, i) => <td key={i} className={cls(row, v, vals)}>{row.show(v)}</td>)}
-                  </tr>
+                  <Fragment key={row.key}>
+                    <tr className={isOpen ? 'is-open' : ''}>
+                      <td>
+                        <button className="ll-measure" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : row.key)}>
+                          <span className="ll-measure-label">{row.label} <span aria-hidden className="ll-measure-icon">{isOpen ? '−' : 'ⓘ'}</span></span>
+                          {row.note && <span className="ll-row-note">{row.note}</span>}
+                        </button>
+                      </td>
+                      {entries.map((e, i) => (
+                        <td key={i} className={row.rank ? cls(row.rank, vals[i], vals) : ''} style={row.key === 'needsModel' ? { maxWidth: '14rem' } : undefined}>{row.cell(e.score)}</td>
+                      ))}
+                    </tr>
+                    {isOpen && (
+                      <tr className="ll-measure-row">
+                        <td colSpan={entries.length + 1}><MeasureExplain id={row.key} proc={proc} /></td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </Fragment>
           ))}
-          {compact ? (
-            <tr>
-              <td>Tuning parameters<span className="ll-row-note">cost of complexity</span></td>
-              {entries.map((e, i) => <td key={i}>{e.score.complexity.tuningParams}</td>)}
-            </tr>
-          ) : (
-            <>
-          <tr>
-            <td>Stable over the spread<span className="ll-row-note">every operating point, plant parameters varied</span></td>
-            {entries.map((e, i) => <td key={i}>{e.score.robust ? (e.score.stableAll ? 'yes' : <span className="ll-badge is-bad">no</span>) : '—'}</td>)}
-          </tr>
-          <tr><th colSpan={entries.length + 1} style={{ textAlign: 'left', paddingTop: '0.7rem' }}>Cost of complexity</th></tr>
-          <tr>
-            <td>Tuning parameters<span className="ll-row-note">numbers someone has to set and keep right</span></td>
-            {entries.map((e, i) => <td key={i}>{e.score.complexity.tuningParams}</td>)}
-          </tr>
-          <tr>
-            <td>Needs a model of</td>
-            {entries.map((e, i) => <td key={i} style={{ textAlign: 'right', maxWidth: '14rem' }}>{e.score.complexity.needsModel ?? 'nothing beyond a bump test'}</td>)}
-          </tr>
-          <tr>
-            <td>Commissioning effort<span className="ll-row-note">1 switch on and tune … 5 needs an engineer</span></td>
-            {entries.map((e, i) => <td key={i} title={`${e.score.complexity.commissioning} of 5`}>{dots(e.score.complexity.commissioning)}</td>)}
-          </tr>
-          <tr>
-            <td>Maintainability<span className="ll-row-note">5 any technician … 1 only its designer</span></td>
-            {entries.map((e, i) => <td key={i} title={`${e.score.complexity.maintainability} of 5`}>{dots(e.score.complexity.maintainability)}</td>)}
-          </tr>
-            </>
-          )}
         </tbody>
       </table>
     </div>

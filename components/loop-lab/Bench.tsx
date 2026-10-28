@@ -14,11 +14,15 @@ import { ControllerEditor, ParamEditor, ProcessPicker } from './Setup';
 import { useRunsMany } from './useRuns';
 import { AutomationView, ControlView, MechanicalView } from './Views';
 
-/** The views, in three groups: what it does, why (three perspectives), and your own data. */
+/**
+ * The views, in three groups: what it does, why (three perspectives), and
+ * yours. Import only belongs to the identified plant: it is how that plant
+ * gets its model.
+ */
 const TAB_GROUPS = [
   [{ id: 'tests', label: 'Results', icon: '📊' }, { id: 'live', label: 'Run live', icon: '▶️' }],
   [{ id: 'mechanical', label: 'Mechanical', icon: '⚙️' }, { id: 'control', label: 'Control', icon: '📉' }, { id: 'automation', label: 'Automation', icon: '🏭' }],
-  [{ id: 'identify', label: 'Import', icon: '📥' }, { id: 'notebook', label: 'Notebook', icon: '📓' }],
+  [{ id: 'identify', label: 'Import trend', icon: '📥' }, { id: 'notebook', label: 'Notebook', icon: '📓' }],
 ] as const;
 const TABS = TAB_GROUPS.flat();
 type TabId = (typeof TABS)[number]['id'];
@@ -45,6 +49,9 @@ export default function Bench() {
   const [naming, setNaming] = useState<string | null>(null);
   const notebook = useNotebook();
   const proc = getProcess(exp.process);
+  const ownData = proc.id === 'custom';
+  // Import is only there for the identified plant; anywhere else, show the results.
+  const shown: TabId = tab === 'identify' && !ownData ? 'tests' : tab;
 
   // Setup from a shared link, the tab from the hash, and whether the intro was dismissed.
   useEffect(() => {
@@ -73,6 +80,11 @@ export default function Bench() {
     setExp(e);
     setPinned([]);
     setView(0);
+  };
+  /** Switch to the identified plant and open its import. */
+  const openOwnData = () => {
+    startFrom(defaultExperiment('custom'));
+    chooseTab('identify');
   };
   const hideIntro = () => {
     setShowIntro(false);
@@ -129,7 +141,7 @@ export default function Bench() {
       {showIntro && (
         <div className="ll-intro">
           <ol>
-            <li><strong>Pick a process.</strong> Each one is a real piece of plant with its own quirks.</li>
+            <li><strong>Pick a process.</strong> Each one is a real piece of plant with its own quirks, or import a trend from your own loop.</li>
             <li><strong>Pick a controller and press ✨ Auto-tune.</strong> Then change one thing at a time.</li>
             <li><strong>Read the results.</strong> Keep a setup to compare it side by side with the next.</li>
           </ol>
@@ -176,8 +188,15 @@ export default function Bench() {
               <h2 className="ll-step-title"><span>1</span>Process</h2>
               <Link className="ll-small" href={`/loop-lab/processes/${proc.id}`}>About it →</Link>
             </div>
-            <ProcessPicker value={exp.process} onChange={(id) => { if (id !== exp.process) startFrom(defaultExperiment(id)); }} />
+            <ProcessPicker value={exp.process} onChange={(id) => {
+              if (id === exp.process) return;
+              if (id === 'custom') openOwnData();
+              else startFrom(defaultExperiment(id));
+            }} />
             <p className="ll-note">{proc.summary}</p>
+            {ownData
+              ? <button className="ll-btn is-small" onClick={() => chooseTab('identify')}>📥 Import a trend to replace the example model</button>
+              : <button className="ll-link" onClick={openOwnData}>Have a trend from your own loop? Import it →</button>}
           </div>
           <div className="ll-card">
             <div className="ll-card-head" style={{ marginBottom: '0.5rem' }}>
@@ -213,8 +232,8 @@ export default function Bench() {
             {TAB_GROUPS.map((group, gi) => (
               <Fragment key={gi}>
                 {gi > 0 && <span className="ll-tab-sep" aria-hidden />}
-                {group.map((t) => (
-                  <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => chooseTab(t.id)}>
+                {group.filter((t) => t.id !== 'identify' || ownData).map((t) => (
+                  <button key={t.id} role="tab" aria-selected={shown === t.id} onClick={() => chooseTab(t.id)}>
                     <span aria-hidden>{t.icon}</span>{t.label}
                   </button>
                 ))}
@@ -222,7 +241,7 @@ export default function Bench() {
             ))}
           </div>
 
-          {tab === 'tests' && (
+          {shown === 'tests' && (
             <div>
               <div className="ll-card">
                 <div className="ll-card-head">
@@ -266,18 +285,18 @@ export default function Bench() {
                   <h3>Scorecard</h3>
                   <button className="ll-link" onClick={() => setFullScore((f) => !f)}>{fullScore ? 'Show the key measures' : 'Show every measure'}</button>
                 </div>
-                <ScorecardTable compact={!fullScore} entries={(results ?? []).map((r, i) => ({ label: labels[i], color: PALETTE[i % PALETTE.length], score: r.score }))} />
+                <ScorecardTable compact={!fullScore} proc={proc} entries={(results ?? []).map((r, i) => ({ label: labels[i], color: PALETTE[i % PALETTE.length], score: r.score }))} />
                 <p className="ll-note">All {proc.scenarios.length} tests together, measured on the true process value. With more than one setup, the best in each row is green.</p>
               </div>
             </div>
           )}
 
-          {tab === 'live' && <div className="ll-card"><LivePanel proc={proc} exp={exp} /></div>}
-          {tab === 'mechanical' && <MechanicalView proc={proc} exp={exp} />}
-          {tab === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}
-          {tab === 'automation' && <AutomationView proc={proc} exp={exp} />}
-          {tab === 'identify' && <IdentifyPanel onUse={(e) => { startFrom(e); chooseTab('tests'); }} />}
-          {tab === 'notebook' && (
+          {shown === 'live' && <div className="ll-card"><LivePanel proc={proc} exp={exp} /></div>}
+          {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} />}
+          {shown === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}
+          {shown === 'automation' && <AutomationView proc={proc} exp={exp} />}
+          {shown === 'identify' && <IdentifyPanel onUse={(e) => { startFrom(e); chooseTab('tests'); }} />}
+          {shown === 'notebook' && (
             <div className="ll-card">
               <NotebookPanel notebook={notebook} onLoad={(e) => { startFrom(e); chooseTab('tests'); }} onCompare={compareEntry} />
             </div>
