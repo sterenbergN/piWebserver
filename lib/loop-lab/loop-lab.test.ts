@@ -1,12 +1,14 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { cexpj, cmul, cx, eig, expm } from './linalg';
-import { defaultParams, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
+import { cexpj, cmul, cx, eig, expm, rng } from './linalg';
+import { defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
 import { getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
 import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
 import { DEFAULT_PID, cleanController, createController, defaultController, scheduledGains, type ControllerConfig } from './controllers';
 import { Loop, runAll, runScenario } from './sim';
+import { fitModel, parseTable } from './ident';
+import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { TUNING_RULES } from './tuning';
 import { exportCode, pidCompactParams, real } from './export';
@@ -83,7 +85,7 @@ test('closed loop: P control of a first-order plant settles at K·Kc/(1+K·Kc)',
   const proc = getProcess('flow');
   const p = { ...defaultParams(proc), txDelay: 0 };
   const a = analyzeLoop(proc, p, pid({ Kc: 0.5, Ti: 0 }), 30)!;
-  const cl = closedLoop(a.plant, a.pid, a.delay);
+  const cl = closedLoop(a.plant, a.ctrl, a.delay);
   assert.ok(isStable(cl.poles));
   const r = stepResponse(cl, 0, 30, 600);
   const KK = a.plant.K * 0.5;
@@ -120,8 +122,9 @@ test('scheduled gains interpolate and hold flat outside the table', () => {
 test('the PID block: P-only output is Kc × error in % of span', () => {
   const proc = getProcess('flow');
   const c = createController(proc, pid({ Kc: 2, Ti: 0, b: 1 }), defaultParams(proc), 0.1);
-  c.track(50, 30, 30);
-  const u = c.step(33, 30);
+  const aux = { pv2: NaN, d: nominalDisturbances(proc) };
+  c.track(50, 30, 30, aux);
+  const u = c.step(33, 30, aux);
   close(u, 50 + 2 * (toPct(proc, 33) - toPct(proc, 30)), 1e-9);
 });
 
@@ -205,4 +208,125 @@ test('experiments round-trip through a link and bad values are clamped', () => {
 test('delay phase is exact: e^{-jωθ} has unit gain', () => {
   const v = cexpj(-3);
   close(Math.hypot(v.re, v.im), 1, 1e-15);
+});
+
+// ─── Phase 2: feedforward, cascade, identification ─────────────────────────
+
+const hxScore = (c: ControllerConfig, ids: string[]) => {
+  const proc = getProcess('hx');
+  const params = defaultParams(proc);
+  return scorecard(proc, params, c, runAll(proc, { params, controller: c }, ids), false);
+};
+
+test('heat exchanger: cascade on steam flow all but removes steam pressure upsets', () => {
+  const proc = getProcess('hx');
+  const pi = hxScore(defaultController('pid', proc), ['steam-pressure']);
+  const casc = hxScore(defaultController('cascade', proc), ['steam-pressure']);
+  assert.ok(casc.worstPeak * 5 < pi.worstPeak, `cascade ${casc.worstPeak} vs PI ${pi.worstPeak}`);
+});
+
+test('heat exchanger: feedforward from the measured flow cuts flow upsets, and does nothing for steam pressure', () => {
+  const proc = getProcess('hx');
+  const pi = hxScore(defaultController('pid', proc), ['flow-upset', 'steam-pressure']);
+  const ff = hxScore(defaultController('feedforward', proc), ['flow-upset', 'steam-pressure']);
+  const by = (sc: typeof pi, id: string) => sc.tests.find((x) => x.scenarioId === id)!;
+  assert.ok(by(ff, 'flow-upset').upsets.every((u, i) => u.peak * 2.5 < by(pi, 'flow-upset').upsets[i].peak));
+  close(by(ff, 'steam-pressure').iae, by(pi, 'steam-pressure').iae, by(pi, 'steam-pressure').iae * 0.02);
+});
+
+test('feedforward design from the model matches the energy balance', () => {
+  const proc = getProcess('hx');
+  const p = defaultParams(proc);
+  const ff = feedforwardDesign(proc, p, defaultController('pid', proc), 60, 'F')!;
+  // Extra steam per m³/h: ρc_p·ΔT·3600/λ kg/h, as % of the valve's K_st·P_s.
+  const expected = ((((1000 * 4.18) / 3600) * 40 * 3600) / p.lambda / (p.Kst * 4)) * 100;
+  close(ff.gain, expected, expected * 0.05);
+});
+
+test('cascade: the inner loop model is the valve and flow transmitter, not the thermal lags', () => {
+  const proc = getProcess('hx');
+  const m = tuningModel(proc, defaultParams(proc), defaultController('cascade', proc), 60, 'inner');
+  assert.ok(m.tau < 5 && m.theta < 2, `τ ${m.tau}, θ ${m.theta}`);
+  const outer = tuningModel(proc, defaultParams(proc), defaultController('cascade', proc), 60, 'outer');
+  assert.ok(outer.tau > 20);
+});
+
+test('cascade closed loop (linear) is stable and tracks the setpoint', () => {
+  const proc = getProcess('hx');
+  const a = analyzeLoop(proc, defaultParams(proc), defaultController('cascade', proc), 60)!;
+  assert.ok(a.inner && Number.isFinite(a.inner.margins.pm) && Number.isFinite(a.margins.pm));
+  const cl = closedLoop(a.plant, a.ctrl, a.delay);
+  assert.ok(isStable(cl.poles));
+  const r = stepResponse(cl, 0, 600, 600);
+  close(r.y[r.y.length - 1], 1, 0.01);
+});
+
+test('feedforward with no lead-lag adds gain × the disturbance change at once', () => {
+  const proc = getProcess('hx');
+  const c = createController(proc, { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 0, Ti: 0 }, ff: [{ from: 'F', gain: 5, lead: 0, lag: 0 }] }, defaultParams(proc), 0.5);
+  const d = nominalDisturbances(proc);
+  c.track(40, 60, 60, { pv2: NaN, d });
+  close(c.step(60, 60, { pv2: NaN, d: { ...d, F: 12 } }), 40 + 5 * 2, 1e-9);
+});
+
+test('stirred tank: derivative buys margin, so PID can use a gain PI cannot', () => {
+  const proc = getProcess('stirred');
+  const params = defaultParams(proc);
+  const score = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['feed-temp']), true);
+  const piTight = score(pid({ Kc: 13.4, Ti: 373 }));
+  const pidd = score(pid({ Kc: 13.4, Ti: 373, Td: 37.5, a: 0.5 }));
+  const pi = score(defaultController('pid', proc));
+  assert.ok(pidd.worstMs < piTight.worstMs - 0.3);
+  assert.ok(pidd.worstPeak < pi.worstPeak * 0.8);
+});
+
+test('identification recovers a first-order-plus-dead-time process', () => {
+  const r = rng(3);
+  const dt = 0.5, K = 2, tau = 30, theta = 7;
+  const t: number[] = [], u: number[] = [], y: number[] = [];
+  let x = 0;
+  const hist: number[] = [];
+  for (let k = 0; k < 1200; k++) {
+    const tt = k * dt;
+    const uu = 40 + (tt > 50 ? 10 : 0) - (tt > 250 ? 20 : 0);
+    t.push(tt); u.push(uu); hist.push(uu - 40);
+    const ud = k >= theta / dt ? hist[k - theta / dt] : 0;
+    x = Math.exp(-dt / tau) * x + (1 - Math.exp(-dt / tau)) * K * ud;
+    y.push(30 + x + 0.1 * r.gauss());
+  }
+  const f = fitModel(t, u, y, 'fopdt')!;
+  close(f.K, K, 0.03);
+  close(f.tau1, tau, 1.5);
+  close(f.theta, theta, 0.75);
+  assert.ok(f.fit > 95);
+});
+
+test('CSV parsing: semicolons with decimal commas, a header row, and timestamps', () => {
+  const a = parseTable('Trace\nTime [s];Output [%];TT-301 [°C]\n0,0;40,5;60,1\n0,5;41,0;60,2\n');
+  assert.deepEqual(a.columns, ['Time [s]', 'Output [%]', 'TT-301 [°C]']);
+  assert.deepEqual(a.rows[1], [0.5, 41, 60.2]);
+  const b = parseTable('time,u,y\n2026-10-28 10:00:00,1,2\n2026-10-28 10:00:02,1,3\n');
+  close(b.rows[1][0] - b.rows[0][0], 2, 1e-9);
+});
+
+test('an identified integrating plant runs its (scaled) tests and reaches the setpoint', () => {
+  const proc = getProcess('custom');
+  const params = { ...defaultParams(proc), integrating: 1, K: 0.5, tau1: 50, txDelay: 4, txNoise: 0 };
+  const run = runScenario(proc, { params, controller: pid({ Kc: 4, Ti: 60 }) }, proc.scenarios[0]);
+  assert.ok(run.scenario.duration > proc.scenarios[0].duration);
+  const last = run.trace.pvTrue.length - 1;
+  close(run.trace.pvTrue[last], run.trace.sp[last], 0.5);
+});
+
+test('exports: cascade has a master and a slave, feedforward a lead-lag block', () => {
+  const proc = getProcess('hx');
+  const params = defaultParams(proc);
+  const base = defaultController('cascade', proc) as Extract<ControllerConfig, { kind: 'cascade' }>;
+  const casc = exportCode(proc, { ...base, ff: [{ from: 'F', gain: 4, lead: 0, lag: 0 }] }, params, 'scl');
+  assert.match(casc, /"FIC_301_DB"\(Setpoint := "SP2"/);
+  assert.match(casc, /HoldIntegral := "FIC_301_DB".AtLimit/);
+  assert.match(casc, /FUNCTION_BLOCK "LL_LeadLag"/);
+  const st = exportCode(proc, defaultController('feedforward', proc), params, 'st');
+  assert.match(st, /Feedforward := FF_F.Out \+ FF_Tin.Out/);
+  assert.equal(pidCompactParams(proc, defaultController('cascade', proc), params)![0].name, 'Cascade');
 });

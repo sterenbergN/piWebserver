@@ -1,4 +1,4 @@
-import { findCharacterization, type ControllerConfig, type PidParams } from './controllers';
+import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
 
 // Code and parameter exports for the automation view: TIA Portal SCL, IEC
@@ -20,7 +20,7 @@ export function real(v: number) {
 type Dialect = 'scl' | 'st';
 
 /** Tag-free names for the blocks. */
-const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse' };
+const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag' };
 
 function blockHeader(d: Dialect, kind: 'FUNCTION_BLOCK' | 'FUNCTION', name: string, ret?: string) {
   if (d === 'scl') return `${kind} "${name}"${ret ? ` : ${ret}` : ''}\n{ S7_Optimized_Access := 'TRUE' }\nVERSION : 0.1`;
@@ -30,7 +30,7 @@ function blockHeader(d: Dialect, kind: 'FUNCTION_BLOCK' | 'FUNCTION', name: stri
 /** SCL refers to locals as #name; IEC ST just uses the name. */
 const loc = (d: Dialect) => (name: string) => (d === 'scl' ? `#${name}` : name);
 
-function pidBlock(d: Dialect, proc: ProcessDef, pid: PidParams, Ts: number, inLo: number, inHi: number) {
+function pidBlock(d: Dialect, pid: PidParams, Ts: number, inLo: number, inHi: number) {
   const v = loc(d);
   const tt = pid.Td > 0 ? `SQRT(${v('Ti')} * ${v('Td')})` : v('Ti');
   const awLine = pid.antiWindup === 'clamp'
@@ -45,14 +45,17 @@ function pidBlock(d: Dialect, proc: ProcessDef, pid: PidParams, Ts: number, inLo
     ${v('Integral')} := ${v('iNext')};`;
   return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.pid)}
    VAR_INPUT
-      Setpoint : Real;        // ${proc.pv.unit}
-      Input : Real;           // measured ${proc.pv.label.toLowerCase()}, ${proc.pv.unit}
+      Setpoint : Real;        // engineering units
+      Input : Real;           // measurement, engineering units
       ManualEnable : Bool;    // TRUE = manual: Output follows ManualValue
       ManualValue : Real;     // %
+      Feedforward : Real;     // %, added to the output (0 when unused)
+      HoldIntegral : Int;     // +1 / -1: don't integrate up / down (a cascade slave is saturated)
       Cycle : Real := ${real(Ts)};    // s, must match the cyclic interrupt the block is called from
    END_VAR
    VAR_OUTPUT
       Output : Real;          // %
+      AtLimit : Int;          // +1 / -1 when the output is pinned high / low
    END_VAR
    VAR
       Gain : Real := ${real(pid.Kc)};        // % output per % of span
@@ -99,10 +102,11 @@ ${d === 'scl' ? '\nBEGIN' : ''}
     IF ${v('ManualEnable')} THEN
         // Track: preload the integral so switching to auto doesn't bump the output.
         ${v('u')} := LIMIT(MN := ${v('OutLow')}, IN := ${v('ManualValue')}, MX := ${v('OutHigh')});
-        ${v('Integral')} := ${v('u')} - ${v('p')};
+        ${v('Integral')} := ${v('u')} - ${v('p')} - ${v('Feedforward')};
         ${v('DTerm')} := 0.0;
         ${v('LastED')} := ${v('eD')};
         ${v('Output')} := ${v('u')};
+        ${v('AtLimit')} := 0;
         RETURN;
     END_IF;
 
@@ -122,13 +126,21 @@ ${d === 'scl' ? '\nBEGIN' : ''}
         ${v('iNext')} := ${v('Integral')};
     END_IF;
 
-    ${v('v')} := ${v('p')} + ${v('iNext')} + ${v('DTerm')};
+    ${v('v')} := ${v('p')} + ${v('iNext')} + ${v('DTerm')} + ${v('Feedforward')};
     ${v('u')} := LIMIT(MN := ${v('OutLow')}, IN := ${v('v')}, MX := ${v('OutHigh')});
 
-    IF ${v('Ti')} > 0.0 THEN
-${awLine}
+    // A saturated slave asks its master to stop integrating in that direction.
+    IF ${v('Ti')} > 0.0 AND NOT ((${v('HoldIntegral')} > 0 AND ${v('iNext')} > ${v('Integral')}) OR (${v('HoldIntegral')} < 0 AND ${v('iNext')} < ${v('Integral')})) THEN
+${awLine.replace(/^/gm, '    ')}
     END_IF;
 
+    IF ${v('v')} > ${v('OutHigh')} THEN
+        ${v('AtLimit')} := 1;
+    ELSIF ${v('v')} < ${v('OutLow')} THEN
+        ${v('AtLimit')} := -1;
+    ELSE
+        ${v('AtLimit')} := 0;
+    END_IF;
     ${v('Output')} := ${v('u')};
 END_FUNCTION_BLOCK`;
 }
@@ -160,6 +172,47 @@ ${d === 'scl' ? '\nBEGIN' : ''}
     ELSE
         ${v('Output')} := ${v('OutOff')};
     END_IF;
+END_FUNCTION_BLOCK`;
+}
+
+function leadLagBlock(d: Dialect, Ts: number) {
+  const v = loc(d);
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.leadLag)}
+   VAR_INPUT
+      In : Real;              // the measured disturbance, engineering units
+      Reset : Bool;           // TRUE (e.g. in manual): re-zero on the present value
+      Gain : Real;            // % per unit of the disturbance
+      Lead : Real;            // s
+      Lag : Real;             // s
+      Cycle : Real := ${real(Ts)};
+   END_VAR
+   VAR_OUTPUT
+      Out : Real;             // %, zero at the value it started from
+   END_VAR
+   VAR
+      Started : Bool;
+      X0 : Real;
+      XPrev : Real;
+      Y : Real;
+   END_VAR
+   VAR_TEMP
+      x : Real;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    // Deviation from where the loop was switched on, so feedforward starts bumpless.
+    IF ${v('Reset')} OR NOT ${v('Started')} THEN
+        ${v('X0')} := ${v('In')};
+        ${v('XPrev')} := 0.0;
+        ${v('Y')} := 0.0;
+        ${v('Started')} := TRUE;
+    END_IF;
+    ${v('x')} := ${v('In')} - ${v('X0')};
+    // Backward Euler of (Lead*s + 1) / (Lag*s + 1).
+    ${v('Y')} := ${v('Lag')} / (${v('Lag')} + ${v('Cycle')}) * ${v('Y')}
+              + (${v('Lead')} + ${v('Cycle')}) / (${v('Lag')} + ${v('Cycle')}) * ${v('x')}
+              - ${v('Lead')} / (${v('Lag')} + ${v('Cycle')}) * ${v('XPrev')};
+    ${v('XPrev')} := ${v('x')};
+    ${v('Out')} := ${v('Gain')} * ${v('Y')};
 END_FUNCTION_BLOCK`;
 }
 
@@ -284,6 +337,37 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`${out} := ${d === 'scl' ? `"${NAMES.valveInv}"` : NAMES.valveInv}(Demand := ${db}.Output);`);
     return lines.join('\n');
   }
+  const ffInst = (t: FeedforwardTerm) => (d === 'scl' ? `"FF_${t.from}_DB"` : `FF_${t.from}`);
+  const ffOf = (terms: FeedforwardTerm[]) => {
+    if (!terms.length) return '0.0';
+    for (const t of terms) {
+      const ds = proc.disturbances.find((x) => x.key === t.from);
+      lines.push(`${ffInst(t)}(In := ${tag(ds?.measured ?? t.from)}, Reset := ${tag('Manual')}, Gain := ${real(t.gain)}, Lead := ${real(t.lead)}, Lag := ${real(t.lag)});`);
+    }
+    return terms.map((t) => `${ffInst(t)}.Out`).join(' + ');
+  };
+  if (config.kind === 'cascade' && proc.secondary) {
+    const sec = proc.secondary;
+    const inner = d === 'scl' ? `"${sec.loopTag.replace('-', '_')}_DB"` : sec.loopTag.replace('-', '_');
+    const pv2 = tag(sec.tag);
+    const span2 = sec.hi - sec.lo;
+    lines.push(`// Cascade: ${proc.tags.loop} (master) sets the ${sec.label.toLowerCase()} setpoint; ${sec.loopTag} (slave) drives the valve.`);
+    lines.push(`// Give the slave its own tuning once at start-up (OB100): ${inner}.Gain := ${real(config.inner.Kc)}; ${inner}.Ti := ${real(config.inner.Ti)}; ${inner}.Td := ${real(config.inner.Td)}; ${inner}.InLow := ${real(sec.lo)}; ${inner}.InHigh := ${real(sec.hi)};`);
+    if (config.ff.length) lines.push(`// Feedforward goes into the slave's setpoint (% of the ${sec.label.toLowerCase()} span).`);
+    const ff = ffOf(config.ff);
+    lines.push(`// In manual the master tracks the slave's measurement, so switching to auto is bumpless.`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := (${pv2} - ${real(sec.lo)}) / ${real(span2)} * 100.0, Feedforward := ${ff}, HoldIntegral := ${inner}.AtLimit);`);
+    lines.push(`${tag('SP2')} := ${real(sec.lo)} + ${db}.Output / 100.0 * ${real(span2)};`);
+    lines.push(`${inner}(Setpoint := ${tag('SP2')}, Input := ${pv2}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${inner}.Output;`);
+    return lines.join('\n');
+  }
+  if (config.kind === 'feedforward') {
+    const ff = ffOf(config.ff);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, Feedforward := ${ff});`);
+    lines.push(`${out} := ${db}.Output;`);
+    return lines.join('\n');
+  }
   if (config.kind === 'schedule') {
     const x = config.on === 'sp' ? tag('SP') : pv;
     lines.push(`// Look up the gains for where the process is now, then run the PID with them.`);
@@ -317,7 +401,9 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
       if (ch?.id === 'valve-inverse') parts.push(valveInverseFunction(dialect, p.valveChar));
     }
     const [lo, hi] = pidInputRange(proc, config, p);
-    parts.push(pidBlock(dialect, proc, config.pid, p.Ts, lo, hi));
+    const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+    if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
+    parts.push(pidBlock(dialect, config.kind === 'cascade' ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
   return parts.join('\n\n');
@@ -335,7 +421,27 @@ function onOff(spPct: number, pvPct: number): number {
   return on ? ${config.outOn} : ${config.outOff};
 }`;
   }
-  const p = config.pid;
+  const p = config.kind === 'cascade' ? config.outer : config.pid;
+  const extra = config.kind === 'cascade'
+    ? `
+
+// Cascade: this PID is the master; its output (0-100 % of the secondary span) is the slave's setpoint.
+// The slave runs the same algorithm with its own gains (Kc ${config.inner.Kc}, Ti ${config.inner.Ti} s).
+// While the slave's output is pinned, hold the master's integral in that direction.`
+    : '';
+  const terms = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+  const ffCode = terms.length ? `
+
+// Feedforward: gain·(lead·s + 1)/(lag·s + 1) on each measured disturbance, added to the output
+// (to the slave's setpoint in cascade). Zero at the value it starts from.
+${terms.map((t) => `const ff_${t.from} = { gain: ${t.gain}, lead: ${t.lead}, lag: ${t.lag}, x0: NaN, xPrev: 0, y: 0 };`).join('\n')}
+function leadLag(f: { gain: number; lead: number; lag: number; x0: number; xPrev: number; y: number }, d: number) {
+  if (Number.isNaN(f.x0)) f.x0 = d;
+  const x = d - f.x0;
+  f.y = (f.lag / (f.lag + Ts)) * f.y + ((f.lead + Ts) / (f.lag + Ts)) * x - (f.lead / (f.lag + Ts)) * f.xPrev;
+  f.xPrev = x;
+  return f.gain * f.y;
+}` : '';
   return `// Ideal PID with setpoint weights, filtered derivative and ${p.antiWindup === 'none' ? 'no' : p.antiWindup === 'clamp' ? 'conditional-integration' : 'back-calculation'} anti-windup.
 // Inputs in % of span, output in %. Called every Ts = ${rawTs} s.
 const Ts = ${rawTs};
@@ -369,7 +475,7 @@ function track(u: number, sp: number, pv: number) {
   I = u - Kc * (b * sp - pv);
   D = 0;
   lastED = c * sp - pv;
-}`;
+}${ffCode}${extra}`;
 }
 
 export type ParamRow = { name: string; value: string; note: string };
@@ -378,27 +484,44 @@ export type ParamRow = { name: string; value: string; note: string };
 export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, rawParams: Params): ParamRow[] | null {
   if (config.kind === 'onoff') return null;
   const p = cleanParams(proc, rawParams);
+  if (config.kind === 'cascade') {
+    const sec = proc.secondary!;
+    const master = compactRows(config.outer, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts).map((r) => ({ ...r, name: `${proc.tags.loop}: ${r.name}` }));
+    const slave = compactRows(config.inner, sec.lo, sec.hi, sec.unit, p.Ts).map((r) => ({ ...r, name: `${sec.loopTag}: ${r.name}` }));
+    return [
+      { name: 'Cascade', value: 'two controllers', note: `PID_Temp has cascade support built in (master/slave). With PID_Compact, wire the master's Output (scaled to ${real(sec.lo)}–${real(sec.hi)} ${sec.unit}) to the slave's Setpoint, and stop the master winding up while the slave is saturated yourself.` },
+      ...master, ...slave,
+      ...(config.ff.length ? [{ name: 'Feedforward', value: `${config.ff.length} term${config.ff.length > 1 ? 's' : ''}`, note: 'Added to the slave setpoint: compute it in your own code (the exported LL_LeadLag) before the slave call.' }] : []),
+    ];
+  }
   const pid = config.kind === 'schedule' ? { ...config.pid, ...config.points[Math.floor(config.points.length / 2)] } : config.pid;
   const [lo, hi] = pidInputRange(proc, config, p);
-  const span = hi - lo;
   const unit = config.kind === 'characterized' && findCharacterization(proc, config.char)?.on === 'pv' ? findCharacterization(proc, config.char)?.unit ?? '' : proc.pv.unit;
-  const rows: ParamRow[] = [
+  const rows = compactRows(pid, lo, hi, unit, p.Ts);
+  if (config.kind === 'schedule') {
+    rows.unshift({ name: 'Gain scheduling', value: 'not built in', note: 'PID_Compact has one parameter set. Values below are the middle breakpoint; the exported SCL writes the scheduled gains into an LL_PID instance every cycle instead.' });
+  }
+  if (config.kind === 'feedforward' && config.ff.length) {
+    rows.push({ name: 'Disturbance (input)', value: 'feedforward', note: 'Newer PID_Compact versions add a Disturbance input straight to the output; check yours. Otherwise compute the feedforward (LL_LeadLag) and add it to the output yourself.' });
+  }
+  if (pid.antiWindup === 'backcalc') {
+    rows.push({ name: 'Anti-windup', value: 'clamping', note: 'PID_Compact uses its own anti-windup; back-calculation needs the custom block.' });
+  }
+  return rows;
+}
+
+function compactRows(pid: PidParams, lo: number, hi: number, unit: string, Ts: number): ParamRow[] {
+  const span = hi - lo;
+  return [
     { name: 'Retain.CtrlParams.Gain', value: real((pid.Kc * 100) / span), note: `PID_Compact works on the input in engineering units, so its gain is in %/${unit}: Kc × 100 / span (${real(span)} ${unit}). Same loop, different number — a common mix-up.` },
     { name: 'Retain.CtrlParams.Ti', value: real(pid.Ti), note: pid.Ti > 0 ? 'Integral time, s.' : '0.0 switches integral action off.' },
     { name: 'Retain.CtrlParams.Td', value: real(pid.Td), note: pid.Td > 0 ? 'Derivative time, s.' : '0.0 switches derivative action off.' },
     { name: 'Retain.CtrlParams.TdFiltRatio', value: real(pid.a), note: 'Derivative filter coefficient a: filter time = a × Td.' },
     { name: 'Retain.CtrlParams.PWeighting', value: real(pid.b), note: 'Setpoint weight b on the P term. Below 1 softens the kick on setpoint changes.' },
     { name: 'Retain.CtrlParams.DWeighting', value: real(pid.c), note: 'Setpoint weight c on the D term. 0 = derivative on measurement only (no setpoint kick).' },
-    { name: 'Retain.CtrlParams.Cycle', value: real(p.Ts), note: `Controller sampling time, s. Call PID_Compact from a cyclic interrupt OB (e.g. OB30) at ${Math.round(p.Ts * 1000)} ms.` },
+    { name: 'Retain.CtrlParams.Cycle', value: real(Ts), note: `Controller sampling time, s. Call PID_Compact from a cyclic interrupt OB (e.g. OB30) at ${Math.round(Ts * 1000)} ms.` },
     { name: 'Config.OutputLowerLimit / OutputUpperLimit', value: `${real(pid.outLo)} / ${real(pid.outHi)}`, note: 'Output limits, %. PID_Compact stops integrating at these limits (its own anti-windup).' },
     { name: 'Config.InvertControl', value: pid.invert ? 'TRUE' : 'FALSE', note: 'TRUE when more output lowers the PV (e.g. a valve on the outlet).' },
     { name: 'Config.InputLowerLimit / InputUpperLimit', value: `${real(lo)} / ${real(hi)}`, note: `Measurement range, ${unit}. Use Input_PER with Config.InputScaling for a raw 0–27648 analog value.` },
   ];
-  if (config.kind === 'schedule') {
-    rows.unshift({ name: 'Gain scheduling', value: 'not built in', note: 'PID_Compact has one parameter set. Values below are the middle breakpoint; the exported SCL writes the scheduled gains into an LL_PID instance every cycle instead.' });
-  }
-  if (pid.antiWindup === 'backcalc') {
-    rows.push({ name: 'Anti-windup', value: 'clamping', note: 'PID_Compact uses its own anti-windup; back-calculation needs the custom block.' });
-  }
-  return rows;
 }

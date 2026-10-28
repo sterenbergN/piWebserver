@@ -43,10 +43,19 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
         { label: 'Valve stem', color: 'var(--ll-valve)', x: times[i], y: e.run.trace.valve, width: 1.8 },
       ]
     : [{ label: e.label, color: e.color, x: times[i], y: e.run.trace.valve, width: 1.6 }]);
+  const sec = proc.secondary;
+  const inner = single && sec && Array.from(first.trace.sp2).some(Number.isFinite);
   const events = first.scenario.events.filter((ev) => ev.kind === 'dist' || ev.kind === 'freeze').map((ev) => ({ at: ev.t * scale, label: ev.kind === 'dist' ? `${proc.disturbances.find((d) => d.key === ev.key)?.label ?? ev.key} → ${ev.value}` : 'sensor freeze' }));
   return (
     <div>
       <Chart label={`${proc.pv.label} during ${first.scenario.name}`} series={pv} x={{ label: `Time (${unit})` }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} vGuides={events} height={height} />
+      {inner && (
+        <Chart label={`${sec.label} during the test`} height={Math.round(height * 0.7)} x={{ label: `Time (${unit})` }} y={{ label: `${sec.label} (${sec.unit})` }}
+          series={[
+            { label: `${sec.loopTag} setpoint`, color: 'var(--ll-sp)', x: t, y: first.trace.sp2, dash: '5 4', width: 1.3 },
+            { label: `${sec.label} (measured)`, color: 'var(--habit-7)', x: t, y: first.trace.pv2, width: 1.5 },
+          ]} />
+      )}
       <Chart label="Valve during the test" series={cv} x={{ label: `Time (${unit})` }} y={{ label: single ? 'Output (%)' : 'Valve stem (%)', min: -2, max: 102 }} height={Math.round(height * 0.7)} legend />
     </div>
   );

@@ -75,6 +75,8 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Loop Lab', url: '/loop-lab', subtitle: 'Control strategy lab: PID, gain scheduling and more', body: 'pid control loop tuning controller bode simulink plc siemens scl process control' },
   { kind: 'page', title: 'Case study: flow loop', url: '/loop-lab/cases/flow-pi', subtitle: 'Loop Lab: when PI is the answer', body: 'pid flow loop tuning lambda valve' },
   { kind: 'page', title: 'Case study: conical tank', url: '/loop-lab/cases/tank-schedule', subtitle: 'Loop Lab: gain scheduling and characterization', body: 'level tank gain scheduling nonlinear pid' },
+  { kind: 'page', title: 'Case study: stirred tank', url: '/loop-lab/cases/stirred-pid', subtitle: 'Loop Lab: when derivative earns its keep', body: 'temperature pid derivative filter reactor jacket' },
+  { kind: 'page', title: 'Case study: heat exchanger', url: '/loop-lab/cases/hx-cascade-ff', subtitle: 'Loop Lab: cascade and feedforward', body: 'cascade feedforward steam heat exchanger temperature' },
   { kind: 'page', title: 'Unit converter', url: '/tools', subtitle: 'Tools', body: 'calculator convert length weight temperature' },
   { kind: 'page', title: 'Movie picker', url: '/tools', subtitle: 'Tools', body: 'film watch random' },
   { kind: 'page', title: 'Restaurant finder', url: '/tools', subtitle: 'Tools', body: 'food eat dinner' },

@@ -105,6 +105,157 @@ With $K_c$ and $T_i$ fixed, damping falls with $\sqrt{k'}$. If you tune for $\ze
     ],
     verdict: String.raw`**Characterize if you know the geometry; gain-schedule if you don't.** Controlling volume gives one PI tuning that is right from bottom to top, costs a single function block, and survives moderate geometry errors. Gain scheduling reaches the same result from bump tests at a few levels, without needing a formula, at the cost of more parameters to look after. A single PI is acceptable only if the level stays in a narrow band, or if slow control near the bottom (tuned for the top, detuned for noise) is good enough.`,
   },
+  stirred: {
+    mechanical: String.raw`A 200 L jacketed vessel with an agitator. Cold feed runs through it continuously, and **TV-401** sets how much heat goes into the jacket (hot water or low-pressure steam).
+
+**Two energy balances in series.**
+
+$$C_j\,\frac{dT_j}{dt} = Q_{max} f - UA\,(T_j - T), \qquad C_v\,\frac{dT}{dt} = \rho c_p F\,(T_{in} - T) + UA\,(T_j - T)$$
+
+The heat goes first into the jacket, then through the wall into the contents. The contents are well mixed (that is what the agitator is for), so the vessel is one lumped temperature.
+
+**Where the time goes.**
+- The vessel's heat capacity ($\rho c_p V \approx 840$ kJ/K) against the feed and the jacket gives the slow time constant, about 14 minutes.
+- The jacket ($C_j/UA \approx 40$ s) and the thermowell (15 s) add two smaller lags.
+- There is almost no dead time: nothing is transported anywhere.
+
+**When the hardware is the problem.**
+- **Fouling** (scale on the jacket side) lowers UA. The process gets slower and the jacket lag grows.
+- **A thermowell** that is long, thick-walled or badly placed (in a dead zone the agitator doesn't sweep) adds lag the controller can do nothing about.
+- **The agitator stopping** changes everything: the vessel is no longer one temperature.`,
+    control: String.raw`Linearized, the plant is three lags in series and essentially no dead time:
+
+$$G(s) = \frac{K}{(\tau_1 s + 1)(\tau_2 s + 1)(\tau_m s + 1)}, \qquad \tau_1 \approx 840\text{ s},\ \tau_2 \approx 35\text{ s},\ \tau_m = 15\text{ s}$$
+
+**Why derivative earns its keep here.** The phase lag of a PI loop comes mostly from the smaller lags. Derivative adds phase lead, of up to 90°, over a range of frequencies, which cancels much of that. With the lead in place, the gain can go up without losing margin. In the numbers:
+- **PI at $K_c = 13.4$** has a phase margin of 37° and $M_s \approx 2$: fragile.
+- **PID at the same gain** has a phase margin of about 58° and $M_s \approx 1.5$: robust.
+
+SIMC's PID rule makes this explicit: with the second-order model, $T_d = \tau_2$ cancels the second lag.
+
+**The price is noise.** The derivative's gain keeps rising with frequency until the filter stops it at $K_c(1 + 1/a)$. With $a = 0.1$ that is 11 × $K_c$ applied to the measurement noise. Raising the filter ratio to $a = 0.3$–$0.5$ keeps nearly all of the useful lead (the process lags are tens of seconds, the noise is per-sample) and cuts the valve activity about three times.
+
+**One tuning everywhere.** Across the temperature range the plant doesn't change at all. The gain does fall with throughput ($K \propto 1/F$), but only 2:1 across the throughput test, which one robust tuning absorbs.`,
+    automation: String.raw`**Tags.** TT-401 (RTD in a thermowell, 0–100 °C), TIC-401 (the controller), TV-401 (heating valve).
+
+**Siemens.**
+- **Block:** PID_Compact, or **PID_Temp** if the vessel also has cooling (heating/cooling split outputs with their own gains).
+- **Cycle:** OB30 at 1 s is plenty for minute-scale dynamics.
+- **Derivative filter:** set it with Retain.CtrlParams.TdFiltRatio (0.3–0.5). Use DWeighting = 0 so recipe setpoint steps don't kick the valve.
+- **Pretuning** works well on processes like this (slow, self-regulating, little dead time).
+
+**Elsewhere.** Temperature loops in batch reactors are the classic DCS use of PID with derivative. Many add a setpoint ramp, so heat-up follows a profile instead of a step.`,
+    commissioning: [
+      'Check the RTD against a reference thermometer at two temperatures; check the thermowell is in a well-mixed spot.',
+      'With the agitator running and the feed steady, step the heating valve 5–10 % in manual and record the response for 3 time constants.',
+      'Fit the second-order model (two lags): the smaller one sets Td.',
+      'Tune PID with a derivative filter of 0.3–0.5 and DWeighting = 0; watch the valve for noise-driven movement.',
+      'Test a feed temperature change and a throughput change; check the overshoot on a recipe setpoint step.',
+      'Interlock the heating on agitator stop and on high-high temperature, outside the controller.',
+    ],
+    verdict: String.raw`**PID, derivative included, with its filter set sensibly.** Derivative cuts the worst upset by about a third and makes the loop more robust at the same time, because its phase lead pays for the extra gain. The cost is valve activity: about 4× a PI's with a filter ratio of 0.5, about 12× with 0.1. If the actuator can't take that, a SIMC-tuned PI is an honest second. Nothing further up the ladder is needed.`,
+  },
+  hx: {
+    mechanical: String.raw`A shell-and-tube exchanger. Steam condenses on the shell side and heats a water stream inside the tubes. **FV-301** throttles the steam.
+
+**Steam side.** At these pressures the steam valve runs at (near) critical flow, so the flow depends on the upstream pressure and the valve opening, not on what is downstream:
+
+$$\dot m_s = K_{st}\, f(s)\, P_s$$
+
+A 25 % drop in header pressure is a 25 % drop in steam flow at any valve position. The temperature only finds out later.
+
+**Two energy balances.** All the steam condenses and heats the tube bundle, which heats the fluid:
+
+$$C_w\frac{dT_w}{dt} = \frac{\dot m_s \lambda}{3600} - UA\,(T_w - T), \qquad C_f\frac{dT}{dt} = \rho c_p F\,(T_{in} - T) + UA\,(T_w - T)$$
+
+**Where the time goes.** The fluid hold-up and the tube bundle give a dominant lag of about 30 s. TT-301 sits a few metres downstream, which adds 3 s of dead time, and the thermowell adds 4 s more.
+
+**What is measured.**
+- **FT-301:** steam flow.
+- **FT-302:** process flow.
+- **TT-302:** inlet temperature.
+
+Each one, if used, takes one upset out of the temperature loop's hands.`,
+    control: String.raw`**Three upsets, three paths.**
+- **Steam pressure** acts on the steam flow, then through the wall to $T$. It passes through a variable you can measure and control fast.
+- **Process flow and inlet temperature** act on $T$ directly, through the fluid balance. They are measured before they arrive.
+
+**Cascade.** An inner loop on steam flow (valve → FT-301: about 2 s of valve and transmitter lag) is many times faster than the temperature. It corrects a pressure swing within seconds, before the wall has warmed or cooled. The outer loop then sees a near-ideal process:
+
+$$T(s) \approx \frac{K}{(\tau s + 1)} e^{-\theta s}\cdot \dot m_{s,sp}(s)$$
+
+That process is free of the pressure disturbance and of the valve's nonlinearity. Tune the inner loop first, then the outer with the inner closed. The inner loop should be 3–5× faster at least; here it is much more.
+
+**Feedforward.** At steady state the energy balance says exactly how much steam a flow change needs:
+
+$$\Delta \dot m_s = \frac{\rho c_p\, \Delta F\,(T - T_{in})\cdot 3600}{\lambda}, \qquad \Delta \dot m_s = -\frac{\rho c_p F\,\Delta T_{in} \cdot 3600}{\lambda}$$
+
+In valve % (single loop), or in steam-flow setpoint (with cascade), that is the static feedforward gain.
+
+**Dynamics.** The flow and inlet disturbances act on the fluid directly. The steam has to go through the wall first, so the disturbance path is a few seconds faster than the valve path. Feedforward can't anticipate that, so it can only partly cancel the upsets. The lead-lag ($\tau_u s + 1)/(\tau_d s + 1)$ comes out nearly 1 here, so a static gain does most of the work.`,
+    automation: String.raw`**Tags.**
+- Temperature loop: TT-301 → TIC-301 (master).
+- Steam flow loop: FT-301 → FIC-301 (slave) → FV-301.
+- Feedforward inputs: FT-302 and TT-302, combined in FY-302 (the calculation block).
+
+**Siemens.**
+- **Cascade:** **PID_Temp** supports cascade directly (master and slave configured to work together, including windup handling). With **PID_Compact**, use two instances. Scale the master's output to the slave's setpoint range, put the slave in automatic before the master, and stop the master integrating while the slave is at its limit. The exported LL_PID has HoldIntegral / AtLimit for exactly that.
+- **Feedforward:** compute it in SCL from FT-302 and TT-302 (the exported LL_LeadLag), and add it to the slave setpoint (cascade) or to the PID output. Re-zero it on every switch to automatic.
+- **Cycle:** both loops in the same OB30, slave after master, at 0.5 s or faster for the steam flow loop.
+
+**Operator view.** Show both loops on the faceplate: the master's SP/PV and the slave's SP/PV. A slave left in manual (or local) silently breaks the cascade. Mode logic should force the master to track when the slave isn't in cascade mode.`,
+    commissioning: [
+      'Check FT-301 (steam flow) zero and span; a DP steam meter needs density compensation for pressure swings.',
+      'Tune the steam flow loop first, on its own, in automatic with a local setpoint: fast and non-oscillating.',
+      'Bump test the temperature with the steam flow loop closed (step its setpoint), and tune the master on that response.',
+      'Put the slave in cascade mode, then the master in automatic; check bumpless transfer both ways.',
+      'Commission feedforward last: start at 70–80 % of the calculated gain, step the process flow, and adjust until the temperature barely moves.',
+      'Check what happens when FT-302 fails: feedforward should freeze or drop out, not slam the valve.',
+    ],
+    verdict: String.raw`**Cascade for the steam pressure, feedforward for the measured flow and inlet temperature, and both together if all three upsets matter.**
+- Cascade cuts steam-pressure upsets from about 11 °C to under 1 °C.
+- Feedforward cuts flow upsets from 13 °C to about 3 °C.
+- Together, every upset stays under about 2.5 °C and the IAE drops by two thirds.
+
+The price is three more transmitters' worth of trust, ten tuning numbers instead of two, and about 2.8× more valve activity. Each piece is worth adding only if its upset is big enough to matter in your plant.`,
+  },
+  custom: {
+    mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
+
+The model has the form
+
+$$G(s) = \frac{K\,e^{-\theta s}}{(\tau_1 s + 1)(\tau_2 s + 1)} \quad\text{or}\quad G(s) = \frac{k'\,e^{-\theta s}}{s\,(\tau s + 1)}$$
+
+It includes everything the trend saw between the controller output and the measurement: valve, process and transmitter together. That's why the valve and transmitter lags here are kept tiny, so they aren't counted twice.
+
+What the model can't tell you is *why* the loop behaves as it does. For that, go back to the plant:
+- the valve's size and characteristic;
+- where the sensor sits;
+- what other users share the supply.`,
+    control: String.raw`**The identified model is only valid near the operating point the trend was taken at.** Identify at two or three operating points, keep the fits, and compare the gains. If they differ by more than about 2:1, one tuning won't fit everywhere (see the conical tank).
+
+**How far to trust it.**
+- **Fit above 90 %** with a noise-like residual: the model has what there is to find.
+- **Lower fit, or a slowly wandering residual:** something else moved during the test (an upset, a nonlinearity), or the model is too simple. Try second order, narrow the window, or repeat the test.
+
+**The test scripts** are written in units of the model's own time scale ($\tau_1 + \tau_2 + \theta$), so they make sense for a 5-second flow loop and a 2-hour temperature loop alike. The **model mismatch** test is the one to watch: a tuning that only works if the model is exact won't work on the plant.`,
+    automation: String.raw`**Getting a good trend from a Siemens PLC.**
+- In TIA Portal, add a **Trace** on the PID instance (Input, Output; Setpoint optional), sampled at the OB cycle.
+- Record in manual: steady first, then one or two output steps of 5–10 %, held until the PV settles.
+- Export the trace as CSV. Semicolons and decimal commas are fine.
+
+**Elsewhere.** Any historian or DCS trend export works, as long as the time, the controller output and the measurement are columns. Avoid heavy compression (deadband recording) in the historian: it hides the shape of the response.
+
+The exported code and PID_Compact settings use your PV range, so check that the range in the Identify tab matches the transmitter's.`,
+    commissioning: [
+      'Make the bump test in manual, from a steady state, with nothing else changing; note the time of each step.',
+      'Step big enough to be well above the noise (5–10 % of output), small enough to stay in the normal range.',
+      'Hold each step until the PV settles (or, for an integrating process, long enough to see the ramp clearly).',
+      'Identify, check the fit and the residual, and repeat the test at another operating point if the range is wide.',
+      'Tune on the model, check the margins and the mismatch test here, then try it on the plant with a conservative speed first.',
+    ],
+    verdict: String.raw`**Whatever the tests say: this is your loop.** Start with a SIMC PI tuned on the identified model, check the mismatch test and the margins, and only climb the ladder if a specific upset or a varying gain demands it.`,
+  },
 };
 
 export type ControllerContent = {
@@ -270,6 +421,88 @@ The PID then sees an approximately linear process and **one** tuning applies eve
     broad: String.raw`- **DCS:** most have "characterizer" function blocks (piecewise-linear tables) for exactly this.
 - **Valves:** smart positioners often have selectable characterization curves, which do the same thing in the field device.`,
   },
+  feedforward: {
+    summary: 'Act on a disturbance as soon as it is measured, before it moves the PV. Feedback still runs alongside to clean up what the feedforward gets wrong.',
+    theory: String.raw`If a measured disturbance $d$ reaches the PV through $G_d(s)$ and the valve through $G_u(s)$, the output that cancels it exactly is
+
+$$u_{ff} = -\frac{G_d(s)}{G_u(s)}\,d$$
+
+With first-order-plus-dead-time models of both paths, that becomes a gain, a lead-lag and (sometimes) a delay:
+
+$$u_{ff} = -\frac{K_d}{K_u}\cdot\frac{\tau_u s + 1}{\tau_d s + 1}\cdot e^{-(\theta_d - \theta_u)s}\, d$$
+
+- **Static feedforward** (the gain alone) gets the steady state right. It is often enough, and it comes straight from a mass or energy balance.
+- **Lead-lag** fixes the timing when the two paths have different speeds.
+- **If $\theta_d < \theta_u$** the ideal feedforward would need to see the future. It can only be partly cancelled, and feedback has to do the rest.
+
+**Stability.** Feedforward is outside the loop, so it doesn't change the stability margins at all. A wrong feedforward makes the response worse, never unstable.`,
+    works: [
+      'Big, frequent disturbances that can be measured upstream: throughput, feed temperature, feed composition.',
+      'Processes with dead time, where feedback alone reacts too late.',
+      'Where a balance (mass, energy) gives the gain without any test.',
+    ],
+    breaks: [
+      'Unmeasured disturbances: there is nothing to feed forward.',
+      'Disturbances that reach the PV faster than the valve can: only partial cancellation.',
+      'Wrong or drifting models: fouling, valve wear, a mis-ranged transmitter. Too much feedforward makes upsets worse.',
+      'A failed transmitter: feedforward follows the bad reading straight into the valve.',
+    ],
+    tuning: String.raw`1. **Static gain first:** from a balance, or from two bump tests (output step → PV, disturbance step → PV) as $-K_d/K_u$. Start at 70–80 % of it.
+2. **Lead-lag:** lead = $\tau_u$, lag = $\tau_d$. If they are close, leave both at zero.
+3. **Test with real disturbance steps,** with feedback in automatic.
+   - The PV first dips, then rises: the timing is wrong.
+   - The PV ends up away from setpoint while feedback catches up: the gain is wrong.
+4. Re-check after maintenance: feedforward gains drift with the plant.`,
+    implementation: String.raw`- Use the **deviation** from the disturbance value when the loop went to automatic, so switching on is bumpless.
+- Add the feedforward to the PID output inside the anti-windup (the integral sees the total output), or to a cascade slave's setpoint.
+- Re-zero in manual, limit its contribution, and freeze it on a bad-quality input.
+- Discretize the lead-lag with backward Euler at the controller cycle.`,
+    siemens: String.raw`- **PID_Compact:** newer versions have a **Disturbance** input added to the output; check your version.
+- **Otherwise:** compute the feedforward in SCL (the exported **LL_LeadLag** block) and add it through LL_PID's Feedforward input, or to the cascade slave's setpoint.
+- **Bad quality:** use the analog input's status (or the PROFINET IO status) to freeze the feedforward.`,
+    broad: String.raw`- **DCS:** most PID blocks have a feedforward input with its own gain, and many have lead-lag blocks for the dynamic part.
+- **Rockwell:** the PIDE instruction has a feedforward input.
+- **Ratio control** is the common special case: a flow kept in proportion to another (fuel to air, additive to main flow) is feedforward with a gain set by the ratio.`,
+  },
+  cascade: {
+    summary: 'Two loops nested: a fast inner (slave) loop on a variable between the valve and the PV, and an outer (master) loop that sets the slave\'s setpoint. Upsets that pass through the inner variable are corrected before they reach the PV.',
+    theory: String.raw`The master controls the main PV. Its output is the slave's setpoint, and the slave controls a faster intermediate variable, here steam flow, by moving the valve.
+
+**What it buys.**
+- **Inner upsets are fixed early.** Anything that disturbs the inner variable (supply pressure, a valve that sticks) is corrected by the slave before it reaches the main PV.
+- **The master sees a simpler process.** With the slave closed, the valve's nonlinearity, stiction and supply variations disappear inside it. The master sees "steam flow → temperature", which is cleaner than "valve position → temperature".
+
+**What it needs.**
+- The slave must be clearly faster than the master: a crossover 3–5× higher at least. Otherwise the two loops fight.
+- The inner variable must be measurable, and reached by the valve before the outer variable.
+
+**In the frequency domain.** The master sees $C_i G_2/(1 + C_i G_2)$, the slave's closed loop, in series with the path to the PV. At frequencies well below the slave's bandwidth that is close to 1: the master doesn't see the inner dynamics.`,
+    works: [
+      'An upset enters through a fast, measurable intermediate variable: supply pressure → flow, a jacket temperature, a motor current.',
+      'The valve or actuator is nonlinear or sticky: an inner flow or position loop straightens it out.',
+      'Temperature, level and composition loops whose valves have positioners or flow meters.',
+    ],
+    breaks: [
+      'The inner loop is not much faster than the outer: they interact, and the result is worse than one loop.',
+      'Upsets that bypass the inner variable (process flow, inlet temperature here): cascade does nothing for them.',
+      'Windup through the cascade: if the master keeps integrating while the slave is saturated, the recovery overshoots.',
+      'Mode handling: a slave left in manual or local setpoint silently breaks the loop.',
+    ],
+    tuning: String.raw`1. **Slave first,** on its own, with a local setpoint: fast and well damped (SIMC with $\tau_c \approx \theta$ is usually fine for a flow loop).
+2. **Close the slave.** Bump-test the master by stepping the slave's setpoint, and fit a model to that response.
+3. **Tune the master** on that model, more slowly: its crossover well below the slave's.
+4. **Check both loops' margins:** the analysis here shows them separately.`,
+    implementation: String.raw`- Scale the master's output (0–100 %) to the slave's setpoint range.
+- Run the slave after the master in the same cycle, or in a faster cyclic interrupt.
+- **Manual mode:** the master tracks the slave's measurement, so switching to automatic is bumpless.
+- **Windup:** stop the master integrating in a direction where the slave is saturated (external reset feedback does this more elegantly).
+- **Feedforward** for a cascade usually goes into the slave's setpoint.`,
+    siemens: String.raw`- **PID_Temp** supports cascade directly: master and slave configured to work together, including what happens when the slave can't follow.
+- **PID_Compact:** two instances. Master Output → scaled → slave Setpoint, and handle the master's windup when the slave is at a limit. The exported LL_PID has HoldIntegral and AtLimit for this.
+- **HMI:** show both loops on the faceplate, with the slave's mode visible.`,
+    broad: String.raw`- **DCS PID blocks** have a cascade mode (often called CAS). The slave sends its actual setpoint back (back-calculation) so the master can initialise and avoid windup.
+- **Motion control** is cascade throughout: current inside velocity inside position, each loop several times faster than the one outside it.`,
+  },
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -417,6 +650,142 @@ export const CASES: CaseStudy[] = [
 - A single PI is only acceptable over a narrow level band.
 
 **Next on the ladder.** If this were a surge tank, the right answer would be the opposite of tight control: averaging level control (phase 3).`,
+      },
+    ],
+  },
+  {
+    id: 'stirred-pid',
+    process: 'stirred',
+    title: 'The stirred tank: when derivative earns its keep',
+    question: 'On the flow loop derivative only added noise. On a lag-dominant vessel, does D finally pay for itself?',
+    family: 'pid-wins',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A 200 L jacketed vessel, agitated, with cold feed running through it. TV-401 heats the jacket, and TT-401 sits in a thermowell. Three lags in series (vessel about 14 minutes, jacket about 35 s, thermowell 15 s) and practically no dead time: the **control view** shows the plant. Recipe changes move the setpoint; upstream changes the feed temperature and the throughput.`,
+      },
+      {
+        title: 'On-off, like a thermostat',
+        body: String.raw`A thermostat works for a room. Here it overshoots recipe steps by up to 22 % and never settles, because by the time the heating switches off the jacket is already hot. On-off is fine where a few degrees of swing don't matter; for a reactor recipe they do.`,
+        presets: [{ label: 'On-off', controller: { kind: 'onoff', hyst: 2, outOn: 100, outOff: 0 } }],
+        scenarios: ['sp-steps'],
+      },
+      {
+        title: 'A SIMC PI',
+        body: String.raw`The bump test gives roughly $K \approx 0.86$, $\tau \approx 850$ s and $\theta \approx 36$ s effective (the small lags lumped together by the half rule). SIMC with $\tau_c = 2\theta$ gives $K_c \approx 9$, $T_i \approx 430$ s. The setpoint steps come in without overshoot. Feed upsets peak at about 3 °C and take around 9 minutes to recover. It's a respectable loop, robust at $M_s \approx 1.6$.`,
+        presets: [{ label: 'PI (SIMC)', controller: PI(9, 430) }],
+        scenarios: ['sp-steps', 'feed-temp', 'feed-flow'],
+      },
+      {
+        title: 'Why not just more gain?',
+        body: String.raw`Push the PI to $K_c \approx 13.4$ and the upsets shrink, but the phase margin falls to about 37° and $M_s$ passes 2. The model-mismatch test (a fouled jacket) overshoots by 9 %. The small lags are eating the phase: a PI can't go faster without becoming fragile.`,
+        presets: [{ label: 'PI (SIMC)', controller: PI(9, 430) }, { label: 'PI, gain pushed', controller: PI(13.4, 373) }],
+        scenarios: ['feed-temp', 'mismatch'],
+      },
+      {
+        title: 'Add derivative',
+        body: String.raw`SIMC's PID rule uses the second-order model: $T_d$ cancels the jacket lag. At the same gain the loop is now robust ($M_s \approx 1.5$, phase margin about 58°). The worst upset drops from 3.2 °C to about 2.1 °C, and recovery is two and a half minutes faster. This is what derivative is for: its phase lead pays for the gain.`,
+        presets: [
+          { label: 'PI (SIMC)', controller: PI(9, 430) },
+          { label: 'PI, gain pushed', controller: PI(13.4, 373) },
+          { label: 'PID (SIMC, a = 0.5)', controller: PI(13.4, 373, { Td: 37.5, a: 0.5 }) },
+        ],
+        scenarios: ['feed-temp', 'feed-flow', 'mismatch'],
+      },
+      {
+        title: 'The price: filter the derivative',
+        body: String.raw`With the default filter ratio $a = 0.1$ the derivative's high-frequency gain is 11 × $K_c$. The valve moves about 12 times as much as with the PI, and on the noisy-thermocouple test much more. Raising $a$ to 0.5 keeps nearly all the benefit (the process lags are tens of seconds; the noise is per-sample) at about 4 times the PI's activity. In PID_Compact that is Retain.CtrlParams.TdFiltRatio.`,
+        presets: [
+          { label: 'PID (SIMC, a = 0.1)', controller: PI(13.4, 373, { Td: 37.5, a: 0.1 }) },
+          { label: 'PID (SIMC, a = 0.5)', controller: PI(13.4, 373, { Td: 37.5, a: 0.5 }) },
+        ],
+        scenarios: ['noisy', 'feed-temp'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**PID with a filtered derivative.**
+- On a lag-dominant process with several lags, derivative is worth having: smaller upsets *and* more margin.
+- Set the filter ratio to 0.3–0.5 and DWeighting to 0.
+- If the valve can't take the extra movement, the SIMC PI is a respectable second.
+- Nothing further up the ladder is needed.`,
+      },
+    ],
+  },
+  {
+    id: 'hx-cascade-ff',
+    process: 'hx',
+    title: 'The heat exchanger: cascade and feedforward',
+    question: 'Three upsets reach the outlet temperature by three different paths. Which tool fixes which, and is it worth the extra instruments?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`Steam heats a water stream in a shell-and-tube exchanger, and TT-301 reads the outlet a few metres downstream. Three things upset it:
+- **Steam header pressure** swings. Steam flow follows instantly, because it is choked flow.
+- **Process flow** changes with production; FT-302 measures it.
+- **Inlet temperature** varies; TT-302 measures it.
+
+The **mechanical view** shows why each one matters.`,
+      },
+      {
+        title: 'Baseline: one PI on temperature',
+        body: String.raw`SIMC on the bump test ($\tau \approx 29$ s, $\theta \approx 9$ s effective) gives $K_c \approx 1.5$, $T_i \approx 29$ s. Setpoint changes are clean. The upsets aren't: about 11 °C for a steam pressure drop, 13 °C for a flow step and 10 °C for a feed temperature step, each taking a minute and a half to recover. Feedback only hears about an upset once the temperature has moved.`,
+        presets: [{ label: 'PI (SIMC)', controller: PI(1.5, 29) }],
+        scenarios: ['steam-pressure', 'flow-upset', 'inlet-temp'],
+      },
+      {
+        title: 'Cascade on steam flow',
+        body: String.raw`Put a flow loop on the steam (FT-301 → FIC-301 → FV-301) and let the temperature controller set its setpoint.
+
+**Tuning order.**
+1. The slave first: its process is just the valve and the flow meter (about 2.5 s), so SIMC gives a fast PI ($K_c \approx 1.8$, $T_i \approx 2.3$ s).
+2. Then the master, tuned on the response with the slave closed.
+
+**Result.** A steam pressure swing now changes the flow for a few seconds before the slave puts it back, and the temperature barely moves: under 1 °C instead of 11 °C. The setpoint response gets faster too. But the flow and feed temperature upsets hardly change, because they don't pass through steam flow. The inner trend shows the slave at work.`,
+        presets: [
+          { label: 'PI (SIMC)', controller: PI(1.5, 29) },
+          { label: 'Cascade', controller: { kind: 'cascade', outer: { ...DEFAULT_PID, Kc: 1.5, Ti: 31 }, inner: { ...DEFAULT_PID, Kc: 1.8, Ti: 2.25 }, ff: [] } },
+        ],
+        scenarios: ['steam-pressure', 'flow-upset', 'sp-steps'],
+      },
+      {
+        title: 'Feedforward from flow and inlet temperature',
+        body: String.raw`The energy balance says how much more steam a flow increase needs: $\Delta\dot m_s = \rho c_p\,\Delta F\,(T - T_{in})\cdot 3600/\lambda$. That is about 80 kg/h per m³/h, or 5 % of valve per m³/h; inlet temperature works the same way, at −1.24 % per °C. Both go straight to the valve, without cascade for now.
+
+**Result.** Flow upsets drop from 13 °C to about 3 °C, and feed temperature upsets from 10 °C to under 3 °C. Steam pressure is exactly as bad as before, because nothing measures it.
+
+**Why it isn't perfect.** The disturbances reach the outlet through the fluid, a few seconds sooner than steam can through the tube wall. Feedforward can't act before it knows, so a small upset remains. The "Design from model" button shows those numbers, and the control view plots the response with and without feedforward.`,
+        presets: [
+          { label: 'PI (SIMC)', controller: PI(1.5, 29) },
+          { label: 'PI + feedforward', controller: { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 1.5, Ti: 29 }, ff: [{ from: 'F', gain: 5, lead: 0, lag: 0 }, { from: 'Tin', gain: -1.24, lead: 0, lag: 0 }] } },
+        ],
+        scenarios: ['flow-upset', 'inlet-temp', 'steam-pressure'],
+      },
+      {
+        title: 'Both together',
+        body: String.raw`Cascade plus feedforward, with the feedforward going into the steam-flow setpoint. There its gain is in steam-flow units: 4 % of the 2000 kg/h span per m³/h, the same 80 kg/h per m³/h from the energy balance.
+
+**Result.** Every upset now stays under about 2.5 °C, and the total IAE falls by about two thirds compared with the PI.
+
+**The bill.**
+- Three more transmitters to trust.
+- Ten tuning numbers instead of two.
+- About 2.8 times the valve activity.
+- Commissioning that has to go in order: slave, master, then feedforward.`,
+        presets: [
+          { label: 'PI (SIMC)', controller: PI(1.5, 29) },
+          { label: 'Cascade + feedforward', controller: { kind: 'cascade', outer: { ...DEFAULT_PID, Kc: 1.5, Ti: 31 }, inner: { ...DEFAULT_PID, Kc: 1.8, Ti: 2.25 }, ff: [{ from: 'F', gain: 4, lead: 0, lag: 0 }, { from: 'Tin', gain: -1, lead: 0, lag: 0 }] } },
+        ],
+        scenarios: ['steam-pressure', 'flow-upset', 'inlet-temp', 'mismatch'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**Match the tool to the path the upset takes.**
+- **Cascade** when an upset passes through a fast, measurable intermediate variable, like steam flow here.
+- **Feedforward** when an upset is measured before it arrives and a balance tells you its effect.
+- **Both** only when each upset is big enough, in your plant, to pay for its transmitter and its tuning.
+
+If the steam header is steady, the flow-and-feed feedforward alone is the cheaper win. If production is steady and the boiler isn't, cascade alone.`,
       },
     ],
   },

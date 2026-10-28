@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phase 1 built (2026-10-28) on the `loop-lab` branch — see "Phase 1 as built" at the end.
+Status: phases 1 and 2 built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -403,3 +403,26 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
   cycles the valve hundreds of times an hour); conical tank → characterize (control volume) or gain-schedule; one
   PI tuned at the bottom overshoots ~18 % near the top, tuned at the top it passes ~6× more noise to the valve.
 - **Not in phase 1**: Monte Carlo is on the linear margins only (not time runs); no trend import yet (phase 2).
+
+## 13. Phase 2 as built
+
+- **Processes**: stirred-tank temperature (jacketed vessel; where PID *with derivative* is the answer), steam heat
+  exchanger (steam pressure unmeasured; steam flow, process flow and inlet temperature measured), and "your plant",
+  an identified FOPDT / SOPDT / integrating model whose test scripts scale with its own time constants.
+- **Controllers**: feedforward (gain + lead-lag per measured disturbance, deviation form, bumpless) and cascade
+  (master sets the slave's setpoint; master holds its integral while the slave is saturated; feedforward goes into
+  the slave setpoint). Availability depends on the process (cascade needs a secondary measurement, feedforward a
+  measured disturbance).
+- **Analysis**: linearization w.r.t. disturbances and the secondary measurement; one closed-loop builder for single,
+  feedforward and cascade loops; master and slave margins; feedforward responses with and without; models reduced
+  to the valve → output path before the half rule; cascade outer model fitted to the inner-closed step response.
+- **Tuning**: inner/outer loop selector for cascade; feedforward designed from fitted path models (−K_d/K_u,
+  lead τ_u, lag τ_d, with a note when the disturbance outruns the valve).
+- **Identify tab**: CSV import (TIA trace exports with semicolons and decimal commas, historians, timestamps),
+  column guessing, fit window, least-squares fit of three model types with fit % and residuals, kept fits at several
+  operating points with a gain-spread verdict, and "use as a process" with a SIMC PI to start from.
+- **Exports**: LL_PID gains Feedforward / HoldIntegral inputs and an AtLimit output; LL_LeadLag; cascade call site
+  with master and slave; PID_Compact settings for both loops, with notes on PID_Temp's built-in cascade.
+- **Case studies**: `stirred-pid` (D buys margin; filter it) and `hx-cascade-ff` (match the tool to the upset's path).
+- **Not in phase 2**: identified models are linear (no schedule built from several fits yet); feedforward dead time
+  compensation (only lead-lag).

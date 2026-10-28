@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CONTROLLER_KINDS, defaultController, type ControllerConfig, type ControllerKind, type PidParams, type SchedulePoint,
+  CONTROLLER_KINDS, defaultController, defaultInnerFeedforward, isAvailable,
+  type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint,
 } from '@/lib/loop-lab/controllers';
-import { defaultParams, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
+import { defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { PROCESSES } from '@/lib/loop-lab/processes';
-import { TUNING_RULES, getRule, tuningModel, type ControlType, type TuningRuleId } from '@/lib/loop-lab/tuning';
+import { TUNING_RULES, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
 
 /** A number input that lets you type freely and reports only valid numbers. */
@@ -157,19 +158,26 @@ export function ControllerEditor({ proc, params, config, onChange }: {
   proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void;
 }) {
   const switchKind = (kind: ControllerKind) => {
-    if (kind === config.kind) return;
+    if (kind === config.kind || !isAvailable(proc, kind)) return;
     const next = defaultController(kind, proc);
-    // Carry the PID settings across where both have them.
-    if (config.kind !== 'onoff' && next.kind !== 'onoff') next.pid = { ...config.pid };
-    if (next.kind === 'schedule' && config.kind !== 'onoff') next.points = next.points.map((p) => ({ ...p, Kc: config.pid.Kc, Ti: config.pid.Ti, Td: config.pid.Td }));
+    // Carry the PID settings across where both have them (a cascade master is tuned in other units, so it keeps its own).
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade') next.pid = { ...prev };
+    if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
   return (
     <div>
       <div className="ll-seg" role="tablist" aria-label="Controller">
-        {CONTROLLER_KINDS.map((k) => (
-          <button key={k.kind} role="tab" aria-selected={config.kind === k.kind} onClick={() => switchKind(k.kind)}>{k.short}</button>
-        ))}
+        {CONTROLLER_KINDS.map((k) => {
+          const ok = isAvailable(proc, k.kind);
+          return (
+            <button key={k.kind} role="tab" aria-selected={config.kind === k.kind} disabled={!ok} onClick={() => switchKind(k.kind)}
+              title={ok ? k.name : k.kind === 'cascade' ? 'Needs an inner measurement (e.g. steam flow)' : k.kind === 'feedforward' ? 'Needs a measured disturbance' : 'This process has no known nonlinearity to invert'}>
+              {k.short}
+            </button>
+          );
+        })}
       </div>
       <div style={{ marginTop: '0.7rem' }}>
         {config.kind === 'onoff' && (
@@ -180,6 +188,25 @@ export function ControllerEditor({ proc, params, config, onChange }: {
           </div>
         )}
         {config.kind === 'pid' && <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />}
+        {config.kind === 'feedforward' && (
+          <>
+            <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+            <div className="ll-sub">Feedforward to the valve</div>
+            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} unit="% output" onChange={(ff) => onChange({ ...config, ff })} />
+          </>
+        )}
+        {config.kind === 'cascade' && proc.secondary && (
+          <>
+            <div className="ll-sub">Master: {proc.tags.loop} ({proc.pv.label.toLowerCase()})</div>
+            <PidFields pid={config.outer} onChange={(outer) => onChange({ ...config, outer })} />
+            <p className="ll-note" style={{ marginTop: '0.3rem' }}>Its output is the {proc.secondary.label.toLowerCase()} setpoint, 0–100 % of {proc.secondary.lo}–{proc.secondary.hi} {proc.secondary.unit}.</p>
+            <div className="ll-sub">Slave: {proc.secondary.loopTag} ({proc.secondary.label.toLowerCase()})</div>
+            <PidFields pid={config.inner} onChange={(inner) => onChange({ ...config, inner })} />
+            <div className="ll-sub">Feedforward into the slave setpoint</div>
+            <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} unit={`% of ${proc.secondary.label.toLowerCase()}`}
+              onChange={(ff) => onChange({ ...config, ff })} suggest={defaultInnerFeedforward(proc)} />
+          </>
+        )}
         {config.kind === 'characterized' && (
           <>
             <label className="ll-field is-wide" style={{ marginBottom: '0.5rem' }}>
@@ -211,20 +238,75 @@ export function ControllerEditor({ proc, params, config, onChange }: {
   );
 }
 
+/** Feedforward terms: one per measured disturbance, each a gain and a lead-lag, with a design-from-the-model button. */
+function FeedforwardEditor({ proc, params, config, terms, unit, onChange, suggest }: {
+  proc: ProcessDef; params: Params; config: ControllerConfig; terms: FeedforwardTerm[]; unit: string;
+  onChange: (t: FeedforwardTerm[]) => void; suggest?: FeedforwardTerm[];
+}) {
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const measured = measuredDisturbances(proc);
+  const unused = measured.filter((d) => !terms.some((t) => t.from === d.key));
+  const set = (i: number, patch: Partial<FeedforwardTerm>) => onChange(terms.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  const design = (i: number) => {
+    const t = terms[i];
+    const r = feedforwardDesign(proc, params, config, proc.nominalPv, t.from);
+    if (!r) { setNotes({ ...notes, [t.from]: 'No usable model for this path.' }); return; }
+    const round = (v: number) => Number(v.toPrecision(3));
+    set(i, { gain: round(r.gain), lead: round(r.lead), lag: round(r.lag) });
+    setNotes({ ...notes, [t.from]: `Valve path K ${round(r.u.K)}, τ ${round(r.u.tau)} s, θ ${round(r.u.theta)} s; disturbance path K ${round(r.d.K)}, τ ${round(r.d.tau)} s, θ ${round(r.d.theta)} s. ${r.note ?? ''}` });
+  };
+  return (
+    <div>
+      {!terms.length && <p className="ll-note" style={{ marginTop: 0 }}>None yet: feedback only.</p>}
+      {terms.map((t, i) => {
+        const d = proc.disturbances.find((x) => x.key === t.from);
+        return (
+          <div key={t.from} style={{ borderTop: '1px solid var(--surface-border)', paddingTop: '0.4rem', marginTop: '0.4rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
+              <strong style={{ fontSize: '0.85rem' }}>{d?.label} <span className="ll-small">({d?.measured})</span></strong>
+              <span style={{ display: 'flex', gap: '0.4rem' }}>
+                <button className="ll-link" onClick={() => design(i)}>Design from model</button>
+                <button className="ll-link" aria-label={`Remove feedforward from ${d?.label}`} onClick={() => onChange(terms.filter((_, j) => j !== i))}>✕</button>
+              </span>
+            </div>
+            <div className="ll-fields is-3" style={{ marginTop: '0.3rem' }}>
+              <NumField label="Gain" unit={`${unit}/${d?.unit ?? ''}`} value={t.gain} onChange={(v) => set(i, { gain: v })} title="Output change per unit change of the disturbance" />
+              <NumField label="Lead" unit="s" value={t.lead} min={0} onChange={(v) => set(i, { lead: v })} />
+              <NumField label="Lag" unit="s" value={t.lag} min={0} onChange={(v) => set(i, { lag: v })} />
+            </div>
+            {notes[t.from] && <p className="ll-note">{notes[t.from]}</p>}
+          </div>
+        );
+      })}
+      {unused.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.5rem' }}>
+          {unused.map((d) => (
+            <button key={d.key} className="ll-btn is-small" onClick={() => onChange([...terms, suggest?.find((x) => x.from === d.key) ?? { from: d.key, gain: 0, lead: 0, lag: 0 }])}>
+              + From {d.label.toLowerCase()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
   const [pv, setPv] = useState(proc.opPoints[0]);
   const [ruleId, setRuleId] = useState<TuningRuleId>('simc');
   const [type, setType] = useState<ControlType>('PI');
   const [speedFactor, setSpeedFactor] = useState(3);
+  const [loopSel, setLoopSel] = useState<TuningLoop>('outer');
   useEffect(() => { setPv(proc.opPoints[0]); }, [proc]);
+  const loop: TuningLoop = config.kind === 'cascade' ? loopSel : 'main';
   const rule = getRule(ruleId);
   const types = rule.types;
   const t = types.includes(type) ? type : types[0];
   const model = useMemo(() => {
-    try { return tuningModel(proc, params, config, pv); } catch { return null; }
-  }, [proc, params, config, pv]);
+    try { return tuningModel(proc, params, config, pv, loop); } catch { return null; }
+  }, [proc, params, config, pv, loop]);
   const tuneAt = (at: number) => {
-    const m = tuningModel(proc, params, config, at);
+    const m = tuningModel(proc, params, config, at, loop);
     return rule.tune(m, t, m.theta * speedFactor);
   };
   const result = model ? rule.tune(model, t, model.theta * speedFactor) : null;
@@ -236,6 +318,8 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
         ? config.points.map((p, j) => (j === i ? { ...p, ...result } : p))
         : [...config.points, { at: pv, ...result }].sort((a, b) => a.at - b.at);
       onChange({ ...config, points });
+    } else if (config.kind === 'cascade') {
+      onChange(loop === 'inner' ? { ...config, inner: { ...config.inner, ...result } } : { ...config, outer: { ...config.outer, ...result } });
     } else onChange({ ...config, pid: { ...config.pid, ...result } });
   };
   const tuneAll = () => {
@@ -246,6 +330,12 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   return (
     <details className="ll-tuner" style={{ marginTop: '0.8rem' }}>
       <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '0.88rem' }}>Tune from the model</summary>
+      {config.kind === 'cascade' && (
+        <div className="ll-seg" role="group" aria-label="Which loop" style={{ marginTop: '0.6rem' }}>
+          <button aria-pressed={loop === 'inner'} onClick={() => setLoopSel('inner')}>Slave (inner) first</button>
+          <button aria-pressed={loop === 'outer'} onClick={() => setLoopSel('outer')}>Then the master</button>
+        </div>
+      )}
       <div className="ll-fields" style={{ marginTop: '0.6rem' }}>
         <label className="ll-field">
           <span>Operating point</span>
@@ -266,6 +356,8 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
           Model here{model.slope !== 1 ? ' (as the controller sees it)' : ''}: K = {fmt(model.K, 3)}, τ = {fmt(model.tau, 3)} s, θ = {fmt(model.theta, 3)} s
           {model.integrating && <> · acts as an integrator: k′ = {fmt(model.kPrime, 3)} /s</>}
           {!model.reachable && <> · <span className="ll-badge is-warn">not reachable</span></>}
+          {model.negative && <> · <span className="ll-badge is-warn">negative gain: tick Invert</span></>}
+          {loop === 'outer' && <> · the inner loop is closed with its present tuning</>}
         </p>
       )}
       <div className="ll-seg" style={{ marginTop: '0.5rem' }} role="group" aria-label="Controller type">
@@ -285,7 +377,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
           <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.88rem' }}>
             Kc {fmt(result.Kc, 3)} · Ti {result.Ti ? `${fmt(result.Ti, 3)} s` : 'off'} · Td {result.Td ? `${fmt(result.Td, 3)} s` : 'off'}
           </span>
-          <button className="ll-btn is-small is-primary" onClick={apply}>{config.kind === 'schedule' ? 'Apply at this point' : 'Apply'}</button>
+          <button className="ll-btn is-small is-primary" onClick={apply}>{config.kind === 'schedule' ? 'Apply at this point' : config.kind === 'cascade' ? `Apply to the ${loop === 'inner' ? 'slave' : 'master'}` : 'Apply'}</button>
           {config.kind === 'schedule' && <button className="ll-btn is-small" onClick={tuneAll}>Tune every breakpoint</button>}
         </div>
       ) : <p className="ll-note">This rule gives no usable tuning for this model.</p>}

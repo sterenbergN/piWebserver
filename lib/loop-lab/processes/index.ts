@@ -1,8 +1,12 @@
 import type { ProcessDef, ProcessId } from '../model';
+import { CUSTOM } from './custom';
 import { FLOW } from './flow';
+import { HX } from './hx';
+import { STIRRED } from './stirred';
 import { TANK } from './tank';
 
-export const PROCESSES: ProcessDef[] = [FLOW, TANK];
+/** In ladder order: where PID wins first, then the escalations, then your own plant. */
+export const PROCESSES: ProcessDef[] = [FLOW, STIRRED, TANK, HX, CUSTOM];
 
 export const isProcessId = (v: unknown): v is ProcessId => PROCESSES.some((p) => p.id === v);
 

@@ -30,6 +30,8 @@ export type DisturbanceSpec = {
   min: number;
   max: number;
   note?: string;
+  /** Transmitter tag when the disturbance is measured (so feedforward can use it). */
+  measured?: string;
 };
 
 export type StateSpec = { key: string; label: string; unit: string };
@@ -42,6 +44,17 @@ export type PvSpec = {
   lo: number;
   hi: number;
   decimals: number;
+};
+
+/**
+ * A second measurement between the valve and the main process variable (steam
+ * flow ahead of a heat exchanger's temperature): what an inner cascade loop controls.
+ */
+export type SecondarySpec = PvSpec & {
+  tag: string;
+  /** Inner loop tag (e.g. FIC-301). */
+  loopTag: string;
+  of(x: number[], flow: number, d: Params, p: Params): number;
 };
 
 export type ScenarioEvent =
@@ -78,7 +91,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -88,6 +101,8 @@ export type ProcessDef = {
   /** "Where PID is the right answer" or "where PID falls short". */
   family: 'pid-wins' | 'escalation';
   pv: PvSpec;
+  /** Inner measurement for cascade control, if the process has one. */
+  secondary?: SecondarySpec;
   tags: { loop: string; transmitter: string; valve: string };
   states: StateSpec[];
   params: ParamSpec[];
@@ -101,6 +116,15 @@ export type ProcessDef = {
   pvOf(x: number[], flow: number, d: Params, p: Params): number;
   /** Process states at steady state for a valve flow fraction, or null if there is none. */
   steady(flow: number, d: Params, p: Params): number[] | null;
+  /**
+   * Steady state for a PV directly, for processes where the valve position can't
+   * be found by searching (integrating ones hold any level at one valve position).
+   */
+  steadyAt?: (pv: number, d: Params, p: Params) => { valve: number; x: number[] } | null;
+  /** Test script times are in units of this (s), for processes whose speed is a parameter. */
+  timeScale?: (p: Params) => number;
+  /** Fastest process time constant (s), when the process has dynamics faster than its instruments: sets the integration step. */
+  fastest?: (p: Params) => number;
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;
@@ -138,6 +162,8 @@ export function valveCharacteristicInverse(kind: number, f: number) {
 export type InstrumentDefaults = {
   valveTau: number; valveRate: number; valveChar: number;
   txTau: number; txNoise: number; txDelay: number; Ts: number;
+  /** Damping of the secondary (inner-loop) transmitter, for processes that have one. */
+  tx2Tau?: number;
 };
 
 /** Valve, transmitter and controller-cycle parameters, with this process's defaults. */
@@ -157,6 +183,8 @@ export function instrumentParams(d: InstrumentDefaults): ParamSpec[] {
       note: 'Standard deviation of the noise on the reading: turbulence, electrical noise, a sloshing surface.' },
     { key: 'txDelay', label: 'Transport delay', symbol: 'θ', unit: 's', default: d.txDelay, min: 0, max: 120, step: 0.1, group: 'transmitter',
       note: 'Dead time between the process and the reading, e.g. a sample line or a sensor mounted downstream.' },
+    ...(d.tx2Tau !== undefined ? [{ key: 'tx2Tau', label: 'Inner transmitter damping', symbol: 'τ_m2', unit: 's', default: d.tx2Tau, min: 0.05, max: 30, step: 0.05, group: 'transmitter' as const,
+      note: 'Filter on the secondary measurement the inner cascade loop uses.' }] : []),
     { key: 'Ts', label: 'Controller cycle', symbol: 'T_s', unit: 's', default: d.Ts, min: 0.01, max: 10, step: 0.01, group: 'controller',
       note: 'How often the controller runs: the cyclic interrupt OB it is called from.' },
   ];
@@ -182,3 +210,10 @@ export function cleanParams(proc: ProcessDef, raw: unknown): Params {
 export const pvSpan = (proc: ProcessDef) => proc.pv.hi - proc.pv.lo;
 export const toPct = (proc: ProcessDef, v: number) => ((v - proc.pv.lo) / pvSpan(proc)) * 100;
 export const fromPct = (proc: ProcessDef, pct: number) => proc.pv.lo + (pct / 100) * pvSpan(proc);
+
+/** % of the secondary measurement's span (and back). */
+export const toPct2 = (s: SecondarySpec, v: number) => ((v - s.lo) / (s.hi - s.lo)) * 100;
+export const fromPct2 = (s: SecondarySpec, pct: number) => s.lo + (pct / 100) * (s.hi - s.lo);
+
+/** Disturbances a feedforward can use. */
+export const measuredDisturbances = (proc: ProcessDef) => proc.disturbances.filter((d) => d.measured);

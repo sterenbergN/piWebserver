@@ -1,12 +1,13 @@
-import { linearPidAt, type ControllerConfig, type LinearPid } from './controllers';
+import { linearControllerAt, type ControllerConfig, type FeedforwardTerm, type LinearController, type LinearPid } from './controllers';
 import { c2d, cabs, carg, cdiv, cexpj, cmul, cx, eig, rng, solve, solveShifted, zeros, type Complex, type Mat } from './linalg';
 import { cleanParams, nominalDisturbances, pvSpan, type Params, type ProcessDef } from './model';
-import { findSteady, plantDerivatives, truePv } from './sim';
+import { findSteady, plantDerivatives, steadyState, truePv } from './sim';
 
 // Linear analysis: linearize the nonlinear plant at an operating point the
 // way you would on paper (Jacobian at steady state), then the classical tools:
 // frequency response, margins, closed-loop poles and step responses.
-// Signals are in % (valve signal in, % of transmitter span out).
+// Signals are in % (valve signal in, % of transmitter span out); disturbances
+// in their own units.
 
 export type PlantModel = {
   /** Operating point the model is taken at. */
@@ -20,6 +21,12 @@ export type PlantModel = {
   C: number[];
   /** True process value, % of span. */
   Ctrue: number[];
+  /** Secondary (inner-loop) reading, % of its span; null when the process has none. */
+  C2: number[] | null;
+  /** How each disturbance enters the state equations (per unit of the disturbance). */
+  Bd: Record<string, number[]>;
+  /** Direct effect of each disturbance on the true PV (% of span per unit), for algebraic processes. */
+  Dd: Record<string, number>;
   /** Transport delay, s. */
   theta: number;
   poles: Complex[];
@@ -29,13 +36,14 @@ export type PlantModel = {
 
 export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Params = nominalDisturbances(proc)): PlantModel {
   const s = findSteady(proc, p, d, pv);
-  const x0 = [s.valve, ...s.x, s.pv];
+  const x0 = steadyState(proc, s);
   const u0 = s.valve;
   const n = x0.length;
-  const f = (x: number[], u: number) => plantDerivatives(proc, p, d, x, u, false);
-  const A = zeros(n);
-  const Ctrue = new Array(n).fill(0);
+  const nProc = proc.states.length;
+  const f = (x: number[], u: number, dd = d) => plantDerivatives(proc, p, dd, x, u, false);
   const span = pvSpan(proc);
+  let A = zeros(n);
+  let Ctrue = new Array(n).fill(0);
   for (let j = 0; j < n; j++) {
     const h = 1e-6 * Math.max(1, Math.abs(x0[j]));
     const xp = x0.slice(), xm = x0.slice();
@@ -45,29 +53,93 @@ export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Param
     Ctrue[j] = ((truePv(proc, p, d, xp) - truePv(proc, p, d, xm)) / (2 * h)) * (100 / span);
   }
   const hu = 1e-6 * Math.max(1, Math.abs(u0));
-  const fp = f(x0, u0 + hu), fm = f(x0, u0 - hu);
-  const B = fp.map((v, i) => (v - fm[i]) / (2 * hu));
-  const C = new Array(n).fill(0);
-  C[n - 1] = 100 / span;
+  const fu = f(x0, u0 + hu), fm = f(x0, u0 - hu);
+  let B = fu.map((v, i) => (v - fm[i]) / (2 * hu));
+  let C = new Array(n).fill(0);
+  C[nProc + 1] = 100 / span;
+  let C2: number[] | null = null;
+  if (proc.secondary) {
+    C2 = new Array(n).fill(0);
+    C2[nProc + 2] = 100 / (proc.secondary.hi - proc.secondary.lo);
+  }
+  let Bd: Record<string, number[]> = {};
+  const Dd: Record<string, number> = {};
+  for (const ds of proc.disturbances) {
+    const v = d[ds.key];
+    const h = 1e-6 * Math.max(1, Math.abs(v));
+    const dp = { ...d, [ds.key]: v + h }, dm = { ...d, [ds.key]: v - h };
+    const a = f(x0, u0, dp), b = f(x0, u0, dm);
+    Bd[ds.key] = a.map((q, i) => (q - b[i]) / (2 * h));
+    Dd[ds.key] = ((truePv(proc, p, dp, x0) - truePv(proc, p, dm, x0)) / (2 * h)) * (100 / span);
+  }
+
+  // Drop states nothing depends on (e.g. an unused second lag): they'd only add fake poles.
+  const keep = Array.from({ length: n }, (_, j) => j).filter((j) =>
+    A.some((row, i) => i !== j && row[j] !== 0) || C[j] || Ctrue[j] || C2?.[j] || A[j][j] !== 0);
+  if (keep.length < n) {
+    A = keep.map((i) => keep.map((j) => A[i][j]));
+    B = keep.map((i) => B[i]);
+    C = keep.map((j) => C[j]);
+    Ctrue = keep.map((j) => Ctrue[j]);
+    C2 = C2 ? keep.map((j) => C2![j]) : null;
+    Bd = Object.fromEntries(Object.entries(Bd).map(([k, col]) => [k, keep.map((i) => col[i])]));
+  }
+
   const inv = solve(A, B);
   const K = inv ? -C.reduce((acc, c, i) => acc + c * inv[i], 0) : Infinity;
   return {
     pv: s.pv, valve: s.valve, reachable: Math.abs(s.pv - pv) < span * 1e-3,
-    A, B, C, Ctrue, theta: p.txDelay, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K,
+    A, B, C, Ctrue, C2, Bd, Dd, theta: p.txDelay, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K,
   };
+}
+
+/**
+ * The part of the plant between the valve and one output: states the valve
+ * can move *and* that can move the output. Others (the inner transmitter, as
+ * seen from the main PV; the thermal states, as seen from steam flow) would
+ * only add poles the path doesn't have.
+ */
+export function pathModel(m: PlantModel, row: number[], theta: number): PlantModel {
+  const n = m.A.length;
+  const reach = (start: number[], next: (j: number) => number[]) => {
+    const seen = new Set(start);
+    const stack = [...start];
+    while (stack.length) for (const k of next(stack.pop()!)) if (!seen.has(k)) { seen.add(k); stack.push(k); }
+    return seen;
+  };
+  const idx = Array.from({ length: n }, (_, i) => i);
+  const fromInput = reach(idx.filter((i) => m.B[i] !== 0), (j) => idx.filter((i) => i !== j && m.A[i][j] !== 0));
+  const toOutput = reach(idx.filter((j) => row[j] !== 0), (i) => idx.filter((j) => j !== i && m.A[i][j] !== 0));
+  const keep = idx.filter((i) => fromInput.has(i) && toOutput.has(i));
+  const A = keep.map((i) => keep.map((j) => m.A[i][j]));
+  const B = keep.map((i) => m.B[i]);
+  const C = keep.map((j) => row[j]);
+  const inv = solve(A, B);
+  const K = inv ? -C.reduce((acc, c, i) => acc + c * inv[i], 0) : Infinity;
+  return {
+    ...m, A, B, C, Ctrue: C, C2: null, Bd: {}, Dd: {}, theta, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K,
+  };
+}
+
+/** row·(jωI − A)⁻¹·col: one output's response to one input, without delay. */
+export function ssResponse(A: Mat, col: number[], row: number[], w: number): Complex {
+  const x = solveShifted(A, w, col);
+  let g = cx(0);
+  for (let i = 0; i < x.length; i++) if (row[i]) g = { re: g.re + row[i] * x[i].re, im: g.im + row[i] * x[i].im };
+  return g;
 }
 
 /** Plant frequency response G(jω), including the exact transport delay. */
 export function plantResponse(m: PlantModel, w: number): Complex {
-  const x = solveShifted(m.A, w, m.B);
-  let g = cx(0);
-  for (let i = 0; i < x.length; i++) if (m.C[i]) g = { re: g.re + m.C[i] * x[i].re, im: g.im + m.C[i] * x[i].im };
-  return cmul(g, cexpj(-w * m.theta));
+  return cmul(ssResponse(m.A, m.B, m.C, w), cexpj(-w * m.theta));
 }
 
-/** Time constants (s) of the plant's real poles, slowest first. */
+const isZeroPole = (p: Complex, scale: number) => Math.hypot(p.re, p.im) < 1e-9 * Math.max(1, scale);
+
+/** Time constants (s) of the plant's real poles, slowest first (integrators left out). */
 export function timeConstants(m: PlantModel) {
-  return m.poles.filter((p) => p.re < 0).map((p) => 1 / Math.hypot(p.re, p.im)).sort((a, b) => b - a);
+  const scale = Math.max(...m.poles.map((p) => Math.hypot(p.re, p.im)), 1);
+  return m.poles.filter((p) => p.re < 0 && !isZeroPole(p, scale)).map((p) => 1 / Math.hypot(p.re, p.im)).sort((a, b) => b - a);
 }
 
 export type Fopdt = {
@@ -85,12 +157,25 @@ export type Fopdt = {
  * rule: half of the first neglected time constant goes to the kept one, the
  * other half and all smaller ones become effective dead time. `extraDelay`
  * adds the sample-and-hold delay of a digital controller (T_s/2).
+ * A true integrator is represented by a very long τ with K = k′·τ, so every
+ * tuning rule still applies (SIMC then gives its integrating-process tuning).
  */
 export function approximate(m: PlantModel, extraDelay = 0): Fopdt {
   const t = timeConstants(m);
   const theta0 = m.theta + extraDelay;
-  const [t1 = 0, t2 = 0, t3 = 0, ...rest] = t;
+  const scale = Math.max(...m.poles.map((p) => Math.hypot(p.re, p.im)), 1);
+  const integrator = m.poles.some((p) => isZeroPole(p, scale));
+  const [t1 = 0, t2 = 0, t3 = 0, ...rest] = integrator ? [0, ...t] : t;
   const restSum = rest.reduce((s, v) => s + v, 0);
+  const lags = t.reduce((s, v) => s + v, 0);
+  if (integrator) {
+    // k′ from the low-frequency asymptote ω·|G(jω)|.
+    const w = 1e-6 / Math.max(1, lags + theta0);
+    const kPrime = w * cabs(ssResponse(m.A, m.B, m.C, w));
+    const tauBig = 1e4 * Math.max(1, lags + theta0);
+    const theta = theta0 + t2 + t3 + restSum;
+    return { K: kPrime * tauBig, tau: tauBig, theta: Math.max(theta, 1e-6), tau1: tauBig, tau2: t2, theta2: Math.max(theta0 + t3 + restSum, 1e-6), kPrime, integrating: true };
+  }
   const tau = t1 + t2 / 2;
   const theta = theta0 + t2 / 2 + t3 + restSum;
   const tau2 = t2 + t3 / 2;
@@ -118,11 +203,13 @@ export function pidResponse(c: LinearPid, w: number): Complex {
 
 export type BodePoint = { w: number; mag: number; phase: number };
 
-/** Log-spaced frequencies covering the plant's and controller's dynamics. */
-export function frequencyGrid(m: PlantModel, c: LinearPid | null, delay: number, count = 500) {
+/** Log-spaced frequencies covering the plant's and controllers' dynamics. */
+export function frequencyGrid(m: PlantModel, pids: (LinearPid | null)[], delay: number, count = 500) {
   const rates = m.poles.map((p) => Math.hypot(p.re, p.im)).filter((v) => v > 1e-9);
-  if (c?.Ti) rates.push(1 / c.Ti);
-  if (c?.Td) rates.push(1 / (c.a * c.Td));
+  for (const c of pids) {
+    if (c?.Ti) rates.push(1 / c.Ti);
+    if (c?.Td) rates.push(1 / (c.a * c.Td));
+  }
   if (delay > 0) rates.push(1 / delay);
   const lo = Math.min(...rates, 1) * 0.01;
   const hi = Math.max(...rates, 0.01) * 50;
@@ -164,31 +251,49 @@ export type Margins = {
 
 export type LoopAnalysis = {
   plant: PlantModel;
+  ctrl: LinearController;
+  /** The single PID, or the outer (master) one in cascade. */
   pid: LinearPid;
-  /** Total loop delay: transport + half a controller cycle. */
+  /** Total delay in the main loop: transport + half a controller cycle. */
   delay: number;
+  /** Open loop L = C·G (for cascade: the outer loop with the inner one closed). */
   loop: BodePoint[];
   plantBode: BodePoint[];
   margins: Margins;
+  /** Cascade only: the inner loop on its own. */
+  inner?: { loop: BodePoint[]; plantBode: BodePoint[]; margins: Margins };
 };
 
-/** Open-loop L = C·G at an operating point, its Bode data and stability margins. */
+/** Open loop at an operating point, its Bode data and stability margins (both loops in cascade). */
 export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: ControllerConfig, pv: number, plantParams?: Params): LoopAnalysis | null {
   const model = cleanParams(proc, setupParams);
   const m = linearizePlant(proc, plantParams ?? model, pv);
-  const pid = linearPidAt(proc, config, model, pv, m.valve);
-  if (!pid) return null;
-  const delay = m.theta + model.Ts / 2;
-  const ws = frequencyGrid(m, pid, delay);
-  const rational = (w: number) => {
-    const x = solveShifted(m.A, w, m.B);
-    let g = cx(0);
-    for (let i = 0; i < x.length; i++) if (m.C[i]) g = { re: g.re + m.C[i] * x[i].re, im: g.im + m.C[i] * x[i].im };
-    return g;
+  const ctrl = linearControllerAt(proc, config, model, pv, m.valve);
+  if (!ctrl) return null;
+  const sample = model.Ts / 2;
+  const delay = m.theta + sample;
+  const G1 = (w: number) => ssResponse(m.A, m.B, m.C, w);
+  if (ctrl.kind === 'single') {
+    const ws = frequencyGrid(m, [ctrl.pid], delay);
+    const loop = bode(ws, (w) => cmul(pidResponse(ctrl.pid, w), G1(w)), delay);
+    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop) };
+  }
+  // Cascade: the inner loop sees the sampling delay; the outer loop sees the inner one closed, plus the transport delay.
+  const C2 = m.C2!;
+  const G2 = (w: number) => ssResponse(m.A, m.B, C2, w);
+  const ws = frequencyGrid(m, [ctrl.outer, ctrl.inner], delay);
+  const Li = (w: number) => cmul(cmul(pidResponse(ctrl.inner, w), G2(w)), cexpj(-w * sample));
+  const innerLoop = bode(ws, (w) => cmul(pidResponse(ctrl.inner, w), G2(w)), sample);
+  const outer = (w: number) => {
+    const li = Li(w);
+    const ti = cdiv(cmul(pidResponse(ctrl.inner, w), cexpj(-w * sample)), { re: 1 + li.re, im: li.im });
+    return cmul(cmul(pidResponse(ctrl.outer, w), ti), G1(w));
   };
-  const plantBode = bode(ws, rational, m.theta);
-  const loop = bode(ws, (w) => cmul(pidResponse(pid, w), rational(w)), delay);
-  return { plant: m, pid, delay, loop, plantBode, margins: margins(loop) };
+  const loop = bode(ws, outer, m.theta);
+  return {
+    plant: m, ctrl, pid: ctrl.outer, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop),
+    inner: { loop: innerLoop, plantBode: bode(ws, G2, 0), margins: margins(innerLoop) },
+  };
 }
 
 export function margins(loop: BodePoint[]): Margins {
@@ -219,18 +324,26 @@ export function margins(loop: BodePoint[]): Margins {
   return { gm, pm, wc, w180, ms, delayMargin };
 }
 
+/** The worse of two sets of margins (cascade: the outer and inner loops together). */
+export const worseMargins = (a: Margins, b?: Margins): Margins => (b ? {
+  gm: Math.min(a.gm, b.gm), pm: Math.min(a.pm, b.pm), ms: Math.max(a.ms, b.ms),
+  wc: a.wc, w180: a.w180, delayMargin: Math.min(a.delayMargin, b.delayMargin),
+} : a);
+
 // ─── Closed loop in state space ─────────────────────────────────────────────
 
 export type ClosedLoop = {
   A: Mat;
-  /** Inputs: [setpoint, load disturbance at the valve]. */
+  /** Inputs: [setpoint, load at the valve, the chosen disturbance]. */
   B: Mat;
   /** Outputs: [true PV %, controller output %]. */
   C: Mat;
+  /** Direct feed-through from the inputs to the outputs. */
+  D: Mat;
   poles: Complex[];
   /** Controller output's direct response to the setpoint (P and D setpoint weights). */
   Kr: number;
-  /** Index ranges of the parts, for labelling poles. */
+  /** Number of states in each part, for labelling poles. */
   parts: { plant: number; delay: number; controller: number };
 };
 
@@ -240,75 +353,124 @@ export function pade2(theta: number) {
   return { A: [[0, 1], [-a0, -a1]], B: [0, 1], C: [0, -12 / theta], D: 1 };
 }
 
-export function closedLoop(m: PlantModel, pid: LinearPid, delay: number): ClosedLoop {
+/** A signal as a linear combination of the states and the three inputs. */
+type Sig = { x: number[]; r: number; l: number; d: number };
+const sig = (n: number): Sig => ({ x: new Array(n).fill(0), r: 0, l: 0, d: 0 });
+const add = (a: Sig, b: Sig, k = 1): Sig => ({ x: a.x.map((v, i) => v + k * b.x[i]), r: a.r + k * b.r, l: a.l + k * b.l, d: a.d + k * b.d });
+const scale = (a: Sig, k: number): Sig => ({ x: a.x.map((v) => v * k), r: a.r * k, l: a.l * k, d: a.d * k });
+const unit = (n: number, i: number): Sig => { const s = sig(n); s.x[i] = 1; return s; };
+const rowSig = (n: number, row: number[], offset = 0): Sig => { const s = sig(n); row.forEach((v, i) => { s.x[offset + i] = v; }); return s; };
+
+/**
+ * The linear closed loop, built from blocks: plant, delay (Padé on the main
+ * measurement), feedforward lead-lags on the chosen disturbance, and the PID
+ * (or the two PIDs of a cascade).
+ */
+export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number, dKey?: string): ClosedLoop {
   const np = m.A.length;
   const nq = delay > 0 ? 2 : 0;
-  const hasI = pid.Ti > 0, hasD = pid.Td > 0;
-  const n = np + nq + (hasI ? 1 : 0) + (hasD ? 1 : 0);
-  const iq = np, ii = np + nq, id = ii + (hasI ? 1 : 0);
-  const A = zeros(n), B = zeros(n, 2), C = zeros(2, n);
-  const k = (pid.invert ? -1 : 1) * pid.Kc * pid.slope;
-  const Tf = Math.max(pid.a * pid.Td, 1e-9);
-  // Measured y as a row over the state.
-  const Cy = new Array(n).fill(0);
+  const ffTerms: FeedforwardTerm[] = (ctrl.ff ?? []).filter((t) => t.from === dKey);
+  const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) as number);
+  const pids = ctrl.kind === 'single' ? [ctrl.pid] : [ctrl.outer, ctrl.inner];
+  const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0));
+  const n = np + nq + ffStates.reduce((s, v) => s + v, 0) + pidStates.reduce((s, v) => s + v, 0);
+  const deriv: Sig[] = Array.from({ length: n }, () => sig(n));
+  let next = np + nq;
+
+  // Measurements.
   const pd = nq ? pade2(delay) : null;
-  for (let j = 0; j < np; j++) Cy[j] = (pd ? pd.D : 1) * m.C[j];
-  if (pd) { Cy[iq] = pd.C[0]; Cy[iq + 1] = pd.C[1]; }
-  // u = Ku·x + Kr·r
-  const dGain = hasD ? pid.Td / Tf : 0;
-  const Ku = Cy.map((v) => -k * v * (1 + dGain));
-  if (hasI) Ku[ii] += k / pid.Ti;
-  if (hasD) Ku[id] += -k * dGain;
-  const Kr = k * (pid.b + (hasD ? pid.c * dGain : 0));
-  // Plant: ẋp = A xp + B (u + load)
+  const yRaw = rowSig(n, m.C);
+  const y = pd ? add(scale(yRaw, pd.D), add(scale(unit(n, np), pd.C[0]), unit(n, np + 1), pd.C[1])) : yRaw;
+  const y2 = m.C2 ? rowSig(n, m.C2) : sig(n);
+  const dd: Sig = { ...sig(n), d: 1 };
+  const r: Sig = { ...sig(n), r: 1 };
+
+  // Feedforward: gain·(lead·s + 1)/(lag·s + 1) on the disturbance.
+  let v = sig(n);
+  ffTerms.forEach((t) => {
+    if (t.lag > 0) {
+      const i = next++;
+      deriv[i] = scale(add(dd, unit(n, i), -1), 1 / t.lag);
+      const k = t.lead / t.lag;
+      v = add(v, add(scale(dd, k), unit(n, i), 1 - k), t.gain);
+    } else v = add(v, dd, t.gain);
+  });
+
+  const pidBlock = (p: LinearPid, rS: Sig, yS: Sig) => {
+    const k = (p.invert ? -1 : 1) * p.Kc * p.slope;
+    const e = add(rS, yS, -1), eP = add(scale(rS, p.b), yS, -1), eD = add(scale(rS, p.c), yS, -1);
+    let out = scale(eP, k);
+    if (p.Ti > 0) {
+      const i = next++;
+      deriv[i] = e;
+      out = add(out, unit(n, i), k / p.Ti);
+    }
+    if (p.Td > 0) {
+      const i = next++;
+      const Tf = Math.max(p.a * p.Td, 1e-9);
+      deriv[i] = scale(add(eD, unit(n, i), -1), 1 / Tf);
+      out = add(out, add(eD, unit(n, i), -1), (k * p.Td) / Tf);
+    }
+    return out;
+  };
+
+  let u: Sig;
+  if (ctrl.kind === 'single') u = add(pidBlock(ctrl.pid, r, y), v);
+  else u = pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
+
+  // Plant and delay.
+  const drive = add(u, { ...sig(n), l: 1 });
+  const bd = (dKey && m.Bd[dKey]) || new Array(np).fill(0);
   for (let i = 0; i < np; i++) {
-    for (let j = 0; j < np; j++) A[i][j] += m.A[i][j];
-    for (let j = 0; j < n; j++) A[i][j] += m.B[i] * Ku[j];
-    B[i][0] = m.B[i] * Kr;
-    B[i][1] = m.B[i];
+    let s = rowSig(n, m.A[i]);
+    s = add(s, drive, m.B[i]);
+    s = add(s, dd, bd[i]);
+    deriv[i] = s;
   }
-  // Delay approximation driven by the transmitter reading.
   if (pd) {
-    for (let r = 0; r < 2; r++) {
-      A[iq + r][iq] = pd.A[r][0];
-      A[iq + r][iq + 1] = pd.A[r][1];
-      for (let j = 0; j < np; j++) A[iq + r][j] += pd.B[r] * m.C[j];
+    for (let k = 0; k < 2; k++) {
+      deriv[np + k] = add(add(scale(unit(n, np), pd.A[k][0]), unit(n, np + 1), pd.A[k][1]), yRaw, pd.B[k]);
     }
   }
-  if (hasI) {
-    for (let j = 0; j < n; j++) A[ii][j] -= Cy[j];
-    B[ii][0] = 1;
-  }
-  if (hasD) {
-    for (let j = 0; j < n; j++) A[id][j] -= Cy[j] / Tf;
-    A[id][id] -= 1 / Tf;
-    B[id][0] = pid.c / Tf;
-  }
-  for (let j = 0; j < np; j++) C[0][j] = m.Ctrue[j];
-  C[1] = Ku.slice();
-  return { A, B, C, poles: eig(A), Kr, parts: { plant: np, delay: nq, controller: n - np - nq } };
+
+  const A = deriv.map((s) => s.x);
+  const B = deriv.map((s) => [s.r, s.l, s.d]);
+  const yTrue = rowSig(n, m.Ctrue);
+  const C = [yTrue.x, u.x];
+  const D = [[0, 0, (dKey && m.Dd[dKey]) || 0], [u.r, u.l, u.d]];
+  return { A, B, C, D, poles: eig(A), Kr: u.r, parts: { plant: np, delay: nq, controller: n - np - nq } };
 }
 
 export type StepResponse = { t: number[]; y: number[]; u: number[] };
 
-/** Response of the linear closed loop to a unit step on one input (0 = setpoint, 1 = load). */
-export function stepResponse(cl: ClosedLoop, input: 0 | 1, horizon: number, points = 400): StepResponse {
+/** Response of the linear closed loop to a unit step on one input (0 setpoint, 1 load, 2 disturbance). */
+export function stepResponse(cl: ClosedLoop, input: 0 | 1 | 2, horizon: number, points = 400): StepResponse {
   const h = horizon / points;
   const { Phi, Gamma } = c2d(cl.A, cl.B.map((r) => [r[input]]), h);
-  const n = cl.A.length;
-  let x = new Array(n).fill(0);
+  let x = new Array(cl.A.length).fill(0);
   const t: number[] = [], y: number[] = [], u: number[] = [];
-  // On a setpoint step the controller output also jumps straight away (P and D setpoint weights).
-  const ff = input === 0 ? cl.Kr : 0;
   for (let k = 0; k <= points; k++) {
     t.push(k * h);
-    y.push(cl.C[0].reduce((s, c, i) => s + c * x[i], 0));
-    u.push(cl.C[1].reduce((s, c, i) => s + c * x[i], 0) + ff);
+    y.push(cl.C[0].reduce((s, c, i) => s + c * x[i], 0) + cl.D[0][input]);
+    u.push(cl.C[1].reduce((s, c, i) => s + c * x[i], 0) + cl.D[1][input]);
     x = Phi.map((row, i) => row.reduce((s, v, j) => s + v * x[j], 0) + Gamma[i][0]);
   }
   return { t, y, u };
 }
 
+/** Open-loop step response of one output to one input column (for fitting simple models to paths). */
+export function openLoopStep(A: Mat, col: number[], row: number[], direct: number, horizon: number, points = 600) {
+  const h = horizon / points;
+  const { Phi, Gamma } = c2d(A, col.map((v) => [v]), h);
+  let x = new Array(A.length).fill(0);
+  const t: number[] = [], y: number[] = [];
+  for (let k = 0; k <= points; k++) {
+    t.push(k * h);
+    y.push(row.reduce((s, c, i) => s + c * x[i], 0) + direct);
+    x = Phi.map((r, i) => r.reduce((s, v, j) => s + v * x[j], 0) + Gamma[i][0]);
+  }
+  return { t, y };
+}
 
 /** A time axis long enough for the slowest closed-loop mode to settle. */
 export function settleHorizon(poles: Complex[], fallback: number) {
@@ -326,27 +488,24 @@ export type RobustPoint = { pv: number; nominal: Margins | null; worst: Margins 
 /**
  * Margins at each operating point, nominal and the worst over a seeded random
  * spread of the uncertain plant parameters (the controller keeps its tuning).
+ * In cascade both loops count.
  */
 export function robustness(proc: ProcessDef, setupParams: Params, config: ControllerConfig, samples = 20): RobustPoint[] {
   const model = cleanParams(proc, setupParams);
   const r = rng(7);
   return proc.opPoints.map((pv) => {
-    const nominal = analyzeLoop(proc, model, config, pv)?.margins ?? null;
-    if (!nominal) return { pv, nominal: null, worst: null, stableAll: true };
+    const a0 = analyzeLoop(proc, model, config, pv);
+    if (!a0) return { pv, nominal: null, worst: null, stableAll: true };
+    const nominal = worseMargins(a0.margins, a0.inner?.margins);
     let worst: Margins = { ...nominal };
-    let stableAll = true;
+    let stableAll = isStable(closedLoop(a0.plant, a0.ctrl, a0.delay).poles);
     for (let i = 0; i < samples; i++) {
       const plant = { ...model };
       for (const u of proc.uncertain) plant[u.key] = model[u.key] * (1 + u.spread * (2 * r.next() - 1));
       const a = analyzeLoop(proc, model, config, pv, plant);
       if (!a) continue;
-      const mg = a.margins;
-      const pdl = linearPidAt(proc, config, model, pv, a.plant.valve);
-      if (pdl && !isStable(closedLoop(a.plant, pdl, a.delay).poles)) stableAll = false;
-      worst = {
-        gm: Math.min(worst.gm, mg.gm), pm: Math.min(worst.pm, mg.pm), ms: Math.max(worst.ms, mg.ms),
-        wc: worst.wc, w180: worst.w180, delayMargin: Math.min(worst.delayMargin, mg.delayMargin),
-      };
+      if (!isStable(closedLoop(a.plant, a.ctrl, a.delay).poles)) stableAll = false;
+      worst = worseMargins(worst, worseMargins(a.margins, a.inner?.margins));
     }
     return { pv, nominal, worst, stableAll };
   });

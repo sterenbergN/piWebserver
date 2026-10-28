@@ -6,7 +6,8 @@ import { cleanParams, nominalDisturbances, pvSpan, valveCharacteristic, type Par
 // filter) is integrated with RK4 in small steps; the controller runs once per
 // cycle T_s and holds its output in between, like a PLC cyclic interrupt.
 //
-// State vector: [valve stem %, ...process states, transmitter reading].
+// State vector: [valve stem %, ...process states, transmitter reading,
+// secondary transmitter reading (only for processes with an inner measurement)].
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -17,9 +18,16 @@ export function findSteady(proc: ProcessDef, p: Params, d: Params, pv: number) {
   const at = (valve: number) => {
     const flow = valveCharacteristic(p.valveChar, valve / 100);
     const x = proc.steady(flow, d, p);
-    return x ? { valve, x, pv: proc.pvOf(x, flow, d, p) } : null;
+    return x ? { valve, x, pv: proc.pvOf(x, flow, d, p), pv2: proc.secondary ? proc.secondary.of(x, flow, d, p) : NaN } : null;
   };
-  // Bisection on valve position (PV rises with opening for both processes).
+  if (proc.steadyAt) {
+    const direct = proc.steadyAt(pv, d, p);
+    if (direct) {
+      const flow = valveCharacteristic(p.valveChar, direct.valve / 100);
+      return { valve: direct.valve, x: direct.x, pv: proc.pvOf(direct.x, flow, d, p), pv2: proc.secondary ? proc.secondary.of(direct.x, flow, d, p) : NaN };
+    }
+  }
+  // Bisection on valve position (PV rises with opening on every process here).
   let lo = 0, hi = 100;
   const top = at(hi);
   if (top && top.pv <= pv) return top;
@@ -31,7 +39,12 @@ export function findSteady(proc: ProcessDef, p: Params, d: Params, pv: number) {
     if (!s || s.pv > pv) hi = mid;
     else lo = mid;
   }
-  return at(lo) ?? { valve: lo, x: proc.states.map(() => 0), pv };
+  return at(lo) ?? { valve: lo, x: proc.states.map(() => 0), pv, pv2: NaN };
+}
+
+/** The full plant state at a steady state: [valve, ...process, reading, (secondary reading)]. */
+export function steadyState(proc: ProcessDef, s: ReturnType<typeof findSteady>) {
+  return proc.secondary ? [s.valve, ...s.x, s.pv, s.pv2] : [s.valve, ...s.x, s.pv];
 }
 
 /** Derivatives of the whole plant (valve + process + transmitter) for a valve signal. */
@@ -45,7 +58,9 @@ export function plantDerivatives(proc: ProcessDef, p: Params, d: Params, x: numb
   const dp = proc.derivatives(px, flow, d, p);
   const pvTrue = proc.pvOf(px, flow, d, p);
   const dm = (pvTrue - x[n + 1]) / p.txTau;
-  return [dv, ...dp, dm];
+  if (!proc.secondary) return [dv, ...dp, dm];
+  const dm2 = (proc.secondary.of(px, flow, d, p) - x[n + 2]) / p.tx2Tau;
+  return [dv, ...dp, dm, dm2];
 }
 
 export function truePv(proc: ProcessDef, p: Params, d: Params, x: number[]) {
@@ -56,6 +71,10 @@ export function truePv(proc: ProcessDef, p: Params, d: Params, x: number[]) {
 export type Sample = {
   t: number; sp: number; pv: number; pvTrue: number; cv: number; valve: number;
   P: number; I: number; D: number; Kc: number;
+  /** Inner loop: its measurement and setpoint (NaN without cascade). */
+  pv2: number; sp2: number;
+  /** Feedforward's share of the output (0 without feedforward). */
+  ff: number;
 };
 
 /** A running loop: step it one controller cycle at a time. Used by test runs and the live faceplate. */
@@ -76,6 +95,7 @@ export class Loop {
   private delay: number[] = [];
   private frozenUntil = -1;
   private lastMeas: number;
+  private lastMeas2 = NaN;
   private noise: ReturnType<typeof rng>;
 
   constructor(proc: ProcessDef, setup: LoopSetup, opts: { sp: number; d?: Params; plantParams?: Params }) {
@@ -86,9 +106,10 @@ export class Loop {
     this.d = { ...nominalDisturbances(proc), ...(opts.d ?? {}) };
     this.sp = opts.sp;
     const s = findSteady(proc, this.p, this.d, opts.sp);
-    this.x = [s.valve, ...s.x, s.pv];
+    this.x = steadyState(proc, s);
     this.ctrl = createController(proc, setup.controller, model, this.Ts);
-    this.ctrl.track(s.valve, opts.sp, s.pv);
+    this.lastMeas2 = s.pv2;
+    this.ctrl.track(s.valve, opts.sp, s.pv, this.aux());
     this.manualOut = s.valve;
     this.lastCv = s.valve;
     this.held = s.valve;
@@ -112,7 +133,13 @@ export class Loop {
     this.lastCv = prev.lastCv;
     this.held = prev.held;
     this.lastMeas = prev.lastMeas;
-    this.ctrl.track(prev.lastCv, this.sp, prev.lastMeas);
+    this.lastMeas2 = prev.lastMeas2;
+    this.ctrl.track(prev.lastCv, this.sp, prev.lastMeas, this.aux());
+  }
+
+  /** What controllers see besides SP and PV: the inner measurement and the disturbances. */
+  private aux() {
+    return { pv2: this.lastMeas2, d: this.d };
   }
 
   freeze(duration: number) { this.frozenUntil = this.t + duration; }
@@ -134,6 +161,11 @@ export class Loop {
     const noisy = delayed + ((this.p.txNoise / 100) * span) * this.noise.gauss();
     // A 4–20 mA input saturates a little outside its range.
     this.lastMeas = clamp(noisy, this.proc.pv.lo - 0.02 * span, this.proc.pv.hi + 0.02 * span);
+    const sec = this.proc.secondary;
+    if (sec) {
+      const span2 = sec.hi - sec.lo;
+      this.lastMeas2 = clamp(this.x[n + 2] + ((this.p.txNoise / 100) * span2) * this.noise.gauss(), sec.lo - 0.02 * span2, sec.hi + 0.02 * span2);
+    }
     return this.lastMeas;
   }
 
@@ -141,10 +173,10 @@ export class Loop {
   step(): Sample {
     const pv = this.measure();
     let cv: number;
-    if (this.auto) cv = this.ctrl.step(this.sp, pv);
+    if (this.auto) cv = this.ctrl.step(this.sp, pv, this.aux());
     else {
       cv = clamp(this.manualOut, 0, 100);
-      this.ctrl.track(cv, this.sp, pv);
+      this.ctrl.track(cv, this.sp, pv, this.aux());
     }
     cv = clamp(cv, 0, 100);
     this.lastCv = cv;
@@ -155,7 +187,7 @@ export class Loop {
 
     const sample: Sample = {
       t: this.t, sp: this.sp, pv, pvTrue: truePv(this.proc, this.p, this.d, this.x), cv, valve: this.x[0],
-      ...pick(this.ctrl.internals()),
+      pv2: this.lastMeas2, ...pick(this.ctrl.internals()),
     };
     this.integrate(this.Ts, this.held);
     this.t += this.Ts;
@@ -163,7 +195,7 @@ export class Loop {
   }
 
   private integrate(dt: number, target: number) {
-    const hmax = 0.25 * Math.min(this.p.valveTau, this.p.txTau);
+    const hmax = 0.25 * Math.min(this.p.valveTau, this.p.txTau, this.proc.secondary ? this.p.tx2Tau : Infinity, this.proc.fastest?.(this.p) ?? Infinity);
     const n = Math.max(1, Math.ceil(dt / hmax));
     const h = dt / n;
     const f = (x: number[]) => plantDerivatives(this.proc, this.p, this.d, x, target);
@@ -179,19 +211,32 @@ export class Loop {
   }
 }
 
-const pick = ({ P, I, D, Kc }: { P: number; I: number; D: number; Kc: number }) => ({ P, I, D, Kc });
+const pick = ({ P, I, D, Kc, sp2, ff }: { P: number; I: number; D: number; Kc: number; sp2: number; ff: number }) => ({ P, I, D, Kc, sp2, ff });
 
 export type Trace = {
   t: Float64Array; sp: Float64Array; pv: Float64Array; pvTrue: Float64Array;
   cv: Float64Array; valve: Float64Array; P: Float64Array; I: Float64Array; D: Float64Array; Kc: Float64Array;
+  pv2: Float64Array; sp2: Float64Array; ff: Float64Array;
   dist: Record<string, Float64Array>;
 };
 
 export type Run = { scenario: Scenario; trace: Trace; Ts: number };
 
+/** A test script in seconds: scaled for processes whose time scale is a parameter. */
+export function scaledScenario(proc: ProcessDef, p: Params, scenario: Scenario): Scenario {
+  const k = proc.timeScale?.(p) ?? 1;
+  if (k === 1) return scenario;
+  return {
+    ...scenario,
+    duration: scenario.duration * k,
+    events: scenario.events.map((e) => (e.kind === 'freeze' ? { ...e, t: e.t * k, duration: e.duration * k } : { ...e, t: e.t * k })),
+  };
+}
+
 /** Run one test script from start to finish. */
-export function runScenario(proc: ProcessDef, setup: LoopSetup, scenario: Scenario): Run {
+export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Scenario): Run {
   const model = cleanParams(proc, setup.params);
+  const scenario = scaledScenario(proc, model, rawScenario);
   // Changes at t = 0 describe the plant as it really is; the controller keeps the setup's view.
   const plant = { ...model };
   const sorted = [...scenario.events].sort((a, b) => a.t - b.t);
@@ -200,7 +245,7 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, scenario: Scenar
   const events = sorted.filter((e) => !initial(e));
   const loop = new Loop(proc, setup, { sp: scenario.initialSp, plantParams: plant });
   const n = Math.floor(scenario.duration / loop.Ts) + 1;
-  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc'] as const;
+  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff'] as const;
   const trace = Object.fromEntries(keys.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
   trace.dist = Object.fromEntries(proc.disturbances.map((s) => [s.key, new Float64Array(n)]));
   let next = 0;

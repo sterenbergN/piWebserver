@@ -7,6 +7,7 @@ import { CONTROLLER_KINDS, describeController } from '@/lib/loop-lab/controllers
 import { getProcess, PROCESSES } from '@/lib/loop-lab/processes';
 import { decodeExperiment, defaultExperiment, encodeExperiment, type Experiment, type NotebookEntry } from '@/lib/loop-lab/setup';
 import { fmt } from './Chart';
+import IdentifyPanel from './Identify';
 import LivePanel from './Live';
 import { NotebookPanel, newEntryId, useNotebook } from './Notebook';
 import { PALETTE, ScorecardTable, TestDetail, TrendPanel } from './Results';
@@ -20,12 +21,13 @@ const TABS = [
   { id: 'mechanical', label: 'Mechanical', icon: '⚙️' },
   { id: 'control', label: 'Control', icon: '📉' },
   { id: 'automation', label: 'Automation', icon: '🏭' },
+  { id: 'identify', label: 'Identify', icon: '📥' },
   { id: 'notebook', label: 'Notebook', icon: '📓' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
 /** Rungs planned for later phases, shown so the ladder reads as a whole. */
-export const LATER_RUNGS = ['Feedforward', 'Cascade', 'Ratio · override · split-range', 'Smith predictor · IMC', 'Decoupling', 'State feedback · observers', 'LQR', 'MPC', 'Adaptive', 'ADRC'];
+export const LATER_RUNGS = ['Ratio · override · split-range', 'Smith predictor · IMC', 'Decoupling', 'State feedback · observers', 'LQR', 'MPC', 'Adaptive', 'ADRC'];
 
 type Pinned = { id: string; label: string; exp: Experiment };
 
@@ -255,6 +257,9 @@ export default function Bench() {
           {tab === 'mechanical' && <MechanicalView proc={proc} exp={exp} />}
           {tab === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}
           {tab === 'automation' && <AutomationView proc={proc} exp={exp} />}
+          {tab === 'identify' && (
+            <IdentifyPanel onUse={(e) => { setExp(e); setPinned([]); setScenarioIds(null); chooseTab('tests'); }} />
+          )}
           {tab === 'notebook' && (
             <div className="ll-card">
               <NotebookPanel notebook={notebook} onLoad={(e) => { setExp(e); setPinned([]); setScenarioIds(null); chooseTab('tests'); }} onCompare={compareEntry} />

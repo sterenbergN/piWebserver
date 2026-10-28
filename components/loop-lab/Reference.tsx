@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { MathText, Tex } from '@/components/daily/MathText';
 import { CASES, CONTROLLER_CONTENT, PROCESS_CONTENT } from '@/lib/loop-lab/content';
-import { controllerMeta, defaultController, type ControllerKind } from '@/lib/loop-lab/controllers';
+import { controllerMeta, defaultController, isAvailable, type ControllerKind } from '@/lib/loop-lab/controllers';
 import type { ProcessId } from '@/lib/loop-lab/model';
 import { getProcess, PROCESSES } from '@/lib/loop-lab/processes';
 import { defaultExperiment, encodeExperiment, type Experiment } from '@/lib/loop-lab/setup';
@@ -69,10 +69,10 @@ export function ProcessReference({ id }: { id: ProcessId }) {
 export function ControllerReference({ kind }: { kind: ControllerKind }) {
   const meta = controllerMeta(kind);
   const c = CONTROLLER_CONTENT[kind];
-  const [procId, setProcId] = useState<ProcessId>(kind === 'schedule' || kind === 'characterized' ? 'tank' : 'flow');
+  const [procId, setProcId] = useState<ProcessId>(kind === 'schedule' || kind === 'characterized' ? 'tank' : kind === 'feedforward' || kind === 'cascade' ? 'hx' : 'flow');
   const proc = getProcess(procId);
   const exp: Experiment = useMemo(() => ({ ...defaultExperiment(procId), controller: defaultController(kind, getProcess(procId)) }), [kind, procId]);
-  const available = kind !== 'characterized' || proc.characterizations.length > 0;
+  const available = isAvailable(proc, kind);
   return (
     <div className="ll animate-fade-in" style={{ maxWidth: 1000 }}>
       <div className="ll-crumbs"><Link href="/loop-lab">Loop Lab</Link> / Controller ladder / rung {meta.rung}</div>
@@ -86,7 +86,7 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
         {CONTROLLER_KINDS.map((k) => (
           <Link key={k.kind} href={`/loop-lab/controllers/${k.kind}`} style={k.kind === kind ? { borderColor: 'var(--accent-light)' } : undefined}>{k.icon} {k.rung}. {k.short}</Link>
         ))}
-        {LATER_RUNGS.slice(0, 3).map((r, i) => <span key={r}>{CONTROLLER_KINDS.length + i + 1}. {r}</span>)}
+        {LATER_RUNGS.slice(0, 2).map((r, i) => <span key={r}>{CONTROLLER_KINDS.length + i + 1}. {r}</span>)}
         <span>…</span>
       </div>
 
@@ -134,7 +134,7 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
             <CodeTabs proc={proc} exp={exp} />
             <p style={{ marginTop: '0.8rem' }}><Link className="ll-btn is-primary" href={benchLink(exp)}>Try it in the bench</Link></p>
           </>
-        ) : <p className="ll-note">The {proc.name.toLowerCase()} has no characterization in this phase.</p>}
+        ) : <p className="ll-note">This controller needs something the {proc.name.toLowerCase()} doesn&apos;t have: {kind === 'cascade' ? 'an inner measurement' : kind === 'feedforward' ? 'a measured disturbance' : 'a known nonlinearity to invert'}.</p>}
       </div>
     </div>
   );

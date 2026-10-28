@@ -1,20 +1,103 @@
 import { linearPidAt, type ControllerConfig } from './controllers';
-import { approximate, linearizePlant, type Fopdt } from './linear';
+import { fitModel } from './ident';
+import { approximate, closedLoop, linearizePlant, openLoopStep, pathModel, settleHorizon, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
+
+export type TuningLoop = 'main' | 'inner' | 'outer';
+
+export type TuningModel = Fopdt & {
+  /** Characterization slope folded into K (1 when there is none). */
+  slope: number;
+  reachable: boolean;
+  valve: number;
+  /** The process gain is negative: the controller needs "invert". (K is reported as its magnitude.) */
+  negative: boolean;
+};
+
+/** A first-or-second-order-plus-dead-time model fitted to a simulated step response. */
+function fitStep(t: number[], y: number[], extraDelay: number): Fopdt | null {
+  const f = fitModel(t, t.map(() => 1), y, 'sopdt', { u0: 0, y0: 0 });
+  if (!f || !Number.isFinite(f.K)) return null;
+  const [t1, t2] = f.tau1 >= f.tau2 ? [f.tau1, f.tau2] : [f.tau2, f.tau1];
+  const theta = f.theta + extraDelay;
+  const tau = t1 + t2 / 2, thetaF = theta + t2 / 2;
+  return { K: f.K, tau, theta: Math.max(thetaF, 1e-6), tau1: t1, tau2: t2, theta2: Math.max(theta, 1e-6), kPrime: f.K / tau, integrating: tau > 20 * thetaF };
+}
+
+/** The inner loop closed with its own PI: what the outer controller sees (inner setpoint → main reading). */
+function innerClosed(m: PlantModel, config: Extract<ControllerConfig, { kind: 'cascade' }>, Ts: number) {
+  const mi: PlantModel = { ...m, C: m.C2!, Ctrue: m.C, theta: 0, Dd: {} };
+  return closedLoop(mi, { kind: 'single', pid: { ...config.inner, slope: 1 }, ff: [] }, Ts / 2);
+}
 
 /**
  * The model a tuning rule should use at an operating point: the plant as the
  * controller sees it (including any characterization), approximated as
  * first/second order plus dead time, with half a controller cycle of delay.
+ * In cascade: the inner loop (valve → secondary), or the outer loop (inner
+ * setpoint → main PV, with the inner loop closed at its present tuning).
  */
-export function tuningModel(proc: ProcessDef, params: Params, config: ControllerConfig, pv: number) {
+export function tuningModel(proc: ProcessDef, params: Params, config: ControllerConfig, pv: number, loop: TuningLoop = 'main'): TuningModel {
   const p = cleanParams(proc, params);
   const m = linearizePlant(proc, p, pv);
-  const f = approximate(m, p.Ts / 2);
-  const lp = config.kind === 'onoff' ? null : linearPidAt(proc, config, p, pv, m.valve);
-  const slope = lp?.slope ?? 1;
-  return { ...f, K: f.K * slope, kPrime: f.kPrime * slope, slope, reachable: m.reachable, valve: m.valve };
+  let f: Fopdt;
+  let slope = 1;
+  if (config.kind === 'cascade' && m.C2 && loop !== 'main') {
+    if (loop === 'inner') f = approximate(pathModel(m, m.C2, 0), p.Ts / 2);
+    else {
+      const cl = innerClosed(m, config, p.Ts);
+      const horizon = settleHorizon(cl.poles, 60) * 1.5;
+      const r = stepResponse(cl, 0, horizon, 600);
+      f = fitStep(r.t, r.y, m.theta + p.Ts / 2) ?? approximate(m, p.Ts / 2);
+    }
+  } else {
+    f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
+    const lp = config.kind === 'onoff' ? null : linearPidAt(proc, config, p, pv, m.valve);
+    slope = lp?.slope ?? 1;
+  }
+  const K = f.K * slope;
+  return { ...f, K: Math.abs(K), kPrime: Math.abs(f.kPrime * slope), slope, reachable: m.reachable, valve: m.valve, negative: K < 0 };
 }
+
+export type FeedforwardDesign = {
+  gain: number; lead: number; lag: number;
+  /** The two paths as fitted: valve (or inner setpoint) → PV, and disturbance → PV. */
+  u: Fopdt; d: Fopdt;
+  /** What the design can't do, in a sentence (null when it can do it all). */
+  note: string | null;
+};
+
+/**
+ * Feedforward from a measured disturbance: fit simple models to the two paths
+ * into the PV and invert. Ideal FF = −G_d/G_u ≈ −(K_d/K_u)·(τ_u s + 1)/(τ_d s + 1)·e^{−(θ_d − θ_u)s}.
+ */
+export function feedforwardDesign(proc: ProcessDef, params: Params, config: ControllerConfig, pv: number, key: string): FeedforwardDesign | null {
+  const p = cleanParams(proc, params);
+  const m = linearizePlant(proc, p, pv);
+  if (!m.Bd[key]) return null;
+  const slowest = Math.max(...timeConstants(m), 1);
+  const horizon = 8 * slowest + 4 * m.theta;
+  let uPath: Fopdt | null;
+  if (config.kind === 'cascade' && m.C2) {
+    const cl = innerClosed(m, config, p.Ts);
+    const r = stepResponse(cl, 0, Math.max(horizon, settleHorizon(cl.poles, 60) * 1.5), 600);
+    uPath = fitStep(r.t, r.y, m.theta);
+  } else {
+    const r = openLoopStep(m.A, m.B, m.C, 0, horizon);
+    uPath = fitStep(r.t, r.y, m.theta);
+  }
+  const rd = openLoopStep(m.A, m.Bd[key], m.C, 0, horizon);
+  const dPath = fitStep(rd.t, rd.y, m.theta);
+  if (!uPath || !dPath || !uPath.K) return null;
+  const gain = -dPath.K / uPath.K;
+  const lead = uPath.tau, lag = dPath.tau;
+  const dt = dPath.theta - uPath.theta;
+  const note = dt < -0.5
+    ? `The disturbance reaches the PV ${dt < 0 ? Math.abs(dt).toPrecision(2) : ''} s sooner than the valve can: feedforward can only partly cancel it.`
+    : dt > 0.5 ? `Ideally the feedforward would wait ${dt.toPrecision(2)} s (the disturbance is slower than the valve); the lead-lag alone is a little early.` : null;
+  return { gain, lead, lag, u: uPath, d: dPath, note };
+}
+
 
 // Classic tuning rules, each from a first-order-plus-dead-time model
 // K·e^{-θs}/(τs+1) (or its second-order version). Results are for the ideal

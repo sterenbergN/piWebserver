@@ -1,15 +1,24 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { valveCharacteristic, type Params, type ProcessDef } from '@/lib/loop-lab/model';
-import { flowAt } from '@/lib/loop-lab/processes/flow';
+import type { Params, ProcessDef } from '@/lib/loop-lab/model';
 import { Loop, type Sample } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt } from './Chart';
-import { FlowSchematic, TankSchematic } from './Drawings';
+import { ProcessDrawing } from './Schematics';
 
 const SPEEDS = [1, 5, 20, 60, 300];
-const WINDOW = { flow: 120, tank: 3600 } as const;
+
+/** How much history the trend keeps (s of process time), and the speed it starts at. */
+function pace(proc: ProcessDef, p: Params) {
+  if (proc.timeScale) {
+    const k = proc.timeScale(p);
+    return { window: 30 * k, speed: k > 60 ? 20 : k > 10 ? 5 : 1 };
+  }
+  const table = { flow: [120, 1], tank: [3600, 60], stirred: [2400, 60], hx: [400, 5] } as Record<string, [number, number]>;
+  const [window, speed] = table[proc.id] ?? [600, 5];
+  return { window, speed };
+}
 
 type Buffer = { t: number[]; sp: number[]; pv: number[]; pvTrue: number[]; cv: number[]; valve: number[] };
 const emptyBuffer = (): Buffer => ({ t: [], sp: [], pv: [], pvTrue: [], cv: [], valve: [] });
@@ -41,12 +50,13 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
   const last = useRef<Sample | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(proc.id === 'tank' ? 60 : 1);
+  const { window: windowS, speed: startSpeed } = pace(proc, exp.params);
+  const [speed, setSpeed] = useState(startSpeed);
   const [shownProc, setShownProc] = useState(proc.id);
   if (shownProc !== proc.id) {
     // A different process starts at its own sensible speed.
     setShownProc(proc.id);
-    setSpeed(proc.id === 'tank' ? 60 : 1);
+    setSpeed(startSpeed);
   }
 
   const publish = useCallback(() => {
@@ -65,11 +75,11 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
     const loop = new Loop(proc, { params: exp.params, controller: exp.controller, seed: Math.floor(Math.random() * 1e9) }, { sp: proc.nominalPv });
     if (prev && prev.proc.id === proc.id) loop.adopt(prev);
     else buf.current = emptyBuffer();
-    every.current = Math.max(1, Math.ceil(WINDOW[proc.id] / loop.Ts / 2500));
+    every.current = Math.max(1, Math.ceil(windowS / loop.Ts / 2500));
     loopRef.current = loop;
     last.current = null;
     publish();
-  }, [proc, exp, publish]);
+  }, [proc, exp, publish, windowS]);
 
   useEffect(() => {
     if (!running) return;
@@ -86,7 +96,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
             const b = buf.current;
             b.t.push(s.t); b.sp.push(s.sp); b.pv.push(s.pv); b.pvTrue.push(s.pvTrue); b.cv.push(s.cv); b.valve.push(s.valve);
             // Trim in batches, not every sample.
-            const cut = b.t.findIndex((t) => t >= s.t - WINDOW[proc.id]);
+            const cut = b.t.findIndex((t) => t >= s.t - windowS);
             if (cut > 500) for (const k of Object.keys(b) as (keyof Buffer)[]) b[k].splice(0, cut);
           }
           acc -= loop.Ts;
@@ -99,7 +109,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [running, speed, proc.id, publish]);
+  }, [running, speed, windowS, publish]);
 
   if (!view) return null;
   const s = view.sample;
@@ -107,19 +117,13 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
   const span = proc.pv.hi - proc.pv.lo;
   const pctOf = (v: number) => Math.max(0, Math.min(100, ((v - proc.pv.lo) / span) * 100));
   const b = view.trend;
-  const minutes = proc.id === 'tank';
+  const minutes = windowS > 900;
   const tx = minutes ? b.t.map((t) => t / 60) : b.t;
 
-  const valve = view.x[0];
   const { p, d } = view;
-  const drawing = proc.id === 'flow'
-    ? <FlowSchematic p={p} valve={valve} flow={flowAt(valveCharacteristic(p.valveChar, valve / 100), d.P0, p)} P0={d.P0} />
-    : (() => {
-        const h = view.x[1];
-        const qIn = p.Qmax * valveCharacteristic(p.valveChar, valve / 100) * (d.supply / 100);
-        const qOut = p.Kout * (d.dOut / 100) * Math.sqrt(Math.max(0, h));
-        return <TankSchematic p={p} level={h} valve={valve} dOut={d.dOut} qIn={qIn} qOut={qOut} />;
-      })();
+  const drawing = <ProcessDrawing proc={proc} p={p} d={d} x={view.x} />;
+  const sec = proc.secondary;
+  const cascade = exp.controller.kind === 'cascade' && sec;
 
   return (
     <div>
@@ -164,6 +168,8 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
               <dt>I</dt><dd>{fmt(s.I, 3)} %</dd>
               <dt>D</dt><dd>{fmt(s.D, 3)} %</dd>
               {exp.controller.kind === 'schedule' && <><dt>Kc now</dt><dd>{fmt(s.Kc, 3)}</dd></>}
+              {(exp.controller.kind === 'feedforward' || exp.controller.kind === 'cascade') && exp.controller.ff.length > 0 && <><dt>FF</dt><dd>{fmt(s.ff, 3)} %</dd></>}
+              {cascade && <><dt>{sec.loopTag} SP</dt><dd>{fmt(s.sp2, 4)} {sec.unit}</dd><dt>{sec.loopTag} PV</dt><dd>{fmt(s.pv2, 4)} {sec.unit}</dd></>}
             </dl>
           )}
         </div>

@@ -7,15 +7,19 @@ import { linearPidAt } from '@/lib/loop-lab/controllers';
 import { exportCode, exportReference, pidCompactParams } from '@/lib/loop-lab/export';
 import { texNum } from './format';
 import {
-  analyzeLoop, closedLoop, isStable, linearizePlant, settleHorizon, stepResponse, timeConstants, approximate, type PlantModel,
+  analyzeLoop, closedLoop, isStable, linearizePlant, openLoopStep, pathModel, settleHorizon, stepResponse, timeConstants, approximate, worseMargins,
+  type BodePoint, type LoopAnalysis, type PlantModel,
 } from '@/lib/loop-lab/linear';
-import { cleanParams, nominalDisturbances, valveCharacteristic, VALVE_CHARS, type ProcessDef } from '@/lib/loop-lab/model';
+import { cleanParams, nominalDisturbances, valveCharacteristic, VALVE_CHARS, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { flowAt } from '@/lib/loop-lab/processes/flow';
+import { steamFlow } from '@/lib/loop-lab/processes/hx';
+import { RHO_CP_PER_M3H } from '@/lib/loop-lab/processes/stirred';
 import { tankArea, tankVolume } from '@/lib/loop-lab/processes/tank';
-import { findSteady, type Run } from '@/lib/loop-lab/sim';
+import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt, type Series } from './Chart';
-import { BlockDiagram, FlowSchematic, PAndId, TankSchematic, type ProbeKey } from './Drawings';
+import { BlockDiagram, type ProbeKey } from './Drawings';
+import { PAndIdFor, ProcessDrawing } from './Schematics';
 import { PALETTE } from './Results';
 
 const linspace = (a: number, b: number, n: number) => Array.from({ length: n }, (_, i) => a + ((b - a) * i) / (n - 1));
@@ -25,53 +29,94 @@ const linspace = (a: number, b: number, n: number) => Array.from({ length: n }, 
 export function MechanicalView({ proc, exp }: { proc: ProcessDef; exp: Experiment }) {
   const p = useMemo(() => cleanParams(proc, exp.params), [proc, exp.params]);
   const d = useMemo(() => nominalDisturbances(proc), [proc]);
-  const s = findSteady(proc, p, d, proc.nominalPv);
-  const plots = useMemo(() => {
-    const st = linspace(0, 100, 101);
-    if (proc.id === 'flow') {
-      const series: Series[] = VALVE_CHARS.map((c, i) => ({
-        label: `${c.label}${c.value === p.valveChar ? ' (fitted)' : ''}`,
-        color: PALETTE[i], width: c.value === p.valveChar ? 2.6 : 1.4,
-        x: st, y: st.map((v) => flowAt(valveCharacteristic(c.value, v / 100), d.P0, { ...p, valveChar: c.value })),
-      }));
-      const inherent: Series = {
-        label: 'Inherent (no line losses)', color: 'var(--muted)', dash: '4 4', width: 1.2,
-        x: st, y: st.map((v) => valveCharacteristic(p.valveChar, v / 100) * flowAt(1, d.P0, p)),
-      };
-      return [{ title: 'Installed characteristic: flow vs stem position', series: [...series, inherent], x: 'Stem position (%)', y: 'Flow (m³/h)' }];
-    }
-    const hs = linspace(0.05, p.H, 80);
-    const k = (p.Kout * (d.dOut / 100)) / 3600;
+  const s = useMemo(() => findSteady(proc, p, d, proc.nominalPv), [proc, p, d]);
+  const plots = useMemo(() => mechanicalPlots(proc, p, d), [proc, p, d]);
+  const content = PROCESS_CONTENT[proc.id];
+  return (
+    <MechanicalLayout proc={proc} p={p} d={d} x={steadyState(proc, s)} plots={plots} text={content.mechanical} />
+  );
+}
+
+type MechPlot = { title: string; series: Series[]; x: string; y: string; note?: string };
+
+/** The characteristic plots for each process's mechanical view. */
+function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
+  const st = linspace(0, 100, 101);
+  if (proc.id === 'flow') {
+    const series: Series[] = VALVE_CHARS.map((c, i) => ({
+      label: `${c.label}${c.value === p.valveChar ? ' (fitted)' : ''}`,
+      color: PALETTE[i], width: c.value === p.valveChar ? 2.6 : 1.4,
+      x: st, y: st.map((v) => flowAt(valveCharacteristic(c.value, v / 100), d.P0, { ...p, valveChar: c.value })),
+    }));
+    const inherent: Series = {
+      label: 'Inherent (no line losses)', color: 'var(--muted)', dash: '4 4', width: 1.2,
+      x: st, y: st.map((v) => valveCharacteristic(p.valveChar, v / 100) * flowAt(1, d.P0, p)),
+    };
+    return [{ title: 'Installed characteristic: flow vs stem position', series: [...series, inherent], x: 'Stem position (%)', y: 'Flow (m³/h)' }];
+  }
+  if (proc.id === 'stirred') {
+    return [{
+      title: 'Steady temperature vs heating valve, at three throughputs', x: 'Valve (%)', y: 'Vessel temperature (°C)',
+      series: [0.6, 1, 1.4].map((F, i) => ({ label: `${F} m³/h`, color: PALETTE[i], x: st, y: st.map((v) => d.Tin + (p.Qmax * valveCharacteristic(p.valveChar, v / 100)) / (RHO_CP_PER_M3H * F)) })),
+      note: 'Each line is an energy balance: heat in = ρ·c_p·F·(T − T_in). The slope (the process gain) halves when the throughput doubles.',
+    }];
+  }
+  if (proc.id === 'hx') {
+    const pressures = [3, 4, 5];
     return [
       {
-        title: 'Cross-section and volume vs level', x: 'Level (m)', y: 'Area (m²) · volume (m³)',
-        series: [
-          { label: 'Area A(h)', color: PALETTE[0], x: hs, y: hs.map((h) => tankArea(h, p)) },
-          { label: 'Volume V(h)', color: PALETTE[2], x: hs, y: hs.map((h) => tankVolume(h, p)) },
-        ],
+        title: 'Steam flow vs valve, at three supply pressures', x: 'Valve (%)', y: 'Steam flow (kg/h)',
+        series: pressures.map((Ps, i) => ({ label: `${Ps} bar`, color: PALETTE[i], x: st, y: st.map((v) => steamFlow(valveCharacteristic(p.valveChar, v / 100), Ps, p)) })),
+        note: 'Critical flow: steam flow is proportional to supply pressure at any valve position. A pressure drop is a steam-flow drop, long before the temperature shows it — what a flow loop in cascade catches.',
       },
       {
-        title: 'How fast the level answers the valve, vs level', x: 'Level (m)', y: 'k′ (%/s per %)',
-        series: [{ label: 'Integrating slope k′ = Qmax / (100·A)', color: PALETTE[1], x: hs, y: hs.map((h) => ((p.Qmax / 3600 / 100) / tankArea(h, p)) * (100 / p.H)) }],
-        note: `Time constant 2A√h/k runs from ${fmt((2 * tankArea(proc.opPoints[0], p) * Math.sqrt(proc.opPoints[0])) / k / 60, 2)} min at ${proc.opPoints[0]} m to ${fmt((2 * tankArea(proc.opPoints[2], p) * Math.sqrt(proc.opPoints[2])) / k / 60, 2)} min at ${proc.opPoints[2]} m.`,
+        title: 'Steady outlet temperature vs valve', x: 'Valve (%)', y: 'Outlet temperature (°C)',
+        series: pressures.map((Ps, i) => ({ label: `${Ps} bar`, color: PALETTE[i], x: st, y: st.map((v) => d.Tin + (steamFlow(valveCharacteristic(p.valveChar, v / 100), Ps, p) * p.lambda) / 3600 / (RHO_CP_PER_M3H * d.F)) })),
       },
     ];
-  }, [proc, p, d]);
-  const content = PROCESS_CONTENT[proc.id];
+  }
+  if (proc.id === 'custom') {
+    const m = linearizePlant(proc, p, proc.nominalPv);
+    const pm = pathModel(m, m.C, m.theta);
+    const horizon = 5 * Math.max(1, p.tau1 + p.tau2 + p.txDelay);
+    const r = openLoopStep(pm.A, pm.B, pm.C, 0, horizon, 400);
+    const t = r.t.map((v) => v + p.txDelay);
+    return [{
+      title: 'Open-loop response to a 10 % output step', x: 'Time (s)', y: 'PV change (% of span)',
+      series: [{ label: 'Identified model', color: PALETTE[0], x: [0, p.txDelay, ...t], y: [0, 0, ...r.y.map((v) => v * 10)] }],
+    }];
+  }
+  const hs = linspace(0.05, p.H, 80);
+  const k = (p.Kout * (d.dOut / 100)) / 3600;
+  return [
+    {
+      title: 'Cross-section and volume vs level', x: 'Level (m)', y: 'Area (m²) · volume (m³)',
+      series: [
+        { label: 'Area A(h)', color: PALETTE[0], x: hs, y: hs.map((h) => tankArea(h, p)) },
+        { label: 'Volume V(h)', color: PALETTE[2], x: hs, y: hs.map((h) => tankVolume(h, p)) },
+      ],
+    },
+    {
+      title: 'How fast the level answers the valve, vs level', x: 'Level (m)', y: 'k′ (%/s per %)',
+      series: [{ label: 'Integrating slope k′ = Qmax / (100·A)', color: PALETTE[1], x: hs, y: hs.map((h) => ((p.Qmax / 3600 / 100) / tankArea(h, p)) * (100 / p.H)) }],
+      note: `Time constant 2A√h/k runs from ${fmt((2 * tankArea(proc.opPoints[0], p) * Math.sqrt(proc.opPoints[0])) / k / 60, 2)} min at ${proc.opPoints[0]} m to ${fmt((2 * tankArea(proc.opPoints[2], p) * Math.sqrt(proc.opPoints[2])) / k / 60, 2)} min at ${proc.opPoints[2]} m.`,
+    },
+  ];
+}
+
+function MechanicalLayout({ proc, p, d, x, plots, text }: { proc: ProcessDef; p: Params; d: Params; x: number[]; plots: MechPlot[]; text: string }) {
   return (
     <div>
       <div className="ll-card">
-        {proc.id === 'flow'
-          ? <FlowSchematic p={p} valve={s.valve} flow={s.pv} P0={d.P0} />
-          : <TankSchematic p={p} level={s.pv} valve={s.valve} dOut={d.dOut} qIn={p.Qmax * valveCharacteristic(p.valveChar, s.valve / 100)} qOut={p.Kout * (d.dOut / 100) * Math.sqrt(s.pv)} />}
+        <ProcessDrawing proc={proc} p={p} d={d} x={x} />
         <p className="ll-small" style={{ textAlign: 'center' }}>At steady state at {fmt(proc.nominalPv, 3)} {proc.pv.unit}, nominal disturbances.</p>
       </div>
-      <div className="ll-card"><MathText className="ll-prose">{content.mechanical}</MathText></div>
+      <div className="ll-card"><MathText className="ll-prose">{text}</MathText></div>
       {plots.map((pl) => (
         <div className="ll-card" key={pl.title}>
           <div className="ll-chart-title">{pl.title}</div>
           <Chart label={pl.title} series={pl.series} x={{ label: pl.x }} y={{ label: pl.y }} height={230} />
-          {'note' in pl && pl.note && <p className="ll-note">{pl.note}</p>}
+          {pl.note && <p className="ll-note">{pl.note}</p>}
         </div>
       ))}
       <div className="ll-card">
@@ -109,7 +154,10 @@ function plantTex(m: PlantModel) {
   return `G(s) = \\frac{${texNum(m.K)}${delay}}{${factors.join('')}}`;
 }
 
-const PROBE_LABEL: Record<string, string> = { sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term', Kc: 'Scheduled Kc' };
+const PROBE_LABEL: Record<string, string> = {
+  sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term',
+  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement',
+};
 
 export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experiment; runs?: Run[] }) {
   const p = useMemo(() => cleanParams(proc, exp.params), [proc, exp.params]);
@@ -123,8 +171,9 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
   const ops = [points[0], points[2], points[4]];
 
   const here = useMemo(() => analyzeLoop(proc, p, exp.controller, pv), [proc, p, exp.controller, pv]);
-  const plant = here?.plant ?? linearizePlant(proc, p, pv);
-  const cl = useMemo(() => (here ? closedLoop(here.plant, here.pid, here.delay) : null), [here]);
+  const full = here?.plant ?? linearizePlant(proc, p, pv);
+  const plant = pathModel(full, full.C, full.theta);
+  const cl = useMemo(() => (here ? closedLoop(here.plant, here.ctrl, here.delay) : null), [here]);
 
   const content = PROCESS_CONTENT[proc.id];
   const toggleProbe = (k: ProbeKey) => setProbes((ps) => (ps.includes(k) ? ps.filter((x) => x !== k) : [...ps, k]));
@@ -136,7 +185,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
     return { label: k.startsWith('dist:') ? proc.disturbances.find((d) => d.key === k.slice(5))?.label ?? k : PROBE_LABEL[k] ?? k, color: PALETTE[i % PALETTE.length], x: tAxis, y: y ?? [] };
   }) : [];
 
-  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp'].includes(k) ? 'pv' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
+  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp'].includes(k) ? 'pv' : ['sp2', 'pv2'].includes(k) ? 'sec' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
   const groups = [...new Set(probes.map(unitScale))];
 
   return (
@@ -162,7 +211,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
               return ss.length ? (
                 <Chart key={g} label={`Probed signals (${g})`} series={ss} height={170}
                   x={{ label: `Time (${long ? 'min' : 's'})` }}
-                  y={{ label: g === 'pv' ? `${proc.pv.label} (${proc.pv.unit})` : g === 'pct' ? '%' : g === 'kc' ? 'Kc' : 'Disturbance' }} />
+                  y={{ label: g === 'pv' ? `${proc.pv.label} (${proc.pv.unit})` : g === 'sec' ? `${proc.secondary?.label ?? ''} (${proc.secondary?.unit ?? ''})` : g === 'pct' ? '%' : g === 'kc' ? 'Kc' : 'Disturbance' }} />
               ) : null;
             })}
           </>
@@ -180,7 +229,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
         </div>
         <div className="ll-tex-block"><Tex latex={plantTex(plant)} display /></div>
         <p className="ll-note">
-          Time constants, slowest first: {timeConstants(plant).map((t) => `${fmt(t, 3)} s`).join(', ')} (process, actuator and transmitter lags); transport delay {fmt(plant.theta, 3)} s,
+          Valve to {proc.tags.transmitter}. Time constants, slowest first: {timeConstants(plant).map((t) => `${fmt(t, 3)} s`).join(', ')} (process, actuator and transmitter lags); transport delay {fmt(plant.theta, 3)} s,
           plus {fmt(p.Ts / 2, 3)} s for the controller cycle (zero-order hold).
         </p>
         {!here ? (
@@ -193,8 +242,17 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
               <dt>Peak sensitivity Ms</dt><dd>{fmt(here.margins.ms, 3)} {here.margins.ms < 1.4 ? <span className="ll-badge is-good">robust</span> : here.margins.ms > 2 ? <span className="ll-badge is-bad">fragile</span> : <span className="ll-badge">moderate</span>}</dd>
               <dt>Delay margin</dt><dd>{fmt(here.margins.delayMargin, 3)} s of extra dead time before instability</dd>
               <dt>Closed loop</dt><dd>{cl && isStable(cl.poles) ? 'stable' : <span className="ll-badge is-bad">unstable</span>}</dd>
+              {here.inner && (
+                <>
+                  <dt>Slave loop ({proc.secondary?.loopTag})</dt>
+                  <dd>PM {fmt(here.inner.margins.pm, 3)}° at {fmt(here.inner.margins.wc, 3)} rad/s, GM {Number.isFinite(here.inner.margins.gm) ? `${fmt(here.inner.margins.gm, 3)} dB` : '∞'}, Ms {fmt(here.inner.margins.ms, 3)}
+                    {' '}· {fmt(here.inner.margins.wc / here.margins.wc, 2)}× faster than the master {here.inner.margins.wc / here.margins.wc < 3 && <span className="ll-badge is-warn">aim for 3–5×</span>}</dd>
+                </>
+              )}
             </dl>
+            {here.inner && <p className="ll-note">The master&apos;s margins above are with the slave loop closed: the master sees the slave as part of its process.</p>}
             <BodeCharts proc={proc} exp={exp} pv={pv} all={allPoints} ops={ops} />
+            {here.inner && <InnerBode inner={here.inner} />}
             <label className="ll-check"><input type="checkbox" checked={allPoints} onChange={(e) => setAllPoints(e.target.checked)} /> Overlay the loop at all three operating points</label>
             {cl && <PoleMap cl={cl} plant={here.plant} zoom={zoom} setZoom={setZoom} />}
           </>
@@ -202,6 +260,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
       </div>
 
       {exp.controller.kind !== 'onoff' && <div className="ll-card"><OperatingPointSteps proc={proc} exp={exp} /></div>}
+      {here && here.ctrl.ff.length > 0 && <div className="ll-card"><FeedforwardResponse proc={proc} a={here} /></div>}
 
       <div className="ll-card"><MathText className="ll-prose">{content.control}</MathText></div>
     </div>
@@ -214,9 +273,9 @@ export function RangeTable({ proc, exp }: { proc: ProcessDef; exp: Experiment })
   const points = useMemo(() => linspace(proc.opPoints[0], proc.opPoints[proc.opPoints.length - 1], 5), [proc]);
   const across = useMemo(() => points.map((at) => {
     const m = linearizePlant(proc, p, at);
-    const f = approximate(m, p.Ts / 2);
+    const f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
     const a = analyzeLoop(proc, p, exp.controller, at);
-    return { at, m, f, a };
+    return { at, m, f, a: a ? { margins: worseMargins(a.margins, a.inner?.margins) } : null };
   }), [proc, p, exp.controller, points]);
   return (
     <>
@@ -250,7 +309,7 @@ export function RangeTable({ proc, exp }: { proc: ProcessDef; exp: Experiment })
           </table>
         </div>
         <p className="ll-note">
-          Margins are for the current controller at each point.
+          Margins are for the current controller at each point{exp.controller.kind === 'cascade' ? ' (the worse of master and slave)' : ''}.
           {(() => {
             const ks = across.map((r) => r.f.kPrime).filter(Number.isFinite);
             const ratio = Math.max(...ks) / Math.min(...ks);
@@ -269,7 +328,7 @@ export function OperatingPointSteps({ proc, exp }: { proc: ProcessDef; exp: Expe
     const ops = [proc.opPoints[0], proc.opPoints[Math.floor(proc.opPoints.length / 2)], proc.opPoints[proc.opPoints.length - 1]];
     const loops = ops.map((at) => {
       const a = analyzeLoop(proc, p, exp.controller, at)!;
-      return { at, cl: closedLoop(a.plant, a.pid, a.delay) };
+      return { at, cl: closedLoop(a.plant, a.ctrl, a.delay) };
     });
     const horizon = Math.max(...loops.map((l) => settleHorizon(l.cl.poles, 60)));
     return loops.map((l) => ({ at: l.at, sp: stepResponse(l.cl, 0, horizon), load: stepResponse(l.cl, 1, horizon), stable: isStable(l.cl.poles) }));
@@ -324,6 +383,57 @@ function BodeCharts({ proc, exp, pv, all, ops }: { proc: ProcessDef; exp: Experi
         y={{ label: 'Phase (°)', min: Math.max(-540, Math.min(...phase.flatMap((ps) => Array.from(ps.y))) - 10), max: Math.max(0, ...phase.flatMap((ps) => Array.from(ps.y))) + 10 }}
         hGuides={[{ at: -180, label: '−180°' }]} vGuides={v} height={170} />
     </div>
+  );
+}
+
+/** Bode of the slave loop on its own (cascade). */
+function InnerBode({ inner }: { inner: NonNullable<LoopAnalysis['inner']> }) {
+  const ws = (b: BodePoint[]) => b.map((q) => q.w);
+  const m = inner.margins;
+  const v = Number.isFinite(m.wc) ? [{ at: m.wc, label: `ωc ${fmt(m.wc, 2)}` }] : [];
+  return (
+    <div>
+      <div className="ll-chart-title">Bode: slave loop on its own</div>
+      <Chart label="Slave loop Bode magnitude" height={170} x={{ log: true, label: 'Frequency (rad/s)' }} y={{ label: 'Magnitude (dB)', min: -80 }} hGuides={[{ at: 0, label: '0 dB' }]} vGuides={v}
+        series={[
+          { label: 'Slave L', color: PALETTE[3], x: ws(inner.loop), y: inner.loop.map((q) => q.mag), width: 2 },
+          { label: 'Valve → inner measurement', color: 'var(--muted)', x: ws(inner.plantBode), y: inner.plantBode.map((q) => q.mag), dash: '4 4', width: 1.2 },
+        ]} />
+    </div>
+  );
+}
+
+/** A measured disturbance step, linear, with and without the feedforward. */
+function FeedforwardResponse({ proc, a }: { proc: ProcessDef; a: LoopAnalysis }) {
+  const data = useMemo(() => a.ctrl.ff.map((t) => {
+    const ds = proc.disturbances.find((d) => d.key === t.from)!;
+    const step = (ds.max - ds.min) / 10;
+    const withFf = closedLoop(a.plant, a.ctrl, a.delay, t.from);
+    const without = closedLoop(a.plant, { ...a.ctrl, ff: [] }, a.delay, t.from);
+    const horizon = Math.max(settleHorizon(withFf.poles, 60), settleHorizon(without.poles, 60));
+    const span = (proc.pv.hi - proc.pv.lo) / 100;
+    const w = stepResponse(withFf, 2, horizon), o = stepResponse(without, 2, horizon);
+    return { ds, step, t: w.t, withFf: w.y.map((v) => v * step * span), without: o.y.map((v) => v * step * span) };
+  }), [proc, a]);
+  return (
+    <>
+      <div className="ll-card-head">
+        <h3>Feedforward: a measured disturbance, with and without it</h3>
+        <span className="ll-small">Linear, at this operating point</span>
+      </div>
+      <div className="ll-split">
+        {data.map((d) => (
+          <div key={d.ds.key}>
+            <div className="ll-chart-title">{d.ds.label} +{fmt(d.step, 2)} {d.ds.unit}</div>
+            <Chart label={`Response to ${d.ds.label}`} height={190} x={{ label: 'Time (s)' }} y={{ label: `${proc.pv.label} change (${proc.pv.unit})` }} hGuides={[{ at: 0 }]}
+              series={[
+                { label: 'Feedback only', color: PALETTE[1], x: d.t, y: d.without },
+                { label: 'With feedforward', color: PALETTE[2], x: d.t, y: d.withFf, width: 2.2 },
+              ]} />
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -406,7 +516,7 @@ export function AutomationView({ proc, exp }: { proc: ProcessDef; exp: Experimen
     <div>
       <div className="ll-card">
         <div className="ll-card-head"><h3>P&amp;ID</h3><span className="ll-small">ISA-5.1 tags</span></div>
-        <PAndId proc={proc} />
+        <PAndIdFor proc={proc} config={exp.controller} />
       </div>
       <div className="ll-card"><MathText className="ll-prose">{content.automation}</MathText></div>
       <div className="ll-card">
