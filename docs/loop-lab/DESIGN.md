@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: design only, nothing built yet (2026-10-28).
+Status: phase 1 built (2026-10-28) on the `loop-lab` branch — see "Phase 1 as built" at the end.
 
 ---
 
@@ -381,6 +381,25 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
 
 ## 11. Open questions
 
-- Nav placement: new "Engineering" group, or under Tools?
-- Public or signed-in only? (Proposal: public to use, sign-in to save.)
+- Nav placement: phase 1 puts Loop Lab first under **Tools**; a separate "Engineering" group is still an option.
+- Public or signed-in only? Phase 1: public to use, the notebook saves to the account when signed in and to the browser when not.
 - Which real loops from work would make good case studies (anonymized)?
+
+---
+
+## 12. Phase 1 as built
+
+- **Routes**: `/loop-lab` (bench: Tests · Live · Mechanical · Control · Automation · Notebook),
+  `/loop-lab/cases/[id]` (`flow-pi`, `tank-schedule`), `/loop-lab/processes/[id]`, `/loop-lab/controllers/[kind]`,
+  `/api/loop-lab/notebook` (per-user JSON in `.data/loop-lab/`).
+- **Library** (`lib/loop-lab/`): `linalg` (eigenvalues, expm, c2d), `model` (process/instrument types, valve
+  characteristics), `processes/` (flow, tank), `controllers` (on-off, PID, gain scheduling, characterization,
+  complexity), `sim` (RK4 plant, PLC-style controller cycle, seeded noise), `linear` (Jacobian linearization,
+  half-rule FOPDT, Bode, margins, closed-loop state space with Padé delay, step responses, robustness spread),
+  `tuning` (SIMC, Lambda, ZN, Cohen–Coon, AMIGO), `score` (scorecard), `export` (SCL, ST, reference code,
+  PID_Compact mapping), `setup` (shareable links, notebook), `content` (the three views' text, controller cards,
+  case studies). Tests in `loop-lab.test.ts` check the numerics against hand derivations.
+- **Verdicts the numbers support**: flow loop → PI (PID roughly doubles valve travel for a few % of IAE; on-off
+  cycles the valve hundreds of times an hour); conical tank → characterize (control volume) or gain-schedule; one
+  PI tuned at the bottom overshoots ~18 % near the top, tuned at the top it passes ~6× more noise to the valve.
+- **Not in phase 1**: Monte Carlo is on the linear margins only (not time runs); no trend import yet (phase 2).

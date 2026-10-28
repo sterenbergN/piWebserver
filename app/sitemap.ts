@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const origin = siteOrigin(await headers());
-  const pages = ['', '/resume', '/blog', '/gallery', '/library', '/game', '/party', '/tools', '/stats', '/workout'];
+  const pages = ['', '/resume', '/blog', '/gallery', '/library', '/game', '/party', '/tools', '/loop-lab', '/loop-lab/cases/flow-pi', '/loop-lab/cases/tank-schedule', '/stats', '/workout'];
   const posts = await getPosts();
   return [
     ...pages.map((p) => ({ url: `${origin}${p}`, changeFrequency: 'weekly' as const, priority: p === '' ? 1 : 0.6 })),
