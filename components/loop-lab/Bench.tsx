@@ -10,7 +10,10 @@ import IdentifyPanel from './Identify';
 import LivePanel from './Live';
 import { NotebookPanel, newEntryId, useNotebook } from './Notebook';
 import { PALETTE, ResultSummary, ScorecardTable, TestDetail, TrendPanel } from './Results';
-import { ControllerEditor, ParamEditor, ProcessPicker } from './Setup';
+import { ControllerEditor, ProcessPicker } from './Setup';
+import { fmt } from './Chart';
+import { plantSummary } from '@/lib/loop-lab/plant';
+import { defaultParams } from '@/lib/loop-lab/model';
 import { useRunsMany } from './useRuns';
 import { AutomationView, ControlView, MechanicalView } from './Views';
 
@@ -50,6 +53,11 @@ export default function Bench() {
   const notebook = useNotebook();
   const proc = getProcess(exp.process);
   const ownData = proc.id === 'custom';
+  const plant = useMemo(() => plantSummary(proc, exp.params), [proc, exp.params]);
+  const plantChanges = useMemo(() => {
+    const d = defaultParams(proc);
+    return proc.params.filter((s) => Math.abs((exp.params[s.key] ?? d[s.key]) - d[s.key]) > 1e-9 * Math.max(1, Math.abs(d[s.key]))).length;
+  }, [proc, exp.params]);
   // Import is only there for the identified plant; anywhere else, show the results.
   const shown: TabId = tab === 'identify' && !ownData ? 'tests' : tab;
 
@@ -208,10 +216,18 @@ export default function Bench() {
             <button className="ll-btn is-small ll-mobile-only" style={{ marginTop: '0.7rem' }}
               onClick={() => { chooseTab('tests'); document.getElementById('ll-results')?.scrollIntoView({ block: 'start' }); }}>📊 See the results</button>
           </div>
-          <details className="ll-card">
-            <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: '0.92rem' }}>Process &amp; instrument settings</summary>
-            <ParamEditor proc={proc} params={exp.params} onChange={(params) => setExp({ ...exp, params })} />
-          </details>
+          <div className="ll-card">
+            <div className="ll-card-head" style={{ marginBottom: '0.4rem' }}>
+              <h2 style={{ fontSize: '0.92rem' }}>The plant</h2>
+              {plantChanges > 0 && <span className="ll-badge is-warn">{plantChanges} setting{plantChanges > 1 ? 's' : ''} changed</span>}
+            </div>
+            {plant && (
+              <p className="ll-small" style={{ margin: '0 0 0.5rem' }}>
+                Dead time {fmt(plant.theta, 3)} s · {plant.integrating ? `ramps at ${fmt(plant.kPrime, 3)} /s per %` : `time constant ${fmt(plant.tau, 3)} s · gain ${fmt(plant.K, 3)}`}
+              </p>
+            )}
+            <button className="ll-btn is-small" onClick={() => chooseTab('mechanical')}>⚙️ Change the plant: sizes, valve, transmitter</button>
+          </div>
           <div className="ll-card" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
             <button className="ll-btn is-small" onClick={() => setNaming(describeController(proc, exp.controller))} disabled={!current}>📓 Save to notebook</button>
             <button className="ll-btn is-small" onClick={copyLink}>{copied ? 'Link copied' : '🔗 Copy link'}</button>
@@ -292,7 +308,7 @@ export default function Bench() {
           )}
 
           {shown === 'live' && <div className="ll-card"><LivePanel proc={proc} exp={exp} /></div>}
-          {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} />}
+          {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} onParams={(params) => setExp({ ...exp, params })} />}
           {shown === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}
           {shown === 'automation' && <AutomationView proc={proc} exp={exp} />}
           {shown === 'identify' && <IdentifyPanel onUse={(e) => { startFrom(e); chooseTab('tests'); }} />}

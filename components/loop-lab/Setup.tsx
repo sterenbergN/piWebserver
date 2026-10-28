@@ -61,48 +61,6 @@ const KIND_HINT: Record<ControllerKind, string> = {
   cascade: 'A fast inner loop inside the main one.',
 };
 
-const GROUPS: { id: ParamGroup; label: string }[] = [
-  { id: 'process', label: 'Process' },
-  { id: 'valve', label: 'Control valve' },
-  { id: 'transmitter', label: 'Transmitter' },
-  { id: 'controller', label: 'Controller cycle' },
-];
-
-export function ParamEditor({ proc, params, onChange }: { proc: ProcessDef; params: Params; onChange: (p: Params) => void }) {
-  const defaults = useMemo(() => defaultParams(proc), [proc]);
-  const changed = proc.params.filter((s) => params[s.key] !== defaults[s.key]).length;
-  return (
-    <div>
-      {GROUPS.map((g) => {
-        const specs = proc.params.filter((s) => s.group === g.id);
-        if (!specs.length) return null;
-        return (
-          <div key={g.id}>
-            <div className="ll-sub">{g.label}</div>
-            <div className="ll-fields">
-              {specs.map((s) => s.options ? (
-                <label key={s.key} className="ll-field is-wide" title={s.note}>
-                  <span>{s.label}</span>
-                  <select value={params[s.key]} onChange={(e) => onChange({ ...params, [s.key]: Number(e.target.value) })}>
-                    {s.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </label>
-              ) : (
-                <NumField key={s.key} label={s.symbol ? `${s.label} (${s.symbol})` : s.label} unit={s.unit} title={s.note}
-                  value={params[s.key]} min={s.min} max={s.max} step={s.step} onChange={(v) => onChange({ ...params, [s.key]: v })} />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-      <p className="ll-note">
-        {changed ? `${changed} changed from the defaults. ` : 'All at their defaults. '}
-        {changed > 0 && <button className="ll-link" onClick={() => onChange(defaults)}>Reset</button>}
-      </p>
-    </div>
-  );
-}
-
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
   const set = (k: keyof PidParams) => (v: number) => onChange({ ...pid, [k]: v });
   return (

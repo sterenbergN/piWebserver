@@ -348,3 +348,17 @@ test('auto-tune gives a stable, robust starting point for every process and cont
     }
   }
 });
+
+test('plant goals pick the physical setting that does it: hold-up for a slower exchanger', async () => {
+  const { applyGoal, settingEffects } = await import('./plant');
+  const hx = getProcess('hx');
+  const slower = applyGoal(hx, defaultParams(hx), 'slower')!;
+  assert.equal(slower.changes[0].key, 'Cf');
+  assert.ok(slower.after!.tau > slower.before!.tau * 1.2);
+  const more = applyGoal(hx, defaultParams(hx), 'deadtime')!;
+  assert.ok(more.after!.theta > more.before!.theta * 1.3);
+  // A bigger tank top radius makes the level slower; more inlet capacity, more gain.
+  const tank = getProcess('tank');
+  const e = settingEffects(tank, defaultParams(tank));
+  assert.ok(e.R.dTau > 0.2 && e.Qmax.dK > 0.15);
+});

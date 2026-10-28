@@ -19,6 +19,7 @@ import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt, type Series } from './Chart';
 import { BlockDiagram, type ProbeKey } from './Drawings';
+import PlantEditor from './PlantEditor';
 import { PAndIdFor, ProcessDrawing } from './Schematics';
 import { PALETTE } from './Results';
 
@@ -26,14 +27,16 @@ const linspace = (a: number, b: number, n: number) => Array.from({ length: n }, 
 
 // ─── Mechanical ─────────────────────────────────────────────────────────────
 
-export function MechanicalView({ proc, exp }: { proc: ProcessDef; exp: Experiment }) {
+/** The plant as built. With `onParams`, its settings can be changed here too. */
+export function MechanicalView({ proc, exp, onParams }: { proc: ProcessDef; exp: Experiment; onParams?: (p: Params) => void }) {
   const p = useMemo(() => cleanParams(proc, exp.params), [proc, exp.params]);
   const d = useMemo(() => nominalDisturbances(proc), [proc]);
   const s = useMemo(() => findSteady(proc, p, d, proc.nominalPv), [proc, p, d]);
   const plots = useMemo(() => mechanicalPlots(proc, p, d), [proc, p, d]);
   const content = PROCESS_CONTENT[proc.id];
   return (
-    <MechanicalLayout proc={proc} p={p} d={d} x={steadyState(proc, s)} plots={plots} text={content.mechanical} />
+    <MechanicalLayout proc={proc} p={p} d={d} x={steadyState(proc, s)} plots={plots} text={content.mechanical}
+      editor={onParams ? <PlantEditor proc={proc} params={exp.params} onChange={onParams} /> : null} />
   );
 }
 
@@ -104,13 +107,16 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
   ];
 }
 
-function MechanicalLayout({ proc, p, d, x, plots, text }: { proc: ProcessDef; p: Params; d: Params; x: number[]; plots: MechPlot[]; text: string }) {
+function MechanicalLayout({ proc, p, d, x, plots, text, editor }: {
+  proc: ProcessDef; p: Params; d: Params; x: number[]; plots: MechPlot[]; text: string; editor: React.ReactNode;
+}) {
   return (
     <div>
       <div className="ll-card">
         <ProcessDrawing proc={proc} p={p} d={d} x={x} />
-        <p className="ll-small" style={{ textAlign: 'center' }}>At steady state at {fmt(proc.nominalPv, 3)} {proc.pv.unit}, nominal disturbances.</p>
+        <p className="ll-small" style={{ textAlign: 'center' }}>At steady state at {fmt(proc.nominalPv, 3)} {proc.pv.unit}, nominal disturbances{editor ? ': it follows your settings' : ''}.</p>
       </div>
+      {editor}
       <div className="ll-card"><MathText className="ll-prose">{text}</MathText></div>
       {plots.map((pl) => (
         <div className="ll-card" key={pl.title}>
@@ -119,7 +125,7 @@ function MechanicalLayout({ proc, p, d, x, plots, text }: { proc: ProcessDef; p:
           {pl.note && <p className="ll-note">{pl.note}</p>}
         </div>
       ))}
-      <div className="ll-card">
+      {!editor && <div className="ll-card">
         <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Parameters</h3>
         <div className="ll-table-wrap">
           <table className="ll-table">
@@ -135,7 +141,7 @@ function MechanicalLayout({ proc, p, d, x, plots, text }: { proc: ProcessDef; p:
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
