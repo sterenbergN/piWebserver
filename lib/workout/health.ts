@@ -619,16 +619,28 @@ export function describeSync(summary: SyncSummary): string {
   return problems.length ? `${head} Check: ${problems.join('; ')}.` : head;
 }
 
+/** Heart rate this old (or older) while daily data keeps arriving means the shortcut stopped sending it. */
+export const STALE_HEART_RATE_MS = 12 * 3_600_000;
+
 /**
  * The notification for an automatic sync: the upload's description when
  * something needs fixing (or nothing usable arrived), else empty, so a
- * good sync stays quiet.
+ * good sync stays quiet. Also speaks up when daily data arrives without any
+ * heart rate or energy although the site has had them before and its newest
+ * heart rate (`newestHeartRateMs`, before this upload) is over 12 hours old:
+ * the shortcut's heart rate steps are finding nothing.
  */
-export function syncAlert(summary: SyncSummary): string {
+export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null = null, now = Date.now()): string {
   const empty = !(summary.steps || summary.sleep || summary.weight || summary.bodyFat || summary.restingHr || summary.hrv
     || summary.dailyCalories || summary.heartRate || summary.activeEnergy || summary.workouts);
   const problems = !!(summary.unreadableDates || summary.mismatched?.length || summary.ignored?.length);
-  return empty || problems ? describeSync(summary) : '';
+  if (empty || problems) return describeSync(summary);
+  if (!summary.heartRate && !summary.activeEnergy && newestHeartRateMs !== null && now - newestHeartRateMs > STALE_HEART_RATE_MS) {
+    const hours = Math.round((now - newestHeartRateMs) / 3_600_000);
+    const age = hours >= 48 ? `${Math.round(hours / 24)} days` : `${hours} hours`;
+    return `No heart rate or energy came in, and the newest on the site is ${age} old. The shortcut's heart rate steps are finding nothing: check its "Since" step (Health & plan › Sync), then run the 30-day shortcut to fill the gap.`;
+  }
+  return '';
 }
 
 /**

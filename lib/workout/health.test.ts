@@ -234,6 +234,12 @@ test('an automatic sync only alerts when something needs fixing', () => {
   assert.equal(syncAlert(ok), '');
   assert.match(syncAlert({ ...ok, unreadableDates: 3 }), /Check: 3 dates couldn't be read/);
   assert.equal(syncAlert({ ...ok, steps: 0, sleep: 0, restingHr: 0, hrv: 0, dailyCalories: 0, heartRate: 0, activeEnergy: 0, workouts: 0 }), 'Nothing usable in this upload.');
+  // Daily data keeps coming but heart rate stopped days ago: say so.
+  const now = Date.parse('2026-10-28T20:00:00Z');
+  const noHr = { ...ok, heartRate: 0, activeEnergy: 0 };
+  assert.match(syncAlert(noHr, Date.parse('2026-10-22T13:44:00Z'), now), /newest on the site is 6 days old/);
+  assert.equal(syncAlert(noHr, now - 2 * 3_600_000, now), ''); // a quiet couple of hours
+  assert.equal(syncAlert(noHr, null, now), ''); // never sent heart rate (no Watch)
 });
 
 test('the daily shortcut sends heart rate and energy from shortly before the newest reading on hand', () => {

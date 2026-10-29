@@ -13,7 +13,7 @@ import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, alignNote, 
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import { dailyBurn, daysSince, fullWearDays, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
-import { describeSync, type HealthDay, type MatchCheck, type PublicHealth } from '@/lib/workout/health';
+import { describeSync, STALE_HEART_RATE_MS, type HealthDay, type MatchCheck, type PublicHealth } from '@/lib/workout/health';
 import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
@@ -377,6 +377,8 @@ function WaitingWorkout({ workout, check }: { workout: Workout; check: MatchChec
     why = 'It has no timer or set times, so there’s no way to tell when it happened.';
   } else if (!check.newestHeartRate && !check.newestEnergy) {
     why = 'No heart rate or energy readings have reached the site. Check that the shortcut sends Heart Rate and Active Energy.';
+  } else if (check.newestHeartRate && Date.parse(check.to) - Date.parse(check.newestHeartRate) > STALE_HEART_RATE_MS) {
+    why = `No heart rate has reached the site since ${clock(check.newestHeartRate)}, so the shortcut has stopped sending it (steps and sleep don’t depend on it). Check the shortcut’s “Since” step, then run the 30-day shortcut to fill the gap.`;
   } else if (check.newestHeartRate && check.newestHeartRate < check.to && (!check.newestEnergy || check.newestEnergy < check.to)) {
     why = `The site’s newest heart rate is from ${clock(check.newestHeartRate)}, before this workout ended. It should arrive with the next sync after your Watch has passed it to your phone.`;
   } else {
