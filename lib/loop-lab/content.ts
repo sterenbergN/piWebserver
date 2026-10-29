@@ -219,6 +219,176 @@ In valve % (single loop), or in steam-flow setpoint (with cascade), that is the 
 
 The price is three more transmitters' worth of trust, ten tuning numbers instead of two, and about 2.8× more valve activity. Each piece is worth adding only if its upset is big enough to matter in your plant.`,
   },
+  surge: {
+    mechanical: String.raw`A buffer vessel, **T-601**, between two plant sections. The upstream section sends whatever it produces. Pump **P-601** draws the outflow through **LV-601** to the downstream section, which would rather see a steady feed.
+
+**Mass balance.** With the outflow set by the pump and valve, not by the level:
+
+$$A\frac{dh}{dt} = Q_{in} - Q_{out}, \qquad Q_{out} = Q_{max}\, f(s)$$
+
+Nothing on the right depends on $h$, so the level is a pure integrator: any imbalance, however small, fills or empties the tank at a steady rate.
+
+**The tank's room.** 4 m² of cross-section and 3 m of height hold 12 m³. At 1.5 m there are 6 m³ of room each way. A 15 m³/h upstream swing fills the room above the setpoint in 24 minutes. That volume is the tank's whole reason for existing.
+
+**What goes wrong in practice.**
+- Somebody tunes the level loop tightly, "because a level should be on setpoint", and the downstream section gets every upstream swing.
+- The tank is then made bigger to fix the "surge problem", and the new tank does no better, because the controller still doesn't use it.`,
+    control: String.raw`**An integrator with almost no dead time.** Valve to level:
+
+$$G(s) = \frac{-k'}{s}\,e^{-\theta s},\qquad k' = \frac{Q_{max}}{100\,A}\cdot\frac{100}{H} \approx 0.0014\ \%/\text{s per }\%$$
+
+The gain is negative (more outflow, lower level), so the controller acts in reverse.
+
+**Two opposite goals.**
+- **Tight level control** keeps $h$ on setpoint by moving $Q_{out}$ with $Q_{in}$. The outflow then copies every upstream swing.
+- **Averaging level control** lets the level move within its limits so the outflow changes slowly. The tank absorbs the upset; the outflow only follows the *average* inflow.
+
+**Choosing the speed from the room.** With the Lambda rule for integrating processes ($K_c = (2\lambda+\theta)/(k'(\lambda+\theta)^2)$, $T_i = 2\lambda + \theta$), a step $\Delta$ in inflow (in % of the outlet's capacity) moves the level by at most about
+
+$$\Delta h_{max} \approx \frac{k'\,\Delta\,\lambda}{e}$$
+
+before it turns round. So pick the largest swing you can tolerate and solve for the arrest time $\lambda$. Here, a 25 % inflow step using 25 % of the span gives $\lambda \approx 33$ min.
+
+**P-only works.** An offset is harmless in a buffer. P-only with $K_c = 1/(k'\lambda)$ is even smoother, and it is what many plants use.`,
+    automation: String.raw`**Tags.** LT-601 (radar or DP level, 0–3 m), LIC-601, LV-601 on the pump discharge.
+
+**Siemens.**
+- **PID_Compact** with **InvertControl = TRUE**: more output means more outflow and a lower level.
+- A slow cycle is fine: OB30 at 1 s or slower. The loop's time scale is tens of minutes.
+- Its pretuning will try to make the loop fast. For averaging control, enter the gains by hand.
+
+**Protecting the limits.** Averaging control uses the tank's room on purpose, so the limits need their own protection:
+- **High-level override** that opens the outlet, or a **high-high trip** that stops the feed.
+- **Low-level** pump protection.
+- Some plants use an error-squared or gap controller: very little action near the setpoint, strong action near the limits. PID_Compact doesn't do this; it is a few lines of SCL on the gain.
+
+**Alarms.** Put level alarms at the real limits, not near the setpoint. An averaging level spends its life away from setpoint, and a deviation alarm would nag the operators all day.`,
+    commissioning: [
+      'Agree the level limits with operations first: how high and how low the level may go in normal running. That is the tuning spec.',
+      'Check LT-601 reads the whole working range, and that the high and low alarms and trips are at the real limits.',
+      'Measure k′: in manual, step the outflow 5 % and time the ramp (or calculate it from the tank area and the pump capacity).',
+      'Choose the arrest time λ from the allowed swing and the largest normal upset, and compute Kc and Ti (or P-only).',
+      'Watch a few days of upstream upsets: the outflow should drift, not jump, and the level should stay inside its limits.',
+      'If the level hits a limit, slow down less (shorter λ) rather than adding derivative or tightening Ti.',
+    ],
+    verdict: String.raw`**A slow P or PI, tuned from the room the tank has.** The scorecard's IAE will call it terrible, and that's the wrong measure here: the outflow moves about eight times more gently than with a tight tuning, and the downstream section never sees the upstream swings. Protect the limits with an override or a trip, not by tightening the loop.`,
+  },
+  feeder: {
+    mechanical: String.raw`A screw feeder under a hopper discharges bulk solids (limestone, say) onto a belt conveyor. A weigh idler near the far end of the belt, **WT-701**, measures the feed rate. The screw's motor runs on a VFD, **SC-701**, which the controller sets.
+
+**The screw.** Its discharge follows its speed within a few seconds ($\tau_s \approx 4$ s, how the hopper flows and the flights fill):
+
+$$\tau_s \frac{dF}{dt} = F_{max}\,\frac{n}{100}\,\frac{\rho}{\rho_0} - F$$
+
+Bulk density $\rho$ changes with moisture, particle size and how full the hopper is. A wetter, lighter batch delivers less per turn.
+
+**The belt.** Material takes $L/v$ to travel from the screw to the scale: here 30 s. That is pure transport delay. It is set by the layout and the belt speed, and nothing in the controller can shorten it.
+
+**Where the time goes.** Valve (VFD ramp) 1 s, screw 4 s, belt 30 s, weighing filter 3 s. More than four fifths of the response time is dead time.
+
+**Note on the scorecard.** Performance is judged on the rate leaving the screw: what the kiln will get, 30 s later.`,
+    control: String.raw`**Dead-time dominant.** From speed to measured rate:
+
+$$G(s) \approx \frac{K\,e^{-\theta s}}{\tau s + 1},\qquad K \approx 0.8,\ \tau \approx 5.5\ \text{s},\ \theta \approx 33\ \text{s}$$
+
+With $\theta/\tau \approx 6$, this is the hard end of the scale.
+
+**What feedback can do.** A PI can't respond to anything before $\theta$ has passed, and it must not push harder in the meantime. SIMC gives $T_i = \tau$ and $K_c = \tau/(K(\tau_c + \theta))$, with $\tau_c \ge \theta$ for robustness. The result is an almost pure integral controller, and a closed loop that settles in roughly $4\theta$.
+
+**What a Smith predictor does.** It runs a model of the process beside the plant, $G_m(s) = K_m/(\tau_m s + 1)$, plus a copy delayed by $\theta_m$. It feeds the PI with
+
+$$y_{fb} = y + G_m u - G_m e^{-\theta_m s} u$$
+
+If the model is right, the delayed model output cancels the real measurement's response to the controller's own moves. The PI then sees the undelayed process $G_m$ and can be tuned for $\tau = 5.5$ s instead of $\theta = 33$ s. The setpoint response becomes "the fast response, $\theta$ later".
+
+**What it can't do.**
+- **Load upsets** (a density change) still reach the scale 30 s late, and nothing can act before then. Smith only helps the recovery.
+- **Model error.** A wrong dead time leaves a mismatch term that acts like dead time the PI doesn't know about. A PI tuned too fast inside the predictor then rings.`,
+    automation: String.raw`**Tags.** WT-701 (belt scale, 0–20 t/h), WIC-701, SC-701 (VFD speed reference, 0–100 %).
+
+**Siemens.**
+- **PID_Compact** in OB30. A 0.5 s cycle is plenty when the dead time is 30 s.
+- PID_Compact has **no dead-time compensation**. Put the exported **LL_Smith** in front of it: it reads the scale and the PID's last output, and gives the PID a corrected input.
+- The dead time in the model is a buffer of $\theta/T_s$ values (66 here). Keep the cycle constant (a cyclic interrupt, not OB1), or the buffer's length in time changes.
+
+**Belt speed.** The belt is often on its own VFD. If its speed changes, the dead time changes with it. Calculate $\theta_m = L/v$ from the belt speed signal every cycle rather than typing in a constant.
+
+**Weighing.**
+- **Zero the belt scale** regularly, with the belt running empty: an offset is a permanent error in the feed rate.
+- **Totalize** the rate for the batch record. Totalize the measured rate, not the setpoint.`,
+    commissioning: [
+      'Calibrate the belt scale: zero with the belt running empty, then span with a test chain or a weighed sample.',
+      'Measure the dead time: step the screw speed in manual and time how long until the scale responds. Compare with belt length / belt speed.',
+      'Bump test for the gain and the lag after the dead time. Repeat with a different material if the density varies a lot.',
+      'Commission a PI first (τc ≈ θ). It is the fallback whenever the predictor is switched off.',
+      'Then the Smith predictor: model from the bump test, PI tuned for the lag alone but no faster than about θ/2.',
+      'Test with the belt slowed by 20 %: if the loop rings, make the PI inside the predictor slower, or tie the model dead time to the belt speed.',
+    ],
+    verdict: String.raw`**A PI tuned with $\tau_c \approx \theta$ is the honest baseline. A Smith predictor roughly halves the IAE**, mostly on setpoint changes: it settles in about 55 s instead of 90 s. It does little for density upsets, which nothing can see until they reach the scale.
+
+It is worth it when rate changes are frequent and the dead time is known and stable. Tie the model's dead time to the belt speed if the belt can change speed. Tune the PI inside the predictor no faster than about half the dead time, or a slowed belt will make it ring.`,
+  },
+  drum: {
+    mechanical: String.raw`The steam drum of a water-tube boiler. Water from the drum flows down the downcomers to the furnace, boils in the risers, and the steam-water mixture comes back to the drum, where steam separates and leaves through the top. **FV-502** controls the feedwater; **LT-501** reads the level, in mm from the normal water level (NWL).
+
+**Why the level matters.**
+- **Too high:** water carries over with the steam into the superheater and turbine.
+- **Too low:** the risers starve and the tubes overheat.
+
+Both are trips, typically at ±200–300 mm. The drum holds only a couple of minutes of steam production.
+
+**The level is not just the water inventory.** The water below the surface is full of steam bubbles, so
+
+$$L = L_w + L_{swell} - L_{shrink}$$
+
+- **Water inventory:** $\rho A\,dL_w/dt = q_{fw} - q_s$, an integrator.
+- **Swell:** more steam drawn drops the drum pressure, the water flashes, and the bubbles push the level up, although the drum is losing water.
+- **Shrink:** more cold feedwater condenses bubbles, and the level drops, although the drum is gaining water.
+
+Both effects are bigger at low pressure, where steam takes up more volume per kg.`,
+    control: String.raw`**Inverse response on an integrator.** From feedwater to level:
+
+$$\frac{L(s)}{q_{fw}(s)} = \frac{k}{s} - \frac{k_{sh}}{\tau_{sh}s + 1} = k\,\frac{1 - (k_{sh}/k - \tau_{sh})\,s}{s(\tau_{sh}s + 1)}$$
+
+That is a zero in the right half plane at $1/(k_{sh}/k - \tau_{sh})$, about 35 s here. A right-half-plane zero limits bandwidth the way dead time does. The level loop can't be faster than about that time, whatever the tuning, so for tuning it counts as about 46 s of dead time. A model that keeps only the poles would say 11 s, and a PI tuned on it is fragile (Ms ≈ 6).
+
+**Steam demand is the big upset**, and it enters with the wrong sign first. A level-only controller sees the swell, cuts the feedwater just when the drum needs more, and then has to recover a much larger drop.
+
+**Three-element control.**
+1. **Feedforward from steam flow:** feedwater follows steam, 1 t/h for 1 t/h, the mass balance. It acts on the real cause, not on the misleading level.
+2. **Cascade on feedwater flow:** an inner flow loop makes the feedwater actually equal its setpoint, whatever the pump pressure does.
+3. **The level controller** only trims the slow mismatch: blowdown, meter errors, the swell settling out.
+
+For an integrating process the feedforward gain is the ratio of the ramp rates, not of static gains. Here that is the mass balance: 1 t/h of feedwater per t/h of steam, 0.83 % of the feedwater span.`,
+    automation: String.raw`**Tags.** LT-501 (DP level, compensated for drum pressure), LIC-501 (master), FT-502 and FIC-502 (feedwater flow, slave), FT-503 (steam flow), FY-503 (the summing block), FV-502.
+
+**Siemens.**
+- Two PID_Compact instances, or **PID_Temp** in cascade, in the same OB30 (0.5 s), slave after master.
+- The feedforward goes into the slave's setpoint: $q_{fw,sp} = q_s + \text{LIC-501 output}$, with the level controller's output centred on zero (a bias) or scaled as a trim of ±20 %.
+- Start in **single-element** at low load (steam flow is unreliable below 20–30 %), then switch to three-element automatically above a load threshold, bumplessly.
+
+**Measurement.**
+- **Drum level DP transmitters must be density-compensated** for drum pressure. Uncompensated, the reading is wrong by tens of mm at part pressure.
+- Use **two or three level transmitters** with a median select. The trip system has its own, independent transmitters.
+- **Steam flow** should be pressure and temperature compensated, since it feeds forward one-for-one.
+
+**Elsewhere.** Every boiler DCS library has a three-element drum-level template. The mass-balance feedforward plus a level trim is the same everywhere.`,
+    commissioning: [
+      'Verify the level transmitters against the gauge glass at operating pressure; check the density compensation over the pressure range.',
+      'Calibrate FT-502 and FT-503 against each other at steady load: at steady state, feedwater ≈ steam + blowdown.',
+      'Tune the feedwater flow loop first (fast, well damped), in automatic with a local setpoint.',
+      'Tune the level master slowly with the flow loop closed: respect the shrink, about 45 s of effective dead time here.',
+      'Add the steam-flow feedforward at gain 1 (mass balance); step the load and check the level only shows the swell, then returns.',
+      'Test the switch between single and three-element, and what happens if FT-503 fails (fall back to single-element).',
+    ],
+    verdict: String.raw`**Three-element control.**
+- A level-only PI either has to be slow (about 100–160 mm swings on load steps, nowhere near recovered in five minutes) or is fragile, and a 50 % swell increase takes it to the valve limits.
+- Steam-flow feedforward cuts the load-step swings to about 20–35 mm.
+- The feedwater flow loop removes pump-pressure upsets almost entirely.
+- Together, the total IAE falls by three quarters.
+
+This is the textbook case of the controller ladder done right: each element fixes one specific, physical problem.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -502,7 +672,55 @@ $$u_{ff} = -\frac{K_d}{K_u}\cdot\frac{\tau_u s + 1}{\tau_d s + 1}\cdot e^{-(\the
 - **HMI:** show both loops on the faceplate, with the slave's mode visible.`,
     broad: String.raw`- **DCS PID blocks** have a cascade mode (often called CAS). The slave sends its actual setpoint back (back-calculation) so the master can initialise and avoid windup.
 - **Motion control** is cascade throughout: current inside velocity inside position, each loop several times faster than the one outside it.`,
+  },  smith: {
+    summary: 'A PID that sees a prediction of its measurement. A model of the process runs beside the plant, with and without its dead time, and the difference is added to the measurement, so the PID can be tuned as if the dead time weren\'t there.',
+    theory: String.raw`O. J. M. Smith, 1957. Split the process into a fast part and a delay, $G(s) = G_0(s)\,e^{-\theta s}$, and keep a model of both, $G_m(s) = G_{m0}(s)\,e^{-\theta_m s}$. The controller $C$ is fed
+
+$$y_{fb} = y + G_{m0}\,u - G_{m0}\,e^{-\theta_m s}\,u$$
+
+If the model is exact, the last term cancels the real measurement's response to $u$. What is left is $G_{m0}u$: the process *without* its delay. The closed loop becomes
+
+$$\frac{y}{r} = \frac{C\,G_0}{1 + C\,G_0}\,e^{-\theta s}$$
+
+The delay has moved out of the loop. $C$ is tuned for $G_0$ alone, and the answer arrives $\theta$ later.
+
+**As a single controller.** The predictor and $C$ together are
+
+$$C_{eff} = \frac{C}{1 + C\,G_{m0}\,(1 - e^{-\theta_m s})}$$
+
+That's what the Bode plot here uses. Its gain ripples with frequency, every $2\pi/\theta_m$ rad/s, which is why the delay margin, not the phase margin, is the number to watch.
+
+**What it doesn't change.** Load disturbances still pass through the plant's full delay before the controller sees them. Only the response *after* that gets faster. Setpoint tracking gains the most.`,
+    works: [
+      'Dead time much longer than the process lag (θ/τ above about 1): belts, long sample lines, paper machines, extruders, analysers.',
+      'The dead time is known and steady, or can be calculated (belt length / belt speed).',
+      'Frequent setpoint changes, where "the fast response, θ later" is a real gain.',
+    ],
+    breaks: [
+      'The dead time changes and the model doesn\'t: 20 % error with a fast inner PI can be worse than a plain PI.',
+      'Integrating processes: a plain Smith predictor can\'t reject a constant load on one (it leaves an offset or drifts). They need a modified structure.',
+      'Load upsets: they still take the full dead time to be seen, so the predictor helps little there.',
+      'Maintenance: three model parameters someone must keep right, inside a structure most technicians haven\'t met.',
+    ],
+    tuning: String.raw`1. **Identify** gain, lag and dead time from a bump test (FOPDT is usually enough).
+2. **Put them in the model.** $\theta_m$ is the whole dead time the loop sees, half a controller cycle included.
+3. **Tune the PI for the lag alone**, as if $\theta = 0$. SIMC gives $T_i = \tau$, $K_c = \tau/(K\tau_c)$.
+4. **Choose $\tau_c$ for robustness, not speed.** The undelayed process would allow $\tau_c$ of a few seconds, but any error in $\theta_m$ acts like unmodelled dead time. Here $\tau_c = \max(\tau, \theta/2)$ keeps Ms near 2 with the dead time ±15 % off. Faster and the loop rings as soon as the belt slows down.
+5. **Test with the model wrong on purpose:** dead time ±20 %, gain ±20 %.`,
+    implementation: String.raw`- **Order in the cycle:** update the model with *last* cycle's controller output, compute the corrected measurement, then run the PID.
+- **The dead time is a ring buffer** of $n = \theta_m/T_s$ model outputs. The cycle time must be constant, so use a cyclic interrupt.
+- **Manual mode:** re-zero the model (output = the present value, buffer cleared), so switching to automatic is bumpless.
+- **Show the real measurement** to the operator, not the corrected one.
+- **Variable dead time:** recompute $n$ from the speed that causes it (belt speed, line flow).`,
+    siemens: String.raw`- **No standard block** for dead-time compensation in PID_Compact or PID_Temp.
+- The exported **LL_Smith** FB (SCL, ring buffer of up to 1000 cycles) goes in front of PID_Compact: its Corrected output feeds PID_Compact's Input.
+- For longer dead times, sample the model slower than the PID (a buffer entry every few cycles), or use a larger array.
+- Keep the PID's own pretuning switched off: it would tune for the delayed process.`,
+    broad: String.raw`- **DCS libraries** often have a dead-time block (DEADTIME, DELAY) that makes building a Smith predictor a few blocks of configuration.
+- **IMC** (internal model control) is the general form of the same idea: a model in parallel with the plant, and the controller acting on the model error. A Smith predictor is IMC with a PI in place of the model inverse.
+- **MPC** handles dead time natively, in its prediction, along with constraints.`,
   },
+
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -786,6 +1004,213 @@ The **mechanical view** shows why each one matters.`,
 - **Both** only when each upset is big enough, in your plant, to pay for its transmitter and its tuning.
 
 If the steam header is steady, the flow-and-feed feedforward alone is the cheaper win. If production is steady and the boiler isn't, cascade alone.`,
+      },
+    ],
+  },
+  {
+    id: 'surge-averaging',
+    process: 'surge',
+    title: 'The surge tank: averaging level control',
+    question: 'A level loop that holds its setpoint perfectly and is still doing the wrong job. What should a buffer tank\'s controller actually do?',
+    family: 'pid-wins',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`T-601 sits between an upstream section that swings its throughput and a downstream section that wants a steady feed. P-601 and LV-601 set the outflow. The tank holds 12 m³, and at 1.5 m there are 6 m³ of room each way.
+
+The **mechanical view** shows how long that room lasts for a given imbalance: about 24 minutes for a 15 m³/h swing.`,
+      },
+      {
+        title: 'Baseline: a level loop tuned like any other',
+        body: String.raw`SIMC on the integrating model gives a tight PI ($K_c \approx 6$, $T_i \approx 7.5$ min, inverted).
+
+The level is a picture of good control: it stays within about ±0.2 m of 1.5 m. But look at the valve. **The outflow copies the inflow**: it swings from 17 to 81 % (10 to 48 m³/h) and changes by up to 13 m³/h in a minute. The downstream section gets every upstream swing, just a little later. The tank's 12 m³ are not being used.`,
+        presets: [{ label: 'Tight PI', controller: PI(6, 450, { invert: true }) }],
+        scenarios: ['surges', 'batch-dumps'],
+      },
+      {
+        title: 'Averaging control: use the room',
+        body: String.raw`Decide how far the level may move: say a quarter of the span (0.75 m) for an upset of a quarter of the outlet's capacity (15 m³/h). The Lambda rule for integrating processes then gives the arrest time
+
+$$\lambda = \frac{e\cdot\Delta h_{max}}{k'\,\Delta} \approx 33\ \text{min}$$
+
+and from it $K_c \approx 0.73$, $T_i \approx 65$ min. **Auto-tune** does exactly this on this process.
+
+**Result.** The level now wanders between 0.9 and 2.2 m. The outflow moves between 37 and 70 % and never faster than about 1.6 m³/h per minute: **eight times gentler**. Valve travel drops from 21 to under 3 strokes an hour.
+
+**The scorecard's IAE is several times worse.** That isn't a failure, it's the point: IAE measures distance from setpoint, and for a buffer tank that is the wrong goal.`,
+        presets: [
+          { label: 'Tight PI', controller: PI(6, 450, { invert: true }) },
+          { label: 'Averaging PI', controller: PI(0.73, 3920, { invert: true }) },
+        ],
+        scenarios: ['surges', 'batch-dumps', 'noisy'],
+      },
+      {
+        title: 'P-only, and where the limits come in',
+        body: String.raw`Many surge tanks run **P-only**: $K_c = 1/(k'\lambda) \approx 0.37$. The level settles wherever the flows balance, and that offset doesn't matter in a buffer. The outflow is smoother still, about 0.7 m³/h per minute at most.
+
+The cost is room. P-only lets the level reach 2.4 m in the surge test, and 2.5 m (of 3) on the model mismatch test, where the tank is effectively 30 % smaller.
+
+So on a real tank the limits get their own protection: a **high-level override** that opens the outlet, or a trip. That isn't a reason to tighten the loop. Override control is the next phase of Loop Lab.`,
+        presets: [
+          { label: 'Averaging PI', controller: PI(0.73, 3920, { invert: true }) },
+          { label: 'Averaging P-only', controller: PI(0.37, 0, { invert: true }) },
+        ],
+        scenarios: ['surges', 'mismatch'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**A slow PI or P-only, tuned from the room the tank has.**
+- Choose the arrest time from the allowed level swing, not from the loop's speed.
+- Judge the loop by how smooth the outflow is, and whether the level stays inside its limits.
+- Protect the limits with an override or a trip.
+
+This is PID winning: nothing up the ladder does the job better, as long as the tuning matches what the tank is for.`,
+      },
+    ],
+  },
+  {
+    id: 'feeder-smith',
+    process: 'feeder',
+    title: 'The belt feeder: dead time and the Smith predictor',
+    question: 'Thirty seconds of belt between the screw and the scale. How much faster can a controller that predicts the measurement be, and what happens when its prediction is wrong?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A screw feeder (SC-701, on a VFD) drops material onto a belt, and the belt scale WT-701 weighs it 30 s later. The screw itself answers in about 4 s.
+
+Bump test: $K \approx 0.8$, $\tau \approx 5.5$ s, $\theta \approx 33$ s. The dead time is six times the lag. The **mechanical view** shows the two curves: what leaves the screw, and what the scale sees.`,
+      },
+      {
+        title: 'Baseline: PI, as fast as it safely goes',
+        body: String.raw`SIMC with $\tau_c = \theta$ gives $K_c \approx 0.1$, $T_i = 5.5$ s: almost pure integral action. That's the right shape for a dead-time dominant process.
+- Rate changes settle in about 90 s, with a few percent of overshoot.
+- Density upsets recover in about two minutes.
+- Ms is 1.8.
+
+**Auto-tune** for a PI is more careful still ($\tau_c = 3\theta$, $K_c \approx 0.05$) and doesn't settle at all within the 200 s between rate changes.`,
+        presets: [
+          { label: 'PI (τc = 3θ, auto)', controller: PI(0.0525, 5.5) },
+          { label: 'PI (τc = θ)', controller: PI(0.1, 5.5) },
+        ],
+        scenarios: ['sp-steps', 'density'],
+      },
+      {
+        title: 'Smith predictor',
+        body: String.raw`Give the controller a model: $K_m = 0.8$, $\tau_m = 5.5$ s, $\theta_m = 32.8$ s (the **Fill from the plant** button). The PI inside now sees only the 5.5 s lag.
+
+Tuned for $\tau_c = \max(\tau, \theta/2) \approx 16$ s, it gets $K_c \approx 0.41$, four times the plain PI's gain.
+
+**Result.**
+- Rate changes settle in about 57 s instead of 90 s, and the setpoint IAE falls from 29 to 13.
+- On the bench, the trend shows a dashed "predicted" line: what the PID sees, 33 s ahead of the scale.
+- Density upsets peak just as high (nothing can see them before the scale), but recover in 70–95 s instead of 110–130 s.
+
+**The cost.** Four times the gain passes four times the scale noise to the VFD: 78 %/min of activity instead of 20.`,
+        presets: [
+          { label: 'PI (τc = θ)', controller: PI(0.1, 5.5) },
+          { label: 'Smith predictor', controller: { kind: 'smith', pid: { ...DEFAULT_PID, Kc: 0.41, Ti: 5.5 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } } },
+        ],
+        scenarios: ['sp-steps', 'density', 'noisy'],
+      },
+      {
+        title: 'When the model is wrong',
+        body: String.raw`Someone slows the belt: the dead time is now 25 % longer than the model's, and the screw has worn (15 % less capacity).
+
+The Smith predictor tuned with $\tau_c = \theta/2$ shrugs it off: about 5 % overshoot, still settling faster than the PI.
+
+Now tune the PI inside the predictor for the lag alone ($K_c = 1.2$), which is what the theory seems to allow. On the true plant its setpoint IAE is less than half again. On the slowed belt, **it overshoots by 27 % and takes nearly five minutes to settle.** The model error acts like dead time the PI doesn't know about.
+
+The robustness rows show it before you ever run the test: Ms 2.4 against 2.0.`,
+        presets: [
+          { label: 'Smith (τc = θ/2)', controller: { kind: 'smith', pid: { ...DEFAULT_PID, Kc: 0.41, Ti: 5.5 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } } },
+          { label: 'Smith (tuned for the lag only)', controller: { kind: 'smith', pid: { ...DEFAULT_PID, Kc: 1.2, Ti: 5.5 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } } },
+          { label: 'PI (τc = θ)', controller: PI(0.1, 5.5) },
+        ],
+        scenarios: ['mismatch', 'sp-steps'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**A Smith predictor roughly halves the IAE on this loop, if the dead time is known.**
+- Calculate the model's dead time from the belt speed if the belt can change speed.
+- Tune the PI inside it for robustness ($\tau_c$ around half the dead time), not for the lag alone.
+- Keep the plain PI ($\tau_c = \theta$) as the fallback.
+
+If rate changes are rare and the material varies more than the rate does, the PI alone is nearly as good, and anyone can maintain it.`,
+      },
+    ],
+  },
+  {
+    id: 'drum-three-element',
+    process: 'drum',
+    title: 'The boiler drum: why three-element control exists',
+    question: 'More steam makes the level rise. More feedwater makes it fall. How do you control a level that lies to you, and what does each extra measurement buy?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A steam drum: feedwater in through FV-502, steam out to the turbine, and the level must stay within about ±300 mm, or the boiler trips.
+
+The level reading includes the steam bubbles in the water. The **mechanical view** shows a 10 t/h step each way, valve fixed:
+- **More steam:** the level *rises* by up to 30 mm (swell) before it falls.
+- **More feedwater:** it *dips* by up to 20 mm (shrink), and is only back where it started after about 40 s.`,
+      },
+      {
+        title: 'Single element: level only',
+        body: String.raw`A level PI is fighting a process whose first response has the wrong sign. The shrink is a right-half-plane zero, about 46 s of effective dead time. SIMC on that gives $K_c \approx 0.7$, $T_i \approx 12$ min (Ms 1.4).
+
+**Result.** A 15 t/h load increase swells the level, the controller *cuts* feedwater, and the level then drops about 100 mm. A 25 t/h load cut takes it 160 mm the other way. Neither has recovered five minutes later.
+
+**Ignoring the shrink** gives $\theta \approx 11$ s and a PI three times as fast ($K_c \approx 2$, $T_i \approx 4.3$ min). Its swings are smaller, but Ms is 6, setpoint changes overshoot by 50 %, and on the mismatch test (low pressure, 50 % more swell) it slams the valve between 0 and 100 %.`,
+        presets: [
+          { label: 'Level PI (shrink counted)', controller: PI(0.7, 740) },
+          { label: 'Level PI (shrink ignored)', controller: PI(2, 260) },
+        ],
+        scenarios: ['load-steps', 'mismatch'],
+      },
+      {
+        title: 'Two elements: add steam-flow feedforward',
+        body: String.raw`Measure the steam flow (FT-503), and move the feedwater with it: 1 t/h for 1 t/h, which is the mass balance. On an integrating process the feedforward gain is the ratio of the ramp rates; **Design from model** finds the same 1 %/(t/h).
+
+**Result.** Load steps now show little more than the swell itself: about 20–35 mm instead of 100–160 mm, back within a few minutes. The level PI only trims.
+
+A dip in feedwater pump pressure still costs 67 mm, because nothing measures the feedwater.`,
+        presets: [
+          { label: 'Level PI', controller: PI(0.7, 740) },
+          { label: 'Level PI + steam feedforward', controller: { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 0.7, Ti: 740 }, ff: [{ from: 'qs', gain: 1, lead: 0, lag: 0 }] } },
+        ],
+        scenarios: ['load-steps', 'fw-pressure'],
+      },
+      {
+        title: 'Three elements: and a feedwater flow loop',
+        body: String.raw`Put a flow loop on the feedwater (FT-502 → FIC-502 → FV-502). The level controller and the steam feedforward now set its *setpoint*, in t/h: 0.83 % of the 120 t/h span per t/h of steam.
+
+**Result.**
+- **Pump pressure dips:** the flow loop corrects them in seconds, and the level barely moves (3 mm instead of 67).
+- **Load steps:** as good as two-element.
+- **Total IAE:** down from 430 to about 107.
+
+The level controller is now a slow trim on a mass balance, which is all a level that lies to you can be trusted with.
+
+**The cost.** About twice the valve activity, from the flow loop chasing a noisy flow signal.`,
+        presets: [
+          { label: 'Level PI', controller: PI(0.7, 740) },
+          { label: 'Cascade (no feedforward)', controller: { kind: 'cascade', outer: { ...DEFAULT_PID, Kc: 0.6, Ti: 740 }, inner: { ...DEFAULT_PID, Kc: 1, Ti: 2.5 }, ff: [] } },
+          { label: 'Three-element', controller: { kind: 'cascade', outer: { ...DEFAULT_PID, Kc: 0.6, Ti: 740 }, inner: { ...DEFAULT_PID, Kc: 1, Ti: 2.5 }, ff: [{ from: 'qs', gain: 0.833, lead: 0, lag: 0 }] } },
+        ],
+        scenarios: ['load-steps', 'fw-pressure', 'mismatch'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**Three-element control, because each element fixes one physical problem:**
+- **Steam flow feedforward** for the load, which the level reports the wrong way round.
+- **The feedwater flow loop** for the pump pressure.
+- **A slow level trim** for everything else.
+
+Single-element is still used at low load, where the steam flow measurement is unreliable; switch over bumplessly above 20–30 % load.
+
+The same pattern fits any level with inverse response or a dominant measured flow: feed forward the mass balance, close a flow loop, trim on level.`,
       },
     ],
   },

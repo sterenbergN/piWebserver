@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CONTROLLER_KINDS, defaultController, defaultInnerFeedforward, isAvailable,
-  type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint,
+  type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
 } from '@/lib/loop-lab/controllers';
 import { defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { PROCESSES } from '@/lib/loop-lab/processes';
@@ -59,6 +59,7 @@ const KIND_HINT: Record<ControllerKind, string> = {
   characterized: 'A PID on a straightened-out measurement or output.',
   feedforward: 'A PID plus action on measured disturbances, before they arrive.',
   cascade: 'A fast inner loop inside the main one.',
+  smith: 'A PID that sees a prediction of the measurement, with the dead time taken out.',
 };
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -133,9 +134,10 @@ export function ControllerEditor({ proc, params, config, onChange }: {
   const switchKind = (kind: ControllerKind) => {
     if (kind === config.kind || !isAvailable(proc, kind)) return;
     const next = defaultController(kind, proc);
-    // Carry the PID settings across where both have them (a cascade master is tuned in other units, so it keeps its own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade') next.pid = { ...prev };
+    // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
+    // Smith predictor's PID for a process without dead time, so those keep their own).
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'smith' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'smith') next.pid = { ...prev };
     if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
@@ -176,6 +178,14 @@ export function ControllerEditor({ proc, params, config, onChange }: {
             <div className="ll-sub">Feedforward into the slave setpoint</div>
             <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff} target={`the ${proc.secondary.label.toLowerCase()} setpoint's span`}
               onChange={(ff) => onChange({ ...config, ff })} suggest={defaultInnerFeedforward(proc)} />
+          </>
+        )}
+        {config.kind === 'smith' && (
+          <>
+            <div className="ll-sub">The PID (for the process without its dead time)</div>
+            <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+            <div className="ll-sub">The model inside the predictor</div>
+            <SmithModelEditor proc={proc} params={params} model={config.model} pid={config.pid} onChange={(model) => onChange({ ...config, model })} />
           </>
         )}
         {config.kind === 'characterized' && (
@@ -275,6 +285,36 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
   );
 }
 
+/** The Smith predictor's process model, with a button to copy it from the plant's step response. */
+function SmithModelEditor({ proc, params, model, pid, onChange }: {
+  proc: ProcessDef; params: Params; model: SmithModel; pid: PidParams; onChange: (m: SmithModel) => void;
+}) {
+  const [note, setNote] = useState('');
+  const fill = () => {
+    const m = tuningModel(proc, params, { kind: 'pid', pid }, proc.nominalPv);
+    const round = (v: number) => Number(v.toPrecision(3));
+    onChange({ K: round((m.negative ? -1 : 1) * m.K), tau: round(m.tau), theta: round(m.theta) });
+    setNote(m.integrating
+      ? 'The plant integrates: a first-order model only matches it for a while. Smith predictors on integrating plants need a modified structure.'
+      : `From the plant at ${fmt(proc.nominalPv, 3)} ${proc.pv.unit}. Change the plant (or the dead time here) to see what a wrong model does.`);
+  };
+  const set = (k: keyof SmithModel) => (v: number) => onChange({ ...model, [k]: v });
+  return (
+    <div>
+      <div className="ll-fields is-3">
+        <NumField label="Gain K" unit="%/%" value={model.K} onChange={set('K')} title="% of span the measurement moves per % of output, in the end" />
+        <NumField label="Lag τ" unit="s" value={model.tau} min={0.01} onChange={set('tau')} title="Time constant of the process without its dead time" />
+        <NumField label="Dead time θ" unit="s" value={model.theta} min={0} onChange={set('theta')} title="The whole dead time the loop sees, half a controller cycle included" />
+      </div>
+      <div className="ll-ff-head" style={{ marginTop: '0.3rem' }}>
+        <span className="ll-small">K·e<sup>−θs</sup>/(τs + 1), from output to measurement.</span>
+        <button className="ll-link" onClick={fill}>✨ Fill from the plant</button>
+      </div>
+      {note && <p className="ll-note" style={{ marginTop: '0.3rem' }}>{note}</p>}
+    </div>
+  );
+}
+
 /** "%/°C", or "%/(m³/h)" when the unit is itself a ratio. */
 const gainUnit = (u: string) => `%/${u.includes('/') ? `(${u})` : u}`;
 
@@ -364,6 +404,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
           {!model.reachable && <> · <span className="ll-badge is-warn">not reachable</span></>}
           {model.negative && <> · <span className="ll-badge is-warn">negative gain: tick Invert</span></>}
           {loop === 'outer' && <> · the inner loop is closed with its present tuning</>}
+          {config.kind === 'smith' && <> · what the PID sees: the predictor takes its model&apos;s {fmt(config.model.theta, 3)} s of dead time out (any error in it stays)</>}
         </p>
       )}
       <div className="ll-seg" style={{ marginTop: '0.5rem' }} role="group" aria-label="Controller type">
@@ -373,8 +414,8 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
       </div>
       {rule.usesSpeed && model && (
         <label className="ll-field" style={{ marginTop: '0.5rem' }}>
-          <span>{ruleId === 'lambda' ? 'λ' : 'τc'} = {fmt(speedFactor, 2)} × θ = {fmt(model.theta * speedFactor, 3)} s<em>{speedFactor <= 1 ? 'fast' : speedFactor >= 10 ? 'smooth' : ''}</em></span>
-          <input type="range" min={-1} max={Math.log2(200)} step={0.05} value={Math.log2(speedFactor)} onChange={(e) => setSpeedFactor(2 ** Number(e.target.value))} />
+          <span>{ruleId === 'simc' ? 'τc' : 'λ'} = {fmt(speedFactor, 2)} × θ = {fmt(model.theta * speedFactor, 3)} s<em>{speedFactor <= 1 ? 'fast' : speedFactor >= 10 ? 'smooth' : ''}</em></span>
+          <input type="range" min={-1} max={Math.log2(ruleId === 'averaging' ? 2000 : 200)} step={0.05} value={Math.log2(speedFactor)} onChange={(e) => setSpeedFactor(2 ** Number(e.target.value))} />
         </label>
       )}
       <p className="ll-note">{rule.assumptions}</p>

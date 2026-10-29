@@ -1,6 +1,6 @@
 import { linearPidAt, type ControllerConfig } from './controllers';
 import { fitModel } from './ident';
-import { approximate, closedLoop, linearizePlant, openLoopStep, pathModel, settleHorizon, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
+import { approximate, closedLoop, linearizePlant, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
 
 export type TuningLoop = 'main' | 'inner' | 'outer';
@@ -54,6 +54,11 @@ export function tuningModel(proc: ProcessDef, params: Params, config: Controller
     f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
     const lp = config.kind === 'onoff' ? null : linearPidAt(proc, config, p, pv, m.valve);
     slope = lp?.slope ?? 1;
+    if (config.kind === 'smith') {
+      // The predictor takes its model's dead time out of what the PID sees; whatever is left (or wrong) stays.
+      const rest = (v: number) => Math.max(Math.abs(v - config.model.theta), p.Ts / 2);
+      f = { ...f, theta: rest(f.theta), theta2: rest(f.theta2) };
+    }
   }
   const K = f.K * slope;
   return { ...f, K: Math.abs(K), kPrime: Math.abs(f.kPrime * slope), slope, reachable: m.reachable, valve: m.valve, negative: K < 0 };
@@ -75,6 +80,8 @@ export function feedforwardDesign(proc: ProcessDef, params: Params, config: Cont
   const p = cleanParams(proc, params);
   const m = linearizePlant(proc, p, pv);
   if (!m.Bd[key]) return null;
+  const plain = approximate(m, p.Ts / 2);
+  if (plain.integrating) return integratingFeedforward(m, p, config, key, plain);
   const slowest = Math.max(...timeConstants(m), 1);
   const horizon = 8 * slowest + 4 * m.theta;
   let uPath: Fopdt | null;
@@ -99,11 +106,38 @@ export function feedforwardDesign(proc: ProcessDef, params: Params, config: Cont
 }
 
 
+/** Final ramp rate of a path, G(jω) ≈ k′/(jω) at low frequency (signed). */
+const rampRate = (A: number[][], col: number[], row: number[]) => {
+  const w = 1e-7;
+  return -w * ssResponse(A, col, row, w).im;
+};
+
+/**
+ * On an integrating process (a level) there is no steady-state gain to divide:
+ * the feedforward has to stop the ramp, so its gain is the ratio of the two
+ * ramp rates. For a drum or a tank that is just the mass balance: one unit
+ * more out, one unit more in.
+ */
+function integratingFeedforward(m: PlantModel, p: Params, config: ControllerConfig, key: string, plain: Fopdt): FeedforwardDesign | null {
+  let ku: number;
+  if (config.kind === 'cascade' && m.C2) {
+    const cl = innerClosed(m, config, p.Ts);
+    ku = rampRate(cl.A, cl.B.map((r) => r[0]), cl.C[0]);
+  } else ku = rampRate(m.A, m.B, m.C);
+  const kd = rampRate(m.A, m.Bd[key], m.C);
+  if (!ku || !Number.isFinite(ku) || !Number.isFinite(kd)) return null;
+  const fit = (k: number): Fopdt => ({ ...plain, K: k * plain.tau, kPrime: k });
+  return {
+    gain: -kd / ku, lead: 0, lag: 0, u: fit(ku), d: fit(kd),
+    note: 'The process integrates, so the feedforward balances the ramp rates (for a level: flow in matches flow out). Inverse response such as swell is left to the feedback.',
+  };
+}
+
 // Classic tuning rules, each from a first-order-plus-dead-time model
 // K·e^{-θs}/(τs+1) (or its second-order version). Results are for the ideal
 // (non-interacting) PID form used throughout Loop Lab.
 
-export type TuningRuleId = 'simc' | 'lambda' | 'zn' | 'cc' | 'amigo';
+export type TuningRuleId = 'simc' | 'lambda' | 'averaging' | 'zn' | 'cc' | 'amigo';
 export type ControlType = 'P' | 'PI' | 'PID';
 export type Tuning = { Kc: number; Ti: number; Td: number };
 
@@ -149,6 +183,17 @@ export const TUNING_RULES: TuningRule[] = [
     assumptions: 'The process-industry favourite: choose λ, the closed-loop time constant, and the setpoint response is first-order with no overshoot. Ti = τ cancels the process pole, which makes load rejection slow on lag-dominant processes. λ = 1–3 × τ is typical for robustness.',
     tune(m, _type, lambda) {
       return ok({ Kc: m.tau / (m.K * (Math.max(lambda, 1e-6) + m.theta)), Ti: m.tau, Td: 0 });
+    },
+  },
+  {
+    id: 'averaging', name: 'Lambda for integrating (averaging level)', usesSpeed: true, types: ['P', 'PI'],
+    formula: String.raw`K_c = \frac{2\lambda + \theta}{k'(\lambda + \theta)^2},\quad T_i = 2\lambda + \theta`,
+    assumptions: "For integrating processes such as levels, from the ramp rate k′ (% of span per second, per % of output). λ is the arrest time: how long the level keeps moving after an inflow upset. For a step upset Δ (in % of output) the level swings about k′·Δ·λ/e before it turns round, so choose λ from the room the tank has. A long λ lets the tank absorb the upset and keeps the outflow smooth: averaging level control. P-only: Kc = 1/(k′λ), which leaves an offset that is harmless in a buffer.",
+    tune(m, type, lambda) {
+      const k = Math.abs(m.kPrime), lam = Math.max(lambda, 1e-6), th = m.theta;
+      if (!(k > 0)) return null;
+      if (type === 'P') return ok({ Kc: 1 / (k * (lam + th)), Ti: 0, Td: 0 });
+      return ok({ Kc: (2 * lam + th) / (k * (lam + th) ** 2), Ti: 2 * lam + th, Td: 0 });
     },
   },
   {
@@ -213,6 +258,18 @@ function autoSpeed(m: TuningModel, noisePct: number) {
 }
 
 /**
+ * Closed-loop speed for the PID inside a Smith predictor. It could aim for the
+ * process lag alone, but then a dead-time error of a few percent makes it ring:
+ * the delay mismatch acts like extra dead time the PID doesn't know about. So
+ * it aims for the larger of the lag and half the dead time, and no
+ * faster than the noise allows.
+ */
+function smithSpeed(plain: TuningModel, m: TuningModel, noisePct: number) {
+  return Math.max(SMITH_SPEED.lag * plain.tau, SMITH_SPEED.theta * plain.theta, autoSpeed(m, noisePct));
+}
+export const SMITH_SPEED = { lag: 1, theta: 0.5 };
+
+/**
  * A sensible starting tuning in one step: SIMC at the nominal operating
  * point with a noise-aware closed-loop speed, P/PI/PID kept as it is; the
  * slave then the master in cascade; schedules at each breakpoint with the
@@ -253,6 +310,22 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
     const done = withFf({ ...step1, outer: { ...config.outer, ...outer.t } });
     return { config: done, note: `SIMC at ${where}: slave first (Kc ${inner.t.Kc}, Ti ${inner.t.Ti} s), then the master with the slave closed (Kc ${outer.t.Kc}, Ti ${outer.t.Ti} s).${slowNote(inner.slowed || outer.slowed)}` };
   }
+  if (config.kind === 'smith') {
+    // The model first (from the plant's step response), then the PID for what the predictor leaves.
+    const plain = tuningModel(proc, params, { kind: 'pid', pid: config.pid }, pv);
+    const model = { K: round3((plain.negative ? -1 : 1) * plain.K), tau: round3(plain.tau), theta: round3(plain.theta) };
+    const withModel = { ...config, model };
+    const type = typeOf(config.pid);
+    const m = tuningModel(proc, params, withModel, pv);
+    const tc = smithSpeed(plain, m, noise);
+    const t = rule.tune(m, type, tc);
+    if (!t) return null;
+    const pid = { ...config.pid, ...tidy(t), invert: plain.negative };
+    return {
+      config: { ...withModel, pid },
+      note: `Model from the plant at ${where}: K ${model.K}, τ ${model.tau} s, θ ${model.theta} s. The PI is then tuned (SIMC) as if the dead time weren't there, aiming for a closed-loop time constant of ${round3(tc)} s: slower than the predictor would allow, so a dead time that is off by 20 % doesn't make it oscillate.`,
+    };
+  }
   if (config.kind === 'schedule') {
     // One closed-loop speed, chosen at the nominal point, for every breakpoint: the point of scheduling.
     const ref = at(config, 'main', 'PI');
@@ -262,6 +335,20 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
       return r ? { ...p, ...r.t } : p;
     });
     return { config: { ...config, points }, note: `SIMC at each breakpoint (${points.map((p) => `${round3(p.at)} ${proc.pv.unit}`).join(', ')}) with the same closed-loop time constant, ${round3(ref.tc)} s.${slowNote(ref.slowed)}` };
+  }
+  if (proc.averaging && (config.kind === 'pid' || config.kind === 'feedforward')) {
+    // Averaging level: arrest time chosen so a design upset uses the room the tank has (swing ≈ k′·Δ·λ/e).
+    const m = tuningModel(proc, params, config, pv);
+    const { swing, upset } = proc.averaging;
+    const lambda = (Math.E * swing) / (Math.abs(m.kPrime) * upset);
+    const type: ControlType = config.pid.Ti > 0 ? 'PI' : 'P';
+    const t = getRule('averaging').tune(m, type, lambda);
+    if (!t) return null;
+    const pid = { ...config.pid, ...tidy(t), invert: m.negative };
+    return {
+      config: withFf({ ...config, pid }),
+      note: `Averaging level (Lambda for integrating): the level may swing about ${swing} % of span when the inflow changes by ${upset} % of the outlet's capacity, so the arrest time is λ = e·${swing}/(k′·${upset}) = ${round3(lambda / 60)} min with k′ ${round3(Math.abs(m.kPrime))} %/s per %. Tight level control would pass every upstream swing straight to the outflow.${m.negative ? ' More outflow lowers the level, so the action is inverted.' : ''}`,
+    };
   }
   const type = typeOf(config.pid);
   const r = at(config, 'main', type);

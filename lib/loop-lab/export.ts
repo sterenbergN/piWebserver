@@ -1,4 +1,4 @@
-import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams } from './controllers';
+import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
 
 // Code and parameter exports for the automation view: TIA Portal SCL, IEC
@@ -20,7 +20,10 @@ export function real(v: number) {
 type Dialect = 'scl' | 'st';
 
 /** Tag-free names for the blocks. */
-const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag' };
+const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith' };
+
+/** Longest dead time the Smith predictor block can hold, in controller cycles. */
+const SMITH_BUFFER = 1000;
 
 function blockHeader(d: Dialect, kind: 'FUNCTION_BLOCK' | 'FUNCTION', name: string, ret?: string) {
   if (d === 'scl') return `${kind} "${name}"${ret ? ` : ${ret}` : ''}\n{ S7_Optimized_Access := 'TRUE' }\nVERSION : 0.1`;
@@ -216,6 +219,73 @@ ${d === 'scl' ? '\nBEGIN' : ''}
 END_FUNCTION_BLOCK`;
 }
 
+function smithBlock(d: Dialect, model: SmithModel, Ts: number, inLo: number, inHi: number) {
+  const v = loc(d);
+  const last = SMITH_BUFFER - 1;
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.smith)}
+   VAR_INPUT
+      Input : Real;           // measurement, engineering units
+      PidOutput : Real;       // the PID's output from the last cycle, %
+      Reset : Bool;           // TRUE (e.g. in manual): restart the model from the present output
+      Cycle : Real := ${real(Ts)};
+   END_VAR
+   VAR_OUTPUT
+      Corrected : Real;       // to the PID's Input: the measurement with the dead time predicted away
+   END_VAR
+   VAR
+      K : Real := ${real(model.K)};          // model gain, % of span per % output
+      Tau : Real := ${real(model.tau)};        // model lag, s
+      DeadTime : Real := ${real(model.theta)};   // model dead time, s (at most ${SMITH_BUFFER} cycles)
+      InLow : Real := ${real(inLo)};
+      InHigh : Real := ${real(inHi)};
+      Buffer : Array[0..${last}] of Real;   // the model output over the last DeadTime
+      Head : DInt;
+      Ym : Real;              // undelayed model output, % (deviation from where it started)
+      U0 : Real;
+      Started : Bool;
+   END_VAR
+   VAR_TEMP
+      n : DInt;
+      i : DInt;
+      a : Real;
+      ymd : Real;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    ${v('n')} := LIMIT(MN := 0, IN := TRUNC(${v('DeadTime')} / ${v('Cycle')}), MX := ${SMITH_BUFFER});
+    IF ${v('Reset')} OR NOT ${v('Started')} THEN
+        ${v('U0')} := ${v('PidOutput')};
+        ${v('Ym')} := 0.0;
+        ${v('Head')} := 0;
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('Buffer')}[${v('i')}] := 0.0;
+        END_FOR;
+        ${v('Started')} := TRUE;
+    ELSE
+        // One cycle of K / (Tau*s + 1) driven by last cycle's output (exact for a held output).
+        ${v('a')} := 0.0;
+        IF ${v('Tau')} > 0.0 THEN
+            ${v('a')} := EXP(-${v('Cycle')} / ${v('Tau')});
+        END_IF;
+        ${v('Ym')} := ${v('a')} * ${v('Ym')} + (1.0 - ${v('a')}) * ${v('K')} * (${v('PidOutput')} - ${v('U0')});
+    END_IF;
+
+    // The same model, DeadTime later: a ring buffer of the last n values.
+    IF ${v('n')} > 0 THEN
+        IF ${v('Head')} >= ${v('n')} THEN
+            ${v('Head')} := 0;
+        END_IF;
+        ${v('ymd')} := ${v('Buffer')}[${v('Head')}];
+        ${v('Buffer')}[${v('Head')}] := ${v('Ym')};
+        ${v('Head')} := (${v('Head')} + 1) MOD ${v('n')};
+    ELSE
+        ${v('ymd')} := ${v('Ym')};
+    END_IF;
+
+    // Measurement + (what the model says is coming − what the model says is arriving now).
+    ${v('Corrected')} := ${v('Input')} + (${v('Ym')} - ${v('ymd')}) / 100.0 * (${v('InHigh')} - ${v('InLow')});
+END_FUNCTION_BLOCK`;
+}
+
 function scheduleFunction(d: Dialect, points: { at: number; Kc: number; Ti: number; Td: number }[]) {
   const v = loc(d);
   // Sorted, and a repeated breakpoint dropped (it would divide by zero).
@@ -362,6 +432,15 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`${out} := ${inner}.Output;`);
     return lines.join('\n');
   }
+  if (config.kind === 'smith') {
+    const sm = d === 'scl' ? `"${proc.tags.loop.replace('-', '_')}_Smith_DB"` : `${proc.tags.loop.replace('-', '_')}_Smith`;
+    lines.push(`// Smith predictor: feed it last cycle's PID output first, then give the PID its corrected measurement.`);
+    lines.push(`${sm}(Input := ${pv}, PidOutput := ${db}.Output, Reset := ${tag('Manual')});`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${sm}.Corrected, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${db}.Output;`);
+    lines.push(`// Show ${pv} on the HMI, not the corrected value: the operator wants the real measurement.`);
+    return lines.join('\n');
+  }
   if (config.kind === 'feedforward') {
     const ff = ffOf(config.ff);
     lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, Feedforward := ${ff});`);
@@ -403,6 +482,7 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     const [lo, hi] = pidInputRange(proc, config, p);
     const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
+    if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
     parts.push(pidBlock(dialect, config.kind === 'cascade' ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
@@ -430,6 +510,22 @@ function onOff(spPct: number, pvPct: number): number {
 // While the slave's output is pinned, hold the master's integral in that direction.`
     : '';
   const terms = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+  const smithCode = config.kind === 'smith' ? `
+
+// Smith predictor: a model of the process, K/(tau·s + 1), and the same model n cycles later.
+// Each cycle: pv = smith(pv, lastOutput) before calling pid(sp, pv).
+const model = { K: ${config.model.K}, tau: ${config.model.tau}, theta: ${config.model.theta} };
+const n = Math.floor(model.theta / Ts);
+const aM = model.tau > 0 ? Math.exp(-Ts / model.tau) : 0;
+const ring: number[] = new Array(n).fill(0);
+let head = 0, ym = 0, u0 = 0;
+function smith(pvPct: number, lastOutput: number): number {
+  ym = aM * ym + (1 - aM) * model.K * (lastOutput - u0);
+  const delayed = n ? ring[head] : ym;
+  if (n) { ring[head] = ym; head = (head + 1) % n; }
+  return pvPct + ym - delayed;
+}
+// In manual: u0 = the output, ym = 0, ring.fill(0).` : '';
   const ffCode = terms.length ? `
 
 // Feedforward: gain·(lead·s + 1)/(lag·s + 1) on each measured disturbance, added to the output
@@ -475,7 +571,7 @@ function track(u: number, sp: number, pv: number) {
   I = u - Kc * (b * sp - pv);
   D = 0;
   lastED = c * sp - pv;
-}${ffCode}${extra}`;
+}${ffCode}${smithCode}${extra}`;
 }
 
 export type ParamRow = { name: string; value: string; note: string };
@@ -500,6 +596,9 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
   const rows = compactRows(pid, lo, hi, unit, p.Ts);
   if (config.kind === 'schedule') {
     rows.unshift({ name: 'Gain scheduling', value: 'not built in', note: 'PID_Compact has one parameter set. Values below are the middle breakpoint; the exported SCL writes the scheduled gains into an LL_PID instance every cycle instead.' });
+  }
+  if (config.kind === 'smith') {
+    rows.unshift({ name: 'Smith predictor', value: 'not built in', note: `PID_Compact has no dead-time compensation. Call the exported LL_Smith before it and wire its Corrected output to PID_Compact's Input; the gains below are then for the process without its ${real(config.model.theta)} s dead time.` });
   }
   if (config.kind === 'feedforward' && config.ff.length) {
     rows.push({ name: 'Disturbance (input)', value: 'feedforward', note: 'Newer PID_Compact versions add a Disturbance input straight to the output; check yours. Otherwise compute the feedforward (LL_LeadLag) and add it to the output yourself.' });

@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1 and 2 built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1, 2 and 3a built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -367,6 +367,10 @@ cascade; block-diagram probes; trend import and model identification.
 Surge tank, conveyor dead time, drum level, compressor limits, stiction; Smith
 predictor, IMC, ratio, override / selector, split-range; guided case studies for each.
 
+Split in two: **3a** (built) is surge tank, belt feeder with the Smith predictor, and boiler drum
+level. **3b** is override / selector, split-range and ratio, with their processes (compressor limits, a
+high-level override on the surge tank, a split-range temperature, a blending ratio); IMC and stiction go with it.
+
 ### Phase 4 — modern control
 
 Interacting tanks, batch reactor, maglev / pendulum, servo resonance; state feedback,
@@ -426,3 +430,31 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
 - **Case studies**: `stirred-pid` (D buys margin; filter it) and `hx-cascade-ff` (match the tool to the upset's path).
 - **Not in phase 2**: identified models are linear (no schedule built from several fits yet); feedforward dead time
   compensation (only lead-lag).
+
+## 14. Phase 3a as built
+
+- **Processes**: surge tank (pure integrator, negative gain, averaging level; `averaging` spec of the
+  allowed swing for a design upset), belt feeder (screw lag + 30 s belt as transport delay, density upsets),
+  boiler drum (water inventory + swell − shrink; feedwater flow as the secondary, steam flow measured, pump
+  pressure unmeasured).
+- **Smith predictor** (rung 7): first-order model + dead-time ring buffer in the controller (n = ⌊θ/Ts⌋, ZOH-exact
+  model update), the PID fed y + ŷ − ŷ(t − θ), re-zeroed in manual; the prediction is traced (`pred`) and plotted.
+  Linear form C/(1 + C·Gm(1 − e^{−θs})) in the Bode/margins (fine linear grid for the ripples, phase margin
+  as the angle to −1 at every crossover, delay margin as the smallest over all crossovers), and model lag +
+  Padé copy of its delay in the closed-loop builder. Exports: `LL_Smith` FB (SCL / ST, buffer of 1000), call
+  order (predictor with last cycle's output, then the PID), PID_Compact note, reference code. Editor with
+  "Fill from the plant". Auto-tune: model from the plant, PI on what is left, τc = max(τ, θ/2) (Ms ≈ 2 with the
+  dead time ±15 % off; τc = τ alone gives Ms ≈ 2.4 and rings on a slowed belt).
+- **Analysis fixes**: integrating gains keep their sign (k′ from Im G); the effective dead time of an integrator
+  comes from the ramp asymptote (Σ pole τ − Σ zero τ), so a right-half-plane zero (drum shrink, ~35 s) counts
+  (θ 11 → 46 s; the old estimate gave a PI with Ms ≈ 6); phase crossovers at −180° ± 360°k.
+- **Tuning**: "Lambda for integrating (averaging level)" rule, Kc = (2λ+θ)/(k′(λ+θ)²), Ti = 2λ+θ; auto-tune on an
+  averaging process picks λ = e·swing/(k′·upset). Feedforward on an integrating path: gain = ratio of ramp rates
+  (the mass balance), no lead-lag.
+- **Verdicts the numbers support**: surge → slow PI or P-only (outflow 8× gentler than a tight PI, IAE several
+  times "worse", which is the point); feeder → Smith roughly halves IAE vs PI at τc = θ (setpoint settling 57 s
+  vs 90 s), little help on density upsets; drum → three-element (load-step swings 100–160 mm → 20–35 mm, pump
+  pressure dips 67 mm → 3 mm, IAE 430 → 107).
+- **Case studies**: `surge-averaging`, `feeder-smith`, `drum-three-element`.
+- **Not in 3a**: Smith for integrating plants (modified structures), dead time tied to a measured belt speed
+  (described, not simulated), level limit protection (comes with override control in 3b).

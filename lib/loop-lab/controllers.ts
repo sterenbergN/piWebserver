@@ -38,13 +38,21 @@ export type SchedulePoint = { at: number; Kc: number; Ti: number; Td: number };
  */
 export type FeedforwardTerm = { from: string; gain: number; lead: number; lag: number };
 
+/**
+ * The Smith predictor's copy of the process: K·e^{−θs}/(τs + 1), from the
+ * controller output (%) to the measurement (% of span). θ is the whole dead
+ * time the loop sees, half a controller cycle included.
+ */
+export type SmithModel = { K: number; tau: number; theta: number };
+
 export type ControllerConfig =
   | { kind: 'onoff'; hyst: number; outOn: number; outOff: number }
   | { kind: 'pid'; pid: PidParams }
   | { kind: 'schedule'; pid: PidParams; on: 'pv' | 'sp'; points: SchedulePoint[] }
   | { kind: 'characterized'; pid: PidParams; char: string }
   | { kind: 'feedforward'; pid: PidParams; ff: FeedforwardTerm[] }
-  | { kind: 'cascade'; outer: PidParams; inner: PidParams; ff: FeedforwardTerm[] };
+  | { kind: 'cascade'; outer: PidParams; inner: PidParams; ff: FeedforwardTerm[] }
+  | { kind: 'smith'; pid: PidParams; model: SmithModel };
 
 export type ControllerKind = ControllerConfig['kind'];
 
@@ -54,6 +62,8 @@ export type ControllerInternals = {
   sp2: number;
   /** Feedforward contribution, % (of output, or of the inner span in cascade). */
   ff: number;
+  /** Smith predictor: the measurement as the PID sees it, with the dead time predicted away (engineering units); NaN otherwise. */
+  pred: number;
 };
 
 /** Signals besides SP and PV: the inner measurement and the (measured) disturbances. */
@@ -95,6 +105,7 @@ export const CONTROLLER_KINDS: ControllerMeta[] = [
   { kind: 'characterized', name: 'Characterized PID', short: 'Characterization', rung: 4, icon: '📐' },
   { kind: 'feedforward', name: 'PID with feedforward', short: 'Feedforward', rung: 5, icon: '⏩' },
   { kind: 'cascade', name: 'Cascade control', short: 'Cascade', rung: 6, icon: '🪜' },
+  { kind: 'smith', name: 'Smith predictor', short: 'Smith predictor', rung: 7, icon: '🔮' },
 ];
 export const controllerMeta = (kind: ControllerKind) => CONTROLLER_KINDS.find((c) => c.kind === kind)!;
 
@@ -113,23 +124,34 @@ export const DEFAULT_PID: PidParams = { Kc: 1, Ti: 10, Td: 0, b: 1, c: 0, a: 0.1
  * bottom of the range, where a tank is usually first commissioned: the
  * baseline its case study starts from.
  */
-export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'>> = {
+export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>> = {
   flow: { Kc: 0.45, Ti: 1.8, Td: 0 },
   tank: { Kc: 3, Ti: 245, Td: 0 },
   stirred: { Kc: 9, Ti: 430, Td: 0 },
   hx: { Kc: 1.5, Ti: 29, Td: 0 },
+  surge: { Kc: 6, Ti: 450, Td: 0, invert: true },
+  feeder: { Kc: 0.1, Ti: 5.5, Td: 0 },
+  drum: { Kc: 0.7, Ti: 740, Td: 0 },
   custom: { Kc: 1.2, Ti: 20, Td: 0 },
 };
 
 /** Starting cascade tunings (inner steam-flow PI, outer temperature PI) and feedforward. */
 export const BASELINE_CASCADE: Partial<Record<ProcessId, { inner: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; outer: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> }>> = {
   hx: { inner: { Kc: 1.8, Ti: 2.25, Td: 0 }, outer: { Kc: 1.5, Ti: 31, Td: 0 } },
+  drum: { inner: { Kc: 1, Ti: 2.5, Td: 0 }, outer: { Kc: 0.6, Ti: 740, Td: 0 } },
 };
 export const BASELINE_FF: Partial<Record<ProcessId, { valve: FeedforwardTerm[]; inner: FeedforwardTerm[] }>> = {
   hx: {
     valve: [{ from: 'F', gain: 5, lead: 0, lag: 0 }, { from: 'Tin', gain: -1.24, lead: 0, lag: 0 }],
     inner: [{ from: 'F', gain: 4, lead: 0, lag: 0 }, { from: 'Tin', gain: -1, lead: 0, lag: 0 }],
   },
+  // Steam flow into feedwater: 1 t/h more steam, 1 t/h more feedwater (1 % of the valve, 0.83 % of FT-502's span).
+  drum: { valve: [{ from: 'qs', gain: 1, lead: 0, lag: 0 }], inner: [{ from: 'qs', gain: 0.833, lead: 0, lag: 0 }] },
+};
+
+/** Starting Smith predictors: the model from the plant's step response, the PI tuned for the undelayed part. */
+export const BASELINE_SMITH: Partial<Record<ProcessId, { pid: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; model: SmithModel }>> = {
+  feeder: { pid: { Kc: 0.41, Ti: 5.5, Td: 0 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } },
 };
 
 export function defaultController(kind: ControllerKind, proc: ProcessDef): ControllerConfig {
@@ -151,6 +173,10 @@ export function defaultController(kind: ControllerKind, proc: ProcessDef): Contr
       inner: { ...DEFAULT_PID, ...(c?.inner ?? { Kc: 0.5, Ti: 3, Td: 0 }) },
       ff: [],
     };
+  }
+  if (kind === 'smith') {
+    const b = BASELINE_SMITH[proc.id];
+    return { kind, pid: { ...pid, ...b?.pid }, model: b?.model ?? { K: 1, tau: 10, theta: 5 } };
   }
   return { kind, pid, char: proc.characterizations[0]?.id ?? '' };
 }
@@ -286,17 +312,18 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
         return on ? config.outOn : config.outOff;
       },
       track(valve) { on = valve > mid; },
-      internals: () => ({ P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: last.e, sp2: NaN, ff: 0 }),
+      internals: () => ({ P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: last.e, sp2: NaN, ff: 0, pred: NaN }),
     };
   }
 
   if (config.kind === 'cascade') return createCascade(proc, config, Ts);
+  if (config.kind === 'smith') return createSmith(proc, config, Ts);
 
   const pid = config.pid;
   const scale = controlScale(proc, config, model);
   const core = new PidCore(pid, Ts);
   const ffs = config.kind === 'feedforward' ? config.ff.map((t) => new FeedforwardCore(t, Ts)) : [];
-  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td, e: 0, sp2: NaN, ff: 0 };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td, e: 0, sp2: NaN, ff: 0, pred: NaN };
   const gains = (sp: number, pv: number) =>
     config.kind === 'schedule' ? scheduledGains(config.points, config.on === 'sp' ? sp : pv) : { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
 
@@ -306,7 +333,7 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
       const { e, eP, eD } = errorsOf(pid, scale.toC(sp), scale.toC(pv));
       const ff = ffs.reduce((s, f) => s + f.step(aux.d), 0);
       const { u, P } = core.run(e, eP, eD, g, ff);
-      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff };
+      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff, pred: NaN };
       return scale.out(u);
     },
     track(valve, sp, pv, aux) {
@@ -314,7 +341,7 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
       const { e, eP, eD } = errorsOf(pid, scale.toC(sp), scale.toC(pv));
       ffs.forEach((f) => f.reset(aux.d));
       core.track(scale.back(valve), eP, eD, g.Kc, 0);
-      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0 };
+      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: NaN };
     },
     internals: () => last,
   };
@@ -331,7 +358,7 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
   const outer = new PidCore(config.outer, Ts), inner = new PidCore(config.inner, Ts);
   const ffs = config.ff.map((t) => new FeedforwardCore(t, Ts));
   let innerSat = 0;
-  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td, e: 0, sp2: NaN, ff: 0 };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td, e: 0, sp2: NaN, ff: 0, pred: NaN };
   const gOuter = { Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td };
   const gInner = { Kc: config.inner.Kc, Ti: config.inner.Ti, Td: config.inner.Td };
 
@@ -344,7 +371,7 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
       const i = errorsOf(config.inner, u1, toPct2(sec, aux.pv2));
       const r = inner.run(i.e, i.eP, i.eD, gInner, 0);
       innerSat = r.sat * (config.inner.invert ? -1 : 1);
-      last = { P, I: outer.I, D: outer.D, ...gOuter, e: o.e, sp2, ff };
+      last = { P, I: outer.I, D: outer.D, ...gOuter, e: o.e, sp2, ff, pred: NaN };
       return r.u;
     },
     track(valve, sp, pv, aux) {
@@ -356,7 +383,51 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
       ffs.forEach((f) => f.reset(aux.d));
       outer.track(y2, o.eP, o.eD, gOuter.Kc, 0);
       innerSat = 0;
-      last = { P: gOuter.Kc * o.eP, I: outer.I, D: 0, ...gOuter, e: o.e, sp2: aux.pv2, ff: 0 };
+      last = { P: gOuter.Kc * o.eP, I: outer.I, D: 0, ...gOuter, e: o.e, sp2: aux.pv2, ff: 0, pred: NaN };
+    },
+    internals: () => last,
+  };
+}
+
+/**
+ * Smith predictor: a model of the process without its dead time runs beside
+ * the plant, and a delayed copy of it. The PID is fed the measurement plus
+ * (undelayed − delayed model): what the measurement will be once the dead time
+ * has passed. With a perfect model the PID only sees the fast part of the
+ * process, so it can be tuned as if the dead time weren't there.
+ */
+function createSmith(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'smith' }>, Ts: number): ControllerInstance {
+  const { pid, model } = config;
+  const core = new PidCore(pid, Ts);
+  const g = { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
+  // Exact discretization of K/(τs + 1) behind a hold; the hold's half cycle is part of θ.
+  const a = model.tau > 0 ? Math.exp(-Ts / model.tau) : 0;
+  const n = Math.max(0, Math.floor(model.theta / Ts + 1e-9));
+  const buf = new Array<number>(n).fill(0);
+  let head = 0, ym = 0, u0 = 0;
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...g, e: 0, sp2: NaN, ff: 0, pred: NaN };
+  const delayed = () => (n ? buf[head] : ym);
+  const advance = (u: number) => {
+    if (n) { buf[head] = ym; head = (head + 1) % n; }
+    ym = a * ym + (1 - a) * model.K * (u - u0);
+  };
+  const span = pvSpan(proc);
+
+  return {
+    step(sp, pv) {
+      const yfb = toPct(proc, pv) + ym - delayed();
+      const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), yfb);
+      const { u, P } = core.run(e, eP, eD, g, 0);
+      advance(u);
+      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff: 0, pred: proc.pv.lo + (yfb / 100) * span };
+      return u;
+    },
+    track(valve, sp, pv) {
+      // Restart the model from here: no prediction until the controller moves the output.
+      u0 = valve; ym = 0; head = 0; buf.fill(0);
+      const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), toPct(proc, pv));
+      core.track(valve, eP, eD, g.Kc, 0);
+      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: pv };
     },
     internals: () => last,
   };
@@ -369,7 +440,8 @@ export type LinearPid = PidParams & { slope: number };
 /** The controller acting at one operating point, as linear blocks; null for on-off. */
 export type LinearController =
   | { kind: 'single'; pid: LinearPid; ff: FeedforwardTerm[] }
-  | { kind: 'cascade'; outer: LinearPid; inner: LinearPid; ff: FeedforwardTerm[] };
+  | { kind: 'cascade'; outer: LinearPid; inner: LinearPid; ff: FeedforwardTerm[] }
+  | { kind: 'smith'; pid: LinearPid; model: SmithModel; ff: FeedforwardTerm[] };
 
 /**
  * The PID acting at one operating point, with the local slope of any
@@ -379,6 +451,7 @@ export type LinearController =
 export function linearPidAt(proc: ProcessDef, config: ControllerConfig, model: Params, pv: number, valve: number): LinearPid | null {
   if (config.kind === 'onoff') return null;
   if (config.kind === 'cascade') return { ...config.outer, slope: 1 };
+  if (config.kind === 'smith') return { ...config.pid, slope: 1 };
   const g = config.kind === 'schedule' ? scheduledGains(config.points, pv) : config.pid;
   const scale = controlScale(proc, config, model);
   let slope = 1;
@@ -398,6 +471,7 @@ export function linearPidAt(proc: ProcessDef, config: ControllerConfig, model: P
 export function linearControllerAt(proc: ProcessDef, config: ControllerConfig, model: Params, pv: number, valve: number): LinearController | null {
   if (config.kind === 'onoff') return null;
   if (config.kind === 'cascade') return { kind: 'cascade', outer: { ...config.outer, slope: 1 }, inner: { ...config.inner, slope: 1 }, ff: config.ff };
+  if (config.kind === 'smith') return { kind: 'smith', pid: { ...config.pid, slope: 1 }, model: config.model, ff: [] };
   return { kind: 'single', pid: linearPidAt(proc, config, model, pv, valve)!, ff: config.kind === 'feedforward' ? config.ff : [] };
 }
 
@@ -434,6 +508,13 @@ export function complexity(proc: ProcessDef, config: ControllerConfig): Complexi
       tuningParams: pidCount(config.outer) + pidCount(config.inner) + 3 * ff,
       needsModel: ff ? ffModelNote : null,
       extraInstruments: 1 + ff, commissioning: ff ? 4 : 3, maintainability: ff ? 3 : 4,
+    };
+  }
+  if (config.kind === 'smith') {
+    return {
+      tuningParams: pidCount(config.pid) + 3,
+      needsModel: 'Gain, lag and dead time of the process, the dead time accurately (a 20 % error can make the loop worse than plain PI)',
+      extraInstruments: 0, commissioning: 4, maintainability: 2,
     };
   }
   const ch = findCharacterization(proc, config.char);
@@ -489,6 +570,13 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
   if (base.kind === 'cascade') {
     return { kind: 'cascade', outer: cleanPid(r.outer, base.outer), inner: cleanPid(r.inner, base.inner), ff: cleanFeedforward(r.ff, proc) };
   }
+  if (base.kind === 'smith') {
+    const m = (r.model && typeof r.model === 'object' ? r.model : {}) as Record<string, unknown>;
+    return {
+      kind: 'smith', pid: cleanPid(r.pid, base.pid),
+      model: { K: num(m.K, -1e4, 1e4, base.model.K), tau: num(m.tau, 0, 1e6, base.model.tau), theta: num(m.theta, 0, 1e5, base.model.theta) },
+    };
+  }
   const pid = cleanPid(r.pid, base.pid);
   if (base.kind === 'pid') return { kind: 'pid', pid };
   if (base.kind === 'feedforward') return { kind: 'feedforward', pid, ff: Array.isArray(r.ff) ? cleanFeedforward(r.ff, proc) : base.ff };
@@ -520,6 +608,7 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
     return `Scheduled on ${config.on.toUpperCase()}: ${config.points.map((p) => `${fmt(p.at)} ${proc.pv.unit} → ${pidText(p)}`).join('; ')}`;
   }
   if (config.kind === 'feedforward') return `PID ${pidText(config.pid)}${config.ff.length ? ` + ${ffText(config.ff)}` : ''}`;
+  if (config.kind === 'smith') return `Smith predictor: ${pidText(config.pid)}; model K ${fmt(config.model.K)}, τ ${fmt(config.model.tau)} s, θ ${fmt(config.model.theta)} s`;
   if (config.kind === 'cascade') return `Cascade: outer ${pidText(config.outer)}; inner ${pidText(config.inner)}${config.ff.length ? ` + ${ffText(config.ff)}` : ''}`;
   const ch = findCharacterization(proc, config.char);
   return `${ch?.label ?? 'Characterized'} + ${pidText(config.pid)}`;

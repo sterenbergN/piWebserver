@@ -78,6 +78,49 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
       },
     ];
   }
+  if (proc.id === 'surge') {
+    const imb = linspace(1, 40, 80);
+    const room = (dh: number) => imb.map((q) => ((p.A * dh) / q) * 60);
+    return [{
+      title: 'How long the tank can absorb an imbalance', x: 'Inflow − outflow (m³/h)', y: 'Minutes until full or empty',
+      series: [
+        { label: `Up to the top (${fmt(p.H - proc.nominalPv, 2)} m of room)`, color: PALETTE[0], x: imb, y: room(p.H - proc.nominalPv) },
+        { label: `Down to empty (${fmt(proc.nominalPv, 2)} m)`, color: PALETTE[2], x: imb, y: room(proc.nominalPv) },
+      ],
+      note: `Time = A·Δh/ΔQ. This is the volume the level controller is allowed to use. An upstream swing of ${fmt(d.Qin * 0.5, 2)} m³/h fills the room above the setpoint in ${fmt(((p.A * (p.H - proc.nominalPv)) / (d.Qin * 0.5)) * 60, 2)} min, so the controller has that long to bring the outflow round, and no reason to do it faster.`,
+    }];
+  }
+  if (proc.id === 'feeder') {
+    const ts = linspace(0, 6 * p.tauScrew + p.txDelay + 5 * p.txTau, 200);
+    const dF = 0.1 * p.Fmax;
+    const screw = ts.map((t) => dF * (1 - Math.exp(-t / p.tauScrew)));
+    const lagged = (t: number) => {
+      if (t <= 0) return 0;
+      const a = p.tauScrew, b = p.txTau;
+      return Math.abs(a - b) < 1e-6 ? dF * (1 - (1 + t / a) * Math.exp(-t / a)) : dF * (1 - (a * Math.exp(-t / a) - b * Math.exp(-t / b)) / (a - b));
+    };
+    return [{
+      title: 'Response to a 10 % speed step', x: 'Time (s)', y: 'Feed rate change (t/h)',
+      series: [
+        { label: 'Leaving the screw', color: PALETTE[0], x: ts, y: screw },
+        { label: 'On the scale (WT-701)', color: PALETTE[2], x: ts, y: ts.map((t) => lagged(t - p.txDelay)) },
+      ],
+      note: `The material takes ${fmt(p.txDelay, 3)} s to reach the scale. Feedback can't know about any change before then, whatever the tuning: the dead time sets the speed limit.`,
+    }];
+  }
+  if (proc.id === 'drum') {
+    const ts = linspace(0, 150, 200);
+    const kInt = 1000 / 3.6 / (750 * p.A);
+    const dq = 10;
+    return [{
+      title: 'Drum level after a 10 t/h step, valve fixed', x: 'Time (s)', y: 'Level change (mm)',
+      series: [
+        { label: '+10 t/h steam demand', color: PALETTE[3], x: ts, y: ts.map((t) => -kInt * dq * t + p.kSwell * dq * (1 - Math.exp(-t / p.tauSwell))) },
+        { label: '+10 t/h feedwater', color: PALETTE[0], x: ts, y: ts.map((t) => kInt * dq * t - p.kShrink * dq * (1 - Math.exp(-t / p.tauShrink))) },
+      ],
+      note: `Both go the wrong way first. More steam drops the pressure, the water flashes and the bubbles swell the level by up to ${fmt(p.kSwell * dq, 3)} mm, though the drum is losing water. More (cold) feedwater collapses bubbles: the level shrinks by up to ${fmt(p.kShrink * dq, 3)} mm though the drum is gaining water. The feedwater step only has the level back where it started after about ${fmt(p.kShrink / kInt, 2)} s.`,
+    }];
+  }
   if (proc.id === 'custom') {
     const m = linearizePlant(proc, p, proc.nominalPv);
     const pm = pathModel(m, m.C, m.theta);
@@ -162,7 +205,7 @@ function plantTex(m: PlantModel) {
 
 const PROBE_LABEL: Record<string, string> = {
   sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term',
-  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement',
+  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted (Smith)',
 };
 
 export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experiment; runs?: Run[] }) {
@@ -191,7 +234,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
     return { label: k.startsWith('dist:') ? proc.disturbances.find((d) => d.key === k.slice(5))?.label ?? k : PROBE_LABEL[k] ?? k, color: PALETTE[i % PALETTE.length], x: tAxis, y: y ?? [] };
   }) : [];
 
-  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp'].includes(k) ? 'pv' : ['sp2', 'pv2'].includes(k) ? 'sec' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
+  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp', 'pred'].includes(k) ? 'pv' : ['sp2', 'pv2'].includes(k) ? 'sec' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
   const groups = [...new Set(probes.map(unitScale))];
 
   return (

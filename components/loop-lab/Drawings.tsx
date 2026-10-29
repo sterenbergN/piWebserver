@@ -149,11 +149,12 @@ export function PAndId({ proc }: { proc: ProcessDef }) {
 
 // ─── Block diagram ──────────────────────────────────────────────────────────
 
-export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | `dist:${string}`;
+export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | 'pred' | `dist:${string}`;
 
 /** A one-line description of each process for its block. */
 const PROCESS_SUB: Record<string, string> = {
-  flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid', custom: 'K e^(−θs)/(τs + 1)',
+  flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
+  surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {
@@ -223,12 +224,13 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
   const xP = xLoad + 30, wP = 120;
   const xOut = xP + wP + 50;
 
+  const smith = config.kind === 'smith';
   const ctrlTitle = config.kind === 'onoff' ? 'Relay' : config.kind === 'schedule' ? 'PID (scheduled)' : 'PID';
   const ffNames = ff.map((t) => proc.disturbances.find((d) => d.key === t.from)?.label.toLowerCase() ?? t.from).join(', ');
   const ctrlSub = config.kind === 'onoff' ? `± ${config.hyst} % band` : 'Kc·(1 + 1/Ti·s + Td·s)';
 
   return (
-    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 20} 270`} role="img" aria-label={`Block diagram: ${ctrlTitle} on the ${proc.name.toLowerCase()}`}>
+    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 20} ${smith ? 300 : 270}`} role="img" aria-label={`Block diagram: ${smith ? 'Smith predictor' : ctrlTitle} on the ${proc.name.toLowerCase()}`}>
       {/* Setpoint in */}
       {probe('sp', 14, Y - 8, 'SP r', 'start')}
       {pvChar ? (
@@ -311,6 +313,19 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
           <Block x={40} y={FB - 18} w={70} h={36} title="f(·)" sub="level → vol." />
           <path className="ll-wire" d={`M40 ${FB}H25V${FB + 30}H${xSum}V${Y + 11}`} />
           <path className="ll-wire" d={arrowHead(xSum, Y + 11, 'u')} />
+        </>
+      ) : smith ? (
+        <>
+          {/* Smith predictor: the model's (undelayed − delayed) output is added to the measurement. */}
+          {wire('pv', `M${xV + wV / 2 - 11} ${FB}H${xSum + 11}`, { x: xSum + 11, y: FB, dir: 'l' })}
+          <Sum x={xSum} y={FB} signs="++" />
+          {wire('pred', `M${xSum} ${FB - 11}V${Y + 11}`, { x: xSum, y: Y + 11, dir: 'u' })}
+          {probe('pred', xSum - 6, (Y + FB) / 2 + 4, 'predicted', 'end')}
+          <path className="ll-wire" d={`M${xC + wC + 12} ${Y}V${FB + 50}H${xC + wC - 10}`} />
+          <path className="ll-wire" d={arrowHead(xC + wC - 10, FB + 50, 'l')} />
+          <Block x={xC + 10} y={FB + 32} w={wC - 20} h={36} title="Model" sub="Kₘ(1 − e^(−θₘs))/(τₘs + 1)" ctrl />
+          <path className="ll-wire" d={`M${xC + 10} ${FB + 50}H${xSum}V${FB + 11}`} />
+          <path className="ll-wire" d={arrowHead(xSum, FB + 11, 'u')} />
         </>
       ) : (
         <>

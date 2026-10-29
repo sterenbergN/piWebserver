@@ -91,7 +91,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -125,6 +125,12 @@ export type ProcessDef = {
   timeScale?: (p: Params) => number;
   /** Fastest process time constant (s), when the process has dynamics faster than its instruments: sets the integration step. */
   fastest?: (p: Params) => number;
+  /**
+   * A buffer whose level is there to absorb upsets (averaging level control):
+   * it may swing `swing` % of span when the inflow changes by `upset` % of the
+   * outlet's capacity. Auto-tuning then aims to use that room, not hold the level.
+   */
+  averaging?: { swing: number; upset: number };
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;

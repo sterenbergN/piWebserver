@@ -362,3 +362,116 @@ test('plant goals pick the physical setting that does it: hold-up for a slower e
   const e = settingEffects(tank, defaultParams(tank));
   assert.ok(e.R.dTau > 0.2 && e.Qmax.dK > 0.15);
 });
+
+// ─── Phase 3: averaging level, dead time, inverse response ─────────────────
+
+test('surge tank: an integrator with negative gain, and auto-tune uses the room (averaging)', async () => {
+  const { autoTune } = await import('./tuning');
+  const proc = getProcess('surge');
+  const params = defaultParams(proc);
+  const m = tuningModel(proc, params, defaultController('pid', proc), proc.nominalPv);
+  assert.ok(m.integrating && m.negative);
+  // k′ = Qmax/(100·A)/H in %/s per %: 60/3600/100/4 m/s per % over a 3 m span.
+  close(m.kPrime, (60 / 3600 / 100 / 4) * (100 / 3), 2e-5);
+  const r = autoTune(proc, params, defaultController('pid', proc))!;
+  assert.ok(r.config.kind === 'pid' && r.config.pid.invert && r.config.pid.Kc < 1.5 && r.config.pid.Ti > 1800, r.note);
+  const tight = runAll(proc, { params, controller: pid({ Kc: 6, Ti: 450, invert: true }) }, ['surges'])[0];
+  const avg = runAll(proc, { params, controller: r.config }, ['surges'])[0];
+  const swing = (a: Float64Array) => Math.max(...a) - Math.min(...a);
+  // The averaging loop lets the level move several times more, and the outflow far less.
+  assert.ok(swing(avg.trace.pvTrue) > 3 * swing(tight.trace.pvTrue));
+  assert.ok(swing(avg.trace.valve) < 0.6 * swing(tight.trace.valve));
+  assert.ok(Math.max(...avg.trace.pvTrue) < proc.pv.hi * 0.85, 'stays inside the tank');
+});
+
+test('drum: the shrink counts as dead time (a right-half-plane zero), not just the lags', () => {
+  const proc = getProcess('drum');
+  const p = defaultParams(proc);
+  const m = approximate(linearizePlant(proc, p, 0), p.Ts / 2);
+  assert.ok(m.integrating);
+  // Zero time constant k_sh/k − τ_sh, plus the lags: about 46 s.
+  const kInt = (1000 / 3.6 / (750 * p.A)) * (100 / 600) * (100 / 100);
+  const zero = p.kShrink * (100 / 600) / kInt - p.tauShrink;
+  close(m.theta, zero + p.tauShrink + p.valveTau + p.txTau + p.Ts / 2, 1.5);
+});
+
+test('drum: feedforward on an integrator matches the mass balance; three-element beats level-only', () => {
+  const proc = getProcess('drum');
+  const params = defaultParams(proc);
+  const ffValve = feedforwardDesign(proc, params, defaultController('feedforward', proc), 0, 'qs')!;
+  close(ffValve.gain, 1, 0.02, 'one t/h of feedwater (1 % of valve) per t/h of steam');
+  const casc = defaultController('cascade', proc);
+  const ffInner = feedforwardDesign(proc, params, casc, 0, 'qs')!;
+  close(ffInner.gain, 100 / 120, 0.02, 'in % of the 0–120 t/h feedwater span');
+  const peak = (c: ControllerConfig, s: string) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, [s]), false).worstPeak;
+  const single = defaultController('pid', proc);
+  const three: ControllerConfig = { ...(casc as Extract<ControllerConfig, { kind: 'cascade' }>), ff: [{ from: 'qs', gain: 0.833, lead: 0, lag: 0 }] };
+  assert.ok(peak(three, 'load-steps') < 0.3 * peak(single, 'load-steps'));
+  assert.ok(peak(three, 'fw-pressure') < 0.1 * peak(single, 'fw-pressure'));
+});
+
+test('Smith predictor: with the model right it settles setpoint steps much faster than PI', () => {
+  const proc = getProcess('feeder');
+  const params = defaultParams(proc);
+  const piCfg = pid({ Kc: 0.1, Ti: 5.5 });
+  const smith = defaultController('smith', proc);
+  const iae = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['sp-steps']), false).iae;
+  assert.ok(iae(smith) < 0.6 * iae(piCfg));
+  // The PID sees the prediction: during a rate step it moves θ before the scale does.
+  const r = runAll(proc, { params, controller: smith }, ['sp-steps'])[0];
+  const i = r.trace.t.findIndex((t) => t >= 30);
+  assert.ok(r.trace.pred[i] - 10 > 5 * Math.abs(r.trace.pv[i] - 10) + 0.5, 'prediction runs ahead of the measurement');
+});
+
+test('Smith predictor: linear loop matches the theory, and a dead-time error costs margin', async () => {
+  const { robustness } = await import('./linear');
+  const proc = getProcess('feeder');
+  const params = defaultParams(proc);
+  const smith = defaultController('smith', proc);
+  const a = analyzeLoop(proc, params, smith, proc.nominalPv)!;
+  assert.ok(isStable(closedLoop(a.plant, a.ctrl, a.delay).poles));
+  assert.ok(a.margins.pm > 30 && a.margins.pm < 180 && a.margins.ms < 2.2);
+  const pts = robustness(proc, params, smith, 8);
+  assert.ok(pts.every((p) => p.stableAll));
+  // Tuned for the lag alone, the same predictor is fragile.
+  const fast = { ...smith, pid: { ...(smith as Extract<ControllerConfig, { kind: 'smith' }>).pid, Kc: 1.2 } };
+  const worst = (c: ControllerConfig) => Math.max(...robustness(proc, params, c, 8).map((p) => p.worst?.ms ?? 0));
+  assert.ok(worst(fast) > worst(smith) + 0.2);
+});
+
+test('Smith predictor: manual → auto is bumpless, and the config survives a link', () => {
+  const proc = getProcess('feeder');
+  const params = defaultParams(proc);
+  const cfg = defaultController('smith', proc);
+  const loop = new Loop(proc, { params, controller: cfg }, { sp: 10 });
+  loop.setMode(false);
+  for (let i = 0; i < 20; i++) loop.step();
+  const before = loop.step().cv;
+  loop.setMode(true);
+  close(loop.step().cv, before, 0.5);
+  assert.deepEqual(cleanController(JSON.parse(JSON.stringify(cfg)), proc), cfg);
+});
+
+test('exports: the Smith predictor block has a ring buffer and runs before the PID', () => {
+  const proc = getProcess('feeder');
+  const cfg = defaultController('smith', proc);
+  const scl = exportCode(proc, cfg, defaultParams(proc), 'scl');
+  assert.match(scl, /FUNCTION_BLOCK "LL_Smith"/);
+  assert.match(scl, /Buffer : Array\[0\.\.999\] of Real/);
+  assert.ok(scl.indexOf('"WIC_701_Smith_DB"(') < scl.lastIndexOf('"WIC_701_DB"('), 'predictor called first');
+  assert.match(scl, /Input := "WIC_701_Smith_DB"\.Corrected/);
+  const st = exportCode(proc, cfg, defaultParams(proc), 'st');
+  assert.ok(!st.includes('#'), 'IEC ST has no # locals');
+  assert.equal(pidCompactParams(proc, cfg, defaultParams(proc))![0].name, 'Smith predictor');
+});
+
+test('every case study preset is a valid controller for its process, and its test scripts exist', async () => {
+  const { CASES } = await import('./content');
+  for (const c of CASES) {
+    const proc = getProcess(c.process);
+    for (const step of c.steps) {
+      for (const s of step.scenarios ?? []) assert.ok(proc.scenarios.some((x) => x.id === s), `${c.id}: ${s}`);
+      for (const pr of step.presets ?? []) assert.deepEqual(cleanController(pr.controller, proc), pr.controller, `${c.id}: ${pr.label}`);
+    }
+  }
+});

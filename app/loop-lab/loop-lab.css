@@ -4,12 +4,12 @@
    Process drawings use their own small set so liquid, steel and signals read the same in both themes. */
 :root, [data-theme="dark"] {
   --ll-liquid: #4f8fd6; --ll-liquid-dim: rgba(79, 143, 214, 0.35);
-  --ll-steel: #8a94a6; --ll-signal: #d0a24c; --ll-paper: #262b35;
+  --ll-steel: #8a94a6; --ll-signal: #d0a24c; --ll-paper: #262b35; --ll-solid: rgba(176, 132, 82, 0.6);
   --ll-sp: #e5e9f0; --ll-pv: var(--habit-1); --ll-cv: var(--habit-2); --ll-valve: var(--habit-4);
 }
 [data-theme="light"] {
   --ll-liquid: #3a7cc4; --ll-liquid-dim: rgba(58, 124, 196, 0.25);
-  --ll-steel: #6b7588; --ll-signal: #a8761c; --ll-paper: #ffffff;
+  --ll-steel: #6b7588; --ll-signal: #a8761c; --ll-paper: #ffffff; --ll-solid: rgba(150, 105, 60, 0.55);
   --ll-sp: #2e3440;
 }
 
@@ -165,6 +165,8 @@ a.ll-chip:hover { border-color: var(--accent-light); }
 .ll-drawing .ll-steel { stroke: var(--ll-steel); fill: none; stroke-width: 2; }
 .ll-drawing .ll-fill-steel { fill: var(--ll-steel); }
 .ll-drawing .ll-liquid { fill: var(--ll-liquid-dim); stroke: var(--ll-liquid); stroke-width: 1.5; }
+.ll-drawing .ll-solid { fill: var(--ll-solid); }
+.ll-drawing .ll-bubble-gas { fill: var(--ll-paper); stroke: var(--ll-liquid); stroke-width: 1; }
 .ll-drawing .ll-signal { stroke: var(--ll-signal); stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; }
 .ll-drawing .ll-bubble { fill: var(--ll-paper); stroke: var(--foreground); stroke-width: 1.5; }
 .ll-drawing .ll-line { stroke: var(--foreground); stroke-width: 1.5; fill: none; }

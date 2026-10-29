@@ -1,15 +1,17 @@
 'use client';
 
+import { useId } from 'react';
 import type { ControllerConfig } from '@/lib/loop-lab/controllers';
 import { valveCharacteristic, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
 
-// Process drawings for the stirred tank, the heat exchanger and an identified
-// plant, one entry point that draws any process from its state, and P&IDs that
-// follow the control structure (cascade adds the flow loop, feedforward the
-// measured disturbances).
+// Process drawings for the stirred tank, the heat exchanger, the surge tank,
+// the belt feeder, the boiler drum and an identified plant; one entry point
+// that draws any process from its state; and P&IDs that follow the control
+// structure (cascade adds the flow loop, feedforward the measured
+// disturbances, a Smith predictor its model).
 
 /** Liquid colour from cold (blue) to hot (red) over 0–100 °C. */
 function heat(T: number) {
@@ -89,6 +91,117 @@ export function HxSchematic({ p, d, valve, T, Tw }: { p: Params; d: Params; valv
   );
 }
 
+export function SurgeSchematic({ p, level, valve, qIn }: { p: Params; level: number; valve: number; qIn: number }) {
+  const qOut = p.Qmax * valveCharacteristic(p.valveChar, valve / 100);
+  const top = 40, bottom = 230, x0 = 160, x1 = 340;
+  const yl = bottom - (Math.min(Math.max(level, 0), p.H) / p.H) * (bottom - top);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 290" role="img" aria-label={`Surge tank: level ${level.toFixed(2)} m, ${f1(qIn)} m³/h in, ${f1(qOut)} m³/h out`}>
+      <rect className="ll-liquid" x={x0} y={yl} width={x1 - x0} height={bottom - yl} />
+      <path className="ll-steel" strokeWidth={3} d={`M${x0} ${top}V${bottom}H${x1}V${top}`} />
+      <line className="ll-guide" x1={x0 - 6} x2={x1 + 6} y1={yl} y2={yl} />
+      <text x={(x0 + x1) / 2} y={Math.min(bottom - 6, yl + 18)} textAnchor="middle" fontWeight={700}>{level.toFixed(2)} m</text>
+      <text className="is-muted" x={(x0 + x1) / 2} y={bottom + 18} textAnchor="middle">T-601 · A = {f1(p.A)} m²</text>
+      {/* Inflow from upstream */}
+      <path className="ll-pipe" d={`M20 24H${x0 + 30}V${top + 6}`} />
+      {qIn > 0.1 && <path className="ll-flowline" style={flowAnim(qIn / 30)} d={`M24 24H${x0 + 30}V${top + 2}`} />}
+      <text x={20} y={14}>From upstream · {f1(qIn)} m³/h</text>
+      {/* Pumped outlet */}
+      <path className="ll-pipe" d={`M${x1 - 30} ${bottom}V${bottom + 30}H540`} />
+      {qOut > 0.1 && <path className="ll-flowline" style={flowAnim(qOut / 30)} d={`M${x1 - 30} ${bottom + 4}V${bottom + 30}H536`} />}
+      <circle className="ll-block" cx={390} cy={bottom + 30} r={14} />
+      <path className="ll-line" d={`M383 ${bottom + 21}L399 ${bottom + 30}L383 ${bottom + 39}`} />
+      <text className="is-muted" x={376} y={bottom + 58}>P-601</text>
+      <ControlValve x={470} y={bottom + 30} open={valve} tag="" label={false} />
+      <text x={440} y={bottom - 30}>LV-601</text>
+      <text className="is-muted" x={440} y={bottom - 16}>{f1(valve)} % · {f1(qOut)} m³/h out</text>
+      {/* Level transmitter */}
+      <line className="ll-signal" x1={x1} y1={130} x2={x1 + 50} y2={130} />
+      <circle className="ll-bubble" cx={x1 + 68} cy={130} r={18} />
+      <text x={x1 + 68} y={126} textAnchor="middle">LT</text>
+      <text x={x1 + 68} y={139} textAnchor="middle">601</text>
+    </svg>
+  );
+}
+
+export function FeederSchematic({ p, d, speed, atScrew, reading }: { p: Params; d: Params; speed: number; atScrew: number; reading: number }) {
+  const beltY = 170;
+  return (
+    <svg className="ll-drawing" viewBox="0 0 600 250" role="img" aria-label={`Belt feeder: screw at ${f1(speed)} %, ${f1(atScrew)} t/h leaving the screw`}>
+      {/* Hopper and screw */}
+      <path className="ll-steel" strokeWidth={3} d="M40 20H160L120 90H80Z" />
+      <path className="ll-solid" d="M48 30H152L118 86H82Z" />
+      <text className="is-muted" x={100} y={14} textAnchor="middle">hopper · {f1(d.density)} % density</text>
+      <rect className="ll-block" x={70} y={90} width={150} height={26} rx={4} />
+      <path className="ll-line" d="M80 103Q90 93 100 103T120 103T140 103T160 103T180 103T200 103" />
+      <rect className="ll-block" x={20} y={92} width={40} height={22} rx={3} />
+      <text x={40} y={107} textAnchor="middle">M</text>
+      <text x={20} y={140}>SC-701 {f1(speed)} %</text>
+      {/* Discharge onto the belt */}
+      <path className="ll-solid" d="M205 116H220L216 162H209Z" />
+      <text x={230} y={112}>{f1(atScrew)} t/h</text>
+      {/* Belt */}
+      <circle className="ll-block" cx={200} cy={beltY + 10} r={10} />
+      <circle className="ll-block" cx={560} cy={beltY + 10} r={10} />
+      <path className="ll-steel" strokeWidth={2} d={`M200 ${beltY}H560M200 ${beltY + 20}H560`} />
+      {atScrew > 0.1 && <path className="ll-flowline" style={flowAnim(0.5)} d={`M212 ${beltY - 3}H548`} />}
+      <text className="is-muted" x={330} y={beltY + 42} textAnchor="middle">belt: {f1(p.txDelay)} s from screw to scale</text>
+      {/* Weigh idler */}
+      <path className="ll-line" d={`M470 ${beltY + 20}V${beltY + 34}M458 ${beltY + 34}H482`} />
+      <line className="ll-signal" x1={470} y1={beltY} x2={470} y2={100} />
+      <circle className="ll-bubble" cx={470} cy={82} r={18} />
+      <text x={470} y={78} textAnchor="middle">WT</text>
+      <text x={470} y={91} textAnchor="middle">701</text>
+      <text x={500} y={70} fontWeight={700}>{f1(reading)} t/h</text>
+      <text className="is-muted" x={500} y={86}>on the scale</text>
+      <path className="ll-line" d={`M560 ${beltY}L585 ${beltY + 40}`} />
+      <text className="is-muted" x={585} y={beltY + 56} textAnchor="end">to the kiln</text>
+    </svg>
+  );
+}
+
+export function DrumSchematic({ p, d, valve, level, swell }: { p: Params; d: Params; valve: number; level: number; swell: number }) {
+  const qfw = p.Qmax * valveCharacteristic(p.valveChar, valve / 100) * (d.Pfw / 100);
+  const cy = 120, half = 60, x0 = 170, x1 = 430;
+  const yl = cy - (Math.min(Math.max(level, -300), 300) / 300) * half * 0.9;
+  const bubbles = Math.max(0, Math.min(14, Math.round(swell / 15)));
+  const clip = `ll-drum-${useId().replace(/:/g, '')}`;
+  return (
+    <svg className="ll-drawing" viewBox="0 0 600 280" role="img" aria-label={`Boiler drum: level ${Math.round(level)} mm, steam ${f1(d.qs)} t/h, feedwater ${f1(qfw)} t/h`}>
+      <clipPath id={clip}><rect x={x0} y={cy - half} width={x1 - x0} height={2 * half} rx={half} /></clipPath>
+      <rect className="ll-liquid" x={x0} y={yl} width={x1 - x0} height={cy + half - yl} clipPath={`url(#${clip})`} />
+      {Array.from({ length: bubbles }, (_, i) => (
+        <circle key={i} className="ll-bubble-gas" cx={x0 + 40 + ((i * 53) % (x1 - x0 - 80))} cy={Math.min(cy + half - 10, yl + 12 + ((i * 17) % 40))} r={3} />
+      ))}
+      <rect className="ll-steel" fill="none" strokeWidth={3} x={x0} y={cy - half} width={x1 - x0} height={2 * half} rx={half} />
+      <line className="ll-guide" x1={x0 + 20} x2={x1 - 20} y1={cy} y2={cy} strokeDasharray="6 4" />
+      <text className="is-muted" x={x1 - 24} y={cy - 4} textAnchor="end">NWL</text>
+      <text x={(x0 + x1) / 2} y={Math.min(cy + half - 8, yl + 18)} textAnchor="middle" fontWeight={700}>{level >= 0 ? '+' : ''}{Math.round(level)} mm</text>
+      {/* Steam out */}
+      <path className="ll-pipe" d={`M${x1 - 60} ${cy - half}V24H580`} />
+      <path className="ll-flowline" style={flowAnim(d.qs / 40)} d={`M${x1 - 60} ${cy - half - 4}V24H576`} />
+      <circle className="ll-block" cx={500} cy={24} r={11} />
+      <text x={470} y={52}>FT-503 · steam {f1(d.qs)} t/h</text>
+      {/* Feedwater in */}
+      <path className="ll-pipe" d={`M20 230H${x0 + 50}V${cy + half}`} />
+      {qfw > 0.5 && <path className="ll-flowline" style={flowAnim(qfw / 40)} d={`M24 230H${x0 + 50}V${cy + half + 4}`} />}
+      <ControlValve x={70} y={230} open={valve} tag="" label={false} />
+      <text x={20} y={268}>FV-502 {f1(valve)} % · feedwater {f1(qfw)} t/h</text>
+      <circle className="ll-block" cx={150} cy={230} r={11} />
+      <text x={136} y={212}>FT-502</text>
+      <text className="is-muted" x={20} y={172}>{f1(d.Pfw)} % header pressure</text>
+      {/* Downcomer and risers to the furnace */}
+      <path className="ll-pipe" d={`M${x1 - 90} ${cy + half}V250M${x1 - 40} ${cy + half - 6}V250`} />
+      <text className="is-muted" x={x1 - 65} y={268} textAnchor="middle">to and from the furnace</text>
+      {/* Level transmitter */}
+      <line className="ll-signal" x1={x1} y1={cy} x2={x1 + 50} y2={cy} />
+      <circle className="ll-bubble" cx={x1 + 68} cy={cy} r={18} />
+      <text x={x1 + 68} y={cy - 4} textAnchor="middle">LT</text>
+      <text x={x1 + 68} y={cy + 9} textAnchor="middle">501</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -120,6 +233,9 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   }
   if (proc.id === 'stirred') return <StirredSchematic p={p} d={d} valve={valve} Tj={x[1]} T={x[2]} />;
   if (proc.id === 'hx') return <HxSchematic p={p} d={d} valve={valve} Tw={x[1]} T={x[2]} />;
+  if (proc.id === 'surge') return <SurgeSchematic p={p} level={x[1]} valve={valve} qIn={d.Qin} />;
+  if (proc.id === 'feeder') return <FeederSchematic p={p} d={d} speed={valve} atScrew={x[1]} reading={x[2]} />;
+  if (proc.id === 'drum') return <DrumSchematic p={p} d={d} valve={valve} level={x[1] + x[2] - x[3]} swell={x[2]} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
 
@@ -187,6 +303,111 @@ export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: Controll
           </>
         )}
         <text className="is-muted" x={20} y={334}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'surge') {
+    return (
+      <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label="P&ID of the surge tank level loop">
+        <path className="ll-steel" strokeWidth={2.5} d="M160 70V230H320V70Z" />
+        <text className="is-muted" x={240} y={160} textAnchor="middle">T-601</text>
+        <path className="ll-pipe" strokeWidth={3} d="M20 50H200V70" />
+        <text className="is-muted" x={20} y={40}>from upstream</text>
+        <path className="ll-pipe" strokeWidth={3} d="M290 230V260H500" />
+        <circle className="ll-block" cx={350} cy={260} r={12} />
+        <text className="is-muted" x={338} y={288}>P-601</text>
+        <ControlValve x={430} y={260} open={50} tag="" label={false} />
+        <text x={450} y={230}>{proc.tags.valve}</text>
+        <line className="ll-signal" x1={320} y1={130} x2={410} y2={130} />
+        <Bubble x={430} y={130} letters="LT" num="601" />
+        <line className="ll-signal" x1={430} y1={110} x2={430} y2={80} />
+        <Bubble x={430} y={60} letters="LIC" num="601" shared />
+        <path className="ll-signal" d="M450 60H490V200H430V218" />
+        <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'feeder') {
+    const smith = config.kind === 'smith';
+    return (
+      <svg className="ll-drawing" viewBox="0 0 560 270" role="img" aria-label={`P&ID of the feed rate loop${smith ? ' with a Smith predictor' : ''}`}>
+        <path className="ll-steel" strokeWidth={2.5} d="M30 40H130L100 100H60Z" />
+        <rect className="ll-block" x={50} y={100} width={120} height={22} rx={3} />
+        <text className="is-muted" x={110} y={115} textAnchor="middle">screw</text>
+        <path className="ll-steel" strokeWidth={2} d="M160 170H520" />
+        <path className="ll-line" d="M165 122V165" />
+        <text className="is-muted" x={340} y={190} textAnchor="middle">belt conveyor</text>
+        <rect className="ll-block" x={20} y={150} width={50} height={30} rx={3} />
+        <text x={45} y={170} textAnchor="middle">SC</text>
+        <text className="is-muted" x={20} y={200}>VFD {proc.tags.valve}</text>
+        <path className="ll-line" d="M45 150V122H50" />
+        <path className="ll-line" d="M430 170V184M420 184H440" />
+        <line className="ll-signal" x1={430} y1={170} x2={430} y2={130} />
+        <Bubble x={430} y={110} letters="WT" num="701" />
+        {smith ? (
+          <>
+            <line className="ll-signal" x1={410} y1={110} x2={360} y2={110} />
+            <Bubble x={340} y={110} letters="WY" num="701" shared />
+            <text className="is-muted" x={300} y={146}>Smith predictor</text>
+            <line className="ll-signal" x1={340} y1={90} x2={340} y2={60} />
+            <Bubble x={340} y={40} letters="WIC" num="701" shared />
+            <path className="ll-signal" d="M360 46H380V80H360" strokeDasharray="2 3" />
+          </>
+        ) : (
+          <>
+            <line className="ll-signal" x1={430} y1={90} x2={430} y2={60} />
+            <Bubble x={430} y={40} letters="WIC" num="701" shared />
+          </>
+        )}
+        <path className="ll-signal" d={`M${smith ? 320 : 410} 40H10V165H20`} />
+        <text className="is-muted" x={20} y={262}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'drum') {
+    const cascade = config.kind === 'cascade';
+    const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+    const elements = 1 + (cascade ? 1 : 0) + (ff.length ? 1 : 0);
+    return (
+      <svg className="ll-drawing" viewBox="0 0 600 330" role="img" aria-label={`P&ID of the drum level loop: ${elements}-element control`}>
+        <rect className="ll-steel" fill="none" strokeWidth={2.5} x={230} y={170} width={220} height={70} rx={35} />
+        <text className="is-muted" x={340} y={210} textAnchor="middle">D-501 steam drum</text>
+        {/* Steam out with flow transmitter */}
+        <path className="ll-pipe" strokeWidth={3} d="M400 170V130H590" />
+        <circle className="ll-block" cx={500} cy={130} r={11} />
+        {/* Feedwater in */}
+        <path className="ll-pipe" strokeWidth={3} d="M20 280H270V240" />
+        <ControlValve x={90} y={280} open={50} tag="" label={false} />
+        <text x={112} y={258}>FV-502</text>
+        <circle className="ll-block" cx={190} cy={280} r={11} />
+        {/* Level */}
+        <line className="ll-signal" x1={450} y1={205} x2={500} y2={205} />
+        <Bubble x={520} y={205} letters="LT" num="501" />
+        <path className="ll-signal" d="M540 205H570V40H360" />
+        <Bubble x={340} y={40} letters="LIC" num="501" shared />
+        {cascade ? (
+          <>
+            <line className="ll-signal" x1={190} y1={269} x2={190} y2={160} />
+            <Bubble x={190} y={140} letters="FT" num="502" />
+            <line className="ll-signal" x1={190} y1={120} x2={190} y2={110} />
+            <Bubble x={190} y={90} letters="FIC" num="502" shared />
+            <path className="ll-signal" d={`M320 40H${ff.length ? 270 : 190}V${ff.length ? 52 : 70}`} />
+            <path className="ll-signal" d="M170 90H90V238" />
+          </>
+        ) : <path className="ll-signal" d="M320 40H90V238" />}
+        {ff.length > 0 && (
+          <>
+            <line className="ll-signal" x1={500} y1={119} x2={500} y2={100} />
+            <Bubble x={500} y={80} letters="FT" num="503" />
+            <path className="ll-signal" d="M480 80H290" />
+            <Bubble x={270} y={80} letters="FY" num="503" shared />
+            <text className="is-muted" x={250} y={128}>Σ: {cascade ? 'feedwater setpoint' : 'valve'}</text>
+            {cascade && <path className="ll-signal" d="M250 80H210" />}
+            {!cascade && <path className="ll-signal" d="M250 80H110V238" />}
+          </>
+        )}
+        <text className="is-muted" x={20} y={20}>{elements === 3 ? 'Three-element: level, steam flow, feedwater flow' : elements === 2 ? 'Two-element' : 'Single-element: level only'}</text>
+        <text className="is-muted" x={20} y={326}>{LEGEND}</text>
       </svg>
     );
   }

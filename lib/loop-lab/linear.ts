@@ -169,12 +169,21 @@ export function approximate(m: PlantModel, extraDelay = 0): Fopdt {
   const restSum = rest.reduce((s, v) => s + v, 0);
   const lags = t.reduce((s, v) => s + v, 0);
   if (integrator) {
-    // k′ from the low-frequency asymptote ω·|G(jω)|.
+    // k′ from the low-frequency asymptote G(jω) ≈ k′/(jω), keeping its sign.
     const w = 1e-6 / Math.max(1, lags + theta0);
-    const kPrime = w * cabs(ssResponse(m.A, m.B, m.C, w));
+    const g = ssResponse(m.A, m.B, m.C, w);
+    const kPrime = Math.sign(-g.im || 1) * w * cabs(g);
     const tauBig = 1e4 * Math.max(1, lags + theta0);
-    const theta = theta0 + t2 + t3 + restSum;
-    return { K: kPrime * tauBig, tau: tauBig, theta: Math.max(theta, 1e-6), tau1: tauBig, tau2: t2, theta2: Math.max(theta0 + t3 + restSum, 1e-6), kPrime, integrating: true };
+    // The ramp's asymptote k′(t − θe) lags by Σ pole time constants − Σ zero time constants, so an
+    // inverse response (a right-half-plane zero, like a drum's shrink) counts as dead time too.
+    // The poles alone would miss it.
+    const wl = 1e-4 / Math.max(1, lags + theta0);
+    const gl = ssResponse(m.A, m.B, m.C, wl);
+    const kl = -wl * gl.im;
+    const lagged = kl ? -gl.re / kl : 0;
+    const extra = Math.max(0, lagged - (t2 + t3 + restSum));
+    const theta = theta0 + t2 + t3 + restSum + extra;
+    return { K: kPrime * tauBig, tau: tauBig, theta: Math.max(theta, 1e-6), tau1: tauBig, tau2: t2, theta2: Math.max(theta0 + t3 + restSum + extra, 1e-6), kPrime, integrating: true };
   }
   const tau = t1 + t2 / 2;
   const theta = theta0 + t2 / 2 + t3 + restSum;
@@ -216,6 +225,17 @@ export function frequencyGrid(m: PlantModel, pids: (LinearPid | null)[], delay: 
   const out: number[] = [];
   for (let i = 0; i < count; i++) out.push(lo * (hi / lo) ** (i / (count - 1)));
   return out;
+}
+
+/** A frequency grid with extra points every π/8 of the model delay's phase, for the Smith predictor's ripples. */
+function smithGrid(base: number[], theta: number) {
+  if (!(theta > 0)) return base;
+  const lo = base[0], hi = base[base.length - 1];
+  const step = Math.PI / (8 * theta);
+  const top = Math.min(hi, 200 / theta);
+  const extra: number[] = [];
+  for (let w = Math.max(lo, step); w <= top && extra.length < 4000; w += step) extra.push(w);
+  return [...base, ...extra].sort((a, b) => a - b);
 }
 
 /** Bode data with a continuous (unwrapped) phase in degrees; the delay's phase is added exactly. */
@@ -278,6 +298,21 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
     const loop = bode(ws, (w) => cmul(pidResponse(ctrl.pid, w), G1(w)), delay);
     return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop) };
   }
+  if (ctrl.kind === 'smith') {
+    // The predictor makes the controller C/(1 + C·Gm(1 − e^{−θm·s})). Its delay term ripples
+    // with frequency, so the grid gets a fine linear part where the loop still has gain.
+    const { K, tau, theta } = ctrl.model;
+    const ws = smithGrid(frequencyGrid(m, [ctrl.pid], delay), theta);
+    const eff = (w: number) => {
+      const c = pidResponse(ctrl.pid, w);
+      const gm = cdiv(cx(K), { re: 1, im: w * tau });
+      const pred = cmul(gm, { re: 1 - Math.cos(w * theta), im: Math.sin(w * theta) });
+      const cg = cmul(c, pred);
+      return cdiv(c, { re: 1 + cg.re, im: cg.im });
+    };
+    const loop = bode(ws, (w) => cmul(eff(w), G1(w)), delay);
+    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop, true) };
+  }
   // Cascade: the inner loop sees the sampling delay; the outer loop sees the inner one closed, plus the transport delay.
   const C2 = m.C2!;
   const G2 = (w: number) => ssResponse(m.A, m.B, C2, w);
@@ -296,8 +331,14 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
   };
 }
 
-export function margins(loop: BodePoint[]): Margins {
-  let pm = Infinity, wc = NaN, gm = Infinity, w180 = NaN, ms = 0;
+/**
+ * Margins from the open-loop Bode data. `rippled`: the loop has a dead-time
+ * model inside the controller (Smith predictor), whose phase winds round many
+ * times, so the phase margin is taken as the angle between L and −1 at each
+ * crossover, whichever way round.
+ */
+export function margins(loop: BodePoint[], rippled = false): Margins {
+  let pm = Infinity, wc = NaN, gm = Infinity, w180 = NaN, ms = 0, delayMargin = Infinity;
   const interp = (a: BodePoint, b: BodePoint, key: 'mag' | 'phase', target: number) => {
     const f = (target - a[key]) / (b[key] - a[key]);
     const lw = Math.log(a.w) + f * (Math.log(b.w) - Math.log(a.w));
@@ -308,11 +349,20 @@ export function margins(loop: BodePoint[]): Margins {
     const a = loop[i - 1], b = loop[i];
     if ((a.mag >= 0 && b.mag < 0) || (a.mag < 0 && b.mag >= 0)) {
       const { w, v } = interp(a, b, 'mag', 0);
-      const m = 180 + v;
+      // A long delay (or a Smith predictor's ripples) can carry the phase past −360° before
+      // a crossover: what counts is where it points, so take it within one turn.
+      let ph = v;
+      while (ph <= -360) ph += 360;
+      const m = rippled ? 180 - Math.abs(ph + 360 * Math.round(-ph / 360)) : 180 + ph;
       if (m < pm) { pm = m; wc = w; }
+      // Extra dead time turns L clockwise by ω·Δθ: the margin is the smallest turn, over every crossover, that reaches −1.
+      const turnToMinus1 = rippled ? (((ph + 180) % 360) + 360) % 360 : m;
+      if (w > 0) delayMargin = Math.min(delayMargin, ((turnToMinus1 * Math.PI) / 180) / w);
     }
-    if ((a.phase > -180 && b.phase <= -180) || (a.phase <= -180 && b.phase > -180)) {
-      const { w, v } = interp(a, b, 'phase', -180);
+    // Phase crossovers at −180°, −540°, …: every time the loop points at −1.
+    const turn = (ph: number) => Math.floor((ph + 180) / 360);
+    if (turn(a.phase) !== turn(b.phase)) {
+      const { w, v } = interp(a, b, 'phase', -180 + 360 * Math.max(turn(a.phase), turn(b.phase)));
       if (-v < gm) { gm = -v; w180 = w; }
     }
   }
@@ -320,7 +370,6 @@ export function margins(loop: BodePoint[]): Margins {
     const L = { re: 10 ** (p.mag / 20) * Math.cos((p.phase * Math.PI) / 180), im: 10 ** (p.mag / 20) * Math.sin((p.phase * Math.PI) / 180) };
     ms = Math.max(ms, 1 / Math.hypot(1 + L.re, L.im));
   }
-  const delayMargin = Number.isFinite(pm) && wc > 0 ? ((pm * Math.PI) / 180) / wc : Infinity;
   return { gm, pm, wc, w180, ms, delayMargin };
 }
 
@@ -371,9 +420,11 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   const nq = delay > 0 ? 2 : 0;
   const ffTerms: FeedforwardTerm[] = (ctrl.ff ?? []).filter((t) => t.from === dKey);
   const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) as number);
-  const pids = ctrl.kind === 'single' ? [ctrl.pid] : [ctrl.outer, ctrl.inner];
+  const pids = ctrl.kind === 'cascade' ? [ctrl.outer, ctrl.inner] : [ctrl.pid];
   const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0));
-  const n = np + nq + ffStates.reduce((s, v) => s + v, 0) + pidStates.reduce((s, v) => s + v, 0);
+  const smith = ctrl.kind === 'smith' ? ctrl.model : null;
+  const smithStates = smith ? 1 + (smith.theta > 0 ? 2 : 0) : 0;
+  const n = np + nq + ffStates.reduce((s, v) => s + v, 0) + pidStates.reduce((s, v) => s + v, 0) + smithStates;
   const deriv: Sig[] = Array.from({ length: n }, () => sig(n));
   let next = np + nq;
 
@@ -416,7 +467,19 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
 
   let u: Sig;
   if (ctrl.kind === 'single') u = add(pidBlock(ctrl.pid, r, y), v);
-  else u = pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
+  else if (ctrl.kind === 'smith') {
+    // Model lag z (undelayed prediction) and a Padé copy of its delay; the PID sees y + z − delayed z.
+    const sm = ctrl.model;
+    const iz = next++;
+    const iq = next;
+    next += sm.theta > 0 ? 2 : 0;
+    const mp = sm.theta > 0 ? pade2(sm.theta) : null;
+    const z = unit(n, iz);
+    const zd = mp ? add(scale(z, mp.D), add(scale(unit(n, iq), mp.C[0]), unit(n, iq + 1), mp.C[1])) : z;
+    u = pidBlock(ctrl.pid, r, add(y, add(z, zd, -1)));
+    deriv[iz] = scale(add(scale(u, sm.K), z, -1), 1 / Math.max(sm.tau, 1e-2));
+    if (mp) for (let k = 0; k < 2; k++) deriv[iq + k] = add(add(scale(unit(n, iq), mp.A[k][0]), unit(n, iq + 1), mp.A[k][1]), z, mp.B[k]);
+  } else u = pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
 
   // Plant and delay.
   const drive = add(u, { ...sig(n), l: 1 });
