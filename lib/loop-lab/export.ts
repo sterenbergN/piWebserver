@@ -54,6 +54,8 @@ function pidBlock(d: Dialect, pid: PidParams, Ts: number, inLo: number, inHi: nu
       ManualValue : Real;     // %
       Feedforward : Real;     // %, added to the output (0 when unused)
       HoldIntegral : Int;     // +1 / -1: don't integrate up / down (a cascade slave is saturated)
+      ExtResetEnable : Bool;  // override: this controller is not selected, so its integral follows ExtReset
+      ExtReset : Real;        // %, the selected (valve) output, for external reset feedback
       Cycle : Real := ${real(Ts)};    // s, must match the cyclic interrupt the block is called from
    END_VAR
    VAR_OUTPUT
@@ -123,7 +125,11 @@ ${d === 'scl' ? '\nBEGIN' : ''}
     END_IF;
     ${v('LastED')} := ${v('eD')};
 
-    IF ${v('Ti')} > 0.0 THEN
+    IF ${v('ExtResetEnable')} AND ${v('Ti')} > 0.0 THEN
+        // External reset feedback: the integral follows the selected output through a Ti lag,
+        // so this controller's output is the valve signal plus its own P and D.
+        ${v('iNext')} := ${v('Integral')} + ${v('Cycle')} / MAX(IN1 := ${v('Ti')}, IN2 := ${v('Cycle')}) * (${v('ExtReset')} - ${v('Integral')});
+    ELSIF ${v('Ti')} > 0.0 THEN
         ${v('iNext')} := ${v('Integral')} + ${v('Gain')} * ${v('Cycle')} / ${v('Ti')} * ${v('e')};
     ELSE
         ${v('iNext')} := ${v('Integral')};
@@ -133,7 +139,9 @@ ${d === 'scl' ? '\nBEGIN' : ''}
     ${v('u')} := LIMIT(MN := ${v('OutLow')}, IN := ${v('v')}, MX := ${v('OutHigh')});
 
     // A saturated slave asks its master to stop integrating in that direction.
-    IF ${v('Ti')} > 0.0 AND NOT ((${v('HoldIntegral')} > 0 AND ${v('iNext')} > ${v('Integral')}) OR (${v('HoldIntegral')} < 0 AND ${v('iNext')} < ${v('Integral')})) THEN
+    IF ${v('ExtResetEnable')} THEN
+        ${v('Integral')} := ${v('iNext')};
+    ELSIF ${v('Ti')} > 0.0 AND NOT ((${v('HoldIntegral')} > 0 AND ${v('iNext')} > ${v('Integral')}) OR (${v('HoldIntegral')} < 0 AND ${v('iNext')} < ${v('Integral')})) THEN
 ${awLine.replace(/^/gm, '    ')}
     END_IF;
 
@@ -441,6 +449,41 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`// Show ${pv} on the HMI, not the corrected value: the operator wants the real measurement.`);
     return lines.join('\n');
   }
+  if (config.kind === 'override') {
+    const on = config.on === 'pv2' && proc.secondary ? proc.secondary : null;
+    const ovrIn = on ? tag(on.tag) : pv;
+    const ovr = d === 'scl' ? `"${proc.tags.loop.replace('-', '_')}_Ovr_DB"` : `${proc.tags.loop.replace('-', '_')}_Ovr`;
+    const fn = config.select === 'max' ? 'MAX' : 'MIN';
+    lines.push(`// Override: ${proc.tags.loop} (normal) and a limit controller on ${on ? `${on.tag} (${on.label.toLowerCase()})` : pv} at ${real(config.limit)} ${on ? on.unit : proc.pv.unit}; the ${config.select === 'max' ? 'higher' : 'lower'} output drives ${out}.`);
+    lines.push(`// Give the limit controller its own tuning once at start-up (OB100): ${ovr}.Gain := ${real(config.ovr.Kc)}; ${ovr}.Ti := ${real(config.ovr.Ti)}; ${ovr}.Td := ${real(config.ovr.Td)};${on ? ` ${ovr}.InLow := ${real(on.lo)}; ${ovr}.InHigh := ${real(on.hi)};` : ''}`);
+    lines.push(config.tracking
+      ? `// External reset: whichever controller lost the selection last cycle has its integral follow the valve signal.`
+      : `// No tracking: each controller integrates on its own error even when it isn't selected (the windup case).`);
+    const er = (who: string) => (config.tracking ? `ExtResetEnable := ${who}, ExtReset := ${tag('Out')}` : 'ExtResetEnable := FALSE, ExtReset := 0.0');
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ${er(tag('OvrSelected'))});`);
+    lines.push(`${ovr}(Setpoint := ${real(config.limit)}, Input := ${ovrIn}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ${er(`NOT ${tag('OvrSelected')}`)});`);
+    lines.push(`${tag('Out')} := ${fn}(IN1 := ${db}.Output, IN2 := ${ovr}.Output);`);
+    lines.push(`${tag('OvrSelected')} := ${ovr}.Output ${config.select === 'max' ? '>' : '<'} ${db}.Output;  // show it on the faceplate: which controller has the valve`);
+    lines.push(`${out} := ${tag('Out')};`);
+    return lines.join('\n');
+  }
+  if (config.kind === 'ratio' && proc.secondary && proc.ratio) {
+    const sec = proc.secondary;
+    const inner = d === 'scl' ? `"${sec.loopTag.replace('-', '_')}_DB"` : sec.loopTag.replace('-', '_');
+    const wildD = proc.disturbances.find((x) => x.key === proc.ratio!.from);
+    const wild = tag(wildD?.measured ?? proc.ratio.from), pv2 = tag(sec.tag);
+    lines.push(`// Ratio station: ${sec.loopTag} setpoint = R × ${wildD?.measured ?? 'the wild flow'} (${wildD?.label.toLowerCase() ?? 'wild flow'}).`);
+    lines.push(`// Give the flow controller its own tuning once at start-up (OB100): ${inner}.Gain := ${real(config.inner.Kc)}; ${inner}.Ti := ${real(config.inner.Ti)}; ${inner}.InLow := ${real(sec.lo)}; ${inner}.InHigh := ${real(sec.hi)};`);
+    if (config.trim) {
+      lines.push(`// Trim: ${proc.tags.loop} sets R over ${real(config.rLo)}–${real(config.rHi)}; in manual it tracks the ratio being run, so auto is bumpless.`);
+      lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := (${pv2} / MAX(IN1 := ${wild}, IN2 := 0.001) - ${real(config.rLo)}) / ${real(config.rHi - config.rLo)} * 100.0, HoldIntegral := ${inner}.AtLimit);`);
+      lines.push(`${tag('Ratio')} := ${real(config.rLo)} + ${db}.Output / 100.0 * ${real(config.rHi - config.rLo)};`);
+    } else lines.push(`${tag('Ratio')} := ${real(config.ratio)};  // fixed by the recipe`);
+    lines.push(`${tag('SP2')} := LIMIT(MN := ${real(sec.lo)}, IN := ${tag('Ratio')} * ${wild}, MX := ${real(sec.hi)});`);
+    lines.push(`${inner}(Setpoint := ${tag('SP2')}, Input := ${pv2}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${inner}.Output;`);
+    return lines.join('\n');
+  }
   if (config.kind === 'feedforward') {
     const ff = ffOf(config.ff);
     lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, Feedforward := ${ff});`);
@@ -455,6 +498,19 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
   lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
   lines.push(`${out} := ${db}.Output;`);
   return lines.join('\n');
+}
+
+/** Split-range: the one controller output to two valves, as the PLC (or two positioners) would split it. */
+function splitRange(d: Dialect, proc: ProcessDef, p: Params) {
+  const tag = (name: string) => (d === 'scl' ? `"${name}"` : name.replace(/-/g, '_'));
+  const u = tag(proc.tags.valve), lo = p.split - p.gap / 2, hi = p.split + p.gap / 2;
+  return [
+    `// Split-range ${proc.tags.valve}: ${proc.split!.low} works over 0–${real(lo)} % (fully open at 0), ${proc.split!.high} over ${real(hi)}–100 %.`,
+    p.gap > 0 ? `// Between them, a ${real(p.gap)} % gap where both are shut.` : `// No gap: one valve starts opening as the other closes.`,
+    `${tag(proc.split!.low)} := LIMIT(MN := 0.0, IN := (${real(lo)} - ${u}) / ${real(Math.max(lo, 1e-3))} * 100.0, MX := 100.0);`,
+    `${tag(proc.split!.high)} := LIMIT(MN := 0.0, IN := (${u} - ${real(hi)}) / ${real(Math.max(100 - hi, 1e-3))} * 100.0, MX := 100.0);`,
+    `// Or calibrate the two positioners to 4–${real(4 + (16 * lo) / 100)} mA (reversed) and ${real(4 + (16 * hi) / 100)}–20 mA, and send one signal to both.`,
+  ].join('\n');
 }
 
 function pidInputRange(proc: ProcessDef, config: ControllerConfig, p: Params) {
@@ -483,9 +539,10 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
-    parts.push(pidBlock(dialect, config.kind === 'cascade' ? config.outer : config.pid, p.Ts, lo, hi));
+    parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
+  if (proc.split && config.kind !== 'onoff') parts.push(splitRange(dialect, proc, p));
   return parts.join('\n\n');
 }
 
@@ -501,8 +558,19 @@ function onOff(spPct: number, pvPct: number): number {
   return on ? ${config.outOn} : ${config.outOff};
 }`;
   }
-  const p = config.kind === 'cascade' ? config.outer : config.pid;
-  const extra = config.kind === 'cascade'
+  const p = 'outer' in config ? config.outer : config.pid;
+  const extra = config.kind === 'override'
+    ? `
+
+// Override: a second copy of this PID (Kc ${config.ovr.Kc}, Ti ${config.ovr.Ti} s) on ${config.on === 'pv2' ? 'the secondary measurement' : 'the same measurement'},
+// setpoint ${config.limit}. Each cycle: out = ${config.select === 'max' ? 'Math.max' : 'Math.min'}(main, override).${config.tracking ? `
+// External reset: the one not selected does I += (Ts / Ti) * (out - I) instead of integrating its error.` : ''}`
+    : config.kind === 'ratio'
+      ? `
+
+// Ratio: this PID ${config.trim ? `is the trim; R = ${config.rLo} + output / 100 * ${config.rHi - config.rLo}` : `is not used; R = ${config.ratio}`}.
+// The flow controller's setpoint is R * wildFlow; it runs the same algorithm (Kc ${config.inner.Kc}, Ti ${config.inner.Ti} s).`
+      : config.kind === 'cascade'
     ? `
 
 // Cascade: this PID is the master; its output (0-100 % of the secondary span) is the slave's setpoint.
@@ -588,6 +656,24 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
       { name: 'Cascade', value: 'two controllers', note: `PID_Temp has cascade support built in (master/slave). With PID_Compact, wire the master's Output (scaled to ${real(sec.lo)}–${real(sec.hi)} ${sec.unit}) to the slave's Setpoint, and stop the master winding up while the slave is saturated yourself.` },
       ...master, ...slave,
       ...(config.ff.length ? [{ name: 'Feedforward', value: `${config.ff.length} term${config.ff.length > 1 ? 's' : ''}`, note: 'Added to the slave setpoint: compute it in your own code (the exported LL_LeadLag) before the slave call.' }] : []),
+    ];
+  }
+  if (config.kind === 'ratio') {
+    const sec = proc.secondary!;
+    const trim = config.trim ? compactRows(config.outer, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts).map((r) => ({ ...r, name: `${proc.tags.loop}: ${r.name}` })) : [];
+    const flow = compactRows(config.inner, sec.lo, sec.hi, sec.unit, p.Ts).map((r) => ({ ...r, name: `${sec.loopTag}: ${r.name}` }));
+    return [
+      { name: 'Ratio', value: config.trim ? `${real(config.rLo)}–${real(config.rHi)}` : real(config.ratio), note: `No ratio block in PID_Compact: compute SP = R × wild flow in your own code (one line, in the exported call), and write it to ${sec.loopTag}'s Setpoint.${config.trim ? ` The trim's Output (0–100 %) scales to R; Config.OutputLower/UpperLimit bound the ratio.` : ''}` },
+      ...trim, ...flow,
+    ];
+  }
+  if (config.kind === 'override') {
+    const on = config.on === 'pv2' && proc.secondary ? proc.secondary : proc.pv;
+    const main = compactRows(config.pid, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts).map((r) => ({ ...r, name: `${proc.tags.loop}: ${r.name}` }));
+    const ovr = compactRows(config.ovr, on.lo, on.hi, on.unit, p.Ts).map((r) => ({ ...r, name: `Override: ${r.name}` }));
+    return [
+      { name: 'Override', value: `${config.select === 'max' ? 'MAX' : 'MIN'} of two`, note: `Two PID_Compact instances and a MAX/MIN in your code. PID_Compact has no external-reset input: the usual workaround is to put the one not selected in manual (ManualEnable) with ManualValue = the selected output, so it tracks; PID_Temp is no different. The exported LL_PID has ExtReset for the real thing.` },
+      ...main, ...ovr,
     ];
   }
   const pid = config.kind === 'schedule' ? { ...config.pid, ...config.points[Math.floor(config.points.length / 2)] } : config.pid;

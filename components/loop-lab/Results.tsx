@@ -47,6 +47,9 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
         { label: 'Valve stem', color: 'var(--ll-valve)', x: times[i], y: e.run.trace.valve, width: 1.8 },
       ]
     : [{ label: e.label, color: e.color, x: times[i], y: e.run.trace.valve, width: 1.6 }]);
+  if (single && Array.from(first.trace.alt).some(Number.isFinite)) {
+    cv.push({ label: 'Override controller (its own output)', color: 'var(--habit-6)', x: t, y: first.trace.alt, dash: '4 3', width: 1.2 });
+  }
   const sec = proc.secondary;
   const inner = single && sec && Array.from(first.trace.sp2).some(Number.isFinite);
   const events = first.scenario.events.filter((ev) => ev.kind === 'dist' || ev.kind === 'freeze').map((ev) => ({ at: ev.t * scale, label: ev.kind === 'dist' ? `${proc.disturbances.find((d) => d.key === ev.key)?.label ?? ev.key} → ${ev.value}` : 'sensor freeze' }));

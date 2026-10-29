@@ -59,6 +59,11 @@ export const SURGE: ProcessDef = {
       ],
     },
     {
+      id: 'big-surge', name: 'A long surge', duration: 4800, initialSp: 1.5,
+      purpose: 'Upstream dumps at almost full rate for half an hour: more than the averaging controller can absorb in the room it is allowed. Without a limit, the level heads for the top of the tank.',
+      events: [{ t: 60, kind: 'dist', key: 'Qin', value: 55 }, { t: 1860, kind: 'dist', key: 'Qin', value: 20 }, { t: 3300, kind: 'dist', key: 'Qin', value: 50 }],
+    },
+    {
       id: 'sp-change', name: 'Level setpoint moves', duration: 3000, initialSp: 1.5,
       purpose: 'The operator raises and lowers the normal level (to make room before a known surge, say). Rare for a surge tank, but it shouldn\'t slam the outflow.',
       events: [{ t: 60, kind: 'sp', value: 2 }, { t: 1500, kind: 'sp', value: 1.2 }],

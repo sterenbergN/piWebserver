@@ -69,7 +69,7 @@ export function ProcessReference({ id }: { id: ProcessId }) {
 export function ControllerReference({ kind }: { kind: ControllerKind }) {
   const meta = controllerMeta(kind);
   const c = CONTROLLER_CONTENT[kind];
-  const [procId, setProcId] = useState<ProcessId>(kind === 'schedule' || kind === 'characterized' ? 'tank' : kind === 'feedforward' || kind === 'cascade' ? 'hx' : kind === 'smith' ? 'feeder' : 'flow');
+  const [procId, setProcId] = useState<ProcessId>(kind === 'schedule' || kind === 'characterized' ? 'tank' : kind === 'feedforward' || kind === 'cascade' ? 'hx' : kind === 'smith' ? 'feeder' : kind === 'override' ? 'hx' : kind === 'ratio' ? 'blend' : 'flow');
   const proc = getProcess(procId);
   const exp: Experiment = useMemo(() => ({ ...defaultExperiment(procId), controller: defaultController(kind, getProcess(procId)) }), [kind, procId]);
   const available = isAvailable(proc, kind);

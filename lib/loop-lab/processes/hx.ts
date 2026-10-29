@@ -22,7 +22,7 @@ export const HX: ProcessDef = {
   family: 'escalation',
   pv: { label: 'Outlet temperature', symbol: 'T', unit: '°C', lo: 0, hi: 120, decimals: 2 },
   secondary: {
-    label: 'Steam flow', symbol: 'm_s', unit: 'kg/h', lo: 0, hi: 2000, decimals: 0, tag: 'FT-301', loopTag: 'FIC-301',
+    label: 'Steam flow', symbol: 'm_s', unit: 'kg/h', lo: 0, hi: 2000, decimals: 0, tag: 'FT-301', loopTag: 'FIC-301', upset: 'Ps',
     of: (_x, flow, d, p) => steamFlow(flow, d.Ps, p),
   },
   tags: { loop: 'TIC-301', transmitter: 'TT-301', valve: 'FV-301' },
@@ -85,6 +85,11 @@ export const HX: ProcessDef = {
       id: 'flow-upset', name: 'Process flow changes (measured)', duration: 560, initialSp: 60,
       purpose: 'Throughput steps up 30 % and down 30 %. FT-302 sees it the moment it happens; feedback waits for the temperature to move.',
       events: [{ t: 20, kind: 'dist', key: 'F', value: 13 }, { t: 200, kind: 'dist', key: 'F', value: 7 }, { t: 380, kind: 'dist', key: 'F', value: 10 }],
+    },
+    {
+      id: 'steam-limit', name: 'More duty than the steam allowance', duration: 600, initialSp: 60,
+      purpose: 'Production pushes the flow up 40 %: holding 60 °C would need about 1100 kg/h of steam, more than the 1000 kg/h the boiler can spare (if a limit is set). Then the flow drops back below normal.',
+      events: [{ t: 20, kind: 'dist', key: 'F', value: 14 }, { t: 260, kind: 'dist', key: 'F', value: 8 }, { t: 440, kind: 'dist', key: 'F', value: 10 }],
     },
     {
       id: 'inlet-temp', name: 'Inlet temperature changes (measured)', duration: 400, initialSp: 60,

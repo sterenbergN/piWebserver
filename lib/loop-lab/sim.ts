@@ -77,6 +77,8 @@ export type Sample = {
   ff: number;
   /** Smith predictor: the measurement with the dead time predicted away (NaN otherwise). */
   pred: number;
+  /** Override: the override controller's own output, % (NaN otherwise). */
+  alt: number;
 };
 
 /** A running loop: step it one controller cycle at a time. Used by test runs and the live faceplate. */
@@ -213,12 +215,12 @@ export class Loop {
   }
 }
 
-const pick = ({ P, I, D, Kc, sp2, ff, pred }: { P: number; I: number; D: number; Kc: number; sp2: number; ff: number; pred: number }) => ({ P, I, D, Kc, sp2, ff, pred });
+const pick = ({ P, I, D, Kc, sp2, ff, pred, alt }: { P: number; I: number; D: number; Kc: number; sp2: number; ff: number; pred: number; alt: number }) => ({ P, I, D, Kc, sp2, ff, pred, alt });
 
 export type Trace = {
   t: Float64Array; sp: Float64Array; pv: Float64Array; pvTrue: Float64Array;
   cv: Float64Array; valve: Float64Array; P: Float64Array; I: Float64Array; D: Float64Array; Kc: Float64Array;
-  pv2: Float64Array; sp2: Float64Array; ff: Float64Array; pred: Float64Array;
+  pv2: Float64Array; sp2: Float64Array; ff: Float64Array; pred: Float64Array; alt: Float64Array;
   dist: Record<string, Float64Array>;
 };
 
@@ -245,9 +247,9 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Sce
   const initial = (e: Scenario['events'][number]) => e.t <= 0 && e.kind === 'param';
   for (const ev of sorted) if (ev.kind === 'param' && initial(ev)) applyParam(plant, ev.key, ev.value, ev.factor);
   const events = sorted.filter((e) => !initial(e));
-  const loop = new Loop(proc, setup, { sp: scenario.initialSp, plantParams: plant });
+  const loop = new Loop(proc, setup, { sp: scenario.initialSp, d: scenario.initialDist, plantParams: plant });
   const n = Math.floor(scenario.duration / loop.Ts) + 1;
-  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred'] as const;
+  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred', 'alt'] as const;
   const trace = Object.fromEntries(keys.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
   trace.dist = Object.fromEntries(proc.disturbances.map((s) => [s.key, new Float64Array(n)]));
   let next = 0;

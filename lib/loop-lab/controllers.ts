@@ -1,4 +1,4 @@
-import { fromPct2, measuredDisturbances, pvSpan, toPct, toPct2, type Characterization, type Params, type ProcessDef, type ProcessId } from './model';
+import { fromPct2, measuredDisturbances, nominalDisturbances, pvSpan, toPct, toPct2, valveCharacteristic, type Characterization, type Params, type ProcessDef, type ProcessId } from './model';
 
 // Control strategies. Every controller runs once per cycle (T_s), takes the
 // setpoint and the measurement in engineering units and returns the valve
@@ -52,7 +52,20 @@ export type ControllerConfig =
   | { kind: 'characterized'; pid: PidParams; char: string }
   | { kind: 'feedforward'; pid: PidParams; ff: FeedforwardTerm[] }
   | { kind: 'cascade'; outer: PidParams; inner: PidParams; ff: FeedforwardTerm[] }
-  | { kind: 'smith'; pid: PidParams; model: SmithModel };
+  | { kind: 'smith'; pid: PidParams; model: SmithModel }
+  /**
+   * Override: a second controller with its own (limit) setpoint, on the same
+   * measurement or on the secondary one; the higher or lower of the two
+   * outputs drives the valve. With
+   * tracking, the controller not in charge follows the one that is (external
+   * reset feedback), so it can take over without unwinding first.
+   */
+  | { kind: 'override'; pid: PidParams; ovr: PidParams; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min'; tracking: boolean }
+  /**
+   * Ratio: the controlled flow's setpoint is R × the wild flow. R is fixed, or
+   * set by an outer (trim) controller on the main PV over [rLo, rHi].
+   */
+  | { kind: 'ratio'; outer: PidParams; inner: PidParams; trim: boolean; ratio: number; rLo: number; rHi: number };
 
 export type ControllerKind = ControllerConfig['kind'];
 
@@ -64,6 +77,8 @@ export type ControllerInternals = {
   ff: number;
   /** Smith predictor: the measurement as the PID sees it, with the dead time predicted away (engineering units); NaN otherwise. */
   pred: number;
+  /** Override: the override controller's own output, %; NaN otherwise. */
+  alt: number;
 };
 
 /** Signals besides SP and PV: the inner measurement and the (measured) disturbances. */
@@ -106,6 +121,8 @@ export const CONTROLLER_KINDS: ControllerMeta[] = [
   { kind: 'feedforward', name: 'PID with feedforward', short: 'Feedforward', rung: 5, icon: '⏩' },
   { kind: 'cascade', name: 'Cascade control', short: 'Cascade', rung: 6, icon: '🪜' },
   { kind: 'smith', name: 'Smith predictor', short: 'Smith predictor', rung: 7, icon: '🔮' },
+  { kind: 'override', name: 'Override (selector) control', short: 'Override', rung: 8, icon: '🚧' },
+  { kind: 'ratio', name: 'Ratio control', short: 'Ratio', rung: 9, icon: '⚗️' },
 ];
 export const controllerMeta = (kind: ControllerKind) => CONTROLLER_KINDS.find((c) => c.kind === kind)!;
 
@@ -114,6 +131,7 @@ export function isAvailable(proc: ProcessDef, kind: ControllerKind) {
   if (kind === 'characterized') return proc.characterizations.length > 0;
   if (kind === 'feedforward') return measuredDisturbances(proc).length > 0;
   if (kind === 'cascade') return !!proc.secondary;
+  if (kind === 'ratio') return !!proc.secondary && !!proc.ratio;
   return true;
 }
 
@@ -132,6 +150,8 @@ export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> 
   surge: { Kc: 6, Ti: 450, Td: 0, invert: true },
   feeder: { Kc: 0.1, Ti: 5.5, Td: 0 },
   drum: { Kc: 0.7, Ti: 740, Td: 0 },
+  jacket: { Kc: 3.2, Ti: 170, Td: 0 },
+  blend: { Kc: 0.4, Ti: 38.5, Td: 0 },
   custom: { Kc: 1.2, Ti: 20, Td: 0 },
 };
 
@@ -139,6 +159,7 @@ export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> 
 export const BASELINE_CASCADE: Partial<Record<ProcessId, { inner: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; outer: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> }>> = {
   hx: { inner: { Kc: 1.8, Ti: 2.25, Td: 0 }, outer: { Kc: 1.5, Ti: 31, Td: 0 } },
   drum: { inner: { Kc: 1, Ti: 2.5, Td: 0 }, outer: { Kc: 0.6, Ti: 740, Td: 0 } },
+  blend: { inner: { Kc: 0.88, Ti: 1.75, Td: 0 }, outer: { Kc: 0.4, Ti: 38.6, Td: 0 } },
 };
 export const BASELINE_FF: Partial<Record<ProcessId, { valve: FeedforwardTerm[]; inner: FeedforwardTerm[] }>> = {
   hx: {
@@ -147,11 +168,24 @@ export const BASELINE_FF: Partial<Record<ProcessId, { valve: FeedforwardTerm[]; 
   },
   // Steam flow into feedwater: 1 t/h more steam, 1 t/h more feedwater (1 % of the valve, 0.83 % of FT-502's span).
   drum: { valve: [{ from: 'qs', gain: 1, lead: 0, lag: 0 }], inner: [{ from: 'qs', gain: 0.833, lead: 0, lag: 0 }] },
+  // Diluent flow into concentrate: the ratio 0.25 (1 % of the valve, 1 % of FT-802's 0–25 m³/h, per m³/h).
+  blend: { valve: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }], inner: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }] },
 };
 
 /** Starting Smith predictors: the model from the plant's step response, the PI tuned for the undelayed part. */
 export const BASELINE_SMITH: Partial<Record<ProcessId, { pid: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; model: SmithModel }>> = {
   feeder: { pid: { Kc: 0.41, Ti: 5.5, Td: 0 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } },
+};
+
+/** Starting overrides: a high-level limit on the surge tank, tight, above the averaging controller. */
+export const BASELINE_OVERRIDE: Partial<Record<ProcessId, { pid: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; ovr: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min' }>> = {
+  surge: { pid: { Kc: 0.73, Ti: 3920, Td: 0, invert: true }, ovr: { Kc: 6, Ti: 450, Td: 0, invert: true }, on: 'pv', limit: 2.4, select: 'max' },
+  // The boiler can spare 1000 kg/h: a steam flow limiter under the temperature controller.
+  hx: { pid: { Kc: 1.5, Ti: 29, Td: 0 }, ovr: { Kc: 1.8, Ti: 2.25, Td: 0 }, on: 'pv2', limit: 1000, select: 'min' },
+};
+/** Starting ratio loops: the flow slave, and a slow trim on the analyzer. */
+export const BASELINE_RATIO: Partial<Record<ProcessId, { inner: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; outer: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> }>> = {
+  blend: { inner: { Kc: 0.88, Ti: 1.75, Td: 0 }, outer: { Kc: 0.5, Ti: 38.6, Td: 0 } },
 };
 
 export function defaultController(kind: ControllerKind, proc: ProcessDef): ControllerConfig {
@@ -172,6 +206,21 @@ export function defaultController(kind: ControllerKind, proc: ProcessDef): Contr
       outer: { ...pid, ...c?.outer },
       inner: { ...DEFAULT_PID, ...(c?.inner ?? { Kc: 0.5, Ti: 3, Td: 0 }) },
       ff: [],
+    };
+  }
+  if (kind === 'override') {
+    const b = BASELINE_OVERRIDE[proc.id];
+    const span = pvSpan(proc);
+    return {
+      kind, pid: { ...pid, ...b?.pid }, ovr: { ...pid, ...(b?.ovr ?? { Kc: pid.Kc * 3, Ti: pid.Ti }) }, on: b?.on ?? 'pv',
+      limit: b?.limit ?? Math.min(proc.pv.hi, proc.nominalPv + 0.3 * span), select: b?.select ?? (pid.invert ? 'max' : 'min'), tracking: true,
+    };
+  }
+  if (kind === 'ratio') {
+    const b = BASELINE_RATIO[proc.id], r = proc.ratio;
+    return {
+      kind, outer: { ...pid, ...b?.outer }, inner: { ...DEFAULT_PID, ...(b?.inner ?? { Kc: 0.5, Ti: 3, Td: 0 }) },
+      trim: true, ratio: r?.nominal ?? 1, rLo: r?.lo ?? 0, rHi: r?.hi ?? 2,
     };
   }
   if (kind === 'smith') {
@@ -312,18 +361,20 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
         return on ? config.outOn : config.outOff;
       },
       track(valve) { on = valve > mid; },
-      internals: () => ({ P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: last.e, sp2: NaN, ff: 0, pred: NaN }),
+      internals: () => ({ P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: last.e, sp2: NaN, ff: 0, pred: NaN, alt: NaN }),
     };
   }
 
   if (config.kind === 'cascade') return createCascade(proc, config, Ts);
   if (config.kind === 'smith') return createSmith(proc, config, Ts);
+  if (config.kind === 'override') return createOverride(proc, config, Ts);
+  if (config.kind === 'ratio') return createRatio(proc, config, Ts);
 
   const pid = config.pid;
   const scale = controlScale(proc, config, model);
   const core = new PidCore(pid, Ts);
   const ffs = config.kind === 'feedforward' ? config.ff.map((t) => new FeedforwardCore(t, Ts)) : [];
-  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td, e: 0, sp2: NaN, ff: 0, pred: NaN };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
   const gains = (sp: number, pv: number) =>
     config.kind === 'schedule' ? scheduledGains(config.points, config.on === 'sp' ? sp : pv) : { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
 
@@ -333,7 +384,7 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
       const { e, eP, eD } = errorsOf(pid, scale.toC(sp), scale.toC(pv));
       const ff = ffs.reduce((s, f) => s + f.step(aux.d), 0);
       const { u, P } = core.run(e, eP, eD, g, ff);
-      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff, pred: NaN };
+      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff, pred: NaN, alt: NaN };
       return scale.out(u);
     },
     track(valve, sp, pv, aux) {
@@ -341,7 +392,7 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
       const { e, eP, eD } = errorsOf(pid, scale.toC(sp), scale.toC(pv));
       ffs.forEach((f) => f.reset(aux.d));
       core.track(scale.back(valve), eP, eD, g.Kc, 0);
-      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: NaN };
+      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
     },
     internals: () => last,
   };
@@ -358,7 +409,7 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
   const outer = new PidCore(config.outer, Ts), inner = new PidCore(config.inner, Ts);
   const ffs = config.ff.map((t) => new FeedforwardCore(t, Ts));
   let innerSat = 0;
-  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td, e: 0, sp2: NaN, ff: 0, pred: NaN };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
   const gOuter = { Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td };
   const gInner = { Kc: config.inner.Kc, Ti: config.inner.Ti, Td: config.inner.Td };
 
@@ -371,7 +422,7 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
       const i = errorsOf(config.inner, u1, toPct2(sec, aux.pv2));
       const r = inner.run(i.e, i.eP, i.eD, gInner, 0);
       innerSat = r.sat * (config.inner.invert ? -1 : 1);
-      last = { P, I: outer.I, D: outer.D, ...gOuter, e: o.e, sp2, ff, pred: NaN };
+      last = { P, I: outer.I, D: outer.D, ...gOuter, e: o.e, sp2, ff, pred: NaN, alt: NaN };
       return r.u;
     },
     track(valve, sp, pv, aux) {
@@ -383,7 +434,7 @@ function createCascade(proc: ProcessDef, config: Extract<ControllerConfig, { kin
       ffs.forEach((f) => f.reset(aux.d));
       outer.track(y2, o.eP, o.eD, gOuter.Kc, 0);
       innerSat = 0;
-      last = { P: gOuter.Kc * o.eP, I: outer.I, D: 0, ...gOuter, e: o.e, sp2: aux.pv2, ff: 0, pred: NaN };
+      last = { P: gOuter.Kc * o.eP, I: outer.I, D: 0, ...gOuter, e: o.e, sp2: aux.pv2, ff: 0, pred: NaN, alt: NaN };
     },
     internals: () => last,
   };
@@ -405,7 +456,7 @@ function createSmith(proc: ProcessDef, config: Extract<ControllerConfig, { kind:
   const n = Math.max(0, Math.floor(model.theta / Ts + 1e-9));
   const buf = new Array<number>(n).fill(0);
   let head = 0, ym = 0, u0 = 0;
-  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...g, e: 0, sp2: NaN, ff: 0, pred: NaN };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...g, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
   const delayed = () => (n ? buf[head] : ym);
   const advance = (u: number) => {
     if (n) { buf[head] = ym; head = (head + 1) % n; }
@@ -419,7 +470,7 @@ function createSmith(proc: ProcessDef, config: Extract<ControllerConfig, { kind:
       const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), yfb);
       const { u, P } = core.run(e, eP, eD, g, 0);
       advance(u);
-      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff: 0, pred: proc.pv.lo + (yfb / 100) * span };
+      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff: 0, pred: proc.pv.lo + (yfb / 100) * span, alt: NaN };
       return u;
     },
     track(valve, sp, pv) {
@@ -427,7 +478,99 @@ function createSmith(proc: ProcessDef, config: Extract<ControllerConfig, { kind:
       u0 = valve; ym = 0; head = 0; buf.fill(0);
       const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), toPct(proc, pv));
       core.track(valve, eP, eD, g.Kc, 0);
-      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: pv };
+      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: pv, alt: NaN };
+    },
+    internals: () => last,
+  };
+}
+
+/**
+ * Override: both controllers run every cycle on the same measurement, the
+ * selector picks one output. With tracking (external reset feedback), the
+ * integral of the one not selected follows the selected output through its
+ * own Ti lag: its output is then the valve signal plus its own P and D, so it
+ * takes over smoothly exactly when its error says it should. Without, it runs
+ * on its own against its output limits.
+ */
+function createOverride(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'override' }>, Ts: number): ControllerInstance {
+  const main = new PidCore(config.pid, Ts), ovr = new PidCore(config.ovr, Ts);
+  const gM = { Kc: config.pid.Kc, Ti: config.pid.Ti, Td: config.pid.Td };
+  const gO = { Kc: config.ovr.Kc, Ti: config.ovr.Ti, Td: config.ovr.Td };
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...gM, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  const pick = (a: number, b: number) => (config.select === 'max' ? Math.max(a, b) : Math.min(a, b));
+  const sec = proc.secondary;
+  // The override's measurement and limit, in % of their span.
+  const onSec = config.on === 'pv2' && !!sec;
+  const ovrErrors = (pv: number, aux: ControllerAux) => (onSec
+    ? errorsOf(config.ovr, toPct2(sec!, config.limit), toPct2(sec!, aux.pv2))
+    : errorsOf(config.ovr, toPct(proc, config.limit), toPct(proc, pv)));
+  return {
+    step(sp, pv, aux) {
+      const y = toPct(proc, pv);
+      const a = errorsOf(config.pid, toPct(proc, sp), y), b = ovrErrors(pv, aux);
+      const ra = main.run(a.e, a.eP, a.eD, gM, 0), rb = ovr.run(b.e, b.eP, b.eD, gO, 0);
+      const u = pick(ra.u, rb.u);
+      const overridden = u !== ra.u;
+      if (config.tracking) {
+        const idle = overridden ? main : ovr, Ti = overridden ? gM.Ti : gO.Ti;
+        idle.I += (Ts / Math.max(Ti > 0 ? Ti : Ts, Ts)) * (u - idle.I);
+      }
+      last = { P: ra.P, I: main.I, D: main.D, ...gM, e: a.e, sp2: NaN, ff: 0, pred: NaN, alt: rb.u };
+      return u;
+    },
+    track(valve, sp, pv, aux) {
+      const y = toPct(proc, pv);
+      const a = errorsOf(config.pid, toPct(proc, sp), y), b = ovrErrors(pv, aux);
+      main.track(valve, a.eP, a.eD, gM.Kc, 0);
+      // The override starts wherever it would be in auto: its integral on the valve signal if it tracks, else pinned at its far limit.
+      ovr.track(config.select === 'max' ? config.ovr.outLo : config.ovr.outHi, b.eP, b.eD, gO.Kc, 0);
+      if (config.tracking) ovr.I = valve;
+      last = { P: gM.Kc * a.eP, I: main.I, D: 0, ...gM, e: a.e, sp2: NaN, ff: 0, pred: NaN, alt: valve };
+    },
+    internals: () => last,
+  };
+}
+
+/**
+ * Ratio: the inner (flow) controller's setpoint is R × the wild flow. With
+ * trim, the outer controller's output (0–100 %) sets R over [rLo, rHi]; the
+ * outer holds its integral while the inner is saturated, as in cascade.
+ */
+function createRatio(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'ratio' }>, Ts: number): ControllerInstance {
+  const sec = proc.secondary!, from = proc.ratio?.from ?? '';
+  const outer = new PidCore(config.outer, Ts), inner = new PidCore(config.inner, Ts);
+  const gO = { Kc: config.outer.Kc, Ti: config.outer.Ti, Td: config.outer.Td };
+  const gI = { Kc: config.inner.Kc, Ti: config.inner.Ti, Td: config.inner.Td };
+  const range = config.rHi - config.rLo || 1;
+  let innerSat = 0;
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...gO, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  return {
+    step(sp, pv, aux) {
+      const wild = Math.max(0, aux.d[from] ?? 0);
+      const o = errorsOf(config.outer, toPct(proc, sp), toPct(proc, pv));
+      let R = config.ratio, P = 0;
+      if (config.trim) {
+        const r = outer.run(o.e, o.eP, o.eD, gO, 0, innerSat);
+        R = config.rLo + (r.u / 100) * range;
+        P = r.P;
+      }
+      const sp2 = Math.min(sec.hi, Math.max(sec.lo, R * wild));
+      const i = errorsOf(config.inner, toPct2(sec, sp2), toPct2(sec, aux.pv2));
+      const ri = inner.run(i.e, i.eP, i.eD, gI, 0);
+      innerSat = ri.sat * (config.inner.invert ? -1 : 1);
+      last = { P, I: outer.I, D: outer.D, ...gO, e: o.e, sp2, ff: 0, pred: NaN, alt: NaN };
+      return ri.u;
+    },
+    track(valve, sp, pv, aux) {
+      const y2 = toPct2(sec, aux.pv2);
+      const i = errorsOf(config.inner, y2, y2);
+      inner.track(valve, i.eP, i.eD, gI.Kc, 0);
+      // The trim follows the ratio the operator is running at.
+      const wild = Math.max(1e-6, aux.d[from] ?? 0);
+      const o = errorsOf(config.outer, toPct(proc, sp), toPct(proc, pv));
+      outer.track(((aux.pv2 / wild - config.rLo) / range) * 100, o.eP, o.eD, gO.Kc, 0);
+      innerSat = 0;
+      last = { P: gO.Kc * o.eP, I: outer.I, D: 0, ...gO, e: o.e, sp2: aux.pv2, ff: 0, pred: NaN, alt: NaN };
     },
     internals: () => last,
   };
@@ -451,7 +594,8 @@ export type LinearController =
 export function linearPidAt(proc: ProcessDef, config: ControllerConfig, model: Params, pv: number, valve: number): LinearPid | null {
   if (config.kind === 'onoff') return null;
   if (config.kind === 'cascade') return { ...config.outer, slope: 1 };
-  if (config.kind === 'smith') return { ...config.pid, slope: 1 };
+  if (config.kind === 'smith' || config.kind === 'override') return { ...config.pid, slope: 1 };
+  if (config.kind === 'ratio') return { ...config.outer, ...(config.trim ? {} : { Kc: 0, Ti: 0, Td: 0 }), slope: ratioAt(proc, config, model, valve).slope };
   const g = config.kind === 'schedule' ? scheduledGains(config.points, pv) : config.pid;
   const scale = controlScale(proc, config, model);
   let slope = 1;
@@ -472,7 +616,30 @@ export function linearControllerAt(proc: ProcessDef, config: ControllerConfig, m
   if (config.kind === 'onoff') return null;
   if (config.kind === 'cascade') return { kind: 'cascade', outer: { ...config.outer, slope: 1 }, inner: { ...config.inner, slope: 1 }, ff: config.ff };
   if (config.kind === 'smith') return { kind: 'smith', pid: { ...config.pid, slope: 1 }, model: config.model, ff: [] };
+  if (config.kind === 'override') return { kind: 'single', pid: { ...config.pid, slope: 1 }, ff: [] };
+  if (config.kind === 'ratio') {
+    // Linearized, R × F_A is a cascade: the trim's output scaled by F_A, plus feedforward R₀ from F_A.
+    const r = ratioAt(proc, config, model, valve);
+    return {
+      kind: 'cascade', outer: linearPidAt(proc, config, model, pv, valve)!, inner: { ...config.inner, slope: 1 },
+      ff: [{ from: proc.ratio!.from, gain: r.ffGain, lead: 0, lag: 0 }],
+    };
+  }
   return { kind: 'single', pid: linearPidAt(proc, config, model, pv, valve)!, ff: config.kind === 'feedforward' ? config.ff : [] };
+}
+
+/**
+ * The ratio station at an operating point: δSP₂ = R₀·δF_A + F_A₀·δR, in % of the
+ * secondary span. `slope`: SP₂ % per % of trim output; `ffGain`: SP₂ % per unit of F_A.
+ */
+export function ratioAt(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'ratio' }>, model: Params, valve: number) {
+  const sec = proc.secondary!, span2 = sec.hi - sec.lo;
+  const d = nominalDisturbances(proc);
+  const wild = d[proc.ratio!.from] || 1;
+  const flow = valveCharacteristic(model.valveChar, valve / 100);
+  const x = proc.steady(flow, d, model) ?? proc.states.map(() => 0);
+  const R0 = sec.of(x, flow, d, model) / wild;
+  return { R0, wild, slope: (wild * (config.rHi - config.rLo)) / span2, ffGain: (R0 * 100) / span2 };
 }
 
 // ─── Cost of complexity ─────────────────────────────────────────────────────
@@ -508,6 +675,19 @@ export function complexity(proc: ProcessDef, config: ControllerConfig): Complexi
       tuningParams: pidCount(config.outer) + pidCount(config.inner) + 3 * ff,
       needsModel: ff ? ffModelNote : null,
       extraInstruments: 1 + ff, commissioning: ff ? 4 : 3, maintainability: ff ? 3 : 4,
+    };
+  }
+  if (config.kind === 'override') {
+    return {
+      tuningParams: pidCount(config.pid) + pidCount(config.ovr) + 1,
+      needsModel: null, extraInstruments: 0, commissioning: 3, maintainability: config.tracking ? 4 : 3,
+    };
+  }
+  if (config.kind === 'ratio') {
+    return {
+      tuningParams: pidCount(config.inner) + (config.trim ? pidCount(config.outer) + 2 : 1),
+      needsModel: 'The ratio the recipe needs (a mass balance), and the range the trim may move it over',
+      extraInstruments: 2, commissioning: 3, maintainability: 4,
     };
   }
   if (config.kind === 'smith') {
@@ -570,6 +750,24 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
   if (base.kind === 'cascade') {
     return { kind: 'cascade', outer: cleanPid(r.outer, base.outer), inner: cleanPid(r.inner, base.inner), ff: cleanFeedforward(r.ff, proc) };
   }
+  if (base.kind === 'override') {
+    const pidC = cleanPid(r.pid, base.pid);
+    const on = r.on === 'pv2' && proc.secondary ? 'pv2' : r.on === 'pv' ? 'pv' : base.on;
+    const range = on === 'pv2' ? proc.secondary! : proc.pv;
+    return {
+      kind: 'override', pid: pidC, ovr: cleanPid(r.ovr, base.ovr), on,
+      limit: num(r.limit, range.lo, range.hi, on === base.on ? base.limit : (range.lo + range.hi) / 2), select: r.select === 'min' || r.select === 'max' ? r.select : base.select,
+      tracking: typeof r.tracking === 'boolean' ? r.tracking : base.tracking,
+    };
+  }
+  if (base.kind === 'ratio') {
+    const rLo = num(r.rLo, 0, 1e4, base.rLo);
+    const rHi = num(r.rHi, rLo + 1e-6, 1e4, Math.max(base.rHi, rLo + 1e-6));
+    return {
+      kind: 'ratio', outer: cleanPid(r.outer, base.outer), inner: cleanPid(r.inner, base.inner),
+      trim: typeof r.trim === 'boolean' ? r.trim : base.trim, ratio: num(r.ratio, 0, 1e4, base.ratio), rLo, rHi,
+    };
+  }
   if (base.kind === 'smith') {
     const m = (r.model && typeof r.model === 'object' ? r.model : {}) as Record<string, unknown>;
     return {
@@ -608,6 +806,13 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
     return `Scheduled on ${config.on.toUpperCase()}: ${config.points.map((p) => `${fmt(p.at)} ${proc.pv.unit} → ${pidText(p)}`).join('; ')}`;
   }
   if (config.kind === 'feedforward') return `PID ${pidText(config.pid)}${config.ff.length ? ` + ${ffText(config.ff)}` : ''}`;
+  if (config.kind === 'override') {
+    const on = config.on === 'pv2' && proc.secondary ? proc.secondary : proc.pv;
+    return `Override: ${pidText(config.pid)}; ${config.select === 'max' ? 'high' : 'low'} select with a ${on.label.toLowerCase()} limit at ${fmt(config.limit)} ${on.unit} (${pidText(config.ovr)})${config.tracking ? ', tracking' : ', no tracking'}`;
+  }
+  if (config.kind === 'ratio') {
+    return `Ratio ${proc.secondary?.label.toLowerCase() ?? 'flow'} / ${proc.disturbances.find((d) => d.key === proc.ratio?.from)?.label.toLowerCase() ?? 'wild flow'}: ${config.trim ? `trimmed over ${fmt(config.rLo)}–${fmt(config.rHi)} (${pidText(config.outer)})` : `fixed at ${fmt(config.ratio)}`}; flow loop ${pidText(config.inner)}`;
+  }
   if (config.kind === 'smith') return `Smith predictor: ${pidText(config.pid)}; model K ${fmt(config.model.K)}, τ ${fmt(config.model.tau)} s, θ ${fmt(config.model.theta)} s`;
   if (config.kind === 'cascade') return `Cascade: outer ${pidText(config.outer)}; inner ${pidText(config.inner)}${config.ff.length ? ` + ${ffText(config.ff)}` : ''}`;
   const ch = findCharacterization(proc, config.char);

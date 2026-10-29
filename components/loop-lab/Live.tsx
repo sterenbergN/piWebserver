@@ -15,7 +15,7 @@ function pace(proc: ProcessDef, p: Params) {
     const k = proc.timeScale(p);
     return { window: 30 * k, speed: k > 60 ? 20 : k > 10 ? 5 : 1 };
   }
-  const table = { flow: [120, 1], tank: [3600, 60], stirred: [2400, 60], hx: [400, 5], surge: [3600, 60], feeder: [600, 5], drum: [900, 5] } as Record<string, [number, number]>;
+  const table = { flow: [120, 1], tank: [3600, 60], stirred: [2400, 60], hx: [400, 5], surge: [3600, 60], feeder: [600, 5], drum: [900, 5], jacket: [2400, 20], blend: [900, 5] } as Record<string, [number, number]>;
   const [window, speed] = table[proc.id] ?? [600, 5];
   return { window, speed };
 }

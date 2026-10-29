@@ -54,6 +54,8 @@ export type SecondarySpec = PvSpec & {
   tag: string;
   /** Inner loop tag (e.g. FIC-301). */
   loopTag: string;
+  /** The (unmeasured) disturbance that acts on this flow, such as its supply pressure. */
+  upset?: string;
   of(x: number[], flow: number, d: Params, p: Params): number;
 };
 
@@ -72,6 +74,8 @@ export type Scenario = {
   purpose: string;
   duration: number;
   initialSp: number;
+  /** Disturbances the test starts at (steady), instead of the nominal ones. */
+  initialDist?: Params;
   events: ScenarioEvent[];
 };
 
@@ -91,7 +95,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -131,6 +135,13 @@ export type ProcessDef = {
    * outlet's capacity. Auto-tuning then aims to use that room, not hold the level.
    */
   averaging?: { swing: number; upset: number };
+  /**
+   * Ratio control: the secondary (controlled) flow's setpoint is a ratio times
+   * this measured disturbance (the wild flow), in the same units.
+   */
+  ratio?: { from: string; lo: number; hi: number; nominal: number };
+  /** Split-range: one controller output drives two valves (the split point and gap are valve parameters). */
+  split?: { low: string; high: string };
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;

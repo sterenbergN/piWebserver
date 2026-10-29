@@ -1,4 +1,4 @@
-import { linearPidAt, type ControllerConfig } from './controllers';
+import { linearPidAt, type ControllerConfig, type PidParams } from './controllers';
 import { fitModel } from './ident';
 import { approximate, closedLoop, linearizePlant, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
@@ -25,7 +25,7 @@ function fitStep(t: number[], y: number[], extraDelay: number): Fopdt | null {
 }
 
 /** The inner loop closed with its own PI: what the outer controller sees (inner setpoint → main reading). */
-function innerClosed(m: PlantModel, config: Extract<ControllerConfig, { kind: 'cascade' }>, Ts: number) {
+function innerClosed(m: PlantModel, config: { inner: PidParams }, Ts: number) {
   const mi: PlantModel = { ...m, C: m.C2!, Ctrue: m.C, theta: 0, Dd: {} };
   return closedLoop(mi, { kind: 'single', pid: { ...config.inner, slope: 1 }, ff: [] }, Ts / 2);
 }
@@ -42,13 +42,15 @@ export function tuningModel(proc: ProcessDef, params: Params, config: Controller
   const m = linearizePlant(proc, p, pv);
   let f: Fopdt;
   let slope = 1;
-  if (config.kind === 'cascade' && m.C2 && loop !== 'main') {
-    if (loop === 'inner') f = approximate(pathModel(m, m.C2, 0), p.Ts / 2);
+  if ((config.kind === 'cascade' || config.kind === 'ratio' || (config.kind === 'override' && config.on === 'pv2')) && m.C2 && loop !== 'main') {
+    if (loop === 'inner' || config.kind === 'override') f = approximate(pathModel(m, m.C2, 0), p.Ts / 2);
     else {
       const cl = innerClosed(m, config, p.Ts);
       const horizon = settleHorizon(cl.poles, 60) * 1.5;
       const r = stepResponse(cl, 0, horizon, 600);
       f = fitStep(r.t, r.y, m.theta + p.Ts / 2) ?? approximate(m, p.Ts / 2);
+      // Ratio: the trim moves R, and R × the wild flow moves the inner setpoint.
+      if (config.kind === 'ratio') slope = linearPidAt(proc, { ...config, trim: true }, p, pv, m.valve)?.slope ?? 1;
     }
   } else {
     f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
@@ -301,6 +303,28 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
   };
   const where = `${round3(pv)} ${proc.pv.unit}`;
 
+  if (config.kind === 'override') {
+    // The normal controller as if it were alone; the override tight (SIMC) at its limit, acting the same way.
+    const normal = autoTune(proc, params, { kind: 'pid', pid: config.pid });
+    const o = config.on === 'pv2' ? at(config, 'inner', typeOf(config.ovr)) : at(config, 'main', typeOf(config.ovr), config.limit);
+    if (!normal || normal.config.kind !== 'pid' || !o) return null;
+    const ovr = { ...config.ovr, ...o.t, invert: o.m.negative };
+    return {
+      config: { ...config, pid: normal.config.pid, ovr },
+      note: `Normal controller: ${normal.note} Override at its limit (${round3(config.limit)} ${config.on === 'pv2' ? proc.secondary?.unit : proc.pv.unit}): SIMC Kc ${o.t.Kc}, Ti ${o.t.Ti} s, much tighter, because once it is in charge its job is to hold the limit.`,
+    };
+  }
+  if (config.kind === 'ratio') {
+    const inner = at(config, 'inner', typeOf(config.inner));
+    if (!inner) return null;
+    const step1 = { ...config, inner: { ...config.inner, ...inner.t } };
+    const outer = at(step1, 'outer', typeOf(config.outer));
+    if (!outer) return null;
+    return {
+      config: { ...step1, outer: { ...config.outer, ...outer.t } },
+      note: `SIMC at ${where}: the flow loop first (Kc ${inner.t.Kc}, Ti ${inner.t.Ti} s), then the trim on the ratio with the flow loop closed (Kc ${outer.t.Kc}, Ti ${outer.t.Ti} s). In ratio units its gain doesn't change with the throughput.${slowNote(inner.slowed || outer.slowed)}`,
+    };
+  }
   if (config.kind === 'cascade') {
     const inner = at(config, 'inner', typeOf(config.inner));
     if (!inner) return null;

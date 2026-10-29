@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1, 2 and 3a built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1, 2 and 3 (3a and 3b) built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -367,9 +367,10 @@ cascade; block-diagram probes; trend import and model identification.
 Surge tank, conveyor dead time, drum level, compressor limits, stiction; Smith
 predictor, IMC, ratio, override / selector, split-range; guided case studies for each.
 
-Split in two: **3a** (built) is surge tank, belt feeder with the Smith predictor, and boiler drum
-level. **3b** is override / selector, split-range and ratio, with their processes (compressor limits, a
-high-level override on the surge tank, a split-range temperature, a blending ratio); IMC and stiction go with it.
+Split in two, both built: **3a** is surge tank, belt feeder with the Smith predictor, and boiler drum
+level. **3b** is override / selector (a steam flow limit on the heat exchanger, a high-level override on the
+surge tank), split-range (a heated-and-cooled reactor) and ratio (in-line blending). IMC, compressor limits and
+stiction are left for later.
 
 ### Phase 4 — modern control
 
@@ -458,3 +459,32 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
 - **Case studies**: `surge-averaging`, `feeder-smith`, `drum-three-element`.
 - **Not in 3a**: Smith for integrating plants (modified structures), dead time tied to a measured belt speed
   (described, not simulated), level limit protection (comes with override control in 3b).
+
+## 15. Phase 3b as built
+
+- **Override** (rung 8): normal PID and a limit PID on the same measurement or the secondary one, high or low
+  select, optional tracking by external reset feedback (the idle controller's integral follows the selected
+  output through its own Ti, so its output is valve + its own P and D). Linear analysis is the normal loop.
+  Exports: LL_PID gained ExtResetEnable / ExtReset; call site with MAX/MIN and an OvrSelected flag;
+  PID_Compact note (manual-tracking workaround). Presets: HX steam-flow limit 1000 kg/h (low select), surge
+  tank high-level override at 2.4 m (high select). New tests: HX `steam-limit`, surge `big-surge`.
+- **Ratio** (rung 9): SP₂ = R × wild flow, R fixed or set by a trim over [rLo, rHi]; trim holds while the
+  flow loop is saturated; bumpless via the running ratio. Linearized as a cascade with outer slope F_A₀·ΔR/span₂
+  and feedforward R₀·100/span₂ (`ratioAt`), so Bode, margins, robustness and tuning reuse the cascade
+  machinery. Needs `ProcessDef.ratio`.
+- **Split-range**: a process structure, not a controller: `ProcessDef.split`, split point and gap as valve
+  parameters, two valves from one signal (`splitValves`), a balanced cv characterization (rung 4) that also
+  jumps the gap, split-range output lines in the exports.
+- **Processes**: reactor temperature heated and cooled (cooling side ≈ 3.5× the steam side's gain per %),
+  in-line blending (wild diluent measured, concentrate flow loop, analyzer with 20 s sample delay; gain and
+  mixing time vary 3 : 1 with rate). Scenarios can start from their own disturbances (`initialDist`).
+- **Verdicts the numbers support**: steam limit → override with tracking (steam held at ≈ 1000 kg/h; without
+  tracking 1060 kg/h on takeover and a 77 °C instead of 71 °C overshoot on hand-back); reactor → balance the
+  split (a PI tuned on steam is linearly unstable on cooling and hunts at 3× the valve travel; detuned for
+  cooling it overshoots 23 % on steam; balanced, 5–8 % both sides; a 6 % gap quadruples the wander near the
+  split); blending → ratio with an analyzer trim (production upsets 27 % → < 1 % of span; total IAE 321 → 118;
+  vs additive feedforward, 10–13 % instead of 28–32 % overshoot at low rate, a third of the mismatch IAE).
+- **Case studies**: `hx-steam-limit`, `jacket-split`, `blend-ratio`; `surge-averaging` gained a high-level
+  override step.
+- **Not in 3b**: override on more than two controllers, cross-limiting for combustion, energy cost of a
+  split-range overlap (no energy measure in the scorecard yet).

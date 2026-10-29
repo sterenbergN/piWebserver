@@ -31,7 +31,7 @@ const TABS = TAB_GROUPS.flat();
 type TabId = (typeof TABS)[number]['id'];
 
 /** Rungs planned for later phases, shown so the ladder reads as a whole. */
-export const LATER_RUNGS = ['Ratio · override · split-range', 'IMC · dead-time compensation for integrators', 'Decoupling', 'State feedback · observers', 'LQR', 'MPC', 'Adaptive', 'ADRC'];
+export const LATER_RUNGS = ['IMC · dead-time compensation for integrators', 'Decoupling', 'State feedback · observers', 'LQR', 'MPC', 'Adaptive', 'ADRC'];
 
 const INTRO_KEY = 'loop-lab:intro-hidden';
 

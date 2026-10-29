@@ -60,6 +60,8 @@ const KIND_HINT: Record<ControllerKind, string> = {
   feedforward: 'A PID plus action on measured disturbances, before they arrive.',
   cascade: 'A fast inner loop inside the main one.',
   smith: 'A PID that sees a prediction of the measurement, with the dead time taken out.',
+  override: 'A normal controller and a limit controller on one valve; the higher (or lower) output wins.',
+  ratio: 'The controlled flow follows the wild flow at a set ratio, trimmed by the main measurement.',
 };
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -136,8 +138,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
     const next = defaultController(kind, proc);
     // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
     // Smith predictor's PID for a process without dead time, so those keep their own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'smith' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'smith') next.pid = { ...prev };
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith') next.pid = { ...prev };
     if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
@@ -188,6 +190,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
             <SmithModelEditor proc={proc} params={params} model={config.model} pid={config.pid} onChange={(model) => onChange({ ...config, model })} />
           </>
         )}
+        {config.kind === 'override' && <OverrideFields proc={proc} config={config} onChange={onChange} />}
+        {config.kind === 'ratio' && <RatioFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'characterized' && (
           <>
             <label className="ll-field is-wide" style={{ marginBottom: '0.5rem' }}>
@@ -285,6 +289,84 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
   );
 }
 
+/** Override: the normal controller, then the limit controller, its measurement, limit and selector. */
+function OverrideFields({ proc, config, onChange }: { proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'override' }>; onChange: (c: ControllerConfig) => void }) {
+  const on = config.on === 'pv2' && proc.secondary ? proc.secondary : proc.pv;
+  return (
+    <>
+      <div className="ll-sub">Normal: {proc.tags.loop} ({proc.pv.label.toLowerCase()})</div>
+      <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+      <div className="ll-sub">Override: the limit</div>
+      <div className="ll-fields is-3">
+        {proc.secondary && (
+          <label className="ll-field">
+            <span>On</span>
+            <select value={config.on} onChange={(e) => {
+              const v = e.target.value === 'pv2' ? 'pv2' : 'pv';
+              const range = v === 'pv2' ? proc.secondary! : proc.pv;
+              onChange({ ...config, on: v, limit: range.lo + 0.8 * (range.hi - range.lo) });
+            }}>
+              <option value="pv">{proc.pv.label}</option>
+              <option value="pv2">{proc.secondary.label}</option>
+            </select>
+          </label>
+        )}
+        <NumField label="Limit" unit={on.unit} value={config.limit} min={on.lo} max={on.hi} onChange={(limit) => onChange({ ...config, limit })}
+          title="The override controller's setpoint: the value it holds once it has the valve" />
+        <label className="ll-field">
+          <span>Selector</span>
+          <select value={config.select} onChange={(e) => onChange({ ...config, select: e.target.value === 'min' ? 'min' : 'max' })}>
+            <option value="max">High (MAX)</option>
+            <option value="min">Low (MIN)</option>
+          </select>
+        </label>
+      </div>
+      <label className="ll-check" style={{ marginTop: '0.4rem' }}>
+        <input type="checkbox" checked={config.tracking} onChange={(e) => onChange({ ...config, tracking: e.target.checked })} />
+        Tracking (external reset): the controller not in charge follows the valve
+      </label>
+      <div className="ll-sub">Override controller</div>
+      <PidFields pid={config.ovr} onChange={(ovr) => onChange({ ...config, ovr })} />
+      <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+        {config.select === 'max' ? 'The higher' : 'The lower'} of the two outputs drives the valve. Pick the selector so the override wins exactly when {on.label.toLowerCase()} is past its limit.
+      </p>
+    </>
+  );
+}
+
+/** Ratio: fixed or trimmed, the trim's range, and the two controllers. */
+function RatioFields({ proc, config, onChange }: { proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'ratio' }>; onChange: (c: ControllerConfig) => void }) {
+  const sec = proc.secondary!;
+  const wild = proc.disturbances.find((d) => d.key === proc.ratio?.from);
+  return (
+    <>
+      <p className="ll-note" style={{ marginTop: 0 }}>
+        {sec.loopTag} setpoint = R × {wild?.label.toLowerCase()} ({wild?.measured}). R is {sec.label.toLowerCase()} per {wild?.label.toLowerCase()}, both in {sec.unit}.
+      </p>
+      <label className="ll-check">
+        <input type="checkbox" checked={config.trim} onChange={(e) => onChange({ ...config, trim: e.target.checked })} />
+        Trim the ratio from {proc.tags.transmitter} ({proc.pv.label.toLowerCase()})
+      </label>
+      {config.trim ? (
+        <>
+          <div className="ll-fields is-3" style={{ marginTop: '0.4rem' }}>
+            <NumField label="R at 0 %" value={config.rLo} min={0} onChange={(rLo) => onChange({ ...config, rLo: Math.min(rLo, config.rHi - 1e-3) })} title="Ratio when the trim's output is 0 %" />
+            <NumField label="R at 100 %" value={config.rHi} min={0} onChange={(rHi) => onChange({ ...config, rHi: Math.max(rHi, config.rLo + 1e-3) })} title="Ratio when the trim's output is 100 %" />
+          </div>
+          <div className="ll-sub">Trim: {proc.tags.loop} ({proc.pv.label.toLowerCase()})</div>
+          <PidFields pid={config.outer} onChange={(outer) => onChange({ ...config, outer })} />
+        </>
+      ) : (
+        <div className="ll-fields is-3" style={{ marginTop: '0.4rem' }}>
+          <NumField label="Ratio R" value={config.ratio} min={0} onChange={(ratio) => onChange({ ...config, ratio })} title="From the recipe: the mass balance" />
+        </div>
+      )}
+      <div className="ll-sub">Flow loop: {sec.loopTag} ({sec.label.toLowerCase()})</div>
+      <PidFields pid={config.inner} onChange={(inner) => onChange({ ...config, inner })} />
+    </>
+  );
+}
+
 /** The Smith predictor's process model, with a button to copy it from the plant's step response. */
 function SmithModelEditor({ proc, params, model, pid, onChange }: {
   proc: ProcessDef; params: Params; model: SmithModel; pid: PidParams; onChange: (m: SmithModel) => void;
@@ -344,7 +426,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   const [speedFactor, setSpeedFactor] = useState(3);
   const [loopSel, setLoopSel] = useState<TuningLoop>('outer');
   useEffect(() => { setPv(proc.opPoints[0]); }, [proc]);
-  const loop: TuningLoop = config.kind === 'cascade' ? loopSel : 'main';
+  const loop: TuningLoop = config.kind === 'cascade' || config.kind === 'ratio' ? loopSel : 'main';
   const rule = getRule(ruleId);
   const types = rule.types;
   const t = types.includes(type) ? type : types[0];
@@ -364,7 +446,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
         ? config.points.map((p, j) => (j === i ? { ...p, ...result } : p))
         : [...config.points, { at: pv, ...result }].sort((a, b) => a.at - b.at);
       onChange({ ...config, points });
-    } else if (config.kind === 'cascade') {
+    } else if (config.kind === 'cascade' || config.kind === 'ratio') {
       onChange(loop === 'inner' ? { ...config, inner: { ...config.inner, ...result } } : { ...config, outer: { ...config.outer, ...result } });
     } else onChange({ ...config, pid: { ...config.pid, ...result } });
   };
@@ -376,7 +458,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   return (
     <details className="ll-tuner" style={{ marginTop: '0.8rem' }}>
       <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>Tune by hand: rule, operating point, speed</summary>
-      {config.kind === 'cascade' && (
+      {(config.kind === 'cascade' || config.kind === 'ratio') && (
         <div className="ll-seg" role="group" aria-label="Which loop" style={{ marginTop: '0.6rem' }}>
           <button aria-pressed={loop === 'inner'} onClick={() => setLoopSel('inner')}>Slave (inner) first</button>
           <button aria-pressed={loop === 'outer'} onClick={() => setLoopSel('outer')}>Then the master</button>
@@ -424,7 +506,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
           <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.88rem' }}>
             Kc {fmt(result.Kc, 3)} · Ti {result.Ti ? `${fmt(result.Ti, 3)} s` : 'off'} · Td {result.Td ? `${fmt(result.Td, 3)} s` : 'off'}
           </span>
-          <button className="ll-btn is-small is-primary" onClick={apply}>{config.kind === 'schedule' ? 'Apply at this point' : config.kind === 'cascade' ? `Apply to the ${loop === 'inner' ? 'slave' : 'master'}` : 'Apply'}</button>
+          <button className="ll-btn is-small is-primary" onClick={apply}>{config.kind === 'schedule' ? 'Apply at this point' : config.kind === 'cascade' || config.kind === 'ratio' ? `Apply to the ${loop === 'inner' ? 'slave' : 'master'}` : config.kind === 'override' ? 'Apply to the normal controller' : 'Apply'}</button>
           {config.kind === 'schedule' && <button className="ll-btn is-small" onClick={tuneAll}>Tune every breakpoint</button>}
         </div>
       ) : <p className="ll-note">This rule gives no usable tuning for this model.</p>}

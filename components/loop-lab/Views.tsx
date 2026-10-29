@@ -14,6 +14,7 @@ import { cleanParams, nominalDisturbances, valveCharacteristic, VALVE_CHARS, typ
 import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { RHO_CP_PER_M3H } from '@/lib/loop-lab/processes/stirred';
+import { balancePoint, splitValves } from '@/lib/loop-lab/processes/jacket';
 import { tankArea, tankVolume } from '@/lib/loop-lab/processes/tank';
 import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
@@ -75,6 +76,39 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
       {
         title: 'Steady outlet temperature vs valve', x: 'Valve (%)', y: 'Outlet temperature (°C)',
         series: pressures.map((Ps, i) => ({ label: `${Ps} bar`, color: PALETTE[i], x: st, y: st.map((v) => d.Tin + (steamFlow(valveCharacteristic(p.valveChar, v / 100), Ps, p) * p.lambda) / 3600 / (RHO_CP_PER_M3H * d.F)) })),
+      },
+    ];
+  }
+  if (proc.id === 'jacket') {
+    const Tj = proc.nominalPv - 5;
+    const duty = (pp: Params) => st.map((v) => {
+      const { cool, heat } = splitValves(v / 100, pp);
+      return pp.Qhmax * heat - pp.Kcw * cool * Math.max(0, Tj - d.Tcw);
+    });
+    const b = balancePoint(p);
+    const per = (lo: number, hi: number) => fmt((p.Kcw * (Tj - d.Tcw)) / lo, 2) + ' kW/% cooling, ' + fmt(p.Qhmax / (100 - hi), 2) + ' kW/% heating';
+    return [{
+      title: 'Heat into the jacket vs controller output', x: 'Controller output (%)', y: 'Net heat (kW, + heating)',
+      series: [
+        { label: `Split at ${fmt(p.split, 3)} %`, color: PALETTE[0], x: st, y: duty(p), width: 2.4 },
+        { label: `Balanced split (${fmt(b, 3)} %)`, color: PALETTE[2], x: st, y: duty({ ...p, split: b, gap: 0 }), dash: '5 4' },
+      ],
+      note: `The slope of this line is the process gain. At ${fmt(p.split, 3)} %: ${per(p.split - p.gap / 2, p.split + p.gap / 2)}. Splitting at ${fmt(b, 3)} % gives the cooling side more of the range and makes both slopes equal. Jacket at about ${fmt(Tj, 3)} °C, cooling water at ${fmt(d.Tcw, 3)} °C.`,
+    }];
+  }
+  if (proc.id === 'blend') {
+    const fb = linspace(0, p.FBmax, 100);
+    const rs = linspace(0, 0.5, 100);
+    return [
+      {
+        title: 'Product concentration vs concentrate flow, at three rates', x: 'Concentrate flow F_B (m³/h)', y: 'Concentration (%)',
+        series: [20, 40, 60].map((FA, i) => ({ label: `Diluent ${FA} m³/h`, color: PALETTE[i], x: fb, y: fb.map((v) => (v * d.cB) / (FA + v)) })),
+        note: 'At a fixed concentrate flow, every change in the diluent rate moves the product. The slope (the gain a flow-based loop sees) is three times steeper at 20 m³/h than at 60.',
+      },
+      {
+        title: 'Product concentration vs ratio F_B/F_A', x: 'Ratio R', y: 'Concentration (%)',
+        series: [{ label: 'Any diluent rate', color: PALETTE[3], x: rs, y: rs.map((r) => (r * d.cB) / (1 + r)) }],
+        note: `c = R·c_B/(1 + R): the rate has dropped out. Hold the ratio and the product holds, whatever upstream does; the trim only has to correct for the concentrate's strength (${fmt(d.cB, 3)} % here).`,
       },
     ];
   }
@@ -205,7 +239,7 @@ function plantTex(m: PlantModel) {
 
 const PROBE_LABEL: Record<string, string> = {
   sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term',
-  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted (Smith)',
+  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted (Smith)', alt: 'Override controller output',
 };
 
 export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experiment; runs?: Run[] }) {

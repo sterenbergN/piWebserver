@@ -149,12 +149,12 @@ export function PAndId({ proc }: { proc: ProcessDef }) {
 
 // ─── Block diagram ──────────────────────────────────────────────────────────
 
-export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | 'pred' | `dist:${string}`;
+export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | 'pred' | 'alt' | `dist:${string}`;
 
 /** A one-line description of each process for its block. */
 const PROCESS_SUB: Record<string, string> = {
   flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
-  surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', custom: 'K e^(−θs)/(τs + 1)',
+  surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {
@@ -194,7 +194,8 @@ export const arrowHead = (x: number, y: number, dir: 'r' | 'l' | 'u' | 'd') => {
 export function BlockDiagram({ proc, config, probes = [], onProbe }: {
   proc: ProcessDef; config: ControllerConfig; probes?: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
 }) {
-  if (config.kind === 'cascade') return <CascadeDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
+  if (config.kind === 'cascade' || config.kind === 'ratio') return <CascadeDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
+  if (config.kind === 'override') return <OverrideDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   const ff = config.kind === 'feedforward' ? config.ff : [];
   const ffOn = ff.length > 0;
   const ch = config.kind === 'characterized' ? findCharacterization(proc, config.char) : undefined;
@@ -338,13 +339,19 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
   );
 }
 
-/** Cascade: master on the main PV sets the slave's setpoint; the slave closes a fast loop around the valve. */
+/**
+ * Cascade: master on the main PV sets the slave's setpoint; the slave closes a fast loop around the valve.
+ * Ratio is drawn the same way, with the master's output (the ratio) multiplied by the wild flow.
+ */
 function CascadeDiagram({ proc, config, probes, onProbe }: {
-  proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'cascade' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
+  proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'cascade' | 'ratio' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
 }) {
   const sec = proc.secondary!;
   const Y = 120, FB2 = 190, FB1 = 250;
-  const ffOn = config.ff.length > 0;
+  const ratio = config.kind === 'ratio';
+  const ffOn = config.kind === 'cascade' && config.ff.length > 0;
+  const outerOn = !ratio || config.trim;
+  const wild = ratio ? proc.disturbances.find((d) => d.key === proc.ratio?.from) : undefined;
   const wire = (key: ProbeKey | null, d: string, end?: { x: number; y: number; dir: 'r' | 'l' | 'u' | 'd' }) => (
     <g>
       <path className={`ll-wire${key && probes.includes(key) ? ' is-probe' : ''}`} d={d} />
@@ -359,25 +366,39 @@ function CascadeDiagram({ proc, config, probes, onProbe }: {
   );
   const s1 = 70, xM = 95, wM = 110;
   const xF = xM + wM + 28;
-  const s2 = xF + (ffOn ? 42 : 0) + 20, xS = s2 + 25, wS = 100;
+  const s2 = xF + (ffOn || ratio ? 42 : 0) + 20, xS = s2 + 25, wS = 100;
   const xV = xS + wS + 25, wV = 90;
   const sP = xV + wV + 28;
   const xQ = sP + 25, wQ = 92;
   const xP = xQ + wQ + 35, wP = 100;
   const xOut = xP + wP + 40;
-  const press = proc.disturbances.find((d) => !d.measured);
+  const press = proc.disturbances.find((d) => (sec.upset ? d.key === sec.upset : !d.measured));
   const measured = proc.disturbances.filter((d) => d.measured);
   return (
-    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 290`} role="img" aria-label={`Block diagram: cascade control of the ${proc.name.toLowerCase()}`}>
-      {probe('sp', 12, Y - 8, 'SP r', 'start')}
-      {wire('sp', `M8 ${Y}H${s1 - 11}`, { x: s1 - 11, y: Y, dir: 'r' })}
-      <Sum x={s1} y={Y} signs="+−" />
-      {wire(null, `M${s1 + 11} ${Y}H${xM}`, { x: xM, y: Y, dir: 'r' })}
-      <Block x={xM} y={Y - 24} w={wM} h={48} title="Master PID" sub={proc.tags.loop} ctrl />
-      {probe('P', xM + 20, Y + 38, 'P')}
-      {probe('I', xM + wM / 2, Y + 38, 'I')}
-      {probe('D', xM + wM - 20, Y + 38, 'D')}
-      {ffOn ? (
+    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 290`} role="img" aria-label={`Block diagram: ${ratio ? 'ratio' : 'cascade'} control of the ${proc.name.toLowerCase()}`}>
+      {outerOn && (
+        <>
+          {probe('sp', 12, Y - 8, 'SP r', 'start')}
+          {wire('sp', `M8 ${Y}H${s1 - 11}`, { x: s1 - 11, y: Y, dir: 'r' })}
+          <Sum x={s1} y={Y} signs="+−" />
+          {wire(null, `M${s1 + 11} ${Y}H${xM}`, { x: xM, y: Y, dir: 'r' })}
+          {probe('P', xM + 20, Y + 38, 'P')}
+          {probe('I', xM + wM / 2, Y + 38, 'I')}
+          {probe('D', xM + wM - 20, Y + 38, 'D')}
+        </>
+      )}
+      <Block x={xM} y={Y - 24} w={wM} h={48} title={ratio ? (outerOn ? 'Trim PID' : 'Ratio R') : 'Master PID'}
+        sub={ratio ? (outerOn ? `R ${config.rLo}–${config.rHi}` : `fixed at ${config.ratio}`) : proc.tags.loop} ctrl />
+      {ratio ? (
+        <>
+          {wire(null, `M${xM + wM} ${Y}H${xF - 11}`, { x: xF - 11, y: Y, dir: 'r' })}
+          {probe('cv', xM + wM + 2, Y - 8, 'R', 'start')}
+          <Sum x={xF} y={Y} signs="" symbol="×" />
+          {wire(wild ? `dist:${wild.key}` : null, `M${xF} 52V${Y - 11}`, { x: xF, y: Y - 11, dir: 'd' })}
+          {wild && probe(`dist:${wild.key}`, xF, 44, `${wild.label.toLowerCase()} (${wild.measured})`)}
+          {wire('sp2', `M${xF + 11} ${Y}H${s2 - 11}`, { x: s2 - 11, y: Y, dir: 'r' })}
+        </>
+      ) : ffOn ? (
         <>
           {wire(null, `M${xM + wM} ${Y}H${xF - 11}`, { x: xF - 11, y: Y, dir: 'r' })}
           <Sum x={xF} y={Y} signs="++" />
@@ -386,7 +407,7 @@ function CascadeDiagram({ proc, config, probes, onProbe }: {
           {probe('ff', xF + 6, 82, 'ff', 'start')}
           <path className="ll-wire" d={`M${xM} 45H${xF - 40}`} />
           <path className="ll-wire" d={arrowHead(xF - 40, 45, 'r')} />
-          <text className="is-muted" x={xM} y={38}>measured: {config.ff.map((t) => proc.disturbances.find((d) => d.key === t.from)?.label.toLowerCase() ?? t.from).join(', ')}</text>
+          <text className="is-muted" x={xM} y={38}>measured: {(config.kind === 'cascade' ? config.ff : []).map((t) => proc.disturbances.find((d) => d.key === t.from)?.label.toLowerCase() ?? t.from).join(', ')}</text>
           {wire('sp2', `M${xF + 11} ${Y}H${s2 - 11}`, { x: s2 - 11, y: Y, dir: 'r' })}
         </>
       ) : wire('sp2', `M${xM + wM} ${Y}H${s2 - 11}`, { x: s2 - 11, y: Y, dir: 'r' })}
@@ -425,8 +446,85 @@ function CascadeDiagram({ proc, config, probes, onProbe }: {
       {/* Outer loop: main transmitter back to the master */}
       {wire('pv', `M${xOut - 15} ${Y}V${FB1}H${xP + wP}`, { x: xP + wP, y: FB1, dir: 'l' })}
       <Block x={xP} y={FB1 - 20} w={wP} h={40} title={proc.tags.transmitter} sub="e^(−θs)/(τₘs + 1)" />
-      {wire('pv', `M${xP} ${FB1}H${s1}V${Y + 11}`, { x: s1, y: Y + 11, dir: 'u' })}
-      {probe('pv', (s1 + xP) / 2, FB1 - 6, 'PV measured')}
+      {outerOn && wire('pv', `M${xP} ${FB1}H${s1}V${Y + 11}`, { x: s1, y: Y + 11, dir: 'u' })}
+      {outerOn && probe('pv', (s1 + xP) / 2, FB1 - 6, 'PV measured')}
+    </svg>
+  );
+}
+
+/** Override: the normal and the limit controller in parallel, a selector, one valve. */
+function OverrideDiagram({ proc, config, probes, onProbe }: {
+  proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'override' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
+}) {
+  const sec = config.on === 'pv2' ? proc.secondary : undefined;
+  const Y = 90, Y2 = 190, FB = 270;
+  const wire = (key: ProbeKey | null, d: string, end?: { x: number; y: number; dir: 'r' | 'l' | 'u' | 'd' }) => (
+    <g>
+      <path className={`ll-wire${key && probes.includes(key) ? ' is-probe' : ''}`} d={d} />
+      {end && <path className="ll-wire" d={arrowHead(end.x, end.y, end.dir)} />}
+    </g>
+  );
+  const probe = (key: ProbeKey, x: number, y: number, text: string, anchor: 'start' | 'middle' | 'end' = 'middle') => (
+    <g className="ll-probe" role="button" tabIndex={onProbe ? 0 : -1} aria-pressed={probes.includes(key)}
+      onClick={() => onProbe?.(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onProbe?.(key); } }}>
+      <text x={x} y={y} textAnchor={anchor}>{text}</text>
+    </g>
+  );
+  const s1 = 70, xC = 95, wC = 130, xSel = xC + wC + 40, wSel = 64;
+  const xV = xSel + wSel + 40, wV = 90, xP = xV + wV + 45, wP = 110, xOut = xP + wP + 40;
+  const selMid = (Y + Y2) / 2;
+  const firstDist = proc.disturbances[0];
+  return (
+    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 310`} role="img" aria-label={`Block diagram: override control of the ${proc.name.toLowerCase()}`}>
+      {probe('sp', 12, Y - 8, 'SP r', 'start')}
+      {wire('sp', `M8 ${Y}H${s1 - 11}`, { x: s1 - 11, y: Y, dir: 'r' })}
+      <Sum x={s1} y={Y} signs="+−" />
+      {wire(null, `M${s1 + 11} ${Y}H${xC}`, { x: xC, y: Y, dir: 'r' })}
+      <Block x={xC} y={Y - 24} w={wC} h={48} title="Normal PID" sub={proc.tags.loop} ctrl />
+      {probe('P', xC + 25, Y + 38, 'P')}
+      {probe('I', xC + wC / 2, Y + 38, 'I')}
+      {probe('D', xC + wC - 25, Y + 38, 'D')}
+      {probe('sp', 12, Y2 - 8, `limit ${config.limit}`, 'start')}
+      {wire(null, `M8 ${Y2}H${s1 - 11}`, { x: s1 - 11, y: Y2, dir: 'r' })}
+      <Sum x={s1} y={Y2} signs="+−" />
+      {wire(null, `M${s1 + 11} ${Y2}H${xC}`, { x: xC, y: Y2, dir: 'r' })}
+      <Block x={xC} y={Y2 - 24} w={wC} h={48} title="Override PID" sub={`${sec ? sec.label.toLowerCase() : proc.pv.label.toLowerCase()} limit`} ctrl />
+      {/* Both outputs into the selector */}
+      {wire(null, `M${xC + wC} ${Y}H${xSel - 18}V${selMid - 10}H${xSel}`, { x: xSel, y: selMid - 10, dir: 'r' })}
+      {wire('alt', `M${xC + wC} ${Y2}H${xSel - 18}V${selMid + 10}H${xSel}`, { x: xSel, y: selMid + 10, dir: 'r' })}
+      {probe('alt', xC + wC + 6, Y2 - 8, 'override out', 'start')}
+      <Block x={xSel} y={selMid - 28} w={wSel} h={56} title={config.select === 'max' ? 'MAX' : 'MIN'} sub="select" ctrl />
+      {config.tracking && (
+        <>
+          <path className="ll-wire" strokeDasharray="4 3" d={`M${xSel + wSel / 2} ${selMid - 28}V${Y - 40}H${xC + wC / 2}V${Y - 24}`} />
+          <path className="ll-wire" strokeDasharray="4 3" d={`M${xSel + wSel / 2} ${selMid + 28}V${Y2 + 40}H${xC + wC / 2}V${Y2 + 24}`} />
+          <text className="is-muted" x={xC + wC / 2 + 6} y={Y - 44}>external reset</text>
+        </>
+      )}
+      {wire('cv', `M${xSel + wSel} ${selMid}H${xV - 20}V${Y}H${xV}`, { x: xV, y: Y, dir: 'r' })}
+      {probe('cv', xSel + wSel + 4, selMid + 16, 'CV u', 'start')}
+      <Block x={xV} y={Y - 24} w={wV} h={48} title="Valve" sub="1/(τᵥs + 1)" />
+      {wire('valve', `M${xV + wV} ${Y}H${xP}`, { x: xP, y: Y, dir: 'r' })}
+      {firstDist && (
+        <>
+          {wire(`dist:${firstDist.key}`, `M${xP + wP / 2} ${Y - 60}V${Y - 24}`, { x: xP + wP / 2, y: Y - 24, dir: 'd' })}
+          {probe(`dist:${firstDist.key}`, xP + wP / 2, Y - 66, `d: ${firstDist.label.toLowerCase()}`)}
+        </>
+      )}
+      <Block x={xP} y={Y - 24} w={wP} h={48} title="Process" sub={PROCESS_SUB[proc.id]} />
+      {wire('pvTrue', `M${xP + wP} ${Y}H${xOut}`, { x: xOut, y: Y, dir: 'r' })}
+      {probe('pvTrue', xP + wP + 18, Y - 8, 'PV y')}
+      {/* Feedback: the main measurement to both (or the secondary to the override) */}
+      {wire('pv', `M${xOut - 15} ${Y}V${FB}H${xP + wP}`, { x: xP + wP, y: FB, dir: 'l' })}
+      <Block x={xP} y={FB - 20} w={wP} h={40} title={proc.tags.transmitter} sub="e^(−θs)/(τₘs + 1)" />
+      {wire('pv', `M${xP} ${FB}H30V${Y + 30}H${s1}V${Y + 11}`, { x: s1, y: Y + 11, dir: 'u' })}
+      {probe('pv', (xC + xP) / 2, FB - 6, 'PV measured')}
+      {sec ? (
+        <>
+          {wire('pv2', `M${xV + wV + 20} ${Y}V${Y2 + 50}H${s1}V${Y2 + 11}`, { x: s1, y: Y2 + 11, dir: 'u' })}
+          {probe('pv2', xV + wV + 26, Y2 + 44, `${sec.tag} measured`, 'start')}
+        </>
+      ) : wire(null, `M30 ${Y2 + 30}H${s1}V${Y2 + 11}`, { x: s1, y: Y2 + 11, dir: 'u' })}
     </svg>
   );
 }

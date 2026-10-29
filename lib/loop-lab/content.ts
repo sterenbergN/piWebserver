@@ -389,6 +389,126 @@ For an integrating process the feedforward gain is the ratio of the ramp rates, 
 
 This is the textbook case of the controller ladder done right: each element fixes one specific, physical problem.`,
   },
+  jacket: {
+    mechanical: String.raw`A 0.5 m³ jacketed reactor, **R-501**. The reaction gives off anything from nothing to 150 kW, so the jacket sometimes has to heat (steam, **TV-501B**) and sometimes cool (cooling water, **TV-501A**). One temperature controller drives both valves through a **split-range** output, **TY-501**: cooling water over the low part of the range, steam over the high part.
+
+**Two energy balances.**
+
+$$C_j\frac{dT_j}{dt} = Q_h - Q_c - UA\,(T_j - T),\qquad C_v\frac{dT}{dt} = UA\,(T_j - T) + Q_r - UA_l\,(T - T_{amb})$$
+
+- Steam: $Q_h = Q_{h,max}\,f_h$, up to 250 kW.
+- Cooling water: $Q_c = K_{cw}\,f_c\,(T_j - T_{cw})$, about 800 kW fully open with the jacket 40 K above the water.
+
+**The two valves aren't equal.** Per % of controller output, the cooling side moves three times the heat the steam side does. Where the output crosses the split, the process gain jumps threefold. The cooling side also depends on the cooling water temperature, so it changes with the seasons.
+
+**Where the split is made.**
+- In the **positioners**: one valve calibrated to 4–12 mA (reverse), the other to 12–20 mA, both on one signal.
+- Or in the **PLC**: one controller output, two analog outputs, each scaled to its own range.
+
+The PLC version is easier to change. Either way, the split point and the gap are design choices, not facts of nature.`,
+    control: String.raw`**One controller, two processes.** Linearized on either side of the split:
+
+$$G_{cool}(s) \approx \frac{k'_{c}}{s}\,e^{-\theta s},\qquad G_{heat}(s) \approx \frac{k'_{h}}{s}\,e^{-\theta s},\qquad k'_{c} \approx 3.5\,k'_{h}$$
+
+Heat losses are small, so it is nearly integrating, with about 22 s of effective dead time from the jacket and the thermowell.
+
+**What a 3.5 : 1 gain step does to one PI.**
+- **Tuned on steam,** it has 3.5 times the loop gain on cooling: there it is linearly unstable. It doesn't run away, because every swing back across the split drops the gain again. It hunts, bouncing the output between the two valves.
+- **Tuned on cooling,** it's sluggish on steam, and setpoint changes overshoot.
+
+**Two fixes, the same idea.**
+1. **Move the split point** so each side gets a share of the range in proportion to its capacity: $s^* = Q_{c,max}/(Q_{c,max} + Q_{h,max}) \approx 76\ \%$. Then 1 % of output is about 10 kW either way.
+2. **Characterize the output** in the PLC: the controller's 0–100 % is mapped onto the two valves so the gain is the same on both sides. Same result, done in software, and it can jump straight across a gap.
+
+**The gap.** A band where both valves are shut stops them fighting (heating and cooling at once wastes energy). It is also a dead zone. Near the split, the controller has to integrate across it before anything happens, and the temperature wanders. Keep it small, or jump it.`,
+    automation: String.raw`**Tags.** TT-501 (RTD in a thermowell), TIC-501, TY-501 (the split-range function), TV-501A (cooling water, fail open), TV-501B (steam, fail closed).
+
+**Siemens.**
+- PID_Compact in OB30 at 1 s, output 0–100 %.
+- Two NORM_X/SCALE_X pairs, or the exported lines, turn it into two analog outputs.
+- **Fail-safe directions decide the split's orientation.** Cooling water fail-open is the safe choice for an exothermic reactor, so it is on the low end: 0 % output means full cooling.
+- **PID_Temp** has heating/cooling built in, with its own cooling factor. It is the same idea as the balanced split: one gain for heating and a scaled one for cooling.
+
+**Elsewhere.** DCS split-range blocks (SPLITTER, SPLTR) take the split point, the gap and the overlap as parameters. Positioner split-range calibration (4–12 / 12–20 mA) works with any controller, but it is hidden in the field: document it on the loop sheet.
+
+**Operator view.** Show both valve positions on the faceplate, not just the controller output. "Output 48 %" means nothing to an operator who doesn't know where the split is.`,
+    commissioning: [
+      'Decide the fail-safe positions first (cooling water fail-open for an exothermic reaction), and with them which valve takes the low end.',
+      'Check each valve strokes over its own range: cooling fully open at 0 %, shut at the split; steam shut at the split, fully open at 100 %.',
+      'Bump test on each side: step the output well inside the cooling range, then well inside the steam range, and compare the slopes.',
+      'Set the split point from the ratio of the two gains (or characterize the output), then re-check that the bump tests now match.',
+      'Tune one PI on the balanced split; test a step that crosses the split both ways.',
+      'Run near the split for a while and watch for hunting between valves; if it does, look at the gap and the valves\' deadband before the tuning.',
+    ],
+    verdict: String.raw`**Balance the split, then tune one PI.**
+- Split at 50 %, a PI tuned on steam hunts between the valves once the reaction needs cooling (linearly unstable there). One tuned on cooling overshoots setpoint changes by about 23 %.
+- Move the split to about 76 % (or characterize the output) and one tuning gives 5–8 % overshoot on both sides, with the same margin everywhere.
+- Keep the gap small: 6 % of gap made the temperature wander four times more near the split.
+
+The fix is a valve setting, not a smarter controller.`,
+  },
+  blend: {
+    mechanical: String.raw`In-line blending: a concentrate (stream B, 50 %) is dosed into a diluent (stream A) to make a product at 10 %. The diluent flow is **wild**: the upstream unit sets it, and **FT-801** only measures it. The concentrate goes through **FV-802** and **FT-802**. A static mixer blends them, and an analyzer, **AT-803**, reads the product through a 20 s sample line.
+
+**Mixing balance** (well mixed, hold-up $V$):
+
+$$V\frac{dc}{dt} = F_B\,c_B - (F_A + F_B)\,c$$
+
+At steady state
+
+$$c = \frac{F_B\,c_B}{F_A + F_B} = \frac{R\,c_B}{1 + R},\qquad R = \frac{F_B}{F_A}$$
+
+**The ratio alone sets the product.** Whatever the throughput, a given ratio gives a given concentration. That is the physical fact ratio control is built on.
+
+**What changes with throughput.**
+- The gain from concentrate flow to concentration, $F_A(c_B - c)/(F_A + F_B)^2$, is three times larger at 20 m³/h than at 60.
+- The mixing time, $V/(F_A + F_B)$, changes the same way: 96 s at 40 % rate, 22 s at 160 %.
+
+**Sizes.** Diluent 40 m³/h (10–70), concentrate 10 m³/h through a valve good for 25, mixer hold-up 0.5 m³.`,
+    control: String.raw`**Three ways to close the loop.**
+1. **Feedback only** (analyzer → valve, possibly through a flow loop). Every production change upsets the product, and the analyzer sees it 20–25 s late.
+2. **Feedforward from FT-801** (additive): $u = u_{PID} + K_{ff}\,(F_A - F_{A0})$. That is right for small changes around the design point.
+3. **Ratio:** the concentrate flow setpoint is $R \times F_A$. It is multiplicative, so it is right at *any* rate.
+
+**Why multiplicative matters.** Linearized at one rate, ratio and additive feedforward look the same: a feedforward gain $R_0$ from $F_A$. The difference is the trim.
+- With additive feedforward, the analyzer controller adds a flow, and its loop gain is $\partial c/\partial F_B$. That varies 3 : 1 with throughput.
+- With ratio, the analyzer controller sets $R$, and
+
+$$\frac{\partial c}{\partial R} = \frac{c_B}{(1 + R)^2}$$
+
+does not depend on the throughput at all. Ratio control linearizes the loop. Only the mixing time still changes with rate.
+
+**What ratio doesn't do.** An unmeasured change in the concentrate's strength still has to be found by the analyzer. That is the trim's job, and the ratio's range (here 0–0.5) bounds how far the trim may go.`,
+    automation: String.raw`**Tags.** FT-801 (diluent, wild), FFY-802 (ratio station), FIC-802 (concentrate flow), FV-802, AT-803 (analyzer, through a sample conditioning system), AIC-803 (the trim).
+
+**Siemens.**
+- FIC-802 is a PID_Compact in OB30 at 0.5 s.
+- The ratio station is one line of SCL: SP := R × FT-801, limited to FIC-802's range.
+- The trim (AIC-803) can run slower, since analyzer updates are often 10–60 s apart.
+- Show the actual ratio (FT-802 / FT-801) on the HMI next to its setpoint: operators think in ratios.
+
+**Practicalities.**
+- **Low-flow cut-off:** below a minimum wild flow, hold the concentrate at minimum or stop it. A ratio of a noisy near-zero flow is noise.
+- **Lead/lag:** if the two flows have different dynamics (one valve much slower), filter the wild flow so both arrive together.
+- **Analyzer faults:** a frozen analyzer must freeze the trim (hold R), not let it drift. Use the analyzer's status bits.
+- **Units:** mass or volume, the same on both meters. A ratio of a mass flow to a volume flow changes with density.
+
+**Elsewhere.** DCS libraries have a RATIO block with bias, gain and ratio limits. Rockwell: one CPT instruction feeding the slave's setpoint.`,
+    commissioning: [
+      'Calibrate FT-801 and FT-802 to the same basis (both volume or both mass) and check them against each other on a known blend.',
+      'Tune the concentrate flow loop first, on its own, fast and well damped.',
+      'Put the ratio station in with the recipe ratio and the analyzer trim in manual; change the production rate and check the product barely moves.',
+      'Then close the trim, slowly (its loop includes the sample line and the analyzer), and bound the ratio to a sensible range.',
+      'Test a step in concentrate strength (a new tank) and a low-rate grade change.',
+      'Decide what happens on an analyzer fault (hold the ratio) and below the minimum wild flow (concentrate to minimum).',
+    ],
+    verdict: String.raw`**Ratio control with an analyzer trim.**
+- Production changes drop from 27 % of span (5 %-points) on the product to under 1 %.
+- The trim handles the concentrate's strength.
+- The trim's loop gain no longer depends on the rate. Additive feedforward handles the throughput nearly as well, but its trim overshoots 28–32 % at low rate where the ratio trim overshoots 10–13 %. On the mismatch test, ratio's IAE is a third of feedforward's.
+
+A fixed ratio without a trim is fine only if the concentrate never varies.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -721,6 +841,97 @@ That's what the Bode plot here uses. Its gain ripples with frequency, every $2\p
 - **MPC** handles dead time natively, in its prediction, along with constraints.`,
   },
 
+  override: {
+    summary: 'Two (or more) controllers share one valve through a high or low selector: the normal one, and one that holds a limit. Whichever asks for the safer output wins. The controller not in charge must track the valve, or it winds up and takes over late.',
+    theory: String.raw`Most of the time a loop has one job, but it also has limits it must never cross: a maximum steam flow, a high tank level, a motor current. **Override (selector) control** gives each limit its own controller, all acting on the same valve:
+
+$$u = \max(u_{normal},\ u_{limit})\quad\text{or}\quad u = \min(u_{normal},\ u_{limit})$$
+
+The selector picks whichever is safer, so the limit controller takes the valve exactly when its variable reaches its limit, and hands it back when it doesn't need it.
+
+**Choosing max or min.** Ask what the limit controller wants when its variable is past the limit.
+- A steam flow limiter wants *less* opening: low select.
+- A high-level override on an outlet valve wants *more*: high select.
+
+**Windup: the real design problem.** The controller not in charge still sees an error and keeps integrating. Its output runs to a limit (0 or 100 %) and stays there. When it should take over, it first has to integrate all the way back. Meanwhile the other controller holds the valve in the wrong place.
+
+**External reset feedback** fixes it. Every controller's integral follows the *selected* output through its own $T_i$ lag:
+
+$$I(s) = \frac{u_{sel}(s)}{T_i\,s + 1}$$
+
+For the controller in charge this is exactly normal PI action. For the others, the output becomes "valve signal + my own P and D", so each one sits just its proportional action away from the valve, and takes over smoothly the moment its error says it should.
+
+**Linear analysis** sees one loop at a time: the normal controller, and the override when it is in charge. The selector switches between them.`,
+    works: [
+      'Constraints that matter only sometimes: steam or fuel allowances, high/low levels, compressor surge and motor current, maximum tube-skin temperatures.',
+      'Start-up and shutdown, where a different variable should be in charge for a while.',
+      'Any "control this, unless that" requirement that would otherwise be a pile of IF statements.',
+    ],
+    breaks: [
+      'No tracking: the idle controller winds up, takes over late, and hands back late (bumps both ways).',
+      'Selector direction wrong: the limit controller wins all the time, or never.',
+      'Limit controllers tuned like normal ones: once in charge they must act fast, or the limit is overshot.',
+      'Two overrides fighting near both limits at once: then the process genuinely can\'t meet both, and someone must decide which wins.',
+    ],
+    tuning: String.raw`1. **Tune each controller on its own**, as if it were the only one: the normal one for its job, the limit one for its variable.
+2. **Make the limit controller tight.** Once it has the valve, its job is to stop at the limit, not to be gentle.
+3. **Set the limit with margin** below the real constraint. The override acts only when the limit is reached, so expect some overshoot.
+4. **Test a takeover and a hand-back** with tracking on, and once with it off to see what tracking is saving you.`,
+    implementation: String.raw`- Run every controller every cycle, then select: $u = \max(\ldots)$ or $\min(\ldots)$.
+- **External reset:** each controller's integral follows the selected output. Without an ER input, the classic workaround is to put the controllers not selected into tracking (manual with ManualValue = the selected output). It works, but they then lose their proportional "opinion".
+- **Show which controller has the valve** on the faceplate, and log the switches: an override that is in charge a lot is telling you about the plant.
+- **Manual mode:** all controllers track the manual output.`,
+    siemens: String.raw`- **PID_Compact** has no external-reset input. The usual pattern is two instances plus a MAX/MIN in SCL; the one not selected goes into manual (ManualEnable, ManualValue = the selected output) each cycle.
+- The exported **LL_PID** has ExtResetEnable / ExtReset, which do the real thing: its integral follows the selected output through Ti.
+- **PID_Temp** is the same in this respect.
+- Put the selector logic in the same OB30 as the controllers, after both calls.`,
+    broad: String.raw`- **DCS:** high/low selector blocks (HSEL, LSEL, SIGSEL) with built-in back-calculation (BKCAL) to every input, so external reset is automatic.
+- **Rockwell:** PIDE has a "track" input and the SEL / ESEL instructions.
+- **Model predictive control** handles constraints in one optimization instead of a selector, at the cost of a model and a lot more engineering.`,
+  },
+  ratio: {
+    summary: 'The controlled flow follows a wild flow that something else sets, at a set ratio: SP = R × wild flow. An analyzer or quality controller may trim the ratio. The product stays right through every production change, and the trim\'s loop gain stops depending on the rate.',
+    theory: String.raw`Many processes care about a **proportion**: fuel to air, reagent to feed, concentrate to diluent. If the proportion is right, the product is right, whatever the throughput. Ratio control holds the proportion directly:
+
+$$F_{B,sp} = R \times F_A$$
+
+- $F_A$ is the **wild** flow, measured but set elsewhere (production rate).
+- $F_B$ is the controlled flow, with its own flow loop.
+
+**Fixed ratio** is pure feedforward: no quality measurement at all. It is right only as long as the recipe ratio is right.
+
+**Trimmed ratio** adds a slow outer controller on the product quality that adjusts $R$. That is cascade, with a multiplication in the middle. Linearized at one throughput,
+
+$$\delta F_{B,sp} = R_0\,\delta F_A + F_{A0}\,\delta R$$
+
+that is, feedforward gain $R_0$ from the wild flow, plus the trim's output scaled by $F_{A0}$.
+
+**Why not just additive feedforward?** The quality usually depends on the ratio, not on the flow. With ratio control the trim's loop gain, $\partial c/\partial R$, doesn't depend on the throughput. With additive feedforward it does (here 3 : 1 between low and high rate), so one tuning is too fast at low rate and too slow at high rate.`,
+    works: [
+      'Blending, dosing and dilution: chemicals into water, additives into fuel, concentrate into product.',
+      'Combustion: air follows fuel (often with cross-limiting so air leads on increases and lags on decreases).',
+      'Any process where the quality depends on a proportion and the throughput is set elsewhere.',
+    ],
+    breaks: [
+      'The two meters disagree (different bases, drift): the ratio is wrong without anyone seeing it.',
+      'Very low wild flow: the ratio of a noisy, near-zero signal is noise. Cut off below a minimum.',
+      'Different dynamics on the two streams: one arrives before the other, and the product shows a transient on every rate change (add a lead-lag on the wild flow).',
+      'Unmeasured changes in either stream\'s composition: only a trim on a quality measurement catches them.',
+    ],
+    tuning: String.raw`1. **The flow loop first,** fast and well damped, on its own setpoint.
+2. **The ratio from the recipe:** the mass balance, $R = F_B/F_A$ at the design point.
+3. **The trim on the quality measurement,** with the flow loop and the ratio closed. Its process is "ratio → quality": tune it on a step in $R$. It includes the analyzer delay, so it is slow.
+4. **Limit the ratio range** the trim may use, so a failed analyzer can't drive it anywhere absurd.`,
+    implementation: String.raw`- **Ratio station:** SP₂ = R × wild flow, limited to the flow loop's range. Below a minimum wild flow, hold a minimum.
+- **Bumpless:** in manual, the trim tracks the ratio actually being run, $F_B/F_A$.
+- **Windup:** while the flow loop is saturated, hold the trim's integral, as in cascade.
+- **HMI:** show the ratio setpoint and the actual ratio side by side.`,
+    siemens: String.raw`- No ratio block in PID_Compact: one line of SCL computes the setpoint, as in the exported call, before the flow controller.
+- Use **PID_Compact** for the flow loop. Use a second one for the trim, its output scaled 0–100 % → [R_min, R_max].
+- **Cross-limiting** for combustion (air leads fuel up, lags it down) is a MAX/MIN on the two setpoints: the same selector idea as override control.`,
+    broad: String.raw`- **DCS:** RATIO blocks with ratio limits and bias, and a cascade connection to the slave.
+- **Combustion control** standards (NFPA 85, EN 12952) build on ratio with cross-limiting and an O₂ trim: the same structure as here.`,
+  },
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -1051,12 +1262,25 @@ and from it $K_c \approx 0.73$, $T_i \approx 65$ min. **Auto-tune** does exactly
 
 The cost is room. P-only lets the level reach 2.4 m in the surge test, and 2.5 m (of 3) on the model mismatch test, where the tank is effectively 30 % smaller.
 
-So on a real tank the limits get their own protection: a **high-level override** that opens the outlet, or a trip. That isn't a reason to tighten the loop. Override control is the next phase of Loop Lab.`,
+So on a real tank the limits get their own protection: a **high-level override** that opens the outlet, or a trip. That isn't a reason to tighten the loop.`,
         presets: [
           { label: 'Averaging PI', controller: PI(0.73, 3920, { invert: true }) },
           { label: 'Averaging P-only', controller: PI(0.37, 0, { invert: true }) },
         ],
         scenarios: ['surges', 'mismatch'],
+      },
+      {
+        title: 'A high-level override',
+        body: String.raw`A long surge (half an hour near full rate) is more than the averaging controller should absorb: the level climbs to 2.76 m of a 3 m tank.
+
+Add a second, tight level controller with its setpoint at 2.4 m ($K_c = 6$, $T_i = 7.5$ min) and high-select the two outputs, because the override wants *more* outflow. With tracking, it sits idle until the level reaches 2.4 m, then takes the valve. The level stops at 2.5 m: the outflow has to swing up to 100 % first, so set the limit with margin.
+
+**The other side of tracking.** When the surge ends, the averaging controller takes the valve back from where the override left it, near 100 %. Being slow, it takes a while to bring the outflow down, and the level dips to 0.66 m. A low-level override would catch that too.`,
+        presets: [
+          { label: 'Averaging PI', controller: PI(0.73, 3920, { invert: true }) },
+          { label: 'Averaging + high-level override', controller: { kind: 'override', pid: { ...DEFAULT_PID, Kc: 0.73, Ti: 3920, invert: true }, ovr: { ...DEFAULT_PID, Kc: 6, Ti: 450, invert: true }, on: 'pv', limit: 2.4, select: 'max', tracking: true } },
+        ],
+        scenarios: ['big-surge'],
       },
       {
         title: 'Verdict',
@@ -1211,6 +1435,214 @@ The level controller is now a slow trim on a mass balance, which is all a level 
 Single-element is still used at low load, where the steam flow measurement is unreliable; switch over bumplessly above 20–30 % load.
 
 The same pattern fits any level with inverse response or a dominant measured flow: feed forward the mass balance, close a flow loop, trim on level.`,
+      },
+    ],
+  },
+  {
+    id: 'hx-steam-limit',
+    process: 'hx',
+    title: 'The heat exchanger: a steam limit, and why trackers matter',
+    question: 'The boiler can only spare 1000 kg/h. How do you control the temperature without ever taking more, and what goes wrong when the limiter isn\'t built right?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`The steam heat exchanger from the cascade case. Now the boiler house says this exchanger may take at most 1000 kg/h. At full production, holding 60 °C needs about 1100.
+
+Someone has to give, and it should be the temperature, not the boiler. The test pushes the process flow up 40 % for four minutes, then drops it below normal.`,
+      },
+      {
+        title: 'No limit',
+        body: String.raw`The temperature PI does its job: the outlet dips to 53 °C and recovers. To do it, it takes **1120 kg/h** of steam, 12 % over the allowance, for as long as the high flow lasts.
+
+In a real plant the boiler pressure would sag and every other user would feel it.`,
+        presets: [{ label: 'PI', controller: PI(1.5, 29) }],
+        scenarios: ['steam-limit'],
+      },
+      {
+        title: 'Override on steam flow, with tracking',
+        body: String.raw`Add a steam flow controller (FT-301 → FIC-301) with setpoint 1000 kg/h. Low-select its output with the temperature controller's, because the limiter wants *less* steam when it acts.
+
+Both controllers track the selected output (external reset). Each one's integral follows the valve signal, so the one not in charge sits just its own P action away.
+
+**Result.**
+- Steam now stops at about 1000 kg/h. The temperature settles at 55.9 °C, exactly what the energy balance allows on 1000 kg/h at that flow.
+- When the flow drops, the temperature controller takes the valve straight back. The outlet peaks at 71 °C and is back within about 100 s.
+
+On the valve chart, the dashed line is the limiter's own output: where it meets the valve signal, the limiter is in charge.`,
+        presets: [
+          { label: 'PI', controller: PI(1.5, 29) },
+          { label: 'Override, tracking', controller: { kind: 'override', pid: { ...DEFAULT_PID, Kc: 1.5, Ti: 29 }, ovr: { ...DEFAULT_PID, Kc: 1.8, Ti: 2.25 }, on: 'pv2', limit: 1000, select: 'min', tracking: true } },
+        ],
+        scenarios: ['steam-limit'],
+      },
+      {
+        title: 'The same override without tracking',
+        body: String.raw`Now each controller integrates its own error whether or not it has the valve. This is what two PID_Compacts and a MIN() give you if nothing else is done.
+
+**Taking over.** While the temperature is fine, the limiter's flow is below its setpoint, so it winds up to 100 %. When the steam reaches 1000 kg/h it has to come down from there first: steam overshoots to **1060 kg/h** before it catches.
+
+**Handing back.** While the limiter is in charge, the temperature is below setpoint, so the temperature controller winds up to 100 %. When the flow drops, it holds the valve open until it has unwound. The outlet overshoots to **77 °C** (instead of 71) and takes 137 s to come back (instead of about 100).
+
+Neither controller is badly tuned. The structure is.`,
+        presets: [
+          { label: 'Override, tracking', controller: { kind: 'override', pid: { ...DEFAULT_PID, Kc: 1.5, Ti: 29 }, ovr: { ...DEFAULT_PID, Kc: 1.8, Ti: 2.25 }, on: 'pv2', limit: 1000, select: 'min', tracking: true } },
+          { label: 'Override, no tracking', controller: { kind: 'override', pid: { ...DEFAULT_PID, Kc: 1.5, Ti: 29 }, ovr: { ...DEFAULT_PID, Kc: 1.8, Ti: 2.25 }, on: 'pv2', limit: 1000, select: 'min', tracking: false } },
+        ],
+        scenarios: ['steam-limit'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**An override with tracking.**
+- The limit controller gets the valve exactly when its variable reaches the limit.
+- Tracking (external reset feedback, or at least manual-tracking of the idle controller) is what makes the takeover and the hand-back clean.
+- Pick the selector by asking which way the limiter pushes.
+- Set the limit a little inside the real one, and show which controller has the valve.
+
+The same structure fits high-level overrides, compressor surge and motor-current limits.`,
+      },
+    ],
+  },
+  {
+    id: 'jacket-split',
+    process: 'jacket',
+    title: 'The reactor: split-range heating and cooling',
+    question: 'One temperature controller, a steam valve and a cooling water valve. Why does a loop that was fine during start-up start hunting once the reaction is running?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`R-501 needs steam to get warm and cooling water once the reaction runs. TIC-501's output is split: 0–50 % opens the cooling water (fully open at 0), 50–100 % opens the steam.
+
+The **mechanical view** plots the heat into the jacket against the controller output. The line is three and a half times steeper on the cooling side: per % of output, cooling water moves far more heat than steam.`,
+      },
+      {
+        title: 'Tuned during start-up, on steam',
+        body: String.raw`The loop was commissioned while heating up the first batch, so it was tuned on the steam side: SIMC with $\tau_c = \theta$, $K_c = 11$, $T_i = 180$ s. On steam it is fine.
+
+Once the reaction needs cooling, the loop gain is 3.5 times higher, and the linear analysis says the loop is **unstable** on that side. In the simulation it doesn't run away: every swing back across the split puts it on the low-gain side again. Instead it **hunts**, bouncing the output between cooling water and steam. Valve travel is 14 strokes an hour, three times a well-behaved loop's, with steam and cooling water fighting each other.`,
+        presets: [{ label: 'PI tuned on steam', controller: PI(11, 180) }],
+        scenarios: ['load-swing', 'near-split'],
+      },
+      {
+        title: 'Detune for the cooling side',
+        body: String.raw`The usual fix on site: lower the gain until the cooling side is calm. Tuned on the cooling side ($K_c = 3.2$, $T_i = 170$ s), the loop is stable everywhere with Ms 2.3.
+
+The steam side is now sluggish. Setpoint steps that need steam overshoot by about 23 % and take 10–12 minutes to settle.`,
+        presets: [
+          { label: 'PI tuned on steam', controller: PI(11, 180) },
+          { label: 'PI tuned on cooling', controller: PI(3.2, 170) },
+        ],
+        scenarios: ['sp-steps', 'load-swing'],
+      },
+      {
+        title: 'Balance the split',
+        body: String.raw`Give the cooling valve more of the range: split at about 76 %, the ratio of the two capacities, $Q_{c}/(Q_c + Q_h) = 800/(800 + 250)$. Now each % of output moves about 10 kW on either side. One SIMC tuning ($K_c = 4.9$, $T_i = 170$ s) fits both.
+
+**Result.**
+- Setpoint steps overshoot 5–8 % on both sides, settling in 5–9 minutes.
+- Load swings are rejected with 40 % less IAE than the detuned loop.
+- Ms is the same 2.4 everywhere.
+
+The **characterized** controller does the same thing in software: it maps the controller's output onto the two valves at the balance point, so the valves' split can stay at 50 %. The two give identical results.`,
+        presets: [
+          { label: 'PI tuned on cooling', controller: PI(3.2, 170) },
+          { label: 'Balanced split (76 %)', controller: PI(4.9, 170), params: { split: 76 } },
+          { label: 'Characterized output', controller: { kind: 'characterized', pid: { ...DEFAULT_PID, Kc: 4.9, Ti: 170 }, char: 'balanced-split' } },
+        ],
+        scenarios: ['sp-steps', 'load-swing'],
+      },
+      {
+        title: 'The gap',
+        body: String.raw`A gap between the ranges (both valves shut over a band) stops steam and cooling water ever being on together. It is also a dead zone.
+
+With a 6 % gap, a reactor running near the split wanders four times more (IAE 8 instead of 2): the controller has to integrate across the gap before either valve moves. Valve activity doubles as it hops across.
+
+The characterization can jump the gap in software, but then a tiny change in output moves a valve by a step. Keep the gap as small as the valves' shut-off allows.`,
+        presets: [
+          { label: 'Balanced, no gap', controller: PI(4.9, 170), params: { split: 76 } },
+          { label: 'Balanced, 6 % gap', controller: PI(4.9, 170), params: { split: 76, gap: 6 } },
+        ],
+        scenarios: ['near-split'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**Balance the split, then tune one PI.**
+- Put the split point where both ranges move the same heat per % (or characterize the output in the PLC), keep the gap small, and tune once.
+- If the cooling capacity changes a lot with the seasons, re-check the balance in summer and winter.
+
+The ladder's rung here is characterization, not anything fancier: the problem is a nonlinearity in the actuators, so straighten it.`,
+      },
+    ],
+  },
+  {
+    id: 'blend-ratio',
+    process: 'blend',
+    title: 'Blending: ratio control',
+    question: 'Production sets the diluent flow, and the product must stay at 10 % whatever it does. Feedback, feedforward, or ratio, and why does it matter which?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A 50 % concentrate is dosed into a diluent stream to make a 10 % product. The diluent flow (FT-801) is set upstream and swings with production, from 25 to 60 m³/h. An analyzer reads the product 20 s downstream.
+
+The **mechanical view** shows the key fact. At a fixed concentrate flow the product moves with every rate change. At a fixed *ratio*, it doesn't move at all.`,
+      },
+      {
+        title: 'Feedback only',
+        body: String.raw`A PI from the analyzer to the concentrate valve ($K_c = 0.4$, $T_i = 38.5$ s).
+
+Every production change is a 2–5 %-point upset on the product (11–27 % of the span): off spec for four to six minutes, because the analyzer only sees it 25 s later. A concentrate flow loop underneath (cascade) changes nothing here: the upset doesn't pass through the concentrate flow.`,
+        presets: [{ label: 'PI', controller: PI(0.4, 38.5) }],
+        scenarios: ['throughput', 'strength'],
+      },
+      {
+        title: 'Fixed ratio',
+        body: String.raw`Let FIC-802 follow the diluent: setpoint = 0.25 × FT-801. No analyzer in the loop at all.
+
+**Result.** Production changes now barely touch the product: under 2.5 % of span, settled within about a minute.
+
+But a weaker concentrate delivery (45 % instead of 50) leaves the product **1 %-point low for good**, because nothing measures it. Grade changes are impossible without someone retyping the ratio.`,
+        presets: [
+          { label: 'PI', controller: PI(0.4, 38.5) },
+          { label: 'Fixed ratio 0.25', controller: { kind: 'ratio', outer: { ...DEFAULT_PID, Kc: 0.5, Ti: 38.6 }, inner: { ...DEFAULT_PID, Kc: 0.88, Ti: 1.75 }, trim: false, ratio: 0.25, rLo: 0, rHi: 0.5 } },
+        ],
+        scenarios: ['throughput', 'strength'],
+      },
+      {
+        title: 'Ratio with an analyzer trim',
+        body: String.raw`Let AIC-803 set the ratio (0–0.5) from the analyzer. Tune the flow loop first, then the trim on a step in $R$ ($K_c = 0.5$, $T_i = 39$ s).
+
+**Result.**
+- Production changes stay under 1 % of span.
+- A new concentrate strength is found and corrected by the trim, as fast as feedback alone could.
+- Total IAE drops from 321 to 118.`,
+        presets: [
+          { label: 'PI', controller: PI(0.4, 38.5) },
+          { label: 'Ratio + trim', controller: { kind: 'ratio', outer: { ...DEFAULT_PID, Kc: 0.5, Ti: 38.6 }, inner: { ...DEFAULT_PID, Kc: 0.88, Ti: 1.75 }, trim: true, ratio: 0.25, rLo: 0, rHi: 0.5 } },
+        ],
+        scenarios: ['throughput', 'strength', 'mismatch'],
+      },
+      {
+        title: 'Why not additive feedforward?',
+        body: String.raw`Feedforward from FT-801 to the valve (1 % per m³/h, designed from the model) handles production changes almost as well as ratio. The difference shows when the plant runs away from the design rate.
+- **At 40 % rate,** the feedforward loop's trim sees a process gain three times higher: grade changes overshoot 28–32 %. The ratio trim overshoots 10–13 %.
+- **At 160 % rate,** the feedforward trim is too slow to settle in seven minutes. The ratio trim settles in under five.
+- **On the mismatch test,** ratio's IAE is a third of feedforward's.
+
+Ratio keeps the trim's gain constant. What still changes with rate is the mixing time ($V/F$, 96 s at low rate against 22 s at high), which no structure can remove.`,
+        presets: [
+          { label: 'PI + feedforward', controller: { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 0.4, Ti: 38.5 }, ff: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }] } },
+          { label: 'Ratio + trim', controller: { kind: 'ratio', outer: { ...DEFAULT_PID, Kc: 0.5, Ti: 38.6 }, inner: { ...DEFAULT_PID, Kc: 0.88, Ti: 1.75 }, trim: true, ratio: 0.25, rLo: 0, rHi: 0.5 } },
+        ],
+        scenarios: ['low-rate', 'high-rate', 'mismatch'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**Ratio control with a quality trim.**
+- When the product depends on a proportion and the throughput is set elsewhere, hold the proportion.
+- Use the analyzer to correct the proportion, not the flow.
+- Limit the ratio range, cut off at low wild flow, and hold the ratio when the analyzer faults.`,
       },
     ],
   },

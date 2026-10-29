@@ -5,6 +5,7 @@ import type { ControllerConfig } from '@/lib/loop-lab/controllers';
 import { valveCharacteristic, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
+import { splitValves } from '@/lib/loop-lab/processes/jacket';
 import { Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
 
 // Process drawings for the stirred tank, the heat exchanger, the surge tank,
@@ -202,6 +203,77 @@ export function DrumSchematic({ p, d, valve, level, swell }: { p: Params; d: Par
   );
 }
 
+export function JacketSchematic({ p, d, signal, Tj, T }: { p: Params; d: Params; signal: number; Tj: number; T: number }) {
+  const { cool, heat: hot } = splitValves(signal / 100, p);
+  const qh = p.Qhmax * hot, qc = p.Kcw * cool * Math.max(0, Tj - d.Tcw);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 300" role="img" aria-label={`Reactor at ${T.toFixed(1)} °C: steam ${Math.round(hot * 100)} % open, cooling water ${Math.round(cool * 100)} % open`}>
+      <path d="M180 60V215Q180 262 290 262Q400 262 400 215V60" fill={heat(Tj)} stroke="var(--ll-steel)" strokeWidth={3} />
+      <path d="M200 60V210Q200 244 290 244Q380 244 380 210V60" fill={heat(T)} stroke="var(--ll-steel)" strokeWidth={3} />
+      <line className="ll-steel" x1={170} x2={410} y1={60} y2={60} />
+      <line className="ll-line" x1={290} y1={22} x2={290} y2={200} />
+      <rect className="ll-block" x={274} y={8} width={32} height={18} rx={3} />
+      <text x={290} y={21} textAnchor="middle">M</text>
+      <path className="ll-line" d="M266 200H314M266 192V208M314 192V208" />
+      <text x={290} y={145} textAnchor="middle" fontWeight={700}>{T.toFixed(1)} °C</text>
+      <text className="is-muted" x={290} y={162} textAnchor="middle">reaction {f1(d.Qr)} kW</text>
+      <text className="is-muted" x={410} y={250}>jacket {Tj.toFixed(1)} °C</text>
+      {/* Steam, high range */}
+      <path className="ll-pipe" d="M20 100H180" />
+      {hot > 0.005 && <path className="ll-flowline" style={flowAnim(hot * 2)} d="M24 100H176" />}
+      <ControlValve x={90} y={100} open={hot * 100} tag="" label={false} />
+      <text x={20} y={46}>Steam TV-501B {f1(hot * 100)} % · {f1(qh)} kW</text>
+      {/* Cooling water, low range */}
+      <path className="ll-pipe" d="M20 190H180" />
+      {cool > 0.005 && <path className="ll-flowline" style={flowAnim(cool * 2)} d="M24 190H176" />}
+      <ControlValve x={90} y={190} open={cool * 100} tag="" label={false} />
+      <text x={20} y={222}>Cooling water TV-501A {f1(cool * 100)} %</text>
+      <text className="is-muted" x={20} y={236}>{f1(d.Tcw)} °C supply · {f1(qc)} kW out</text>
+      <path className="ll-pipe" d="M400 90H470" />
+      <text className="is-muted" x={476} y={94}>return</text>
+      {/* Temperature */}
+      <line className="ll-signal" x1={370} y1={130} x2={470} y2={130} />
+      <circle className="ll-bubble" cx={490} cy={130} r={18} />
+      <text x={490} y={126} textAnchor="middle">TT</text>
+      <text x={490} y={139} textAnchor="middle">501</text>
+      <text className="is-muted" x={20} y={290}>TY-501 at {f1(signal)} %: split at {f1(p.split)} %{p.gap > 0 ? `, gap ${f1(p.gap)} %` : ''}</text>
+    </svg>
+  );
+}
+
+export function BlendSchematic({ p, d, valve, c, reading }: { p: Params; d: Params; valve: number; c: number; reading: number }) {
+  const FB = p.FBmax * valveCharacteristic(p.valveChar, valve / 100) * (d.Pb / 100);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 600 250" role="img" aria-label={`Blending: ${f1(d.FA)} m³/h diluent, ${f1(FB)} m³/h concentrate, product ${c.toFixed(2)} %`}>
+      {/* Diluent (wild) */}
+      <path className="ll-pipe" d="M20 90H250" />
+      <path className="ll-flowline" style={flowAnim(d.FA / 30)} d="M24 90H246" />
+      <circle className="ll-block" cx={90} cy={90} r={11} />
+      <text x={20} y={66}>Diluent (wild) {f1(d.FA)} m³/h</text>
+      <text className="is-muted" x={78} y={120}>FT-801</text>
+      {/* Concentrate */}
+      <path className="ll-pipe" d="M20 190H210V110H250" />
+      {FB > 0.05 && <path className="ll-flowline" style={flowAnim(FB / 10)} d="M24 190H210V110H246" />}
+      <ControlValve x={80} y={190} open={valve} tag="" label={false} />
+      <circle className="ll-block" cx={160} cy={190} r={11} />
+      <text x={20} y={226}>Concentrate {f1(d.cB)} % · FV-802 {f1(valve)} % · FT-802 {f1(FB)} m³/h</text>
+      {/* Mixer */}
+      <rect className="ll-block" x={250} y={74} width={110} height={52} rx={8} />
+      <path className="ll-line" d="M262 100L278 84L294 116L310 84L326 116L342 84L352 96" />
+      <text className="is-muted" x={305} y={142} textAnchor="middle">static mixer</text>
+      {/* Product and analyzer */}
+      <path className="ll-pipe" d="M360 100H590" />
+      <path className="ll-flowline" style={flowAnim((d.FA + FB) / 30)} d="M364 100H586" />
+      <text x={380} y={86} fontWeight={700}>{c.toFixed(2)} % product</text>
+      <path className="ll-line" strokeDasharray="2 3" d="M500 100V160H530" />
+      <circle className="ll-bubble" cx={548} cy={160} r={18} />
+      <text x={548} y={156} textAnchor="middle">AT</text>
+      <text x={548} y={169} textAnchor="middle">803</text>
+      <text className="is-muted" x={420} y={196}>sample line {f1(p.txDelay)} s · reads {reading.toFixed(2)} %</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -235,6 +307,8 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   if (proc.id === 'hx') return <HxSchematic p={p} d={d} valve={valve} Tw={x[1]} T={x[2]} />;
   if (proc.id === 'surge') return <SurgeSchematic p={p} level={x[1]} valve={valve} qIn={d.Qin} />;
   if (proc.id === 'feeder') return <FeederSchematic p={p} d={d} speed={valve} atScrew={x[1]} reading={x[2]} />;
+  if (proc.id === 'jacket') return <JacketSchematic p={p} d={d} signal={valve} Tj={x[1]} T={x[2]} />;
+  if (proc.id === 'blend') return <BlendSchematic p={p} d={d} valve={valve} c={x[1]} reading={x[2]} />;
   if (proc.id === 'drum') return <DrumSchematic p={p} d={d} valve={valve} level={x[1] + x[2] - x[3]} swell={x[2]} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
@@ -258,6 +332,38 @@ export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: Controll
         <line className="ll-signal" x1={430} y1={120} x2={430} y2={70} />
         <Bubble x={430} y={50} letters="TIC" num="401" shared />
         <path className="ll-signal" d="M410 50H80V98" />
+        <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'hx' && config.kind === 'override') {
+    const onFlow = config.on === 'pv2';
+    return (
+      <svg className="ll-drawing" viewBox="0 0 600 300" role="img" aria-label={`P&ID of the heat exchanger with a ${onFlow ? 'steam flow' : 'temperature'} override`}>
+        <rect className="ll-steel" strokeWidth={2.5} x={230} y={190} width={200} height={70} rx={26} />
+        <text className="is-muted" x={330} y={230} textAnchor="middle">E-301</text>
+        <path className="ll-pipe" strokeWidth={3} d="M20 140H330V190" />
+        <ControlValve x={130} y={140} open={50} tag="" label={false} />
+        <text x={110} y={172}>FV-301</text>
+        <circle className="ll-block" cx={240} cy={140} r={11} />
+        <path className="ll-pipe" strokeWidth={3} d="M20 225H230M430 225H590" />
+        <line className="ll-signal" x1={520} y1={225} x2={520} y2={190} />
+        <Bubble x={520} y={170} letters="TT" num="301" />
+        <line className="ll-signal" x1={520} y1={150} x2={520} y2={60} />
+        <Bubble x={520} y={40} letters="TIC" num="301" shared />
+        {onFlow && (
+          <>
+            <line className="ll-signal" x1={240} y1={129} x2={240} y2={110} />
+            <Bubble x={240} y={90} letters="FT" num="301" />
+            <line className="ll-signal" x1={260} y1={90} x2={300} y2={90} />
+            <Bubble x={320} y={90} letters="FIC" num="301" shared />
+            <text className="is-muted" x={300} y={124}>limit {config.limit} kg/h</text>
+          </>
+        )}
+        <Bubble x={410} y={40} letters={config.select === 'max' ? 'TY >' : 'TY <'} num="301" shared />
+        <path className="ll-signal" d="M500 40H430" />
+        {onFlow ? <path className="ll-signal" d="M340 90H410V60" /> : null}
+        <path className="ll-signal" d="M390 40H130V98" />
         <text className="is-muted" x={20} y={292}>{LEGEND}</text>
       </svg>
     );
@@ -306,6 +412,31 @@ export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: Controll
       </svg>
     );
   }
+  if (proc.id === 'surge' && config.kind === 'override') {
+    return (
+      <svg className="ll-drawing" viewBox="0 0 560 300" role="img" aria-label="P&ID of the surge tank level loop with a high-level override">
+        <path className="ll-steel" strokeWidth={2.5} d="M160 70V230H320V70Z" />
+        <text className="is-muted" x={240} y={160} textAnchor="middle">T-601</text>
+        <path className="ll-pipe" strokeWidth={3} d="M20 50H200V70" />
+        <text className="is-muted" x={20} y={40}>from upstream</text>
+        <path className="ll-pipe" strokeWidth={3} d="M290 230V260H540" />
+        <circle className="ll-block" cx={350} cy={260} r={12} />
+        <text className="is-muted" x={338} y={288}>P-601</text>
+        <ControlValve x={480} y={260} open={50} tag="" label={false} />
+        <text x={496} y={230}>{proc.tags.valve}</text>
+        <line className="ll-signal" x1={320} y1={130} x2={350} y2={130} />
+        <Bubble x={370} y={130} letters="LT" num="601" />
+        <path className="ll-signal" d="M390 130H410V60H430M410 130V160H430" />
+        <Bubble x={450} y={60} letters="LIC" num="601" shared />
+        <Bubble x={450} y={160} letters="LIC" num="602" shared />
+        <text className="is-muted" x={476} y={174}>high limit</text>
+        <path className="ll-signal" d="M470 60H510V100M470 160H510V140" />
+        <Bubble x={510} y={120} letters={config.select === 'max' ? 'LY >' : 'LY <'} num="601" shared />
+        <path className="ll-signal" d="M530 120H545V200H480V218" />
+        <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+      </svg>
+    );
+  }
   if (proc.id === 'surge') {
     return (
       <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label="P&ID of the surge tank level loop">
@@ -323,6 +454,74 @@ export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: Controll
         <line className="ll-signal" x1={430} y1={110} x2={430} y2={80} />
         <Bubble x={430} y={60} letters="LIC" num="601" shared />
         <path className="ll-signal" d="M450 60H490V200H430V218" />
+        <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'jacket') {
+    return (
+      <svg className="ll-drawing" viewBox="0 0 560 300" role="img" aria-label="P&ID of the reactor temperature loop, split-range on steam and cooling water">
+        <path className="ll-steel" strokeWidth={2.5} d="M200 70V215Q200 250 300 250Q400 250 400 215V70Z" />
+        <path className="ll-steel" strokeWidth={1.5} d="M215 85V210Q215 236 300 236Q385 236 385 210V85" />
+        <text className="is-muted" x={300} y={160} textAnchor="middle">R-501</text>
+        <path className="ll-pipe" strokeWidth={3} d="M20 110H200" />
+        <ControlValve x={90} y={110} open={50} tag="" label={false} />
+        <text x={110} y={92}>TV-501B steam</text>
+        <path className="ll-pipe" strokeWidth={3} d="M20 200H200" />
+        <ControlValve x={90} y={200} open={50} tag="" label={false} />
+        <text x={110} y={232}>TV-501A cooling water</text>
+        <line className="ll-signal" x1={390} y1={140} x2={450} y2={140} />
+        <Bubble x={470} y={140} letters="TT" num="501" />
+        <line className="ll-signal" x1={470} y1={120} x2={470} y2={70} />
+        <Bubble x={470} y={50} letters="TIC" num="501" shared />
+        <path className="ll-signal" d="M450 50H40" />
+        <Bubble x={40} y={50} letters="TY" num="501" shared />
+        <text className="is-muted" x={64} y={30}>split at {config.kind === 'characterized' ? 'the balance point' : 'the split point'}</text>
+        <path className="ll-signal" d="M40 70V150H90V158M40 150V170H60V240H90V208" />
+        <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+      </svg>
+    );
+  }
+  if (proc.id === 'blend') {
+    const ratio = config.kind === 'ratio', cascade = config.kind === 'cascade' || ratio;
+    const trim = !ratio || config.trim;
+    return (
+      <svg className="ll-drawing" viewBox="0 0 600 300" role="img" aria-label={`P&ID of the blending loop${ratio ? ' with ratio control' : ''}`}>
+        <path className="ll-pipe" strokeWidth={3} d="M20 140H300" />
+        <text className="is-muted" x={20} y={130}>diluent (wild)</text>
+        <circle className="ll-block" cx={80} cy={140} r={11} />
+        <path className="ll-pipe" strokeWidth={3} d="M20 240H260V150H300" />
+        <text className="is-muted" x={20} y={262}>concentrate</text>
+        <ControlValve x={110} y={240} open={50} tag="" label={false} />
+        <text x={124} y={268}>FV-802</text>
+        <circle className="ll-block" cx={200} cy={240} r={11} />
+        <rect className="ll-block" x={300} y={125} width={70} height={40} rx={6} />
+        <text className="is-muted" x={335} y={150} textAnchor="middle">mixer</text>
+        <path className="ll-pipe" strokeWidth={3} d="M370 145H590" />
+        <path className="ll-line" strokeDasharray="2 3" d="M470 145V185" />
+        <Bubble x={470} y={205} letters="AT" num="803" />
+        <path className="ll-signal" d="M490 205H560V40H520" />
+        {trim && <Bubble x={500} y={40} letters="AIC" num="803" shared />}
+        {cascade && (
+          <>
+            <line className="ll-signal" x1={200} y1={229} x2={200} y2={210} />
+            <Bubble x={200} y={190} letters="FT" num="802" />
+            <line className="ll-signal" x1={200} y1={170} x2={200} y2={110} />
+            <Bubble x={200} y={90} letters="FIC" num="802" shared />
+            <path className="ll-signal" d="M180 90H110V198" />
+          </>
+        )}
+        {ratio ? (
+          <>
+            <line className="ll-signal" x1={80} y1={129} x2={80} y2={60} />
+            <Bubble x={80} y={40} letters="FT" num="801" />
+            <path className="ll-signal" d="M100 40H180" />
+            <Bubble x={200} y={40} letters="FFY" num="802" shared />
+            <text className="is-muted" x={224} y={30}>× ratio</text>
+            {trim && <path className="ll-signal" d="M480 40H220" />}
+            <line className="ll-signal" x1={200} y1={60} x2={200} y2={70} />
+          </>
+        ) : cascade ? <path className="ll-signal" d="M480 40H200V70" /> : <path className="ll-signal" d="M480 40H110V198" />}
         <text className="is-muted" x={20} y={292}>{LEGEND}</text>
       </svg>
     );

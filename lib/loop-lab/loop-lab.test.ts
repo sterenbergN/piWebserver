@@ -475,3 +475,102 @@ test('every case study preset is a valid controller for its process, and its tes
     }
   }
 });
+
+// ─── Phase 3b: override, split-range, ratio ────────────────────────────────
+
+test('override: a steam flow limiter holds the limit, and tracking avoids windup both ways', () => {
+  const proc = getProcess('hx');
+  const params = defaultParams(proc);
+  const o = defaultController('override', proc) as Extract<ControllerConfig, { kind: 'override' }>;
+  assert.equal(o.on, 'pv2');
+  const run = (c: ControllerConfig) => runAll(proc, { params, controller: c }, ['steam-limit'])[0].trace;
+  const max = (a: Float64Array, from: number, to: number, t: Float64Array) => Math.max(...Array.from(a).filter((_, i) => t[i] >= from && t[i] < to));
+  const free = run(pid({ Kc: 1.5, Ti: 29 })), tracked = run(o), wound = run({ ...o, tracking: false });
+  assert.ok(max(free.pv2, 20, 260, free.t) > 1080, 'without a limit the steam goes over');
+  assert.ok(max(tracked.pv2, 20, 260, tracked.t) < 1025, 'the limiter holds 1000 kg/h');
+  assert.ok(max(wound.pv2, 20, 260, wound.t) > max(tracked.pv2, 20, 260, tracked.t) + 20, 'a wound-up limiter takes over late');
+  assert.ok(max(wound.pvTrue, 260, 440, wound.t) > max(tracked.pvTrue, 260, 440, tracked.t) + 3, 'a wound-up temperature controller hands back late');
+  // The linear view is the normal loop.
+  const a = analyzeLoop(proc, params, o, 60)!;
+  assert.equal(a.ctrl.kind, 'single');
+});
+
+test('override on the same measurement: a high-level limit on the surge tank', () => {
+  const proc = getProcess('surge');
+  const params = defaultParams(proc);
+  const avg = pid({ Kc: 0.73, Ti: 3920, invert: true });
+  const o = defaultController('override', proc);
+  const top = (c: ControllerConfig) => Math.max(...runAll(proc, { params, controller: c }, ['big-surge'])[0].trace.pvTrue);
+  assert.ok(top(avg) > 2.7);
+  assert.ok(top(o) < 2.6);
+});
+
+test('split-range: valve ranges, the balanced characterization, and one tuning that fails on the other side', async () => {
+  const { splitValves, balancePoint } = await import('./processes/jacket');
+  const { robustness } = await import('./linear');
+  const proc = getProcess('jacket');
+  const p = defaultParams(proc);
+  assert.deepEqual(splitValves(0, p), { cool: 1, heat: 0 });
+  assert.deepEqual(splitValves(1, p), { cool: 0, heat: 1 });
+  assert.deepEqual(splitValves(0.5, p), { cool: 0, heat: 0 });
+  const g = splitValves(0.5, { ...p, gap: 10 });
+  assert.ok(g.cool === 0 && g.heat === 0 && splitValves(0.44, { ...p, gap: 10 }).cool > 0);
+  close(balancePoint(p), (800 / 1050) * 100, 0.5);
+  const ch = proc.characterizations[0];
+  for (const u of [0, 20, 50, 75, 90, 100]) close(ch.inv!(ch.f(u, p), p), u, 1e-6);
+  // Tuned on steam (τc = θ there), the loop is unstable where it needs cooling; the balanced split is not.
+  const stable = (c: ControllerConfig, pp = p) => robustness(proc, pp, c, 4).every((r) => r.stableAll);
+  assert.equal(stable(pid({ Kc: 11, Ti: 180 })), false);
+  assert.equal(stable(pid({ Kc: 4.9, Ti: 170 }), { ...p, split: 76 }), true);
+  assert.equal(stable({ kind: 'characterized', pid: { ...DEFAULT_PID, Kc: 4.9, Ti: 170 }, char: 'balanced-split' }), true);
+});
+
+test('ratio: the linear form is a cascade with feedforward R₀, and production changes barely move the product', async () => {
+  const { ratioAt } = await import('./controllers');
+  const proc = getProcess('blend');
+  const params = defaultParams(proc);
+  const r = defaultController('ratio', proc) as Extract<ControllerConfig, { kind: 'ratio' }>;
+  const at = ratioAt(proc, r, params, 40);
+  close(at.R0, 0.25, 1e-6);
+  close(at.ffGain, (0.25 * 100) / 25, 1e-6);
+  close(at.slope, (40 * 0.5) / 25, 1e-9);
+  const a = analyzeLoop(proc, params, r, 10)!;
+  assert.ok(a.ctrl.kind === 'cascade' && a.ctrl.ff[0].from === 'FA');
+  assert.ok(isStable(closedLoop(a.plant, a.ctrl, a.delay).poles));
+  const peak = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['throughput']), false).worstPeak;
+  assert.ok(peak(r) < 0.1 * peak(pid({ Kc: 0.4, Ti: 38.5 })));
+  // A fixed ratio can't see the concentrate's strength.
+  const fixed = runAll(proc, { params, controller: { ...r, trim: false } }, ['strength'])[0].trace;
+  close(fixed.pvTrue[fixed.pvTrue.length - 1], (0.25 * 55) / 1.25, 0.05);
+});
+
+test('ratio: the trim keeps its loop gain at any rate; additive feedforward does not', () => {
+  const proc = getProcess('blend');
+  const params = defaultParams(proc);
+  const r = defaultController('ratio', proc);
+  const ff: ControllerConfig = { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 0.4, Ti: 38.5 }, ff: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }] };
+  const os = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['low-rate']), false).worstOvershoot;
+  assert.ok(os(r) < 0.6 * os(ff));
+  // The low-rate test starts steady at its own diluent flow.
+  const t = runAll(proc, { params, controller: r }, ['low-rate'])[0].trace;
+  close(t.pvTrue[0], 10, 0.01);
+  close(t.dist.FA[0], 15, 1e-9);
+});
+
+test('exports: override selector with external reset, ratio station, split-range outputs', () => {
+  const hx = getProcess('hx');
+  const o = exportCode(hx, defaultController('override', hx), defaultParams(hx), 'scl');
+  assert.match(o, /"Out" := MIN\(IN1 := "TIC_301_DB"\.Output, IN2 := "TIC_301_Ovr_DB"\.Output\);/);
+  assert.match(o, /ExtResetEnable := NOT "OvrSelected"/);
+  assert.match(o, /ExtReset : Real;/);
+  const blend = getProcess('blend');
+  const r = exportCode(blend, defaultController('ratio', blend), defaultParams(blend), 'scl');
+  assert.match(r, /"SP2" := LIMIT\(MN := 0\.0, IN := "Ratio" \* "FT-801", MX := 25\.0\);/);
+  const jacket = getProcess('jacket');
+  const s = exportCode(jacket, defaultController('pid', jacket), { ...defaultParams(jacket), split: 76 }, 'st');
+  assert.match(s, /TV_501A := LIMIT\(MN := 0\.0, IN := \(76\.0 - TY_501\) \/ 76\.0 \* 100\.0, MX := 100\.0\);/);
+  for (const [proc, kind] of [[hx, 'override'], [blend, 'ratio']] as const) {
+    const c = defaultController(kind, proc);
+    assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
+  }
+});

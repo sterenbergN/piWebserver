@@ -18,7 +18,7 @@ export const DRUM: ProcessDef = {
   family: 'escalation',
   pv: { label: 'Drum level', symbol: 'L', unit: 'mm', lo: -300, hi: 300, decimals: 0 },
   secondary: {
-    label: 'Feedwater flow', symbol: 'q_fw', unit: 't/h', lo: 0, hi: 120, decimals: 1, tag: 'FT-502', loopTag: 'FIC-502',
+    label: 'Feedwater flow', symbol: 'q_fw', unit: 't/h', lo: 0, hi: 120, decimals: 1, tag: 'FT-502', loopTag: 'FIC-502', upset: 'Pfw',
     of: (_x, flow, d, p) => p.Qmax * flow * (d.Pfw / 100),
   },
   tags: { loop: 'LIC-501', transmitter: 'LT-501', valve: 'FV-502' },
