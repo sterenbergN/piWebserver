@@ -17,20 +17,19 @@ export async function POST(request: Request) {
     if (!userId) throw new ApiError(401, 'Unknown or revoked health sync key');
 
     const history = await loadUserHistory(userId);
-    const { summary, weights, newestHeartRateMs, sinceAsk } = await updateUserHealth(userId, (health) => {
+    const { summary, weights, newestHeartRateMs } = await updateUserHealth(userId, (health) => {
       const newest = health.hr.length ? health.hr[health.hr.length - 1][0] * 1000 : null;
-      const asked = health.lastSinceAsk;
       const result = applyHealthImport(health, body);
       Object.assign(health, result.health);
       refreshWorkoutHealth(health, history);
-      return { ...result, newestHeartRateMs: newest, sinceAsk: asked };
+      return { ...result, newestHeartRateMs: newest };
     });
     // Scale readings join the bodyweight log (and set the profile weight).
     await logBodyweights(userId, weights);
 
     // "message" is what arrived (the 30-day shortcut shows it). The daily one
     // runs on its own and only shows "alert", which is empty when all is well.
-    return NextResponse.json({ success: true, received: summary, message: describeSync(summary), alert: syncAlert(summary, newestHeartRateMs, Date.now(), sinceAsk) });
+    return NextResponse.json({ success: true, received: summary, message: describeSync(summary), alert: syncAlert(summary, newestHeartRateMs) });
   } catch (error) {
     const response = handleApiError(error, 'Health import failed');
     const { message } = await response.json();

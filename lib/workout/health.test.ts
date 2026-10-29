@@ -242,8 +242,10 @@ test('an automatic sync only alerts when something needs fixing', () => {
   assert.equal(syncAlert(noHr, null, now), ''); // never sent heart rate (no Watch)
   const old = Date.parse('2026-10-22T13:44:00Z');
   assert.match(syncAlert({ ...noHr, detail: { heartRate: 'missing', activeEnergy: 'missing' } }, old, now), /no heartRateValues/);
-  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'empty', activeEnergy: 'empty' } }, old, now, { at: new Date(now - 60_000).toISOString(), minutes: 4320 }), /asked for the last 4320 minutes/);
-  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'empty', activeEnergy: 'empty' } }, old, now), /never asked/);
+  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'empty', activeEnergy: 'empty' } }, old, now), /Heart Rate search found nothing/);
+  // Heart rate came, but starts well after the newest stored reading: a gap to backfill.
+  assert.match(syncAlert({ ...ok, heartRateFrom: '2026-10-27T20:00:00Z' }, old, now), /missing for about 5 days.*Last 30 Days/);
+  assert.equal(syncAlert({ ...ok, heartRateFrom: '2026-10-27T20:00:00Z' }, Date.parse('2026-10-28T17:00:00Z'), now), ''); // overlaps
 });
 
 test('the daily shortcut sends heart rate and energy from shortly before the newest reading on hand', () => {

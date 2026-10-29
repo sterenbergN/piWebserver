@@ -69,6 +69,8 @@ export type SyncSummary = {
    * nothing) or 'missing' (the upload had no such fields).
    */
   detail?: { heartRate: FieldState; activeEnergy: FieldState };
+  /** The earliest heart rate reading in this upload (to spot a gap since the last one). */
+  heartRateFrom?: string;
   /** Fields in the upload that were not recognised, and dates that could not be read. */
   ignored?: string[];
   unreadableDates?: number;
@@ -82,8 +84,6 @@ export type UserHealth = {
   keyHint?: string;
   keyCreatedAt?: string;
   lastSync?: SyncSummary;
-  /** When the daily shortcut last asked how far back to read heart rate, and the answer. */
-  lastSinceAsk?: { at: string; minutes: number };
   days: Record<string, HealthDay>;
   /** Recent heart rate samples [epoch seconds, bpm], kept RAW_DAYS for matching to workouts. */
   hr: [number, number][];
@@ -412,6 +412,7 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
     if (!(bpm >= 25 && bpm <= 250)) continue;
     hr.set(Math.floor(s.start.ms / 1000), Math.round(bpm));
     summary.heartRate++;
+    if (!summary.heartRateFrom || s.start.ms < Date.parse(summary.heartRateFrom)) summary.heartRateFrom = new Date(s.start.ms).toISOString();
   }
   health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
 
@@ -638,6 +639,8 @@ export function describeSync(summary: SyncSummary): string {
 
 /** Heart rate this old (or older) while daily data keeps arriving means the shortcut stopped sending it. */
 export const STALE_HEART_RATE_MS = 12 * 3_600_000;
+/** A gap this long between the newest stored reading and an upload's first one is missing data, not a quiet spell. */
+const HEART_RATE_GAP_MS = 90 * 60_000;
 
 /**
  * The notification for an automatic sync: the upload's description when
@@ -647,7 +650,7 @@ export const STALE_HEART_RATE_MS = 12 * 3_600_000;
  * heart rate (`newestHeartRateMs`, before this upload) is over 12 hours old:
  * the shortcut's heart rate steps are finding nothing.
  */
-export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null = null, now = Date.now(), sinceAsk?: UserHealth['lastSinceAsk']): string {
+export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null = null, now = Date.now()): string {
   const empty = !(summary.steps || summary.sleep || summary.weight || summary.bodyFat || summary.restingHr || summary.hrv
     || summary.dailyCalories || summary.heartRate || summary.activeEnergy || summary.workouts);
   const problems = !!(summary.unreadableDates || summary.mismatched?.length || summary.ignored?.length);
@@ -659,17 +662,22 @@ export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null
     if (summary.detail?.heartRate === 'missing') {
       return `${head} The upload has no heartRateValues / heartRateDates fields: add them to the shortcut's upload (STEP 4).`;
     }
-    const asked = sinceAsk && now - Date.parse(sinceAsk.at) < 15 * 60_000;
-    return asked
-      ? `${head} The heart rate fields came but were empty, although the shortcut asked for the last ${sinceAsk!.minutes} minutes: its Heart Rate search found nothing. Check the Health app has recent heart rate (if not, the Watch isn't passing it to the phone); if it does, the search is set up wrong.`
-      : `${head} The heart rate fields came but were empty, and the shortcut never asked the website how far back to read (STEP 2 didn't run).`;
+    return `${head} The heart rate fields came but were empty: the shortcut's Heart Rate search found nothing. Check the Health app has recent heart rate (if not, the Watch isn't passing it to the phone); if it does, the search is set up wrong.`;
+  }
+  // The daily shortcut reads a fixed day back: after a longer break, the readings between are never sent.
+  if (summary.heartRateFrom && newestHeartRateMs !== null && Date.parse(summary.heartRateFrom) - newestHeartRateMs > HEART_RATE_GAP_MS) {
+    const hours = Math.round((Date.parse(summary.heartRateFrom) - newestHeartRateMs) / 3_600_000);
+    const gap = hours >= 48 ? `about ${Math.round(hours / 24)} days` : `about ${hours} hours`;
+    return `Heart rate is missing for ${gap} before this sync (it hadn't run for over a day). Run "Sync Health – Last 30 Days" once to fill it in.`;
   }
   return '';
 }
 
 /**
  * How many minutes of heart rate and energy readings the daily shortcut
- * should send: from the newest reading already here (the older of the two
+ * should send (for shortcuts built from older prompts; current ones read a
+ * fixed day back, since a date worked out at run time didn't work as a
+ * Health search filter): from the newest reading already here (the older of the two
  * kinds), less 6 hours because the Watch hands readings to the phone late
  * sometimes, and at most 3 days. Turning thousands of readings into text is
  * what makes a sync slow, so this keeps it to a few hours' worth.
