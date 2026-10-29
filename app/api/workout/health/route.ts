@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { publicHealth } from '@/lib/workout/health';
 import { createImportKey, deleteUserHealth, refreshUserWorkoutHealth, updateUserHealth } from '@/lib/workout/health-store';
+import { loadUserHistory } from '@/lib/workout/history';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
 // Your Apple Health data and its sync key (the phone sends data to ./import).
@@ -10,7 +11,7 @@ export async function GET() {
     const userId = await requireWorkoutUserId();
     // Workouts saved since the last upload get matched now.
     const health = await refreshUserWorkoutHealth(userId);
-    return NextResponse.json({ success: true, health: publicHealth(health) });
+    return NextResponse.json({ success: true, health: publicHealth(health, await loadUserHistory(userId)) });
   } catch (error) {
     return handleApiError(error, 'Load health data failed');
   }

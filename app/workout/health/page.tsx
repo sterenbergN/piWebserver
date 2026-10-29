@@ -13,7 +13,8 @@ import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, alignNote, 
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import { dailyBurn, daysSince, fullWearDays, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
-import { describeSync, type HealthDay, type PublicHealth } from '@/lib/workout/health';
+import { describeSync, type HealthDay, type MatchCheck, type PublicHealth } from '@/lib/workout/health';
+import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
 
@@ -67,6 +68,7 @@ export default function HealthPage() {
   const [user, setUser] = useState<any>(null);
   const [health, setHealth] = useState<PublicHealth | null>(null);
   const [history, setHistory] = useState<Workout[]>([]);
+  const [queued, setQueued] = useState(0);
   const [weights, setWeights] = useState<{ date: string; weight: number }[]>([]);
   const [range, setRange] = useState<Range>('30d');
   const [setupOpen, setSetupOpen] = useState(false);
@@ -99,6 +101,9 @@ export default function HealthPage() {
       if (!auth.data?.authenticated) { setLoading(false); return; }
       setSignedIn(true);
       setUser(auth.data.user);
+      // A workout saved with no signal waits on this phone; send it first so it can be matched.
+      if (getQueuedWorkouts(auth.data.user.id).length) await flushWorkoutQueue(auth.data.user.id).catch(() => null);
+      setQueued(getQueuedWorkouts(auth.data.user.id).length);
       const [h, hist, bw, calc] = await Promise.all([loadHealth(), fetchWorkoutJson('/api/workout/history'), fetchWorkoutJson('/api/workout/bodyweight'), fetchWorkoutJson('/api/workout/calculator-settings')]);
       setCalorie(calc.data?.calculatorDefaults?.calorie || {});
       setOffline([h, hist, bw].some((r) => r.offline));
@@ -308,6 +313,13 @@ export default function HealthPage() {
 
         <section className="workout-tile an-card">
           <div className="an-card-head"><h2>Workouts</h2><span className="workout-hint">From your Watch</span></div>
+          {queued > 0 && (
+            <p className="hc-warn">{queued === 1 ? 'A workout saved on this phone hasn’t' : `${queued} workouts saved on this phone haven’t`} reached the site yet (no signal when it was saved), so it can’t get heart rate. It’ll go up next time there’s a connection.</p>
+          )}
+          {(h.waiting || []).map((c) => {
+            const w = history.find((x) => x.id === c.id);
+            return w ? <WaitingWorkout key={c.id} workout={w} check={c} /> : null;
+          })}
           {matched.length === 0 ? (
             <p className="workout-hint" style={{ margin: 0 }}>
               Heart rate and calories show up here for workouts in the last two weeks once the shortcut sends <em>Heart Rate</em> and <em>Active Energy</em>.
@@ -352,6 +364,28 @@ export default function HealthPage() {
       </div>))}
 
       {setupOpen && h && <HealthSetupSheet health={h} onChanged={loadHealth} onClose={() => setSetupOpen(false)} />}
+    </div>
+  );
+}
+
+const clock = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+
+/** A recent workout with no heart rate or calories yet, and why. */
+function WaitingWorkout({ workout, check }: { workout: Workout; check: MatchCheck }) {
+  let why: string;
+  if (!check.from || !check.to) {
+    why = 'It has no timer or set times, so there’s no way to tell when it happened.';
+  } else if (!check.newestHeartRate && !check.newestEnergy) {
+    why = 'No heart rate or energy readings have reached the site. Check that the shortcut sends Heart Rate and Active Energy.';
+  } else if (check.newestHeartRate && check.newestHeartRate < check.to && (!check.newestEnergy || check.newestEnergy < check.to)) {
+    why = `The site’s newest heart rate is from ${clock(check.newestHeartRate)}, before this workout ended. It should arrive with the next sync after your Watch has passed it to your phone.`;
+  } else {
+    why = `The site has readings up to ${clock(check.newestHeartRate || check.newestEnergy!)}, but only ${check.heartRate} heart rate and ${check.energy} energy reading${check.energy === 1 ? '' : 's'} between ${clock(check.from)} and ${clock(check.to)}. The shortcut is probably skipping that time: check that its Heart Rate and Active Energy steps use “Start Date is after Since”.`;
+  }
+  return (
+    <div className="hc-waiting">
+      <strong>{workout.type?.name || workout.name || 'Workout'} · waiting for heart rate</strong>
+      <span className="workout-hint">{why}</span>
     </div>
   );
 }

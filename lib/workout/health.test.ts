@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignSets, applyHealthImport, dayKeyAt, describeSync, detailSinceMinutes, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { alignSets, applyHealthImport, dayKeyAt, describeSync, detailSinceMinutes, matchChecks, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -244,4 +244,17 @@ test('the daily shortcut sends heart rate and energy from shortly before the new
   assert.equal(detailSinceMinutes({ hr: [[s('2026-10-22T10:00:00Z'), 80]], energy: [[s('2026-10-22T08:59:00Z'), s('2026-10-22T09:00:00Z'), 2]] }, now), 180 + 360);
   // A week without a sync: capped at 3 days.
   assert.equal(detailSinceMinutes({ hr: [[s('2026-10-15T10:00:00Z'), 80]], energy: [[s('2026-10-15T10:00:00Z'), s('2026-10-15T10:01:00Z'), 2]] }, now), 3 * 24 * 60);
+});
+
+test('recent workouts without heart rate say what the site holds around them', () => {
+  const now = Date.parse('2026-10-28T20:00:00Z');
+  const s = (iso: string) => Date.parse(iso) / 1000;
+  const workout = { id: 'w', timestamp: '2026-10-28T18:00:00Z', durationSecs: 3600 };
+  const health = { ...emptyUserHealth(), hr: [[s('2026-10-28T16:30:00Z'), 70]] as [number, number][] };
+  const [check] = matchChecks(health, [workout, { id: 'old', timestamp: '2026-10-20T18:00:00Z', durationSecs: 3600 }], now);
+  assert.equal(check.id, 'w');
+  assert.equal(check.from, '2026-10-28T17:00:00.000Z');
+  assert.equal(check.heartRate, 0);
+  assert.equal(check.newestHeartRate, '2026-10-28T16:30:00.000Z');
+  assert.deepEqual(matchChecks({ ...health, workouts: { w: { start: '', end: '', kcal: 1 } } }, [workout], now), []);
 });

@@ -648,10 +648,48 @@ export function detailSinceMinutes(health: Pick<UserHealth, 'hr' | 'energy'>, no
   return Math.max(DETAIL_OVERLAP_MINUTES, Math.min(DETAIL_MAX_MINUTES, since));
 }
 
-/** What the page gets: everything except the key and the raw samples. */
-export function publicHealth(health: UserHealth | undefined) {
+/**
+ * What the site holds around a recent logged workout that has no heart rate
+ * or calories yet, so the page can say why: its time window (null when it has
+ * no timer or set times to place it), readings inside that window, and the
+ * newest reading of each kind on hand.
+ */
+export type MatchCheck = {
+  id: string;
+  from: string | null;
+  to: string | null;
+  heartRate: number;
+  energy: number;
+  newestHeartRate: string | null;
+  newestEnergy: string | null;
+};
+
+export function matchChecks(health: UserHealth, history: LoggedWorkout[], now = Date.now(), days = 3): MatchCheck[] {
+  const newestHr = health.hr.length ? health.hr[health.hr.length - 1][0] * 1000 : null;
+  const newestEnergy = health.energy.length ? Math.max(...health.energy.slice(-50).map(([, end]) => end)) * 1000 : null;
+  const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+  return history
+    .filter((w) => w.id && !health.workouts[w.id] && Date.parse(w.timestamp || '') >= now - days * DAY_MS)
+    .map((w) => {
+      const window = workoutWindow(w);
+      const inside = (t: number) => !!window && t >= window[0] && t <= window[1];
+      return {
+        id: w.id!,
+        from: iso(window ? window[0] : null),
+        to: iso(window ? window[1] : null),
+        heartRate: health.hr.filter(([t]) => inside(t * 1000)).length,
+        energy: health.energy.filter(([s, e]) => !!window && e * 1000 >= window[0] && s * 1000 <= window[1]).length,
+        newestHeartRate: iso(newestHr),
+        newestEnergy: iso(newestEnergy),
+      };
+    });
+}
+
+/** What the page gets: everything except the key and the raw samples (plus checks on unmatched recent workouts). */
+export function publicHealth(health: UserHealth | undefined, history: LoggedWorkout[] = []) {
   const h = health || emptyUserHealth();
   return {
+    waiting: matchChecks(h, history),
     connected: !!h.keyHash,
     keyHint: h.keyHint || null,
     keyCreatedAt: h.keyCreatedAt || null,
