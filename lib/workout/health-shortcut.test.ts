@@ -24,7 +24,13 @@ test('the 30-day shortcut runs by hand: no skip check, and it shows what arrived
   const prompt = shortcutPrompt('backfill', { url });
   assert.ok(!prompt.includes(SYNC_STAMP_FILE));
   assert.ok(prompt.includes('the key "message"'));
-  // The day-by-day loop starts from tomorrow so its first day is the last 24 hours.
-  assert.ok(prompt.includes('named "Tomorrow"'));
-  assert.ok(prompt.includes('repeats 15 times'));
+  // No run-time dates (they find nothing as a search filter): one fixed search, uploaded in batches by position.
+  assert.ok(!prompt.includes('Adjust Date'));
+  assert.ok(prompt.includes('type Heart Rate, filter "Start Date is in the last 14 days"'));
+  assert.ok(prompt.includes('Count Items in AllHeartRate'));
+  assert.ok(prompt.includes('Repeat Index × 2500'));
+  assert.ok(prompt.includes('Get Items in Range, from index From to index Last, of AllEnergy'));
+  // Each batch uploads only its own type.
+  const heartBatch = prompt.slice(prompt.indexOf('of AllHeartRate'), prompt.indexOf('STEP 5'));
+  assert.ok(heartBatch.includes('heartRateValues') && !heartBatch.includes('activeEnergyValues'));
 });

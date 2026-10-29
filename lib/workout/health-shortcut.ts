@@ -88,6 +88,10 @@ export const SYNC_TRIGGER_APP = 'Messages';
 export const SYNC_STAMP_FILE = 'health-sync-last.txt';
 export const SYNC_EVERY_HOURS = 3;
 
+/** The 30-day shortcut uploads heart rate and energy this many readings at a time, for at most this many batches each. */
+export const BACKFILL_BATCH = 2500;
+export const BACKFILL_MAX_BATCHES = 20;
+
 /**
  * Plain-language instructions for an AI shortcut builder (or a person) to make
  * one of the two shortcuts exactly as the import expects. The daily one sends
@@ -145,23 +149,36 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
     ].join('\n');
   }
   // Two weeks of watch heart rate and energy is tens of thousands of readings —
-  // more than Shortcuts can turn into text at once — so it goes one day per upload.
+  // more than Shortcuts can turn into text at once. Each is found once with a
+  // fixed range and uploaded in batches picked by position in the list (a
+  // date worked out at run time finds nothing as a search filter).
   const summary = SHORTCUT_SAMPLES.filter((s) => !s.detail);
   const detail = SHORTCUT_SAMPLES.filter((s) => s.detail);
-  const loopDays = Math.max(...detail.map((s) => s.backfillDays));
+  const n = BACKFILL_BATCH.toLocaleString('en-US');
+  const batches = (s: ShortcutSample, step: number) => {
+    const all = `All${s.variable}`;
+    const count = `${s.variable}Count`;
+    return [
+      `STEP ${step}: ${s.type} for the last ${s.backfillDays} days, uploaded ${n} readings at a time`,
+      `1. Add "Find Health Samples": type ${s.type}, filter "Start Date is in the last ${s.backfillDays} days", Limit off, sorted by Start Date, oldest first. Then add "Set Variable" named "${all}".`,
+      `2. Add "Count": Count Items in ${all}. Then add "Set Variable" named "${count}".`,
+      `3. Add a "Repeat" action that repeats ${BACKFILL_MAX_BATCHES} times. Put all of the following inside the Repeat:`,
+      `   a. Add "Calculate": Repeat Index × ${BACKFILL_BATCH}. Then add "Set Variable" named "To".`,
+      `   b. Add "Calculate": To − ${BACKFILL_BATCH}. Then add "Set Variable" named "Done".`,
+      `   c. Add "If": ${count} "is greater than" Done. Put the rest inside this If:`,
+      '      i. Add "Calculate": Done + 1. Then add "Set Variable" named "From".',
+      `      ii. Add "If": To "is greater than" ${count}. Inside it, add "Set Variable" named "Last" set to ${count}. In its Otherwise, add "Set Variable" named "Last" set to To. Then End If.`,
+      `      iii. Add "Get Items from List": Get Items in Range, from index From to index Last, of ${all}. Then add "Set Variable" named "${s.variable}".`,
+      `      iv. ${upload([s], ' with only these fields')}`,
+      '   d. End the If (leave its Otherwise empty). Do not show a notification inside the Repeat.',
+    ].join('\n');
+  };
   return [
     intro, '',
     'STEP 1: Read 30 days of daily data', find, rows(summary), '',
     'STEP 2: Upload the daily data', upload(summary, ' (the first upload)'), '',
     'STEP 3: Show the first result', notify('this Contents of URL result'), '',
-    `STEP 4: Heart rate and energy, one day at a time (today and the ${loopDays} days before)`,
-    'Before the Repeat, add "Adjust Date": operation Add, amount 1, unit days, date = Current Date. Then add "Set Variable" named "Tomorrow". (Starting from tomorrow makes the first day of the loop include today.)',
-    `Add a "Repeat" action that repeats ${loopDays + 1} times. Put all of the following inside the Repeat:`,
-    '1. Add "Adjust Date": operation Subtract, amount = Repeat Index, unit = days, date = the variable Tomorrow. Then add "Set Variable" named "DayEnd".',
-    '2. Add another "Adjust Date": operation Subtract, amount 1, unit days, date = the variable DayEnd. Then add "Set Variable" named "DayStart".',
-    ...detail.map((s, i) => `${3 + i}. Add "Find Health Samples" of type ${s.type}, with two filters (match All): Start Date is after (pick the variable DayStart) and Start Date is before (pick the variable DayEnd). Leave Limit off and sort by Start Date, oldest first. Then add "Set Variable" named "${s.variable}".`),
-    `${3 + detail.length}. ${upload(detail, ' with only these fields')}`,
-    'Do not show a notification inside the Repeat.', '',
-    'STEP 5: After the Repeat ends, add "Show Notification" with the text "Heart rate and energy backfill finished".',
+    ...detail.flatMap((s, i) => [batches(s, 4 + i), '']),
+    `STEP ${4 + detail.length}: After both Repeats, add "Show Notification" with the text "Heart rate and energy backfill finished".`,
   ].join('\n');
 }
