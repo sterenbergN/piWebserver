@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1, 2, 3 (3a and 3b) and 4a built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1, 2, 3 (3a and 3b), 4a and 4b built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -379,8 +379,8 @@ observers and Kalman filter, LQR/LQG, MPC, decoupling, adaptive, ADRC; custom
 controllers in Structured Text.
 
 Split in three: **4a** (built) is state feedback, observers, Kalman filter and LQR on a crane with a swinging
-load, a drive with a flexible shaft and magnetic levitation. **4b** is multivariable: interacting tanks, the
-relative gain array, decoupling and MPC. **4c** is the model-light alternatives (adaptive control, ADRC), the batch
+load, a drive with a flexible shaft and magnetic levitation. **4b** (built) is multivariable: a mixing tank,
+the relative gain array, decoupling and MPC. **4c** is the model-light alternatives (adaptive control, ADRC), the batch
 reactor and custom controllers in Structured Text.
 
 ### Phase 5 — software in the loop
@@ -532,3 +532,36 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
   phase margin wrapped into (−360°, 0°].
 - **Not in 4a:** LQG loop-transfer recovery, a design scheduled on the rope length or the gap, notch filters as a
   PID option, observers for processes with transport delay (the delay isn't in the controller's model).
+
+## 17. Phase 4b as built
+
+- **2×2 processes** (`ProcessDef.mimo`): a second valve and a second controlled variable (the secondary measurement).
+  The second valve's command is a disturbance marked `manipulated` that the process models its own actuator for,
+  so linearization (`Bd` gives the second input column), analysis with the second loop open, and every SISO
+  controller keep working unchanged. Tests get `sp2` events and `initialSp2`; the loop runs a second setpoint and
+  manual value; controllers may return `out2()`; traces add `pv2True`, `cv2`, `valve2`. A controller without a second
+  output leaves the second valve where it is.
+- **Scoring both variables:** IAE, steps and upsets on each, each setpoint change counted as an upset on the other
+  variable ("effect on …"), travel of both valves, saturation of the worse.
+- **Process:** mixing tank, hot and cold water into a gravity-drained tank, temperature and level. λ₁₁ =
+  (T_h − T)/(T_h − T_c): 0.82 at 25 °C, 0.64 at 35 °C, 0.36 at 50 °C, 0.27 at 55 °C, so the right pairing flips
+  with the recipe. Tests: temperature and level changes, demand, hot supply cooling, a hot recipe (55 °C) and peak
+  demand beyond the hot valve's capacity.
+- **Multi-loop PID and decoupling** (rung 11): a PID per variable, direct or crossed pairing, an optional static
+  decoupler from the steady-state gains (`multivar.ts`: gains, RGA, decoupler), integral hold on a pinned valve,
+  bumpless by undoing the decoupler. Linear form as an `ss` controller with direct feedthrough and a second output;
+  the loop is broken at the main valve with the second loop closed (L = −(T₁₁ + T₁₂T₂₁/(1 − T₂₂))). Auto-tune: SIMC
+  per pair with the other open, and the relative gain in the note.
+- **MPC** (rung 12): linear model at the design point, discretized; Kalman filter with a constant load at each valve
+  (offset-free; better on load changes than offsets on the outputs); prediction over P cycles, M moves of both
+  valves, weights per output and on moves; valve limits as constraints; a box QP solved by projected Gauss–Seidel
+  with a warm start. No linear analysis (constrained), said so in the Control view. Export: `LL_Mpc` in SCL/ST (the
+  same solver, LReal matrices), reference TypeScript; notes on PCS 7 ModPreCon and MPC on an edge device.
+- **Verdicts the numbers support:** one loop leaves the level wandering 64–72 cm; two loops tuned alone fight (a level
+  change pulls the temperature 6 °C, a demand change 3.8 °C); a static decoupler takes that to 0.1 and 0.03 °C; MPC
+  matches it on interaction, is better on the hot-supply upset (0.7 against 1.6 °C) and at the limit (its weights
+  choose what gives: temperature first holds 48.4 °C and lets the level fall to 0.92 m; it recovers without the
+  55 °C overshoot two plain loops show). For one tank: decouple (or control total flow and hot fraction).
+- **Case study:** `mixing-mimo`.
+- **Not in 4b:** dynamic decouplers, output constraints and soft constraints in the MPC, larger than 2×2, the
+  quadruple tank (multivariable right-half-plane zeros), gain-scheduled decoupling per recipe.

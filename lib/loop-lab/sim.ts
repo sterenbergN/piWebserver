@@ -13,8 +13,19 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export type LoopSetup = { params: Params; controller: ControllerConfig; seed?: number };
 
-/** Steady state of the process at a PV value: the valve position that holds it, and the states. */
-export function findSteady(proc: ProcessDef, p: Params, d: Params, pv: number) {
+/**
+ * Steady state of the process at a PV value: the valve position that holds it, and the states.
+ * On a 2×2 process, the second valve too (`u2`), holding the second variable at `pv2`.
+ */
+export function findSteady(proc: ProcessDef, p: Params, d: Params, pv: number, pv2?: number) {
+  if (proc.mimo) {
+    const r = proc.mimo.steady(pv, pv2 ?? proc.mimo.nominal2, d, p);
+    if (r) {
+      const dd = { ...d, [proc.mimo.input]: r.u2 };
+      const flow = valveCharacteristic(p.valveChar, r.valve / 100);
+      return { valve: r.valve, x: r.x, pv: proc.pvOf(r.x, flow, dd, p), pv2: proc.secondary!.of(r.x, flow, dd, p), u2: r.u2 };
+    }
+  }
   const at = (valve: number) => {
     const flow = valveCharacteristic(p.valveChar, valve / 100);
     const x = proc.steady(flow, d, p);
@@ -79,6 +90,8 @@ export type Sample = {
   pred: number;
   /** Override: the override controller's own output, % (NaN otherwise). */
   alt: number;
+  /** 2×2 processes: the second variable's true value, the second controller output and valve (NaN otherwise). */
+  pv2True: number; cv2: number; valve2: number;
 };
 
 /** A running loop: step it one controller cycle at a time. Used by test runs and the live faceplate. */
@@ -91,6 +104,9 @@ export class Loop {
   x: number[];
   t = 0;
   sp: number;
+  /** 2×2 processes: the second setpoint, and the second valve's manual value. */
+  sp2 = NaN;
+  manualOut2 = NaN;
   auto = true;
   manualOut: number;
   lastCv: number;
@@ -102,14 +118,17 @@ export class Loop {
   private lastMeas2 = NaN;
   private noise: ReturnType<typeof rng>;
 
-  constructor(proc: ProcessDef, setup: LoopSetup, opts: { sp: number; d?: Params; plantParams?: Params }) {
+  constructor(proc: ProcessDef, setup: LoopSetup, opts: { sp: number; sp2?: number; d?: Params; plantParams?: Params }) {
     this.proc = proc;
     const model = cleanParams(proc, setup.params);
     this.p = { ...(opts.plantParams ?? model) };
     this.Ts = model.Ts;
     this.d = { ...nominalDisturbances(proc), ...(opts.d ?? {}) };
     this.sp = opts.sp;
-    const s = findSteady(proc, this.p, this.d, opts.sp);
+    if (proc.mimo) this.sp2 = opts.sp2 ?? proc.mimo.nominal2;
+    const s = findSteady(proc, this.p, this.d, opts.sp, this.sp2);
+    if (proc.mimo && 'u2' in s && s.u2 !== undefined) this.d[proc.mimo.input] = s.u2;
+    this.manualOut2 = proc.mimo ? this.d[proc.mimo.input] : NaN;
     this.x = steadyState(proc, s);
     this.ctrl = createController(proc, setup.controller, model, this.Ts);
     this.lastMeas2 = s.pv2;
@@ -131,6 +150,8 @@ export class Loop {
     this.x = prev.x.slice();
     this.t = prev.t;
     this.sp = prev.sp;
+    this.sp2 = prev.sp2;
+    this.manualOut2 = prev.manualOut2;
     this.d = { ...prev.d };
     this.auto = prev.auto;
     this.manualOut = prev.manualOut;
@@ -143,13 +164,16 @@ export class Loop {
 
   /** What controllers see besides SP and PV: the inner measurement and the disturbances. */
   private aux() {
-    return { pv2: this.lastMeas2, d: this.d };
+    return { pv2: this.lastMeas2, d: this.d, sp2: this.sp2 };
   }
 
   freeze(duration: number) { this.frozenUntil = this.t + duration; }
 
   setMode(auto: boolean) {
-    if (!auto) this.manualOut = this.lastCv;
+    if (!auto) {
+      this.manualOut = this.lastCv;
+      if (this.proc.mimo) this.manualOut2 = this.d[this.proc.mimo.input];
+    }
     this.auto = auto;
   }
 
@@ -184,6 +208,14 @@ export class Loop {
     }
     cv = clamp(cv, 0, 100);
     this.lastCv = cv;
+    // The second valve: the controller's second output, or held where it is (manual, or a one-output controller).
+    const mimo = this.proc.mimo;
+    let cv2 = NaN;
+    if (mimo) {
+      const out2 = this.auto ? this.ctrl.out2?.() : undefined;
+      cv2 = clamp(out2 ?? (this.auto ? this.d[mimo.input] : this.manualOut2), 0, 100);
+      this.d[mimo.input] = cv2;
+    }
     // Deadband: the stem only follows once the signal has moved past the slack.
     const half = this.p.valveDeadband / 2;
     if (cv > this.held + half) this.held = cv - half;
@@ -192,7 +224,14 @@ export class Loop {
     const sample: Sample = {
       t: this.t, sp: this.sp, pv, pvTrue: truePv(this.proc, this.p, this.d, this.x), cv, valve: this.x[0],
       pv2: this.lastMeas2, ...pick(this.ctrl.internals()),
+      pv2True: NaN, cv2, valve2: NaN,
     };
+    if (mimo) {
+      const n = this.proc.states.length, px = this.x.slice(1, 1 + n);
+      sample.sp2 = this.sp2;
+      sample.pv2True = this.proc.secondary!.of(px, valveCharacteristic(this.p.valveChar, this.x[0] / 100), this.d, this.p);
+      sample.valve2 = mimo.stem(px);
+    }
     this.integrate(this.Ts, this.held);
     this.t += this.Ts;
     return sample;
@@ -221,6 +260,7 @@ export type Trace = {
   t: Float64Array; sp: Float64Array; pv: Float64Array; pvTrue: Float64Array;
   cv: Float64Array; valve: Float64Array; P: Float64Array; I: Float64Array; D: Float64Array; Kc: Float64Array;
   pv2: Float64Array; sp2: Float64Array; ff: Float64Array; pred: Float64Array; alt: Float64Array;
+  pv2True: Float64Array; cv2: Float64Array; valve2: Float64Array;
   dist: Record<string, Float64Array>;
 };
 
@@ -247,9 +287,9 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Sce
   const initial = (e: Scenario['events'][number]) => e.t <= 0 && e.kind === 'param';
   for (const ev of sorted) if (ev.kind === 'param' && initial(ev)) applyParam(plant, ev.key, ev.value, ev.factor);
   const events = sorted.filter((e) => !initial(e));
-  const loop = new Loop(proc, setup, { sp: scenario.initialSp, d: scenario.initialDist, plantParams: plant });
+  const loop = new Loop(proc, setup, { sp: scenario.initialSp, sp2: scenario.initialSp2, d: scenario.initialDist, plantParams: plant });
   const n = Math.floor(scenario.duration / loop.Ts) + 1;
-  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred', 'alt'] as const;
+  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred', 'alt', 'pv2True', 'cv2', 'valve2'] as const;
   const trace = Object.fromEntries(keys.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
   trace.dist = Object.fromEntries(proc.disturbances.map((s) => [s.key, new Float64Array(n)]));
   let next = 0;
@@ -257,6 +297,7 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Sce
     while (next < events.length && events[next].t <= loop.t + 1e-9) {
       const ev = events[next++];
       if (ev.kind === 'sp') loop.sp = ev.value;
+      else if (ev.kind === 'sp2') loop.sp2 = ev.value;
       else if (ev.kind === 'dist') loop.d[ev.key] = ev.value;
       else if (ev.kind === 'param') applyParam(loop.p, ev.key, ev.value, ev.factor);
       else loop.freeze(ev.duration);

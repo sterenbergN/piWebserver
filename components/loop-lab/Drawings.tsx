@@ -2,7 +2,7 @@
 
 import type { ControllerConfig } from '@/lib/loop-lab/controllers';
 import { findCharacterization } from '@/lib/loop-lab/controllers';
-import type { Params, ProcessDef } from '@/lib/loop-lab/model';
+import { upsets as upsetList, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { tankRadius } from '@/lib/loop-lab/processes/tank';
 
 // Drawings for the three views: the process as built (mechanical), the loop
@@ -149,13 +149,13 @@ export function PAndId({ proc }: { proc: ProcessDef }) {
 
 // ─── Block diagram ──────────────────────────────────────────────────────────
 
-export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | 'pred' | 'alt' | `dist:${string}`;
+export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D' | 'Kc' | 'ff' | 'sp2' | 'pv2' | 'pred' | 'alt' | 'cv2' | 'valve2' | 'pv2True' | `dist:${string}`;
 
 /** A one-line description of each process for its block. */
 const PROCESS_SUB: Record<string, string> = {
   flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
   surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c',
-  crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
+  mixing: 'A·ḣ = F_h + F_c − F_out', crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {
@@ -198,6 +198,7 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
   if (config.kind === 'cascade' || config.kind === 'ratio') return <CascadeDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   if (config.kind === 'override') return <OverrideDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   if (config.kind === 'statefb') return <StateFbDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
+  if ((config.kind === 'multiloop' || config.kind === 'mpc') && proc.mimo) return <MimoDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   const ff = config.kind === 'feedforward' ? config.ff : [];
   const ffOn = ff.length > 0;
   const ch = config.kind === 'characterized' ? findCharacterization(proc, config.char) : undefined;
@@ -215,7 +216,7 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
       <text x={x} y={y} textAnchor={anchor}>{text}</text>
     </g>
   );
-  const firstDist = proc.disturbances[0];
+  const firstDist = upsetList(proc)[0];
 
   // x positions along the forward path
   const xSum = pvChar ? 150 : 110;
@@ -478,7 +479,7 @@ function StateFbDiagram({ proc, config, probes, onProbe }: {
   );
   const xN = 50, wN = 50, xS = 150, xV = 200, wV = 100, xP = 340, wP = 120, xOut = xP + wP + 50;
   const xO = 200, wO = 200, xK = 60, wK = 70;
-  const firstDist = proc.disturbances[0];
+  const firstDist = upsetList(proc)[0];
   const extra = config.integral === 'error' ? '∫(r − y)·K_z' : config.integral === 'dist' ? 'd̂ · N_d' : null;
   return (
     <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 340`} role="img" aria-label={`Block diagram: state feedback with an observer on the ${proc.name.toLowerCase()}`}>
@@ -533,6 +534,105 @@ function StateFbDiagram({ proc, config, probes, onProbe }: {
   );
 }
 
+/**
+ * A 2×2 process: two loops (each PID on its own valve, crossed if the pairing says so, with an optional
+ * decoupler between them and the valves), or one MPC moving both. Inside the process each valve moves both.
+ */
+function MimoDiagram({ proc, config, probes, onProbe }: {
+  proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'multiloop' | 'mpc' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
+}) {
+  const sec = proc.secondary!, mimo = proc.mimo!;
+  const Y1 = 70, Y2 = 200;
+  const wire = (key: ProbeKey | null, d: string, end?: { x: number; y: number; dir: 'r' | 'l' | 'u' | 'd' }) => (
+    <g>
+      <path className={`ll-wire${key && probes.includes(key) ? ' is-probe' : ''}`} d={d} />
+      {end && <path className="ll-wire" d={arrowHead(end.x, end.y, end.dir)} />}
+    </g>
+  );
+  const probe = (key: ProbeKey, x: number, y: number, text: string, anchor: 'start' | 'middle' | 'end' = 'middle') => (
+    <g className="ll-probe" role="button" tabIndex={onProbe ? 0 : -1} aria-pressed={probes.includes(key)}
+      onClick={() => onProbe?.(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onProbe?.(key); } }}>
+      <text x={x} y={y} textAnchor={anchor}>{text}</text>
+    </g>
+  );
+  const mpc = config.kind === 'mpc';
+  const crossed = config.kind === 'multiloop' && config.pairing === 'crossed';
+  const dec = config.kind === 'multiloop' && config.decouple;
+  const xS = 70, xC = 100, wC = 120, xD = 260, wD = 80, xV = 380, wV = 90, xP = 510, wP = 130, xOut = xP + wP + 50;
+  const firstDist = upsetList(proc)[0];
+  return (
+    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 300`} role="img" aria-label={`Block diagram: ${mpc ? 'MPC' : crossed ? 'two loops, crossed pairing' : 'two loops'}${dec ? ' with a decoupler' : ''} on the ${proc.name.toLowerCase()}`}>
+      {probe('sp', 8, Y1 - 8, 'SP r₁', 'start')}
+      {probe('sp2', 8, Y2 - 8, 'SP r₂', 'start')}
+      {mpc ? (
+        <>
+          {wire('sp', `M4 ${Y1}H${xC}`, { x: xC, y: Y1, dir: 'r' })}
+          {wire('sp2', `M4 ${Y2}H${xC}`, { x: xC, y: Y2, dir: 'r' })}
+          <Block x={xC} y={Y1 - 30} w={xD + wD - xC} h={Y2 - Y1 + 60} title="MPC" sub="model · plan M moves · limits" ctrl />
+          <text className="is-muted" x={(xC + xD + wD) / 2} y={(Y1 + Y2) / 2 + 30} textAnchor="middle">Kalman filter: states, loads</text>
+        </>
+      ) : (
+        <>
+          {wire('sp', `M4 ${Y1}H${xS - 11}`, { x: xS - 11, y: Y1, dir: 'r' })}
+          {wire('sp2', `M4 ${Y2}H${xS - 11}`, { x: xS - 11, y: Y2, dir: 'r' })}
+          <Sum x={xS} y={Y1} signs="+−" />
+          <Sum x={xS} y={Y2} signs="+−" />
+          {wire(null, `M${xS + 11} ${Y1}H${xC}`, { x: xC, y: Y1, dir: 'r' })}
+          {wire(null, `M${xS + 11} ${Y2}H${xC}`, { x: xC, y: Y2, dir: 'r' })}
+          <Block x={xC} y={Y1 - 22} w={wC} h={44} title={`PID ${proc.tags.loop}`} sub={proc.pv.label.toLowerCase()} ctrl />
+          <Block x={xC} y={Y2 - 22} w={wC} h={44} title={`PID ${mimo.loop2}`} sub={sec.label.toLowerCase()} ctrl />
+          {probe('P', xC + wC / 2, Y1 + 36, 'P · I · D')}
+          {dec ? (
+            <>
+              {wire(null, `M${xC + wC} ${Y1}H${xD}`, { x: xD, y: Y1, dir: 'r' })}
+              {wire(null, `M${xC + wC} ${Y2}H${xD}`, { x: xD, y: Y2, dir: 'r' })}
+              <Block x={xD} y={Y1 - 22} w={wD} h={Y2 - Y1 + 44} title="Decoupler" sub="static" ctrl />
+              <text className="is-muted" x={xD + wD / 2} y={(Y1 + Y2) / 2 + 26} textAnchor="middle">u_a = w₁ + c_a w₂</text>
+              <text className="is-muted" x={xD + wD / 2} y={(Y1 + Y2) / 2 + 40} textAnchor="middle">u_b = w₂ + c_b w₁</text>
+            </>
+          ) : crossed ? (
+            <>
+              <path className="ll-wire" d={`M${xC + wC} ${Y1}H${xD}L${xD + wD} ${Y2}`} />
+              <path className="ll-wire" d={`M${xC + wC} ${Y2}H${xD}L${xD + wD} ${Y1}`} />
+              <text className="is-muted" x={xD + wD / 2} y={(Y1 + Y2) / 2 - 8} textAnchor="middle">crossed</text>
+            </>
+          ) : (
+            <>
+              <path className="ll-wire" d={`M${xC + wC} ${Y1}H${xD + wD}`} />
+              <path className="ll-wire" d={`M${xC + wC} ${Y2}H${xD + wD}`} />
+            </>
+          )}
+        </>
+      )}
+      {wire('cv', `M${xD + wD} ${Y1}H${xV}`, { x: xV, y: Y1, dir: 'r' })}
+      {wire('cv2', `M${xD + wD} ${Y2}H${xV}`, { x: xV, y: Y2, dir: 'r' })}
+      {probe('cv', xD + wD + 8, Y1 - 8, 'u₁', 'start')}
+      {probe('cv2', xD + wD + 8, Y2 - 8, 'u₂', 'start')}
+      <Block x={xV} y={Y1 - 22} w={wV} h={44} title={proc.tags.valve} sub={proc.id === 'mixing' ? 'hot' : 'valve 1'} />
+      <Block x={xV} y={Y2 - 22} w={wV} h={44} title={mimo.valve} sub={proc.id === 'mixing' ? 'cold' : 'valve 2'} />
+      {wire('valve', `M${xV + wV} ${Y1}H${xP}`, { x: xP, y: Y1, dir: 'r' })}
+      {wire('valve2', `M${xV + wV} ${Y2}H${xP}`, { x: xP, y: Y2, dir: 'r' })}
+      <Block x={xP} y={Y1 - 30} w={wP} h={Y2 - Y1 + 60} title="Process" sub="each valve moves both" />
+      <path className="ll-wire" strokeDasharray="3 3" d={`M${xP + 14} ${Y1 + 34}L${xP + wP - 14} ${Y2 - 34}M${xP + 14} ${Y2 - 34}L${xP + wP - 14} ${Y1 + 34}`} />
+      {firstDist && (
+        <>
+          {wire(`dist:${firstDist.key}`, `M${xP + wP / 2} ${Y1 - 58}V${Y1 - 30}`, { x: xP + wP / 2, y: Y1 - 30, dir: 'd' })}
+          {probe(`dist:${firstDist.key}`, xP + wP / 2, Y1 - 62, `d: ${firstDist.label.toLowerCase()}`)}
+        </>
+      )}
+      {wire('pvTrue', `M${xP + wP} ${Y1}H${xOut}`, { x: xOut, y: Y1, dir: 'r' })}
+      {wire('pv2True', `M${xP + wP} ${Y2}H${xOut}`, { x: xOut, y: Y2, dir: 'r' })}
+      {probe('pvTrue', xP + wP + 22, Y1 - 8, `y₁ ${proc.pv.symbol}`)}
+      {probe('pv2True', xP + wP + 22, Y2 - 8, `y₂ ${sec.symbol}`)}
+      {/* Measurements back */}
+      {wire('pv', `M${xOut - 12} ${Y1}V${Y1 + 40}H${mpc ? xC + 40 : xS}V${mpc ? Y1 + 30 : Y1 + 11}`, mpc ? undefined : { x: xS, y: Y1 + 11, dir: 'u' })}
+      {wire('pv2', `M${xOut - 12} ${Y2}V${Y2 + 50}H${mpc ? xC + 40 : xS}V${mpc ? Y2 + 30 : Y2 + 11}`, mpc ? undefined : { x: xS, y: Y2 + 11, dir: 'u' })}
+      {probe('pv', (xV + xP) / 2, Y1 + 34, proc.tags.transmitter)}
+      {probe('pv2', (xV + xP) / 2, Y2 + 44, sec.tag)}
+    </svg>
+  );
+}
+
 /** Override: the normal and the limit controller in parallel, a selector, one valve. */
 function OverrideDiagram({ proc, config, probes, onProbe }: {
   proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'override' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
@@ -554,7 +654,7 @@ function OverrideDiagram({ proc, config, probes, onProbe }: {
   const s1 = 70, xC = 95, wC = 130, xSel = xC + wC + 40, wSel = 64;
   const xV = xSel + wSel + 40, wV = 90, xP = xV + wV + 45, wP = 110, xOut = xP + wP + 40;
   const selMid = (Y + Y2) / 2;
-  const firstDist = proc.disturbances[0];
+  const firstDist = upsetList(proc)[0];
   return (
     <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 310`} role="img" aria-label={`Block diagram: override control of the ${proc.name.toLowerCase()}`}>
       {probe('sp', 12, Y - 8, 'SP r', 'start')}

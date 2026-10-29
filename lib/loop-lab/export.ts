@@ -1,5 +1,6 @@
 import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
+import { decoupler, designMpc, mimoModel, steadyGains, type MpcDesign } from './multivar';
 import { designStateFb, type StateFbDesign } from './statespace';
 
 // Code and parameter exports for the automation view: TIA Portal SCL, IEC
@@ -21,7 +22,7 @@ export function real(v: number) {
 type Dialect = 'scl' | 'st';
 
 /** Tag-free names for the blocks. */
-const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith', stateFb: 'LL_StateFb' };
+const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith', stateFb: 'LL_StateFb', mpc: 'LL_Mpc' };
 
 /** Longest dead time the Smith predictor block can hold, in controller cycles. */
 const SMITH_BUFFER = 1000;
@@ -467,6 +468,184 @@ function track(u: number, spPct: number, pvPct: number) {
 }`;
 }
 
+/**
+ * MPC as one block: observer update, the QP's linear term, then projected
+ * Gauss–Seidel sweeps over the planned moves (each clipped to the valve
+ * limits). Matrices generated for this design and this cycle time.
+ */
+function mpcBlock(d: Dialect, proc: ProcessDef, des: MpcDesign, sweeps: number) {
+  const v = loc(d);
+  const sec = proc.secondary!;
+  const n = des.n, no = n + 2, nz = des.lo.length;
+  const ind = '         ';
+  const arr = (name: string, rows: number[][], comment = '') =>
+    `      ${name} : Array[0..${rows.length - 1}, 0..${rows[0].length - 1}] of LReal := [${arrayInit(rows.flat(), rows[0].length, ind)}];${comment ? `   // ${comment}` : ''}`;
+  const vec = (name: string, a: number[]) => `      ${name} : Array[0..${a.length - 1}] of LReal := [${arrayInit(a, 8, ind)}];`;
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.mpc)}
+   // Two valves (${proc.tags.valve}, ${proc.mimo!.valve}), two measurements (${proc.tags.transmitter}, ${sec.tag}); ${nz / 2} planned moves each.
+   VAR_INPUT
+      Setpoint : Real;        // ${proc.pv.unit}
+      Setpoint2 : Real;       // ${sec.unit}
+      Input : Real;           // ${proc.tags.transmitter}, ${proc.pv.unit}
+      Input2 : Real;          // ${sec.tag}, ${sec.unit}
+      ManualEnable : Bool;
+      ManualValue : Real;     // ${proc.tags.valve}, %
+      ManualValue2 : Real;    // ${proc.mimo!.valve}, %
+   END_VAR
+   VAR_OUTPUT
+      Output : Real;          // ${proc.tags.valve}, %
+      Output2 : Real;         // ${proc.mimo!.valve}, %
+   END_VAR
+   VAR
+      // Observer: Xo <- Phio*Xo + Gamo*[last outputs, measurements] (deviations from the design point, %).
+${arr('Phio', des.Phio)}
+${arr('Gamo', des.Gamo)}
+      // The plan: minimize Z'HZ + 2F'Z with F = Fx*X + Fd*D + Fr*R + Fu*ULast, Lo <= Z <= Hi.
+${arr('H', des.H)}
+${arr('Fx', des.Fx)}
+${arr('Fd', des.Fd)}
+${arr('Fr', des.Fr)}
+${arr('Fu', des.Fu)}
+${vec('Lo', des.lo)}
+${vec('Hi', des.hi)}
+      // For the bumpless start: steady state for a valve change, and the outputs it gives.
+${arr('Xu', des.Xu)}
+${arr('Cy', des.Cy)}
+      U0 : Array[0..1] of LReal := [${lreal(des.u0[0])}, ${lreal(des.u0[1])}];
+      Y0 : Array[0..1] of LReal := [${lreal(des.y0[0])}, ${lreal(des.y0[1])}];
+      Sweeps : Int := ${sweeps};
+      Xo : Array[0..${no - 1}] of LReal;
+      XNew : Array[0..${no - 1}] of LReal;
+      Z : Array[0..${nz - 1}] of LReal;
+      F : Array[0..${nz - 1}] of LReal;
+      W : Array[0..3] of LReal;
+      ULast : Array[0..1] of LReal;
+      Started : Bool;
+   END_VAR
+   VAR_TEMP
+      i : Int;
+      j : Int;
+      s : Int;
+      acc : LReal;
+      zi : LReal;
+      r1 : LReal;
+      r2 : LReal;
+      cx : Array[0..1, 0..1] of LReal;
+      det : LReal;
+      v0 : LReal;
+      v1 : LReal;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    ${v('W')}[2] := (${v('Input')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0 - ${v('Y0')}[0];
+    ${v('W')}[3] := (${v('Input2')} - ${real(sec.lo)}) / ${real(sec.hi - sec.lo)} * 100.0 - ${v('Y0')}[1];
+    ${v('r1')} := (${v('Setpoint')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0 - ${v('Y0')}[0];
+    ${v('r2')} := (${v('Setpoint2')} - ${real(sec.lo)}) / ${real(sec.hi - sec.lo)} * 100.0 - ${v('Y0')}[1];
+    IF ${v('ManualEnable')} OR NOT ${v('Started')} THEN
+        // Track: a steady state with the valves where they are, plus the loads that explain the readings.
+        ${v('ULast')}[0] := ${v('ManualValue')} - ${v('U0')}[0];
+        ${v('ULast')}[1] := ${v('ManualValue2')} - ${v('U0')}[1];
+        FOR ${v('i')} := 0 TO 1 DO
+            FOR ${v('j')} := 0 TO 1 DO
+                ${v('acc')} := 0.0;
+                FOR ${v('s')} := 0 TO ${n - 1} DO
+                    ${v('acc')} := ${v('acc')} + ${v('Cy')}[${v('i')}, ${v('s')}] * ${v('Xu')}[${v('s')}, ${v('j')}];
+                END_FOR;
+                ${v('cx')}[${v('i')}, ${v('j')}] := ${v('acc')};
+            END_FOR;
+        END_FOR;
+        ${v('det')} := ${v('cx')}[0, 0] * ${v('cx')}[1, 1] - ${v('cx')}[0, 1] * ${v('cx')}[1, 0];
+        ${v('v0')} := (${v('cx')}[1, 1] * ${v('W')}[2] - ${v('cx')}[0, 1] * ${v('W')}[3]) / ${v('det')};
+        ${v('v1')} := (${v('cx')}[0, 0] * ${v('W')}[3] - ${v('cx')}[1, 0] * ${v('W')}[2]) / ${v('det')};
+        FOR ${v('i')} := 0 TO ${n - 1} DO
+            ${v('Xo')}[${v('i')}] := ${v('Xu')}[${v('i')}, 0] * ${v('v0')} + ${v('Xu')}[${v('i')}, 1] * ${v('v1')};
+        END_FOR;
+        ${v('Xo')}[${n}] := ${v('v0')} - ${v('ULast')}[0];
+        ${v('Xo')}[${n + 1}] := ${v('v1')} - ${v('ULast')}[1];
+        FOR ${v('i')} := 0 TO ${nz - 1} DO
+            ${v('Z')}[${v('i')}] := ${v('ULast')}[${v('i')} MOD 2];
+        END_FOR;
+        ${v('Started')} := TRUE;
+    ELSE
+        ${v('W')}[0] := ${v('ULast')}[0];
+        ${v('W')}[1] := ${v('ULast')}[1];
+        FOR ${v('i')} := 0 TO ${no - 1} DO
+            ${v('acc')} := 0.0;
+            FOR ${v('j')} := 0 TO ${no - 1} DO
+                ${v('acc')} := ${v('acc')} + ${v('Phio')}[${v('i')}, ${v('j')}] * ${v('Xo')}[${v('j')}];
+            END_FOR;
+            FOR ${v('j')} := 0 TO 3 DO
+                ${v('acc')} := ${v('acc')} + ${v('Gamo')}[${v('i')}, ${v('j')}] * ${v('W')}[${v('j')}];
+            END_FOR;
+            ${v('XNew')}[${v('i')}] := ${v('acc')};
+        END_FOR;
+        FOR ${v('i')} := 0 TO ${no - 1} DO
+            ${v('Xo')}[${v('i')}] := ${v('XNew')}[${v('i')}];
+        END_FOR;
+        FOR ${v('i')} := 0 TO ${nz - 1} DO
+            ${v('acc')} := ${v('Fd')}[${v('i')}, 0] * ${v('Xo')}[${n}] + ${v('Fd')}[${v('i')}, 1] * ${v('Xo')}[${n + 1}]
+                + ${v('Fr')}[${v('i')}, 0] * ${v('r1')} + ${v('Fr')}[${v('i')}, 1] * ${v('r2')}
+                + ${v('Fu')}[${v('i')}, 0] * ${v('ULast')}[0] + ${v('Fu')}[${v('i')}, 1] * ${v('ULast')}[1];
+            FOR ${v('j')} := 0 TO ${n - 1} DO
+                ${v('acc')} := ${v('acc')} + ${v('Fx')}[${v('i')}, ${v('j')}] * ${v('Xo')}[${v('j')}];
+            END_FOR;
+            ${v('F')}[${v('i')}] := ${v('acc')};
+        END_FOR;
+        // Warm start: last cycle's plan, one cycle on.
+        FOR ${v('i')} := 0 TO ${nz - 3} DO
+            ${v('Z')}[${v('i')}] := ${v('Z')}[${v('i')} + 2];
+        END_FOR;
+        // Projected Gauss-Seidel: minimize over one move at a time, clipped to the valve limits.
+        FOR ${v('s')} := 1 TO ${v('Sweeps')} DO
+            FOR ${v('i')} := 0 TO ${nz - 1} DO
+                ${v('acc')} := ${v('F')}[${v('i')}];
+                FOR ${v('j')} := 0 TO ${nz - 1} DO
+                    ${v('acc')} := ${v('acc')} + ${v('H')}[${v('i')}, ${v('j')}] * ${v('Z')}[${v('j')}];
+                END_FOR;
+                ${v('zi')} := ${v('Z')}[${v('i')}] - ${v('acc')} / ${v('H')}[${v('i')}, ${v('i')}];
+                ${v('Z')}[${v('i')}] := LIMIT(MN := ${v('Lo')}[${v('i')}], IN := ${v('zi')}, MX := ${v('Hi')}[${v('i')}]);
+            END_FOR;
+        END_FOR;
+        ${v('ULast')}[0] := ${v('Z')}[0];
+        ${v('ULast')}[1] := ${v('Z')}[1];
+    END_IF;
+    ${v('Output')} := LREAL_TO_REAL(LIMIT(MN := 0.0, IN := ${v('U0')}[0] + ${v('ULast')}[0], MX := 100.0));
+    ${v('Output2')} := LREAL_TO_REAL(LIMIT(MN := 0.0, IN := ${v('U0')}[1] + ${v('ULast')}[1], MX := 100.0));
+END_FUNCTION_BLOCK`;
+}
+
+/** MPC as plain TypeScript: the same steps as the block. */
+function mpcReference(proc: ProcessDef, des: MpcDesign, Ts: number) {
+  const mat = (M: number[][]) => `[\n${M.map((r) => `  [${r.map((x) => Number(x.toPrecision(10))).join(', ')}],`).join('\n')}\n]`;
+  const vec = (a: number[]) => `[${a.map((x) => Number(x.toPrecision(10))).join(', ')}]`;
+  return `// Model predictive control of ${proc.name.toLowerCase()}, every Ts = ${Ts} s.
+// Deviations from the design point: valves ${des.u0.map((x) => Number(x.toPrecision(6))).join(' / ')} %, outputs ${des.y0.map((x) => Number(x.toPrecision(6))).join(' / ')} % of span.
+const Phio = ${mat(des.Phio)};
+const Gamo = ${mat(des.Gamo)};   // columns: last outputs (2), measurements (2)
+const H = ${mat(des.H)};
+const Fx = ${mat(des.Fx)};
+const Fd = ${mat(des.Fd)}, Fr = ${mat(des.Fr)}, Fu = ${mat(des.Fu)};
+const lo = ${vec(des.lo)}, hi = ${vec(des.hi)};
+const n = ${des.n};
+let xo = new Array(${des.n + 2}).fill(0), z = new Array(${des.lo.length}).fill(0), uLast = [0, 0];
+const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+
+/** One cycle: setpoints and measurements in % of span (deviations) → both valve changes, %. */
+function step(r: [number, number], y: [number, number]): [number, number] {
+  xo = Phio.map((row, i) => dot(row, xo) + dot(Gamo[i], [...uLast, ...y]));
+  const x = xo.slice(0, n), d = xo.slice(n);
+  const f = Fx.map((row, i) => dot(row, x) + dot(Fd[i], d) + dot(Fr[i], r) + dot(Fu[i], uLast));
+  z = [...z.slice(2), ...z.slice(-2)];   // warm start: last plan, one cycle on
+  for (let s = 0; s < 200; s++) {        // projected Gauss–Seidel
+    for (let i = 0; i < z.length; i++) {
+      const g = f[i] + dot(H[i], z);
+      z[i] = Math.min(hi[i], Math.max(lo[i], z[i] - g / H[i][i]));
+    }
+  }
+  uLast = [z[0], z[1]];                  // only the first move is used; plan again next cycle
+  return [z[0], z[1]];
+}`;
+}
+
 function scheduleFunction(d: Dialect, points: { at: number; Kc: number; Ti: number; Td: number }[]) {
   const v = loc(d);
   // Sorted, and a repeated breakpoint dropped (it would divide by zero).
@@ -613,6 +792,45 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`${out} := ${inner}.Output;`);
     return lines.join('\n');
   }
+  if (config.kind === 'multiloop' && proc.mimo && proc.secondary) {
+    const sec = proc.secondary, mimo = proc.mimo;
+    const db2 = d === 'scl' ? `"${mimo.loop2.replace('-', '_')}_DB"` : mimo.loop2.replace('-', '_');
+    const direct = config.pairing === 'direct';
+    const { m, B2 } = mimoModel(proc, p);
+    const dec = decoupler(steadyGains(m, B2), config.pairing);
+    const s0 = proc.mimo.steady(proc.nominalPv, mimo.nominal2, Object.fromEntries(proc.disturbances.map((x) => [x.key, x.nominal])), p);
+    const base = [s0?.valve ?? 50, s0?.u2 ?? 50];
+    const [va, vb] = direct ? [out, tag(mimo.valve)] : [tag(mimo.valve), out];
+    lines.push(`// Two loops: ${proc.tags.loop} (${proc.pv.label.toLowerCase()}) drives ${direct ? proc.tags.valve : mimo.valve}, ${mimo.loop2} (${sec.label.toLowerCase()}) drives ${direct ? mimo.valve : proc.tags.valve}.`);
+    lines.push(`// Give ${mimo.loop2} its own tuning once at start-up (OB100): ${db2}.Gain := ${real(config.pid2.Kc)}; ${db2}.Ti := ${real(config.pid2.Ti)}; ${db2}.Td := ${real(config.pid2.Td)}; ${db2}.InLow := ${real(sec.lo)}; ${db2}.InHigh := ${real(sec.hi)}; ${db2}.Invert := ${config.pid2.invert ? 'TRUE' : 'FALSE'};`);
+    lines.push(`// While a valve is pinned, the loop driving it holds its integral.`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, HoldIntegral := ${tag('SatA')});`);
+    lines.push(`${db2}(Setpoint := ${tag('SP2')}, Input := ${tag(sec.tag)}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut2')}, HoldIntegral := ${tag('SatB')});`);
+    if (config.decouple) {
+      const a0 = base[dec.a], b0 = base[dec.b];
+      lines.push(`// Static decoupler (from the steady-state gains at ${real(proc.nominalPv)} ${proc.pv.unit}): each loop also moves the other valve, just enough to cancel its effect on the other variable.`);
+      lines.push(`${tag('W1')} := ${db}.Output - ${real(a0)};`);
+      lines.push(`${tag('W2')} := ${db2}.Output - ${real(b0)};`);
+      lines.push(`${tag('UA')} := ${real(a0)} + ${tag('W1')} + ${real(dec.ca)} * ${tag('W2')};`);
+      lines.push(`${tag('UB')} := ${real(b0)} + ${tag('W2')} + ${real(dec.cb)} * ${tag('W1')};`);
+    } else {
+      lines.push(`${tag('UA')} := ${db}.Output;`);
+      lines.push(`${tag('UB')} := ${db2}.Output;`);
+    }
+    lines.push(`${tag('SatA')} := SEL(G := ${tag('UA')} >= 100.0, IN0 := SEL(G := ${tag('UA')} <= 0.0, IN0 := 0, IN1 := -1), IN1 := 1);`);
+    lines.push(`${tag('SatB')} := SEL(G := ${tag('UB')} >= 100.0, IN0 := SEL(G := ${tag('UB')} <= 0.0, IN0 := 0, IN1 := -1), IN1 := 1);`);
+    lines.push(`${va} := LIMIT(MN := 0.0, IN := ${tag('UA')}, MX := 100.0);`);
+    lines.push(`${vb} := LIMIT(MN := 0.0, IN := ${tag('UB')}, MX := 100.0);`);
+    return lines.join('\n');
+  }
+  if (config.kind === 'mpc' && proc.mimo && proc.secondary) {
+    lines.push(`// MPC: one block plans both valves every cycle. In manual it tracks both, so auto is bumpless.`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Setpoint2 := ${tag('SP2')}, Input := ${pv}, Input2 := ${tag(proc.secondary.tag)}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ManualValue2 := ${tag('ManualOut2')});`);
+    lines.push(`${out} := ${db}.Output;`);
+    lines.push(`${tag(proc.mimo.valve)} := ${db}.Output2;`);
+    lines.push(`// Its cycle time is part of the design: the block's matrices are for ${real(p.Ts)} s.`);
+    return lines.join('\n');
+  }
   if (config.kind === 'statefb') {
     const des = designStateFb(proc, config, p);
     const in2 = des.inputs.includes('pv2') && proc.secondary ? `, Input2 := ${tag(proc.secondary.tag)}` : '';
@@ -722,6 +940,7 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
     if (config.kind === 'statefb') parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
+    else if (config.kind === 'mpc') parts.push(mpcBlock(dialect, proc, designMpc(proc, config, p), 200));
     else parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
@@ -732,6 +951,7 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
 /** The same algorithm as plain TypeScript, with nothing hidden. */
 export function exportReference(config: ControllerConfig, rawTs: number, proc?: ProcessDef, params?: Params) {
   if (config.kind === 'statefb') return proc ? stateFbReference(proc, designStateFb(proc, config, cleanParams(proc, params ?? {})), rawTs) : '// State feedback: needs the process model to export.';
+  if (config.kind === 'mpc') return proc ? mpcReference(proc, designMpc(proc, config, cleanParams(proc, params ?? {})), rawTs) : '// MPC: needs the process model to export.';
   if (config.kind === 'onoff') {
     return `// On-off with hysteresis (band in % of span).
 let on = false;
@@ -743,7 +963,13 @@ function onOff(spPct: number, pvPct: number): number {
 }`;
   }
   const p = 'outer' in config ? config.outer : config.pid;
-  const extra = config.kind === 'override'
+  const extra = config.kind === 'multiloop'
+    ? `
+
+// Two loops: a second copy of this PID (Kc ${config.pid2.Kc}, Ti ${config.pid2.Ti} s) on the second variable.
+// Pairing: ${config.pairing === 'direct' ? 'this one drives the main valve, the second the second valve' : 'crossed: this one drives the second valve, the second the main valve'}.${config.decouple ? `
+// Static decoupler: uA = a0 + w1 + cA·w2, uB = b0 + w2 + cB·w1, with w the PID outputs' changes from the design point.` : ''}`
+    : config.kind === 'override'
     ? `
 
 // Override: a second copy of this PID (Kc ${config.ovr.Kc}, Ti ${config.ovr.Ti} s) on ${config.on === 'pv2' ? 'the secondary measurement' : 'the same measurement'},
@@ -858,6 +1084,26 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
     return [
       { name: 'Override', value: `${config.select === 'max' ? 'MAX' : 'MIN'} of two`, note: `Two PID_Compact instances and a MAX/MIN in your code. PID_Compact has no external-reset input: the usual workaround is to put the one not selected in manual (ManualEnable) with ManualValue = the selected output, so it tracks; PID_Temp is no different. The exported LL_PID has ExtReset for the real thing.` },
       ...main, ...ovr,
+    ];
+  }
+  if (config.kind === 'multiloop' && proc.mimo && proc.secondary) {
+    const sec = proc.secondary;
+    const { m, B2 } = mimoModel(proc, p);
+    const dec = decoupler(steadyGains(m, B2), config.pairing);
+    return [
+      { name: 'Two loops', value: config.pairing === 'direct' ? 'direct pairing' : 'crossed pairing', note: `Two PID_Compact instances, one per variable. ${config.decouple ? `The decoupler is your own code between their outputs and the valves (c_A ${real(dec.ca)}, c_B ${real(dec.cb)}): see the exported call.` : 'Each drives its valve directly.'}` },
+      ...compactRows(config.pid, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts).map((r) => ({ ...r, name: `${proc.tags.loop}: ${r.name}` })),
+      ...compactRows(config.pid2, sec.lo, sec.hi, sec.unit, p.Ts).map((r) => ({ ...r, name: `${proc.mimo!.loop2}: ${r.name}` })),
+    ];
+  }
+  if (config.kind === 'mpc') {
+    const des = designMpc(proc, config, p);
+    return [
+      { name: 'PID_Compact', value: 'not applicable', note: 'MPC isn\'t a PID. TIA Portal has no standard MPC block for S7-1200/1500; the exported LL_Mpc runs the observer, the prediction and a small constrained optimization in SCL. SIMATIC PCS 7\'s Advanced Process Library has a small MPC block (ModPreCon) for a few variables; bigger MPCs run on a PC or an edge device and write setpoints to PID loops.' },
+      { name: 'Cycle', value: real(p.Ts), note: 'The prediction matrices are for this cycle: a different cycle needs a new export.' },
+      { name: 'Horizon', value: `${config.P} cycles (${real(config.P * p.Ts)} s)`, note: `${config.M} moves planned per valve; after that the valves are held.` },
+      { name: 'Work per cycle', value: `${des.lo.length} variables`, note: `About ${(2 * des.lo.length * des.lo.length * 200 + 2 * (des.n + 2) ** 2).toLocaleString('en')} multiply-adds with 200 sweeps: a few ms on an S7-1500, fine at a ${real(p.Ts)} s cycle; check the cycle load on smaller CPUs.` },
+      { name: 'Relative gain λ₁₁', value: real(des.lambda), note: 'At the design point. MPC doesn\'t need a pairing: it moves both valves together.' },
     ];
   }
   if (config.kind === 'statefb') {

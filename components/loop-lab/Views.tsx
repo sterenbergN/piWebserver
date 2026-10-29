@@ -15,6 +15,8 @@ import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { RHO_CP_PER_M3H } from '@/lib/loop-lab/processes/stirred';
 import { balancePoint, splitValves } from '@/lib/loop-lab/processes/jacket';
+import { hotFraction } from '@/lib/loop-lab/processes/mixing';
+import { mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { tankArea, tankVolume } from '@/lib/loop-lab/processes/tank';
 import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
@@ -154,6 +156,36 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
       ],
       note: `Both go the wrong way first. More steam drops the pressure, the water flashes and the bubbles swell the level by up to ${fmt(p.kSwell * dq, 3)} mm, though the drum is losing water. More (cold) feedwater collapses bubbles: the level shrinks by up to ${fmt(p.kShrink * dq, 3)} mm though the drum is gaining water. The feedwater step only has the level back where it started after about ${fmt(p.kShrink / kInt, 2)} s.`,
     }];
+  }
+  if (proc.id === 'mixing') {
+    const Ts = linspace(d.Tc + 1, d.Th - 1, 100);
+    const valves = (demand: number) => {
+      const F = p.Kout * (demand / 100);
+      return { hot: Ts.map((T) => (100 * hotFraction(T, d) * F) / p.Fhmax), cold: Ts.map((T) => (100 * (1 - hotFraction(T, d)) * F) / p.Fcmax) };
+    };
+    const now = valves(d.dOut), peak = valves(120);
+    const mid = d.Tc + (d.Th - d.Tc) / 2;
+    return [
+      {
+        title: 'Which valve should control the temperature? The relative gain', x: 'Temperature (°C)', y: 'Relative gain λ',
+        series: [
+          { label: `Temperature ← hot valve (λ₁₁)`, color: PALETTE[3], x: Ts, y: Ts.map((T) => (d.Th - T) / (d.Th - d.Tc)), width: 2.2 },
+          { label: 'Temperature ← cold valve (1 − λ₁₁)', color: PALETTE[0], x: Ts, y: Ts.map((T) => (T - d.Tc) / (d.Th - d.Tc)), width: 2.2 },
+          { label: '0.5: no pairing is better', color: 'var(--muted)', dash: '4 4', x: Ts, y: Ts.map(() => 0.5) },
+        ],
+        note: `With level on total flow and temperature on the mix, λ₁₁ = (T_h − T)/(T_h − T_c): the share of the inflow that is cold. Below ${fmt(mid, 3)} °C most of the water is cold and the hot valve is the better temperature handle; above it the pairing should cross. At exactly ${fmt(mid, 3)} °C both pairings are equally bad: each valve moves both variables as much.`,
+      },
+      {
+        title: 'Valve positions to hold 1 m, vs temperature', x: 'Temperature (°C)', y: 'Valve (%)',
+        series: [
+          { label: `Hot, demand ${fmt(d.dOut, 3)} %`, color: PALETTE[3], x: Ts, y: now.hot, width: 2 },
+          { label: `Cold, demand ${fmt(d.dOut, 3)} %`, color: PALETTE[0], x: Ts, y: now.cold, width: 2 },
+          { label: 'Hot, demand 120 %', color: PALETTE[3], x: Ts, y: peak.hot, dash: '4 3' },
+          { label: 'Cold, demand 120 %', color: PALETTE[0], x: Ts, y: peak.cold, dash: '4 3' },
+        ],
+        note: `Both valves together set the flow (the level) and the mix (the temperature). At 120 % demand the hot valve runs out above about ${fmt(d.Tc + (d.Th - d.Tc) * Math.min(1, p.Fhmax / (p.Kout * 1.2)), 3)} °C: past that, temperature and level can't both be held, and something has to give.`,
+      },
+    ];
   }
   if (proc.id === 'crane') {
     // The trolley accelerates to top speed and stops again, the load left to swing (no controller).
@@ -322,6 +354,7 @@ function plantTex(m: PlantModel) {
 const PROBE_LABEL: Record<string, string> = {
   sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term',
   Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted / estimated', alt: 'Override controller output',
+  cv2: 'Second controller output', valve2: 'Second valve stem', pv2True: 'Second variable (true)',
 };
 
 export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experiment; runs?: Run[] }) {
@@ -350,7 +383,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
     return { label: k.startsWith('dist:') ? proc.disturbances.find((d) => d.key === k.slice(5))?.label ?? k : PROBE_LABEL[k] ?? k, color: PALETTE[i % PALETTE.length], x: tAxis, y: y ?? [] };
   }) : [];
 
-  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp', 'pred'].includes(k) ? 'pv' : ['sp2', 'pv2'].includes(k) ? 'sec' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
+  const unitScale = (k: ProbeKey) => (['pvTrue', 'pv', 'sp', 'pred'].includes(k) ? 'pv' : ['sp2', 'pv2', 'pv2True'].includes(k) ? 'sec' : k === 'Kc' ? 'kc' : k.startsWith('dist:') ? 'dist' : 'pct');
   const groups = [...new Set(probes.map(unitScale))];
 
   return (
@@ -398,7 +431,9 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
           plus {fmt(p.Ts / 2, 3)} s for the controller cycle (zero-order hold).
         </p>
         {!here ? (
-          <p className="ll-note">On-off control has no linear model: it settles into a limit cycle instead of an equilibrium. See its behaviour in the tests and the live view.</p>
+          <p className="ll-note">{exp.controller.kind === 'mpc'
+            ? 'MPC with its valve limits isn’t a linear controller: whenever a limit is active, it is a different controller. Margins and Bode plots don’t describe it; judge it on the tests, the model-mismatch test above all. (Without limits it would be a linear controller, much like state feedback with an observer.)'
+            : 'On-off control has no linear model: it settles into a limit cycle instead of an equilibrium. See its behaviour in the tests and the live view.'}</p>
         ) : (
           <>
             <dl className="ll-kv" style={{ margin: '0.6rem 0' }}>
@@ -440,7 +475,9 @@ export function RangeTable({ proc, exp }: { proc: ProcessDef; exp: Experiment })
     const m = linearizePlant(proc, p, at);
     const f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
     const a = analyzeLoop(proc, p, exp.controller, at);
-    return { at, m, f, a: a ? { margins: worseMargins(a.margins, a.inner?.margins) } : null };
+    // A 2×2 process: the relative gain for "main valve → PV" here.
+    const lam = proc.mimo ? (() => { const mm = mimoModel(proc, p, at); return rga11(steadyGains(mm.m, mm.B2)); })() : NaN;
+    return { at, m, f, lam, a: a ? { margins: worseMargins(a.margins, a.inner?.margins) } : null };
   }), [proc, p, exp.controller, points]);
   return (
     <>
@@ -453,11 +490,11 @@ export function RangeTable({ proc, exp }: { proc: ProcessDef; exp: Experiment })
             <thead>
               <tr>
                 <th>{proc.pv.label} ({proc.pv.unit})</th><th>Valve</th><th>K (%/%)</th><th>τ</th><th>θ eff.</th><th>k′ = K/τ</th>
-                <th>PM</th><th>GM</th><th>Ms</th>
+                <th>PM</th><th>GM</th><th>Ms</th>{proc.mimo && <th title="Relative gain for the main valve on the PV: near 1 good, below 0.5 cross the pairing">λ₁₁</th>}
               </tr>
             </thead>
             <tbody>
-              {across.map(({ at, m, f, a }) => (
+              {across.map(({ at, m, f, a, lam }) => (
                 <tr key={at}>
                   <td>{fmt(at, 3)}{!m.reachable && <span className="ll-badge is-warn"> out of reach</span>}</td>
                   <td>{fmt(m.valve, 3)} %</td>
@@ -468,6 +505,7 @@ export function RangeTable({ proc, exp }: { proc: ProcessDef; exp: Experiment })
                   <td className={a && a.margins.pm < 45 ? 'is-worst' : ''}>{a ? `${fmt(a.margins.pm, 3)}°` : '—'}</td>
                   <td className={a && a.margins.gm < 6 ? 'is-worst' : ''}>{a ? (Number.isFinite(a.margins.gm) ? `${fmt(a.margins.gm, 3)} dB` : '∞') : '—'}</td>
                   <td className={a && a.margins.ms > 2 ? 'is-worst' : ''}>{a ? fmt(a.margins.ms, 3) : '—'}</td>
+                  {proc.mimo && <td className={lam < 0.5 ? 'is-worst' : ''}>{fmt(lam, 2)}</td>}
                 </tr>
               ))}
             </tbody>
@@ -491,10 +529,11 @@ export function OperatingPointSteps({ proc, exp }: { proc: ProcessDef; exp: Expe
     if (exp.controller.kind === 'onoff') return null;
     const p = cleanParams(proc, exp.params);
     const ops = [proc.opPoints[0], proc.opPoints[Math.floor(proc.opPoints.length / 2)], proc.opPoints[proc.opPoints.length - 1]];
-    const loops = ops.map((at) => {
-      const a = analyzeLoop(proc, p, exp.controller, at)!;
-      return { at, cl: closedLoop(a.plant, a.ctrl, a.delay) };
+    const loops = ops.flatMap((at) => {
+      const a = analyzeLoop(proc, p, exp.controller, at);
+      return a ? [{ at, cl: closedLoop(a.plant, a.ctrl, a.delay) }] : [];
     });
+    if (!loops.length) return null;
     const horizon = Math.max(...loops.map((l) => settleHorizon(l.cl.poles, 60)));
     return loops.map((l) => ({ at: l.at, sp: stepResponse(l.cl, 0, horizon), load: stepResponse(l.cl, 1, horizon), stable: isStable(l.cl.poles) }));
   }, [proc, exp]);

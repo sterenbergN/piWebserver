@@ -38,6 +38,8 @@ export type PlantModel = {
 
 export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Params = nominalDisturbances(proc)): PlantModel {
   const s = findSteady(proc, p, d, pv);
+  // A 2×2 process: the second valve where it holds the second variable at its nominal setpoint.
+  if (proc.mimo && 'u2' in s && s.u2 !== undefined) d = { ...d, [proc.mimo.input]: s.u2 };
   const x0 = steadyState(proc, s);
   const u0 = s.valve;
   const n = x0.length;
@@ -318,14 +320,29 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
   if (ctrl.kind === 'ss') {
     // Broken at the valve: L = −Σ C_y,k(jω)·G_k(jω), the main measurement behind its transport delay,
     // the whole loop behind half a cycle of hold.
-    const { ss, inputs } = ctrl;
+    // On a 2×2 process the second valve's loop stays closed: L = −(T₁₁ + T₁₂T₂₁/(1 − T₂₂)), T = C_y·G.
+    const { ss, inputs, out2 } = ctrl;
     const ws = frequencyGrid(m, [], delay, 600, eig(ss.A).map((p) => Math.hypot(p.re, p.im)));
-    const G2 = (w: number) => ssResponse(m.A, m.B, m.C2 ?? m.C, w);
-    const L = (w: number) => inputs.reduce((acc, key, k) => {
-      const g = key === 'pv' ? cmul(G1(w), cexpj(-w * m.theta)) : G2(w);
-      const v = cmul(ssResponse(ss.A, ss.By.map((r) => r[k]), ss.C, w), g);
-      return { re: acc.re - v.re, im: acc.im - v.im };
-    }, cx(0));
+    const B2 = ctrl.u2Key ? m.Bd[ctrl.u2Key] : null;
+    const plantTo = (key: 'pv' | 'pv2', col: number[], w: number) => {
+      const g = ssResponse(m.A, col, key === 'pv' ? m.C : (m.C2 ?? m.C), w);
+      return key === 'pv' ? cmul(g, cexpj(-w * m.theta)) : g;
+    };
+    const ctrlFrom = (C: number[], Dy: number[] | undefined, k: number, w: number) => {
+      const c = ss.A.length ? ssResponse(ss.A, ss.By.map((r) => r[k]), C, w) : cx(0);
+      return { re: c.re + (Dy?.[k] ?? 0), im: c.im };
+    };
+    const L = (w: number) => {
+      const T = (C: number[], Dy: number[] | undefined, col: number[]) => inputs.reduce((acc, key, k) => {
+        const v = cmul(ctrlFrom(C, Dy, k, w), plantTo(key, col, w));
+        return { re: acc.re + v.re, im: acc.im + v.im };
+      }, cx(0));
+      const t11 = T(ss.C, ss.Dy, m.B);
+      if (!out2 || !B2) return { re: -t11.re, im: -t11.im };
+      const t12 = T(ss.C, ss.Dy, B2), t21 = T(out2.C, out2.Dy, m.B), t22 = T(out2.C, out2.Dy, B2);
+      const x = cdiv(cmul(t12, t21), { re: 1 - t22.re, im: -t22.im });
+      return { re: -(t11.re + x.re), im: -(t11.im + x.im) };
+    };
     const loop = bode(ws, L, sample);
     const pid: LinearPid = { Kc: 0, Ti: 0, Td: 0, b: 1, c: 0, a: 0.1, antiWindup: 'clamp', outLo: 0, outHi: 100, invert: false, slope: 1 };
     // A state-feedback loop's phase can wind round the origin (integrators and resonances on both sides), so
@@ -487,6 +504,8 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   };
 
   let u: Sig;
+  // A 2×2 process's second valve, when the controller drives it.
+  let u2: Sig | null = null, b2: number[] | null = null;
   if (ctrl.kind === 'single') u = add(pidBlock(ctrl.pid, r, y), v);
   else if (ctrl.kind === 'smith') {
     // Model lag z (undelayed prediction) and a Padé copy of its delay; the PID sees y + z − delayed z.
@@ -510,7 +529,13 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
       ys.forEach((yk, k) => { s = add(s, yk, ss.By[i][k]); });
       deriv[base + i] = s;
     }
-    u = add(add(rowSig(n, ss.C, base), r, ss.Dr), v);
+    const outOf = (C: number[], Dy: number[] | undefined, Dr: number) => {
+      let o = add(rowSig(n, C, base), r, Dr);
+      ys.forEach((yk, k) => { o = add(o, yk, Dy?.[k] ?? 0); });
+      return o;
+    };
+    u = add(outOf(ss.C, ss.Dy, ss.Dr), v);
+    if (ctrl.out2 && ctrl.u2Key) { u2 = outOf(ctrl.out2.C, ctrl.out2.Dy, ctrl.out2.Dr); b2 = m.Bd[ctrl.u2Key]; }
   } else u =pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
 
   // Plant and delay.
@@ -520,6 +545,7 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
     let s = rowSig(n, m.A[i]);
     s = add(s, drive, m.B[i]);
     s = add(s, dd, bd[i]);
+    if (u2 && b2) s = add(s, u2, b2[i]);
     deriv[i] = s;
   }
   if (pd) {

@@ -6,6 +6,7 @@ import {
   type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
 } from '@/lib/loop-lab/controllers';
 import { cleanParams, defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
+import { designMpc, mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { designStateFb } from '@/lib/loop-lab/statespace';
 import { PROCESSES } from '@/lib/loop-lab/processes';
 import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
@@ -64,6 +65,8 @@ const KIND_HINT: Record<ControllerKind, string> = {
   override: 'A normal controller and a limit controller on one valve; the higher (or lower) output wins.',
   ratio: 'The controlled flow follows the wild flow at a set ratio, trimmed by the main measurement.',
   statefb: 'Every state of the plant, estimated by an observer from the measurements, fed back with its own gain.',
+  multiloop: 'A PID on each variable, each with its own valve, and optionally a decoupler between them.',
+  mpc: 'Plans both valves a few moves ahead from a model, within their limits, and re-plans every cycle.',
 };
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -140,8 +143,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
     const next = defaultController(kind, proc);
     // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
     // Smith predictor's PID for a process without dead time, so those keep their own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb') next.pid = { ...prev };
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc') next.pid = { ...prev };
     if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
@@ -195,6 +198,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
         {config.kind === 'override' && <OverrideFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'ratio' && <RatioFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'statefb' && <StateFbFields proc={proc} params={params} config={config} onChange={onChange} />}
+        {config.kind === 'multiloop' && <MultiloopFields proc={proc} params={params} config={config} onChange={onChange} />}
+        {config.kind === 'mpc' && <MpcFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'characterized' && (
           <>
             <label className="ll-field is-wide" style={{ marginBottom: '0.5rem' }}>
@@ -221,7 +226,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
           </>
         )}
       </div>
-      {config.kind !== 'onoff' && config.kind !== 'statefb' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
+      {config.kind !== 'onoff' && config.kind !== 'statefb' && config.kind !== 'multiloop' && config.kind !== 'mpc' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
     </div>
   );
 }
@@ -456,6 +461,69 @@ function StateFbFields({ proc, params, config, onChange }: { proc: ProcessDef; p
   );
 }
 
+/** Two loops: the pairing (with the relative gain that judges it), the decoupler, and the two PIDs. */
+function MultiloopFields({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: Extract<ControllerConfig, { kind: 'multiloop' }>; onChange: (c: ControllerConfig) => void }) {
+  const sec = proc.secondary!, mimo = proc.mimo!;
+  const rgas = useMemo(() => proc.opPoints.map((at) => {
+    const { m, B2 } = mimoModel(proc, cleanParams(proc, params), at);
+    return { at, lam: rga11(steadyGains(m, B2)) };
+  }), [proc, params]);
+  const direct = config.pairing === 'direct';
+  const v1 = direct ? proc.tags.valve : mimo.valve, v2 = direct ? mimo.valve : proc.tags.valve;
+  return (
+    <>
+      <div className="ll-fields is-3">
+        <label className="ll-field is-wide">
+          <span>Pairing</span>
+          <select value={config.pairing} onChange={(e) => onChange({ ...config, pairing: e.target.value === 'crossed' ? 'crossed' : 'direct' })}>
+            <option value="direct">{proc.pv.label} ← {proc.tags.valve}, {sec.label.toLowerCase()} ← {mimo.valve}</option>
+            <option value="crossed">{proc.pv.label} ← {mimo.valve}, {sec.label.toLowerCase()} ← {proc.tags.valve}</option>
+          </select>
+        </label>
+      </div>
+      <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+        Relative gain for this pairing: {rgas.map((r) => `${fmt(direct ? r.lam : 1 - r.lam, 2)} at ${fmt(r.at, 3)} ${proc.pv.unit}`).join(', ')}.
+        Near 1 the loops hardly notice each other; towards 0.5 they fight; below 0.5 the other pairing is better.
+      </p>
+      <label className="ll-check">
+        <input type="checkbox" checked={config.decouple} onChange={(e) => onChange({ ...config, decouple: e.target.checked })} />
+        Static decoupler: each loop also moves the other valve, to cancel its steady effect on the other variable
+      </label>
+      <div className="ll-sub">{proc.tags.loop}: {proc.pv.label.toLowerCase()} → {v1}</div>
+      <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+      <div className="ll-sub">{mimo.loop2}: {sec.label.toLowerCase()} → {v2}</div>
+      <PidFields pid={config.pid2} onChange={(pid2) => onChange({ ...config, pid2 })} />
+    </>
+  );
+}
+
+/** MPC: horizon, moves, weights and the observer, and what the design point looks like. */
+function MpcFields({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: Extract<ControllerConfig, { kind: 'mpc' }>; onChange: (c: ControllerConfig) => void }) {
+  const sec = proc.secondary!;
+  const p = cleanParams(proc, params);
+  const des = useMemo(() => designMpc(proc, config, p), [proc, config, p]);
+  const set = <K extends keyof typeof config>(k: K) => (v: (typeof config)[K]) => onChange({ ...config, [k]: v });
+  return (
+    <>
+      <div className="ll-fields is-3">
+        <NumField label="Horizon P" unit={`× ${fmt(p.Ts, 3)} s`} value={config.P} min={5} max={300} step={1} onChange={(v) => set('P')(Math.round(v))}
+          title="How many cycles ahead it predicts: long enough to see where each move leads" />
+        <NumField label="Moves M" value={config.M} min={1} max={20} step={1} onChange={(v) => set('M')(Math.round(Math.min(v, config.P)))}
+          title="How many moves of each valve it plans; after that it assumes they stay put" />
+        <NumField label="Move weight r" value={config.r} min={1e-6} onChange={set('r')} title="Cost of moving a valve 1 %, against 1 % of error: bigger = gentler" />
+        <NumField label={`q ${proc.pv.label.toLowerCase()}`} value={config.q1} min={0} onChange={set('q1')} title={`Weight on ${proc.pv.label.toLowerCase()} error, per % of span (squared)`} />
+        <NumField label={`q ${sec.label.toLowerCase()}`} value={config.q2} min={0} onChange={set('q2')} title={`Weight on ${sec.label.toLowerCase()} error, per % of span (squared)`} />
+        <NumField label="Upsets" value={config.qw} min={1e-4} onChange={set('qw')} title="Kalman filter: how much it expects the loads at the valves to move, against the transmitter noise" />
+      </div>
+      <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+        {des.ok
+          ? `Plans ${config.M} moves of both valves over ${fmt(config.P * p.Ts, 3)} s, within 0–100 %, ${des.lo.length} numbers per cycle. No pairing: it moves both valves together (λ₁₁ is ${fmt(des.lambda, 2)} here, for comparison).`
+          : `⚠️ ${des.error}`}
+      </p>
+    </>
+  );
+}
+
 /** The Smith predictor's process model, with a button to copy it from the plant's step response. */
 function SmithModelEditor({ proc, params, model, pid, onChange }: {
   proc: ProcessDef; params: Params; model: SmithModel; pid: PidParams; onChange: (m: SmithModel) => void;
@@ -503,7 +571,7 @@ function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params
           setTuned({ key: JSON.stringify([proc.id, params, r.config]), note: r.note });
         }
       }}>✨ Auto-tune</button>
-      <span className="ll-small">{note || (config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point. Then adjust by hand and compare.' : 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.')}</span>
+      <span className="ll-small">{note || (config.kind === 'mpc' ? 'A horizon from the plant’s slowest response, to start from. MPC has no tuning rule: then the weights.' : config.kind === 'multiloop' ? 'SIMC on each pair with the other loop open, and the relative gain for the pairing.' : config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point. Then adjust by hand and compare.' : 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.')}</span>
     </div>
   );
 }
@@ -528,7 +596,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   };
   const result = model ? rule.tune(model, t, model.theta * speedFactor) : null;
   const apply = () => {
-    if (!result || config.kind === 'onoff' || config.kind === 'statefb') return;
+    if (!result || config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc') return;
     if (config.kind === 'schedule') {
       const i = config.points.findIndex((p) => Math.abs(p.at - pv) < 1e-9);
       const points = i >= 0

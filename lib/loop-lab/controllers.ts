@@ -1,4 +1,6 @@
 import { fromPct, fromPct2, measuredDisturbances, nominalDisturbances, pvSpan, toPct, toPct2, valveCharacteristic, type Characterization, type Params, type ProcessDef, type ProcessId } from './model';
+import { boxQp, decoupler, designMpc, mimoModel, steadyGains } from './multivar';
+import { findSteady } from './sim';
 import { designStateFb, type StateFbDesign } from './statespace';
 
 // Control strategies. Every controller runs once per cycle (T_s), takes the
@@ -81,7 +83,20 @@ export type ControllerConfig =
   | {
     kind: 'statefb'; design: 'poles' | 'lqr'; wn: number; zeta: number; qy: number; q2: number; qi: number;
     observer: 'poles' | 'kalman'; obsSpeed: number; qw: number; measure: 'pv' | 'pv2' | 'both'; integral: 'none' | 'error' | 'dist';
-  };
+  }
+  /**
+   * Two loops on a 2×2 process: a PID on the PV and one on the second
+   * variable, each driving the valve the pairing gives it (direct: the main
+   * valve for the PV), optionally through a static decoupler.
+   */
+  | { kind: 'multiloop'; pid: PidParams; pid2: PidParams; pairing: 'direct' | 'crossed'; decouple: boolean }
+  /**
+   * Model predictive control of a 2×2 process: plans the next M moves of both
+   * valves to bring both outputs to setpoint over P cycles, weighing errors
+   * (q1, q2, per % of span) against moves (r, per %), within the valves' limits.
+   * A Kalman filter estimates the states and an offset on each output.
+   */
+  | { kind: 'mpc'; P: number; M: number; q1: number; q2: number; r: number; qw: number };
 
 export type ControllerKind = ControllerConfig['kind'];
 
@@ -97,8 +112,8 @@ export type ControllerInternals = {
   alt: number;
 };
 
-/** Signals besides SP and PV: the inner measurement and the (measured) disturbances. */
-export type ControllerAux = { pv2: number; d: Params };
+/** Signals besides SP and PV: the inner measurement, the (measured) disturbances and, on a 2×2 process, the second setpoint. */
+export type ControllerAux = { pv2: number; d: Params; sp2?: number };
 
 export interface ControllerInstance {
   /** One cycle: setpoint and measurement (engineering units) → valve signal (%). */
@@ -106,6 +121,8 @@ export interface ControllerInstance {
   /** Manual mode: follow the valve signal being written, so switching to auto is bumpless. */
   track(valve: number, sp: number, pv: number, aux: ControllerAux): void;
   internals(): ControllerInternals;
+  /** 2×2 processes: the second valve's signal from the last step, %. Controllers without one leave the second valve alone. */
+  out2?(): number;
 }
 
 export type Complexity = {
@@ -140,11 +157,16 @@ export const CONTROLLER_KINDS: ControllerMeta[] = [
   { kind: 'override', name: 'Override (selector) control', short: 'Override', rung: 8, icon: '🚧' },
   { kind: 'ratio', name: 'Ratio control', short: 'Ratio', rung: 9, icon: '⚗️' },
   { kind: 'statefb', name: 'State feedback with an observer (pole placement, LQR, Kalman)', short: 'State feedback', rung: 10, icon: '🧭' },
+  { kind: 'multiloop', name: 'Multi-loop PID and decoupling', short: 'Decoupling', rung: 11, icon: '🔀' },
+  { kind: 'mpc', name: 'Model predictive control (MPC)', short: 'MPC', rung: 12, icon: '🔭' },
 ];
 export const controllerMeta = (kind: ControllerKind) => CONTROLLER_KINDS.find((c) => c.kind === kind)!;
 
 /** Which controllers a process can run: feedforward needs a measured disturbance, cascade an inner measurement. */
 export function isAvailable(proc: ProcessDef, kind: ControllerKind) {
+  // A 2×2 process: one loop (the other valve left where it is), two loops, or MPC.
+  if (proc.mimo) return kind === 'pid' || kind === 'multiloop' || kind === 'mpc';
+  if (kind === 'multiloop' || kind === 'mpc') return false;
   if (kind === 'characterized') return proc.characterizations.length > 0;
   if (kind === 'feedforward') return measuredDisturbances(proc).length > 0;
   if (kind === 'cascade') return !!proc.secondary && !proc.secondary.measureOnly;
@@ -174,6 +196,7 @@ export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> 
   servo: { Kc: 0.8, Ti: 1, Td: 0 },
   // Unstable: PD first (the derivative is what stabilizes it), a slow integral, and a setpoint weight so a gap change doesn't kick the coil.
   maglev: { Kc: 4, Ti: 0.15, Td: 0.02, a: 0.2, b: 0.3, invert: true },
+  mixing: { Kc: 3.26, Ti: 360, Td: 0 },
   custom: { Kc: 1.2, Ti: 20, Td: 0 },
 };
 
@@ -212,6 +235,14 @@ export const BASELINE_RATIO: Partial<Record<ProcessId, { inner: Pick<PidParams, 
 
 type StateFbSettings = Omit<Extract<ControllerConfig, { kind: 'statefb' }>, 'kind'>;
 /** Starting state-feedback designs, checked on each process's tests. */
+/** Starting two-loop tunings (each loop SIMC on its own pair, the other loop open). */
+export const BASELINE_MULTI: Partial<Record<ProcessId, { pid2: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams> }>> = {
+  mixing: { pid2: { Kc: 12, Ti: 64, Td: 0 } },
+};
+export const BASELINE_MPC: Partial<Record<ProcessId, Partial<Omit<Extract<ControllerConfig, { kind: 'mpc' }>, 'kind'>>>> = {
+  mixing: { P: 100, M: 5, q1: 1, q2: 1, r: 0.1, qw: 1 },
+};
+
 export const BASELINE_STATEFB: Partial<Record<ProcessId, Partial<StateFbSettings>>> = {
   crane: { design: 'poles', wn: 0.5, zeta: 0.8, qy: 100, q2: 100, integral: 'dist', observer: 'kalman', qw: 1, obsSpeed: 2, measure: 'both' },
   servo: { design: 'poles', wn: 40, zeta: 0.7, qy: 100, q2: 0, integral: 'dist', observer: 'kalman', qw: 3, obsSpeed: 2, measure: 'both' },
@@ -257,6 +288,10 @@ export function defaultController(kind: ControllerKind, proc: ProcessDef): Contr
     const b = BASELINE_SMITH[proc.id];
     return { kind, pid: { ...pid, ...b?.pid }, model: b?.model ?? { K: 1, tau: 10, theta: 5 } };
   }
+  if (kind === 'multiloop') {
+    return { kind, pid, pid2: { ...DEFAULT_PID, ...(BASELINE_MULTI[proc.id]?.pid2 ?? { Kc: 1, Ti: 100, Td: 0 }) }, pairing: 'direct', decouple: false };
+  }
+  if (kind === 'mpc') return { kind, P: 100, M: 5, q1: 1, q2: 1, r: 0.1, qw: 1, ...BASELINE_MPC[proc.id] };
   if (kind === 'statefb') {
     // Without a checked design: weights for a closed loop about as fast as the tests are long allow.
     const T = (proc.scenarios[0]?.duration ?? 100) / 20;
@@ -408,6 +443,8 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
   if (config.kind === 'override') return createOverride(proc, config, Ts);
   if (config.kind === 'ratio') return createRatio(proc, config, Ts);
   if (config.kind === 'statefb') return createStateFb(proc, config, model);
+  if (config.kind === 'multiloop') return createMultiloop(proc, config, model, Ts);
+  if (config.kind === 'mpc') return createMpc(proc, config, model);
 
   const pid = config.pid;
   const scale = controlScale(proc, config, model);
@@ -671,6 +708,154 @@ function createStateFb(proc: ProcessDef, config: Extract<ControllerConfig, { kin
   };
 }
 
+/**
+ * Two loops on a 2×2 process. Each PID works on its own variable and drives
+ * the valve the pairing gives it; with the decoupler, each loop's output also
+ * moves the other valve just enough to cancel its steady effect on the other
+ * variable. While a valve is pinned, the loop driving it holds its integral.
+ */
+function createMultiloop(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'multiloop' }>, model: Params, Ts: number): ControllerInstance {
+  const sec = proc.secondary!, mimo = proc.mimo!;
+  const c1 = new PidCore(config.pid, Ts), c2 = new PidCore(config.pid2, Ts);
+  const g1 = { Kc: config.pid.Kc, Ti: config.pid.Ti, Td: config.pid.Td };
+  const g2 = { Kc: config.pid2.Kc, Ti: config.pid2.Ti, Td: config.pid2.Td };
+  const { m, B2 } = mimoModel(proc, model);
+  const G = steadyGains(m, B2);
+  const dec = decoupler(G, config.pairing);
+  const ca = config.decouple && Number.isFinite(dec.ca) ? dec.ca : 0, cb = config.decouple && Number.isFinite(dec.cb) ? dec.cb : 0;
+  const design = findSteady(proc, model, nominalDisturbances(proc), proc.nominalPv);
+  const base = [design.valve, 'u2' in design && design.u2 !== undefined ? design.u2 : 50];
+  const a0 = base[dec.a], b0 = base[dec.b];
+  let sat: [number, number] = [0, 0];
+  let u2 = NaN;
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...g1, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  const both = (ua: number, ub: number) => (dec.a === 0 ? [ua, ub] : [ub, ua]);
+  return {
+    step(sp, pv, aux) {
+      const e1 = errorsOf(config.pid, toPct(proc, sp), toPct(proc, pv));
+      const e2 = errorsOf(config.pid2, toPct2(sec, aux.sp2 ?? mimo.nominal2), toPct2(sec, aux.pv2));
+      const r1 = c1.run(e1.e, e1.eP, e1.eD, g1, 0, sat[0]), r2 = c2.run(e2.e, e2.eP, e2.eD, g2, 0, sat[1]);
+      const w1 = r1.u - a0, w2 = r2.u - b0;
+      const ua = a0 + w1 + ca * w2, ub = b0 + w2 + cb * w1;
+      sat = [ua >= 100 ? 1 : ua <= 0 ? -1 : 0, ub >= 100 ? 1 : ub <= 0 ? -1 : 0];
+      const [u1, v2] = both(ua, ub);
+      u2 = clamp(v2, 0, 100);
+      last = { P: r1.P, I: c1.I, D: c1.D, ...g1, e: e1.e, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+      return clamp(u1, 0, 100);
+    },
+    track(valve, sp, pv, aux) {
+      const now = [valve, aux.d[mimo.input] ?? b0];
+      const ua = now[dec.a], ub = now[dec.b];
+      // Undo the decoupler: which PID outputs give these two valve positions?
+      const det = 1 - ca * cb || 1;
+      const w1 = ((ua - a0) - ca * (ub - b0)) / det, w2 = ((ub - b0) - cb * (ua - a0)) / det;
+      const e1 = errorsOf(config.pid, toPct(proc, sp), toPct(proc, pv));
+      const e2 = errorsOf(config.pid2, toPct2(sec, aux.sp2 ?? mimo.nominal2), toPct2(sec, aux.pv2));
+      c1.track(a0 + w1, e1.eP, e1.eD, g1.Kc, 0);
+      c2.track(b0 + w2, e2.eP, e2.eD, g2.Kc, 0);
+      sat = [0, 0];
+      u2 = now[1];
+      last = { P: g1.Kc * e1.eP, I: c1.I, D: 0, ...g1, e: e1.e, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+    },
+    internals: () => last,
+    out2: () => u2,
+  };
+}
+
+/**
+ * Model predictive control: every cycle, the observer updates its estimate of
+ * the plant's states and of a constant offset on each output; then the next M
+ * moves of both valves are chosen to bring both predicted outputs to their
+ * setpoints over P cycles at the least weighted cost, within the valves'
+ * limits. Only the first move is used; next cycle it plans again.
+ */
+function createMpc(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'mpc' }>, model: Params): ControllerInstance {
+  const des = designMpc(proc, config, model);
+  const sec = proc.secondary!, mimo = proc.mimo!;
+  const n = des.n, nz = des.lo.length;
+  let xo = new Array(n + 2).fill(0);
+  let uPrev = [0, 0];
+  let z = new Array(nz).fill(0);
+  let u2 = des.u0[1];
+  const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+  const meas = (pv: number, aux: ControllerAux) => [toPct(proc, pv) - des.y0[0], toPct2(sec, aux.pv2) - des.y0[1]];
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  const estimate = () => fromPct(proc, des.y0[0] + dot(des.Cy[0], xo.slice(0, n)));
+  return {
+    step(sp, pv, aux) {
+      if (!des.ok) return des.u0[0] + uPrev[0];
+      const y = meas(pv, aux);
+      xo = des.Phio.map((row, i) => dot(row, xo) + dot(des.Gamo[i], [...uPrev, ...y]));
+      const r = [toPct(proc, sp) - des.y0[0], toPct2(sec, aux.sp2 ?? mimo.nominal2) - des.y0[1]];
+      const x = xo.slice(0, n), d = [xo[n], xo[n + 1]];
+      const f = des.Fx.map((row, i) => dot(row, x) + dot(des.Fd[i], d) + dot(des.Fr[i], r) + dot(des.Fu[i], uPrev));
+      // Warm start: last plan, shifted one cycle.
+      z = boxQp(des.H, f, des.lo, des.hi, [...z.slice(2), ...z.slice(nz - 2)]);
+      uPrev = [z[0], z[1]];
+      u2 = clamp(des.u0[1] + z[1], 0, 100);
+      last = { P: z[0], I: d[0], D: 0, Kc: 0, Ti: 0, Td: 0, e: r[0] - y[0], sp2: NaN, ff: 0, pred: estimate(), alt: NaN };
+      return clamp(des.u0[0] + z[0], 0, 100);
+    },
+    track(valve, sp, pv, aux) {
+      // Start from a steady state: the valves as they are, plus the loads that make the model read what is measured.
+      uPrev = [valve - des.u0[0], (aux.d[mimo.input] ?? des.u0[1]) - des.u0[1]];
+      const y = meas(pv, aux);
+      const CX = des.Cy.map((c) => [0, 1].map((k) => dot(c, des.Xu.map((r) => r[k]))));
+      const det = CX[0][0] * CX[1][1] - CX[0][1] * CX[1][0] || 1;
+      const v = [(CX[1][1] * y[0] - CX[0][1] * y[1]) / det, (CX[0][0] * y[1] - CX[1][0] * y[0]) / det];
+      const x = des.Xu.map((row) => dot(row, v));
+      xo = [...x, v[0] - uPrev[0], v[1] - uPrev[1]];
+      z = Array.from({ length: nz }, (_, i) => uPrev[i % 2]);
+      u2 = des.u0[1] + uPrev[1];
+      last = { ...last, pred: estimate() };
+    },
+    internals: () => last,
+    out2: () => u2,
+  };
+}
+
+/** The two PIDs and the decoupler as one linear system from [PV, second variable] and the setpoint to both valves. */
+function multiloopLinear(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'multiloop' }>, model: Params): LinearController {
+  const { m, B2 } = mimoModel(proc, model);
+  const dec = decoupler(steadyGains(m, B2), config.pairing);
+  const ca = config.decouple && Number.isFinite(dec.ca) ? dec.ca : 0, cb = config.decouple && Number.isFinite(dec.cb) ? dec.cb : 0;
+  type Row = { C: number[]; Dy: number[]; Dr: number };
+  const A: number[][] = [], By: number[][] = [], Br: number[] = [];
+  const rows: { cols: number[]; Dy: number[]; Dr: number }[] = [];
+  [config.pid, config.pid2].forEach((p, k) => {
+    const sg = p.invert ? -1 : 1, cols: number[] = [], Dy = [0, 0];
+    let Dr = 0;
+    const yIn = (v: number) => { const r = [0, 0]; r[k] = v; return r; };
+    Dy[k] = -sg * p.Kc;
+    if (k === 0) Dr = sg * p.Kc * p.b;
+    if (p.Ti > 0) {
+      const i = A.length;
+      A.push([]); By.push(yIn(-sg)); Br.push(k === 0 ? sg : 0);
+      cols[i] = p.Kc / p.Ti;
+    }
+    if (p.Td > 0) {
+      const i = A.length, Tf = Math.max(p.a * p.Td, 1e-9);
+      A.push([]); By.push(yIn(-sg / Tf)); Br.push(k === 0 ? (sg * p.c) / Tf : 0);
+      (A as number[][])[i][i] = -1 / Tf;
+      cols[i] = -(p.Kc * p.Td) / Tf;
+      Dy[k] += (-sg * p.Kc * p.Td) / Tf;
+      if (k === 0) Dr += (sg * p.Kc * p.Td * p.c) / Tf;
+    }
+    rows.push({ cols, Dy, Dr });
+  });
+  const nc = A.length;
+  const Afull = Array.from({ length: nc }, (_, i) => Array.from({ length: nc }, (__, j) => A[i][j] ?? 0));
+  const full = (r: { cols: number[] }) => Array.from({ length: nc }, (_, j) => r.cols[j] ?? 0);
+  const mix = (x: Row, y: Row, c: number): Row => ({ C: x.C.map((v, j) => v + c * y.C[j]), Dy: x.Dy.map((v, j) => v + c * y.Dy[j]), Dr: x.Dr + c * y.Dr });
+  const v1: Row = { C: full(rows[0]), Dy: rows[0].Dy, Dr: rows[0].Dr }, v2: Row = { C: full(rows[1]), Dy: rows[1].Dy, Dr: rows[1].Dr };
+  const ua = mix(v1, v2, ca), ub = mix(v2, v1, cb);
+  const [o1, o2] = dec.a === 0 ? [ua, ub] : [ub, ua];
+  return {
+    kind: 'ss', ss: { A: Afull, By, Br, C: o1.C, Dr: o1.Dr, Dy: o1.Dy }, out2: o2, u2Key: proc.mimo!.input,
+    inputs: ['pv', 'pv2'], ff: [],
+  };
+}
+
 // ─── Linear view of a controller (for analysis) ─────────────────────────────
 
 export type LinearPid = PidParams & { slope: number };
@@ -680,8 +865,14 @@ export type LinearController =
   | { kind: 'single'; pid: LinearPid; ff: FeedforwardTerm[] }
   | { kind: 'cascade'; outer: LinearPid; inner: LinearPid; ff: FeedforwardTerm[] }
   | { kind: 'smith'; pid: LinearPid; model: SmithModel; ff: FeedforwardTerm[] }
-  /** A controller given as a linear system from the measurements and the setpoint to the output (state feedback). */
-  | { kind: 'ss'; ss: StateFbDesign['ctrl']; inputs: ('pv' | 'pv2')[]; ff: FeedforwardTerm[] };
+  /**
+   * A controller given as a linear system from the measurements and the setpoint to the output (state
+   * feedback, two loops): u = C·xc + Dy·y + Dr·r, and on a 2×2 process a second output to the second valve.
+   */
+  | {
+    kind: 'ss'; ss: StateFbDesign['ctrl'] & { Dy?: number[] }; inputs: ('pv' | 'pv2')[]; ff: FeedforwardTerm[];
+    out2?: { C: number[]; Dy: number[]; Dr: number }; u2Key?: string;
+  };
 
 /**
  * The PID acting at one operating point, with the local slope of any
@@ -690,7 +881,8 @@ export type LinearController =
  */
 export function linearPidAt(proc: ProcessDef, config: ControllerConfig, model: Params, pv: number, valve: number): LinearPid | null {
   if (config.kind === 'onoff') return null;
-  if (config.kind === 'statefb') return { ...DEFAULT_PID, Kc: 0, Ti: 0, Td: 0, slope: 1 };
+  if (config.kind === 'statefb' || config.kind === 'mpc') return { ...DEFAULT_PID, Kc: 0, Ti: 0, Td: 0, slope: 1 };
+  if (config.kind === 'multiloop') return { ...config.pid, slope: 1 };
   if (config.kind === 'cascade') return { ...config.outer, slope: 1 };
   if (config.kind === 'smith' || config.kind === 'override') return { ...config.pid, slope: 1 };
   if (config.kind === 'ratio') return { ...config.outer, ...(config.trim ? {} : { Kc: 0, Ti: 0, Td: 0 }), slope: ratioAt(proc, config, model, valve).slope };
@@ -716,6 +908,9 @@ export function linearControllerAt(proc: ProcessDef, config: ControllerConfig, m
     const des = designStateFb(proc, config, model);
     return des.ok ? { kind: 'ss', ss: des.ctrl, inputs: des.inputs, ff: [] } : null;
   }
+  if (config.kind === 'multiloop') return multiloopLinear(proc, config, model);
+  // With its limits, MPC isn't a linear controller; it is judged on the tests.
+  if (config.kind === 'mpc') return null;
   if (config.kind === 'cascade') return { kind: 'cascade', outer: { ...config.outer, slope: 1 }, inner: { ...config.inner, slope: 1 }, ff: config.ff };
   if (config.kind === 'smith') return { kind: 'smith', pid: { ...config.pid, slope: 1 }, model: config.model, ff: [] };
   if (config.kind === 'override') return { kind: 'single', pid: { ...config.pid, slope: 1 }, ff: [] };
@@ -790,6 +985,20 @@ export function complexity(proc: ProcessDef, config: ControllerConfig): Complexi
       tuningParams: pidCount(config.inner) + (config.trim ? pidCount(config.outer) + 2 : 1),
       needsModel: 'The ratio the recipe needs (a mass balance), and the range the trim may move it over',
       extraInstruments: 2, commissioning: 3, maintainability: 4,
+    };
+  }
+  if (config.kind === 'multiloop') {
+    return {
+      tuningParams: pidCount(config.pid) + pidCount(config.pid2) + (config.decouple ? 2 : 0),
+      needsModel: config.decouple ? 'The steady-state gain from each valve to each variable (four bump-test numbers)' : null,
+      extraInstruments: 0, commissioning: config.decouple ? 3 : 2, maintainability: config.decouple ? 3 : 4,
+    };
+  }
+  if (config.kind === 'mpc') {
+    return {
+      tuningParams: 6,
+      needsModel: 'A dynamic model of every valve–variable pair (step tests on each valve), kept up to date',
+      extraInstruments: 0, commissioning: 5, maintainability: 2,
     };
   }
   if (config.kind === 'statefb') {
@@ -877,6 +1086,20 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
       trim: typeof r.trim === 'boolean' ? r.trim : base.trim, ratio: num(r.ratio, 0, 1e4, base.ratio), rLo, rHi,
     };
   }
+  if (base.kind === 'multiloop') {
+    return {
+      kind: 'multiloop', pid: cleanPid(r.pid, base.pid), pid2: cleanPid(r.pid2, base.pid2),
+      pairing: r.pairing === 'crossed' ? 'crossed' : r.pairing === 'direct' ? 'direct' : base.pairing,
+      decouple: typeof r.decouple === 'boolean' ? r.decouple : base.decouple,
+    };
+  }
+  if (base.kind === 'mpc') {
+    const P = Math.round(num(r.P, 5, 300, base.P));
+    return {
+      kind: 'mpc', P, M: Math.round(num(r.M, 1, Math.min(20, P), Math.min(base.M, P))),
+      q1: num(r.q1, 0, 1e6, base.q1), q2: num(r.q2, 0, 1e6, base.q2), r: num(r.r, 1e-6, 1e6, base.r), qw: num(r.qw, 1e-4, 1e4, base.qw),
+    };
+  }
   if (base.kind === 'statefb') {
     const measure = r.measure === 'pv' || ((r.measure === 'pv2' || r.measure === 'both') && proc.secondary) ? (r.measure as 'pv' | 'pv2' | 'both') : base.measure;
     return {
@@ -932,6 +1155,14 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
   }
   if (config.kind === 'ratio') {
     return `Ratio ${proc.secondary?.label.toLowerCase() ?? 'flow'} / ${proc.disturbances.find((d) => d.key === proc.ratio?.from)?.label.toLowerCase() ?? 'wild flow'}: ${config.trim ? `trimmed over ${fmt(config.rLo)}–${fmt(config.rHi)} (${pidText(config.outer)})` : `fixed at ${fmt(config.ratio)}`}; flow loop ${pidText(config.inner)}`;
+  }
+  if (config.kind === 'multiloop') {
+    const v = (a: boolean) => (a ? proc.tags.valve : proc.mimo?.valve ?? 'valve 2');
+    const direct = config.pairing === 'direct';
+    return `Two loops: ${proc.pv.label.toLowerCase()} → ${v(direct)} (${pidText(config.pid)}), ${proc.secondary?.label.toLowerCase()} → ${v(!direct)} (${pidText(config.pid2)})${config.decouple ? ', static decoupler' : ''}`;
+  }
+  if (config.kind === 'mpc') {
+    return `MPC: ${config.P} cycles ahead, ${config.M} moves; weights ${proc.pv.label.toLowerCase()} ${fmt(config.q1)}, ${proc.secondary?.label.toLowerCase()} ${fmt(config.q2)}, moves ${fmt(config.r)}; Kalman upsets ${fmt(config.qw)}`;
   }
   if (config.kind === 'statefb') {
     const on = config.measure === 'both' ? `${proc.pv.label.toLowerCase()} and ${proc.secondary?.label.toLowerCase()}` : config.measure === 'pv2' ? `${proc.secondary?.label.toLowerCase()} only` : proc.pv.label.toLowerCase();

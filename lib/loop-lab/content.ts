@@ -654,6 +654,59 @@ an unstable pole at $+\sqrt{2g/x_0}$ and its mirror image. More current closes t
 
 **State feedback** with an observer settles about twice as fast (0.06–0.13 s) and has more margin (Ms 2.4 against 3.1), but overshoots more on gap changes (up to 9 %, and 26 % on the mismatch test). It is not a clear win. What this plant teaches is not "use state feedback" but what instability demands: a minimum speed, derivative action, fast hardware, and a gain that changes across the range.`,
   },
+  mixing: {
+    mechanical: String.raw`A tank blends hot water (70 °C, through **FV-901**) and cold mains water (15 °C, through **FV-902**) and supplies the mix by gravity to users downstream: a hot-water set for washing or CIP, a dilution tank, a feed tank. Both the **temperature** (TT-901) and the **level** (LT-902) have to be held.
+
+**Two balances, two valves:**
+
+$$A\frac{dh}{dt} = F_h + F_c - K_{out}\sqrt{h},\qquad A\,h\,\frac{dT}{dt} = F_h(T_h - T) + F_c(T_c - T)$$
+
+- **Level** follows the *total* inflow: either valve raises it.
+- **Temperature** follows the *mix*: the hot valve raises it, the cold valve lowers it.
+
+So every valve moves both variables. Open the hot valve to warm the tank and the level rises too; open the cold valve to raise the level and the temperature drops.
+
+**The operating point decides how bad that is.** At 35 °C, 36 % of the inflow is hot. A hot-water change mostly moves the temperature, a cold-water change mostly moves the level. At 55 °C it is the other way round.
+
+**What you'd change in the hardware.** Flow meters on both inlets turn the problem into total flow and mix ratio, which barely interact (see the verdict). A thermostatic mixing valve does the same mechanically.`,
+    control: String.raw`**The gain matrix.** At steady state, % of span per % of valve, at 35 °C:
+
+$$\begin{bmatrix}\Delta T\\ \Delta h\end{bmatrix} = \begin{bmatrix}0.35 & -0.30\\ 1.0 & 1.5\end{bmatrix}\begin{bmatrix}\Delta u_{hot}\\ \Delta u_{cold}\end{bmatrix}$$
+
+**The relative gain array** compares each gain with the same gain once the other loop is closed:
+
+$$\lambda_{11} = \frac{1}{1 - \dfrac{g_{12}g_{21}}{g_{11}g_{22}}} = \frac{T_h - T}{T_h - T_c}$$
+
+- **λ₁₁ = 1:** the other loop changes nothing. Pair hot → temperature and tune each loop alone.
+- **0.5 < λ₁₁ < 1:** closing the level loop *reduces* what the temperature loop sees by λ. They interact, and each loop tuned alone will be off.
+- **λ₁₁ < 0.5:** the other pairing has the larger relative gain: cross it.
+- **λ₁₁ < 0** (not here): closing the other loop reverses the sign. That pairing must never be used.
+
+Here λ₁₁ is 0.82 at 25 °C, 0.64 at 35 °C, 0.36 at 50 °C and 0.27 at 55 °C: **the right pairing flips with the recipe**.
+
+**Decoupling.** A static decoupler (or the change of variables to total flow and ratio) cancels the steady interaction, so each loop sees only its own variable. **MPC** needs no pairing at all: it uses the whole matrix, dynamics included, and the valve limits.`,
+    automation: String.raw`**Tags.** TT-901 (0–100 °C), LT-902 (0–2 m), FV-901 (hot), FV-902 (cold), TIC-901, LIC-902.
+
+**Siemens.**
+- **Two loops:** two PID_Compact instances in one OB30, 2 s cycle. The decoupler is two lines of SCL between their outputs and the valves (the exported call). In manual, undo the decoupler for bumpless transfer: the exported code shows how.
+- **Ratio form** (often the best): LIC sets the total flow, TIC the hot fraction; then $F_{h,sp} = x F$, $F_{c,sp} = (1 - x)F$ to two flow loops on FT meters. That decouples exactly, at any temperature.
+- **MPC:** the exported LL_Mpc in SCL (a small one fits a PLC at a 2 s cycle), or, for a bigger plant, an MPC on a PC or edge device writing setpoints to the PID loops.
+
+**Interlocks.** Low level stops the outlet pump (if there is one); high temperature (scalding) closes the hot valve whatever the controller says. These sit outside the control logic.`,
+    commissioning: [
+      'Calibrate TT-901 and LT-902; check both valves stroke and fail safe (hot: closed).',
+      'Bump test each valve on its own, the other in manual: four gains (each valve → each variable) and their dynamics.',
+      'Work out the relative gain at the recipes you run; choose the pairing (or cross it per recipe).',
+      'Commission one loop at a time with the other in manual, then close both and check how they fight.',
+      'If they do, add the static decoupler from the bump-test gains, or move to the total-flow / ratio structure.',
+      'For MPC: step tests on both valves at two operating points, a model per region, and an operator display that shows what it is trying to do.',
+    ],
+    verdict: String.raw`**Decouple it: a static decoupler from the bump-test gains, or better, control total flow and hot fraction.** Two loops tuned one at a time fight: a level change pulls the temperature by 6 °C, a demand change by 4 °C. With the decoupler, 0.1 °C and 0.03 °C.
+
+**MPC** does about as well on interaction and better on the hot-supply upset (0.7 °C instead of 1.6 °C). Where it earns its place is at the limits: when the hot valve runs out, its weights decide what gives, and it recovers without the overshoot that two plain loops show. On one tank that is rarely worth the model upkeep. On a unit with five interacting variables and a few limits that often bind, it is.
+
+**Watch the operating point.** λ₁₁ runs from 0.82 to 0.27 across the recipes: the pairing and the decoupler that suit 35 °C don't suit 55 °C.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -1141,6 +1194,99 @@ The estimation error obeys $\dot e = (A - LC)e$: $L$ is designed like $K$, on th
 - **Motion controllers and drives** (servo, crane, robot) are where state feedback and observers live in industry, mostly hidden behind parameters.
 - **MPC** is the next rung: the same model, but the controller plans ahead and respects limits explicitly instead of saturating.`,
   },
+  multiloop: {
+    summary: 'A PID on each variable, each driving one valve. The relative gain array says which valve should go with which variable; a static decoupler cancels the steady interaction, so each loop sees only its own variable.',
+    theory: String.raw`**Multi-loop (decentralized) control** is the plant default for several variables: one PID per variable, each on one valve. It works when each valve mostly moves its own variable. When it doesn't, closing one loop changes the process the other loop sees.
+
+**The relative gain array (RGA)** measures that, from the steady-state gain matrix $G$ alone:
+
+$$\Lambda = G \circ (G^{-1})^\top,\qquad \lambda_{11} = \frac{1}{1 - \dfrac{g_{12}g_{21}}{g_{11}g_{22}}}\ \ (2\times 2)$$
+
+$\lambda_{ij}$ is the gain from valve $j$ to variable $i$ with the other loops open, divided by the same gain with them closed (perfectly). Rows and columns add up to 1.
+- **Pair on relative gains close to 1.**
+- **Never pair on a negative one:** closing the other loops would reverse the sign, and the loop goes unstable when they close (or open).
+- **Around 0.5,** no pairing is good: the loops will fight whatever you choose.
+
+**Static decoupler.** Put a matrix between the PIDs and the valves so the plant they see is diagonal at steady state. The simplified form keeps each loop on its own valve and adds a little of the other loop's output:
+
+$$u_a = w_1 + c_a w_2,\quad u_b = w_2 + c_b w_1,\qquad c_a = -\frac{g_{1b}}{g_{1a}},\ c_b = -\frac{g_{2a}}{g_{2b}}$$
+
+Each loop then sees its own gain divided by its relative gain (1.6× here, at λ = 0.64), so check its tuning again. A **dynamic** decoupler adds lead-lags for the transients; the static one gets most of the benefit.
+
+**Better than a decoupler: change the variables.** If the physics gives you combinations that don't interact (total flow and ratio, energy and mass), control those. It decouples exactly, at every operating point.`,
+    works: [
+      'Two or three interacting variables with relative gains between about 0.6 and 1.5.',
+      'Blending (level and composition, flow and temperature), evaporators, dryers, boilers (pressure and level).',
+      'When the operators should still be able to put one loop in manual and understand the other.',
+    ],
+    breaks: [
+      'Relative gains near 0.5 or below: the loops fight whatever the tuning.',
+      'A negative relative gain on the chosen pairing: unstable when another loop is in manual (or saturated).',
+      'One valve saturates: its loop is effectively open, the decoupler\'s assumption is wrong, and the other loop sees a different plant.',
+      'The gains move with the operating point: a decoupler designed at one recipe is wrong at another.',
+    ],
+    tuning: String.raw`1. **Bump test each valve** with the other loops in manual: the full gain matrix (and the dynamics).
+2. **RGA** at the operating points you run. Pick the pairing with relative gains closest to 1, positive.
+3. **Tune each loop alone** (SIMC on its own pair), then close both and watch them interact.
+4. If they fight: **detune** the less important loop (make it 3–5× slower), or **add the decoupler** and retune on the decoupled plant.
+5. Check with each loop in manual in turn, and with a valve at its limit.`,
+    implementation: String.raw`- Run both PIDs in the same OB, then the decoupler, then write both valves.
+- **Bumpless:** in manual, undo the decoupler: solve for the PID outputs that give the present valve positions, and track those.
+- **Windup:** when a valve saturates, hold the integral of the loop that drives it (and consider switching the decoupler off).
+- Keep the decoupler gains in a DB next to the operating point they were measured at.`,
+    siemens: String.raw`- Two **PID_Compact** instances, one per variable; the decoupler is your own SCL between them and the valves.
+- PID_Compact's manual mode with ManualValue = the tracked value keeps the transfer bumpless.
+- For a fixed recipe set, store a decoupler per recipe and switch with the recipe.`,
+    broad: String.raw`- **DCS:** standard PID blocks plus calculation blocks for the decoupler; some vendors ship a 2×2 decoupling block.
+- **Ratio and total-flow structures** are the common plant-floor answer for blending: see the ratio rung.
+- **MPC** is the next step when there are more variables, constraints and changing priorities.`,
+  },
+  mpc: {
+    summary: 'A model of the whole plant predicts where every variable is heading; every cycle, the controller plans the next few moves of all the valves to bring every variable to its setpoint at the least weighted cost, within the valves\' limits. It uses the first move and plans again next cycle.',
+    theory: String.raw`**The receding horizon.** With a linear model $x_{k+1} = \Phi x_k + \Gamma u_k$, $y = Cx$ and the present state estimate, predict the outputs $P$ cycles ahead for any sequence of the next $M$ moves. Choose the moves that minimize
+
+$$J = \sum_{i=1}^{P} \lVert y_{k+i} - r\rVert^2_{Q} + \sum_{j=0}^{M-1} \lVert \Delta u_{k+j}\rVert^2_{R}\quad \text{subject to}\quad u_{min} \le u \le u_{max}$$
+
+then apply only the first move, and do it all again next cycle with fresh measurements. That's a small quadratic program each cycle (here $2M$ numbers).
+
+**What the pieces do.**
+- **Prediction horizon $P$:** long enough to see where each move leads.
+- **Control horizon $M$:** how many moves it plans; after that the valves are assumed to stay.
+- **Weights $Q$** (per output): which variable matters more.
+- **Move weight $R$:** how gently the valves may move. It is the main speed knob.
+- **Constraints:** the valve limits are part of the problem. It never plans a move it can't make, and when it can't have everything, the weights decide what gives.
+
+**Offset-free.** A model is never exact. The observer (here a Kalman filter) estimates a constant load at each valve alongside the states, and the plan includes it. That does the integral action's job. (The older "offset on each output" model works too, but is slow on load changes.)
+
+**Without constraints** active, MPC is a linear controller (an LQR with a finite horizon, plus the observer). The constraints are what make it different, and what make it hard to analyse with Bode and margins: judge it on tests, including model mismatch.`,
+    works: [
+      'Several interacting variables, with limits that bind often: distillation, reactors, compressors, utilities, whole units.',
+      'Changing priorities: hold the quality, let the level float within its limits.',
+      'Slow processes with dead time and a good model, where a few % of throughput is worth an engineer\'s time.',
+    ],
+    breaks: [
+      'A poor model, or one that goes out of date when the plant changes: MPC is only as good as its model.',
+      'Fast loops (a flow, a pressure): the PLC cycle and the optimization don\'t keep up. MPC usually sits above PID loops and writes their setpoints.',
+      'No one on site who understands it: it gets switched off and the PIDs underneath take over.',
+      'Feasibility: when the setpoints can\'t all be met, the result depends on the weights. Choose them for that case, not just for the nominal one.',
+    ],
+    tuning: String.raw`1. **Model first:** step tests on every input, every output, at the operating points you run.
+2. **Horizon:** $P$ around the time the slowest response takes to settle (here 100 cycles, 200 s); $M$ of 3–10.
+3. **Weights:** start with equal weights in % of span; raise the one that matters more. **Test the case where not everything can be met**: that is where the weights really decide.
+4. **Move weight $R$:** raise it until the valves stop chasing noise, lower it until the response is fast enough.
+5. **Observer:** how quickly it attributes errors to loads (here the "upsets" setting). Too fast passes noise, too slow leaves offsets that last.`,
+    implementation: String.raw`- **Every cycle:** read the measurements, update the observer with the outputs actually applied, compute the QP's linear term, solve, write the first move.
+- **The solver** here is projected Gauss–Seidel (each planned move in turn, clipped to its limits): a few hundred multiply-adds per sweep, simple enough for SCL. Industrial MPCs use active-set or interior-point solvers.
+- **Warm start** from last cycle's plan, shifted by one.
+- **Manual and bumpless:** track the valves and estimate the loads that explain the readings, so auto starts from where the plant is.
+- **Watchdog:** if the solver doesn't finish or the model is flagged bad, fall back to the PID loops.`,
+    siemens: String.raw`- **S7-1200/1500 (TIA Portal):** no standard MPC block. The exported **LL_Mpc** is the whole controller in SCL with its matrices as LReal arrays, fine for a small problem at a cycle of seconds.
+- **SIMATIC PCS 7** has a small MPC in its Advanced Process Library (**ModPreCon**), and larger ones as an APC option.
+- Larger MPCs usually run on a PC or an edge device, reading the measurements and writing setpoints to PID loops in the PLC over OPC UA.`,
+    broad: String.raw`- **Industrial MPC** packages (in every major DCS vendor's portfolio) handle dozens of variables, economic optimization layered on top, and model identification tools.
+- **Embedded and fast MPC** (explicit MPC, code-generated solvers) runs in drives and automotive controllers at kHz rates.
+- MPC is where control meets optimization: the same machinery schedules energy and production.`,
+  },
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -1172,6 +1318,10 @@ export type CaseStudy = {
 };
 
 const PI = (Kc: number, Ti: number, extra: Partial<typeof DEFAULT_PID> = {}): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, Kc, Ti, ...extra } });
+/** The mixing tank's two loops (SIMC each, direct pairing), with changes. */
+const ML = (extra: Partial<Extract<ControllerConfig, { kind: 'multiloop' }>> = {}): ControllerConfig => ({ ...(defaultController('multiloop', getProcess('mixing')) as Extract<ControllerConfig, { kind: 'multiloop' }>), ...extra });
+/** The mixing tank's MPC, with changes. */
+const MPC = (extra: Partial<Extract<ControllerConfig, { kind: 'mpc' }>> = {}): ControllerConfig => ({ ...(defaultController('mpc', getProcess('mixing')) as Extract<ControllerConfig, { kind: 'mpc' }>), ...extra });
 /** The process's checked state-feedback design, with changes. */
 const SF = (id: ProcessId, extra: Partial<Extract<ControllerConfig, { kind: 'statefb' }>> = {}): ControllerConfig => ({ ...(defaultController('statefb', getProcess(id)) as Extract<ControllerConfig, { kind: 'statefb' }>), ...extra });
 
@@ -2013,6 +2163,72 @@ What the unstable plant teaches:
 - So the hardware sets the limits: the controller cycle, the amplifier, the sensor. Real magnetic bearings run at 10–20 kHz.
 - **No tuning rule applies**: design from the model, by pole placement or on the Bode plot.
 - **The gain moves with the setpoint** (the pole runs from 50 rad/s at 8 mm to 30 at 22 mm), and saturating the amplifier at the wrong moment drops the load. Range, limits and trips matter as much as the tuning.`,
+      },
+    ],
+  },
+  {
+    id: 'mixing-mimo',
+    process: 'mixing',
+    title: 'The mixing tank: two loops that fight',
+    question: 'Hot and cold water set both the level and the temperature. Which valve should control what, and is it worth decoupling them, or handing both to an MPC?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A tank blends hot water (70 °C) and cold water (15 °C) and supplies the mix by gravity. Both its temperature and its level are controlled, at 35 °C and 1 m. The **mechanical view** shows the catch: either valve raises the level, and each pulls the temperature its own way.`,
+      },
+      {
+        title: 'One loop: temperature on the hot valve',
+        body: String.raw`A PI on the temperature, the cold valve left where it is. The temperature is fine, but the level goes wherever the flows take it: it moves by up to 64 cm when the temperature setpoint changes, and by up to 72 cm as the demand changes. A second loop is needed.`,
+        presets: [{ label: 'PI on the temperature', controller: PI(3.26, 360) }],
+        scenarios: ['temp-steps', 'demand'],
+      },
+      {
+        title: 'Two loops, each tuned alone',
+        body: String.raw`Add a PI on the level, on the cold valve, each loop tuned by SIMC on its own pair with the other open. Now watch the temperature when only the level setpoint moves: it swings by 6 °C, because the level loop's cold water hits the temperature, and the temperature loop's hot water then disturbs the level again. A 30 % demand change costs 3.8 °C.`,
+        presets: [{ label: 'PI on the temperature', controller: PI(3.26, 360) }, { label: 'Two loops', controller: ML() }],
+        scenarios: ['level-steps', 'demand'],
+      },
+      {
+        title: 'Which valve for which variable? The relative gain',
+        body: String.raw`The steady-state gains give the relative gain for "hot → temperature": $\lambda_{11} = (T_h - T)/(T_h - T_c)$, the cold share of the inflow. It is 0.64 at 35 °C: the right pairing, but with real interaction. At 55 °C it is 0.27, and the pairing should cross: the hot valve should hold the level and the cold valve the temperature.
+
+The hot-recipe test runs at 55 °C. Paired the 35 °C way, a level change pulls the temperature by 7.3 °C; crossed, by 2.6 °C. The best pairing depends on the recipe.`,
+        presets: [{ label: 'Two loops, direct', controller: ML() }, { label: 'Two loops, crossed', controller: ML({ pairing: 'crossed', pid: { ...DEFAULT_PID, Kc: 3.8, Ti: 360, invert: true }, pid2: { ...DEFAULT_PID, Kc: 18.1, Ti: 64 } }) }],
+        scenarios: ['hot-recipe'],
+      },
+      {
+        title: 'A static decoupler',
+        body: String.raw`Between the PIDs and the valves, add $u_{hot} = w_1 + c_a w_2$ and $u_{cold} = w_2 + c_b w_1$ with $c_a = -g_{12}/g_{11}$, $c_b = -g_{21}/g_{22}$ from the bump-test gains. When the level loop opens the cold valve, the hot valve opens in proportion, so the temperature doesn't notice; and the other way round.
+
+A level change now moves the temperature by 0.1 °C instead of 6, and the demand change by 0.03 °C instead of 3.8. Two numbers did that. The same thing done physically is to control total flow and hot fraction; that version is exact at any temperature.`,
+        presets: [{ label: 'Two loops', controller: ML() }, { label: 'Two loops + decoupler', controller: ML({ decouple: true }) }],
+        scenarios: ['level-steps', 'demand'],
+      },
+      {
+        title: 'MPC',
+        body: String.raw`An MPC with the linearized model at 35 °C, planning 5 moves of both valves over 200 s, equal weights, and a Kalman filter estimating a load at each valve. On interaction it is about as good as the decoupler (0.4 °C on the level change, 0.15 °C on demand). It is faster on temperature steps (IAE 17 against 67) and better when the hot water cools (0.7 °C against 1.6 °C), because it sees the load directly rather than waiting for the error.`,
+        presets: [{ label: 'Two loops + decoupler', controller: ML({ decouple: true }) }, { label: 'MPC', controller: MPC() }],
+        scenarios: ['temp-steps', 'hot-supply', 'level-steps'],
+      },
+      {
+        title: 'When not everything can be met',
+        body: String.raw`At 50 °C, demand goes to 120 %. Holding 1 m at 50 °C would need more hot water than FV-901 can pass, so something has to give.
+- **Two plain loops** let the temperature sag to 47 °C. When demand falls again, the temperature overshoots to 55 °C as the hot loop unwinds.
+- **The decoupler** and **MPC with equal weights** also settle at about 47 °C and 1 m, but recover cleanly.
+- **MPC with the temperature weighted 10×** holds 48.4 °C and lets the level float down to 0.92 m instead.
+
+Only MPC lets you say which variable gives. A PID structure would need an override for that.`,
+        presets: [{ label: 'Two loops', controller: ML() }, { label: 'MPC, equal weights', controller: MPC() }, { label: 'MPC, temperature first', controller: MPC({ q1: 10 }) }],
+        scenarios: ['peak'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**For one tank: decouple.** Check the relative gain, pair accordingly, and add a static decoupler, or better, restructure to total flow and hot fraction. Two numbers remove almost all the interaction.
+
+**MPC** matches it on interaction and wins on load upsets and at the limits, where its weights decide what gives. On a single tank that rarely pays for a model someone has to keep right. On a unit with many interacting variables and constraints that bind every day, it does, which is why refineries and chemical plants run it.
+
+**Either way, the operating point matters:** the relative gain runs from 0.82 at 25 °C to 0.27 at 55 °C, so a decoupler or a model taken at one recipe is off at another.`,
       },
     ],
   },

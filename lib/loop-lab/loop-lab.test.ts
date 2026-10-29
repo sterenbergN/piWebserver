@@ -5,7 +5,7 @@ import { defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCh
 import { getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
 import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
-import { DEFAULT_PID, cleanController, createController, defaultController, scheduledGains, type ControllerConfig } from './controllers';
+import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
 import { Loop, runAll, runScenario } from './sim';
 import { fitModel, parseTable } from './ident';
 import { feedforwardDesign, tuningModel } from './tuning';
@@ -16,6 +16,7 @@ import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
 const pid = (o: Partial<typeof DEFAULT_PID>): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, ...o } });
+const isAvailableKind = (proc: ReturnType<typeof getProcess>, kind: string) => isAvailable(proc, kind as ControllerConfig['kind']);
 
 test('eig: real, complex and stiff matrices', () => {
   const r = eig([[0, 1, 0], [0, 0, 1], [-6, -11, -6]]).map((p) => p.re);
@@ -698,4 +699,107 @@ test('state feedback exports: one SCL block with LReal matrices, call site, refe
   assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
   // A sway camera isn't something an inner loop could control.
   assert.equal(cleanController({ kind: 'cascade' }, proc).kind, 'pid');
+});
+
+// ─── Phase 4b: two inputs, two outputs: RGA, decoupling, MPC ────────────────
+
+test('mixing tank: the relative gain is the cold share of the inflow, and the pairing flips with temperature', async () => {
+  const { mimoModel, rga11, steadyGains } = await import('./multivar');
+  const proc = getProcess('mixing');
+  const p = defaultParams(proc);
+  for (const T of [25, 35, 55]) {
+    const { m, B2 } = mimoModel(proc, p, T);
+    const G = steadyGains(m, B2);
+    close(rga11(G), (70 - T) / (70 - 15), 1e-3, `at ${T} °C`);
+    assert.ok(G[0][0] > 0 && G[0][1] < 0 && G[1][0] > 0 && G[1][1] > 0);
+  }
+  // Only the 2×2 controllers (and a single loop) are offered on it, and not elsewhere.
+  assert.deepEqual(['pid', 'multiloop', 'mpc', 'cascade', 'statefb'].map((k) => isAvailableKind(proc, k)), [true, true, true, false, false]);
+  assert.equal(isAvailableKind(getProcess('hx'), 'mpc'), false);
+});
+
+test('2×2 simulation: both setpoints, the second valve, and scoring both variables', () => {
+  const proc = getProcess('mixing');
+  const params = defaultParams(proc);
+  const ml = defaultController('multiloop', proc);
+  const r = runAll(proc, { params, controller: ml }, ['level-steps'])[0];
+  close(r.trace.pv2True[0], 1, 1e-6);
+  close(r.trace.pvTrue[0], 35, 1e-6);
+  const end = r.trace.t.length - 1;
+  close(r.trace.pv2True[end], 0.8, 0.01);
+  assert.ok(Array.from(r.trace.valve2).every((v) => v >= 0 && v <= 100));
+  const sc = scorecard(proc, params, ml, [r], false);
+  assert.ok(sc.tests[0].steps.every((s) => s.unit === 'm'), 'the steps are the level\'s');
+  assert.ok(sc.tests[0].upsets.some((u) => /effect on temperature/.test(u.label)), 'a level step is an upset on the temperature');
+  // A single PID leaves the second valve where it was.
+  const one = runAll(proc, { params, controller: defaultController('pid', proc) }, ['demand'])[0];
+  assert.ok(Array.from(one.trace.cv2).every((v) => Math.abs(v - one.trace.cv2[0]) < 1e-9));
+});
+
+test('decoupling: two numbers take out most of the interaction; the linear loop with both closed is stable', () => {
+  const proc = getProcess('mixing');
+  const params = defaultParams(proc);
+  const ml = defaultController('multiloop', proc) as Extract<ControllerConfig, { kind: 'multiloop' }>;
+  const tempDev = (c: ControllerConfig, id: string) => {
+    const t = runAll(proc, { params, controller: c }, [id])[0].trace;
+    return Math.max(...Array.from(t.pvTrue).map((v, i) => Math.abs(v - t.sp[i])));
+  };
+  assert.ok(tempDev(ml, 'level-steps') > 4);
+  assert.ok(tempDev({ ...ml, decouple: true }, 'level-steps') < 0.3);
+  assert.ok(tempDev({ ...ml, decouple: true }, 'demand') < 0.1);
+  for (const c of [ml, { ...ml, decouple: true }]) {
+    const a = analyzeLoop(proc, params, c, 35)!;
+    assert.ok(a.ctrl.kind === 'ss' && a.ctrl.out2);
+    assert.ok(isStable(closedLoop(a.plant, a.ctrl, a.delay).poles));
+    assert.ok(Number.isFinite(a.margins.ms) && a.margins.ms < 2);
+  }
+  // At 55 °C the crossed pairing is the better one.
+  const crossed: ControllerConfig = { ...ml, pairing: 'crossed', pid: { ...DEFAULT_PID, Kc: 3.8, Ti: 360, invert: true }, pid2: { ...DEFAULT_PID, Kc: 18.1, Ti: 64 } };
+  assert.ok(tempDev(crossed, 'hot-recipe') < 0.5 * tempDev(ml, 'hot-recipe'));
+});
+
+test('MPC: the box QP, bumpless start, and the weights deciding what gives at the limit', async () => {
+  const { boxQp, designMpc } = await import('./multivar');
+  // Inside the box: the unconstrained minimum of zᵀHz + 2fᵀz, z = −H⁻¹f. Outside: clipped and still optimal.
+  const H = [[2, 0.5], [0.5, 1]], f = [-1, -1];
+  const z = boxQp(H, f, [-10, -10], [10, 10], [0, 0]);
+  close(2 * z[0] + 0.5 * z[1], 1, 1e-6); close(0.5 * z[0] + z[1], 1, 1e-6);
+  const zc = boxQp(H, f, [-10, -10], [10, 0.2], [0, 0]);
+  close(zc[1], 0.2, 1e-9); close(zc[0], (1 - 0.5 * 0.2) / 2, 1e-6);
+  const proc = getProcess('mixing');
+  const params = defaultParams(proc);
+  const mpc = defaultController('mpc', proc) as Extract<ControllerConfig, { kind: 'mpc' }>;
+  assert.ok(designMpc(proc, mpc, params).ok);
+  // Starting away from the design point (50 °C) without a bump.
+  const peak = (c: ControllerConfig) => runAll(proc, { params, controller: c }, ['peak'])[0].trace;
+  const t = peak(mpc);
+  // (Its linear model is from 35 °C, so its first plan moves a little: under 1.5 %.)
+  close(t.cv[0], t.valve[0], 1.5);
+  assert.ok(Array.from(t.valve).every((v) => v >= 0 && v <= 100));
+  // The hot valve runs out: equal weights split the loss, temperature first holds more of the temperature.
+  const at = (tr: ReturnType<typeof peak>, s: number) => [tr.pvTrue[Math.round(s / 2)], tr.pv2True[Math.round(s / 2)]];
+  const [Te, he] = at(t, 850), [Tt, ht] = at(peak({ ...mpc, q1: 10 }), 850);
+  assert.ok(Tt > Te + 0.8 && ht < he - 0.04);
+  // And it recovers without the overshoot two plain loops give.
+  const two = peak(defaultController('multiloop', proc));
+  const maxAfter = (tr: ReturnType<typeof peak>) => Math.max(...Array.from(tr.pvTrue).filter((_, i) => tr.t[i] > 900));
+  assert.ok(maxAfter(two) > 53 && maxAfter(t) < 51);
+});
+
+test('2×2 exports: two loops with the decoupler, one MPC block; links round-trip', () => {
+  const proc = getProcess('mixing');
+  const params = defaultParams(proc);
+  const ml = { ...(defaultController('multiloop', proc) as Extract<ControllerConfig, { kind: 'multiloop' }>), decouple: true };
+  const scl = exportCode(proc, ml, params, 'scl');
+  assert.match(scl, /"LIC_902_DB"\(Setpoint := "SP2", Input := "LT-902"/);
+  assert.match(scl, /"UA" := [\d.]+ \+ "W1" \+ -?[\d.E-]+ \* "W2";/);
+  assert.match(scl, /"FV-902" := LIMIT\(MN := 0\.0, IN := "UB", MX := 100\.0\);/);
+  const mpc = defaultController('mpc', proc);
+  const m = exportCode(proc, mpc, params, 'scl');
+  assert.match(m, /FUNCTION_BLOCK "LL_Mpc"/);
+  assert.match(m, /H : Array\[0\.\.9, 0\.\.9\] of LReal := \[/);
+  assert.match(m, /"FV-902" := "TIC_901_DB"\.Output2;/);
+  assert.match(exportReference(mpc, params.Ts, proc, params), /function step\(r: \[number, number\], y: \[number, number\]\)/);
+  assert.equal(pidCompactParams(proc, mpc, params)![0].value, 'not applicable');
+  for (const c of [ml, mpc]) assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
 });

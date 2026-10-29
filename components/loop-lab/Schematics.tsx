@@ -396,6 +396,96 @@ function MotionPAndId({ proc, config }: { proc: ProcessDef; config: ControllerCo
   );
 }
 
+export function MixingSchematic({ p, d, valve, h, T, v2 }: { p: Params; d: Params; valve: number; h: number; T: number; v2: number }) {
+  const Fh = p.Fhmax * (valve / 100), Fc = p.Fcmax * (v2 / 100), Fout = p.Kout * (d.dOut / 100) * Math.sqrt(Math.max(h, 0));
+  const top = 60, bottom = 240, x0 = 200, x1 = 380;
+  const yl = bottom - (Math.min(Math.max(h, 0), 2) / 2) * (bottom - top);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 580 300" role="img" aria-label={`Mixing tank: ${T.toFixed(1)} °C, level ${h.toFixed(2)} m`}>
+      <rect x={x0} y={yl} width={x1 - x0} height={bottom - yl} fill={heat(T)} />
+      <path className="ll-steel" strokeWidth={3} d={`M${x0} ${top}V${bottom}H${x1}V${top}`} />
+      <text x={(x0 + x1) / 2} y={Math.min(bottom - 22, yl + 20)} textAnchor="middle" fontWeight={700}>{T.toFixed(1)} °C</text>
+      <text x={(x0 + x1) / 2} y={Math.min(bottom - 6, yl + 36)} textAnchor="middle">{h.toFixed(2)} m</text>
+      {/* Hot and cold in */}
+      <path className="ll-pipe" d={`M20 30H${x0 + 40}V${top + 4}`} />
+      {Fh > 0.1 && <path className="ll-flowline" style={flowAnim(Fh / 10)} d={`M24 30H${x0 + 40}V${top}`} />}
+      <ControlValve x={100} y={30} open={valve} tag="" label={false} />
+      <text x={20} y={16}>Hot {f1(d.Th)} °C · FV-901 {f1(valve)} % · {f1(Fh)} m³/h</text>
+      <path className="ll-pipe" d={`M20 100H${x0}`} />
+      {Fc > 0.1 && <path className="ll-flowline" style={flowAnim(Fc / 10)} d={`M24 100H${x0 - 4}`} />}
+      <ControlValve x={100} y={100} open={v2} tag="" label={false} />
+      <text x={20} y={134}>Cold {f1(d.Tc)} °C · FV-902 {f1(v2)} % · {f1(Fc)} m³/h</text>
+      {/* Out by gravity */}
+      <path className="ll-pipe" d={`M${x1 - 30} ${bottom}V${bottom + 30}H560`} />
+      {Fout > 0.1 && <path className="ll-flowline" style={flowAnim(Fout / 10)} d={`M${x1 - 30} ${bottom + 4}V${bottom + 30}H556`} />}
+      <text x={420} y={bottom + 22}>{f1(Fout)} m³/h out · demand {f1(d.dOut)} %</text>
+      {/* Transmitters */}
+      <line className="ll-signal" x1={x1} y1={200} x2={x1 + 50} y2={200} />
+      <circle className="ll-bubble" cx={x1 + 68} cy={200} r={18} />
+      <text x={x1 + 68} y={196} textAnchor="middle">TT</text>
+      <text x={x1 + 68} y={209} textAnchor="middle">901</text>
+      <line className="ll-signal" x1={x1} y1={110} x2={x1 + 50} y2={110} />
+      <circle className="ll-bubble" cx={x1 + 68} cy={110} r={18} />
+      <text x={x1 + 68} y={106} textAnchor="middle">LT</text>
+      <text x={x1 + 68} y={119} textAnchor="middle">902</text>
+    </svg>
+  );
+}
+
+/** P&ID of the mixing tank: two loops (with their pairing and any decoupler) or one MPC. */
+function MixingPAndId({ config }: { config: ControllerConfig }) {
+  const mpc = config.kind === 'mpc';
+  const two = config.kind === 'multiloop';
+  const crossed = two && config.pairing === 'crossed';
+  const dec = two && config.decouple;
+  return (
+    <svg className="ll-drawing" viewBox="0 0 580 300" role="img" aria-label={`P&ID of the mixing tank${mpc ? ' with MPC' : two ? `, two loops${crossed ? ' crossed' : ''}${dec ? ' with a decoupler' : ''}` : ''}`}>
+      <path className="ll-steel" strokeWidth={2.5} d="M220 90V250H380V90Z" />
+      <text className="is-muted" x={300} y={180} textAnchor="middle">T-901</text>
+      <path className="ll-pipe" strokeWidth={3} d="M20 110H220M20 200H220M350 250V275H560" />
+      <ControlValve x={110} y={110} open={50} tag="" label={false} />
+      <ControlValve x={110} y={200} open={50} tag="" label={false} />
+      <text x={20} y={100}>hot · FV-901</text>
+      <text x={20} y={230}>cold · FV-902</text>
+      <line className="ll-signal" x1={380} y1={210} x2={430} y2={210} />
+      <Bubble x={450} y={210} letters="TT" num="901" />
+      <line className="ll-signal" x1={380} y1={130} x2={430} y2={130} />
+      <Bubble x={450} y={130} letters="LT" num="902" />
+      {mpc ? (
+        <>
+          <path className="ll-signal" d="M470 210H520V40H360M470 130H500V40" />
+          <Bubble x={340} y={40} letters="UY" num="901" shared />
+          <text className="is-muted" x={300} y={18}>MPC: both valves</text>
+          <path className="ll-signal" d="M320 40H110V68M320 46H160V160H110V178" />
+        </>
+      ) : two ? (
+        <>
+          <path className="ll-signal" d="M470 210H530V30H390" />
+          <Bubble x={370} y={30} letters="TIC" num="901" shared />
+          <path className="ll-signal" d="M470 130H500V70H390" />
+          <Bubble x={370} y={70} letters="LIC" num="902" shared />
+          {dec ? (
+            <>
+              <path className="ll-signal" d="M350 30H200M350 70H200" />
+              <Bubble x={180} y={50} letters="UY" num="901" shared />
+              <text className="is-muted" x={150} y={22}>decoupler</text>
+              <path className="ll-signal" d="M160 50H110V68M180 70V160H110V178" />
+            </>
+          ) : crossed ? <path className="ll-signal" d="M350 30H140V160H110V178M350 70H110V68" /> : <path className="ll-signal" d="M350 30H110V68M350 70H170V160H110V178" />}
+        </>
+      ) : (
+        <>
+          <path className="ll-signal" d="M470 210H530V30H390" />
+          <Bubble x={370} y={30} letters="TIC" num="901" shared />
+          <path className="ll-signal" d="M350 30H110V68" />
+          <text className="is-muted" x={150} y={240}>FV-902 by hand</text>
+        </>
+      )}
+      <text className="is-muted" x={20} y={292}>{LEGEND}</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -435,6 +525,7 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   if (proc.id === 'crane') return <CraneSchematic p={p} d={d} xt={x[1]} v={x[2]} th={x[3]} valve={valve} />;
   if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x[1]} wl={x[2]} phi={x[3]} valve={valve} />;
   if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x[1]} valve={valve} />;
+  if (proc.id === 'mixing') return <MixingSchematic p={p} d={d} valve={valve} h={x[1]} T={x[2]} v2={x[3]} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
 
@@ -444,6 +535,7 @@ const LEGEND = 'Dashed: electrical signal · circle in a square: a function in t
 export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: ControllerConfig }) {
   if (proc.id === 'flow' || proc.id === 'tank') return <PAndId proc={proc} />;
   if (proc.id === 'crane' || proc.id === 'servo' || proc.id === 'maglev') return <MotionPAndId proc={proc} config={config} />;
+  if (proc.id === 'mixing') return <MixingPAndId config={config} />;
   if (proc.id === 'stirred') {
     return (
       <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label="P&ID of the vessel temperature loop">

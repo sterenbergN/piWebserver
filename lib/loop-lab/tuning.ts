@@ -2,6 +2,7 @@ import { linearPidAt, type ControllerConfig, type PidParams } from './controller
 import { fitModel } from './ident';
 import { analyzeLoop, approximate, closedLoop, isStable, linearizePlant, robustness, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
+import { mimoModel, rga11, steadyGains } from './multivar';
 
 export type TuningLoop = 'main' | 'inner' | 'outer';
 
@@ -374,7 +375,7 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
       note: `Averaging level (Lambda for integrating): the level may swing about ${swing} % of span when the inflow changes by ${upset} % of the outlet's capacity, so the arrest time is λ = e·${swing}/(k′·${upset}) = ${round3(lambda / 60)} min with k′ ${round3(Math.abs(m.kPrime))} %/s per %. Tight level control would pass every upstream swing straight to the outflow.${m.negative ? ' More outflow lowers the level, so the action is inverted.' : ''}`,
     };
   }
-  if (config.kind === 'statefb') return null;
+  if (config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc') return null;
   const type = typeOf(config.pid);
   const r = at(config, 'main', type);
   if (!r) return null;
@@ -392,7 +393,8 @@ function scaleGains(config: ControllerConfig, k: number): ControllerConfig {
   if (config.kind === 'cascade' || config.kind === 'ratio') return { ...config, outer: s(config.outer) };
   if (config.kind === 'schedule') return { ...config, pid: s(config.pid), points: config.points.map(s) };
   if (config.kind === 'override') return { ...config, pid: s(config.pid) };
-  if (config.kind === 'onoff' || config.kind === 'statefb') return config;
+  if (config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'mpc') return config;
+  if (config.kind === 'multiloop') return { ...config, pid: s(config.pid), pid2: s(config.pid2) };
   return { ...config, pid: s(config.pid) };
 }
 
@@ -411,6 +413,8 @@ function nominalCheck(proc: ProcessDef, params: Params, config: ControllerConfig
  */
 export function autoTune(proc: ProcessDef, params: Params, config: ControllerConfig): { config: ControllerConfig; note: string } | null {
   if (config.kind === 'statefb') return tuneStateFb(proc, params, config);
+  if (config.kind === 'multiloop') return tuneMultiloop(proc, params, config);
+  if (config.kind === 'mpc') return tuneMpc(proc, params, config);
   const m = linearizePlant(proc, cleanParams(proc, params), proc.nominalPv);
   const scale = Math.max(1, ...m.poles.map((p) => Math.hypot(p.re, p.im)));
   if (config.kind !== 'onoff' && m.poles.some((p) => p.re > 1e-9 * scale)) {
@@ -467,4 +471,45 @@ function tuneStateFb(proc: ProcessDef, params: Params, config: Extract<Controlle
   if (!best) return { config, note: 'No design in the range tried keeps Ms ≤ 1.6 at the design point: try another observer, measurement or offset-free option.' };
   const what = config.design === 'poles' ? `dominant poles at ω_n ${round3(best.v)} rad/s` : `output weight q_y ${(best.c as { qy: number }).qy}`;
   return { config: best.c, note: `The fastest design that keeps the loop's peak sensitivity at or below 1.6 at ${round3(proc.nominalPv)} ${proc.pv.unit}: ${what} (Ms ${round3(best.ms)}). Check it on the mismatch test: the controller's model is only right at its design point.` };
+}
+
+/**
+ * Two loops: each PID by SIMC on its own pair (its valve → its variable, the other loop open), the usual
+ * way, with the relative gain for the chosen pairing in the note: near 1 the loops hardly notice each
+ * other; towards 0.5 closing one changes the other's gain a lot; below 0.5 the pairing is the wrong way round.
+ */
+function tuneMultiloop(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'multiloop' }>) {
+  const p = cleanParams(proc, params);
+  const { m, B2 } = mimoModel(proc, p);
+  const lam = rga11(steadyGains(m, B2));
+  const direct = config.pairing === 'direct';
+  const pair = (col: number[], row: number[], theta: number, pid: PidParams) => {
+    const f = approximate(pathModel({ ...m, B: col }, row, theta), p.Ts / 2);
+    const tm: TuningModel = { ...f, K: Math.abs(f.K), kPrime: Math.abs(f.kPrime), slope: 1, reachable: true, valve: m.valve, negative: f.K < 0 };
+    const t = getRule('simc').tune(tm, pid.Td > 0 ? 'PID' : 'PI', autoSpeed(tm, p.txNoise));
+    return t ? { ...pid, ...tidy(t), invert: tm.negative } : null;
+  };
+  const pid = pair(direct ? m.B : B2, m.C, m.theta, config.pid), pid2 = pair(direct ? B2 : m.B, m.C2!, 0, config.pid2);
+  if (!pid || !pid2) return null;
+  const rel = direct ? lam : 1 - lam;
+  const verdict = rel > 0.8 ? 'the loops barely notice each other' : rel >= 0.5 ? 'closing one loop changes what the other sees noticeably: expect them to fight a little' : 'this pairing is the wrong way round: the other one is better';
+  return {
+    config: { ...config, pid, pid2 },
+    note: `SIMC on each pair with the other loop open: ${proc.pv.label.toLowerCase()} Kc ${pid.Kc}, Ti ${pid.Ti} s; ${proc.secondary!.label.toLowerCase()} Kc ${pid2.Kc}, Ti ${pid2.Ti} s. Relative gain for this pairing λ = ${round3(rel)} at ${round3(proc.nominalPv)} ${proc.pv.unit}: ${verdict}.`,
+  };
+}
+
+/** MPC has no tuning rule: a horizon long enough to see the slowest response settle, a few moves, and equal weights to start from. */
+function tuneMpc(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'mpc' }>) {
+  const p = cleanParams(proc, params);
+  const { m, B2 } = mimoModel(proc, p);
+  const slowest = Math.max(...[m.B, B2].flatMap((col) => [m.C, m.C2!].map((row) => {
+    const f = approximate(pathModel({ ...m, B: col }, row, 0), 0);
+    return f.integrating ? 0 : f.tau + f.theta;
+  })), 10 * p.Ts);
+  const P = Math.min(300, Math.max(10, Math.round(slowest / 2 / p.Ts)));
+  return {
+    config: { ...config, P, M: Math.min(config.M, P) },
+    note: `MPC has no tuning rule. The horizon is set to about half the slowest valve-to-variable response (${round3(slowest)} s with its dead time), ${P} cycles of ${p.Ts} s: long enough to see where each move leads, short enough to keep the plan small. Then: weights q₁, q₂ say which variable matters more, the move weight r how gently the valves may move, and the Kalman filter's upsets how much it trusts the measurements.`,
+  };
 }

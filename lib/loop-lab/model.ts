@@ -32,6 +32,8 @@ export type DisturbanceSpec = {
   note?: string;
   /** Transmitter tag when the disturbance is measured (so feedforward can use it). */
   measured?: string;
+  /** Not a disturbance at all: the second valve's command on a 2×2 process (set by the controller, not the test). */
+  manipulated?: boolean;
 };
 
 export type StateSpec = { key: string; label: string; unit: string };
@@ -63,6 +65,8 @@ export type SecondarySpec = PvSpec & {
 
 export type ScenarioEvent =
   | { t: number; kind: 'sp'; value: number }
+  /** The second controlled variable's setpoint (2×2 processes). */
+  | { t: number; kind: 'sp2'; value: number }
   | { t: number; kind: 'dist'; key: string; value: number }
   /** A change to a parameter: a set value, or a factor on its current value. */
   | { t: number; kind: 'param'; key: string; value?: number; factor?: number }
@@ -76,6 +80,8 @@ export type Scenario = {
   purpose: string;
   duration: number;
   initialSp: number;
+  /** 2×2 processes: the second setpoint the test starts at (else the process's nominal one). */
+  initialSp2?: number;
   /** Disturbances the test starts at (steady), instead of the nominal ones. */
   initialDist?: Params;
   events: ScenarioEvent[];
@@ -97,7 +103,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'mixing' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -144,6 +150,24 @@ export type ProcessDef = {
   ratio?: { from: string; lo: number; hi: number; nominal: number };
   /** Split-range: one controller output drives two valves (the split point and gap are valve parameters). */
   split?: { low: string; high: string };
+  /**
+   * A 2×2 process: a second valve and a second controlled variable (the
+   * secondary measurement). The second valve's command is the disturbance
+   * `input` (marked manipulated); the process models its actuator.
+   */
+  mimo?: {
+    input: string;
+    valve: string;
+    valveLabel: string;
+    /** Loop tag for the second controlled variable. */
+    loop2: string;
+    /** Nominal setpoint for the second controlled variable (its units). */
+    nominal2: number;
+    /** The second valve's stem position, %, from the process states. */
+    stem: (x: number[]) => number;
+    /** Steady state holding both: the two valve positions (%) and the process states. */
+    steady: (pv: number, pv2: number, d: Params, p: Params) => { valve: number; u2: number; x: number[] } | null;
+  };
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;
@@ -239,3 +263,6 @@ export const fromPct2 = (s: SecondarySpec, pct: number) => s.lo + (pct / 100) * 
 
 /** Disturbances a feedforward can use. */
 export const measuredDisturbances = (proc: ProcessDef) => proc.disturbances.filter((d) => d.measured);
+
+/** The real disturbances (not a 2×2 process's second valve). */
+export const upsets = (proc: ProcessDef) => proc.disturbances.filter((d) => !d.manipulated);

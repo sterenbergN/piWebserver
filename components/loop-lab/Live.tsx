@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Params, ProcessDef } from '@/lib/loop-lab/model';
+import { upsets, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { Loop, type Sample } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt } from './Chart';
@@ -22,20 +22,22 @@ function pace(proc: ProcessDef, p: Params) {
   return { window, speed };
 }
 
-type Buffer = { t: number[]; sp: number[]; pv: number[]; pvTrue: number[]; cv: number[]; valve: number[] };
-const emptyBuffer = (): Buffer => ({ t: [], sp: [], pv: [], pvTrue: [], cv: [], valve: [] });
+type Buffer = { t: number[]; sp: number[]; pv: number[]; pvTrue: number[]; cv: number[]; valve: number[]; sp2: number[]; pv2: number[]; valve2: number[] };
+const emptyBuffer = (): Buffer => ({ t: [], sp: [], pv: [], pvTrue: [], cv: [], valve: [], sp2: [], pv2: [], valve2: [] });
 
 /** What the panel shows: a copy of the running loop's state, taken a few times a second. */
 type View = {
   t: number; sp: number; auto: boolean; manualOut: number; lastCv: number;
+  /** 2×2 processes: the second setpoint and the second valve's manual value. */
+  sp2: number; manualOut2: number;
   x: number[]; p: Params; d: Params; sample: Sample | null; trend: Buffer;
 };
 
 function snapshot(loop: Loop, sample: Sample | null, buf: Buffer): View {
   return {
-    t: loop.t, sp: loop.sp, auto: loop.auto, manualOut: loop.manualOut, lastCv: loop.lastCv,
+    t: loop.t, sp: loop.sp, auto: loop.auto, manualOut: loop.manualOut, lastCv: loop.lastCv, sp2: loop.sp2, manualOut2: loop.manualOut2,
     x: loop.x.slice(), p: { ...loop.p }, d: { ...loop.d }, sample,
-    trend: { t: buf.t.slice(), sp: buf.sp.slice(), pv: buf.pv.slice(), pvTrue: buf.pvTrue.slice(), cv: buf.cv.slice(), valve: buf.valve.slice() },
+    trend: Object.fromEntries(Object.entries(buf).map(([k, v]) => [k, v.slice()])) as Buffer,
   };
 }
 
@@ -97,6 +99,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
           if (counter.current++ % every.current === 0) {
             const b = buf.current;
             b.t.push(s.t); b.sp.push(s.sp); b.pv.push(s.pv); b.pvTrue.push(s.pvTrue); b.cv.push(s.cv); b.valve.push(s.valve);
+            b.sp2.push(s.sp2); b.pv2.push(s.pv2True); b.valve2.push(s.valve2);
             // Trim in batches, not every sample.
             const cut = b.t.findIndex((t) => t >= s.t - windowS);
             if (cut > 500) for (const k of Object.keys(b) as (keyof Buffer)[]) b[k].splice(0, cut);
@@ -126,6 +129,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
   const drawing = <ProcessDrawing proc={proc} p={p} d={d} x={view.x} />;
   const sec = proc.secondary;
   const cascade = exp.controller.kind === 'cascade' && sec;
+  const mimo = proc.mimo && sec ? { ...proc.mimo, sec } : null;
 
   return (
     <div>
@@ -164,6 +168,21 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
             <input type="range" min={0} max={100} step={0.5} value={view.auto ? view.lastCv : view.manualOut} disabled={view.auto}
               onChange={(e) => act((l) => { l.manualOut = Number(e.target.value); })} aria-label="Manual output" />
           </label>
+          {mimo && (
+            <>
+              <label className="ll-field">
+                <span>{mimo.loop2} setpoint<em>{mimo.sec.unit}</em></span>
+                <input type="range" min={mimo.sec.lo} max={mimo.sec.hi} step={(mimo.sec.hi - mimo.sec.lo) / 400} value={view.sp2}
+                  onChange={(e) => act((l) => { l.sp2 = Number(e.target.value); })} aria-label={`${mimo.sec.label} setpoint`} />
+                <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--foreground)' }}>{view.sp2.toFixed(mimo.sec.decimals)} {mimo.sec.unit}</span>
+              </label>
+              <label className="ll-field">
+                <span>{mimo.valve} manual<em>%</em></span>
+                <input type="range" min={0} max={100} step={0.5} value={view.auto ? d[mimo.input] : view.manualOut2} disabled={view.auto}
+                  onChange={(e) => act((l) => { l.manualOut2 = Number(e.target.value); })} aria-label={`${mimo.valveLabel} manual output`} />
+              </label>
+            </>
+          )}
           {s && exp.controller.kind !== 'onoff' && (
             <dl className="ll-kv" style={{ fontSize: '0.78rem' }}>
               <dt>P</dt><dd>{fmt(s.P, 3)} %</dd>
@@ -172,6 +191,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
               {exp.controller.kind === 'schedule' && <><dt>Kc now</dt><dd>{fmt(s.Kc, 3)}</dd></>}
               {(exp.controller.kind === 'feedforward' || exp.controller.kind === 'cascade') && exp.controller.ff.length > 0 && <><dt>FF</dt><dd>{fmt(s.ff, 3)} %</dd></>}
               {cascade && <><dt>{sec.loopTag} SP</dt><dd>{fmt(s.sp2, 4)} {sec.unit}</dd><dt>{sec.loopTag} PV</dt><dd>{fmt(s.pv2, 4)} {sec.unit}</dd></>}
+              {mimo && <><dt>{mimo.sec.label}</dt><dd>{fmt(s.pv2, 4)} {mimo.sec.unit}</dd><dt>{mimo.valve}</dt><dd>{fmt(s.cv2, 3)} %</dd></>}
             </dl>
           )}
         </div>
@@ -188,7 +208,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
         </div>
       </div>
       <div className="ll-dists">
-        {proc.disturbances.map((ds) => (
+        {upsets(proc).map((ds) => (
           <label key={ds.key} className="ll-field" title={ds.note}>
             <span>{ds.label}<em>{fmt(d[ds.key], 3)} {ds.unit}</em></span>
             <input type="range" min={ds.min} max={ds.max} step={(ds.max - ds.min) / 200} value={d[ds.key]}
@@ -203,10 +223,19 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
           { label: `${proc.pv.label} (true)`, color: 'var(--ll-pv)', x: tx, y: b.pvTrue, width: 2 },
         ]}
         x={{ label: `Time (${minutes ? 'min' : 's'})` }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} />
+      {mimo && (
+        <Chart label={`Live trend: ${mimo.sec.label.toLowerCase()}`} height={160}
+          series={[
+            { label: 'Setpoint', color: 'var(--ll-sp)', x: tx, y: b.sp2, dash: '5 4', width: 1.4 },
+            { label: `${mimo.sec.label} (true)`, color: 'var(--habit-3)', x: tx, y: b.pv2, width: 2 },
+          ]}
+          x={{ label: `Time (${minutes ? 'min' : 's'})` }} y={{ label: `${mimo.sec.label} (${mimo.sec.unit})` }} />
+      )}
       <Chart label="Live trend: output" height={130}
         series={[
           { label: 'Controller output', color: 'var(--ll-cv)', x: tx, y: b.cv, width: 1.2 },
-          { label: 'Valve stem', color: 'var(--ll-valve)', x: tx, y: b.valve, width: 1.8 },
+          { label: mimo ? `${proc.tags.valve} stem` : 'Valve stem', color: 'var(--ll-valve)', x: tx, y: b.valve, width: 1.8 },
+          ...(mimo ? [{ label: `${mimo.valve} stem`, color: 'var(--habit-3)', x: tx, y: b.valve2, width: 1.8 }] : []),
         ]}
         x={{ label: `Time (${minutes ? 'min' : 's'})` }} y={{ label: 'Output (%)', min: -2, max: 102 }} />
     </div>
