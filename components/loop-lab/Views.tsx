@@ -16,6 +16,7 @@ import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { RHO_CP_PER_M3H } from '@/lib/loop-lab/processes/stirred';
 import { balancePoint, splitValves } from '@/lib/loop-lab/processes/jacket';
 import { hotFraction } from '@/lib/loop-lab/processes/mixing';
+import { reactionHeat } from '@/lib/loop-lab/processes/batch';
 import { mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { tankArea, tankVolume } from '@/lib/loop-lab/processes/tank';
 import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
@@ -156,6 +157,33 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
       ],
       note: `Both go the wrong way first. More steam drops the pressure, the water flashes and the bubbles swell the level by up to ${fmt(p.kSwell * dq, 3)} mm, though the drum is losing water. More (cold) feedwater collapses bubbles: the level shrinks by up to ${fmt(p.kShrink * dq, 3)} mm though the drum is gaining water. The feedwater step only has the level back where it started after about ${fmt(p.kShrink / kInt, 2)} s.`,
     }];
+  }
+  if (proc.id === 'batch') {
+    const Ts = linspace(40, 110, 140);
+    const T0 = proc.nominalPv;
+    const Tj0 = T0 - (reactionHeat(T0, d.charge, p, d) - 0.5 * (T0 - 20)) / p.UA;
+    const removal = (T: number) => p.UA * (T - Tj0) + 0.5 * (T - 20);
+    const charges = [d.charge, d.charge / 2, d.charge / 10];
+    const stage = linspace(0.05, 1, 40).map((x) => x * d.charge);
+    const slope = (c: number) => (reactionHeat(T0 + 0.01, c, p, d) - reactionHeat(T0 - 0.01, c, p, d)) / 0.02;
+    return [
+      {
+        title: 'Heat made and heat taken away (Semenov diagram)', x: 'Reactor temperature (°C)', y: 'Heat (kW)',
+        series: [
+          ...charges.map((c, i) => ({ label: `Reaction, ${fmt(c, 2)} kmol/m³ left`, color: PALETTE[3 + i] ?? PALETTE[i], x: Ts, y: Ts.map((T) => reactionHeat(T, c, p, d)), width: i === 0 ? 2.2 : 1.4 })),
+          { label: `Jacket at ${fmt(Tj0, 3)} °C`, color: PALETTE[0], x: Ts, y: Ts.map(removal), width: 2.2, dash: '5 4' },
+        ],
+        note: `Where the curves cross, the heat balances. If the reaction curve is steeper than the jacket line there, a little warmer means more heat made than removed: it runs away, unless the controller moves the jacket faster than that. At the start of the batch the reaction's slope is ${fmt(slope(d.charge), 3)} kW/K against the jacket's ${fmt(p.UA + 0.5, 3)} kW/K; late in the batch ${fmt(slope(d.charge / 10), 2)} kW/K.`,
+      },
+      {
+        title: 'How the reactor answers the jacket, through the batch', x: 'Reactant left (kmol/m³)', y: 'Gain (°C per °C) · time constant (min)',
+        series: [
+          { label: 'Gain: reactor per jacket °C', color: PALETTE[3], x: stage, y: stage.map((c) => p.UA / Math.max(1e-3, p.UA + 0.5 - slope(c))) },
+          { label: 'Time constant, min', color: PALETTE[1], x: stage, y: stage.map((c) => (4000 * p.V) / Math.max(1e-3, p.UA + 0.5 - slope(c)) / 60) },
+        ],
+        note: `Both are UA (or C) over the cooling margin UA + UA_l − dQ_r/dT. With the batch full of reactant the margin is small, so the reactor is slow and very sensitive; as the reactant runs down the margin grows and the reactor speeds up and calms down. When the margin reaches zero, the gain and time constant go to infinity: that is the runaway point.`,
+      },
+    ];
   }
   if (proc.id === 'mixing') {
     const Ts = linspace(d.Tc + 1, d.Th - 1, 100);

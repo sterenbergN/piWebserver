@@ -267,3 +267,6 @@ a.ll-chip:hover { border-color: var(--accent-light); }
 .ll-ff-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; margin-bottom: 0.2rem; }
 .ll-ff-head strong { font-size: 0.88rem; }
 .ll-ff-head .ll-link { white-space: nowrap; }
+
+/* Structured Text editor for your own controller */
+.ll .ll-code-edit { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.45; padding: 0.6rem; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); tab-size: 2; resize: vertical; }

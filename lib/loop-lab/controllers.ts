@@ -1,5 +1,9 @@
 import { fromPct, fromPct2, measuredDisturbances, nominalDisturbances, pvSpan, toPct, toPct2, valveCharacteristic, type Characterization, type Params, type ProcessDef, type ProcessId } from './model';
+import { Rls, fromArx, initialArx, simcPi } from './adaptive';
+import { adrcLinear, designAdrc } from './adrc';
+import { approximate, linearizePlant, pathModel } from './linear';
 import { boxQp, decoupler, designMpc, mimoModel, steadyGains } from './multivar';
+import { StError, StRunner, compileSt, type StProgram } from './st';
 import { findSteady } from './sim';
 import { designStateFb, type StateFbDesign } from './statespace';
 
@@ -96,7 +100,22 @@ export type ControllerConfig =
    * (q1, q2, per % of span) against moves (r, per %), within the valves' limits.
    * A Kalman filter estimates the states and an offset on each output.
    */
-  | { kind: 'mpc'; P: number; M: number; q1: number; q2: number; r: number; qw: number };
+  | { kind: 'mpc'; P: number; M: number; q1: number; q2: number; r: number; qw: number }
+  /**
+   * Self-tuning PI: recursive least squares fits a first-order model as the
+   * loop runs (forgetting factor lambda), and SIMC retunes the PI from it every
+   * cycle, for a closed-loop time constant tc with an assumed dead time theta.
+   */
+  | { kind: 'adaptive'; pid: PidParams; tc: number; theta: number; lambda: number }
+  /**
+   * Active disturbance rejection control: an extended state observer (bandwidth
+   * wo) estimates the output, its derivative (order 2) and the total
+   * disturbance; the law cancels it and closes the loop at bandwidth wc. b0 is
+   * the plant's rough high-frequency gain (%/s per %, or %/s² for order 2).
+   */
+  | { kind: 'adrc'; order: 1 | 2; wc: number; wo: number; b0: number }
+  /** Your own controller, written in IEC 61131-3 Structured Text and run every cycle. */
+  | { kind: 'custom'; code: string };
 
 export type ControllerKind = ControllerConfig['kind'];
 
@@ -159,13 +178,16 @@ export const CONTROLLER_KINDS: ControllerMeta[] = [
   { kind: 'statefb', name: 'State feedback with an observer (pole placement, LQR, Kalman)', short: 'State feedback', rung: 10, icon: '🧭' },
   { kind: 'multiloop', name: 'Multi-loop PID and decoupling', short: 'Decoupling', rung: 11, icon: '🔀' },
   { kind: 'mpc', name: 'Model predictive control (MPC)', short: 'MPC', rung: 12, icon: '🔭' },
+  { kind: 'adaptive', name: 'Self-tuning (adaptive) PI', short: 'Adaptive', rung: 13, icon: '🧬' },
+  { kind: 'adrc', name: 'Active disturbance rejection control (ADRC)', short: 'ADRC', rung: 14, icon: '🛡️' },
+  { kind: 'custom', name: 'Your own controller (Structured Text)', short: 'Your own (ST)', rung: 15, icon: '✍️' },
 ];
 export const controllerMeta = (kind: ControllerKind) => CONTROLLER_KINDS.find((c) => c.kind === kind)!;
 
 /** Which controllers a process can run: feedforward needs a measured disturbance, cascade an inner measurement. */
 export function isAvailable(proc: ProcessDef, kind: ControllerKind) {
   // A 2×2 process: one loop (the other valve left where it is), two loops, or MPC.
-  if (proc.mimo) return kind === 'pid' || kind === 'multiloop' || kind === 'mpc';
+  if (proc.mimo) return kind === 'pid' || kind === 'multiloop' || kind === 'mpc' || kind === 'custom';
   if (kind === 'multiloop' || kind === 'mpc') return false;
   if (kind === 'characterized') return proc.characterizations.length > 0;
   if (kind === 'feedforward') return measuredDisturbances(proc).length > 0;
@@ -197,6 +219,8 @@ export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> 
   // Unstable: PD first (the derivative is what stabilizes it), a slow integral, and a setpoint weight so a gap change doesn't kick the coil.
   maglev: { Kc: 4, Ti: 0.15, Td: 0.02, a: 0.2, b: 0.3, invert: true },
   mixing: { Kc: 3.26, Ti: 360, Td: 0 },
+  // Commissioned on a quiet batch (most of the reactant gone): SIMC there. Fine late in a batch, fragile early.
+  batch: { Kc: 0.88, Ti: 252, Td: 0 },
   custom: { Kc: 1.2, Ti: 20, Td: 0 },
 };
 
@@ -241,6 +265,14 @@ export const BASELINE_MULTI: Partial<Record<ProcessId, { pid2: Pick<PidParams, '
 };
 export const BASELINE_MPC: Partial<Record<ProcessId, Partial<Omit<Extract<ControllerConfig, { kind: 'mpc' }>, 'kind'>>>> = {
   mixing: { P: 100, M: 5, q1: 1, q2: 1, r: 0.1, qw: 1 },
+};
+
+/** Starting adaptive and ADRC settings, checked on each process's tests. */
+export const BASELINE_ADAPTIVE: Partial<Record<ProcessId, Partial<Omit<Extract<ControllerConfig, { kind: 'adaptive' }>, 'kind'>>>> = {
+  batch: { tc: 166, theta: 83, lambda: 0.995 },
+};
+export const BASELINE_ADRC: Partial<Record<ProcessId, Partial<Omit<Extract<ControllerConfig, { kind: 'adrc' }>, 'kind'>>>> = {
+  batch: { order: 2, wc: 0.0054, wo: 0.016, b0: 3.16e-5 },
 };
 
 export const BASELINE_STATEFB: Partial<Record<ProcessId, Partial<StateFbSettings>>> = {
@@ -292,6 +324,15 @@ export function defaultController(kind: ControllerKind, proc: ProcessDef): Contr
     return { kind, pid, pid2: { ...DEFAULT_PID, ...(BASELINE_MULTI[proc.id]?.pid2 ?? { Kc: 1, Ti: 100, Td: 0 }) }, pairing: 'direct', decouple: false };
   }
   if (kind === 'mpc') return { kind, P: 100, M: 5, q1: 1, q2: 1, r: 0.1, qw: 1, ...BASELINE_MPC[proc.id] };
+  if (kind === 'custom') return { kind, code: defaultCustomCode(proc) };
+  if (kind === 'adaptive') {
+    const T = (proc.scenarios[0]?.duration ?? 100) / 60;
+    return { kind, pid, tc: T, theta: T / 3, lambda: 0.995, ...BASELINE_ADAPTIVE[proc.id] };
+  }
+  if (kind === 'adrc') {
+    const T = (proc.scenarios[0]?.duration ?? 100) / 20;
+    return { kind, order: 1, wc: 1 / T, wo: 5 / T, b0: pid.invert ? -0.01 : 0.01, ...BASELINE_ADRC[proc.id] };
+  }
   if (kind === 'statefb') {
     // Without a checked design: weights for a closed loop about as fast as the tests are long allow.
     const T = (proc.scenarios[0]?.duration ?? 100) / 20;
@@ -445,6 +486,9 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
   if (config.kind === 'statefb') return createStateFb(proc, config, model);
   if (config.kind === 'multiloop') return createMultiloop(proc, config, model, Ts);
   if (config.kind === 'mpc') return createMpc(proc, config, model);
+  if (config.kind === 'adrc') return createAdrc(proc, config, Ts);
+  if (config.kind === 'adaptive') return createAdaptive(proc, config, model, Ts);
+  if (config.kind === 'custom') return createCustom(proc, config, Ts);
 
   const pid = config.pid;
   const scale = controlScale(proc, config, model);
@@ -856,6 +900,194 @@ function multiloopLinear(proc: ProcessDef, config: Extract<ControllerConfig, { k
   };
 }
 
+/**
+ * ADRC run as its discretized observer: each cycle the observer takes the
+ * output applied last cycle and the new measurement, then the law cancels the
+ * estimated total disturbance. It always sees the clamped output, so nothing winds up.
+ */
+function createAdrc(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'adrc' }>, Ts: number): ControllerInstance {
+  const des = designAdrc(config, Ts);
+  const m = des.n + 1;
+  let z = new Array(m).fill(0);
+  let uPrev = 0;
+  const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+  const blank: ControllerInternals = { P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  let last = blank;
+  const report = (r: number, y: number) => {
+    // P: the law's proportional part; I: the disturbance cancellation (what an integral would have built up); D: the derivative part.
+    last = { ...blank, P: des.C[0] * (z[0] - r), I: des.C[m - 1] * z[m - 1], D: m === 3 ? des.C[1] * z[1] : 0, e: r - y, pred: fromPct(proc, z[0]) };
+  };
+  return {
+    step(sp, pv) {
+      const y = toPct(proc, pv), r = toPct(proc, sp);
+      z = des.Phi.map((row, i) => dot(row, z) + des.Gamma[i][0] * uPrev + des.Gamma[i][1] * y);
+      uPrev = clamp(dot(des.C, z) + des.Dr * r, 0, 100);
+      report(r, y);
+      return uPrev;
+    },
+    track(valve, sp, pv) {
+      // At rest: the output where it is, no rate of change, and f = −b₀·u (what holds it there).
+      const y = toPct(proc, pv);
+      z = [y, ...(m === 3 ? [0] : []), -config.b0 * valve];
+      uPrev = valve;
+      report(toPct(proc, sp), y);
+    },
+    internals: () => last,
+  };
+}
+
+/**
+ * Self-tuning PI: recursive least squares on a first-order model with
+ * forgetting, SIMC from the latest estimate every cycle. It only learns when
+ * the signals move by more than the noise (otherwise forgetting lets the
+ * estimate drift on nothing), and only accepts gains within 5× of where it started.
+ */
+function createAdaptive(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'adaptive' }>, model: Params, Ts: number): ControllerInstance {
+  const pid = config.pid;
+  const core = new PidCore(pid, Ts);
+  const start = initialArx(proc, model);
+  const d = Math.max(0, Math.round(config.theta / Ts) - 1);
+  const noise = Math.max(model.txNoise ?? 0, 0.01);
+  let rls = new Rls([start.a, start.b, 0], 0.01, config.lambda);
+  let g = { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
+  const g0 = { ...g };
+  let uHist: number[] = [];
+  let yPrev = NaN;
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, ...g, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  const retune = () => {
+    const [a, b] = rls.theta;
+    const t = simcPi(fromArx(a, b, Ts, config.theta), config.tc);
+    if (!t || t.negative !== pid.invert || !Number.isFinite(t.Kc) || !Number.isFinite(t.Ti)) return;
+    const within = (v: number, ref: number) => (ref > 0 ? Math.min(5 * ref, Math.max(ref / 5, v)) : v);
+    g = { Kc: within(t.Kc, g0.Kc), Ti: within(t.Ti, g0.Ti), Td: pid.Td };
+  };
+  return {
+    step(sp, pv) {
+      const y = toPct(proc, pv);
+      // Learn from the last cycle: y now against y before and the output d cycles before that.
+      if (Number.isFinite(yPrev) && uHist.length > d + 1) {
+        const uOld = uHist[uHist.length - 2 - d];
+        const moved = Math.abs(uHist[uHist.length - 1] - uHist[uHist.length - 2]) > 0.02 || Math.abs(y - yPrev) > 3 * noise;
+        const err = y - (rls.theta[0] * yPrev + rls.theta[1] * uOld + rls.theta[2]);
+        if (moved && Math.abs(err) > noise) {
+          rls.update([yPrev, uOld, 1], y);
+          retune();
+        }
+      }
+      yPrev = y;
+      const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), y);
+      const { u, P } = core.run(e, eP, eD, g, 0);
+      uHist.push(u);
+      if (uHist.length > d + 4) uHist = uHist.slice(-(d + 4));
+      last = { P, I: core.I, D: core.D, ...g, e, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+      return u;
+    },
+    track(valve, sp, pv) {
+      const y = toPct(proc, pv);
+      const { e, eP, eD } = errorsOf(pid, toPct(proc, sp), y);
+      core.track(valve, eP, eD, g.Kc, 0);
+      uHist = new Array(d + 2).fill(valve);
+      yPrev = y;
+      // A steady start: the bias term makes the model hold y at this output.
+      rls = new Rls([rls.theta[0], rls.theta[1], y - rls.theta[0] * y - rls.theta[1] * valve], 0.01, config.lambda);
+      last = { P: g.Kc * eP, I: core.I, D: 0, ...g, e, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+    },
+    internals: () => last,
+  };
+}
+
+/** What a custom controller's code can read (inputs) and write (outputs). */
+export const ST_INPUTS = ['SP', 'PV', 'SP_PCT', 'PV_PCT', 'PV2', 'PV2_PCT', 'SP2', 'SP2_PCT', 'TS', 'TIME', 'MANUAL', 'MAN_OUT', 'MAN_OUT2'];
+export const ST_OUTPUTS = ['OUT', 'OUT2'];
+
+/** A starting program: the process's baseline PI, written out in full. */
+export function defaultCustomCode(proc: ProcessDef) {
+  const b = BASELINE_PI[proc.id];
+  const err = b.invert ? 'PV_PCT - SP_PCT' : 'SP_PCT - PV_PCT';
+  return `// A PI controller, written out. Runs every TS s.
+// Inputs: SP, PV (${proc.pv.unit}), SP_PCT, PV_PCT (% of span), TS (s), MANUAL, MAN_OUT (%).
+// Output: OUT (%). Variables in VAR keep their values from one cycle to the next.
+VAR
+  Kc : REAL := ${Number(b.Kc.toPrecision(4))};    // % output per % of span
+  Ti : REAL := ${Number(b.Ti.toPrecision(4))};    // s
+  I : REAL;          // the integral, in % of output
+  e : REAL;
+  u : REAL;
+END_VAR
+
+e := ${err};${b.invert ? '   // more output lowers the PV' : ''}
+IF MANUAL THEN
+  // Track the manual output, so switching to auto is bumpless.
+  I := MAN_OUT - Kc * e;
+  OUT := MAN_OUT;
+ELSE
+  u := Kc * e + I + Kc * TS / Ti * e;
+  // Anti-windup: don't integrate further into a limit.
+  IF NOT ((u > 100.0 AND e > 0.0) OR (u < 0.0 AND e < 0.0)) THEN
+    I := I + Kc * TS / Ti * e;
+  END_IF;
+  OUT := LIMIT(MN := 0.0, IN := Kc * e + I, MX := 100.0);
+END_IF;
+`;
+}
+
+/** Compile a custom controller's code for a process; the error with its line if it doesn't compile. */
+export function compileCustom(code: string): { prog: StProgram } | { error: string; line: number } {
+  try {
+    return { prog: compileSt(code, ST_INPUTS, ST_OUTPUTS) };
+  } catch (e) {
+    return e instanceof StError ? { error: e.message, line: e.line } : { error: String(e), line: 0 };
+  }
+}
+
+/**
+ * Your own controller, in Structured Text: run once per cycle with the
+ * inputs set, its OUT (and OUT2 on a 2×2 process) taken as the valve signals.
+ * In manual it runs with MANUAL = TRUE and MAN_OUT = the valve, so code that
+ * tracks is bumpless. If it doesn't compile, or fails while running, the valve
+ * is held where it is.
+ */
+function createCustom(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'custom' }>, Ts: number): ControllerInstance {
+  const compiled = compileCustom(config.code);
+  const runner = 'prog' in compiled ? new StRunner(compiled.prog) : null;
+  const sec = proc.secondary, mimo = proc.mimo;
+  let t = 0, uPrev = 0, u2 = NaN, failed = !runner;
+  let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: 0, Ti: 0, Td: 0, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
+  const inputs = (sp: number, pv: number, aux: ControllerAux, manual: boolean, manOut: number) => {
+    const sp2 = aux.sp2 ?? NaN;
+    return {
+      SP: sp, PV: pv, SP_PCT: toPct(proc, sp), PV_PCT: toPct(proc, pv),
+      PV2: sec ? aux.pv2 : 0, PV2_PCT: sec ? toPct2(sec, aux.pv2) : 0, SP2: Number.isFinite(sp2) ? sp2 : 0, SP2_PCT: sec && Number.isFinite(sp2) ? toPct2(sec, sp2) : 0,
+      TS: Ts, TIME: t, MANUAL: manual ? 1 : 0, MAN_OUT: manOut, MAN_OUT2: mimo ? aux.d[mimo.input] ?? 0 : 0,
+    };
+  };
+  const runOnce = (sp: number, pv: number, aux: ControllerAux, manual: boolean, manOut: number) => {
+    if (!runner || failed) return;
+    try {
+      const o = runner.run(inputs(sp, pv, aux, manual, manOut));
+      if (Number.isFinite(o.OUT)) uPrev = clamp(o.OUT, 0, 100);
+      if (mimo && Number.isFinite(o.OUT2)) u2 = clamp(o.OUT2, 0, 100);
+    } catch {
+      failed = true;   // hold the valve: what a PLC would do with a faulted block, more or less
+    }
+    last = { ...last, e: toPct(proc, sp) - toPct(proc, pv) };
+  };
+  const inst: ControllerInstance = {
+    step(sp, pv, aux) { runOnce(sp, pv, aux, false, uPrev); t += Ts; return uPrev; },
+    track(valve, sp, pv, aux) {
+      uPrev = valve;
+      if (mimo) u2 = aux.d[mimo.input] ?? u2;
+      runner?.set('OUT', valve);
+      if (mimo) runner?.set('OUT2', u2);
+      runOnce(sp, pv, aux, true, valve);
+      uPrev = valve;
+    },
+    internals: () => last,
+  };
+  if (mimo) inst.out2 = () => u2;
+  return inst;
+}
+
 // ─── Linear view of a controller (for analysis) ─────────────────────────────
 
 export type LinearPid = PidParams & { slope: number };
@@ -881,8 +1113,10 @@ export type LinearController =
  */
 export function linearPidAt(proc: ProcessDef, config: ControllerConfig, model: Params, pv: number, valve: number): LinearPid | null {
   if (config.kind === 'onoff') return null;
-  if (config.kind === 'statefb' || config.kind === 'mpc') return { ...DEFAULT_PID, Kc: 0, Ti: 0, Td: 0, slope: 1 };
+  if (config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'custom') return { ...DEFAULT_PID, Kc: 0, Ti: 0, Td: 0, slope: 1 };
   if (config.kind === 'multiloop') return { ...config.pid, slope: 1 };
+  if (config.kind === 'adrc') return { ...DEFAULT_PID, Kc: 0, Ti: 0, Td: 0, slope: 1 };
+  if (config.kind === 'adaptive') return adaptiveAt(proc, config, model, pv);
   if (config.kind === 'cascade') return { ...config.outer, slope: 1 };
   if (config.kind === 'smith' || config.kind === 'override') return { ...config.pid, slope: 1 };
   if (config.kind === 'ratio') return { ...config.outer, ...(config.trim ? {} : { Kc: 0, Ti: 0, Td: 0 }), slope: ratioAt(proc, config, model, valve).slope };
@@ -911,6 +1145,10 @@ export function linearControllerAt(proc: ProcessDef, config: ControllerConfig, m
   if (config.kind === 'multiloop') return multiloopLinear(proc, config, model);
   // With its limits, MPC isn't a linear controller; it is judged on the tests.
   if (config.kind === 'mpc') return null;
+  // Your own code: nothing to linearize (the tests are the judge).
+  if (config.kind === 'custom') return null;
+  if (config.kind === 'adrc') return { kind: 'ss', ss: adrcLinear(designAdrc(config, model.Ts)), inputs: ['pv'], ff: [] };
+  if (config.kind === 'adaptive') return { kind: 'single', pid: adaptiveAt(proc, config, model, pv), ff: [] };
   if (config.kind === 'cascade') return { kind: 'cascade', outer: { ...config.outer, slope: 1 }, inner: { ...config.inner, slope: 1 }, ff: config.ff };
   if (config.kind === 'smith') return { kind: 'smith', pid: { ...config.pid, slope: 1 }, model: config.model, ff: [] };
   if (config.kind === 'override') return { kind: 'single', pid: { ...config.pid, slope: 1 }, ff: [] };
@@ -937,6 +1175,19 @@ export function ratioAt(proc: ProcessDef, config: Extract<ControllerConfig, { ki
   const x = proc.steady(flow, d, model) ?? proc.states.map(() => 0);
   const R0 = sec.of(x, flow, d, model) / wild;
   return { R0, wild, slope: (wild * (config.rHi - config.rLo)) / span2, ffGain: (R0 * 100) / span2 };
+}
+
+/**
+ * The PI a self-tuning controller settles on at an operating point, if its
+ * estimate converges to the plant there: SIMC on the plant's first-order model.
+ * (What the analysis tools judge; the transient while it learns is in the tests.)
+ */
+function adaptiveAt(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'adaptive' }>, model: Params, pv: number): LinearPid {
+  const m = linearizePlant(proc, model, pv);
+  const f = approximate(pathModel(m, m.C, m.theta), model.Ts / 2);
+  const t = simcPi({ ...f, theta: config.theta }, config.tc);
+  const g = t && t.negative === config.pid.invert ? { Kc: Math.min(5 * config.pid.Kc, Math.max(config.pid.Kc / 5, t.Kc)), Ti: Math.min(5 * config.pid.Ti, Math.max(config.pid.Ti / 5, t.Ti)) } : config.pid;
+  return { ...config.pid, Kc: g.Kc, Ti: g.Ti, slope: 1 };
 }
 
 // ─── Cost of complexity ─────────────────────────────────────────────────────
@@ -992,6 +1243,28 @@ export function complexity(proc: ProcessDef, config: ControllerConfig): Complexi
       tuningParams: pidCount(config.pid) + pidCount(config.pid2) + (config.decouple ? 2 : 0),
       needsModel: config.decouple ? 'The steady-state gain from each valve to each variable (four bump-test numbers)' : null,
       extraInstruments: 0, commissioning: config.decouple ? 3 : 2, maintainability: config.decouple ? 3 : 4,
+    };
+  }
+  if (config.kind === 'custom') {
+    const c = compileCustom(config.code);
+    return {
+      tuningParams: 'prog' in c ? c.prog.vars.filter((v) => v.init !== 0).length : 0,
+      needsModel: 'Whatever its author assumed: written down, one hopes',
+      extraInstruments: 0, commissioning: 4, maintainability: 2,
+    };
+  }
+  if (config.kind === 'adaptive') {
+    return {
+      tuningParams: 3 + pidCount(config.pid),
+      needsModel: 'Only a rough one to start from (it learns the rest), and the dead time',
+      extraInstruments: 0, commissioning: 4, maintainability: 2,
+    };
+  }
+  if (config.kind === 'adrc') {
+    return {
+      tuningParams: 3,
+      needsModel: 'The plant\'s order and a rough high-frequency gain b₀ (within a factor of two or so)',
+      extraInstruments: 0, commissioning: 3, maintainability: 3,
     };
   }
   if (config.kind === 'mpc') {
@@ -1093,6 +1366,19 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
       decouple: typeof r.decouple === 'boolean' ? r.decouple : base.decouple,
     };
   }
+  if (base.kind === 'custom') return { kind: 'custom', code: typeof r.code === 'string' ? r.code.slice(0, 20000) : base.code };
+  if (base.kind === 'adaptive') {
+    return {
+      kind: 'adaptive', pid: cleanPid(r.pid, base.pid), tc: num(r.tc, 1e-3, 1e6, base.tc), theta: num(r.theta, 0, 1e5, base.theta),
+      lambda: num(r.lambda, 0.9, 1, base.lambda),
+    };
+  }
+  if (base.kind === 'adrc') {
+    return {
+      kind: 'adrc', order: r.order === 2 ? 2 : r.order === 1 ? 1 : base.order,
+      wc: num(r.wc, 1e-6, 1e4, base.wc), wo: num(r.wo, 1e-6, 1e5, base.wo), b0: num(r.b0, -1e6, 1e6, base.b0) || base.b0,
+    };
+  }
   if (base.kind === 'mpc') {
     const P = Math.round(num(r.P, 5, 300, base.P));
     return {
@@ -1161,6 +1447,12 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
     const direct = config.pairing === 'direct';
     return `Two loops: ${proc.pv.label.toLowerCase()} → ${v(direct)} (${pidText(config.pid)}), ${proc.secondary?.label.toLowerCase()} → ${v(!direct)} (${pidText(config.pid2)})${config.decouple ? ', static decoupler' : ''}`;
   }
+  if (config.kind === 'custom') {
+    const c = compileCustom(config.code);
+    return 'prog' in c ? `Your own Structured Text: ${config.code.split('\n').length} lines, ${c.prog.vars.length} variables` : `Your own Structured Text (doesn't compile: line ${c.line}, ${c.error})`;
+  }
+  if (config.kind === 'adaptive') return `Self-tuning PI (RLS, forgetting ${fmt(config.lambda)}), SIMC τc ${fmt(config.tc)} s with θ ${fmt(config.theta)} s; starts at ${pidText(config.pid)}`;
+  if (config.kind === 'adrc') return `ADRC, order ${config.order}: ω_c ${fmt(config.wc)} rad/s, observer ω_o ${fmt(config.wo)} rad/s, b₀ ${fmt(config.b0)}`;
   if (config.kind === 'mpc') {
     return `MPC: ${config.P} cycles ahead, ${config.M} moves; weights ${proc.pv.label.toLowerCase()} ${fmt(config.q1)}, ${proc.secondary?.label.toLowerCase()} ${fmt(config.q2)}, moves ${fmt(config.r)}; Kalman upsets ${fmt(config.qw)}`;
   }

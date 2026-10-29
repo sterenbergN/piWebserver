@@ -346,6 +346,9 @@ test('auto-tune gives a stable, robust starting point for every process and cont
       // An open-loop unstable plant has no tuning rule: it says so and leaves the settings alone.
       if (proc.id === 'maglev') { assert.match(r.note, /unstable on its own/); continue; }
       const pts = robustness(proc, params, r.config, 8);
+      // The batch reactor's spread includes reactors that run away on their own (a stronger reaction, a fouled
+      // jacket): the SIMC tuning for the start of the batch is too slow to hold those. Its case study is about that.
+      if (proc.id === 'batch') { assert.ok(pts.some((p) => !p.stableAll)); continue; }
       assert.ok(pts.every((p) => p.stableAll), `${proc.id} ${kind} unstable`);
       assert.ok(Math.max(...pts.map((p) => p.worst?.ms ?? 0)) < 1.8, `${proc.id} ${kind} fragile`);
     }
@@ -802,4 +805,114 @@ test('2×2 exports: two loops with the decoupler, one MPC block; links round-tri
   assert.match(exportReference(mpc, params.Ts, proc, params), /function step\(r: \[number, number\], y: \[number, number\]\)/);
   assert.equal(pidCompactParams(proc, mpc, params)![0].value, 'not applicable');
   for (const c of [ml, mpc]) assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
+});
+
+// ─── Phase 4c: batch reactor, adaptive, ADRC, your own controller ───────────
+
+test('batch reactor: the cooling margin sets gain and speed, and shrinks with the reactant left', async () => {
+  const { reactionHeat } = await import('./processes/batch');
+  const proc = getProcess('batch');
+  const p = defaultParams(proc);
+  const d = nominalDisturbances(proc);
+  // 500 kW at 80 °C with a full charge, growing by about 48 kW/K.
+  close(reactionHeat(80, 2, p, d), 500, 1);
+  close((reactionHeat(80.01, 2, p, d) - reactionHeat(79.99, 2, p, d)) / 0.02, 48.2, 0.5);
+  const fit = (charge: number) => { const m = linearizePlant(proc, p, 80, { ...d, charge }); return approximate(m, p.Ts / 2); };
+  const start = fit(2), end = fit(0.2);
+  assert.ok(start.K > 4 * end.K && start.tau > 2.5 * end.tau, 'four times more sensitive and slower at the start');
+  // The reactant is frozen in the linear model: one stage of the batch, not its depletion.
+  assert.equal(linearizePlant(proc, p, 80).A.length, 4);
+  // Setpoint ramps: 2 °C/min from 40 to 80.
+  const r = runAll(proc, { params: p, controller: defaultController('pid', proc) }, ['batch'])[0];
+  close(r.trace.sp[Math.round(660 / r.Ts)], 40 + 20, 0.2);
+});
+
+test('adaptive: RLS finds a first-order model, SIMC retunes from it, and the gains move with the batch', async () => {
+  const { Rls, fromArx, simcPi } = await import('./adaptive');
+  const rls = new Rls([0.5, 0.5, 0], 100, 1);
+  let y = 0;
+  const g = rng(3);
+  for (let k = 0; k < 400; k++) { const u = g.next() * 10; const yn = 0.9 * y + 0.2 * u + 1; rls.update([y, u, 1], yn); y = yn; }
+  close(rls.theta[0], 0.9, 1e-3); close(rls.theta[1], 0.2, 1e-3); close(rls.theta[2], 1, 1e-2);
+  const m = fromArx(0.9, 0.2, 1, 2);
+  close(m.K, 2, 1e-9); close(m.tau, -1 / Math.log(0.9), 1e-9);
+  const t = simcPi(m, 4)!;
+  close(t.Kc, m.tau / (2 * 6), 1e-9); close(t.Ti, Math.min(m.tau, 24), 1e-9);
+  const proc = getProcess('batch');
+  const params = defaultParams(proc);
+  const ad = defaultController('adaptive', proc);
+  const tr = runAll(proc, { params, controller: ad }, ['hot-batch'])[0].trace;
+  assert.ok(Math.max(...Array.from(tr.Kc)) > 1.2 * tr.Kc[0], 'it retunes as the reaction takes off');
+  // Where the PI tuned on a quiet batch overshoots a strong one, the self-tuner doesn't.
+  const peak = (c: ControllerConfig) => Math.max(...runAll(proc, { params, controller: c }, ['hot-batch'])[0].trace.pvTrue);
+  assert.ok(peak(defaultController('pid', proc)) > 82 && peak(ad) < 80.5);
+});
+
+test('ADRC: observer bandwidths, the linear form, and a robust design on the reactor without a reaction model', async () => {
+  const { designAdrc } = await import('./adrc');
+  const des = designAdrc({ kind: 'adrc', order: 2, wc: 1, wo: 4, b0: 2 }, 0.01);
+  // Observer poles all at −ω_o: L = [3ω, 3ω², ω³].
+  assert.deepEqual(des.L, [12, 48, 64]);
+  close(des.Dr, 0.5, 1e-12);
+  const proc = getProcess('batch');
+  const params = defaultParams(proc);
+  const { autoTune } = await import('./tuning');
+  const t = autoTune(proc, params, defaultController('adrc', proc))!;
+  assert.match(t.note, /b₀/);
+  const a = analyzeLoop(proc, params, t.config, 80)!;
+  assert.equal(a.ctrl.kind, 'ss');
+  assert.ok(isStable(closedLoop(a.plant, a.ctrl, a.delay).poles) && a.margins.ms <= 1.6);
+  // Its total-disturbance estimate (as the output it takes) climbs through the hold as the reaction dies away.
+  const tr = runAll(proc, { params, controller: t.config }, ['batch'])[0].trace;
+  assert.ok(tr.I[Math.round(5300 / 2)] > tr.I[Math.round(2400 / 2)] + 3);
+});
+
+test('Structured Text: the language, its errors, and a PI written out matching the built-in one', async () => {
+  const { compileSt, StRunner, StError, toScl, stripDeclarations } = await import('./st');
+  const run = (src: string, inputs: Record<string, number> = {}) => new StRunner(compileSt(src, ['SP'], ['OUT'])).run(inputs).OUT;
+  assert.equal(run('VAR x : INT; s : REAL; END_VAR FOR x := 1 TO 10 DO s := s + x; IF x = 5 THEN EXIT; END_IF; END_FOR; OUT := s;'), 15);
+  assert.equal(run('OUT := MAX(IN1 := 2.0 ** 3, IN2 := 4) + SEL(G := TRUE, IN0 := 1, IN1 := 100) + LIMIT(MN := 0, IN := -5, MX := 10) + REAL_TO_INT(2.6) + 7 MOD 3;'), 112);
+  assert.equal(run('IF SP > 1 THEN OUT := 1; ELSIF SP > 0 THEN OUT := 2; ELSE OUT := 3; END_IF;', { SP: 0.5 }), 2);
+  assert.equal(run('(* block comment *) OUT := 1.5E1; // line comment'), 15);
+  // Statics keep their values from one cycle to the next.
+  const r = new StRunner(compileSt('VAR n : INT; END_VAR n := n + 1; OUT := n;', [], ['OUT']));
+  r.run({}); r.run({});
+  assert.equal(r.run({}).OUT, 3);
+  const err = (src: string) => { try { run(src); return ''; } catch (e) { assert.ok(e instanceof StError); return e.message; } };
+  assert.match(err('OUT := y;'), /isn't declared/);
+  assert.match(err('SP := 3;'), /input/);
+  assert.match(err('WHILE TRUE DO OUT := 1; END_WHILE;'), /endless loop/);
+  assert.match(err('OUT := 1'), /Expected ";"/);
+  assert.equal(toScl('x := LIMIT(MN := 0, IN := x, MX := 1);', new Set(['X', 'MN'])), '#x := LIMIT(MN := 0, IN := #x, MX := 1);');
+  assert.ok(!/VAR/.test(stripDeclarations('VAR\n a : REAL;\nEND_VAR\na := 1;')));
+  // The starting program is the process's PI, and runs exactly like it.
+  for (const id of ['flow', 'surge'] as const) {
+    const proc = getProcess(id), params = defaultParams(proc);
+    const a = runAll(proc, { params, controller: defaultController('pid', proc) })[0].trace;
+    const b = runAll(proc, { params, controller: defaultController('custom', proc) })[0].trace;
+    a.cv.forEach((v, i) => close(b.cv[i], v, 1e-9));
+  }
+});
+
+test('your own controller: edges matter, bad code holds the valve, and it exports as an FB', async () => {
+  const { getCase } = await import('./content');
+  const proc = getProcess('flow');
+  const params = defaultParams(proc);
+  const steps = getCase('write-your-own')!.steps[1].presets!;
+  const sat = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['saturation']), false).iae;
+  assert.ok(sat(steps[1].controller) > 1.5 * sat(steps[0].controller), 'without anti-windup the saturation test is worse');
+  // Code that doesn't compile (or fails) holds the valve where it was.
+  const bad = runAll(proc, { params, controller: { kind: 'custom', code: 'OUT := nope;' } }, ['sp-steps'])[0].trace;
+  assert.ok(Array.from(bad.cv).every((v) => Math.abs(v - bad.cv[0]) < 1e-9));
+  const c = defaultController('custom', proc);
+  const scl = exportCode(proc, c, params, 'scl');
+  assert.match(scl, /FUNCTION_BLOCK "LL_Custom"/);
+  assert.match(scl, /#OUT := LIMIT\(MN := 0\.0, IN := #Kc \* #e \+ #I, MX := 100\.0\);/);
+  assert.match(scl, /"FIC_101_DB"\(SP := "SP", PV := "FT-101", SP_PCT :=/);
+  assert.ok(!exportCode(proc, c, params, 'st').includes('#'));
+  for (const k of ['custom', 'adrc', 'adaptive'] as const) {
+    const cfg = defaultController(k, getProcess('batch'));
+    assert.deepEqual(cleanController(JSON.parse(JSON.stringify(cfg)), getProcess('batch')), cfg);
+    assert.ok(exportCode(getProcess('batch'), cfg, defaultParams(getProcess('batch')), 'scl').length > 500);
+  }
 });

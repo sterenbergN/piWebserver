@@ -155,7 +155,7 @@ export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D'
 const PROCESS_SUB: Record<string, string> = {
   flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
   surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c',
-  mixing: 'A·ḣ = F_h + F_c − F_out', crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
+  mixing: 'A·ḣ = F_h + F_c − F_out', batch: 'A → B + heat', crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {
@@ -229,9 +229,9 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
   const xOut = xP + wP + 50;
 
   const smith = config.kind === 'smith';
-  const ctrlTitle = config.kind === 'onoff' ? 'Relay' : config.kind === 'schedule' ? 'PID (scheduled)' : 'PID';
+  const ctrlTitle = config.kind === 'onoff' ? 'Relay' : config.kind === 'schedule' ? 'PID (scheduled)' : config.kind === 'adaptive' ? 'PI (self-tuned)' : config.kind === 'adrc' ? 'ADRC' : config.kind === 'custom' ? 'Your ST code' : 'PID';
   const ffNames = ff.map((t) => proc.disturbances.find((d) => d.key === t.from)?.label.toLowerCase() ?? t.from).join(', ');
-  const ctrlSub = config.kind === 'onoff' ? `± ${config.hyst} % band` : 'Kc·(1 + 1/Ti·s + Td·s)';
+  const ctrlSub = config.kind === 'onoff' ? `± ${config.hyst} % band` : config.kind === 'adrc' ? 'observer + cancel f' : config.kind === 'custom' ? 'LL_Custom' : 'Kc·(1 + 1/Ti·s + Td·s)';
 
   return (
     <svg className="ll-drawing" viewBox={`0 0 ${xOut + 20} ${smith ? 300 : 270}`} role="img" aria-label={`Block diagram: ${smith ? 'Smith predictor' : ctrlTitle} on the ${proc.name.toLowerCase()}`}>
@@ -247,11 +247,20 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
       <Sum x={xSum} y={Y} signs="+−" />
       {wire(null, `M${xSum + 11} ${Y}H${xC}`, { x: xC, y: Y, dir: 'r' })}
       <Block x={xC} y={Y - 24} w={wC} h={48} title={ctrlTitle} sub={ctrlSub} ctrl />
-      {config.kind !== 'onoff' && (
+      {config.kind !== 'onoff' && config.kind !== 'custom' && (
         <>
           {probe('P', xC + 30, Y + 40, 'P')}
           {probe('I', xC + wC / 2, Y + 40, 'I')}
           {probe('D', xC + wC - 30, Y + 40, 'D')}
+        </>
+      )}
+      {config.kind === 'adaptive' && (
+        <>
+          <Block x={xC + 15} y={18} w={wC - 30} h={34} title="RLS → SIMC" sub="fits a model, retunes" ctrl />
+          <path className="ll-wire" strokeDasharray="4 3" d={`M${xC + wC / 2} 52V${Y - 24}`} />
+          <path className="ll-wire" d={arrowHead(xC + wC / 2, Y - 24, 'd')} />
+          {probe('Kc', xC + wC / 2 + 8, 72, 'Kc', 'start')}
+          <path className="ll-wire" strokeDasharray="4 3" d={`M${xOut - 20} ${FB}V35H${xC + wC - 15}`} />
         </>
       )}
       {config.kind === 'schedule' && (

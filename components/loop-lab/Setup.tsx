@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CONTROLLER_KINDS, defaultController, defaultInnerFeedforward, isAvailable,
+  CONTROLLER_KINDS, compileCustom, defaultController, defaultCustomCode, defaultInnerFeedforward, isAvailable,
   type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
 } from '@/lib/loop-lab/controllers';
 import { cleanParams, defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { designMpc, mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { designStateFb } from '@/lib/loop-lab/statespace';
+import { StError, StRunner } from '@/lib/loop-lab/st';
 import { PROCESSES } from '@/lib/loop-lab/processes';
 import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
@@ -67,6 +68,9 @@ const KIND_HINT: Record<ControllerKind, string> = {
   statefb: 'Every state of the plant, estimated by an observer from the measurements, fed back with its own gain.',
   multiloop: 'A PID on each variable, each with its own valve, and optionally a decoupler between them.',
   mpc: 'Plans both valves a few moves ahead from a model, within their limits, and re-plans every cycle.',
+  adaptive: 'A PI that keeps fitting a model to what it measures and retunes itself from it.',
+  adrc: 'An observer estimates everything acting on the PV besides the output, and the law cancels it.',
+  custom: 'Write the controller yourself, in Structured Text, and run it on the bench.',
 };
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -143,8 +147,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
     const next = defaultController(kind, proc);
     // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
     // Smith predictor's PID for a process without dead time, so those keep their own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc') next.pid = { ...prev };
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'custom' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc' && next.kind !== 'adrc' && next.kind !== 'custom') next.pid = { ...prev };
     if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
@@ -158,7 +162,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
         ))}
       </div>
       <p className="ll-note" style={{ marginTop: '0.4rem' }}>{KIND_HINT[config.kind]}</p>
-      {config.kind !== 'onoff' && <AutoTune proc={proc} params={params} config={config} onChange={onChange} />}
+      {config.kind !== 'onoff' && config.kind !== 'custom' && <AutoTune proc={proc} params={params} config={config} onChange={onChange} />}
       <div style={{ marginTop: '0.7rem' }}>
         {config.kind === 'onoff' && (
           <div className="ll-fields is-3">
@@ -200,6 +204,9 @@ export function ControllerEditor({ proc, params, config, onChange }: {
         {config.kind === 'statefb' && <StateFbFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'multiloop' && <MultiloopFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'mpc' && <MpcFields proc={proc} params={params} config={config} onChange={onChange} />}
+        {config.kind === 'adrc' && <AdrcFields proc={proc} config={config} onChange={onChange} />}
+        {config.kind === 'adaptive' && <AdaptiveFields config={config} onChange={onChange} />}
+        {config.kind === 'custom' && <CustomFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'characterized' && (
           <>
             <label className="ll-field is-wide" style={{ marginBottom: '0.5rem' }}>
@@ -226,7 +233,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
           </>
         )}
       </div>
-      {config.kind !== 'onoff' && config.kind !== 'statefb' && config.kind !== 'multiloop' && config.kind !== 'mpc' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
+      {config.kind !== 'onoff' && config.kind !== 'statefb' && config.kind !== 'multiloop' && config.kind !== 'mpc' && config.kind !== 'adrc' && config.kind !== 'adaptive' && config.kind !== 'custom' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
     </div>
   );
 }
@@ -524,6 +531,86 @@ function MpcFields({ proc, params, config, onChange }: { proc: ProcessDef; param
   );
 }
 
+/** ADRC: the plant order it assumes, b₀, and the two bandwidths. */
+function AdrcFields({ proc, config, onChange }: { proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'adrc' }>; onChange: (c: ControllerConfig) => void }) {
+  const set = <K extends keyof typeof config>(k: K) => (v: (typeof config)[K]) => onChange({ ...config, [k]: v });
+  return (
+    <>
+      <div className="ll-fields is-3">
+        <label className="ll-field">
+          <span>Order</span>
+          <select value={config.order} onChange={(e) => set('order')(e.target.value === '2' ? 2 : 1)}>
+            <option value={1}>1: ẏ = b₀u + f</option>
+            <option value={2}>2: ÿ = b₀u + f</option>
+          </select>
+        </label>
+        <NumField label="b₀" unit={config.order === 1 ? '%/s per %' : '%/s² per %'} value={config.b0} onChange={set('b0')}
+          title="The plant's high-frequency gain: how fast (order 1) or how sharply (order 2) the measurement starts to move per % of output. Negative if more output lowers the PV." />
+      </div>
+      <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
+        <NumField label="ω_c" unit="rad/s" value={config.wc} min={1e-6} onChange={set('wc')} title="Loop bandwidth: how fast the closed loop is" />
+        <NumField label="ω_o" unit="rad/s" value={config.wo} min={1e-6} onChange={set('wo')} title="Observer bandwidth: how fast it estimates the disturbance. 3–10× ω_c." />
+      </div>
+      <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+        The observer estimates {proc.pv.label.toLowerCase()}{config.order === 2 ? ', its rate of change' : ''} and everything else acting on it (the total disturbance f), and the law cancels f.
+        Observer {fmt(config.wo / config.wc, 2)}× the loop{config.wo / config.wc < 2 ? ': too close, they will interfere' : ''}.
+      </p>
+    </>
+  );
+}
+
+/** Self-tuning PI: where it starts, what it aims for, how quickly it forgets. */
+function AdaptiveFields({ config, onChange }: { config: Extract<ControllerConfig, { kind: 'adaptive' }>; onChange: (c: ControllerConfig) => void }) {
+  const set = <K extends keyof typeof config>(k: K) => (v: (typeof config)[K]) => onChange({ ...config, [k]: v });
+  return (
+    <>
+      <div className="ll-fields is-3">
+        <NumField label="τc" unit="s" value={config.tc} min={1e-3} onChange={set('tc')} title="The closed-loop time constant SIMC aims for, whatever the plant turns out to be" />
+        <NumField label="θ" unit="s" value={config.theta} min={0} onChange={set('theta')} title="The dead time it assumes (it doesn't estimate this one)" />
+        <NumField label="Forgetting λ" value={config.lambda} min={0.9} max={1} step={0.001} onChange={set('lambda')}
+          title={`How quickly it forgets old data: it remembers about ${Math.round(1 / Math.max(1e-6, 1 - config.lambda))} cycles. Lower follows changes faster and is noisier.`} />
+      </div>
+      <div className="ll-sub">The PI it starts from (and stays within 5× of)</div>
+      <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+    </>
+  );
+}
+
+/** Your own controller: an editor for the Structured Text, checked as you type, applied when you say so. */
+function CustomFields({ proc, config, onChange }: { proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'custom' }>; onChange: (c: ControllerConfig) => void }) {
+  const [text, setText] = useState(config.code);
+  useEffect(() => { setText(config.code); }, [config.code]);
+  const check = useMemo(() => {
+    const c = compileCustom(text);
+    if (!('prog' in c)) return { ok: false, msg: `Line ${c.line}: ${c.error}` };
+    // A dry run, to catch what only shows when it runs (an endless loop, say).
+    try {
+      new StRunner(c.prog).run({ SP: 1, PV: 1, SP_PCT: 50, PV_PCT: 50, TS: 1, MAN_OUT: 50 });
+      return { ok: true, msg: `Compiles: ${c.prog.vars.length} variables.` };
+    } catch (e) {
+      return { ok: false, msg: e instanceof StError ? `Line ${e.line}: ${e.message}` : String(e) };
+    }
+  }, [text]);
+  const dirty = text !== config.code;
+  return (
+    <>
+      <p className="ll-note" style={{ marginTop: 0 }}>
+        Reads <code>SP</code>, <code>PV</code> ({proc.pv.unit}), <code>SP_PCT</code>, <code>PV_PCT</code> (% of span){proc.secondary ? <>, <code>PV2</code>, <code>PV2_PCT</code></> : null}{proc.mimo ? <>, <code>SP2</code>, <code>SP2_PCT</code>, <code>MAN_OUT2</code></> : null},
+        {' '}<code>TS</code>, <code>TIME</code> (s), <code>MANUAL</code>, <code>MAN_OUT</code>. Writes <code>OUT</code> (%){proc.mimo ? <> and <code>OUT2</code></> : null}. Declare your own variables in <code>VAR … END_VAR</code>: they keep their values between cycles.
+      </p>
+      <textarea className="ll-code-edit" spellCheck={false} value={text} rows={Math.min(30, Math.max(12, text.split('\n').length + 1))}
+        onChange={(e) => setText(e.target.value)} aria-label="Structured Text" />
+      <div className="ll-ff-head" style={{ marginTop: '0.3rem' }}>
+        <span className="ll-small" style={{ color: check.ok ? undefined : 'var(--ll-bad, #e5484d)' }}>{check.ok ? '✓' : '⚠️'} {check.msg}</span>
+        <span style={{ display: 'flex', gap: '0.4rem' }}>
+          <button className="ll-btn is-small" onClick={() => { setText(defaultCustomCode(proc)); }}>Start from a PI</button>
+          <button className="ll-btn is-small is-primary" disabled={!dirty || !check.ok} onClick={() => onChange({ ...config, code: text })}>{dirty ? '▶ Run it' : 'Running'}</button>
+        </span>
+      </div>
+    </>
+  );
+}
+
 /** The Smith predictor's process model, with a button to copy it from the plant's step response. */
 function SmithModelEditor({ proc, params, model, pid, onChange }: {
   proc: ProcessDef; params: Params; model: SmithModel; pid: PidParams; onChange: (m: SmithModel) => void;
@@ -596,7 +683,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   };
   const result = model ? rule.tune(model, t, model.theta * speedFactor) : null;
   const apply = () => {
-    if (!result || config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc') return;
+    if (!result || config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'adaptive' || config.kind === 'custom') return;
     if (config.kind === 'schedule') {
       const i = config.points.findIndex((p) => Math.abs(p.at - pv) < 1e-9);
       const points = i >= 0

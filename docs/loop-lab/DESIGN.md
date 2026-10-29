@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1, 2, 3 (3a and 3b), 4a and 4b built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1 to 4 (3a, 3b, 4a, 4b, 4c) built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -380,8 +380,8 @@ controllers in Structured Text.
 
 Split in three: **4a** (built) is state feedback, observers, Kalman filter and LQR on a crane with a swinging
 load, a drive with a flexible shaft and magnetic levitation. **4b** (built) is multivariable: a mixing tank,
-the relative gain array, decoupling and MPC. **4c** is the model-light alternatives (adaptive control, ADRC), the batch
-reactor and custom controllers in Structured Text.
+the relative gain array, decoupling and MPC. **4c** (built) is the model-light alternatives (adaptive control, ADRC), the
+batch reactor and custom controllers in Structured Text.
 
 ### Phase 5 — software in the loop
 
@@ -565,3 +565,35 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
 - **Case study:** `mixing-mimo`.
 - **Not in 4b:** dynamic decouplers, output constraints and soft constraints in the MPC, larger than 2×2, the
   quadruple tank (multivariable right-half-plane zeros), gain-scheduled decoupling per recipe.
+
+## 18. Phase 4c as built
+
+- **Batch reactor** (exothermic A → B on a TCU): reactant, batch and jacket temperatures; Arrhenius heat release, so
+  positive feedback. Processes can freeze slow states in the linear model (`ProcessDef.frozen`): the reactant, so
+  the model describes one stage of the batch. Setpoint events can ramp (`ramp`, units/s). At 80 °C the gain is 3.9
+  with a full charge and 0.86 near the end, the time constant 12 and 4 min; the cooling margin (UA + UA_l −
+  dQ_r/dT) is 12 kW/K at the start and goes negative across the ±20 % spread. Mechanical view: a Semenov diagram,
+  and gain and time constant against the reactant left.
+- **Self-tuning PI** (rung 13): RLS on y(k) = a·y(k−1) + b·u(k−1−d) + c with forgetting, SIMC from the estimate every
+  cycle; learns only on movement above the noise, bounds the covariance, keeps gains within 5× of the start and
+  only accepts the expected sign. Linear analysis: the PI it would converge to at each point. Export: LL_PID plus an
+  `LL_SelfTune` FB writing Gain and Ti each cycle.
+- **ADRC** (rung 14): linear ADRC of order 1 or 2, an extended state observer with all poles at −ω_o, the law
+  cancelling the total disturbance; discretized exactly, the observer fed the applied output. Linear form as an
+  `ss` controller. Auto-tune reads b₀ off the frequency response at 4× the bandwidth (works on unstable and
+  integrating plants) and picks the fastest ω_c with Ms ≤ 1.6, ω_o = 3·ω_c. Export: `LL_Adrc`.
+- **Your own controller** (rung 15): an IEC 61131-3 Structured Text interpreter (`st.ts`: VAR declarations,
+  IF/FOR/WHILE/REPEAT/EXIT/RETURN, operators, the standard functions with named arguments, 100 000 steps per cycle
+  before it calls it an endless loop, errors with line numbers). The code reads SP, PV, the % values, TS, TIME,
+  MANUAL, MAN_OUT (and the second loop's on a 2×2 process) and writes OUT (OUT2). It starts as the process's PI
+  written out, which matches the built-in PI exactly. Code that doesn't compile or fails holds the valve. Editor
+  with live checking and an explicit Run. Export: `LL_Custom` with your VARs as statics and the # prefixes added for SCL.
+- **Auto-tune:** dispatches ADRC and adaptive before the "unstable plant" refusal.
+- **Verdicts the numbers support:** batch → tune for the start of the batch and make the recipe safe. A PI tuned on a
+  quiet batch has Ms 2.6 with a full charge and overshoots a strong batch by 2.4 °C; tuned for the start it is
+  robust but lags a 2 °C/min ramp by 26 °C; the self-tuner reaches Ms 1.4 and no overshoot but detunes itself to Kc
+  0.25 in a quiet late hold; ADRC holds the start with Ms 1.6 and no reaction model but lags ramps by 22 °C. None
+  of them holds every reactor in the ±20 % spread: the cooling margin is the recipe's and the safety system's job.
+  Your own controller: the PI without its edges starts every test with a bump (IAE ten times worse).
+- **Case studies:** `batch-adaptive`, `write-your-own`.
+- **Not in 4c:** MRAC, gain scheduling on batch time or conversion, nonlinear ADRC, arrays and CASE in the ST subset.

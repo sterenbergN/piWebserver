@@ -1,7 +1,8 @@
 import { linearPidAt, type ControllerConfig, type PidParams } from './controllers';
 import { fitModel } from './ident';
-import { analyzeLoop, approximate, closedLoop, isStable, linearizePlant, robustness, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
+import { analyzeLoop, approximate, closedLoop, isStable, linearizePlant, plantResponse, robustness, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
+import { simcPi } from './adaptive';
 import { mimoModel, rga11, steadyGains } from './multivar';
 
 export type TuningLoop = 'main' | 'inner' | 'outer';
@@ -375,7 +376,7 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
       note: `Averaging level (Lambda for integrating): the level may swing about ${swing} % of span when the inflow changes by ${upset} % of the outlet's capacity, so the arrest time is λ = e·${swing}/(k′·${upset}) = ${round3(lambda / 60)} min with k′ ${round3(Math.abs(m.kPrime))} %/s per %. Tight level control would pass every upstream swing straight to the outflow.${m.negative ? ' More outflow lowers the level, so the action is inverted.' : ''}`,
     };
   }
-  if (config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc') return null;
+  if (config.kind === 'statefb' || config.kind === 'multiloop' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'adaptive' || config.kind === 'custom') return null;
   const type = typeOf(config.pid);
   const r = at(config, 'main', type);
   if (!r) return null;
@@ -393,7 +394,7 @@ function scaleGains(config: ControllerConfig, k: number): ControllerConfig {
   if (config.kind === 'cascade' || config.kind === 'ratio') return { ...config, outer: s(config.outer) };
   if (config.kind === 'schedule') return { ...config, pid: s(config.pid), points: config.points.map(s) };
   if (config.kind === 'override') return { ...config, pid: s(config.pid) };
-  if (config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'mpc') return config;
+  if (config.kind === 'onoff' || config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'custom') return config;
   if (config.kind === 'multiloop') return { ...config, pid: s(config.pid), pid2: s(config.pid2) };
   return { ...config, pid: s(config.pid) };
 }
@@ -415,6 +416,9 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
   if (config.kind === 'statefb') return tuneStateFb(proc, params, config);
   if (config.kind === 'multiloop') return tuneMultiloop(proc, params, config);
   if (config.kind === 'mpc') return tuneMpc(proc, params, config);
+  if (config.kind === 'adrc') return tuneAdrc(proc, params, config);
+  if (config.kind === 'adaptive') return tuneAdaptive(proc, params, config);
+  if (config.kind === 'custom') return { config, note: 'Your own code: auto-tune can\'t know what its numbers mean. Tune it by hand, or start from another rung\'s tuning.' };
   const m = linearizePlant(proc, cleanParams(proc, params), proc.nominalPv);
   const scale = Math.max(1, ...m.poles.map((p) => Math.hypot(p.re, p.im)));
   if (config.kind !== 'onoff' && m.poles.some((p) => p.re > 1e-9 * scale)) {
@@ -511,5 +515,54 @@ function tuneMpc(proc: ProcessDef, params: Params, config: Extract<ControllerCon
   return {
     config: { ...config, P, M: Math.min(config.M, P) },
     note: `MPC has no tuning rule. The horizon is set to about half the slowest valve-to-variable response (${round3(slowest)} s with its dead time), ${P} cycles of ${p.Ts} s: long enough to see where each move leads, short enough to keep the plan small. Then: weights q₁, q₂ say which variable matters more, the move weight r how gently the valves may move, and the Kalman filter's upsets how much it trusts the measurements.`,
+  };
+}
+
+/**
+ * ADRC: b₀ from the plant's first-order (or second-order) model, the
+ * observer five times faster than the loop, and the loop as fast as it can be
+ * while it keeps Ms ≤ 1.6 at the design point. Unlike the PID rules, this also
+ * works on an unstable plant: the observer treats the instability as part of
+ * the disturbance it cancels.
+ */
+function tuneAdrc(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'adrc' }>) {
+  const p = cleanParams(proc, params);
+  const m = linearizePlant(proc, p, proc.nominalPv);
+  const f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
+  // ADRC assumes the plant looks like b₀/sⁿ around its bandwidth: read b₀ off the frequency response there
+  // (works for unstable and integrating plants too, where first-order fits don't).
+  const b0At = (w: number) => {
+    const g = plantResponse(m, w);
+    return config.order === 1 ? -w * g.im : -w * w * g.re;
+  };
+  // b₀ is read a little above the loop's bandwidth (4×, where the slow poles are behind it) and the observer runs
+  // at 3×: then try the loop from fast to slow until it is robust.
+  let wc = 1 / Math.max(f.theta2, 2 * p.Ts), best: { c: ControllerConfig; ms: number } | null = null, b0 = 0;
+  for (let i = 0; i < 40 && !best; i++, wc *= 0.8) {
+    b0 = Number(b0At(4 * wc).toPrecision(3));
+    const c: ControllerConfig = { ...config, b0, wc: round3(wc), wo: round3(Math.min(3 * wc, 0.3 / p.Ts)) };
+    const chk = nominalCheck(proc, p, c);
+    if (chk.stable && chk.ms > 0 && chk.ms <= 1.6) best = { c, ms: chk.ms };
+  }
+  if (!best) return { config, note: `No order-${config.order} ADRC design keeps Ms ≤ 1.6 here: try order ${config.order === 1 ? 2 : 1}. (Order 1 assumes the plant looks like an integrator near the bandwidth; a big lag in the way, like a jacket, breaks that.)` };
+  const c = best.c as Extract<ControllerConfig, { kind: 'adrc' }>;
+  return {
+    config: c,
+    note: `Order ${c.order}: b₀ ${c.b0}, read off the plant's frequency response at 4× the loop's bandwidth at ${round3(proc.nominalPv)} ${proc.pv.unit}, where it should look like b₀/s${c.order === 2 ? '²' : ''} (a rough value is enough: the observer takes up the rest). Observer at ω_o ${c.wo} rad/s, loop at ω_c ${c.wc} rad/s, the fastest that keeps Ms ≤ 1.6 (${round3(best.ms)}).`,
+  };
+}
+
+/** Self-tuning PI: the dead time and a closed-loop time constant from the plant, and SIMC at the design point to start from. */
+function tuneAdaptive(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'adaptive' }>) {
+  const p = cleanParams(proc, params);
+  const m = linearizePlant(proc, p, proc.nominalPv);
+  const f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
+  const theta = round3(f.theta), tc = round3(Math.max(3 * f.theta, 2 * p.Ts));
+  const t = simcPi(f, tc);
+  if (!t) return null;
+  const pid = { ...config.pid, Kc: round3(t.Kc), Ti: round3(t.Ti), invert: t.negative };
+  return {
+    config: { ...config, pid, theta, tc },
+    note: `Starts from SIMC at ${round3(proc.nominalPv)} ${proc.pv.unit} (Kc ${pid.Kc}, Ti ${pid.Ti} s), assumes θ ${theta} s, aims for τc ${tc} s, and from then on retunes itself from what it measures (within 5× of the start).`,
   };
 }

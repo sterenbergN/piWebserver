@@ -1,4 +1,4 @@
-import { DEFAULT_PID, defaultController, type ControllerConfig, type ControllerKind } from './controllers';
+import { DEFAULT_PID, defaultController, defaultCustomCode, type ControllerConfig, type ControllerKind } from './controllers';
 import type { Params, ProcessId } from './model';
 import { getProcess } from './processes';
 
@@ -707,6 +707,67 @@ Here λ₁₁ is 0.82 at 25 °C, 0.64 at 35 °C, 0.36 at 50 °C and 0.27 at 55 �
 
 **Watch the operating point.** λ₁₁ runs from 0.82 to 0.27 across the recipes: the pairing and the decoupler that suit 35 °C don't suit 55 °C.`,
   },
+  batch: {
+    mechanical: String.raw`A 2 m³ glass-lined reactor runs an exothermic batch reaction, A → B, about 2 h from charge to discharge. A **temperature control unit** (TCU) heats or cools the jacket fluid. The PLC writes the jacket temperature setpoint (**TY-1001**, 10–130 °C), and the TCU's own loop makes it, with a lag of about 3 minutes (the TCU, the jacket's volume and the thick wall). **TT-1001** reads the batch.
+
+**The heat balance:**
+
+$$C\frac{dT}{dt} = \underbrace{(-\Delta H)\,k(T)\,c\,V}_{Q_r} - UA\,(T - T_j) - UA_l(T - 20),\qquad k(T) = k_{80}\,e^{\frac{E}{R}\left(\frac{1}{353} - \frac{1}{T + 273}\right)}$$
+
+- The reaction rate doubles about every 7 K, so the reaction heat does too: **positive feedback** from temperature to heat.
+- At 80 °C with a full charge, the reaction makes 500 kW, and its heat output grows by 48 kW for every 1 K hotter. The jacket removes 60 kW per K of difference.
+- As A is used up, $Q_r$ and its slope fall: by the end of the batch the reaction hardly matters.
+
+**The cooling margin** is what decides: $UA + UA_l - dQ_r/dT$. At the start of a batch it is about 12 kW/K; with 20 % more reaction heat and a 20 % fouled jacket together it goes negative, and the reactor would run away on its own. The **mechanical view's Semenov diagram** shows that crossing.
+
+**What you'd change in the plant.** Dose the reactant over time (semi-batch) instead of charging it all, so there is never much to react. Heat up more slowly, so it reacts on the way. Keep the jacket clean. These protect the batch more than any controller can.`,
+    control: String.raw`**Linearized at one stage of the batch** (the reactant frozen at what is left), from TCU setpoint to batch temperature:
+
+$$G(s) \approx \frac{K}{(\tau s + 1)(\tau_j s + 1)},\qquad K \propto \frac{UA}{UA + UA_l - dQ_r/dT},\qquad \tau = \frac{C}{UA + UA_l - dQ_r/dT}$$
+
+At 80 °C:
+
+| | Reactant left | K (%/%) | τ |
+|---|---|---|---|
+| Start of the batch | 2 kmol/m³ | 3.9 | 12 min |
+| Halfway | 1 kmol/m³ | 1.3 | 5 min |
+| End | 0.2 kmol/m³ | 0.86 | 4 min |
+
+**The catch for PID.** Commission it on a quiet batch (or a water run) and the loop is 4.5 times livelier than it needs to be when a full charge is in. Tune it for the start of a batch and it is slow for the rest. Either way it sees two different plants.
+
+**The options.**
+- **Gain scheduling** on the batch stage (time, or conversion from a heat balance).
+- **Adaptive control:** let the controller measure the plant as it goes and retune.
+- **ADRC:** treat the reaction heat as a disturbance to estimate and cancel.
+
+And, honestly: a slower heat-up, or dosing, which shrinks the problem itself.`,
+    automation: String.raw`**Tags.** TT-1001 (0–150 °C), TIC-1001, TY-1001 (TCU setpoint, 10–130 °C).
+
+**Structure.** This is already a cascade: the TCU's jacket loop is the slave, TIC-1001 the master. Keep it that way. The TCU makes the jacket behave, whatever heats or cools it.
+
+**Siemens.**
+- **PID_Temp** in its cascade mode is the natural block for reactor temperature: heating/cooling outputs, a master/slave pair, its own tuning. PID_Compact on the batch temperature writing the TCU setpoint works too.
+- **Self-tuning:** PID_Compact's and PID_Temp's tuning (pretuning, fine tuning) runs once, on demand. Continuous adaptation needs your own code (the exported LL_SelfTune), with a freeze switch for the operator.
+- **ADRC:** your own SCL (LL_Adrc).
+- **Recipe:** run the heat-up as a setpoint **ramp** (the batch scenario's 2 °C/min) from the phase logic (ISA-88), not as a step.
+
+**Safety.** A high-temperature trip on an independent sensor, emergency cooling (full cooling water, quench or dump) and, for real runaway potential, a separate safety system. None of that belongs to the control loop.`,
+    commissioning: [
+      'Check the TCU on its own: jacket setpoint steps, heating and cooling, its limits and how fast it gets there.',
+      'Run a water batch (no reaction) to measure UA and the heat capacity: the reactor\'s quiet behaviour.',
+      'From the reaction\'s calorimetry (heat of reaction, rate vs temperature), work out the cooling margin at the hold temperature with a full charge. If it is small, change the recipe first.',
+      'Tune for the hardest stage: the start of the hold with a full charge, not the water batch.',
+      'Run the first real batches with the heat-up ramp slowed down and the operator watching the jacket temperature: how much cooling is it using?',
+      'Set and test the high-temperature trip and emergency cooling independently of the control loop.',
+    ],
+    verdict: String.raw`**Tune for the start of the batch, and make the recipe safe; then a PI is enough.**
+- A PI commissioned on a quiet batch (Kc 0.88) has Ms 2.6 when a full charge is in, and a strong batch overshoots by 2.4 °C.
+- Tuned for the start of the batch (SIMC, Kc 0.47) it is robust there (Ms 1.3) but lags the 2 °C/min heat-up by 26 °C. Slow the ramp or add the ramp's feedforward.
+- The **self-tuning PI**, starting from the quiet-batch tuning, learns its way to Ms 1.4 at the start of the batch and no overshoot. But its estimate wanders when nothing moves: late in a quiet hold it detuned itself to Kc 0.25.
+- **ADRC** holds the start of the batch with Ms 1.6 and no model beyond b₀, but lags ramps.
+
+**No controller holds a reactor whose cooling margin has gone.** Across a ±20 % spread of reaction heat and jacket fouling, every one of them meets reactors that run away. That is fixed in the recipe (dosing, slower heat-up, a cleaner jacket) and guarded by the safety system, not in the loop.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -1287,6 +1348,128 @@ then apply only the first move, and do it all again next cycle with fresh measur
 - **Embedded and fast MPC** (explicit MPC, code-generated solvers) runs in drives and automotive controllers at kHz rates.
 - MPC is where control meets optimization: the same machinery schedules energy and production.`,
   },
+  adaptive: {
+    summary: 'A PI that keeps measuring the plant and retunes itself: recursive least squares fits a simple model to what the loop does, and a tuning rule turns that model into gains, every cycle. It follows a plant that changes, as long as the loop gives it something to learn from.',
+    theory: String.raw`**A self-tuning regulator** (indirect adaptive control) does on line what an engineer does with a bump test:
+1. **Estimate** a model from the recent data: here $y(k) = a\,y(k-1) + b\,u(k-1-d) + c$, a first-order model with the dead time $d$ assumed.
+2. **Design** the controller from it, as if it were true (*certainty equivalence*): here SIMC, $K = b/(1-a)$, $\tau = -T_s/\ln a$, $K_c = \tau/(K(\tau_c + \theta))$, $T_i = \min(\tau, 4(\tau_c + \theta))$.
+
+**Recursive least squares** updates the estimate with each new sample, weighting old data down by a **forgetting factor** $\lambda$ (it remembers about $1/(1-\lambda)$ samples):
+
+$$\hat\theta_k = \hat\theta_{k-1} + K_k\,(y_k - \varphi_k^\top\hat\theta_{k-1}),\quad K_k = \frac{P_{k-1}\varphi_k}{\lambda + \varphi_k^\top P_{k-1}\varphi_k},\quad P_k = \frac{(I - K_k\varphi_k^\top)P_{k-1}}{\lambda}$$
+
+**What can go wrong**, and it is why adaptive control is rare on plant floors:
+- **No excitation.** In a steady loop the data says nothing about the plant, but forgetting keeps discarding what it knew. The covariance grows, the estimate drifts, and the next upset meets strange gains ("bursting"). The guards here: learn only when the signals move by more than the noise, bound $P$, and keep the gains within 5× of the start.
+- **Wrong structure.** A first-order fit to a second-order plant is biased, and the bias depends on what the loop is doing.
+- **Closed-loop identification:** the controller's own feedback correlates input and noise.
+
+**MRAC** (model reference adaptive control) is the other family: adjust the gains directly so the loop follows a reference model (the MIT rule, Lyapunov designs). It is elegant on paper, but harder to trust.`,
+    works: [
+      'A plant whose gain or speed changes slowly and predictably: batch stages, wear, fouling, a catalyst ageing.',
+      'Loops that see enough movement (setpoint changes, regular upsets) to keep the estimate honest.',
+      'As an advisor: estimate and display, let a person accept the new tuning.',
+    ],
+    breaks: [
+      'Long quiet periods with forgetting on: the estimate wanders and the loop detunes (or worse) on nothing.',
+      'Fast changes: it learns more slowly than the plant moves.',
+      'Unmodelled dynamics or dead time error: the fitted model is biased, and so are the gains.',
+      'Nobody on site can say what it is doing at 3 a.m.',
+    ],
+    tuning: String.raw`1. **Start it from a sound tuning:** it should be safe even if it never learns anything.
+2. **Dead time:** measure it; the estimator doesn't.
+3. **Forgetting:** remember a few of the plant's slowest time constants (λ = 0.995 at a 2 s cycle remembers about 7 minutes).
+4. **Guards:** the dead zone (noise level), gain bounds, and a freeze switch.
+5. **Watch the estimate** (gain, time constant) on the HMI for a few weeks before trusting it.`,
+    implementation: String.raw`- **Order each cycle:** run the PID with the present gains, then update the estimator with this cycle's data and compute the next gains.
+- **Freeze** learning in manual, on a bad measurement, and when the operator asks.
+- **Log** every gain change: it is a controller changing its own tuning.`,
+    siemens: String.raw`- **PID_Compact / PID_Temp** have pretuning and fine tuning: identification runs **on demand**, not continuously. For a batch you can trigger fine tuning per batch stage, which is a gain schedule in practice.
+- For **continuous** adaptation: the exported **LL_SelfTune** next to the PID, writing Gain and Ti into the PID's parameters each cycle.
+- **PCS 7** has an adaptive / model-based block set in its Advanced Process Library; most DCSs have some self-tuning option.`,
+    broad: String.raw`- **Commercial self-tuners** (in single-loop controllers and DCSs) mostly retune on demand or on detected changes, not every sample, with heavy guarding.
+- **Gain scheduling** is usually preferred when the change is predictable: it is adaptive control with the learning done once, by the engineer.`,
+  },
+  adrc: {
+    summary: 'Active disturbance rejection: an extended state observer estimates everything acting on the PV besides the controller (unmodelled dynamics, loads, nonlinearity) as one "total disturbance", and the control law cancels it. It needs little model: the plant\'s order and a rough gain b₀.',
+    theory: String.raw`**The idea** (Han, then Gao's linear form): write the plant as $n$ integrators,
+
+$$y^{(n)} = b_0\,u + f,$$
+
+and put everything you don't know or don't want to model into $f$, the **total disturbance**: the rest of the dynamics, loads, the reaction heat in a reactor, the error in $b_0$.
+
+**The extended state observer (ESO)** adds $f$ as an extra state and estimates it with the output and its derivatives:
+
+$$\dot z = \begin{bmatrix}0 & 1 & \\ & \ddots & 1\\ & & 0\end{bmatrix} z + \begin{bmatrix}0\\ b_0\\ 0\end{bmatrix} u + L\,(y - z_1),$$
+
+with all observer poles at $-\omega_o$: $L = \left[\binom{n+1}{1}\omega_o,\ \binom{n+1}{2}\omega_o^2,\ \ldots\right]$.
+
+**The law** cancels the estimate and closes a simple loop on what is left:
+
+$$u = \frac{k_p(r - z_1) - k_d z_2 - z_{n+1}}{b_0},\qquad k_p = \omega_c^2,\ k_d = 2\omega_c\ \ (n = 2;\ k_p = \omega_c\ \text{for}\ n = 1)$$
+
+so the plant behaves like $n$ integrators under a PD, with poles at $-\omega_c$.
+
+**Three knobs, all with meaning:** $\omega_c$ (how fast), $\omega_o$ (how quickly disturbances are estimated, 3–10 × $\omega_c$), and $b_0$ (how hard the output pushes, within a factor of two or so). Linear ADRC *is* a linear controller, a particular two-degree-of-freedom PID with a filter, so the usual margins apply. Its appeal is the tuning: by bandwidth, without a full model.`,
+    works: [
+      'Plants whose dynamics change or aren\'t well known, but whose order and rough gain are: motion, drives, thermal systems.',
+      'Disturbances that act like an extra force or heat: the ESO sees them through their effect and cancels them.',
+      'Where you want to tune by bandwidth instead of by Kc, Ti, Td.',
+    ],
+    breaks: [
+      'A big lag that isn\'t in its order: an order-1 ADRC on a plant with a slow jacket in the way loses its margins.',
+      'Dead time: the ESO sees the effect late, so the cancellation comes late.',
+      'b₀ far off, or the wrong sign: too small and it is violent, too large and sluggish.',
+      'Noise: a fast observer differentiates it into the output.',
+      'Ramps: plain ADRC lags them (add the reference\'s derivatives as feedforward).',
+    ],
+    tuning: String.raw`1. **Order:** 1 if the plant looks like an integrator or a first-order lag near the bandwidth you want, 2 if there are two lags (a reactor behind a jacket, a mass on a motor).
+2. **b₀:** from a step test, the initial slope per % (order 1) or curvature per % (order 2). Auto-tune here reads it off the frequency response at 4× the bandwidth.
+3. **ω_c:** as fast as the dead time and the lags allow; check Ms.
+4. **ω_o:** 3–10 × ω_c, limited by noise and the controller cycle.`,
+    implementation: String.raw`- **Discretize the ESO** for the cycle (exactly, as here, or by Euler at a fast cycle).
+- **Feed the observer the output actually applied** (after the limits): that is the anti-windup.
+- **Bumpless:** in manual, set $z_1 = y$, derivatives to 0 and $f = -b_0 u$.
+- **Trend $f$:** it is a free estimate of everything acting on the process (on the reactor it moves with the reaction heat).`,
+    siemens: String.raw`- No standard ADRC block in TIA Portal: the exported **LL_Adrc** is a small SCL FB (an observer of n + 1 states and a gain row).
+- Motion libraries and some drives have disturbance observers of the same family (load torque estimation); there they are a parameter, not code.`,
+    broad: String.raw`- ADRC is used in motion control, power electronics and some process applications; it is common in recent academic and Asian industrial work.
+- It belongs with **disturbance observers** (DOB) and **internal model control**: estimate what is acting, and cancel it.`,
+  },
+  custom: {
+    summary: 'Write the controller yourself in IEC 61131-3 Structured Text, run it on the bench against any process and test, and export it as an FB for TIA Portal or any IEC 61131-3 PLC.',
+    theory: String.raw`**A controller is a program that runs every cycle.** Every rung on the ladder is one: a PID is a few lines of arithmetic with a memory (the integral). Writing it out makes three things concrete:
+- **State:** what it remembers between cycles (here, anything in a VAR block).
+- **The cycle:** everything happens once per **TS** seconds, from the measurement it read to the output it writes.
+- **The edges:** limits, windup, manual mode, a bad input. That is where most of the code in a real controller goes.
+
+**What the code can use**
+- **Reads:** SP and PV in engineering units; SP_PCT and PV_PCT in % of span (on a 2×2 process also PV2, SP2 and their %); TS, TIME, MANUAL and MAN_OUT.
+- **Writes:** OUT, in % (and OUT2 on a 2×2 process).
+- **Statements:** IF, FOR, WHILE, REPEAT, assignments.
+- **Functions:** the standard ones (ABS, SQRT, EXP, LN, MIN, MAX, LIMIT, SEL, TRUNC, the *_TO_* conversions), with named arguments like LIMIT(MN := 0.0, IN := u, MX := 100.0).
+
+It starts as the process's PI, written out in full: change it, run it, compare it with the built-in controllers on the same tests and scorecard.`,
+    works: [
+      'Trying a variation the ladder doesn\'t have: a nonlinear gain, a deadband, a different anti-windup, a sequence.',
+      'Checking your own PLC code against a process before it goes near the plant.',
+      'Learning: write the PID yourself and see that it matches the built-in one.',
+    ],
+    breaks: [
+      'No manual tracking: the switch to auto bumps.',
+      'Integrating into a limit (windup): handle it, as the starting PI does.',
+      'Code that depends on the cycle time without using TS: it changes behaviour when the OB changes.',
+      'An endless loop: here it is stopped after 100 000 steps and the valve held; in a PLC the cycle-time watchdog stops the CPU.',
+    ],
+    tuning: String.raw`Your code, your numbers. The scorecard, the margins (where the code is a PID in disguise, the PID rung shows them) and the mismatch test are the same as for every other controller. Use them.`,
+    implementation: String.raw`- **One FB, called every cycle**, from a cyclic interrupt OB.
+- **Every variable that must survive a cycle is static** (VAR); temporaries can be VAR_TEMP in the PLC.
+- **Bumpless manual:** the starting PI shows the pattern: in manual, set the integral so the output equals the manual value.
+- **Test the edges:** a sensor freeze, the valve at a limit, manual and back. The bench's tests include them.`,
+    siemens: String.raw`- The export wraps your code as **LL_Custom**: the built-in names become VAR_INPUT / VAR_OUTPUT, your VAR its statics, and in SCL every local gets its # prefix. Paste it into an external source file and compile it into a block.
+- Call it from **OB30** at the cycle you tested with; the call site computes the % inputs from your analog tags.`,
+    broad: String.raw`- The same code runs in **CODESYS, TwinCAT** and any IEC 61131-3 runtime (the ST export, without # prefixes).
+- **PLCopen** has standard motion and process function blocks; your own FB is how anything else gets done.`,
+  },
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -1318,6 +1501,22 @@ export type CaseStudy = {
 };
 
 const PI = (Kc: number, Ti: number, extra: Partial<typeof DEFAULT_PID> = {}): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, Kc, Ti, ...extra } });
+/** The batch reactor's self-tuning PI. */
+const ADAPT = (): ControllerConfig => defaultController('adaptive', getProcess('batch'));
+/** The flow loop's PI written out in Structured Text, and the same without its edges (no anti-windup, no tracking). */
+const STPI = defaultCustomCode(getProcess('flow'));
+const STPI_BARE = `// The same PI without its edges: no anti-windup, no manual tracking.
+VAR
+  Kc : REAL := 0.45;
+  Ti : REAL := 1.8;
+  I : REAL;
+  e : REAL;
+END_VAR
+
+e := SP_PCT - PV_PCT;
+I := I + Kc * TS / Ti * e;
+OUT := LIMIT(MN := 0.0, IN := Kc * e + I, MX := 100.0);
+`;
 /** The mixing tank's two loops (SIMC each, direct pairing), with changes. */
 const ML = (extra: Partial<Extract<ControllerConfig, { kind: 'multiloop' }>> = {}): ControllerConfig => ({ ...(defaultController('multiloop', getProcess('mixing')) as Extract<ControllerConfig, { kind: 'multiloop' }>), ...extra });
 /** The mixing tank's MPC, with changes. */
@@ -2229,6 +2428,83 @@ Only MPC lets you say which variable gives. A PID structure would need an overri
 **MPC** matches it on interaction and wins on load upsets and at the limits, where its weights decide what gives. On a single tank that rarely pays for a model someone has to keep right. On a unit with many interacting variables and constraints that bind every day, it does, which is why refineries and chemical plants run it.
 
 **Either way, the operating point matters:** the relative gain runs from 0.82 at 25 °C to 0.27 at 55 °C, so a decoupler or a model taken at one recipe is off at another.`,
+      },
+    ],
+  },
+  {
+    id: 'batch-adaptive',
+    process: 'batch',
+    title: 'The batch reactor: one plant at the start, another at the end',
+    question: 'An exothermic batch makes the reactor slow and touchy while the reactant lasts and easy afterwards. Does it need adaptive control or ADRC, or a PI tuned for the right stage, and where do controllers stop being the answer?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A 2 m³ reactor, a reaction that gives off up to 500 kW, and a jacket on a temperature control unit. Each batch: charge at 40 °C, heat up at 2 °C/min to 80 °C, hold while it reacts, cool down. The **mechanical view's** Semenov diagram shows what matters: early in the batch, the reaction heat grows almost as fast with temperature (48 kW/K) as the jacket can take it away (60 kW/K).`,
+      },
+      {
+        title: 'A PI commissioned on a quiet batch',
+        body: String.raw`Tuned (SIMC) near the end of a batch, when the reaction is nearly over: Kc 0.88, Ti 252 s. On a whole batch it looks fine. The heat-up lags by 11 °C and the hold is steady. But the **control view** at the start of the batch says Ms 2.6, and the strong batch (more reactant, a fresher catalyst) overshoots 80 °C by 2.4 °C. The plant it was tuned on is 4.5 times less sensitive than the one it meets.`,
+        presets: [{ label: 'PI (quiet batch)', controller: PI(0.88, 252) }],
+        scenarios: ['batch', 'hot-batch'],
+      },
+      {
+        title: 'Tune for the start instead',
+        body: String.raw`SIMC on the start-of-batch model ($K = 3.9$, $\tau = 12$ min): Kc 0.47, Ti 736 s. Ms 1.3 where it matters, no overshoot, but now it is slow all the time: it lags the heat-up ramp by 26 °C. The usual compromise is this tuning plus a slower ramp, or a feedforward from the ramp rate.`,
+        presets: [{ label: 'PI (quiet batch)', controller: PI(0.88, 252) }, { label: 'PI (start of batch)', controller: PI(0.47, 736) }],
+        scenarios: ['batch', 'early-hold'],
+      },
+      {
+        title: 'A self-tuning PI',
+        body: String.raw`Start from the quiet-batch tuning and let it learn: recursive least squares fits a first-order model as the batch runs, and SIMC retunes from it every cycle. Probe **Kc** on the block diagram to watch it move. The strong batch no longer overshoots, and at the start of a batch it settles on gains with Ms 1.4.
+
+Now look at the late-batch test: with little movement to learn from, its estimate wanders and it detunes itself to Kc 0.25. That is the adaptive controller's classic weakness, and why plants that use it guard it heavily or let it only advise.`,
+        presets: [{ label: 'PI (quiet batch)', controller: PI(0.88, 252) }, { label: 'Self-tuning PI', controller: ADAPT() }],
+        scenarios: ['hot-batch', 'late-hold'],
+      },
+      {
+        title: 'ADRC',
+        body: String.raw`A second-order ADRC: an observer estimates the temperature, its rate and the "total disturbance" (here, mostly the reaction heat) and cancels it. It needs only $b_0$, read from the plant around its bandwidth. It holds the start of a batch with Ms 1.6 and no overshoot, with no model of the reaction at all. Probe **I** to see the total disturbance it cancels, as the output that takes: everything acting on the batch, the heat losses and the reaction included. Through the hold it climbs as the reaction dies away and less cooling is needed. Its weakness is ramps: it lags the heat-up by 22 °C.`,
+        presets: [{ label: 'PI (start of batch)', controller: PI(0.47, 736) }, { label: 'ADRC', controller: { kind: 'adrc', order: 2, wc: 0.0054, wo: 0.016, b0: 3.16e-5 } }],
+        scenarios: ['batch', 'early-hold'],
+      },
+      {
+        title: 'Where controllers stop being the answer',
+        body: String.raw`The scorecard's robustness row checks each controller against a ±20 % spread of reaction heat, jacket fouling and jacket lag. **Every one of them meets reactors in that spread that run away.** Where the reaction heat grows faster with temperature than the jacket can remove it, the cooling margin is gone. A loop can hold that only if it is fast enough and has cooling to spare, and these don't.
+
+The fix is the recipe: dose the reactant instead of charging it all, heat up more slowly, keep the jacket clean. Then an independent high-temperature trip and emergency cooling, outside the control system.`,
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**A PI tuned for the hardest stage (the start of the hold, full charge), a heat-up ramp it can follow, and a recipe with a cooling margin.**
+- Adaptive control follows the batch, but needs guarding against learning from quiet data.
+- ADRC copes without a reaction model, at the price of lagging ramps and being one more unfamiliar block.
+- Neither replaces the margin: that is chemistry and plant design, and the safety system's job when it is lost.`,
+      },
+    ],
+  },
+  {
+    id: 'write-your-own',
+    process: 'flow',
+    title: 'Write your own controller',
+    question: 'What is a controller, line by line? Write one in Structured Text, run it on the bench, and see how its edge cases show up in the tests.',
+    family: 'pid-wins',
+    steps: [
+      {
+        title: 'The PI, written out',
+        body: String.raw`Pick **Your own (ST)** on the bench's controller list. It starts with the flow loop's PI written out in full: the error in % of span, the integral as a static, conditional integration for anti-windup, and tracking in manual. Run it and compare it with the built-in PI: the trends are identical, to the last decimal.`,
+        presets: [{ label: 'Built-in PI', controller: PI(0.45, 1.8) }, { label: 'The same PI in ST', controller: { kind: 'custom', code: STPI } }],
+        scenarios: ['sp-steps'],
+      },
+      {
+        title: 'Leave out the edges',
+        body: String.raw`The same PI with the anti-windup and the manual tracking taken out (eight lines shorter). Now every test starts with a bump. Without tracking, its integral starts at zero instead of where the valve is, so its first move slams the valve (up to 54 % overshoot, IAE ten times worse). When the valve saturates it winds up too. Most of a real controller's code is about these edges, not the PID formula.`,
+        presets: [{ label: 'The PI in ST', controller: { kind: 'custom', code: STPI } }, { label: 'Without its edges', controller: { kind: 'custom', code: STPI_BARE } }],
+        scenarios: ['sp-steps', 'saturation'],
+      },
+      {
+        title: 'Now yours',
+        body: String.raw`Open either in the bench and change it. Try a gain that grows with the error (error-squared PI), a deadband, a different anti-windup, or a setpoint ramp in the controller. The **Automation** view turns your code into an FB (**LL_Custom**) for TIA Portal (with # prefixes) or any IEC 61131-3 PLC, with the call site.`,
       },
     ],
   },

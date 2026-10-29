@@ -6,6 +6,7 @@ import { valveCharacteristic, type Params, type ProcessDef } from '@/lib/loop-la
 import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { splitValves } from '@/lib/loop-lab/processes/jacket';
+import { jacketSetpoint, reactionHeat } from '@/lib/loop-lab/processes/batch';
 import { arrowHead, Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
 
 // Process drawings for the stirred tank, the heat exchanger, the surge tank,
@@ -486,6 +487,63 @@ function MixingPAndId({ config }: { config: ControllerConfig }) {
   );
 }
 
+export function BatchSchematic({ p, d, valve, c, T, Tj }: { p: Params; d: Params; valve: number; c: number; T: number; Tj: number }) {
+  const Qr = reactionHeat(T, c, p, d);
+  const left = Math.max(0, Math.min(1, c / Math.max(d.charge, 1e-6)));
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 300" role="img" aria-label={`Batch reactor at ${T.toFixed(1)} °C, jacket ${Tj.toFixed(1)} °C, reaction heat ${Math.round(Qr)} kW`}>
+      <path d="M170 70V220Q170 262 280 262Q390 262 390 220V70" fill={heat(Tj)} stroke="var(--ll-steel)" strokeWidth={3} />
+      <path d="M190 70V215Q190 244 280 244Q370 244 370 215V70" fill={heat(T)} stroke="var(--ll-steel)" strokeWidth={3} />
+      <line className="ll-steel" x1={160} x2={400} y1={70} y2={70} />
+      <line className="ll-line" x1={280} y1={30} x2={280} y2={205} />
+      <rect className="ll-block" x={264} y={14} width={32} height={18} rx={3} />
+      <text x={280} y={27} textAnchor="middle">M</text>
+      <path className="ll-line" d="M256 205H304M256 197V213M304 197V213" />
+      <text x={280} y={140} textAnchor="middle" fontWeight={700}>{T.toFixed(1)} °C</text>
+      <text x={280} y={158} textAnchor="middle">{Math.round(Qr)} kW from the reaction</text>
+      <text className="is-muted" x={400} y={236}>jacket {Tj.toFixed(1)} °C</text>
+      {/* Reactant left */}
+      <rect className="ll-block" x={420} y={90} width={22} height={110} rx={3} />
+      <rect className="ll-liquid" x={422} y={92 + 106 * (1 - left)} width={18} height={106 * left} />
+      <text className="is-muted" x={431} y={80} textAnchor="middle">A left</text>
+      <text x={450} y={150}>{c.toFixed(2)} kmol/m³</text>
+      {/* TCU */}
+      <rect className="ll-block" x={30} y={120} width={90} height={60} rx={6} />
+      <text x={75} y={146} textAnchor="middle" fontWeight={700}>TCU</text>
+      <text className="is-muted" x={75} y={164} textAnchor="middle">heat / cool</text>
+      <path className="ll-pipe" d="M120 140H170M120 165H170" />
+      <text x={20} y={210}>TY-1001 {f1(valve)} % → jacket setpoint {f1(jacketSetpoint(valve))} °C</text>
+      <line className="ll-signal" x1={370} y1={110} x2={480} y2={110} />
+      <circle className="ll-bubble" cx={500} cy={110} r={18} />
+      <text x={500} y={106} textAnchor="middle">TT</text>
+      <text x={500} y={119} textAnchor="middle">1001</text>
+    </svg>
+  );
+}
+
+function BatchPAndId({ config }: { config: ControllerConfig }) {
+  const what = config.kind === 'adrc' ? 'ADRC' : config.kind === 'adaptive' ? 'self-tuning' : config.kind === 'custom' ? 'own code' : null;
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 280" role="img" aria-label={`P&ID of the batch reactor temperature loop${what ? `, ${what}` : ''}`}>
+      <path className="ll-steel" strokeWidth={2.5} d="M180 70V215Q180 250 280 250Q380 250 380 215V70Z" />
+      <path className="ll-steel" strokeWidth={1.5} d="M195 85V210Q195 236 280 236Q365 236 365 210V85" />
+      <text className="is-muted" x={280} y={160} textAnchor="middle">R-1001</text>
+      <rect className="ll-block" x={40} y={130} width={80} height={50} rx={6} />
+      <text x={80} y={160} textAnchor="middle">TCU</text>
+      <path className="ll-pipe" strokeWidth={3} d="M120 145H180M120 170H180" />
+      <line className="ll-signal" x1={370} y1={130} x2={430} y2={130} />
+      <Bubble x={450} y={130} letters="TT" num="1001" />
+      <line className="ll-signal" x1={450} y1={110} x2={450} y2={70} />
+      <Bubble x={450} y={50} letters="TIC" num="1001" shared />
+      {what && <text className="is-muted" x={474} y={40}>{what}</text>}
+      <path className="ll-signal" d="M430 50H80V108" />
+      <Bubble x={80} y={50} letters="TY" num="1001" shared />
+      <text className="is-muted" x={20} y={225}>jacket temperature setpoint</text>
+      <text className="is-muted" x={20} y={272}>{LEGEND}</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -525,6 +583,7 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   if (proc.id === 'crane') return <CraneSchematic p={p} d={d} xt={x[1]} v={x[2]} th={x[3]} valve={valve} />;
   if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x[1]} wl={x[2]} phi={x[3]} valve={valve} />;
   if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x[1]} valve={valve} />;
+  if (proc.id === 'batch') return <BatchSchematic p={p} d={d} valve={valve} c={x[1]} T={x[2]} Tj={x[3]} />;
   if (proc.id === 'mixing') return <MixingSchematic p={p} d={d} valve={valve} h={x[1]} T={x[2]} v2={x[3]} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
@@ -536,6 +595,7 @@ export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: Controll
   if (proc.id === 'flow' || proc.id === 'tank') return <PAndId proc={proc} />;
   if (proc.id === 'crane' || proc.id === 'servo' || proc.id === 'maglev') return <MotionPAndId proc={proc} config={config} />;
   if (proc.id === 'mixing') return <MixingPAndId config={config} />;
+  if (proc.id === 'batch') return <BatchPAndId config={config} />;
   if (proc.id === 'stirred') {
     return (
       <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label="P&ID of the vessel temperature loop">

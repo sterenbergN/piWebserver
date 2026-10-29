@@ -1,6 +1,10 @@
 import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
+import { initialArx } from './adaptive';
+import { designAdrc, type AdrcDesign } from './adrc';
+import { ST_INPUTS, ST_OUTPUTS, compileCustom } from './controllers';
 import { decoupler, designMpc, mimoModel, steadyGains, type MpcDesign } from './multivar';
+import { stripDeclarations, toScl } from './st';
 import { designStateFb, type StateFbDesign } from './statespace';
 
 // Code and parameter exports for the automation view: TIA Portal SCL, IEC
@@ -22,7 +26,7 @@ export function real(v: number) {
 type Dialect = 'scl' | 'st';
 
 /** Tag-free names for the blocks. */
-const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith', stateFb: 'LL_StateFb', mpc: 'LL_Mpc' };
+const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith', stateFb: 'LL_StateFb', mpc: 'LL_Mpc', adrc: 'LL_Adrc', selfTune: 'LL_SelfTune', custom: 'LL_Custom' };
 
 /** Longest dead time the Smith predictor block can hold, in controller cycles. */
 const SMITH_BUFFER = 1000;
@@ -646,6 +650,211 @@ function step(r: [number, number], y: [number, number]): [number, number] {
 }`;
 }
 
+/** ADRC as one block: the discretized extended state observer, then the law. */
+function adrcBlock(d: Dialect, proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'adrc' }>, des: AdrcDesign) {
+  const v = loc(d);
+  const m = des.n + 1, last = m - 1;
+  const ind = '         ';
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.adrc)}
+   // Order ${des.n}: z[0] the output${des.n === 2 ? ', z[1] its rate' : ''}, z[${last}] the total disturbance f.
+   VAR_INPUT
+      Setpoint : Real;        // ${proc.pv.unit}
+      Input : Real;           // ${proc.tags.transmitter}, ${proc.pv.unit}
+      ManualEnable : Bool;
+      ManualValue : Real;     // %
+   END_VAR
+   VAR_OUTPUT
+      Output : Real;          // %
+      Disturbance : Real;     // the estimated total disturbance, as the output it takes to cancel it (%)
+   END_VAR
+   VAR
+      // Observer: z <- Phi*z + Gam*[last output, measurement] (ω_o ${real(config.wo)} rad/s, discretized for ${real(des.Ts)} s).
+      Phi : Array[0..${last}, 0..${last}] of LReal := [${arrayInit(des.Phi.flat(), m, ind)}];
+      Gam : Array[0..${last}, 0..1] of LReal := [${arrayInit(des.Gamma.flat(), 2, ind)}];
+      // Law: Output = Cz*z + Dr*r, i.e. (kp*(r - z0)${des.n === 2 ? ' - kd*z1' : ''} - f) / b0 with ω_c ${real(config.wc)} rad/s, b0 ${real(config.b0)}.
+      Cz : Array[0..${last}] of LReal := [${arrayInit(des.C, 8, ind)}];
+      Dr : LReal := ${lreal(des.Dr)};
+      B0 : LReal := ${lreal(config.b0)};
+      Z : Array[0..${last}] of LReal;
+      ZNew : Array[0..${last}] of LReal;
+      ULast : LReal;
+      Started : Bool;
+   END_VAR
+   VAR_TEMP
+      i : Int;
+      j : Int;
+      y : LReal;
+      r : LReal;
+      u : LReal;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    ${v('y')} := (${v('Input')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0;
+    ${v('r')} := (${v('Setpoint')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0;
+    IF ${v('ManualEnable')} OR NOT ${v('Started')} THEN
+        // At rest: the output where it is, nothing changing, f = -b0 * the output that holds it.
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('Z')}[${v('i')}] := 0.0;
+        END_FOR;
+        ${v('Z')}[0] := ${v('y')};
+        ${v('Z')}[${last}] := -${v('B0')} * ${v('ManualValue')};
+        ${v('u')} := ${v('ManualValue')};
+        ${v('Started')} := TRUE;
+    ELSE
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('ZNew')}[${v('i')}] := ${v('Gam')}[${v('i')}, 0] * ${v('ULast')} + ${v('Gam')}[${v('i')}, 1] * ${v('y')};
+            FOR ${v('j')} := 0 TO ${last} DO
+                ${v('ZNew')}[${v('i')}] := ${v('ZNew')}[${v('i')}] + ${v('Phi')}[${v('i')}, ${v('j')}] * ${v('Z')}[${v('j')}];
+            END_FOR;
+        END_FOR;
+        ${v('u')} := ${v('Dr')} * ${v('r')};
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('Z')}[${v('i')}] := ${v('ZNew')}[${v('i')}];
+            ${v('u')} := ${v('u')} + ${v('Cz')}[${v('i')}] * ${v('Z')}[${v('i')}];
+        END_FOR;
+    END_IF;
+    ${v('Output')} := LREAL_TO_REAL(LIMIT(MN := 0.0, IN := ${v('u')}, MX := 100.0));
+    ${v('ULast')} := ${v('Output')};   // the observer needs what was really applied: no windup
+    ${v('Disturbance')} := LREAL_TO_REAL(-${v('Z')}[${last}] / ${v('B0')});
+END_FUNCTION_BLOCK`;
+}
+
+/**
+ * The self-tuner: recursive least squares on y(k) = a·y(k−1) + b·u(k−1−d) + c, and SIMC from the
+ * estimate, written to the PID's gains each cycle.
+ */
+function selfTuneBlock(d: Dialect, proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'adaptive' }>, Ts: number, start: { a: number; b: number }) {
+  const v = loc(d);
+  const dl = Math.max(0, Math.round(config.theta / Ts) - 1);
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.selfTune)}
+   VAR_INPUT
+      Input : Real;           // ${proc.tags.transmitter}, ${proc.pv.unit}
+      PidOutput : Real;       // the PID's output this cycle, %
+      Learn : Bool := TRUE;   // FALSE freezes the estimate (e.g. in manual, or when the operator says so)
+   END_VAR
+   VAR_OUTPUT
+      Gain : Real;            // % per % of span: write to the PID
+      Ti : Real;              // s
+      ModelGain : Real;       // the estimate: K (% per %)
+      ModelTau : Real;        // s
+   END_VAR
+   VAR
+      Lambda : LReal := ${lreal(config.lambda)};   // forgetting: remembers about ${Math.round(1 / (1 - config.lambda))} cycles
+      Tc : LReal := ${lreal(config.tc)};           // closed-loop time constant, s
+      Theta : LReal := ${lreal(config.theta)};     // dead time, s
+      Cycle : LReal := ${lreal(Ts)};
+      Noise : LReal := ${lreal(0.01)};             // % of span: don't learn from movements smaller than this
+      Kc0 : LReal := ${lreal(config.pid.Kc)};      // the gains it may move within 5x of
+      Ti0 : LReal := ${lreal(config.pid.Ti)};
+      Th : Array[0..2] of LReal := [${lreal(start.a)}, ${lreal(start.b)}, 0.0];   // a, b, c
+      P : Array[0..2, 0..2] of LReal := [0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01];
+      UHist : Array[0..${dl + 1}] of LReal;
+      YPrev : LReal;
+      Started : Bool;
+   END_VAR
+   VAR_TEMP
+      i : Int;
+      j : Int;
+      y : LReal;
+      phi : Array[0..2] of LReal;
+      pphi : Array[0..2] of LReal;
+      k : Array[0..2] of LReal;
+      den : LReal;
+      err : LReal;
+      K : LReal;
+      tau : LReal;
+      span : LReal;
+      kc : LReal;
+      ti : LReal;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    ${v('y')} := (${v('Input')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0;
+    IF NOT ${v('Started')} THEN
+        FOR ${v('i')} := 0 TO ${dl + 1} DO
+            ${v('UHist')}[${v('i')}] := ${v('PidOutput')};
+        END_FOR;
+        ${v('Th')}[2] := ${v('y')} - ${v('Th')}[0] * ${v('y')} - ${v('Th')}[1] * ${v('PidOutput')};
+        ${v('YPrev')} := ${v('y')};
+        ${v('Gain')} := LREAL_TO_REAL(${v('Kc0')});
+        ${v('Ti')} := LREAL_TO_REAL(${v('Ti0')});
+        ${v('Started')} := TRUE;
+    END_IF;
+    // phi = [y(k-1), u(k-1-d), 1]: UHist[${dl + 1}] is the oldest output kept.
+    ${v('phi')}[0] := ${v('YPrev')};
+    ${v('phi')}[1] := ${v('UHist')}[${dl + 1}];
+    ${v('phi')}[2] := 1.0;
+    ${v('err')} := ${v('y')} - (${v('Th')}[0] * ${v('phi')}[0] + ${v('Th')}[1] * ${v('phi')}[1] + ${v('Th')}[2]);
+    // Learn only from real movement, and only from errors bigger than the noise.
+    IF ${v('Learn')} AND (ABS(${v('UHist')}[0] - ${v('UHist')}[1]) > 0.02 OR ABS(${v('y')} - ${v('YPrev')}) > 3.0 * ${v('Noise')}) AND ABS(${v('err')}) > ${v('Noise')} THEN
+        ${v('den')} := ${v('Lambda')};
+        FOR ${v('i')} := 0 TO 2 DO
+            ${v('pphi')}[${v('i')}] := 0.0;
+            FOR ${v('j')} := 0 TO 2 DO
+                ${v('pphi')}[${v('i')}] := ${v('pphi')}[${v('i')}] + ${v('P')}[${v('i')}, ${v('j')}] * ${v('phi')}[${v('j')}];
+            END_FOR;
+            ${v('den')} := ${v('den')} + ${v('phi')}[${v('i')}] * ${v('pphi')}[${v('i')}];
+        END_FOR;
+        FOR ${v('i')} := 0 TO 2 DO
+            ${v('k')}[${v('i')}] := ${v('pphi')}[${v('i')}] / ${v('den')};
+            ${v('Th')}[${v('i')}] := ${v('Th')}[${v('i')}] + ${v('k')}[${v('i')}] * ${v('err')};
+        END_FOR;
+        FOR ${v('i')} := 0 TO 2 DO
+            FOR ${v('j')} := 0 TO 2 DO
+                ${v('P')}[${v('i')}, ${v('j')}] := (${v('P')}[${v('i')}, ${v('j')}] - ${v('k')}[${v('i')}] * ${v('pphi')}[${v('j')}]) / ${v('Lambda')};
+            END_FOR;
+        END_FOR;
+        // SIMC from the estimate (an integrator if a is about 1), kept within 5x of the start.
+        ${v('span')} := ${v('Tc')} + ${v('Theta')};
+        IF ${v('Th')}[0] < 0.9995 AND ${v('Th')}[0] > 0.0 THEN
+            ${v('K')} := ${v('Th')}[1] / (1.0 - ${v('Th')}[0]);
+            ${v('tau')} := -${v('Cycle')} / LN(${v('Th')}[0]);
+            ${v('kc')} := ${v('tau')} / (ABS(${v('K')}) * ${v('span')});
+            ${v('ti')} := MIN(IN1 := ${v('tau')}, IN2 := 4.0 * ${v('span')});
+        ELSE
+            ${v('K')} := 0.0;
+            ${v('tau')} := 0.0;
+            ${v('kc')} := ${v('Cycle')} / (ABS(${v('Th')}[1]) * ${v('span')});
+            ${v('ti')} := 4.0 * ${v('span')};
+        END_IF;
+        IF ${v('Th')}[1] ${config.pid.invert ? '<' : '>'} 0.0 THEN   // only a model with the expected sign
+            ${v('Gain')} := LREAL_TO_REAL(LIMIT(MN := ${v('Kc0')} / 5.0, IN := ${v('kc')}, MX := ${v('Kc0')} * 5.0));
+            ${v('Ti')} := LREAL_TO_REAL(LIMIT(MN := ${v('Ti0')} / 5.0, IN := ${v('ti')}, MX := ${v('Ti0')} * 5.0));
+        END_IF;
+        ${v('ModelGain')} := LREAL_TO_REAL(${v('K')});
+        ${v('ModelTau')} := LREAL_TO_REAL(${v('tau')});
+    END_IF;
+    ${v('YPrev')} := ${v('y')};
+    FOR ${v('i')} := ${dl + 1} TO 1 BY -1 DO
+        ${v('UHist')}[${v('i')}] := ${v('UHist')}[${v('i')} - 1];
+    END_FOR;
+    ${v('UHist')}[0] := ${v('PidOutput')};
+END_FUNCTION_BLOCK`;
+}
+
+/** Your own Structured Text as an FB: the built-in inputs and outputs, your VARs as statics, your code as the body. */
+function customBlock(d: Dialect, code: string) {
+  const c = compileCustom(code);
+  const vars = 'prog' in c ? c.prog.vars : [];
+  const body = stripDeclarations(code);
+  const names = new Set([...ST_INPUTS, ...ST_OUTPUTS, ...vars.map((x) => x.name)]);
+  const ind = (s: string) => s.split('\n').map((l) => (l ? `    ${l}` : l)).join('\n');
+  const bools = new Set(['MANUAL']);
+  const ty = (t: string) => (t === 'REAL' ? 'Real' : t === 'LREAL' ? 'LReal' : t === 'INT' ? 'Int' : t === 'DINT' ? 'DInt' : 'Bool');
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.custom)}
+   VAR_INPUT
+${ST_INPUTS.map((n) => `      ${n} : ${bools.has(n) ? 'Bool' : 'Real'};`).join('\n')}
+   END_VAR
+   VAR_OUTPUT
+      OUT : Real;
+      OUT2 : Real;
+   END_VAR
+   VAR
+${vars.map((x) => `      ${x.name} : ${ty(x.type)}${x.init ? ` := ${x.type === 'BOOL' ? (x.init ? 'TRUE' : 'FALSE') : x.type.endsWith('INT') ? Math.trunc(x.init) : real(x.init)}` : ''};`).join('\n')}
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+${ind(d === 'scl' ? toScl(body, names) : body)}
+END_FUNCTION_BLOCK`;
+}
+
 function scheduleFunction(d: Dialect, points: { at: number; Kc: number; Ti: number; Td: number }[]) {
   const v = loc(d);
   // Sorted, and a repeated breakpoint dropped (it would divide by zero).
@@ -823,6 +1032,40 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`${vb} := LIMIT(MN := 0.0, IN := ${tag('UB')}, MX := 100.0);`);
     return lines.join('\n');
   }
+  if (config.kind === 'adrc') {
+    lines.push(`// ADRC: the observer and the law in one block, called every cycle (in manual too: it tracks).`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${db}.Output;`);
+    lines.push(`// ${db}.Disturbance is what it is cancelling: trend it. On a batch reactor it follows the reaction heat.`);
+    return lines.join('\n');
+  }
+  if (config.kind === 'adaptive') {
+    const st = d === 'scl' ? `"${proc.tags.loop.replace('-', '_')}_Tune_DB"` : `${proc.tags.loop.replace('-', '_')}_Tune`;
+    lines.push(`// Self-tuning: run the PID with the latest gains, then let the estimator learn from this cycle and retune.`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${db}.Output;`);
+    lines.push(`${st}(Input := ${pv}, PidOutput := ${db}.Output, Learn := NOT ${tag('Manual')});`);
+    lines.push(`${db}.Gain := ${st}.Gain;`);
+    lines.push(`${db}.Ti := ${st}.Ti;`);
+    lines.push(`// Show ${st}.ModelGain and .ModelTau on the HMI, with a button to freeze learning (Learn := FALSE).`);
+    return lines.join('\n');
+  }
+  if (config.kind === 'custom') {
+    const sec = proc.secondary;
+    const pct = (x: string, lo: number, hi: number) => `(${x} - ${real(lo)}) / ${real(hi - lo)} * 100.0`;
+    lines.push(`// Your own controller. TIME is a running time in s, if your code uses it (here a static you keep counting).`);
+    lines.push(`${tag('RunTime')} := ${tag('RunTime')} + ${real(p.Ts)};`);
+    const args = [
+      `SP := ${tag('SP')}`, `PV := ${pv}`, `SP_PCT := ${pct(tag('SP'), proc.pv.lo, proc.pv.hi)}`, `PV_PCT := ${pct(pv, proc.pv.lo, proc.pv.hi)}`,
+      ...(sec ? [`PV2 := ${tag(sec.tag)}`, `PV2_PCT := ${pct(tag(sec.tag), sec.lo, sec.hi)}`] : []),
+      ...(proc.mimo && sec ? [`SP2 := ${tag('SP2')}`, `SP2_PCT := ${pct(tag('SP2'), sec.lo, sec.hi)}`, `MAN_OUT2 := ${tag('ManualOut2')}`] : []),
+      `TS := ${real(p.Ts)}`, `TIME := ${tag('RunTime')}`, `MANUAL := ${tag('Manual')}`, `MAN_OUT := ${tag('ManualOut')}`,
+    ];
+    lines.push(`${db}(${args.join(', ')});`);
+    lines.push(`${out} := ${db}.OUT;`);
+    if (proc.mimo) lines.push(`${tag(proc.mimo.valve)} := ${db}.OUT2;`);
+    return lines.join('\n');
+  }
   if (config.kind === 'mpc' && proc.mimo && proc.secondary) {
     lines.push(`// MPC: one block plans both valves every cycle. In manual it tracks both, so auto is bumpless.`);
     lines.push(`${db}(Setpoint := ${tag('SP')}, Setpoint2 := ${tag('SP2')}, Input := ${pv}, Input2 := ${tag(proc.secondary.tag)}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ManualValue2 := ${tag('ManualOut2')});`);
@@ -941,6 +1184,9 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
     if (config.kind === 'statefb') parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
     else if (config.kind === 'mpc') parts.push(mpcBlock(dialect, proc, designMpc(proc, config, p), 200));
+    else if (config.kind === 'adrc') parts.push(adrcBlock(dialect, proc, config, designAdrc(config, p.Ts)));
+    else if (config.kind === 'custom') parts.push(customBlock(dialect, config.code));
+    else if (config.kind === 'adaptive') { parts.push(pidBlock(dialect, config.pid, p.Ts, lo, hi)); parts.push(selfTuneBlock(dialect, proc, config, p.Ts, initialArx(proc, p))); }
     else parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
@@ -952,6 +1198,26 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
 export function exportReference(config: ControllerConfig, rawTs: number, proc?: ProcessDef, params?: Params) {
   if (config.kind === 'statefb') return proc ? stateFbReference(proc, designStateFb(proc, config, cleanParams(proc, params ?? {})), rawTs) : '// State feedback: needs the process model to export.';
   if (config.kind === 'mpc') return proc ? mpcReference(proc, designMpc(proc, config, cleanParams(proc, params ?? {})), rawTs) : '// MPC: needs the process model to export.';
+  if (config.kind === 'custom') return `// Your own controller is its own reference: the Structured Text below, run every ${rawTs} s.\n\n${config.code}`;
+  if (config.kind === 'adrc') {
+    const des = designAdrc(config, rawTs);
+    const mat = (M: number[][]) => `[\n${M.map((r) => `  [${r.map((x) => Number(x.toPrecision(10))).join(', ')}],`).join('\n')}\n]`;
+    return `// Linear ADRC, order ${config.order}, every Ts = ${rawTs} s. Signals in % (output) and % of span (measurement).
+// Observer bandwidth ω_o ${config.wo} rad/s, loop ω_c ${config.wc} rad/s, b0 ${config.b0}.
+const Phi = ${mat(des.Phi)};
+const Gam = ${mat(des.Gamma)};   // columns: last output, measurement
+const C = [${des.C.map((x) => Number(x.toPrecision(10))).join(', ')}], Dr = ${Number(des.Dr.toPrecision(10))}, b0 = ${config.b0};
+let z = new Array(${des.n + 1}).fill(0), uLast = 0;
+
+function step(r: number, y: number): number {
+  z = Phi.map((row, i) => row.reduce((s, v, j) => s + v * z[j], 0) + Gam[i][0] * uLast + Gam[i][1] * y);
+  const u = C.reduce((s, c, i) => s + c * z[i], Dr * r);   // (kp(r − z0)${config.order === 2 ? ' − kd·z1' : ''} − f) / b0
+  uLast = Math.min(100, Math.max(0, u));                   // the observer sees what was applied: no windup
+  return uLast;
+}
+
+// Manual: z = [y, ${config.order === 2 ? '0, ' : ''}−b0·u], uLast = u.`;
+  }
   if (config.kind === 'onoff') {
     return `// On-off with hysteresis (band in % of span).
 let on = false;
@@ -1094,6 +1360,24 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
       { name: 'Two loops', value: config.pairing === 'direct' ? 'direct pairing' : 'crossed pairing', note: `Two PID_Compact instances, one per variable. ${config.decouple ? `The decoupler is your own code between their outputs and the valves (c_A ${real(dec.ca)}, c_B ${real(dec.cb)}): see the exported call.` : 'Each drives its valve directly.'}` },
       ...compactRows(config.pid, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts).map((r) => ({ ...r, name: `${proc.tags.loop}: ${r.name}` })),
       ...compactRows(config.pid2, sec.lo, sec.hi, sec.unit, p.Ts).map((r) => ({ ...r, name: `${proc.mimo!.loop2}: ${r.name}` })),
+    ];
+  }
+  if (config.kind === 'adrc') {
+    return [
+      { name: 'PID_Compact', value: 'not applicable', note: 'ADRC isn\'t a PID: use the exported LL_Adrc (an observer of ${config.order + 1} states and a gain row) in a cyclic interrupt OB. Some drives and motion libraries ship ADRC-style disturbance observers; in TIA it is your own SCL.' },
+      { name: 'Cycle', value: real(p.Ts), note: 'The observer is discretized for this cycle: a different cycle needs a new export.' },
+      { name: 'b₀', value: real(config.b0), note: `The plant\'s high-frequency gain (%/s${config.order === 2 ? '²' : ''} per %). Within a factor of two is usually enough; too small makes the loop aggressive, too large sluggish.` },
+      { name: 'ω_c / ω_o', value: `${real(config.wc)} / ${real(config.wo)} rad/s`, note: 'Loop and observer bandwidths: the two tuning knobs. Keep ω_o 3–10× ω_c and well below 1/Ts.' },
+    ];
+  }
+  if (config.kind === 'custom') {
+    return [{ name: 'PID_Compact', value: 'not applicable', note: 'Your own code becomes the FB LL_Custom (exported below): its VAR become the FB\'s statics, the built-in names its inputs and outputs. Call it from a cyclic interrupt OB at the cycle it was tested at.' }];
+  }
+  if (config.kind === 'adaptive') {
+    const rows = compactRows(config.pid, proc.pv.lo, proc.pv.hi, proc.pv.unit, p.Ts);
+    return [
+      { name: 'Self-tuning', value: 'not built in', note: 'PID_Compact\'s own tuning (pretuning and fine tuning) runs once, on demand, not continuously. For continuous adaptation run the exported LL_SelfTune beside it and write its Gain and Ti into Retain.CtrlParams every cycle; the values below are where it starts.' },
+      ...rows,
     ];
   }
   if (config.kind === 'mpc') {

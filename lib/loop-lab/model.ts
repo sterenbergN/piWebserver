@@ -64,7 +64,8 @@ export type SecondarySpec = PvSpec & {
 };
 
 export type ScenarioEvent =
-  | { t: number; kind: 'sp'; value: number }
+  /** A setpoint change; with `ramp` (units/s) it moves there at that rate, as a recipe ramp does. */
+  | { t: number; kind: 'sp'; value: number; ramp?: number }
   /** The second controlled variable's setpoint (2×2 processes). */
   | { t: number; kind: 'sp2'; value: number }
   | { t: number; kind: 'dist'; key: string; value: number }
@@ -103,7 +104,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'mixing' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'mixing' | 'batch' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -168,6 +169,11 @@ export type ProcessDef = {
     /** Steady state holding both: the two valve positions (%) and the process states. */
     steady: (pv: number, pv2: number, d: Params, p: Params) => { valve: number; u2: number; x: number[] } | null;
   };
+  /**
+   * Process states (indices into `states`) that change much more slowly than the loop (a batch's reactant):
+   * held constant in the linear model, so it describes the plant at one stage of the run.
+   */
+  frozen?: number[];
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;

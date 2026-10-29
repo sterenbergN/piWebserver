@@ -78,8 +78,10 @@ export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Param
   }
 
   // Drop states nothing depends on (e.g. an unused second lag): they'd only add fake poles.
-  const keep = Array.from({ length: n }, (_, j) => j).filter((j) =>
-    A.some((row, i) => i !== j && row[j] !== 0) || C[j] || Ctrue[j] || C2?.[j] || A[j][j] !== 0);
+  // (and slow states the process freezes: the model is for one stage of a batch).
+  const frozen = new Set((proc.frozen ?? []).map((i) => 1 + i));
+  const keep = Array.from({ length: n }, (_, j) => j).filter((j) => !frozen.has(j) && (
+    A.some((row, i) => i !== j && row[j] !== 0) || C[j] || Ctrue[j] || C2?.[j] || A[j][j] !== 0));
   if (keep.length < n) {
     A = keep.map((i) => keep.map((j) => A[i][j]));
     B = keep.map((i) => B[i]);

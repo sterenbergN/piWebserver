@@ -293,14 +293,21 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Sce
   const trace = Object.fromEntries(keys.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
   trace.dist = Object.fromEntries(proc.disturbances.map((s) => [s.key, new Float64Array(n)]));
   let next = 0;
+  let ramp: { to: number; rate: number } | null = null;
   for (let i = 0; i < n; i++) {
     while (next < events.length && events[next].t <= loop.t + 1e-9) {
       const ev = events[next++];
-      if (ev.kind === 'sp') loop.sp = ev.value;
+      if (ev.kind === 'sp' && ev.ramp) ramp = { to: ev.value, rate: Math.abs(ev.ramp) };
+      else if (ev.kind === 'sp') { loop.sp = ev.value; ramp = null; }
       else if (ev.kind === 'sp2') loop.sp2 = ev.value;
       else if (ev.kind === 'dist') loop.d[ev.key] = ev.value;
       else if (ev.kind === 'param') applyParam(loop.p, ev.key, ev.value, ev.factor);
       else loop.freeze(ev.duration);
+    }
+    if (ramp) {
+      const stepBy = ramp.rate * loop.Ts;
+      loop.sp = Math.abs(ramp.to - loop.sp) <= stepBy ? ramp.to : loop.sp + Math.sign(ramp.to - loop.sp) * stepBy;
+      if (loop.sp === ramp.to) ramp = null;
     }
     const s = loop.step();
     for (const k of keys) trace[k][i] = s[k];
