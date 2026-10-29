@@ -240,6 +240,10 @@ test('an automatic sync only alerts when something needs fixing', () => {
   assert.match(syncAlert(noHr, Date.parse('2026-10-22T13:44:00Z'), now), /newest on the site is 6 days old/);
   assert.equal(syncAlert(noHr, now - 2 * 3_600_000, now), ''); // a quiet couple of hours
   assert.equal(syncAlert(noHr, null, now), ''); // never sent heart rate (no Watch)
+  const old = Date.parse('2026-10-22T13:44:00Z');
+  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'missing', activeEnergy: 'missing' } }, old, now), /no heartRateValues/);
+  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'empty', activeEnergy: 'empty' } }, old, now, { at: new Date(now - 60_000).toISOString(), minutes: 4320 }), /asked for the last 4320 minutes/);
+  assert.match(syncAlert({ ...noHr, detail: { heartRate: 'empty', activeEnergy: 'empty' } }, old, now), /never asked/);
 });
 
 test('the daily shortcut sends heart rate and energy from shortly before the newest reading on hand', () => {
@@ -263,4 +267,11 @@ test('recent workouts without heart rate say what the site holds around them', (
   assert.equal(check.heartRate, 0);
   assert.equal(check.newestHeartRate, '2026-10-28T16:30:00.000Z');
   assert.deepEqual(matchChecks({ ...health, workouts: { w: { start: '', end: '', kcal: 1 } } }, [workout], now), []);
+});
+
+test('an upload says whether heart rate fields were sent, empty, or missing', () => {
+  const sent = applyHealthImport(emptyUserHealth(), { heartRateValues: '80', heartRateDates: '2026-10-20T10:00:00-05:00' }, NOW).summary;
+  assert.deepEqual(sent.detail, { heartRate: 'ok', activeEnergy: 'missing' });
+  const empty = applyHealthImport(emptyUserHealth(), { stepsValues: '10', stepsDates: '2026-10-20T00:00:00-05:00', heartRateValues: '', heartRateDates: '' }, NOW).summary;
+  assert.equal(empty.detail?.heartRate, 'empty');
 });

@@ -63,17 +63,27 @@ export type SyncSummary = {
   at: string;
   steps: number; sleep: number; weight: number; bodyFat: number; restingHr: number; hrv: number; dailyCalories: number;
   heartRate: number; activeEnergy: number; workouts: number;
+  /**
+   * Per-reading heart rate and energy in this upload: 'ok', 'empty' (the
+   * fields came but had nothing in them: the shortcut's search found
+   * nothing) or 'missing' (the upload had no such fields).
+   */
+  detail?: { heartRate: FieldState; activeEnergy: FieldState };
   /** Fields in the upload that were not recognised, and dates that could not be read. */
   ignored?: string[];
   unreadableDates?: number;
   mismatched?: string[];
 };
 
+export type FieldState = 'ok' | 'empty' | 'missing';
+
 export type UserHealth = {
   keyHash?: string;
   keyHint?: string;
   keyCreatedAt?: string;
   lastSync?: SyncSummary;
+  /** When the daily shortcut last asked how far back to read heart rate, and the answer. */
+  lastSinceAsk?: { at: string; minutes: number };
   days: Record<string, HealthDay>;
   /** Recent heart rate samples [epoch seconds, bpm], kept RAW_DAYS for matching to workouts. */
   hr: [number, number][];
@@ -392,7 +402,12 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   // Heart rate and active energy: kept raw for a while, for matching to workouts.
   const cutoff = Math.floor((now - RAW_DAYS * DAY_MS) / 1000);
   const hr = new Map(health.hr.map(([t, bpm]) => [t, bpm]));
-  for (const s of samples(column(body, 'heartRate', diag), diag)) {
+  // Which fields each column came from, to tell "sent empty" from "not sent".
+  const fieldState = (col: Column, before: Set<string>): FieldState => (col.values.length ? 'ok' : [...diag.used].some((k) => !before.has(k)) ? 'empty' : 'missing');
+  const beforeHr = new Set(diag.used);
+  const hrCol = column(body, 'heartRate', diag);
+  const hrState = fieldState(hrCol, beforeHr);
+  for (const s of samples(hrCol, diag)) {
     const bpm = parseNumber(s.value);
     if (!(bpm >= 25 && bpm <= 250)) continue;
     hr.set(Math.floor(s.start.ms / 1000), Math.round(bpm));
@@ -400,7 +415,9 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   }
   health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
 
+  const beforeEnergy = new Set(diag.used);
   const energyCol = column(body, 'activeEnergy', diag);
+  summary.detail = { heartRate: hrState, activeEnergy: fieldState(energyCol, beforeEnergy) };
   let energyOffset: number | null | undefined;
   const energy = new Map(health.energy.map((e) => [e[0], e]));
   for (const s of samples(energyCol, diag)) {
@@ -630,7 +647,7 @@ export const STALE_HEART_RATE_MS = 12 * 3_600_000;
  * heart rate (`newestHeartRateMs`, before this upload) is over 12 hours old:
  * the shortcut's heart rate steps are finding nothing.
  */
-export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null = null, now = Date.now()): string {
+export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null = null, now = Date.now(), sinceAsk?: UserHealth['lastSinceAsk']): string {
   const empty = !(summary.steps || summary.sleep || summary.weight || summary.bodyFat || summary.restingHr || summary.hrv
     || summary.dailyCalories || summary.heartRate || summary.activeEnergy || summary.workouts);
   const problems = !!(summary.unreadableDates || summary.mismatched?.length || summary.ignored?.length);
@@ -638,7 +655,14 @@ export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null
   if (!summary.heartRate && !summary.activeEnergy && newestHeartRateMs !== null && now - newestHeartRateMs > STALE_HEART_RATE_MS) {
     const hours = Math.round((now - newestHeartRateMs) / 3_600_000);
     const age = hours >= 48 ? `${Math.round(hours / 24)} days` : `${hours} hours`;
-    return `No heart rate or energy came in, and the newest on the site is ${age} old. The shortcut's heart rate steps are finding nothing: check its "Since" step (Health & plan › Sync), then run the 30-day shortcut to fill the gap.`;
+    const head = `No heart rate came in, and the newest on the site is ${age} old.`;
+    if (summary.detail?.heartRate === 'missing') {
+      return `${head} The upload has no heartRateValues / heartRateDates fields: add them to the shortcut's upload (STEP 4).`;
+    }
+    const asked = sinceAsk && now - Date.parse(sinceAsk.at) < 15 * 60_000;
+    return asked
+      ? `${head} The heart rate fields came but were empty, although the shortcut asked for the last ${sinceAsk!.minutes} minutes: its Heart Rate search found nothing, so its "Start Date is after Since" filter isn't working.`
+      : `${head} The heart rate fields came but were empty, and the shortcut never asked the website how far back to read (STEP 2 didn't run).`;
   }
   return '';
 }
