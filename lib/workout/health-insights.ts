@@ -173,8 +173,9 @@ export type RangeStats = {
   steps: number | null;
   restingHr: number | null;
   hrv: number | null;
-  /** Average calories burned a day (resting + active), over days the Watch was worn all day. */
+  /** Average calories burned a day (resting + active), and active alone, over days the Watch was worn all day. */
   burnKcal: number | null;
+  activeKcal: number | null;
   /** Latest reading in the range and its change from the first one. */
   weight: { latest: number; change: number | null } | null;
   bodyFat: { latest: number; change: number | null } | null;
@@ -201,6 +202,7 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
     restingHr: round(mean(values((d) => d.restingHr))),
     hrv: round(mean(values((d) => d.hrv))),
     burnKcal: round(mean(burns)),
+    activeKcal: round(mean(keys.filter((k) => worn.has(k)).map((k) => days[k].activeKcal!))),
     weight: trend((d) => d.weight),
     bodyFat: trend((d) => d.bodyFat),
     nights: sleep.length,
@@ -208,19 +210,23 @@ export function rangeStats(days: Days, keys: string[]): RangeStats {
   };
 }
 
-export type SeriesPoint = { key: string; label: string; days: number } & Partial<Record<'steps' | 'sleepHours' | 'deepMin' | 'remMin' | 'coreMin' | 'awakeMin' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal', number>> & { bedtime?: string; wake?: string };
+export type SeriesPoint = { key: string; label: string; days: number }
+  & Partial<Record<'steps' | 'sleepHours' | 'deepMin' | 'remMin' | 'coreMin' | 'awakeMin' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal' | 'activeKcal' | 'hrAvg', number>>
+  & { bedtime?: string; wake?: string; /** Lowest and highest heart rate (a week's, for weekly points). */ hrRange?: [number, number] };
 
 const label = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-function point(key: string, list: HealthDay[], burns: number[]): SeriesPoint {
+function point(key: string, list: HealthDay[], burns: number[], actives: number[]): SeriesPoint {
   const avg = (pick: (d: HealthDay) => number | undefined, digits = 0) => {
     const v = mean(list.map(pick).filter((n): n is number => typeof n === 'number'));
     return v === null ? undefined : Math.round(v * 10 ** digits) / 10 ** digits;
   };
   const night: SleepNight | undefined = list.length === 1 ? list[0].sleep : undefined;
+  const lows = list.map((d) => d.hrMin).filter((n): n is number => typeof n === 'number');
+  const highs = list.map((d) => d.hrMax).filter((n): n is number => typeof n === 'number');
   return {
     key, label: label(key), days: list.length,
     steps: avg((d) => d.steps),
@@ -234,6 +240,9 @@ function point(key: string, list: HealthDay[], burns: number[]): SeriesPoint {
     weight: avg((d) => d.weight, 1),
     bodyFat: avg((d) => d.bodyFat, 1),
     burnKcal: burns.length ? Math.round(mean(burns)!) : undefined,
+    activeKcal: actives.length ? Math.round(mean(actives)!) : undefined,
+    hrAvg: avg((d) => d.hrAvg),
+    hrRange: lows.length && highs.length ? [Math.min(...lows), Math.max(...highs)] : undefined,
     bedtime: night?.bedtime,
     wake: night?.wake,
   };
@@ -244,11 +253,12 @@ export function healthSeries(days: Days, end: string, n: number, weekly = false)
   const keys = lastKeys(end, n);
   const worn = fullWearDays(days);
   const burns = (list: string[]) => list.filter((k) => worn.has(k)).map((k) => dailyBurn(days[k])!);
-  if (!weekly) return keys.map((k) => point(k, days[k] ? [days[k]] : [], burns([k])));
+  const actives = (list: string[]) => list.filter((k) => worn.has(k)).map((k) => days[k].activeKcal!);
+  if (!weekly) return keys.map((k) => point(k, days[k] ? [days[k]] : [], burns([k]), actives([k])));
   const out: SeriesPoint[] = [];
   for (let i = 0; i < keys.length; i += 7) {
     const chunk = keys.slice(i, i + 7);
-    out.push(point(chunk[0], chunk.map((k) => days[k]).filter(Boolean), burns(chunk)));
+    out.push(point(chunk[0], chunk.map((k) => days[k]).filter(Boolean), burns(chunk), actives(chunk)));
   }
   return out;
 }

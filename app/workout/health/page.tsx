@@ -9,7 +9,7 @@ import PlanPanel from '@/components/workout/health/PlanPanel';
 import type { CalculatorDefaults } from '@/lib/workout/calculators';
 import type { WeightPlan } from '@/lib/workout/weight-plan';
 import { fullCoach, profileFromUser } from '@/lib/workout/coach';
-import { HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, alignNote, setMarks } from '@/components/workout/health/HealthCharts';
+import { HeartRangeChart, HeartRateChart, RefLegend, SleepBars, StepsBars, TrendLine, alignNote, setMarks } from '@/components/workout/health/HealthCharts';
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import { dailyBurn, daysSince, fullWearDays, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
@@ -176,7 +176,7 @@ export default function HealthPage() {
   const status = !h?.connected && !h?.lastSync ? 'Not connected'
     : h?.lastSync ? `Synced ${timeAgo(h.lastSync.at)}${!h.connected ? ' · syncing stopped' : ''}` : 'Waiting for the first sync';
   const { stats, before, series, typical } = view;
-  const has = (key: 'steps' | 'sleepHours' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal') => series.some((p) => typeof p[key] === 'number');
+  const has = (key: 'steps' | 'sleepHours' | 'restingHr' | 'hrv' | 'weight' | 'bodyFat' | 'burnKcal' | 'activeKcal' | 'hrAvg') => series.some((p) => typeof p[key] === 'number');
 
   return (
     <div className="animate-fade-in an-page hc-page">
@@ -289,12 +289,18 @@ export default function HealthPage() {
 
         <section className="workout-tile an-card">
           <div className="an-card-head"><h2>Calories burned</h2>{stats.burnKcal !== null && <span className="workout-hint">avg {stats.burnKcal.toLocaleString()} a day</span>}</div>
+          <h3 className="hc-sub">Total: resting + active</h3>
           {has('burnKcal') ? <TrendLine data={series} dataKey="burnKcal" unit="kcal" /> : <Empty what="daily calories" add="Active Energy and Resting Energy (grouped by day)" />}
-          <p className="workout-hint an-chart-note">Resting plus active calories each day, from Apple Health. Days the Watch was off for part of the day (resting calories well under your usual) are left out, today included until it&apos;s over. This is what your activity level in the plan is measured from.</p>
+          <h3 className="hc-sub">Active only{stats.activeKcal !== null ? ` · avg ${stats.activeKcal.toLocaleString()} a day` : ''}</h3>
+          {has('activeKcal') ? <TrendLine data={series} dataKey="activeKcal" unit="kcal" /> : <Empty what="active calories" add="Active Energy (grouped by day)" />}
+          <p className="workout-hint an-chart-note">From Apple Health. Active is what you burn moving (your Watch&apos;s Move ring); resting is what your body burns anyway. Days the Watch was off for part of the day are left out, today included until it&apos;s over. The total is what your activity level in the plan is measured from.</p>
         </section>
 
         <section className="workout-tile an-card">
           <h2>Heart</h2>
+          <h3 className="hc-sub">Heart rate through the day</h3>
+          {has('hrAvg') ? <HeartRangeChart data={series} /> : <Empty what="all-day heart rate" add="Heart Rate" />}
+          {has('hrAvg') && <p className="workout-hint" style={{ margin: '0.25rem 0 0' }}>Line: the day&apos;s average. Shading: its lowest to highest reading.</p>}
           <h3 className="hc-sub">Resting heart rate</h3>
           {has('restingHr') ? <TrendLine data={series} dataKey="restingHr" unit="bpm" /> : <Empty what="resting heart rate" add="Resting Heart Rate" />}
           <h3 className="hc-sub">Heart rate variability</h3>

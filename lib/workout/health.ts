@@ -34,6 +34,14 @@ export type HealthDay = {
   activeExact?: boolean;
   /** Resting (basal) calories that day: with activeKcal, your total burn. */
   restingKcal?: number;
+  /**
+   * Heart rate through the day from the Watch's readings (bpm): average (of
+   * 5-minute averages, so a workout's dense readings don't swamp the rest of
+   * the day), lowest and highest. Kept after the readings themselves are dropped.
+   */
+  hrAvg?: number;
+  hrMin?: number;
+  hrMax?: number;
 };
 
 /** A workout session recorded by the watch (if the sender can read workouts). */
@@ -407,14 +415,38 @@ export function applyHealthImport(current: UserHealth, body: Record<string, any>
   const beforeHr = new Set(diag.used);
   const hrCol = column(body, 'heartRate', diag);
   const hrState = fieldState(hrCol, beforeHr);
+  const hrDays = new Map<string, number | null>(); // days this upload touched → their UTC offset
   for (const s of samples(hrCol, diag)) {
     const bpm = parseNumber(s.value);
     if (!(bpm >= 25 && bpm <= 250)) continue;
+    hrDays.set(dayKeyAt(s.start.ms, s.start.offsetMin), s.start.offsetMin);
     hr.set(Math.floor(s.start.ms / 1000), Math.round(bpm));
     summary.heartRate++;
     if (!summary.heartRateFrom || s.start.ms < Date.parse(summary.heartRateFrom)) summary.heartRateFrom = new Date(s.start.ms).toISOString();
   }
   health.hr = [...hr.entries()].filter(([t]) => t >= cutoff).sort((a, b) => a[0] - b[0]);
+  // Every day's summary from all of its readings on hand (an upload may cover only part of a day,
+  // and readings already stored get summarised too), in this upload's time zone. The oldest day
+  // is skipped: the 14-day trim has cut part of it off.
+  if (hrDays.size) {
+    const offset = [...hrDays.values()].pop()!;
+    const oldest = dayKeyAt(cutoff * 1000, offset);
+    const byDay = new Map<string, [number, number][]>();
+    for (const reading of health.hr) {
+      const key = dayKeyAt(reading[0] * 1000, offset);
+      if (key > oldest) byDay.set(key, [...(byDay.get(key) || []), reading]);
+    }
+    for (const [key, readings] of byDay) {
+      if (readings.length < 20) continue;
+      const buckets = new Map<number, number[]>();
+      for (const [t, bpm] of readings) buckets.set(Math.floor(t / 300), [...(buckets.get(Math.floor(t / 300)) || []), bpm]);
+      const means = [...buckets.values()].map((list) => list.reduce((a, b) => a + b, 0) / list.length);
+      const d = day(key);
+      d.hrAvg = Math.round(means.reduce((a, b) => a + b, 0) / means.length);
+      d.hrMin = Math.min(...readings.map(([, b]) => b));
+      d.hrMax = Math.max(...readings.map(([, b]) => b));
+    }
+  }
 
   const beforeEnergy = new Set(diag.used);
   const energyCol = column(body, 'activeEnergy', diag);

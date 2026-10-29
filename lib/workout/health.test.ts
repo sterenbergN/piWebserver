@@ -285,3 +285,17 @@ test('an upload is read as JSON or form fields, and an unreadable one says what 
   assert.throws(() => parseSyncBody('{"key":"nsh_abcdefghijklmnopqrstuv","steps', 'application/json'), /cut off/);
   assert.throws(() => parseSyncBody('<plist>nsh_abcdefghijklmnopqrstuv</plist>', 'application/x-plist'), (e: Error) => /application\/x-plist/.test(e.message) && !e.message.includes('abcdef'));
 });
+
+test('heart rate readings leave a daily average, lowest and highest behind', () => {
+  // A quiet day at 60–70 bpm every 5 minutes, plus a half-hour workout at 150 every 5 seconds.
+  const hrValues: number[] = [];
+  const hrDates: string[] = [];
+  const at = (h: number, m: number, s = 0) => `2026-10-20T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}-05:00`;
+  for (let h = 8; h < 20; h++) for (let m = 0; m < 60; m += 5) { hrValues.push(60 + (m % 20) / 2); hrDates.push(at(h, m)); }
+  for (let s = 0; s < 1800; s += 5) { hrValues.push(150); hrDates.push(at(17, Math.floor(s / 60), s % 60)); }
+  const day = applyHealthImport(emptyUserHealth(), { heartRateValues: hrValues.join('\n'), heartRateDates: hrDates.join('\n') }, NOW).health.days['2026-10-20'];
+  assert.equal(day.hrMin, 60);
+  assert.equal(day.hrMax, 150);
+  // Averaged per 5 minutes: the workout's 360 readings count as 6 of 144 slots, not as most of the day.
+  assert.ok(day.hrAvg! > 60 && day.hrAvg! < 75, `avg ${day.hrAvg}`);
+});

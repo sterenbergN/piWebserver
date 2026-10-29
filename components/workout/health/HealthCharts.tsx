@@ -1,7 +1,7 @@
 'use client';
 
 import './health.css';
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { formatMinutes, type SeriesPoint } from '@/lib/workout/health-insights';
 
 // Charts for the health page and workout history. Same marks as the
@@ -104,6 +104,37 @@ export function TrendLine({ data, dataKey, unit, digits = 0, height = 120 }: { d
             dot={dots ? { r: 3, fill: 'var(--accent)', stroke: 'var(--background)', strokeWidth: 2 } : false}
             activeDot={{ r: 5, stroke: 'var(--background)', strokeWidth: 2 }} isAnimationActive={false} />
         </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Heart rate through each day: the average as a line, inside a band from the lowest to the highest reading. */
+export function HeartRangeChart({ data, height = 150 }: { data: SeriesPoint[]; height?: number }) {
+  const points = data.filter((d) => typeof d.hrAvg === 'number');
+  if (points.length < 2) return <p className="workout-hint hc-empty">Not enough days of heart rate yet for a trend.</p>;
+  const lows = data.flatMap((d) => (d.hrRange ? [d.hrRange[0]] : []));
+  const highs = data.flatMap((d) => (d.hrRange ? [d.hrRange[1]] : []));
+  const dots = data.length <= 31;
+  return (
+    <div className="an-chart" style={{ height }} role="img" aria-label="Heart rate through each day: average, lowest and highest">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 0, left: -8 }}>
+          <CartesianGrid vertical={false} stroke="var(--surface-border)" />
+          <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: 'var(--surface-border)' }} tick={tick} interval="preserveStartEnd" minTickGap={22} />
+          <YAxis tickLine={false} axisLine={false} tick={tick} domain={[Math.floor((Math.min(...lows) - 5) / 10) * 10, Math.ceil((Math.max(...highs) + 5) / 10) * 10]} width={40} />
+          <Tooltip
+            cursor={{ stroke: 'var(--surface-border)' }}
+            contentStyle={tooltipStyle}
+            labelFormatter={(label, items) => ((items?.[0]?.payload as SeriesPoint)?.days > 1 ? `Week of ${label}` : String(label))}
+            formatter={(value, name) => (Array.isArray(value) ? [`${value[0]}–${value[1]} bpm`, 'Range'] : [`${value} bpm`, 'Average'])}
+            separator=" "
+          />
+          <Area type="linear" dataKey="hrRange" connectNulls stroke="none" fill="var(--accent)" fillOpacity={0.16} isAnimationActive={false} activeDot={false} />
+          <Line type="monotone" dataKey="hrAvg" connectNulls stroke="var(--accent)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+            dot={dots ? { r: 3, fill: 'var(--accent)', stroke: 'var(--background)', strokeWidth: 2 } : false}
+            activeDot={{ r: 5, stroke: 'var(--background)', strokeWidth: 2 }} isAnimationActive={false} />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
