@@ -154,7 +154,8 @@ export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D'
 /** A one-line description of each process for its block. */
 const PROCESS_SUB: Record<string, string> = {
   flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
-  surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c', custom: 'K e^(−θs)/(τs + 1)',
+  surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c',
+  crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {
@@ -196,6 +197,7 @@ export function BlockDiagram({ proc, config, probes = [], onProbe }: {
 }) {
   if (config.kind === 'cascade' || config.kind === 'ratio') return <CascadeDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   if (config.kind === 'override') return <OverrideDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
+  if (config.kind === 'statefb') return <StateFbDiagram proc={proc} config={config} probes={probes} onProbe={onProbe} />;
   const ff = config.kind === 'feedforward' ? config.ff : [];
   const ffOn = ff.length > 0;
   const ch = config.kind === 'characterized' ? findCharacterization(proc, config.char) : undefined;
@@ -448,6 +450,85 @@ function CascadeDiagram({ proc, config, probes, onProbe }: {
       <Block x={xP} y={FB1 - 20} w={wP} h={40} title={proc.tags.transmitter} sub="e^(−θs)/(τₘs + 1)" />
       {outerOn && wire('pv', `M${xP} ${FB1}H${s1}V${Y + 11}`, { x: s1, y: Y + 11, dir: 'u' })}
       {outerOn && probe('pv', (s1 + xP) / 2, FB1 - 6, 'PV measured')}
+    </svg>
+  );
+}
+
+/**
+ * State feedback: the setpoint through N_r, minus K times the observer's estimate of every state, plus
+ * the offset remover (an integral of the error, or the estimated disturbance through N_d).
+ */
+function StateFbDiagram({ proc, config, probes, onProbe }: {
+  proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'statefb' }>; probes: ProbeKey[]; onProbe?: (k: ProbeKey) => void;
+}) {
+  const sec = proc.secondary;
+  const uses2 = !!sec && config.measure !== 'pv', uses1 = config.measure !== 'pv2' || !sec;
+  const Y = 80, YO = 205, FB = 300;
+  const wire = (key: ProbeKey | null, d: string, end?: { x: number; y: number; dir: 'r' | 'l' | 'u' | 'd' }) => (
+    <g>
+      <path className={`ll-wire${key && probes.includes(key) ? ' is-probe' : ''}`} d={d} />
+      {end && <path className="ll-wire" d={arrowHead(end.x, end.y, end.dir)} />}
+    </g>
+  );
+  const probe = (key: ProbeKey, x: number, y: number, text: string, anchor: 'start' | 'middle' | 'end' = 'middle') => (
+    <g className="ll-probe" role="button" tabIndex={onProbe ? 0 : -1} aria-pressed={probes.includes(key)}
+      onClick={() => onProbe?.(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onProbe?.(key); } }}>
+      <text x={x} y={y} textAnchor={anchor}>{text}</text>
+    </g>
+  );
+  const xN = 50, wN = 50, xS = 150, xV = 200, wV = 100, xP = 340, wP = 120, xOut = xP + wP + 50;
+  const xO = 200, wO = 200, xK = 60, wK = 70;
+  const firstDist = proc.disturbances[0];
+  const extra = config.integral === 'error' ? '∫(r − y)·K_z' : config.integral === 'dist' ? 'd̂ · N_d' : null;
+  return (
+    <svg className="ll-drawing" viewBox={`0 0 ${xOut + 15} 340`} role="img" aria-label={`Block diagram: state feedback with an observer on the ${proc.name.toLowerCase()}`}>
+      {probe('sp', 8, Y - 8, 'SP r', 'start')}
+      {wire('sp', `M4 ${Y}H${xN}`, { x: xN, y: Y, dir: 'r' })}
+      <Block x={xN} y={Y - 16} w={wN} h={32} title="N_r" ctrl />
+      {wire('ff', `M${xN + wN} ${Y}H${xS - 11}`, { x: xS - 11, y: Y, dir: 'r' })}
+      {probe('ff', xN + wN + 4, Y - 14, 'N_r·r', 'start')}
+      <Sum x={xS} y={Y} signs="+−" />
+      {wire('cv', `M${xS + 11} ${Y}H${xV}`, { x: xV, y: Y, dir: 'r' })}
+      {probe('cv', xS + 12, Y - 10, 'u', 'start')}
+      <Block x={xV} y={Y - 24} w={wV} h={48} title={proc.tags.valve} sub="actuator" />
+      {wire('valve', `M${xV + wV} ${Y}H${xP}`, { x: xP, y: Y, dir: 'r' })}
+      {firstDist && (
+        <>
+          {wire(`dist:${firstDist.key}`, `M${xP + wP / 2} ${Y - 55}V${Y - 24}`, { x: xP + wP / 2, y: Y - 24, dir: 'd' })}
+          {probe(`dist:${firstDist.key}`, xP + wP / 2, Y - 60, `d: ${firstDist.label.toLowerCase()}`)}
+        </>
+      )}
+      <Block x={xP} y={Y - 24} w={wP} h={48} title="Process" sub={PROCESS_SUB[proc.id]} />
+      {wire('pvTrue', `M${xP + wP} ${Y}H${xOut}`, { x: xOut, y: Y, dir: 'r' })}
+      {probe('pvTrue', xP + wP + 22, Y - 8, 'PV y')}
+      {/* Measurements back to the observer */}
+      {uses1 && wire('pv', `M${xOut - 15} ${Y}V${FB}H${xO + wO - 30}V${YO + 26}`, { x: xO + wO - 30, y: YO + 26, dir: 'u' })}
+      {uses1 && probe('pv', xOut - 20, FB - 6, `${proc.tags.transmitter}`, 'end')}
+      {uses2 && sec && (
+        <>
+          {wire('pv2', `M${xP + 20} ${Y + 24}V${YO - 40}H${xO + wO - 10}V${YO - 26}`, { x: xO + wO - 10, y: YO - 26, dir: 'd' })}
+          {probe('pv2', xP + 26, YO - 46, `${sec.tag}: ${sec.label.toLowerCase()}`, 'start')}
+        </>
+      )}
+      {/* The applied output into the observer too */}
+      {wire(null, `M${xV - 14} ${Y}V${YO - 10}H${xO}`, { x: xO, y: YO - 10, dir: 'r' })}
+      <Block x={xO} y={YO - 26} w={wO} h={52} title={config.observer === 'kalman' ? 'Kalman filter' : 'Observer'} sub="x̂′ = Ax̂ + Bu + L(y − Cx̂)" ctrl />
+      {wire('P', `M${xO} ${YO + 10}H${xK + wK}`, { x: xK + wK, y: YO + 10, dir: 'l' })}
+      {probe('pred', xO + wO / 2, YO + 44, 'estimate ŷ')}
+      <text className="is-muted" x={xO - 6} y={YO + 4} textAnchor="end">x̂</text>
+      <Block x={xK} y={YO - 6} w={wK} h={32} title="K" sub="every state" ctrl />
+      {wire('P', `M${xK + wK / 2} ${YO - 6}V${Y + 50}H${xS}V${Y + 11}`, { x: xS, y: Y + 11, dir: 'u' })}
+      {probe('P', xK + wK / 2 + 6, Y + 66, 'K·x̂', 'start')}
+      {extra && (
+        <>
+          <Block x={xK - 40} y={YO + 50} w={110} h={30} title={extra} ctrl />
+          {/* Added to K·x̂ on its way to the sum. */}
+          {wire('I', `M${xK - 30} ${YO + 50}V${Y + 50}H${xK + wK / 2}`)}
+          <circle className="ll-wire" cx={xK + wK / 2} cy={Y + 50} r={2.5} />
+          {probe('I', xK + 74, YO + 70, config.integral === 'error' ? 'integral' : 'd̂ part', 'start')}
+          {config.integral === 'dist' && <path className="ll-wire" strokeDasharray="4 3" d={`M${xO + 30} ${YO + 26}V${YO + 65}H${xK + 70}`} />}
+        </>
+      )}
     </svg>
   );
 }

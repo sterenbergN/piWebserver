@@ -21,7 +21,7 @@ export const SURGE: ProcessDef = {
       note: 'A bigger tank holds more of an upset for the same change in level.' },
     { key: 'H', label: 'Tank height', symbol: 'H', unit: 'm', default: 3, min: 0.5, max: 20, step: 0.1, group: 'process',
       note: 'Overflows at the top. The transmitter covers 0–3 m.' },
-    { key: 'Qmax', label: 'Outlet capacity', symbol: 'Q_max', unit: 'm³/h', default: 60, min: 5, max: 500, step: 1, group: 'process',
+    { key: 'Qmax', label: 'Outlet capacity', symbol: 'Q_{max}', unit: 'm³/h', default: 60, min: 5, max: 500, step: 1, group: 'process',
       note: 'Pumped outflow with LV-601 wide open. Independent of level: the pump does the work.' },
     ...instrumentParams({ valveTau: 3, valveRate: 10, valveChar: 0, txTau: 1, txNoise: 0.3, txDelay: 0, Ts: 1 }),
   ],

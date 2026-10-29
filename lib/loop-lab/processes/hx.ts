@@ -28,7 +28,7 @@ export const HX: ProcessDef = {
   tags: { loop: 'TIC-301', transmitter: 'TT-301', valve: 'FV-301' },
   states: [{ key: 'Tw', label: 'Tube wall temperature', unit: '°C' }, { key: 'T', label: 'Outlet temperature', unit: '°C' }],
   params: [
-    { key: 'Kst', label: 'Steam valve capacity', symbol: 'K_st', unit: 'kg/h per bar', default: 400, min: 20, max: 5000, step: 10, group: 'process',
+    { key: 'Kst', label: 'Steam valve capacity', symbol: 'K_{st}', unit: 'kg/h per bar', default: 400, min: 20, max: 5000, step: 10, group: 'process',
       note: 'Steam flow per bar of supply pressure with the valve wide open (critical flow: downstream pressure doesn\'t matter).' },
     { key: 'lambda', label: 'Latent heat of steam', symbol: 'λ', unit: 'kJ/kg', default: 2100, min: 1800, max: 2300, step: 10, group: 'process',
       note: 'Heat released per kg condensed; about 2100 kJ/kg at 4 bar.' },

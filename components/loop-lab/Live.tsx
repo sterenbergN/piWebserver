@@ -8,6 +8,8 @@ import Chart, { fmt } from './Chart';
 import { ProcessDrawing } from './Schematics';
 
 const SPEEDS = [1, 5, 20, 60, 300];
+/** Drives and magnets run in milliseconds: slow motion. */
+const SLOW_SPEEDS = [0.02, 0.05, 0.2, 1];
 
 /** How much history the trend keeps (s of process time), and the speed it starts at. */
 function pace(proc: ProcessDef, p: Params) {
@@ -15,7 +17,7 @@ function pace(proc: ProcessDef, p: Params) {
     const k = proc.timeScale(p);
     return { window: 30 * k, speed: k > 60 ? 20 : k > 10 ? 5 : 1 };
   }
-  const table = { flow: [120, 1], tank: [3600, 60], stirred: [2400, 60], hx: [400, 5], surge: [3600, 60], feeder: [600, 5], drum: [900, 5], jacket: [2400, 20], blend: [900, 5] } as Record<string, [number, number]>;
+  const table = { flow: [120, 1], tank: [3600, 60], stirred: [2400, 60], hx: [400, 5], surge: [3600, 60], feeder: [600, 5], drum: [900, 5], jacket: [2400, 20], blend: [900, 5], crane: [120, 1], servo: [4, 0.2], maglev: [2, 0.05] } as Record<string, [number, number]>;
   const [window, speed] = table[proc.id] ?? [600, 5];
   return { window, speed };
 }
@@ -178,7 +180,7 @@ export default function LivePanel({ proc, exp }: { proc: ProcessDef; exp: Experi
           <div className="ll-speed">
             <button className="ll-btn is-small" onClick={() => setRunning((r) => !r)}>{running ? '⏸ Pause' : '▶ Run'}</button>
             Speed
-            {SPEEDS.map((v) => (
+            {(startSpeed < 1 ? SLOW_SPEEDS : SPEEDS).map((v) => (
               <button key={v} className={`ll-btn is-small${speed === v ? ' is-primary' : ''}`} onClick={() => setSpeed(v)}>×{v}</button>
             ))}
             <span>t = {minutes ? `${fmt(view.t / 60, 4)} min` : `${fmt(view.t, 4)} s`}</span>

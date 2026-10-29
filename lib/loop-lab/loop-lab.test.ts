@@ -11,7 +11,7 @@ import { fitModel, parseTable } from './ident';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { TUNING_RULES } from './tuning';
-import { exportCode, pidCompactParams, real } from './export';
+import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
@@ -342,6 +342,8 @@ test('auto-tune gives a stable, robust starting point for every process and cont
       const params = defaultParams(proc);
       const r = autoTune(proc, params, defaultController(kind, proc));
       assert.ok(r, `${proc.id} ${kind}`);
+      // An open-loop unstable plant has no tuning rule: it says so and leaves the settings alone.
+      if (proc.id === 'maglev') { assert.match(r.note, /unstable on its own/); continue; }
       const pts = robustness(proc, params, r.config, 8);
       assert.ok(pts.every((p) => p.stableAll), `${proc.id} ${kind} unstable`);
       assert.ok(Math.max(...pts.map((p) => p.worst?.ms ?? 0)) < 1.8, `${proc.id} ${kind} fragile`);
@@ -573,4 +575,127 @@ test('exports: override selector with external reset, ratio station, split-range
     const c = defaultController(kind, proc);
     assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
   }
+});
+
+// ─── Phase 4a: state feedback, observers, LQR, Kalman ───────────────────────
+
+test('state-space numerics: Riccati (LQR), pole placement, the dual problem with two outputs', async () => {
+  const { care, place, placeMulti, regulatorPoles } = await import('./statespace');
+  // Double integrator, Q = I, R = 1: K = [1, √3].
+  const X = care([[0, 1], [0, 0]], [[0], [1]], [[1, 0], [0, 1]], [[1]])!;
+  close(X[1][0], 1, 1e-9);
+  close(X[1][1], Math.sqrt(3), 1e-9);
+  // Ackermann and Sylvester agree, and put the poles where asked.
+  const A = [[0, 1, 0], [0, 0, 1], [2, -1, -3]], b = [0, 0, 1];
+  const want = [{ re: -1, im: 0 }, { re: -2, im: 1 }, { re: -2, im: -1 }];
+  const k1 = place(A, b, want)!, k2 = placeMulti(A, b.map((v) => [v]), want)![0];
+  k1.forEach((v, i) => close(v, k2[i], 1e-6));
+  const got = eig(A.map((r, i) => r.map((v, j) => v - b[i] * k1[j]))).map((p) => p.re).sort((x, y) => x - y);
+  close(got[0], -2, 1e-6); close(got[2], -1, 1e-6);
+  // Observer for two outputs: neither alone sees everything, both together do.
+  const Ao = [[0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, -4, 0]];
+  const C = [[1, 0, 0, 0], [0, 0, 1, 0]];
+  const At = Ao.map((r, i) => r.map((_, j) => Ao[j][i])), Ct = Ao.map((_, i) => C.map((r) => r[i]));
+  const target = [-2, -3, -4, -5].map((re) => ({ re, im: 0 }));
+  assert.ok(placeMulti(At, Ct, target), 'two measurements make it observable');
+  assert.equal(placeMulti(At, Ct.map((r) => [r[0]]), target), null, 'the first alone misses the second oscillator');
+  // The pole rule: a lightly damped pair keeps its frequency and gets the damping; an unstable pole is mirrored.
+  const ps = regulatorPoles([{ re: 0, im: 0 }, { re: 0, im: 0 }, { re: -0.01, im: 2 }, { re: -0.01, im: -2 }, { re: 5, im: 0 }], 1, 0.7);
+  const pair = ps.find((p) => p.im > 1.2)!;
+  close(Math.hypot(pair.re, pair.im), Math.hypot(0.01, 2), 1e-9);
+  close(-pair.re / Math.hypot(pair.re, pair.im), 0.7, 1e-9);
+  assert.ok(ps.some((p) => Math.abs(p.re + 5) < 1e-9 && p.im === 0));
+});
+
+test('state feedback: the linear loop has the regulator\'s and the observer\'s poles (separation principle)', async () => {
+  const { designStateFb } = await import('./statespace');
+  for (const id of ['crane', 'servo', 'maglev'] as const) {
+    const proc = getProcess(id);
+    const params = defaultParams(proc);
+    const c = defaultController('statefb', proc) as Extract<ControllerConfig, { kind: 'statefb' }>;
+    const des = designStateFb(proc, c, params);
+    assert.ok(des.ok, `${id}: ${des.error}`);
+    const a = analyzeLoop(proc, params, c, proc.nominalPv)!;
+    assert.equal(a.ctrl.kind, 'ss');
+    const cl = closedLoop(a.plant, a.ctrl, 0);
+    const mag = (p: { re: number; im: number }) => Math.hypot(p.re, p.im);
+    const expected = [...des.poles, ...des.obsPoles];
+    // Every designed pole is a closed-loop pole (the plant may add its unused transmitter's own pole).
+    for (const p of expected) assert.ok(cl.poles.some((q) => mag({ re: q.re - p.re, im: q.im - p.im }) < 1e-4 * Math.max(1, mag(p))), `${id}: pole ${p.re}±${p.im}j missing`);
+    assert.ok(isStable(closedLoop(a.plant, a.ctrl, a.delay).poles));
+  }
+});
+
+test('crane: PI can\'t damp the swing; state feedback with a wind-aware observer can', () => {
+  const proc = getProcess('crane');
+  const params = defaultParams(proc);
+  const sf = defaultController('statefb', proc) as Extract<ControllerConfig, { kind: 'statefb' }>;
+  const run = (c: ControllerConfig, id: string) => runAll(proc, { params, controller: c }, [id])[0];
+  const lateSway = (r: ReturnType<typeof run>) => Math.max(...Array.from(r.trace.pv2).filter((_, i) => r.trace.t[i] > 0.75 * r.scenario.duration).map(Math.abs));
+  const pi = run(defaultController('pid', proc), 'moves'), st = run(sf, 'moves');
+  assert.ok(lateSway(pi) > 1.5, 'the PI leaves the load swinging');
+  assert.ok(lateSway(st) < 0.2, 'state feedback puts it down still');
+  assert.ok(Math.max(...st.trace.pvTrue) < 25.1 && scorecard(proc, params, sf, [st], false).worstSettling < 25);
+  // Wind: without a disturbance model the controller drives the trolley to "take out" a steady sway.
+  const dev = (r: ReturnType<typeof run>) => Math.max(...Array.from(r.trace.pvTrue).map((v) => Math.abs(v - 20)));
+  assert.ok(dev(run(sf, 'gust')) < 1.2);
+  assert.ok(dev(run({ ...sf, integral: 'none' }, 'gust')) > 5);
+  // With the load position alone, the wind can't be told from a trolley offset.
+  const blind = runAll(proc, { params, controller: { ...sf, measure: 'pv' } }, ['gust']);
+  assert.ok(blind.length === 1);
+  return import('./statespace').then(({ designStateFb }) => {
+    const d = designStateFb(proc, { ...sf, measure: 'pv' }, params);
+    assert.equal(d.ok, false);
+    assert.match(d.error!, /visible/);
+  });
+});
+
+test('flexible shaft: PI on the roll is capped by the resonance; state feedback damps it', async () => {
+  const { autoTune } = await import('./tuning');
+  const proc = getProcess('servo');
+  const params = defaultParams(proc);
+  const stable = (c: ControllerConfig) => { const a = analyzeLoop(proc, params, c, proc.nominalPv)!; return isStable(closedLoop(a.plant, a.ctrl, a.delay).poles); };
+  assert.equal(stable(pid({ Kc: 0.8, Ti: 1 })), true);
+  assert.equal(stable(pid({ Kc: 2, Ti: 0.3 })), false);
+  const t = autoTune(proc, params, defaultController('pid', proc))!;
+  assert.match(t.note, /resonance/);
+  assert.equal(stable(t.config), true);
+  const sf = defaultController('statefb', proc);
+  const sc = scorecard(proc, params, sf, runAll(proc, { params, controller: sf }), false);
+  assert.ok(sc.worstSettling < 1);
+  assert.ok(analyzeLoop(proc, params, sf, proc.nominalPv)!.margins.ms < 1.7);
+});
+
+test('magnetic levitation: no tuning rule; PID needs its setpoint weight; state feedback holds it', async () => {
+  const { autoTune } = await import('./tuning');
+  const proc = getProcess('maglev');
+  const params = defaultParams(proc);
+  assert.ok(linearizePlant(proc, params, 15).poles.some((p) => p.re > 30));
+  assert.match(autoTune(proc, params, defaultController('pid', proc))!.note, /unstable on its own/);
+  const os = (c: ControllerConfig) => scorecard(proc, params, c, runAll(proc, { params, controller: c }, ['gap-steps']), false).worstOvershoot;
+  const base = defaultController('pid', proc) as Extract<ControllerConfig, { kind: 'pid' }>;
+  assert.ok(os(base) < 1);
+  assert.ok(os({ ...base, pid: { ...base.pid, b: 1 } }) > 100);
+  const sf = defaultController('statefb', proc);
+  const r = runAll(proc, { params, controller: sf });
+  assert.ok(r.every((x) => Math.max(...x.trace.pvTrue) < 25), 'never drops to the pad');
+  assert.ok(scorecard(proc, params, sf, r, false).worstSettling < 0.3);
+});
+
+test('state feedback exports: one SCL block with LReal matrices, call site, reference code, no PID_Compact', () => {
+  const proc = getProcess('crane');
+  const params = defaultParams(proc);
+  const c = defaultController('statefb', proc);
+  const scl = exportCode(proc, c, params, 'scl');
+  assert.match(scl, /FUNCTION_BLOCK "LL_StateFb"/);
+  assert.match(scl, /Phi : Array\[0\.\.7, 0\.\.7\] of LReal := \[/);
+  assert.match(scl, /"ZIC_601_DB"\(Setpoint := "SP", Input := "ZT-601", Input2 := "ZT-602"/);
+  assert.match(scl, /#Output := LREAL_TO_REAL\(LIMIT\(MN := 0\.0, IN := #u, MX := 100\.0\)\);/);
+  const st = exportCode(proc, c, params, 'st');
+  assert.ok(!st.includes('#'));
+  assert.match(exportReference(c, params.Ts, proc, params), /const Phi = \[/);
+  assert.equal(pidCompactParams(proc, c, params)![0].value, 'not applicable');
+  assert.deepEqual(cleanController(JSON.parse(JSON.stringify(c)), proc), c);
+  // A sway camera isn't something an inner loop could control.
+  assert.equal(cleanController({ kind: 'cascade' }, proc).kind, 'pid');
 });

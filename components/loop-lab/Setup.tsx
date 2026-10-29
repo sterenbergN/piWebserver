@@ -5,7 +5,8 @@ import {
   CONTROLLER_KINDS, defaultController, defaultInnerFeedforward, isAvailable,
   type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
 } from '@/lib/loop-lab/controllers';
-import { defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
+import { cleanParams, defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
+import { designStateFb } from '@/lib/loop-lab/statespace';
 import { PROCESSES } from '@/lib/loop-lab/processes';
 import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
@@ -62,6 +63,7 @@ const KIND_HINT: Record<ControllerKind, string> = {
   smith: 'A PID that sees a prediction of the measurement, with the dead time taken out.',
   override: 'A normal controller and a limit controller on one valve; the higher (or lower) output wins.',
   ratio: 'The controlled flow follows the wild flow at a set ratio, trimmed by the main measurement.',
+  statefb: 'Every state of the plant, estimated by an observer from the measurements, fed back with its own gain.',
 };
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -138,8 +140,8 @@ export function ControllerEditor({ proc, params, config, onChange }: {
     const next = defaultController(kind, proc);
     // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
     // Smith predictor's PID for a process without dead time, so those keep their own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith') next.pid = { ...prev };
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb') next.pid = { ...prev };
     if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
@@ -192,6 +194,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
         )}
         {config.kind === 'override' && <OverrideFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'ratio' && <RatioFields proc={proc} config={config} onChange={onChange} />}
+        {config.kind === 'statefb' && <StateFbFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'characterized' && (
           <>
             <label className="ll-field is-wide" style={{ marginBottom: '0.5rem' }}>
@@ -218,7 +221,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
           </>
         )}
       </div>
-      {config.kind !== 'onoff' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
+      {config.kind !== 'onoff' && config.kind !== 'statefb' && <TuningHelper proc={proc} params={params} config={config} onChange={onChange} />}
     </div>
   );
 }
@@ -367,6 +370,92 @@ function RatioFields({ proc, config, onChange }: { proc: ProcessDef; config: Ext
   );
 }
 
+const poleText = (p: { re: number; im: number }) => (Math.abs(p.im) < 1e-6 * Math.max(1, Math.abs(p.re)) ? fmt(p.re, 3) : `${fmt(p.re, 3)} ± ${fmt(Math.abs(p.im), 3)}j`);
+/** Each pole once (a pair shown as ±), slowest first. */
+const uniquePoles = (ps: { re: number; im: number }[]) => ps.filter((p) => p.im >= -1e-9).sort((a, b) => Math.hypot(a.re, a.im) - Math.hypot(b.re, b.im));
+
+/** State feedback: how K is designed, how offset is removed, the observer, what it measures, and what came out. */
+function StateFbFields({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: Extract<ControllerConfig, { kind: 'statefb' }>; onChange: (c: ControllerConfig) => void }) {
+  const des = useMemo(() => designStateFb(proc, config, cleanParams(proc, params)), [proc, config, params]);
+  const sec = proc.secondary;
+  const set = <K extends keyof typeof config>(k: K) => (v: (typeof config)[K]) => onChange({ ...config, [k]: v });
+  return (
+    <>
+      <div className="ll-fields is-3">
+        <label className="ll-field">
+          <span>Gains from</span>
+          <select value={config.design} onChange={(e) => set('design')(e.target.value === 'lqr' ? 'lqr' : 'poles')}>
+            <option value="poles">Pole placement</option>
+            <option value="lqr">LQR (weights)</option>
+          </select>
+        </label>
+        <label className="ll-field">
+          <span>No offset by</span>
+          <select value={config.integral} onChange={(e) => set('integral')(e.target.value as typeof config.integral)}>
+            <option value="dist">Estimating the upset</option>
+            <option value="error">Integral of the error</option>
+            <option value="none">Nothing</option>
+          </select>
+        </label>
+        {sec && (
+          <label className="ll-field">
+            <span>Measures</span>
+            <select value={config.measure} onChange={(e) => set('measure')(e.target.value as typeof config.measure)}>
+              <option value="both">{proc.tags.transmitter} + {sec.tag}</option>
+              <option value="pv">{proc.tags.transmitter} only</option>
+              <option value="pv2">{sec.tag} only</option>
+            </select>
+          </label>
+        )}
+      </div>
+      {config.design === 'poles' ? (
+        <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
+          <NumField label="ω_n" unit="rad/s" value={config.wn} min={1e-4} onChange={set('wn')} title="Natural frequency of the dominant pole pair: how fast the closed loop is" />
+          <NumField label="ζ" value={config.zeta} min={0.1} max={3} step={0.05} onChange={set('zeta')} title="Damping of the dominant pair (0.7–1: little or no overshoot)" />
+        </div>
+      ) : (
+        <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
+          <NumField label="q_y" value={config.qy} min={0} onChange={set('qy')} title={`Weight on ${proc.pv.label.toLowerCase()} error (per % of span, squared), against 1 on the output (per %, squared)`} />
+          {sec && <NumField label="q₂" value={config.q2} min={0} onChange={set('q2')} title={`Weight on ${sec.label.toLowerCase()} (per % of its span, squared)`} />}
+          {config.integral === 'error' && <NumField label="q_i" value={config.qi} min={0} onChange={set('qi')} title="Weight on the integral of the error: bigger removes offset faster and overshoots more" />}
+        </div>
+      )}
+      <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
+        <label className="ll-field">
+          <span>Observer</span>
+          <select value={config.observer} onChange={(e) => set('observer')(e.target.value === 'poles' ? 'poles' : 'kalman')}>
+            <option value="kalman">Kalman filter</option>
+            <option value="poles">Pole placement</option>
+          </select>
+        </label>
+        {config.observer === 'kalman'
+          ? <NumField label="Upsets" value={config.qw} min={1e-4} onChange={set('qw')} title="How much the filter expects the plant to be pushed around, against the transmitter noise: bigger trusts the measurement more, follows faster and passes more noise" />
+          : <NumField label="Speed" unit="× regulator" value={config.obsSpeed} min={1} max={20} step={0.5} onChange={set('obsSpeed')} title="Observer poles at this multiple of the regulator's" />}
+      </div>
+      <div className="ll-sub">What came out</div>
+      {des.ok ? (
+        <>
+          <div className="ll-table-wrap">
+            <table className="ll-table">
+              <thead><tr><th style={{ textAlign: 'left' }}>Estimated state</th><th>Gain</th></tr></thead>
+              <tbody>
+                {des.states.map((st, i) => (
+                  <tr key={st}><td style={{ textAlign: 'left' }}>{st} <span className="ll-small">({des.units[i]})</span></td><td>{fmt(i < des.n ? -des.K[i] : des.ctrl.C[i], 3)}</td></tr>
+                ))}
+                <tr><td style={{ textAlign: 'left' }}>Setpoint (N_r)</td><td>{fmt(des.Nr, 3)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="ll-note" style={{ marginTop: '0.3rem' }}>
+            Output change, %, per unit of each estimate, away from the design point ({fmt(proc.nominalPv, 3)} {proc.pv.unit}).
+            Closed-loop poles: {uniquePoles(des.poles).map(poleText).join(', ')} rad/s. Observer: {uniquePoles(des.obsPoles).map(poleText).join(', ')} rad/s.
+          </p>
+        </>
+      ) : <p className="ll-note">⚠️ {des.error}</p>}
+    </>
+  );
+}
+
 /** The Smith predictor's process model, with a button to copy it from the plant's step response. */
 function SmithModelEditor({ proc, params, model, pid, onChange }: {
   proc: ProcessDef; params: Params; model: SmithModel; pid: PidParams; onChange: (m: SmithModel) => void;
@@ -414,7 +503,7 @@ function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params
           setTuned({ key: JSON.stringify([proc.id, params, r.config]), note: r.note });
         }
       }}>✨ Auto-tune</button>
-      <span className="ll-small">{note || 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.'}</span>
+      <span className="ll-small">{note || (config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point. Then adjust by hand and compare.' : 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.')}</span>
     </div>
   );
 }
@@ -439,7 +528,7 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   };
   const result = model ? rule.tune(model, t, model.theta * speedFactor) : null;
   const apply = () => {
-    if (!result || config.kind === 'onoff') return;
+    if (!result || config.kind === 'onoff' || config.kind === 'statefb') return;
     if (config.kind === 'schedule') {
       const i = config.points.findIndex((p) => Math.abs(p.at - pv) < 1e-9);
       const points = i >= 0

@@ -59,7 +59,7 @@ export const JACKET: ProcessDef = {
       note: 'To the surroundings at 20 °C, through the insulation.' },
     { key: 'Qhmax', label: 'Steam heating capacity', symbol: 'Q_h,max', unit: 'kW', default: 250, min: 10, max: 2000, step: 5, group: 'process',
       note: 'Heat from the steam valve, fully open.' },
-    { key: 'Kcw', label: 'Cooling water capacity', symbol: 'K_cw', unit: 'kW/K', default: 20, min: 0.5, max: 100, step: 0.5, group: 'process',
+    { key: 'Kcw', label: 'Cooling water capacity', symbol: 'K_{cw}', unit: 'kW/K', default: 20, min: 0.5, max: 100, step: 0.5, group: 'process',
       note: 'Heat the cooling water takes per K between the jacket and the water, valve fully open. About 800 kW at 40 K: three times the steam.' },
     { key: 'split', label: 'Split point', unit: '% output', default: 50, min: 5, max: 95, step: 1, group: 'valve',
       note: 'Controller output where the cooling valve has just closed and the steam valve starts to open (set in the positioners or the PLC output scaling).' },

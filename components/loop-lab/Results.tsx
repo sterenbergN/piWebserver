@@ -38,7 +38,7 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
     { label: 'Setpoint', color: 'var(--ll-sp)', x: t, y: first.trace.sp, dash: '5 4', width: 1.4 },
     ...(single && showMeasured ? [{ label: 'Measured', color: 'var(--muted)', x: t, y: first.trace.pv, width: 1 }] : []),
     ...(single && Array.from(first.trace.pred).some(Number.isFinite)
-      ? [{ label: 'Predicted (what the PID sees)', color: 'var(--habit-7)', x: t, y: first.trace.pred, dash: '3 3', width: 1.3 }] : []),
+      ? [{ label: first.trace.Kc.every((v) => v === 0) ? 'Observer estimate' : 'Predicted (what the PID sees)', color: 'var(--habit-7)', x: t, y: first.trace.pred, dash: '3 3', width: 1.3 }] : []),
     ...entries.map((e, i) => ({ label: single ? `${proc.pv.label} (true)` : e.label, color: e.color, x: times[i], y: e.run.trace.pvTrue, width: 2 })),
   ];
   const cv: Series[] = entries.flatMap((e, i) => single

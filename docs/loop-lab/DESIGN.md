@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1, 2 and 3 (3a and 3b) built (2026-10-28) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1, 2, 3 (3a and 3b) and 4a built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -378,6 +378,11 @@ Interacting tanks, batch reactor, maglev / pendulum, servo resonance; state feed
 observers and Kalman filter, LQR/LQG, MPC, decoupling, adaptive, ADRC; custom
 controllers in Structured Text.
 
+Split in three: **4a** (built) is state feedback, observers, Kalman filter and LQR on a crane with a swinging
+load, a drive with a flexible shaft and magnetic levitation. **4b** is multivariable: interacting tanks, the
+relative gain array, decoupling and MPC. **4c** is the model-light alternatives (adaptive control, ADRC), the batch
+reactor and custom controllers in Structured Text.
+
 ### Phase 5 — software in the loop
 
 PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
@@ -488,3 +493,42 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
   override step.
 - **Not in 3b**: override on more than two controllers, cross-limiting for combustion, energy cost of a
   split-range overlap (no energy measure in the scorecard yet).
+
+## 16. Phase 4a as built
+
+- **State feedback with an observer** (rung 10, one controller kind for the whole family): u = u₀ − K·x̂ + N_r·r,
+  plus the offset remover. The controller's model is the plant linearized at its design point (`statespace.ts`),
+  less the secondary transmitter's filter when that reading isn't used.
+  - **Regulator** on the physical states (transmitter filters get no gain and keep their poles): pole placement
+    with a dominant pair (ω_n, ζ), where lightly damped pairs keep their frequency and get ζ, unstable poles are
+    mirrored and faster ones stay; or LQR with weights q_y, q₂, q_i against 1 on the output. Pole placement is the
+    Sylvester-equation method (balanced, time-scaled, Jordan blocks for repeats, checked afterwards), Ackermann as
+    a fallback; LQR is the Riccati equation by the matrix sign function.
+  - **Observer:** a Kalman filter (process noise scaled to the regulator's speed so one "upsets" knob means the
+    same on any plant) or pole placement at a multiple of the regulator's poles, on one or both measurements.
+  - **No offset by:** estimating a constant disturbance where it acts (the first unmeasured one, in % of its
+    range; a load at the valve if all are measured) and cancelling it through N_d; or an integral of the error with
+    anti-windup; or nothing.
+  - **Runs** as the discretized design (ZOH, the applied output fed back to the observer), bumpless from manual.
+    **Analysis** as a continuous linear controller (`LinearController` kind `ss`): Bode and margins broken at the
+    valve (phase margin as the angle to −1), closed loop in the state-space builder.
+  - **Exports:** `LL_StateFb` (SCL/ST) with LReal matrices, call site, reference TypeScript; the PID_Compact table
+    becomes the gain table.
+- **Processes:** crane with a swinging load (speed-controlled trolley, pendulum, wind; PV the load position,
+  sway angle as a measurement-only secondary, no cascade), drive with a flexible shaft (two masses and a spring,
+  12 Hz resonance, roll and motor encoders, 2 ms), magnetic levitation (unstable, 1 ms, end stops). Instruments
+  can be millisecond-fast (`fast` instrument ranges); the live view has slow motion.
+- **Auto-tune:** declines on an open-loop unstable plant (no rule applies, says why); on a resonant plant, slows
+  the rule down until the loop is stable with Ms ≤ 1.6 over the parameter spread, and says so; for state feedback,
+  the fastest ω_n (or q_y) that keeps Ms ≤ 1.6 at the design point.
+- **Verdicts the numbers support:** crane → state feedback with a sway sensor and a wind-aware observer (a 20 m
+  move in 23 s with 0.09° of swing left, against a PI that takes over a minute and leaves 2°; without the wind
+  model a gust drags the load 8 m; load position alone can't observe the wind). Flexible shaft → cascade on the
+  motor speed for most machines (settles in ~1 s, Ms 2.7); state feedback (active damping) three times faster with
+  Ms 1.5. Levitation → PID wins (PD + slow I with setpoint weight 0.3: 0.2 s, no overshoot; with b = 1, 130 %
+  overshoot); state feedback no clear gain.
+- **Case studies:** `crane-antisway`, `servo-resonance`, `maglev-unstable`.
+- **Also:** integrators shown as k′/s in the transfer function; multi-letter subscripts braced in parameter symbols;
+  phase margin wrapped into (−360°, 0°].
+- **Not in 4a:** LQG loop-transfer recovery, a design scheduled on the rope length or the gap, notch filters as a
+  PID option, observers for processes with transport delay (the delay isn't in the controller's model).

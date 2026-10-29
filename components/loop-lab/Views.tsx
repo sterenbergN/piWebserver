@@ -155,6 +155,83 @@ function mechanicalPlots(proc: ProcessDef, p: Params, d: Params): MechPlot[] {
       note: `Both go the wrong way first. More steam drops the pressure, the water flashes and the bubbles swell the level by up to ${fmt(p.kSwell * dq, 3)} mm, though the drum is losing water. More (cold) feedwater collapses bubbles: the level shrinks by up to ${fmt(p.kShrink * dq, 3)} mm though the drum is gaining water. The feedwater step only has the level back where it started after about ${fmt(p.kShrink / kInt, 2)} s.`,
     }];
   }
+  if (proc.id === 'crane') {
+    // The trolley accelerates to top speed and stops again, the load left to swing (no controller).
+    const T = 30, n = 600, h = T / n;
+    const xs: number[] = [], th: number[] = [], vs: number[] = [];
+    let s = [0, 0, 0, 0];
+    let flow = 0.5;
+    for (let i = 0; i <= n; i++) {
+      const t = i * h;
+      xs.push(t); th.push((s[2] * 180) / Math.PI); vs.push(s[1]);
+      // The drive's ramp limit (the stroking speed limit) sets how hard it accelerates.
+      const target = t < 8 ? 1 : 0.5, step = (p.valveRate / 100) * h;
+      flow += Math.max(-step, Math.min(step, target - flow));
+      const f = (x: number[]) => proc.derivatives(x, flow, d, p);
+      const k1 = f(s), k2 = f(s.map((v, j) => v + (h / 2) * k1[j])), k3 = f(s.map((v, j) => v + (h / 2) * k2[j])), k4 = f(s.map((v, j) => v + h * k3[j]));
+      s = s.map((v, j) => v + (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+    }
+    const ls = linspace(2, 30, 60);
+    return [
+      {
+        title: 'Ramp to top speed, run, ramp down at 8 s: no controller', x: 'Time (s)', y: 'Sway (°) · trolley speed (m/s)',
+        series: [
+          { label: 'Sway angle', color: PALETTE[3], x: xs, y: th, width: 2.2 },
+          { label: 'Trolley speed', color: PALETTE[0], x: xs, y: vs, dash: '4 3' },
+        ],
+        note: `Every speed change starts a swing, and with ζ = ${fmt(p.zs, 2)} it lasts for minutes. A good driver times the stop to a whole number of swings; a controller can do it every time, if it knows the swing.`,
+      },
+      {
+        title: 'Sway period vs rope length', x: 'Rope length L (m)', y: 'Period 2π√(L/g) (s)',
+        series: [{ label: 'Pendulum', color: PALETTE[1], x: ls, y: ls.map((L) => 2 * Math.PI * Math.sqrt(L / 9.81)) }],
+        note: `The load's mass doesn't appear: only the rope length sets the swing. The hoist changes it on every lift, so an anti-sway controller has to know L (the hoist encoder) or be robust to it.`,
+      },
+    ];
+  }
+  if (proc.id === 'servo') {
+    // A torque step with no controller: the roll follows the motor through the spring and rings.
+    const T = 0.4, n = 800, h = T / n;
+    const xs: number[] = [], wm: number[] = [], wl: number[] = [];
+    const flow = 0.5 + 25 / p.Tmax;
+    let s = proc.steady(0.5 + d.TL / (2 * p.Tmax), d, p) ?? [0, 0, 0];
+    for (let i = 0; i <= n; i++) {
+      xs.push(i * h); wm.push(s[0] * 60 / (2 * Math.PI)); wl.push(s[1] * 60 / (2 * Math.PI));
+      const f = (x: number[]) => proc.derivatives(x, flow, d, p);
+      const k1 = f(s), k2 = f(s.map((v, j) => v + (h / 2) * k1[j])), k3 = f(s.map((v, j) => v + (h / 2) * k2[j])), k4 = f(s.map((v, j) => v + h * k3[j]));
+      s = s.map((v, j) => v + (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+    }
+    const wr = Math.sqrt(p.k * (1 / p.Jm + 1 / p.JL)), wa = Math.sqrt(p.k / p.JL);
+    return [{
+      title: '50 N·m more torque, no controller', x: 'Time (s)', y: 'Speed (rpm)',
+      series: [
+        { label: 'Motor (ST-702)', color: PALETTE[0], x: xs, y: wm },
+        { label: 'Roll (ST-701)', color: PALETTE[3], x: xs, y: wl, width: 2.2 },
+      ],
+      note: `Both speed up together, with the shaft winding up and springing back at ${fmt(wr / (2 * Math.PI), 3)} Hz (√(k(1/J_m + 1/J_L)) = ${fmt(wr, 3)} rad/s) on top. The motor's encoder also sees an anti-resonance at ${fmt(wa, 3)} rad/s (√(k/J_L)), where the roll swings and the motor nearly stands still: a loop on the motor speed barely notices the roll ringing there.`,
+    }];
+  }
+  if (proc.id === 'maglev') {
+    const gaps = linspace(4, 28, 80);
+    const force = (x: number, i: number) => p.F1 * i * i * (10 / x) ** 2;
+    return [
+      {
+        title: 'Magnet pull vs gap, at three currents', x: 'Gap (mm)', y: 'Pull (N)',
+        series: [
+          ...[0.5, 0.75, 1].map((f, i) => ({ label: `${fmt(f * p.Imax, 2)} A`, color: PALETTE[i], x: gaps, y: gaps.map((x) => force(x, f * p.Imax)) })),
+          { label: `Weight (${fmt(p.m, 2)} kg)`, color: 'var(--muted)', dash: '4 4', x: gaps, y: gaps.map(() => p.m * 9.81) },
+        ],
+        note: 'Where a current line crosses the weight, the mass can hang still, but only just: a little further down the pull is weaker than the weight and it falls; a little closer, stronger, and it jumps to the magnet. Without control there is no stable gap.',
+      },
+      {
+        title: 'Unstable pole and the current needed, vs gap', x: 'Gap (mm)', y: 'Pole (rad/s) · current (% of max)',
+        series: [
+          { label: 'Unstable pole √(2g/x)', color: PALETTE[3], x: gaps, y: gaps.map((x) => Math.sqrt((2 * 9.81) / (x / 1000))) },
+          { label: 'Holding current', color: PALETTE[0], x: gaps, y: gaps.map((x) => (100 * Math.sqrt((p.m * 9.81) / (p.F1 * (10 / x) ** 2))) / p.Imax), dash: '4 3' },
+        ],
+        note: `The loop has to be faster than the pole (${fmt(Math.sqrt((2 * 9.81) / (proc.nominalPv / 1000)), 3)} rad/s at ${proc.nominalPv} mm) or the mass gets away from it. Closer to the magnet it is faster still and the gain per amp is higher: one tuning is too lively close in and too sluggish far out.`,
+      },
+    ];
+  }
   if (proc.id === 'custom') {
     const m = linearizePlant(proc, p, proc.nominalPv);
     const pm = pathModel(m, m.C, m.theta);
@@ -226,20 +303,25 @@ function MechanicalLayout({ proc, p, d, x, plots, text, editor }: {
 // ─── Control ────────────────────────────────────────────────────────────────
 
 function plantTex(m: PlantModel) {
+  // An integrator is a factor s, with the slope k′ (the low-frequency asymptote k′/s) as the gain.
+  const scale = Math.max(1, ...m.poles.map((q) => Math.hypot(q.re, q.im)));
+  const isInt = (q: { re: number; im: number }) => Math.hypot(q.re, q.im) < 1e-9 * scale;
+  const ints = m.poles.filter(isInt).length;
   const factors = m.poles
-    .filter((q) => q.im >= -1e-12)
+    .filter((q) => q.im >= -1e-12 && !isInt(q))
     .map((q) => {
       if (Math.abs(q.im) < 1e-9) return `(${texNum(-1 / q.re)}\\,s + 1)`;
       const wn = Math.hypot(q.re, q.im), z = -q.re / wn;
       return `\\left(\\tfrac{s^2}{${texNum(wn * wn)}} + ${texNum((2 * z) / wn)}\\,s + 1\\right)`;
     });
   const delay = m.theta > 0 ? `\\,e^{-${texNum(m.theta)}s}` : '';
-  return `G(s) = \\frac{${texNum(m.K)}${delay}}{${factors.join('')}}`;
+  const gain = ints ? approximate(m).kPrime : m.K;
+  return `G(s) = \\frac{${texNum(gain)}${delay}}{${ints ? (ints > 1 ? `s^${ints}` : 's\\,') : ''}${factors.join('')}}`;
 }
 
 const PROBE_LABEL: Record<string, string> = {
   sp: 'Setpoint', cv: 'Controller output', valve: 'Valve stem', pvTrue: 'PV (true)', pv: 'PV (measured)', P: 'P term', I: 'I term', D: 'D term',
-  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted (Smith)', alt: 'Override controller output',
+  Kc: 'Scheduled Kc', ff: 'Feedforward', sp2: 'Inner setpoint', pv2: 'Inner measurement', pred: 'PV predicted / estimated', alt: 'Override controller output',
 };
 
 export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experiment; runs?: Run[] }) {
@@ -577,7 +659,7 @@ export function CodeBlock({ code, label }: { code: string; label: string }) {
 export function CodeTabs({ proc, exp }: { proc: ProcessDef; exp: Experiment }) {
   const [tab, setTab] = useState<'scl' | 'st' | 'ref'>('scl');
   const p = cleanParams(proc, exp.params);
-  const code = tab === 'ref' ? exportReference(exp.controller, p.Ts) : exportCode(proc, exp.controller, exp.params, tab);
+  const code = tab === 'ref' ? exportReference(exp.controller, p.Ts, proc, exp.params) : exportCode(proc, exp.controller, exp.params, tab);
   return (
     <div>
       <div className="ll-seg" role="tablist" aria-label="Code language" style={{ marginBottom: '0.6rem' }}>

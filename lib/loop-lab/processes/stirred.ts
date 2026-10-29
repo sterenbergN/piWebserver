@@ -25,7 +25,7 @@ export const STIRRED: ProcessDef = {
       note: 'Jacket water plus the steel between it and the contents.' },
     { key: 'UA', label: 'Jacket heat transfer', symbol: 'UA', unit: 'kW/K', default: 3, min: 0.2, max: 30, step: 0.1, group: 'process',
       note: 'Overall coefficient times area. Fouling lowers it.' },
-    { key: 'Qmax', label: 'Heating capacity', symbol: 'Q_max', unit: 'kW', default: 100, min: 5, max: 1000, step: 5, group: 'process',
+    { key: 'Qmax', label: 'Heating capacity', symbol: 'Q_{max}', unit: 'kW', default: 100, min: 5, max: 1000, step: 5, group: 'process',
       note: 'Heat into the jacket with the valve fully open.' },
     ...instrumentParams({ valveTau: 3, valveRate: 10, valveChar: 0, txTau: 15, txNoise: 0.1, txDelay: 0, Ts: 1 }),
   ],

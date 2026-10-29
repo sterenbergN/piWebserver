@@ -1,5 +1,6 @@
 import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
+import { designStateFb, type StateFbDesign } from './statespace';
 
 // Code and parameter exports for the automation view: TIA Portal SCL, IEC
 // 61131-3 Structured Text (CODESYS, TwinCAT), a plain reference
@@ -20,7 +21,7 @@ export function real(v: number) {
 type Dialect = 'scl' | 'st';
 
 /** Tag-free names for the blocks. */
-const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith' };
+const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volume: 'LL_TankVolume', valveInv: 'LL_ValveInverse', leadLag: 'LL_LeadLag', smith: 'LL_Smith', stateFb: 'LL_StateFb' };
 
 /** Longest dead time the Smith predictor block can hold, in controller cycles. */
 const SMITH_BUFFER = 1000;
@@ -294,6 +295,178 @@ ${d === 'scl' ? '\nBEGIN' : ''}
 END_FUNCTION_BLOCK`;
 }
 
+/** An LReal literal with enough digits for an observer matrix (entries a hair away from 1). */
+function lreal(v: number) {
+  if (!Number.isFinite(v)) return '0.0';
+  const n = Number(v.toPrecision(10));
+  if (n !== 0 && (Math.abs(n) < 1e-4 || Math.abs(n) >= 1e7)) {
+    const [m, e] = n.toExponential().split('e');
+    return `${m.includes('.') ? m : `${m}.0`}E${Number(e)}`;
+  }
+  const t = n.toString();
+  return t.includes('.') ? t : `${t}.0`;
+}
+
+/** Array initializer, row by row, wrapped for reading. */
+function arrayInit(values: number[], perLine: number, indent: string) {
+  const rows: string[] = [];
+  for (let i = 0; i < values.length; i += perLine) rows.push(values.slice(i, i + perLine).map(lreal).join(', '));
+  return rows.join(`,\n${indent}`);
+}
+
+/**
+ * State feedback with an observer, as one block: the controller's states
+ * (the estimate and the integral) are updated with the discretized design,
+ * then the output is computed from them. Matrices are generated for this
+ * design and this cycle time.
+ */
+function stateFbBlock(d: Dialect, proc: ProcessDef, des: StateFbDesign) {
+  const v = loc(d);
+  const nc = des.disc.Phi.length, my = des.inputs.length, nw = my + 2;
+  const last = nc - 1;
+  const sec = proc.secondary;
+  const two = des.inputs.includes('pv2') && sec;
+  const ind = '         ';
+  const range = (k: 'pv' | 'pv2') => (k === 'pv' ? { lo: proc.pv.lo, hi: proc.pv.hi, y0: des.y0, name: 'Input' } : { lo: sec!.lo, hi: sec!.hi, y0: des.y20, name: 'Input2' });
+  const meas = des.inputs.map((k, i) => {
+    const r = range(k);
+    return `    ${v('W')}[${i + 1}] := (${v(r.name)} - ${real(r.lo)}) / ${real(r.hi - r.lo)} * 100.0 - ${lreal(r.y0)};`;
+  }).join('\n');
+  const extra = des.mode !== 'none';
+  const pvRow = des.Cpv.concat(extra ? [0] : []);
+  const C = des.ctrl.C;
+  const zIdx = extra ? des.n : -1;
+  return `${blockHeader(d, 'FUNCTION_BLOCK', NAMES.stateFb)}
+   // ${des.states.map((st, i) => `x[${i}] ${st}`).join('; ')}.
+   VAR_INPUT
+      Setpoint : Real;        // ${proc.pv.unit}
+      Input : Real;           // ${proc.tags.transmitter}, ${proc.pv.unit}${two ? `\n      Input2 : Real;          // ${sec!.tag}, ${sec!.unit}` : ''}
+      ManualEnable : Bool;
+      ManualValue : Real;     // %
+   END_VAR
+   VAR_OUTPUT
+      Output : Real;          // %
+      Estimate : Real;        // the observer's estimate of Input, ${proc.pv.unit}
+   END_VAR
+   VAR
+      // x <- Phi*x + Gam*w with w = [last output, measurement${my > 1 ? 's' : ''}, setpoint] (deviations from the design point, %).
+      Phi : Array[0..${last}, 0..${last}] of LReal := [${arrayInit(des.disc.Phi.flat(), nc, ind)}];
+      Gam : Array[0..${last}, 0..${nw - 1}] of LReal := [${arrayInit(des.disc.Gamma.flat(), nw, ind)}];
+      // Output = U0 + Cout*x + Nr*r: the state feedback gains with their sign.
+      Cout : Array[0..${last}] of LReal := [${arrayInit(C, 8, ind)}];
+      Nx : Array[0..${last}] of LReal := [${arrayInit(des.Nx.concat(extra ? [0] : []), 8, ind)}];
+      Cpv : Array[0..${last}] of LReal := [${arrayInit(pvRow, 8, ind)}];
+      Nr : LReal := ${lreal(des.Nr)};
+      U0 : LReal := ${lreal(des.u0)};        // design point: output, %
+      Y0 : LReal := ${lreal(des.y0)};        // design point: measurement, % of span
+      X : Array[0..${last}] of LReal;
+      XNew : Array[0..${last}] of LReal;
+      W : Array[0..${nw - 1}] of LReal;
+      ULast : LReal;
+      Started : Bool;
+   END_VAR
+   VAR_TEMP
+      i : Int;
+      j : Int;
+      r : LReal;
+      dy : LReal;
+      u : LReal;
+      acc : LReal;
+   END_VAR
+${d === 'scl' ? '\nBEGIN' : ''}
+    ${v('r')} := (${v('Setpoint')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0 - ${v('Y0')};
+    ${v('W')}[0] := ${v('ULast')} - ${v('U0')};
+${meas}
+    ${v('W')}[${nw - 1}] := ${v('r')};
+    IF ${v('ManualEnable')} OR NOT ${v('Started')} THEN
+        // Track: the steady state that matches the measurement${extra ? `, the ${des.integral ? 'integral' : 'disturbance estimate'} set so the output equals ManualValue` : ''}.
+        ${v('dy')} := (${v('Input')} - ${real(proc.pv.lo)}) / ${real(proc.pv.hi - proc.pv.lo)} * 100.0 - ${v('Y0')};
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('X')}[${v('i')}] := ${v('Nx')}[${v('i')}] * ${v('dy')};
+        END_FOR;${extra ? `
+        ${v('acc')} := ${v('U0')} + ${v('Nr')} * ${v('r')};
+        FOR ${v('i')} := 0 TO ${last - 1} DO
+            ${v('acc')} := ${v('acc')} + ${v('Cout')}[${v('i')}] * ${v('X')}[${v('i')}];
+        END_FOR;
+        ${v('X')}[${zIdx}] := (${v('ManualValue')} - ${v('acc')}) / ${v('Cout')}[${zIdx}];` : ''}
+        ${v('u')} := ${v('ManualValue')};
+        ${v('Started')} := TRUE;
+    ELSE
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('acc')} := 0.0;
+            FOR ${v('j')} := 0 TO ${last} DO
+                ${v('acc')} := ${v('acc')} + ${v('Phi')}[${v('i')}, ${v('j')}] * ${v('X')}[${v('j')}];
+            END_FOR;
+            FOR ${v('j')} := 0 TO ${nw - 1} DO
+                ${v('acc')} := ${v('acc')} + ${v('Gam')}[${v('i')}, ${v('j')}] * ${v('W')}[${v('j')}];
+            END_FOR;
+            ${v('XNew')}[${v('i')}] := ${v('acc')};
+        END_FOR;
+        ${v('u')} := ${v('U0')} + ${v('Nr')} * ${v('r')};
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('u')} := ${v('u')} + ${v('Cout')}[${v('i')}] * ${v('XNew')}[${v('i')}];
+        END_FOR;${des.integral ? `
+        // Anti-windup: keep the old integral if the new one pushes a saturated output further.
+        ${v('acc')} := ${v('Cout')}[${zIdx}] * (${v('XNew')}[${zIdx}] - ${v('X')}[${zIdx}]);
+        IF (${v('u')} > 100.0 AND ${v('acc')} > 0.0) OR (${v('u')} < 0.0 AND ${v('acc')} < 0.0) THEN
+            ${v('u')} := ${v('u')} - ${v('acc')};
+            ${v('XNew')}[${zIdx}] := ${v('X')}[${zIdx}];
+        END_IF;` : ''}
+        FOR ${v('i')} := 0 TO ${last} DO
+            ${v('X')}[${v('i')}] := ${v('XNew')}[${v('i')}];
+        END_FOR;
+    END_IF;
+    ${v('Output')} := LREAL_TO_REAL(LIMIT(MN := 0.0, IN := ${v('u')}, MX := 100.0));
+    ${v('ULast')} := ${v('Output')};   // the observer needs what was really applied
+    ${v('acc')} := ${v('Y0')};
+    FOR ${v('i')} := 0 TO ${last} DO
+        ${v('acc')} := ${v('acc')} + ${v('Cpv')}[${v('i')}] * ${v('X')}[${v('i')}];
+    END_FOR;
+    ${v('Estimate')} := LREAL_TO_REAL(${real(proc.pv.lo)} + ${v('acc')} / 100.0 * ${real(proc.pv.hi - proc.pv.lo)});
+END_FUNCTION_BLOCK`;
+}
+
+/** The state-feedback controller as plain TypeScript. */
+function stateFbReference(proc: ProcessDef, des: StateFbDesign, Ts: number) {
+  const mat = (M: number[][]) => `[\n${M.map((r) => `  [${r.map((x) => Number(x.toPrecision(10))).join(', ')}],`).join('\n')}\n]`;
+  const vec = (a: number[]) => `[${a.map((x) => Number(x.toPrecision(10))).join(', ')}]`;
+  const nc = des.disc.Phi.length;
+  return `// State feedback with an observer, discretized for Ts = ${Ts} s.
+// States: ${des.states.join('; ')}.
+// Everything in deviations from the design point: output ${Number(des.u0.toPrecision(6))} %, measurement ${Number(des.y0.toPrecision(6))} % of span.
+// Measurements used: ${des.inputs.map((k) => (k === 'pv' ? proc.tags.transmitter : proc.secondary?.tag)).join(', ')} (in % of span).
+const Phi = ${mat(des.disc.Phi)};
+// Columns: last output, measurement${des.inputs.length > 1 ? 's' : ''}, setpoint.
+const Gam = ${mat(des.disc.Gamma)};
+const Cout = ${vec(des.ctrl.C)};   // −K${des.integral ? ', −Kz' : des.mode === 'dist' ? ', Nd' : ''}
+const Nx = ${vec(des.Nx.concat(des.mode !== 'none' ? [0] : []))};
+const Nr = ${Number(des.Nr.toPrecision(10))}, U0 = ${Number(des.u0.toPrecision(10))}, Y0 = ${Number(des.y0.toPrecision(10))}${des.inputs.includes('pv2') ? `, Y20 = ${Number(des.y20.toPrecision(10))}` : ''};
+let x = new Array(${nc}).fill(0), uLast = U0;
+
+/** One cycle: setpoint and measurements in % of span → output %. */
+function step(spPct: number, ${des.inputs.map((k) => (k === 'pv' ? 'pvPct: number' : 'pv2Pct: number')).join(', ')}): number {
+  const r = spPct - Y0;
+  const w = [uLast - U0, ${des.inputs.map((k) => (k === 'pv' ? 'pvPct - Y0' : 'pv2Pct - Y20')).join(', ')}, r];
+  const next = Phi.map((row, i) => row.reduce((s, v, j) => s + v * x[j], 0) + Gam[i].reduce((s, g, j) => s + g * w[j], 0));${des.integral ? `
+  let u = U0 + Nr * r + Cout.reduce((s, c, i) => s + c * next[i], 0);
+  // Anti-windup: don't let the integral push a saturated output further.
+  const push = Cout[${des.n}] * (next[${des.n}] - x[${des.n}]);
+  if ((u > 100 && push > 0) || (u < 0 && push < 0)) { u -= push; next[${des.n}] = x[${des.n}]; }` : `
+  const u = U0 + Nr * r + Cout.reduce((s, c, i) => s + c * next[i], 0);`}
+  x = next;
+  uLast = Math.min(100, Math.max(0, u));   // the observer needs what was really applied
+  return uLast;
+}
+
+// Manual mode: start from the steady state that matches the measurement${des.mode !== 'none' ? `, with the ${des.integral ? 'integral' : 'disturbance estimate'} set so the output equals the manual value` : ''}.
+function track(u: number, spPct: number, pvPct: number) {
+  x = Nx.map((n) => n * (pvPct - Y0));${des.mode !== 'none' ? `
+  const rest = Cout.slice(0, ${des.n}).reduce((s, c, i) => s + c * x[i], 0);
+  x[${des.n}] = (u - U0 - Nr * (spPct - Y0) - rest) / Cout[${des.n}];` : ''}
+  uLast = u;
+}`;
+}
+
 function scheduleFunction(d: Dialect, points: { at: number; Kc: number; Ti: number; Td: number }[]) {
   const v = loc(d);
   // Sorted, and a repeated breakpoint dropped (it would divide by zero).
@@ -440,6 +613,15 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     lines.push(`${out} := ${inner}.Output;`);
     return lines.join('\n');
   }
+  if (config.kind === 'statefb') {
+    const des = designStateFb(proc, config, p);
+    const in2 = des.inputs.includes('pv2') && proc.secondary ? `, Input2 := ${tag(proc.secondary.tag)}` : '';
+    lines.push(`// State feedback: one block holds the observer, the gains and the integral. Call it every cycle, in manual too (it tracks).`);
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}${in2}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')});`);
+    lines.push(`${out} := ${db}.Output;`);
+    lines.push(`// ${db}.Estimate is the observer's idea of ${pv}: trend it next to the real reading while commissioning.`);
+    return lines.join('\n');
+  }
   if (config.kind === 'smith') {
     const sm = d === 'scl' ? `"${proc.tags.loop.replace('-', '_')}_Smith_DB"` : `${proc.tags.loop.replace('-', '_')}_Smith`;
     lines.push(`// Smith predictor: feed it last cycle's PID output first, then give the PID its corrected measurement.`);
@@ -539,7 +721,8 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
-    parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
+    if (config.kind === 'statefb') parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
+    else parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
   }
   parts.push(callSite(dialect, proc, config, p));
   if (proc.split && config.kind !== 'onoff') parts.push(splitRange(dialect, proc, p));
@@ -547,7 +730,8 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
 }
 
 /** The same algorithm as plain TypeScript, with nothing hidden. */
-export function exportReference(config: ControllerConfig, rawTs: number) {
+export function exportReference(config: ControllerConfig, rawTs: number, proc?: ProcessDef, params?: Params) {
+  if (config.kind === 'statefb') return proc ? stateFbReference(proc, designStateFb(proc, config, cleanParams(proc, params ?? {})), rawTs) : '// State feedback: needs the process model to export.';
   if (config.kind === 'onoff') {
     return `// On-off with hysteresis (band in % of span).
 let on = false;
@@ -674,6 +858,19 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
     return [
       { name: 'Override', value: `${config.select === 'max' ? 'MAX' : 'MIN'} of two`, note: `Two PID_Compact instances and a MAX/MIN in your code. PID_Compact has no external-reset input: the usual workaround is to put the one not selected in manual (ManualEnable) with ManualValue = the selected output, so it tracks; PID_Temp is no different. The exported LL_PID has ExtReset for the real thing.` },
       ...main, ...ovr,
+    ];
+  }
+  if (config.kind === 'statefb') {
+    const des = designStateFb(proc, config, p);
+    return [
+      { name: 'PID_Compact', value: 'not applicable', note: 'State feedback isn\'t a PID: no standard Siemens block does it. Use the exported LL_StateFb (an observer and a gain row, about 2n² multiplications a cycle), called from a cyclic interrupt OB.' },
+      { name: 'Cycle', value: real(p.Ts), note: `The design assumes the block runs every ${real(p.Ts)} s. A different cycle needs a new export: the matrices are discretized for this one.` },
+      { name: 'Data type', value: 'LReal', note: 'The observer\'s matrices have entries a hair away from 1: in single-precision Real they round enough to move its poles. S7-1500 handles LReal natively; on an S7-1200 test carefully.' },
+      ...des.states.map((st, i) => ({
+        name: `Gain on ${st}`, value: real(des.ctrl.C[i]),
+        note: i < des.n ? `Output change, %, per ${des.units[i]} of the estimate (away from the design point): −K.` : des.integral ? 'Output change, %, per %·s of integrated error.' : `Output change, %, per ${des.units[i]} of the estimated disturbance (cancels it where it acts).`,
+      })),
+      { name: 'Setpoint gain N_r', value: real(des.Nr), note: 'Feedforward from the setpoint (% output per % of span), so a setpoint change doesn\'t wait for the integral.' },
     ];
   }
   const pid = config.kind === 'schedule' ? { ...config.pid, ...config.points[Math.floor(config.points.length / 2)] } : config.pid;

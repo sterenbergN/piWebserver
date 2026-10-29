@@ -6,7 +6,7 @@ import { valveCharacteristic, type Params, type ProcessDef } from '@/lib/loop-la
 import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { splitValves } from '@/lib/loop-lab/processes/jacket';
-import { Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
+import { arrowHead, Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
 
 // Process drawings for the stirred tank, the heat exchanger, the surge tank,
 // the belt feeder, the boiler drum and an identified plant; one entry point
@@ -274,6 +274,128 @@ export function BlendSchematic({ p, d, valve, c, reading }: { p: Params; d: Para
   );
 }
 
+export function CraneSchematic({ p, d, xt, v, th, valve }: { p: Params; d: Params; xt: number; v: number; th: number; valve: number }) {
+  const x0 = 30, x1 = 530, k = (x1 - x0) / 40;
+  const tx = x0 + Math.min(40, Math.max(0, xt)) * k;
+  const rope = Math.min(170, p.L * 13);
+  const lx = tx + rope * Math.sin(th), ly = 62 + rope * Math.cos(th);
+  const load = xt + p.L * Math.sin(th);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 290" role="img" aria-label={`Crane: trolley at ${xt.toFixed(2)} m, load at ${load.toFixed(2)} m, sway ${((th * 180) / Math.PI).toFixed(2)}°`}>
+      <path className="ll-steel" strokeWidth={4} d={`M${x0 - 10} 50H${x1 + 10}`} />
+      {[0, 10, 20, 30, 40].map((m) => <text key={m} className="is-muted" x={x0 + m * k} y={30} textAnchor="middle">{m} m</text>)}
+      <rect className="ll-block" x={tx - 22} y={40} width={44} height={20} rx={3} />
+      <circle className="ll-steel" cx={tx - 12} cy={52} r={4} />
+      <circle className="ll-steel" cx={tx + 12} cy={52} r={4} />
+      <line className="ll-line" x1={tx} y1={62} x2={lx} y2={ly} />
+      <rect className="ll-liquid" x={lx - 20} y={ly} width={40} height={24} rx={2} stroke="var(--ll-steel)" />
+      <text x={lx} y={ly + 40} textAnchor="middle" fontWeight={700}>{load.toFixed(2)} m</text>
+      <line className="ll-guide" x1={tx} y1={62} x2={tx} y2={62 + rope + 24} strokeDasharray="3 3" />
+      {Math.abs(d.Fw) > 1 && (
+        <g>
+          <path className="ll-line" d={`M${d.Fw > 0 ? lx - 70 : lx + 70} ${ly + 12}H${d.Fw > 0 ? lx - 24 : lx + 24}`} />
+          <path className="ll-line" d={arrowHead(d.Fw > 0 ? lx - 24 : lx + 24, ly + 12, d.Fw > 0 ? 'r' : 'l')} />
+          <text className="is-muted" x={d.Fw > 0 ? lx - 72 : lx + 72} y={ly + 4} textAnchor={d.Fw > 0 ? 'end' : 'start'}>wind {f1(d.Fw / 1000)} kN</text>
+        </g>
+      )}
+      <text x={20} y={262}>Trolley {xt.toFixed(2)} m · {v.toFixed(2)} m/s · drive SC-601 at {f1(valve)} % ({f1(((2 * valve) / 100 - 1) * p.vmax)} m/s asked)</text>
+      <text className="is-muted" x={20} y={280}>Sway {((th * 180) / Math.PI).toFixed(2)}° · rope {f1(p.L)} m · period {f1(2 * Math.PI * Math.sqrt(p.L / 9.81))} s · {f1(p.m)} t</text>
+    </svg>
+  );
+}
+
+export function ServoSchematic({ p, d, wm, wl, phi, valve }: { p: Params; d: Params; wm: number; wl: number; phi: number; valve: number }) {
+  const rpm = 60 / (2 * Math.PI);
+  const torque = ((2 * valve) / 100 - 1) * p.Tmax;
+  // The shaft drawn as a spring whose wiggle shows the twist (exaggerated).
+  const tw = Math.max(-1, Math.min(1, (phi * p.k) / p.Tmax));
+  const pts = Array.from({ length: 17 }, (_, i) => `${200 + i * 12} ${130 + (i % 2 ? 1 : -1) * (6 + 10 * Math.abs(tw)) * (i === 0 || i === 16 ? 0 : 1)}`);
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 260" role="img" aria-label={`Drive: motor ${Math.round(wm * rpm)} rpm, roll ${Math.round(wl * rpm)} rpm`}>
+      <rect className="ll-block" x={60} y={90} width={120} height={80} rx={8} />
+      <text x={120} y={126} textAnchor="middle" fontWeight={700}>M</text>
+      <text className="is-muted" x={120} y={144} textAnchor="middle">J_m {f1(p.Jm)} kg·m²</text>
+      <path className="ll-line" d={`M180 130L${pts.join('L')}L400 130`} />
+      <text className="is-muted" x={296} y={100} textAnchor="middle">shaft k {Math.round(p.k)} N·m/rad · twist {((phi * 180) / Math.PI).toFixed(2)}°</text>
+      <circle className="ll-liquid" cx={450} cy={130} r={58} stroke="var(--ll-steel)" strokeWidth={3} />
+      <line className="ll-steel" x1={450} y1={130} x2={450 + 50 * Math.cos(phi * 40)} y2={130 + 50 * Math.sin(phi * 40)} />
+      <text x={450} y={210} textAnchor="middle" fontWeight={700}>{Math.round(wl * rpm)} rpm</text>
+      <text className="is-muted" x={450} y={226} textAnchor="middle">roll J_L {f1(p.JL)} kg·m² · load {f1(d.TL)} N·m</text>
+      <text x={120} y={210} textAnchor="middle" fontWeight={700}>{Math.round(wm * rpm)} rpm</text>
+      <text className="is-muted" x={120} y={226} textAnchor="middle">motor (ST-702)</text>
+      <text x={20} y={40}>SY-701 torque reference {f1(valve)} % → {f1(torque)} N·m</text>
+      <text className="is-muted" x={20} y={58}>Resonance {f1(Math.sqrt(p.k * (1 / p.Jm + 1 / p.JL)) / (2 * Math.PI))} Hz · ST-701 on the roll</text>
+    </svg>
+  );
+}
+
+export function MaglevSchematic({ p, d, gap, valve }: { p: Params; d: Params; gap: number; valve: number }) {
+  const top = 70, k = 6;
+  const y = top + Math.min(30, Math.max(0, gap)) * k;
+  const i = (valve / 100) * p.Imax;
+  return (
+    <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label={`Levitation: gap ${gap.toFixed(2)} mm, coil ${i.toFixed(2)} A`}>
+      <rect className="ll-block" x={180} y={20} width={160} height={50} rx={4} />
+      {[200, 220, 240, 260, 280, 300, 320].map((x) => <line key={x} className="ll-line" x1={x} y1={26} x2={x} y2={64} />)}
+      <text x={260} y={14} textAnchor="middle">electromagnet · {i.toFixed(2)} A</text>
+      <rect className="ll-liquid" x={200} y={y} width={120} height={26} rx={3} stroke="var(--ll-steel)" strokeWidth={2} />
+      {d.dm > 0.01 && <rect className="ll-block" x={235} y={y + 26} width={50} height={14} rx={2} />}
+      {d.dm > 0.01 && <text className="is-muted" x={292} y={y + 37}>+{f1(d.dm)} kg</text>}
+      <path className="ll-guide" d={`M360 ${top}H380M360 ${y}H380M370 ${top}V${y}`} />
+      <text x={388} y={(top + y) / 2 + 4} fontWeight={700}>{gap.toFixed(2)} mm</text>
+      <path className="ll-steel" strokeWidth={3} d={`M170 ${top + 28 * k + 26}H350`} />
+      <text className="is-muted" x={170} y={top + 28 * k + 44}>landing pad (28 mm)</text>
+      <line className="ll-signal" x1={130} y1={y + 13} x2={198} y2={y + 13} />
+      <circle className="ll-bubble" cx={112} cy={y + 13} r={18} />
+      <text x={112} y={y + 9} textAnchor="middle">ZT</text>
+      <text x={112} y={y + 22} textAnchor="middle">801</text>
+      <text x={20} y={292}>ZY-801 current amplifier {f1(valve)} % · mass {f1(p.m + d.dm)} kg · unstable pole √(2g/x) = {f1(Math.sqrt((2 * 9.81) / Math.max(gap / 1000, 1e-3)))} rad/s</text>
+    </svg>
+  );
+}
+
+/** P&IDs for the motion processes: the measurements and what they feed, for PID or state feedback. */
+function MotionPAndId({ proc, config }: { proc: ProcessDef; config: ControllerConfig }) {
+  const sf = config.kind === 'statefb';
+  const sec = proc.secondary;
+  const uses2 = !!sec && (sf ? config.measure !== 'pv' : config.kind === 'cascade');
+  const uses1 = !sf || config.measure !== 'pv2' || !sec;
+  const [l1, n1] = proc.tags.transmitter.split('-');
+  const [lc, nc] = proc.tags.loop.split('-');
+  const [lv, nv] = proc.tags.valve.split('-');
+  const eq = proc.id === 'crane' ? 'trolley + load' : proc.id === 'servo' ? 'motor · shaft · roll' : 'magnet + armature';
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 280" role="img" aria-label={`P&ID of ${proc.name.toLowerCase()}${sf ? ' with state feedback' : ''}`}>
+      <rect className="ll-block" x={190} y={160} width={180} height={56} rx={6} />
+      <text x={280} y={192} textAnchor="middle">{eq}</text>
+      <rect className="ll-block" x={40} y={168} width={70} height={40} rx={4} />
+      <text x={75} y={193} textAnchor="middle">{lv}</text>
+      <text className="is-muted" x={40} y={228}>{proc.tags.valve} {proc.id === 'maglev' ? 'amplifier' : 'drive'}</text>
+      <path className="ll-line" d="M110 188H190" />
+      {uses1 && (
+        <>
+          <line className="ll-signal" x1={370} y1={188} x2={430} y2={188} />
+          <Bubble x={450} y={188} letters={l1} num={n1} />
+          <text className="is-muted" x={474} y={216}>{proc.pv.label.toLowerCase()}</text>
+          <path className="ll-signal" d="M450 168V70H330" />
+        </>
+      )}
+      {uses2 && sec && (
+        <>
+          <line className="ll-signal" x1={280} y1={160} x2={280} y2={130} />
+          <Bubble x={280} y={110} letters={sec.tag.split('-')[0]} num={sec.tag.split('-')[1]} />
+          <text className="is-muted" x={302} y={134}>{sec.label.toLowerCase()}</text>
+          <path className="ll-signal" d="M280 90V80H330" />
+        </>
+      )}
+      <Bubble x={310} y={60} letters={sf ? `${lc[0]}Y` : lc} num={nc} shared />
+      {sf && <text className="is-muted" x={334} y={44}>state feedback + {config.observer === 'kalman' ? 'Kalman filter' : 'observer'}</text>}
+      <path className="ll-signal" d="M290 60H75V168" />
+      <text className="is-muted" x={20} y={272}>{LEGEND}</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -310,6 +432,9 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   if (proc.id === 'jacket') return <JacketSchematic p={p} d={d} signal={valve} Tj={x[1]} T={x[2]} />;
   if (proc.id === 'blend') return <BlendSchematic p={p} d={d} valve={valve} c={x[1]} reading={x[2]} />;
   if (proc.id === 'drum') return <DrumSchematic p={p} d={d} valve={valve} level={x[1] + x[2] - x[3]} swell={x[2]} />;
+  if (proc.id === 'crane') return <CraneSchematic p={p} d={d} xt={x[1]} v={x[2]} th={x[3]} valve={valve} />;
+  if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x[1]} wl={x[2]} phi={x[3]} valve={valve} />;
+  if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x[1]} valve={valve} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
 
@@ -318,6 +443,7 @@ const LEGEND = 'Dashed: electrical signal · circle in a square: a function in t
 /** The P&ID for a process, drawn for the controller in use. */
 export function PAndIdFor({ proc, config }: { proc: ProcessDef; config: ControllerConfig }) {
   if (proc.id === 'flow' || proc.id === 'tank') return <PAndId proc={proc} />;
+  if (proc.id === 'crane' || proc.id === 'servo' || proc.id === 'maglev') return <MotionPAndId proc={proc} config={config} />;
   if (proc.id === 'stirred') {
     return (
       <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label="P&ID of the vessel temperature loop">

@@ -32,6 +32,8 @@ export type PlantModel = {
   poles: Complex[];
   /** Static gain, % per % (Infinity for an integrating plant). */
   K: number;
+  /** Which of the full plant states ([valve, ...process, reading, (secondary reading)]) the model kept. */
+  keep: number[];
 };
 
 export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Params = nominalDisturbances(proc)): PlantModel {
@@ -89,7 +91,7 @@ export function linearizePlant(proc: ProcessDef, p: Params, pv: number, d: Param
   const K = inv ? -C.reduce((acc, c, i) => acc + c * inv[i], 0) : Infinity;
   return {
     pv: s.pv, valve: s.valve, reachable: Math.abs(s.pv - pv) < span * 1e-3,
-    A, B, C, Ctrue, C2, Bd, Dd, theta: p.txDelay, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K,
+    A, B, C, Ctrue, C2, Bd, Dd, theta: p.txDelay, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K, keep,
   };
 }
 
@@ -117,7 +119,7 @@ export function pathModel(m: PlantModel, row: number[], theta: number): PlantMod
   const inv = solve(A, B);
   const K = inv ? -C.reduce((acc, c, i) => acc + c * inv[i], 0) : Infinity;
   return {
-    ...m, A, B, C, Ctrue: C, C2: null, Bd: {}, Dd: {}, theta, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K,
+    ...m, A, B, C, Ctrue: C, C2: null, Bd: {}, Dd: {}, theta, poles: eig(A), K: Math.abs(K) > 1e9 ? Infinity : K, keep: keep.map((i) => m.keep[i]),
   };
 }
 
@@ -213,8 +215,8 @@ export function pidResponse(c: LinearPid, w: number): Complex {
 export type BodePoint = { w: number; mag: number; phase: number };
 
 /** Log-spaced frequencies covering the plant's and controllers' dynamics. */
-export function frequencyGrid(m: PlantModel, pids: (LinearPid | null)[], delay: number, count = 500) {
-  const rates = m.poles.map((p) => Math.hypot(p.re, p.im)).filter((v) => v > 1e-9);
+export function frequencyGrid(m: PlantModel, pids: (LinearPid | null)[], delay: number, count = 500, extra: number[] = []) {
+  const rates = [...m.poles, ...extra.map((w) => cx(w))].map((p) => Math.hypot(p.re, p.im)).filter((v) => v > 1e-9);
   for (const c of pids) {
     if (c?.Ti) rates.push(1 / c.Ti);
     if (c?.Td) rates.push(1 / (c.a * c.Td));
@@ -313,6 +315,23 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
     const loop = bode(ws, (w) => cmul(eff(w), G1(w)), delay);
     return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop, true) };
   }
+  if (ctrl.kind === 'ss') {
+    // Broken at the valve: L = −Σ C_y,k(jω)·G_k(jω), the main measurement behind its transport delay,
+    // the whole loop behind half a cycle of hold.
+    const { ss, inputs } = ctrl;
+    const ws = frequencyGrid(m, [], delay, 600, eig(ss.A).map((p) => Math.hypot(p.re, p.im)));
+    const G2 = (w: number) => ssResponse(m.A, m.B, m.C2 ?? m.C, w);
+    const L = (w: number) => inputs.reduce((acc, key, k) => {
+      const g = key === 'pv' ? cmul(G1(w), cexpj(-w * m.theta)) : G2(w);
+      const v = cmul(ssResponse(ss.A, ss.By.map((r) => r[k]), ss.C, w), g);
+      return { re: acc.re - v.re, im: acc.im - v.im };
+    }, cx(0));
+    const loop = bode(ws, L, sample);
+    const pid: LinearPid = { Kc: 0, Ti: 0, Td: 0, b: 1, c: 0, a: 0.1, antiWindup: 'clamp', outLo: 0, outHi: 100, invert: false, slope: 1 };
+    // A state-feedback loop's phase can wind round the origin (integrators and resonances on both sides), so
+    // the phase margin is the angle from L to −1, as for the Smith predictor.
+    return { plant: m, ctrl, pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop, true) };
+  }
   // Cascade: the inner loop sees the sampling delay; the outer loop sees the inner one closed, plus the transport delay.
   const C2 = m.C2!;
   const G2 = (w: number) => ssResponse(m.A, m.B, C2, w);
@@ -353,6 +372,7 @@ export function margins(loop: BodePoint[], rippled = false): Margins {
       // a crossover: what counts is where it points, so take it within one turn.
       let ph = v;
       while (ph <= -360) ph += 360;
+      while (ph > 0) ph -= 360;
       const m = rippled ? 180 - Math.abs(ph + 360 * Math.round(-ph / 360)) : 180 + ph;
       if (m < pm) { pm = m; wc = w; }
       // Extra dead time turns L clockwise by ω·Δθ: the margin is the smallest turn, over every crossover, that reaches −1.
@@ -420,11 +440,12 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   const nq = delay > 0 ? 2 : 0;
   const ffTerms: FeedforwardTerm[] = (ctrl.ff ?? []).filter((t) => t.from === dKey);
   const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) as number);
-  const pids = ctrl.kind === 'cascade' ? [ctrl.outer, ctrl.inner] : [ctrl.pid];
+  const pids = ctrl.kind === 'cascade' ? [ctrl.outer, ctrl.inner] : ctrl.kind === 'ss' ? [] : [ctrl.pid];
   const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0));
   const smith = ctrl.kind === 'smith' ? ctrl.model : null;
   const smithStates = smith ? 1 + (smith.theta > 0 ? 2 : 0) : 0;
-  const n = np + nq + ffStates.reduce((s, v) => s + v, 0) + pidStates.reduce((s, v) => s + v, 0) + smithStates;
+  const ssStates = ctrl.kind === 'ss' ? ctrl.ss.A.length : 0;
+  const n = np + nq + ffStates.reduce((s, v) => s + v, 0) + pidStates.reduce((s, v) => s + v, 0) + smithStates + ssStates;
   const deriv: Sig[] = Array.from({ length: n }, () => sig(n));
   let next = np + nq;
 
@@ -479,7 +500,18 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
     u = pidBlock(ctrl.pid, r, add(y, add(z, zd, -1)));
     deriv[iz] = scale(add(scale(u, sm.K), z, -1), 1 / Math.max(sm.tau, 1e-2));
     if (mp) for (let k = 0; k < 2; k++) deriv[iq + k] = add(add(scale(unit(n, iq), mp.A[k][0]), unit(n, iq + 1), mp.A[k][1]), z, mp.B[k]);
-  } else u = pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
+  } else if (ctrl.kind === 'ss') {
+    const { ss, inputs } = ctrl;
+    const base = next;
+    next += ss.A.length;
+    const ys = inputs.map((k) => (k === 'pv' ? y : y2));
+    for (let i = 0; i < ss.A.length; i++) {
+      let s = add(rowSig(n, ss.A[i], base), r, ss.Br[i]);
+      ys.forEach((yk, k) => { s = add(s, yk, ss.By[i][k]); });
+      deriv[base + i] = s;
+    }
+    u = add(add(rowSig(n, ss.C, base), r, ss.Dr), v);
+  } else u =pidBlock(ctrl.inner, add(pidBlock(ctrl.outer, r, y), v), y2);
 
   // Plant and delay.
   const drive = add(u, { ...sig(n), l: 1 });

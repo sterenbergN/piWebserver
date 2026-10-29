@@ -1,6 +1,6 @@
 import { linearPidAt, type ControllerConfig, type PidParams } from './controllers';
 import { fitModel } from './ident';
-import { approximate, closedLoop, linearizePlant, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
+import { analyzeLoop, approximate, closedLoop, isStable, linearizePlant, robustness, openLoopStep, pathModel, settleHorizon, ssResponse, stepResponse, timeConstants, type Fopdt, type PlantModel } from './linear';
 import { cleanParams, type Params, type ProcessDef } from './model';
 
 export type TuningLoop = 'main' | 'inner' | 'outer';
@@ -277,14 +277,14 @@ export const SMITH_SPEED = { lag: 1, theta: 0.5 };
  * slave then the master in cascade; schedules at each breakpoint with the
  * same closed-loop speed; feedforward terms designed from the model.
  */
-export function autoTune(proc: ProcessDef, params: Params, config: ControllerConfig): { config: ControllerConfig; note: string } | null {
+function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfig, slow = 1): { config: ControllerConfig; note: string } | null {
   if (config.kind === 'onoff') return null;
   const rule = getRule('simc');
   const pv = proc.nominalPv;
   const noise = cleanParams(proc, params).txNoise;
   const at = (cfg: ControllerConfig, loop: TuningLoop, type: ControlType, x = pv, speed?: number) => {
     const m = tuningModel(proc, params, cfg, x, loop);
-    const tc = speed ?? autoSpeed(m, noise);
+    const tc = speed ?? autoSpeed(m, noise) * slow;
     const t = rule.tune(m, type, tc);
     return t ? { t: tidy(t), m, tc, slowed: tc > 3 * m.theta * 1.01 } : null;
   };
@@ -374,6 +374,7 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
       note: `Averaging level (Lambda for integrating): the level may swing about ${swing} % of span when the inflow changes by ${upset} % of the outlet's capacity, so the arrest time is λ = e·${swing}/(k′·${upset}) = ${round3(lambda / 60)} min with k′ ${round3(Math.abs(m.kPrime))} %/s per %. Tight level control would pass every upstream swing straight to the outflow.${m.negative ? ' More outflow lowers the level, so the action is inverted.' : ''}`,
     };
   }
+  if (config.kind === 'statefb') return null;
   const type = typeOf(config.pid);
   const r = at(config, 'main', type);
   if (!r) return null;
@@ -383,4 +384,87 @@ export function autoTune(proc: ProcessDef, params: Params, config: ControllerCon
     config: done,
     note: `SIMC ${type} at ${where} from K ${round3(r.m.K)}, τ ${round3(r.m.tau)} s, θ ${round3(r.m.theta)} s, aiming for a closed-loop time constant of ${round3(r.tc)} s.${slowNote(r.slowed)}${type === 'PID' ? ' Derivative filter ratio at least 0.3.' : ''}${r.m.negative ? ' The process gain is negative, so the action is inverted.' : ''}`,
   };
+}
+
+/** Every gain in a PID-based controller, times k (schedules, cascades, overrides included). */
+function scaleGains(config: ControllerConfig, k: number): ControllerConfig {
+  const s = <T extends { Kc: number }>(p: T): T => ({ ...p, Kc: round3(p.Kc * k) });
+  if (config.kind === 'cascade' || config.kind === 'ratio') return { ...config, outer: s(config.outer) };
+  if (config.kind === 'schedule') return { ...config, pid: s(config.pid), points: config.points.map(s) };
+  if (config.kind === 'override') return { ...config, pid: s(config.pid) };
+  if (config.kind === 'onoff' || config.kind === 'statefb') return config;
+  return { ...config, pid: s(config.pid) };
+}
+
+/** Stable at the nominal point, and its peak sensitivity there. */
+function nominalCheck(proc: ProcessDef, params: Params, config: ControllerConfig) {
+  const a = analyzeLoop(proc, params, config, proc.nominalPv);
+  if (!a) return { stable: true, ms: 0 };
+  return { stable: isStable(closedLoop(a.plant, a.ctrl, a.delay).poles), ms: Math.max(a.margins.ms, a.inner?.margins.ms ?? 0) };
+}
+
+/**
+ * The tuning rules all fit a first-order (or integrating) model with dead time. A plant that is
+ * open-loop unstable has no such model, so no rule applies; one with a lightly damped resonance
+ * (a swinging load, a flexible shaft) fits one, but the resonance the model leaves out can still
+ * make the rule's tuning unstable. Then the gain is cut until the loop is stable with some margin.
+ */
+export function autoTune(proc: ProcessDef, params: Params, config: ControllerConfig): { config: ControllerConfig; note: string } | null {
+  if (config.kind === 'statefb') return tuneStateFb(proc, params, config);
+  const m = linearizePlant(proc, cleanParams(proc, params), proc.nominalPv);
+  const scale = Math.max(1, ...m.poles.map((p) => Math.hypot(p.re, p.im)));
+  if (config.kind !== 'onoff' && m.poles.some((p) => p.re > 1e-9 * scale)) {
+    const fast = Math.max(...m.poles.filter((p) => p.re > 0).map((p) => p.re));
+    return {
+      config,
+      note: `No tuning rule applies: the plant is unstable on its own (a pole at +${round3(fast)} rad/s), and SIMC, Lambda and the rest all assume a stable or integrating process. Tune by hand from the Control tab (the loop must cross over well above ${round3(fast)} rad/s, so derivative action is needed), or design by pole placement with state feedback.`,
+    };
+  }
+  const r = autoTuneRules(proc, params, config);
+  if (!r) return r;
+  let c = r.config, k = 1, check = nominalCheck(proc, params, c), last = r;
+  if (check.stable && check.ms <= 1.7) return r;
+  // Cut until it is stable with margin over the plant's spread too (the resonance moves with the uncertain parameters).
+  const spread = (cfg: ControllerConfig) => {
+    const pts = robustness(proc, params, cfg, 6);
+    return { stable: pts.every((p) => p.stableAll), ms: Math.max(...pts.map((p) => p.worst?.ms ?? 0)) };
+  };
+  // Slow the rule down (a longer closed-loop time constant, so the integral slows with the gain) until it is.
+  for (let i = 0; i < 24 && !(check.stable && check.ms <= 1.6); i++) {
+    k *= 1.5;
+    const next = autoTuneRules(proc, params, config, k);
+    if (!next) break;
+    last = next;
+    c = next.config;
+    check = nominalCheck(proc, params, c);
+    if (check.stable && check.ms <= 1.6) check = spread(c);
+  }
+  return {
+    config: c,
+    note: `${last.note} The rule's model leaves out a lightly damped mode (a resonance) that this plant has: at the rule's own speed the loop is ${nominalCheck(proc, params, r.config).stable ? 'too close to the edge' : 'unstable'}, so it is slowed down ${round3(k)}× (Ms ${round3(check.ms)}). PID can't do better here without seeing that mode: see the state-feedback rung.`,
+  };
+}
+
+/**
+ * State feedback: the fastest design whose loop, broken at the valve, keeps
+ * Ms ≤ 1.6 at the design point: the dominant poles' ω_n for pole placement,
+ * the output weight for LQR (with the integral weight following it).
+ */
+function tuneStateFb(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'statefb' }>) {
+  const model = cleanParams(proc, params);
+  const m = linearizePlant(proc, model, proc.nominalPv);
+  const rates = m.poles.map((p) => Math.hypot(p.re, p.im)).filter((v) => v > 1e-9);
+  const lo = Math.min(...rates, 1 / Math.max(model.Ts, 1e-3)) * 0.05, hi = Math.min(Math.max(...rates, 1) * 2, 0.5 / model.Ts);
+  let best: { c: ControllerConfig; v: number; ms: number } | null = null;
+  for (let i = 0; i <= 30; i++) {
+    const x = lo * (hi / lo) ** (i / 30);
+    const c: ControllerConfig = config.design === 'poles'
+      ? { ...config, wn: round3(x) }
+      : { ...config, qy: round3((x / Math.max(lo, 1e-9)) ** 2), qi: config.integral === 'error' ? round3(((x / Math.max(lo, 1e-9)) ** 2) * (x / 5) ** 2) : config.qi };
+    const chk = nominalCheck(proc, model, c);
+    if (chk.stable && chk.ms > 0 && chk.ms <= 1.6) best = { c, v: x, ms: chk.ms };
+  }
+  if (!best) return { config, note: 'No design in the range tried keeps Ms ≤ 1.6 at the design point: try another observer, measurement or offset-free option.' };
+  const what = config.design === 'poles' ? `dominant poles at ω_n ${round3(best.v)} rad/s` : `output weight q_y ${(best.c as { qy: number }).qy}`;
+  return { config: best.c, note: `The fastest design that keeps the loop's peak sensitivity at or below 1.6 at ${round3(proc.nominalPv)} ${proc.pv.unit}: ${what} (Ms ${round3(best.ms)}). Check it on the mismatch test: the controller's model is only right at its design point.` };
 }

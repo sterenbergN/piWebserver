@@ -56,6 +56,8 @@ export type SecondarySpec = PvSpec & {
   loopTag: string;
   /** The (unmeasured) disturbance that acts on this flow, such as its supply pressure. */
   upset?: string;
+  /** A measurement for state feedback only, not something an inner loop could control (a crane's sway angle). */
+  measureOnly?: boolean;
   of(x: number[], flow: number, d: Params, p: Params): number;
 };
 
@@ -95,7 +97,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;
@@ -181,28 +183,31 @@ export type InstrumentDefaults = {
   txTau: number; txNoise: number; txDelay: number; Ts: number;
   /** Damping of the secondary (inner-loop) transmitter, for processes that have one. */
   tx2Tau?: number;
+  /** Drives and motion: millisecond actuators, sensors and cycles. */
+  fast?: boolean;
 };
 
 /** Valve, transmitter and controller-cycle parameters, with this process's defaults. */
 export function instrumentParams(d: InstrumentDefaults): ParamSpec[] {
+  const f = d.fast ? 0.01 : 1;
   return [
     { key: 'valveChar', label: 'Valve characteristic', unit: '', default: d.valveChar, min: 0, max: 2, group: 'valve', options: VALVE_CHARS,
       note: 'Inherent characteristic: flow vs stem position at constant pressure drop. Installed, the piping changes it.' },
-    { key: 'valveTau', label: 'Actuator time constant', symbol: 'τ_v', unit: 's', default: d.valveTau, min: 0.05, max: 60, step: 0.1, group: 'valve',
+    { key: 'valveTau', label: 'Actuator time constant', symbol: 'τ_v', unit: 's', default: d.valveTau, min: 0.05 * f, max: 60, step: 0.1 * f, group: 'valve',
       note: 'How quickly the stem follows its signal: positioner, actuator volume and air supply.' },
-    { key: 'valveRate', label: 'Stroking speed limit', unit: '%/s', default: d.valveRate, min: 0.5, max: 200, step: 0.5, group: 'valve',
+    { key: 'valveRate', label: 'Stroking speed limit', unit: '%/s', default: d.valveRate, min: 0.5, max: d.fast ? 20000 : 200, step: 0.5, group: 'valve',
       note: 'The fastest the stem can travel, for big moves.' },
     { key: 'valveDeadband', label: 'Deadband (backlash)', unit: '%', default: 0, min: 0, max: 5, step: 0.1, group: 'valve',
       note: 'Signal change needed before the stem moves the other way: packing friction, worn linkages. Causes limit cycles with integral action.' },
-    { key: 'txTau', label: 'Transmitter damping', symbol: 'τ_m', unit: 's', default: d.txTau, min: 0.05, max: 30, step: 0.05, group: 'transmitter',
+    { key: 'txTau', label: 'Transmitter damping', symbol: 'τ_m', unit: 's', default: d.txTau, min: 0.05 * f, max: 30, step: 0.05 * f, group: 'transmitter',
       note: 'The first-order filter set in the transmitter. More damping = less noise, more lag.' },
     { key: 'txNoise', label: 'Measurement noise', unit: '% span', default: d.txNoise, min: 0, max: 5, step: 0.05, group: 'transmitter',
       note: 'Standard deviation of the noise on the reading: turbulence, electrical noise, a sloshing surface.' },
-    { key: 'txDelay', label: 'Transport delay', symbol: 'θ', unit: 's', default: d.txDelay, min: 0, max: 120, step: 0.1, group: 'transmitter',
+    { key: 'txDelay', label: 'Transport delay', symbol: 'θ', unit: 's', default: d.txDelay, min: 0, max: 120, step: 0.1 * f, group: 'transmitter',
       note: 'Dead time between the process and the reading, e.g. a sample line or a sensor mounted downstream.' },
-    ...(d.tx2Tau !== undefined ? [{ key: 'tx2Tau', label: 'Inner transmitter damping', symbol: 'τ_m2', unit: 's', default: d.tx2Tau, min: 0.05, max: 30, step: 0.05, group: 'transmitter' as const,
+    ...(d.tx2Tau !== undefined ? [{ key: 'tx2Tau', label: 'Inner transmitter damping', symbol: 'τ_m2', unit: 's', default: d.tx2Tau, min: 0.05 * f, max: 30, step: 0.05 * f, group: 'transmitter' as const,
       note: 'Filter on the secondary measurement the inner cascade loop uses.' }] : []),
-    { key: 'Ts', label: 'Controller cycle', symbol: 'T_s', unit: 's', default: d.Ts, min: 0.01, max: 10, step: 0.01, group: 'controller',
+    { key: 'Ts', label: 'Controller cycle', symbol: 'T_s', unit: 's', default: d.Ts, min: 0.01 * f, max: 10, step: 0.01 * f, group: 'controller',
       note: 'How often the controller runs: the cyclic interrupt OB it is called from.' },
   ];
 }

@@ -17,7 +17,7 @@ export const FEEDER: ProcessDef = {
   tags: { loop: 'WIC-701', transmitter: 'WT-701', valve: 'SC-701' },
   states: [{ key: 'F', label: 'Rate leaving the screw', unit: 't/h' }],
   params: [
-    { key: 'Fmax', label: 'Screw capacity', symbol: 'F_max', unit: 't/h', default: 16, min: 1, max: 200, step: 0.5, group: 'process',
+    { key: 'Fmax', label: 'Screw capacity', symbol: 'F_{max}', unit: 't/h', default: 16, min: 1, max: 200, step: 0.5, group: 'process',
       note: 'Feed rate at full speed with the material at its normal bulk density.' },
     { key: 'tauScrew', label: 'Screw response', symbol: 'τ_s', unit: 's', default: 4, min: 0.2, max: 60, step: 0.1, group: 'process',
       note: 'How quickly the discharge follows a speed change: hopper flow and screw fill.' },

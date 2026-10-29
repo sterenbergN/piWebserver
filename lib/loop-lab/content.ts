@@ -1,5 +1,6 @@
-import { DEFAULT_PID, type ControllerConfig, type ControllerKind } from './controllers';
+import { DEFAULT_PID, defaultController, type ControllerConfig, type ControllerKind } from './controllers';
 import type { Params, ProcessId } from './model';
+import { getProcess } from './processes';
 
 // The written side of Loop Lab: what each process and controller teaches from
 // the mechanical, control and automation points of view, and the case
@@ -509,6 +510,150 @@ does not depend on the throughput at all. Ratio control linearizes the loop. Onl
 
 A fixed ratio without a trim is fine only if the concentrate never varies.`,
   },
+  crane: {
+    mechanical: String.raw`An overhead crane's trolley runs along a 40 m bridge carrying a 10 t load on an 8 m rope. The trolley drive, **SC-601**, is a VFD in speed control: the PLC writes a speed reference (50 % = stop, 0 and 100 % = full speed either way) and the drive's own speed loop follows it within about 0.3 s, with a ramp limit of 0.4 m/s².
+
+**The load is a pendulum hanging from the trolley.** Whenever the trolley accelerates by $a$, the load is left behind and starts to swing:
+
+$$\ddot\theta = -\frac{g}{L}\sin\theta - \frac{a}{L}\cos\theta - 2\zeta_s\omega_0\dot\theta + \frac{F_w\cos\theta}{mL}$$
+
+- Natural frequency $\omega_0 = \sqrt{g/L}$: 1.1 rad/s, a period of 5.7 s at 8 m. The load's mass doesn't come into it.
+- Almost no damping ($\zeta_s \approx 0.005$): a swing takes minutes to die out on its own.
+- Wind $F_w$ on the load holds it at an angle $\tan\theta = F_w/(mg)$: 4 kN on 10 t is 2.3°.
+
+**What is measured.**
+- **ZT-602**, a camera on the trolley looking down at the load: the sway angle.
+- **ZT-601**, the load's position: the trolley encoder plus $L\sin\theta$ (the hoist encoder gives $L$).
+
+**The goal** is to put the load where it should go, quickly, and have it hanging still when it gets there. The trolley's own position matters only as the means.`,
+    control: String.raw`**The model** (linearized, small angles): the drive's lag, the trolley as an integrator of speed, and the pendulum.
+
+$$\frac{x_L(s)}{v_{ref}(s)} = \frac{1}{s(\tau_d s + 1)}\cdot\frac{\omega_0^2 + 2\zeta_s\omega_0 s}{s^2 + 2\zeta_s\omega_0 s + \omega_0^2}$$
+
+**Why PID struggles.** The pendulum puts a resonance at $\omega_0$ with a peak of about $1/(2\zeta_s) = 100$ (40 dB) in the loop, and 180° of phase lag after it. A PID on the load position has to keep its loop gain at $\omega_0$ far below 1, which pushes its crossover far below $\omega_0$. The result is a loop that is slow (a minute to move 20 m) and still leaves the load swinging, because nothing in it damps the swing.
+
+**What state feedback does.** It feeds back every state: trolley position and speed, sway angle and sway rate. Feeding back the sway rate is what damps the pendulum: the trolley moves under the load to take the swing out, which is what a good crane driver does by hand. Pole placement makes it explicit: the swing's poles at $-0.006 \pm 1.1j$ move to $\zeta = 0.8$, while the rest of the loop is put where it is wanted.
+
+**The observer.** Only two things are measured, and the speeds aren't. A Kalman filter estimates them, together with the wind force, from the two readings and the speed reference it sent.`,
+    automation: String.raw`**Tags.** ZT-601 (load position, 0–40 m), ZT-602 (sway angle, ±10°), SC-601 (trolley drive speed reference), ZIC-601.
+
+**Siemens.**
+- The drive does the speed loop. The PLC closes the position and sway loops at 50 ms in a cyclic interrupt (OB30), a fixed cycle because the controller's matrices are discretized for it.
+- No standard block does state feedback: the exported **LL_StateFb** is the whole controller (observer, gains, offset handling) in SCL, with its matrices as LReal arrays.
+- Crane builders sell this as a technology package (anti-sway and positioning in the drive or in a motion controller), with the rope length from the hoist and a sway camera. Under the hood it is this structure.
+
+**Rope length.** The controller is designed for 8 m. A load hoisted to 3 m or lowered to 13 m changes the swing frequency by up to 60 %. Real systems schedule the design on the hoist encoder; here the mismatch test shows how far one design stretches.
+
+**Safety.** The anti-sway is a convenience function, not a safety function: travel limits, overspeed and the brakes stay in the drive and the safety PLC.`,
+    commissioning: [
+      'Check the drive: speed loop tuned, ramp set, reference direction (positive speed = positive position).',
+      'Calibrate the encoders (trolley position, hoist rope length) and the sway camera zero with the load hanging still.',
+      'Measure the swing: run the trolley a few metres in manual, stop, and time ten swings. Compare with 2π√(L/g).',
+      'Load the model with the measured rope length and drive time constant; check the observer\'s estimate against the camera with the controller still in manual.',
+      'Close the loop on short moves first, then full-length moves; check the residual sway at the end of each.',
+      'Test at the shortest and longest rope lengths in use, or schedule the design on the hoist position.',
+    ],
+    verdict: String.raw`**State feedback with a sway measurement and an observer that knows about the wind.** It carries the load 20 m in 23 s and puts it down hanging still (0.09° of swing left), rejects a 4 kN gust within 8 s, and still works with the load 5 m lower than designed for.
+
+The best PI on the load position takes over a minute for the same move and leaves 2° of swing. This is one of the places on the ladder where PID simply can't do the job, because it has nothing with which to damp the swing.`,
+  },
+  servo: {
+    mechanical: String.raw`A motor drives a heavy roll through a long shaft and couplings. The drive, **SY-701**, makes torque (its current loop settles in about 2 ms): the PLC writes a torque reference, 50 % = none, 0 and 100 % = full torque either way (±200 N·m). Encoders measure the motor speed (**ST-702**) and the roll speed (**ST-701**).
+
+**Two masses and a spring.**
+
+$$J_m\dot\omega_m = T - k\varphi - d(\omega_m - \omega_L) - b_m\omega_m$$
+$$J_L\dot\omega_L = k\varphi + d(\omega_m - \omega_L) - b_L\omega_L - T_L,\qquad \dot\varphi = \omega_m - \omega_L$$
+
+- **Resonance** $\omega_r = \sqrt{k(1/J_m + 1/J_L)}$: 73 rad/s (11.6 Hz). The shaft winds up and springs back with the two inertias swinging against each other.
+- **Anti-resonance** $\omega_a = \sqrt{k/J_L}$: 37 rad/s. Seen from the motor, the roll swings while the motor nearly stands still.
+- **Damping** is whatever the steel and the couplings give: $\zeta \approx 0.005$.
+
+**Load torque** $T_L$ is what the process takes from the roll: web tension, material entering a nip.
+
+**What you'd change in the hardware.** A stiffer shaft (bigger diameter, shorter, a stiffer coupling) raises the resonance and lets any controller go faster. A lighter roll or a heavier motor moves the inertia ratio. Both are often cheaper than a cleverer controller, on a new machine.`,
+    control: String.raw`**Two transfer functions,** torque to motor speed and torque to roll speed:
+
+$$\frac{\omega_m}{T} = \frac{J_L s^2 + \ldots + k}{s\,(J_mJ_L s^2 + \ldots + k(J_m + J_L))},\qquad \frac{\omega_L}{T} = \frac{k}{s\,(J_mJ_L s^2 + \ldots + k(J_m + J_L))}$$
+
+- **On the motor** (collocated): an anti-resonance zero pair below the resonance pole pair. The phase never drops below −180°, so a fast loop is possible, but it barely sees the roll ringing at $\omega_a$.
+- **On the roll** (non-collocated): the resonance with nothing in front of it, so the phase falls by another 180° at 73 rad/s. A PI on the roll speed has to stay well below the resonance: here about 1.5 rad/s.
+
+**The usual fixes.**
+- **Cascade:** a fast speed loop on the motor encoder (the drive's own), the roll loop outside it.
+- **A notch filter** on the torque reference at the resonance, so the loop doesn't excite it. It works if the resonance doesn't move, and a fuller roll moves it.
+- **State feedback:** feed back the shaft twist and both speeds, estimated by an observer from the encoders. That is **active damping**: the controller adds the damping the shaft hasn't got.`,
+    automation: String.raw`**Tags.** ST-701 (roll speed), ST-702 (motor speed), SY-701 (drive torque reference), SIC-701.
+
+**Where the loops run.**
+- Torque and speed loops normally run **in the drive** (current loop at 62.5–125 µs, speed loop at 125 µs–1 ms). Drives have notch filters on the speed controller's output and, in the better ones, observers for exactly this load.
+- The 2 ms cycle here is a fast motion controller or a PLC in isochronous mode (PROFINET IRT, OB61 synchronized to the bus). A standard OB30 at 10 ms couldn't do it: the resonance would be beyond half the sampling frequency.
+- No PID_Compact. The exported **LL_StateFb** runs the controller in SCL; at 2 ms the matrix products (about 2n² multiply-adds) are a few microseconds on an S7-1500.
+
+**Encoders.** Speed from an encoder is a difference of positions: quantization is noise, and the faster the loop, the more of it reaches the torque. Resolution and a sensible speed filter matter as much as the tuning.`,
+    commissioning: [
+      'Run the drive\'s own identification (motor data, current loop). Check torque direction against speed direction on both encoders.',
+      'Measure the resonance: a frequency sweep or a torque step with the speed loop slow, looking at both encoders. Note the resonance and anti-resonance frequencies.',
+      'Commission the motor speed loop first, with a notch at the resonance if it rings. This is the fallback.',
+      'For state feedback: fit the two inertias and the stiffness to the measured frequencies, then check the observer\'s estimate of the roll speed against its encoder in open loop.',
+      'Close the loop slowly (low ω_n), raise it while watching the twist and the torque ripple.',
+      'Test with an empty and a full roll: the resonance moves with the inertia.',
+    ],
+    verdict: String.raw`**It depends how fast the roll has to be.**
+- A PI on the roll speed alone is stuck far below the resonance: a speed change takes over a second and a load step costs 10 % of span.
+- A **cascade on the motor speed**, what every drive does, settles in about a second with load dips under 1 %. With a notch filter, that is the standard answer and usually enough.
+- **State feedback with an observer** (active damping) settles in about 0.35 s, three times faster, with the same load rejection and more margin (Ms 1.5 against 2.7), and stays well damped with a roll twice as heavy. It needs a good model of the drive train: worth it on a machine whose speed changes are the product, such as a printing or converting line.`,
+  },
+  maglev: {
+    mechanical: String.raw`A 2 kg steel armature hangs under an electromagnet, with nothing touching it: one axis of a magnetic bearing, the kind that carries turbomachinery rotors without friction or oil. A current amplifier, **ZY-801**, drives the coil (0–6 A); an inductive gap sensor, **ZT-801**, reads the air gap (0–30 mm).
+
+**The magnet pulls harder the closer the armature gets:**
+
+$$F = F_1\,i^2\left(\frac{10\ \text{mm}}{x}\right)^2,\qquad m\ddot x = mg - F$$
+
+with $x$ the gap. At 15 mm, holding 2 kg takes about 3 A.
+
+**Why it can't be left alone.** Let the armature drop a little: the gap grows, the pull weakens, and it drops further. Let it rise: the pull grows and it jumps to the magnet. Linearized, the gap has a pole at
+
+$$p = +\sqrt{2g/x_0}$$
+
+36 rad/s at 15 mm. Any disturbance grows by $e^{36t}$: doubled in 20 ms.
+
+**Limits.** End stops at 2 mm (the pole face cover) and 28 mm (the landing pad). The amplifier is quick (about 3 ms) but can't give more than 6 A: a controller that asks for too much at the wrong moment drops the armature.`,
+    control: String.raw`**Linearized at a gap** $x_0$, from current to gap:
+
+$$\frac{\delta x(s)}{\delta i(s)} = \frac{-2g/i_0}{s^2 - 2g/x_0}$$
+
+an unstable pole at $+\sqrt{2g/x_0}$ and its mirror image. More current closes the gap, so the action is inverted.
+
+**What an unstable plant asks of the loop.**
+- **A minimum speed.** The loop has to cross over above the unstable pole, or the armature gets away faster than the controller reacts. Here that means well above 36 rad/s, against an amplifier at 333 rad/s and a 1 ms cycle: the window between "fast enough" and "too fast for the hardware" is narrow.
+- **Derivative action, or something like it.** A P controller only makes a spring, and with no damping it oscillates. The D term (or the speed estimate of an observer) adds the damping.
+- **A lower bound on sensitivity.** For an unstable pole $p$, the peak sensitivity can't be pushed as low as on a stable plant; $M_s$ around 2–3 is typical, not careless tuning.
+- **The gain moves with the setpoint.** At 8 mm the pole is at 50 rad/s; at 22 mm at 30 rad/s, and the gain per amp changes too. One tuning has to cover both.
+
+**Tuning rules don't apply.** SIMC, Lambda and the rest all start from a stable or integrating model. Here the design is by hand from the model (pole placement, or loop shaping on the Bode plot).`,
+    automation: String.raw`**Tags.** ZT-801 (gap, 0–30 mm), ZY-801 (current amplifier, 0–6 A), ZIC-801.
+
+**Speed.** A 1 ms cycle with a 3 ms amplifier. On an S7-1500 that means an isochronous OB at 1 ms or faster, with the gap sensor and the amplifier on fast I/O. Real magnetic bearings run at 10–20 kHz on dedicated controllers, with the PLC setting the position and watching the alarms.
+
+**PID.** PID_Compact can't do it: its fastest sensible cycle and its built-in filters are too slow. A PID in SCL in the fast OB works (D on the measurement, setpoint weight below 1, a slow integral).
+
+**State feedback.** The exported **LL_StateFb**: its observer estimates the speed from the gap (no differentiating of a noisy reading) and the extra load from the current it takes.
+
+**Start-up.** The armature starts on the landing pad. Lift-off is a ramp of the setpoint from 28 mm, with the integral clamped until the armature is free, or it winds up while the armature can't move.`,
+    commissioning: [
+      'Calibrate the gap sensor against feeler gauges at three gaps; check its direction.',
+      'Check the amplifier: current at 0, 50 and 100 % output, and its response to a step (it sets how fast the loop can be).',
+      'Measure the magnet constant: the current that holds the armature at two gaps (by hand, with a jack under it).',
+      'First lift-off with PD only and the setpoint ramped from the pad; then add a slow integral.',
+      'Test at the closest and furthest gaps in use: the plant is faster and more unstable close in.',
+      'Set the trips: gap out of range or amplifier saturated for more than a few ms means land it, now.',
+    ],
+    verdict: String.raw`**PID works, once the setpoint weight is right.** PD plus a slow integral (Kc 4, Td 20 ms, Ti 150 ms) with b = 0.3 moves the gap in about 0.2 s without overshoot and holds half a kilogram of extra load to a 2 % dip. With b = 1 the same PID overshoots 130 % on a 3 mm step, and on the mismatch test drops the armature on the pad.
+
+**State feedback** with an observer settles about twice as fast (0.06–0.13 s) and has more margin (Ms 2.4 against 3.1), but overshoots more on gap changes (up to 9 %, and 26 % on the mismatch test). It is not a clear win. What this plant teaches is not "use state feedback" but what instability demands: a minimum speed, derivative action, fast hardware, and a gain that changes across the range.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -932,6 +1077,70 @@ that is, feedforward gain $R_0$ from the wild flow, plus the trim's output scale
     broad: String.raw`- **DCS:** RATIO blocks with ratio limits and bias, and a cascade connection to the slave.
 - **Combustion control** standards (NFPA 85, EN 12952) build on ratio with cross-limiting and an O₂ trim: the same structure as here.`,
   },
+  statefb: {
+    summary: 'Every state of the plant fed back with its own gain, u = −K·x̂, the states estimated by an observer (or a Kalman filter) from the few that are measured. The gains come from where you want the closed-loop poles, or from weights on what matters (LQR). It can damp a swing or a resonance that no PID can see.',
+    theory: String.raw`**State space.** Write the plant as first-order equations in all its states (actuator, positions, speeds, transmitter lags):
+
+$$\dot x = Ax + Bu,\qquad y = Cx$$
+
+A PID sees one output. State feedback uses all of $x$:
+
+$$u = -Kx$$
+
+and the closed loop $\dot x = (A - BK)x$ has the eigenvalues of $A - BK$. **If the plant is controllable** (the input reaches every state; the controllability matrix $[B\ AB\ \cdots\ A^{n-1}B]$ has full rank), $K$ can put them **anywhere**.
+
+**Pole placement.** Choose the closed-loop poles, solve for $K$ (Ackermann's formula, or the better-conditioned Sylvester-equation method used here). In Loop Lab you choose a dominant pair $(\omega_n, \zeta)$. Lightly damped pairs (a swing, a resonance) keep their frequency but get damping $\zeta$, unstable poles are mirrored, and poles already faster stay put. Moving a pole a long way costs gain, and gain costs noise and margin.
+
+**LQR.** Instead of poles, say what matters: minimize
+
+$$J = \int_0^\infty \left(x^\top Q x + u^\top R u\right)dt$$
+
+The answer is $K = R^{-1}B^\top X$ with $X$ from the Riccati equation $A^\top X + XA - XBR^{-1}B^\top X + Q = 0$. Here $Q$ puts weights $q_y$ on the PV error, $q_2$ on the secondary measurement and $q_i$ on the integral, against 1 on the output. LQR on its own has guaranteed margins (gain margin ∞, phase margin ≥ 60°) **with the states measured**.
+
+**Observers.** The states usually aren't all measured. Run a copy of the model in the controller and correct it with what is measured:
+
+$$\dot{\hat x} = A\hat x + Bu + L(y - C\hat x)$$
+
+The estimation error obeys $\dot e = (A - LC)e$: $L$ is designed like $K$, on the dual system. That needs **observability** (the outputs see every state). A **Kalman filter** chooses $L$ from how noisy the measurement is against how much the plant gets pushed around.
+
+**The separation principle.** The closed-loop poles are those of $A - BK$ plus those of $A - LC$: regulator and observer can be designed separately. But margins don't separate. LQR plus a Kalman filter (LQG) has **no** guaranteed margins: Doyle's counterexample (1978) has a gain margin as thin as you like. Always check the margins of the whole loop, broken at the plant input.
+
+**No offset.** $u = -K\hat x$ alone leaves an offset under any constant upset. Two cures:
+- **An integral of the error** as an extra state, fed back like the others. Simple, but it integrates during every transient and has to unwind afterwards: overshoot.
+- **Estimate the disturbance** in the observer (a constant $d$ where it really acts, $\dot d = 0$) and cancel it in steady state. No windup, no overshoot from the integral; it needs the disturbance to be observable from what is measured.`,
+    works: [
+      'Lightly damped modes the measurement doesn\'t show directly: a crane\'s swinging load, a flexible shaft, a long boom or arm.',
+      'Open-loop unstable plants (magnetic bearings, balancing), where the design has to be done from the model anyway.',
+      'Plants with several measured states, each telling the controller something the main PV can\'t.',
+      'Anywhere the model is good and the payoff is speed: positioning, motion, drive trains.',
+    ],
+    breaks: [
+      'Model wrong: the observer\'s estimate drifts away from the plant, and the controller acts on fiction. Check the estimate against a measurement.',
+      'Something unobservable or uncontrollable from the chosen sensors and actuator: no gain can fix it (a crane with only the load position can\'t tell wind from a trolley offset).',
+      'A disturbance the observer doesn\'t know about: it explains it with the wrong states (the crane chases the wind).',
+      'Observer or regulator poles too fast for the controller cycle, the actuator or the noise: the margins collapse even though the poles look fine.',
+      'The plant is nonlinear and moves away from the design point: the gains are for one linearization.',
+    ],
+    tuning: String.raw`1. **Get the model right first.** Bump tests, a frequency sweep for any resonance, the physical constants. The design is only as good as $A$ and $B$.
+2. **Choose what to measure** so every state is observable, including any disturbance to be estimated.
+3. **Regulator.** Pole placement: start with $\omega_n$ around what a PI could do, $\zeta \approx 0.7$–0.8, and raise $\omega_n$ until the output effort or the margins say stop. LQR: start with $q_y$ = 1 per % and raise it by decades; put weight $q_2$ on a swing you want damped.
+4. **Observer.** Two to three times faster than the regulator, or a Kalman filter with a sensible ratio of upsets to noise. Faster isn't better: it passes more noise and needs a better model.
+5. **Offset:** prefer estimating the disturbance where it acts; use an integral of the error if you can't model one.
+6. **Check the whole loop:** margins at the plant input, the tests with model mismatch, and the observer's estimate against a real reading.`,
+    implementation: String.raw`- **Discretize the whole controller** for the PLC cycle (here: the continuous design, then a zero-order-hold discretization of the observer). Change the cycle and the matrices must be regenerated.
+- **Feed the observer the output actually applied**, after the limits. Then it doesn't wind up, and with the disturbance estimate, nothing does.
+- **Precision.** Observer matrices have entries a hair away from 1: use LReal (64-bit), not Real.
+- **Deviation variables.** Everything is relative to the design point (the output, measurements and setpoint there); store those values with the matrices.
+- **Manual and bumpless:** in manual, set the estimate to the steady state matching the measurement, and the integral or disturbance estimate so the output equals the manual value.
+- **Watch the estimate.** Trend the observer's estimate of the PV next to the real reading. When they part company, the model is wrong.`,
+    siemens: String.raw`- **No standard block.** PID_Compact, PID_Temp and PID_3Step are PIDs. State feedback is custom SCL: the exported **LL_StateFb** is one FB with the matrices as LReal arrays, about $2n^2$ multiply-adds per cycle (a few µs on an S7-1500).
+- **Cyclic interrupt** (OB30–38) at the design cycle; for motion, an isochronous OB synchronized to PROFINET IRT.
+- **Drives** carry their own versions: speed-loop observers, active vibration damping, and anti-sway packages for cranes. Use those where they exist; they run faster than any PLC.
+- Generate the matrices offline (MATLAB, Python, or this page) and load them as DB start values; document the model and the design point next to them.`,
+    broad: String.raw`- **IEC 61131-3:** the same FB in Structured Text, arrays of LREAL; CODESYS and TwinCAT run it as is.
+- **Motion controllers and drives** (servo, crane, robot) are where state feedback and observers live in industry, mostly hidden behind parameters.
+- **MPC** is the next rung: the same model, but the controller plans ahead and respects limits explicitly instead of saturating.`,
+  },
 };
 
 // ─── Case studies ───────────────────────────────────────────────────────────
@@ -963,6 +1172,8 @@ export type CaseStudy = {
 };
 
 const PI = (Kc: number, Ti: number, extra: Partial<typeof DEFAULT_PID> = {}): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, Kc, Ti, ...extra } });
+/** The process's checked state-feedback design, with changes. */
+const SF = (id: ProcessId, extra: Partial<Extract<ControllerConfig, { kind: 'statefb' }>> = {}): ControllerConfig => ({ ...(defaultController('statefb', getProcess(id)) as Extract<ControllerConfig, { kind: 'statefb' }>), ...extra });
 
 export const CASES: CaseStudy[] = [
   {
@@ -1643,6 +1854,165 @@ Ratio keeps the trim's gain constant. What still changes with rate is the mixing
 - When the product depends on a proportion and the throughput is set elsewhere, hold the proportion.
 - Use the analyzer to correct the proportion, not the flow.
 - Limit the ratio range, cut off at low wild flow, and hold the ratio when the analyzer faults.`,
+      },
+    ],
+  },
+  {
+    id: 'crane-antisway',
+    process: 'crane',
+    title: 'The crane: a swing PID can\'t see',
+    question: 'A load on a rope swings every time the trolley moves. Can a PID put it down quickly and hanging still, and if not, what can?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`An overhead crane carries a 10 t load on an 8 m rope along a 40 m bay. The trolley drive follows a speed reference; a camera on the trolley reads the sway angle, and the load position is the trolley encoder plus the rope's offset. The **mechanical view** shows the problem: run the trolley and stop it, and the load swings with a 5.7 s period for minutes. The load's position is what matters, so that is the PV.`,
+      },
+      {
+        title: 'Baseline: a PI on the load position',
+        body: String.raw`About the fastest PI that stays stable: $K_c = 0.2$, $T_i = 100$ s. It is painfully slow (a minute after the order to move 20 m, the load has covered 12) and the load is still swinging by about 2° when the test ends. A gust leaves it swinging by 4°.`,
+        presets: [{ label: 'PI on the load', controller: PI(0.2, 100) }],
+        scenarios: ['moves', 'gust'],
+      },
+      {
+        title: 'Why it can\'t go faster',
+        body: String.raw`In the **control view**, the plant has a pair of poles at $-0.006 \pm 1.1j$: the swing, with a resonance peak of about 40 dB. Any PI fast enough to matter has gain around 1.1 rad/s, and with 180° of phase lag after the peak, the swing grows instead of dying out. Raise $K_c$ to 0.5 and watch it.
+
+The PI has no way to damp the swing: it only knows how far the load is from where it should be. Damping needs the sway **rate**, and moving the trolley under the load to take the swing out, as a crane driver does.`,
+        presets: [{ label: 'PI on the load', controller: PI(0.2, 100) }, { label: 'PI, a bit faster', controller: PI(0.5, 200) }],
+        scenarios: ['moves'],
+      },
+      {
+        title: 'State feedback with an observer',
+        body: String.raw`Feed back all four mechanical states: trolley position and speed, sway angle and sway rate. Pole placement puts the dominant pair at $\omega_n = 0.5$ rad/s, $\zeta = 0.8$, and moves the swing to $\zeta = 0.8$ at its own frequency. A Kalman filter estimates the speeds and the wind from the camera and the load position.
+
+The 20 m move now takes 23 s (at 1 m/s top speed it can't take much less than 20), and the load arrives hanging still: 0.09° of swing left. A 1 m positioning move settles in 5.5 s. The gust moves the load less than a metre and it is back in 8 s. Look at the controller output: the trolley moves *under* the load.`,
+        presets: [{ label: 'PI on the load', controller: PI(0.2, 100) }, { label: 'State feedback', controller: SF('crane') }],
+        scenarios: ['moves', 'inching', 'gust'],
+      },
+      {
+        title: 'Why the observer has to know about the wind',
+        body: String.raw`Wind holds the load at an angle: 2.3° for 4 kN on 10 t. To a controller that wants zero sway, that is a swing to take out, and it keeps driving the trolley to do it.
+- **With nothing to remove offset**, the gust drags the load almost 8 m along the bay.
+- **With an integral of the error**, the gust costs nearly 4 m, and the integral winds up during every move: 1 m moves overshoot by more than half.
+- **Estimating the wind** in the observer tells the controller what steady sway to expect, so it holds the load where it should be and leaves the integral out of the moves altogether.
+
+An observer is a model: what it doesn't know about, it explains with the wrong states.`,
+        presets: [
+          { label: 'Estimating the wind', controller: SF('crane') },
+          { label: 'No offset removal', controller: SF('crane', { integral: 'none' }) },
+          { label: 'Integral of the error', controller: SF('crane', { integral: 'error', qi: 0.1 }) },
+        ],
+        scenarios: ['gust', 'inching'],
+      },
+      {
+        title: 'A longer rope, and a missing camera',
+        body: String.raw`**The rope.** Lower the load to 13 m and the swing is 27 % slower than the controller was designed for. The moves still settle in 22 s without overshoot: pole placement with a well-damped target leaves room. Further than that, real systems schedule the design on the hoist encoder.
+
+**The camera.** Take it away (measure the load position only) and the wind can't be estimated at all: at rest, a wind with the trolley a little upwind looks exactly like no wind with the trolley where it should be. The design says so (choose "ZT-601 only" with "estimating the upset"). With an integral of the error instead it runs, but it overshoots 60 % on small moves. Observability is a property of the sensors, not of the controller.`,
+        presets: [{ label: 'State feedback', controller: SF('crane') }, { label: 'Load position only, integral', controller: SF('crane', { integral: 'error', measure: 'pv' }) }],
+        scenarios: ['long-rope', 'inching'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**State feedback, with a sway sensor and an observer that models the wind.** This is a place where PID genuinely can't do the job, because the thing to control (the swing) is a resonance the PV only shows when it is already too late.
+
+The cost is real: a model (rope length, drive response), a sway camera, a design per rope length or a schedule over it, and an engineer to commission it. That's why crane builders sell anti-sway as a packaged function of the drive or motion controller rather than leaving it to each project.`,
+      },
+    ],
+  },
+  {
+    id: 'servo-resonance',
+    process: 'servo',
+    title: 'The flexible shaft: damping a resonance',
+    question: 'A shaft between motor and roll rings at 12 Hz. How fast can the roll speed be controlled, and what does it take to go faster?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A motor turns a heavy roll through a long shaft. The drive makes torque; encoders read the motor speed and the roll speed. The **mechanical view** shows a torque step with no controller: both speed up, with the shaft winding up and springing back at 11.6 Hz on top, barely damped.`,
+      },
+      {
+        title: 'Baseline: a PI on the roll speed',
+        body: String.raw`$K_c = 0.8$, $T_i = 1$ s, about the most this loop takes. A 250 rpm speed change takes over a second, a 60 N·m load step pulls the roll down by 10 % of span, and the roll keeps ringing at the resonance throughout.`,
+        presets: [{ label: 'PI on the roll', controller: PI(0.8, 1) }],
+        scenarios: ['speed-steps', 'load-torque'],
+      },
+      {
+        title: 'Why it can\'t go faster',
+        body: String.raw`In the **control view**, the plant from torque to roll speed has the resonance at 73 rad/s with nothing in front of it: a 40 dB peak and 180° more phase lag. The PI has to keep its gain at 73 rad/s well below 1, so it crosses over at about 1.5 rad/s, fifty times slower than the shaft. Double the gain and the loop goes unstable at the resonance. Auto-tune says the same: SIMC's tuning is unstable here and has to be slowed down 25×.`,
+        presets: [{ label: 'PI on the roll', controller: PI(0.8, 1) }, { label: 'PI, gain ×2.5', controller: PI(2, 0.3) }],
+        scenarios: ['speed-steps'],
+      },
+      {
+        title: 'What drives do: cascade on the motor speed',
+        body: String.raw`Close a fast PI on the **motor** encoder ($K_c = 5$, $T_i = 0.05$ s), and the roll loop around it. Seen from the motor the phase never drops below −180°, so the inner loop can be fast. Speed changes now settle in about a second and the load step costs 0.7 %. That is the standard answer, and with a notch filter at the resonance on the torque reference it is usually enough.
+
+Its weak spot: the outer loop's margins are thin (Ms 2.7), because the roll still rings at the anti-resonance, where the motor barely moves and the inner loop can't see it.`,
+        presets: [{ label: 'PI on the roll', controller: PI(0.8, 1) }, { label: 'Cascade on the motor speed', controller: { kind: 'cascade', inner: { ...DEFAULT_PID, Kc: 5, Ti: 0.05 }, outer: { ...DEFAULT_PID, Kc: 2, Ti: 0.2 }, ff: [] } }],
+        scenarios: ['speed-steps', 'load-torque'],
+      },
+      {
+        title: 'State feedback: active damping',
+        body: String.raw`Feed back both speeds and the shaft twist, estimated by a Kalman filter from the two encoders together with the load torque. Pole placement puts the dominant pole at 40 rad/s and moves the resonance pair to $\zeta = 0.7$ at its own frequency: the controller supplies the damping the steel doesn't have.
+
+Speed changes settle in 0.35 s, three times faster than the cascade, with the same load rejection (0.8 %) and better margins (Ms 1.5). With a roll twice as heavy, overshoot is under 4 %.`,
+        presets: [{ label: 'Cascade on the motor speed', controller: { kind: 'cascade', inner: { ...DEFAULT_PID, Kc: 5, Ti: 0.05 }, outer: { ...DEFAULT_PID, Kc: 2, Ti: 0.2 }, ff: [] } }, { label: 'State feedback', controller: SF('servo') }],
+        scenarios: ['speed-steps', 'load-torque', 'heavy-roll'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**A cascade on the motor speed, plus a notch filter if it rings, for most machines. State feedback with an observer where speed changes are the product.**
+- The PI on the roll alone is hopeless: the resonance caps it at 1.5 rad/s.
+- The cascade is what every drive offers: robust, understood, tuned by technicians.
+- State feedback is three times faster with better margins, but it needs the drive train's model (both inertias, the stiffness) and someone who can maintain it. Drives that offer observer-based "active damping" have packaged exactly this.`,
+      },
+    ],
+  },
+  {
+    id: 'maglev-unstable',
+    process: 'maglev',
+    title: 'Magnetic levitation: an unstable plant',
+    question: 'The plant falls (or jumps) on its own. What does that demand of the controller, and does it need anything beyond PID?',
+    family: 'pid-wins',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A 2 kg armature hangs under an electromagnet at a 15 mm gap. The **mechanical view** shows why it can't stay there on its own: where the magnet's pull equals the weight, a little further down the pull is weaker and a little closer it is stronger. Linearized, the gap has a pole at +36 rad/s: any error doubles in 20 ms. The amplifier answers in 3 ms, and the controller runs every millisecond.
+
+Try auto-tune on the PID: it refuses. Every tuning rule assumes a stable or integrating plant.`,
+      },
+      {
+        title: 'A PID designed by hand',
+        body: String.raw`The derivative is what stabilizes it: P alone makes a spring with no damping. Place the closed-loop pair well above 36 rad/s: $K_c = 4$, $T_d = 20$ ms (filtered), and a slow integral, $T_i = 150$ ms, for the weight it has to carry. With the setpoint weight at its default $b = 1$, every gap change kicks the coil: the armature overshoots by more than its step, 130 %. On the mismatch test it lands on the pad.`,
+        presets: [{ label: 'PID, b = 1', controller: PI(4, 0.15, { Td: 0.02, a: 0.2, invert: true }) }],
+        scenarios: ['gap-steps', 'mismatch'],
+      },
+      {
+        title: 'Setpoint weighting',
+        body: String.raw`Put only 30 % of the setpoint into the P term ($b = 0.3$; the D term already works on the measurement only). The loop's stability is unchanged; only the setpoint response is. Gap changes now settle in about 0.2 s without overshoot, half a kilogram of extra load dips the gap by 2 %, and the mismatch test passes.
+
+The peak sensitivity is 3.1, high by the usual standards. For an unstable plant there is a lower limit on how robust the loop can be, set by the unstable pole and the delays, and this is near it.`,
+        presets: [{ label: 'PID, b = 1', controller: PI(4, 0.15, { Td: 0.02, a: 0.2, invert: true }) }, { label: 'PID, b = 0.3', controller: PI(4, 0.15, { Td: 0.02, a: 0.2, b: 0.3, invert: true }) }],
+        scenarios: ['gap-steps', 'added-mass', 'mismatch'],
+      },
+      {
+        title: 'State feedback by pole placement',
+        body: String.raw`The model is exactly what an unstable plant needs designed from anyway. Place the dominant pair at $\omega_n = 60$ rad/s, $\zeta = 0.8$; a Kalman filter estimates the falling speed (no differentiating of a noisy gap) and the extra load from the current it takes.
+
+It settles about twice as fast (0.06–0.13 s), with a little more margin (Ms 2.4), and overshoots more on gap changes: up to 9 %, and 26 % on the mismatch test, because the setpoint feedforward assumes the magnet is as strong as it was.`,
+        presets: [{ label: 'PID, b = 0.3', controller: PI(4, 0.15, { Td: 0.02, a: 0.2, b: 0.3, invert: true }) }, { label: 'State feedback', controller: SF('maglev') }],
+        scenarios: ['gap-steps', 'added-mass', 'mismatch'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**PID is fine here: PD plus a slow integral, designed from the model, with a setpoint weight.** State feedback is no clear win on one axis.
+
+What the unstable plant teaches:
+- The loop has a **minimum speed**: it has to be faster than the unstable pole.
+- So the hardware sets the limits: the controller cycle, the amplifier, the sensor. Real magnetic bearings run at 10–20 kHz.
+- **No tuning rule applies**: design from the model, by pole placement or on the Bode plot.
+- **The gain moves with the setpoint** (the pole runs from 50 rad/s at 8 mm to 30 at 22 mm), and saturating the amplifier at the wrong moment drops the load. Range, limits and trips matter as much as the tuning.`,
       },
     ],
   },

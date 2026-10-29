@@ -69,6 +69,29 @@ export function solve(A: Mat, b: number[]): number[] | null {
   return x;
 }
 
+export const transpose = (A: Mat): Mat => (A[0] ?? []).map((_, j) => A.map((r) => r[j]));
+
+/** Inverse by Gauss–Jordan with partial pivoting, and log|det| (for scaling); null when singular. */
+export function inverse(A: Mat): { inv: Mat; logDet: number } | null {
+  const n = A.length;
+  const M = A.map((r, i) => [...r, ...eye(n)[i]]);
+  let logDet = 0;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-300) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    const piv = M[c][c];
+    logDet += Math.log(Math.abs(piv));
+    for (let k = 0; k < 2 * n; k++) M[c][k] /= piv;
+    for (let r = 0; r < n; r++) {
+      const f = M[r][c];
+      if (r !== c && f) for (let k = 0; k < 2 * n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return { inv: M.map((r) => r.slice(n)), logDet };
+}
+
 /** Solve (jωI − A) x = b for complex x: the core of a state-space frequency response. */
 export function solveShifted(A: Mat, w: number, b: number[]): Complex[] {
   const n = A.length;
