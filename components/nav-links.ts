@@ -41,6 +41,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       label: 'Tools',
       items: [
         { href: '/loop-lab', label: 'Loop Lab', icon: '🎛️' },
+        { href: '/recipes', label: 'Recipes', icon: '🍳' },
         { href: '/tools#calculators', label: 'Calculators', icon: '🧮' },
         { href: '/tools#movies', label: 'Movie picker', icon: '🎬' },
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️' },

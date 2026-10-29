@@ -5,6 +5,7 @@ import { SITE_PAGES, searchDocs, type SearchDoc } from '@/lib/search';
 import { getPosts } from '@/lib/site-content';
 import { getResume } from '@/lib/resume-store';
 import { isSafeBlogSlug } from '@/lib/security/paths';
+import { DEFAULT_RECIPES, extractIngredients, normalizeRecipesData, type RecipesData } from '@/lib/recipes/recipes';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,20 @@ async function buildIndex(): Promise<SearchDoc[]> {
   }
 
   const { projects, skills } = await getResume();
+  const recipesRaw = await readJson<RecipesData>(
+    path.join(process.cwd(), '.data', 'recipes', 'recipes.json'),
+    { version: 1, recipes: DEFAULT_RECIPES },
+  );
+  for (const recipe of normalizeRecipesData(recipesRaw).recipes) {
+    const bom = extractIngredients(recipe).map((b) => b.name).join(' ');
+    docs.push({
+      kind: 'page',
+      title: recipe.title,
+      url: `/recipes?recipe=${encodeURIComponent(recipe.slug)}`,
+      subtitle: `Recipe · ${recipe.category} · ${recipe.summary}`,
+      body: `${bom} ${recipe.equipment.join(' ')} ${recipe.tags.join(' ')}`,
+    });
+  }
   for (const project of projects) {
     docs.push({
       kind: 'project', title: project.name, url: project.post ? `/blog/${project.post.slug}` : '/#projects',
