@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { detailSinceMinutes } from '@/lib/workout/health';
-import { importKeyFrom, loadUserHealth, userForImportKey } from '@/lib/workout/health-store';
-import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
+import { importKeyFrom, readSyncBody, loadUserHealth, userForImportKey } from '@/lib/workout/health-store';
+import { ApiError, handleApiError } from '@/lib/workout/api';
 
 // Asked by daily shortcuts built from an older prompt: how many minutes of
 // heart rate and energy readings to send ({ minutes }). Current prompts read
@@ -11,7 +11,7 @@ import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 
 export async function POST(request: Request) {
   try {
-    const body = await readJsonObject(request);
+    const body = await readSyncBody(request);
     const key = importKeyFrom(request, body);
     const userId = key ? await userForImportKey(key) : null;
     if (!userId) throw new ApiError(401, 'Unknown or revoked health sync key');

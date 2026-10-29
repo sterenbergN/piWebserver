@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alignSets, applyHealthImport, dayKeyAt, describeSync, detailSinceMinutes, matchChecks, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
+import { alignSets, applyHealthImport, parseSyncBody, dayKeyAt, describeSync, detailSinceMinutes, matchChecks, syncAlert, emptyUserHealth, parseHealthDate, parseList, parseNumber, refreshWorkoutHealth, sleepStage, workoutHealth, workoutWindow } from './health';
 
 const NOW = Date.parse('2026-10-20T20:00:00-05:00');
 
@@ -276,4 +276,12 @@ test('an upload says whether heart rate fields were sent, empty, or missing', ()
   assert.deepEqual(sent.detail, { heartRate: 'ok', activeEnergy: 'missing' });
   const empty = applyHealthImport(emptyUserHealth(), { stepsValues: '10', stepsDates: '2026-10-20T00:00:00-05:00', heartRateValues: '', heartRateDates: '' }, NOW).summary;
   assert.equal(empty.detail?.heartRate, 'empty');
+});
+
+test('an upload is read as JSON or form fields, and an unreadable one says what came', () => {
+  assert.deepEqual(parseSyncBody('{"key":"nsh_x","stepsValues":"1"}', 'application/json'), { key: 'nsh_x', stepsValues: '1' });
+  assert.deepEqual(parseSyncBody('key=nsh_x&stepsValues=1%0A2', 'application/x-www-form-urlencoded'), { key: 'nsh_x', stepsValues: '1\n2' });
+  assert.throws(() => parseSyncBody('', ''), /The upload was empty/);
+  assert.throws(() => parseSyncBody('{"key":"nsh_abcdefghijklmnopqrstuv","steps', 'application/json'), /cut off/);
+  assert.throws(() => parseSyncBody('<plist>nsh_abcdefghijklmnopqrstuv</plist>', 'application/x-plist'), (e: Error) => /application\/x-plist/.test(e.message) && !e.message.includes('abcdef'));
 });

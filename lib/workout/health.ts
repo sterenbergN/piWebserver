@@ -745,3 +745,29 @@ export function publicHealth(health: UserHealth | undefined, history: LoggedWork
 }
 
 export type PublicHealth = ReturnType<typeof publicHealth>;
+
+/**
+ * A shortcut's upload as an object: JSON as the prompts ask for, or form
+ * fields (what Get Contents of URL sends if its Request Body is switched to
+ * Form). Anything else throws an error saying what did arrive, with any
+ * sync key blanked out, since it ends up in a notification.
+ */
+export function parseSyncBody(text: string, contentType = ''): Record<string, any> {
+  const body = text.replace(/^\uFEFF/, '').trim();
+  const fix = 'In the shortcut, set Get Contents of URL\'s Request Body to JSON.';
+  if (!body) throw new Error(`The upload was empty. ${fix}`);
+  if (body.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch {
+      const cut = body.endsWith('}') ? '' : ' It looks cut off, as if the upload stopped part way.';
+      throw new Error(`The upload isn't valid JSON (${body.length.toLocaleString('en-US')} characters).${cut}`);
+    }
+  }
+  if (/x-www-form-urlencoded/i.test(contentType) || /^[\w.%-]+=/.test(body)) {
+    return Object.fromEntries(new URLSearchParams(body));
+  }
+  const preview = body.slice(0, 60).replace(/nsh_[\w-]+/g, 'nsh_…').replace(/\s+/g, ' ');
+  throw new Error(`Couldn't read the upload (${contentType || 'no content type'}, starts "${preview}"). ${fix}`);
+}

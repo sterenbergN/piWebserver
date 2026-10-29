@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { applyHealthImport, describeSync, refreshWorkoutHealth, syncAlert } from '@/lib/workout/health';
-import { importKeyFrom, updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
+import { importKeyFrom, readSyncBody, updateUserHealth, userForImportKey } from '@/lib/workout/health-store';
 import { loadUserHistory } from '@/lib/workout/history';
 import { logBodyweights } from '@/lib/workout/bodyweight';
-import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
+import { ApiError, handleApiError } from '@/lib/workout/api';
 
 // Where the phone sends Apple Health data (an iOS Shortcut's "Get Contents of
 // URL"). It has no login cookie, so the user's import key authorises it:
@@ -11,7 +11,7 @@ import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 
 export async function POST(request: Request) {
   try {
-    const body = await readJsonObject(request);
+    const body = await readSyncBody(request);
     const key = importKeyFrom(request, body);
     const userId = key ? await userForImportKey(key) : null;
     if (!userId) throw new ApiError(401, 'Unknown or revoked health sync key');

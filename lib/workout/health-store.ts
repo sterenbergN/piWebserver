@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import { getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
 import { loadUserHistory } from '@/lib/workout/history';
-import { emptyUserHealth, HEALTH_FILE, refreshWorkoutHealth, type HealthStore, type UserHealth } from '@/lib/workout/health';
+import { emptyUserHealth, HEALTH_FILE, parseSyncBody, refreshWorkoutHealth, type HealthStore, type UserHealth } from '@/lib/workout/health';
+import { ApiError } from '@/lib/workout/api';
 
 // Server side of the Apple Health sync: the per-user import key (only its
 // hash is stored) and reading/writing health.json.
@@ -38,6 +39,20 @@ export async function createImportKey(userId: string) {
     health.keyCreatedAt = new Date().toISOString();
   });
   return key;
+}
+
+/** A shortcut's upload: JSON, or form fields (multipart or URL-encoded). Unreadable → a 400 that says what arrived. */
+export async function readSyncBody(request: Request): Promise<Record<string, any>> {
+  const type = request.headers.get('content-type') || '';
+  try {
+    if (/multipart\/form-data/i.test(type)) {
+      const form = await request.formData();
+      return Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === 'string' ? v : '']));
+    }
+    return parseSyncBody(await request.text(), type);
+  } catch (error) {
+    throw new ApiError(400, error instanceof Error ? error.message : 'Couldn\'t read the upload');
+  }
 }
 
 /** The sync key a shortcut sent: "Authorization: Bearer", "x-health-key", or "key" in the JSON body. */
