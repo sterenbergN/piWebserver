@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Loop Lab PLCSIM bridge. Build on the PC that runs S7-PLCSIM Advanced:
+      dotnet run -c Release                      (API 8.0, PLCSIM Advanced V8)
+      dotnet run -c Release -p:PlcsimApi=6.0     (an older install)
+      (no PLCSIM? start it with the mock option: see README.md)
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LoopLab.PlcsimBridge</AssemblyName>
+    <RootNamespace>LoopLab.PlcsimBridge</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PlcsimApi Condition="'$(PlcsimApi)' == ''">8.0</PlcsimApi>
+    <PlcsimApiDir>$([System.Environment]::GetFolderPath(SpecialFolder.CommonProgramFilesX86))\Siemens\PLCSIMADV\API\$(PlcsimApi)</PlcsimApiDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Not copied: at run time the bridge loads the API from the PLCSIM Advanced install (see Program.cs). -->
+    <Reference Include="Siemens.Simatic.Simulation.Runtime.Api.x64">
+      <HintPath>$(PlcsimApiDir)\Siemens.Simatic.Simulation.Runtime.Api.x64.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>PlcsimApiDir</_Parameter1>
+      <_Parameter2>$(PlcsimApiDir)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

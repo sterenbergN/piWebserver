@@ -5,7 +5,7 @@ the same way every time, find out where it is good enough and where it falls sho
 then work up to whatever the process really needs, and learn the theory and the
 implementation along the way.
 
-Status: phases 1 to 4 (3a, 3b, 4a, 4b, 4c) built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
+Status: phases 1 to 5 (3a, 3b, 4a, 4b, 4c, 5) built (2026-10-29) on the `loop-lab` branch — see "as built" at the end.
 
 ---
 
@@ -314,9 +314,8 @@ questions can link to a case study or open the bench set up for that question.
 - **Test strategies** on the identified model with the same scripts and scorecard.
 - **Export** — SCL / Structured Text for the chosen controller, PID_Compact or PID_Temp
   parameters, and a printable tuning report (model, specs, margins, plots).
-- **Later: software in the loop** — the exported SCL running in PLCSIM Advanced against
-  the Loop Lab plant. PLCSIM runs on a PC, not the Pi, so this needs a small local bridge
-  and is the last phase.
+- **Software in the loop** — the exported SCL running in PLCSIM Advanced against
+  the Loop Lab plant, through a small bridge on the PC (phase 5).
 
 ---
 
@@ -597,3 +596,30 @@ PLCSIM Advanced bridge to run exported SCL against Loop Lab plants.
   Your own controller: the PI without its edges starts every test with a bump (IAE ten times worse).
 - **Case studies:** `batch-adaptive`, `write-your-own`.
 - **Not in 4c:** MRAC, gain scheduling on batch time or conversion, nonlinear ADRC, arrays and CASE in the ST subset.
+
+## 19. Phase 5 as built
+
+- **The kit** (`exportSilKit`): one SCL source for "Generate blocks from source": a global DB `"LoopLab_IO"` with
+  every signal the call site uses (the bridge reaches them by name, so no tag table), the blocks from the SCL export
+  unchanged, the instance DBs with the start-up tuning the plain export leaves to OB100 (inner loop, second loop,
+  limit controller), and `FUNCTION "LoopLab_Cycle"`: the call site plus a `Cycles` counter. The engineer adds an OB30
+  at the controller's cycle time calling it. `silSignals` says what each member is to the plant (SP, PV, PV2, SP2,
+  manual, manual values, measured disturbances in; valve signals out; the rest internal). The tank PI kit compiled in
+  TIA Portal V21 with no errors or warnings (checked once, by hand; the other kinds only by the structural tests).
+- **The bridge** (`tools/plcsim-bridge`, C# .NET 8, Kestrel WebSocket on localhost:8765, the PLCSIM Advanced API
+  loaded from its install): attach puts the instance in *time span synchronized* mode, finds OB30's phase from the
+  counter and puts the step boundaries half a cycle away from it; each step writes the readings, runs one cycle of
+  virtual time (drift-corrected), checks the counter went up by exactly one (runs on and re-centres if OB30 was
+  late), reads the outputs. Detach hands the instance back free-running. Accepts this site and localhost pages
+  (`-origin` for others), one page at a time. `-mock` stands in for PLCSIM (holds the valves at their manual values)
+  to check the connection without Siemens software.
+- **The page side** (`plcsim.ts`, `Plcsim.tsx` in the Automation view): download the kit, connect, pick the instance
+  and a test, run. `Loop` splits a cycle into `sense` and `apply`, and `runScenarioExternal` runs the same script
+  with an `ExternalController` that is awaited each cycle, so the run is exact however slow the round trip. The PLC
+  starts with five cycles in manual at the plant's steady state (every block tracks, so auto is bumpless). The PLC
+  run is overlaid on the browser's with the largest output and PV differences. ~0.5 ms per cycle through the mock.
+- **Tests:** the browser's own controller behind the external interface reproduces runScenario bit for bit; every
+  kit for every process and controller declares what it uses and its instance DBs before the FC; the protocol's
+  warm-up and output order.
+- **Not in 5:** downloading from the page (TIA Portal does that), real-time (non-lock-step) runs, PLCSIM (non-Advanced)
+  and other vendors' soft PLCs, I/O through the process image with NORM_X/SCALE_X.

@@ -1,4 +1,4 @@
-import { createController, type ControllerConfig, type ControllerInstance } from './controllers';
+import { createController, type ControllerConfig, type ControllerInstance, type ControllerInternals } from './controllers';
 import { rng } from './linalg';
 import { cleanParams, nominalDisturbances, pvSpan, valveCharacteristic, type Params, type ProcessDef, type Scenario } from './model';
 
@@ -206,13 +206,33 @@ export class Loop {
       cv = clamp(this.manualOut, 0, 100);
       this.ctrl.track(cv, this.sp, pv, this.aux());
     }
-    cv = clamp(cv, 0, 100);
+    return this.apply(pv, cv, this.auto ? this.ctrl.out2?.() : undefined, this.ctrl.internals());
+  }
+
+  /**
+   * A cycle run by a controller outside the browser (a PLC): `sense` gives what it reads,
+   * `apply` takes what it wrote back and moves the plant on by one cycle.
+   */
+  sense() {
+    return this.inputs(this.measure());
+  }
+
+  /** What the controller would read now, without taking a new reading (for bringing it up to the plant). */
+  peek() {
+    return this.inputs(this.lastMeas);
+  }
+
+  private inputs(pv: number) {
+    return { pv, pv2: this.lastMeas2, sp: this.sp, sp2: this.sp2, auto: this.auto, manualOut: this.manualOut, manualOut2: this.manualOut2, d: this.d };
+  }
+
+  apply(pv: number, rawCv: number, out2: number | undefined, internals: ControllerInternals = NO_INTERNALS): Sample {
+    const cv = clamp(Number.isFinite(rawCv) ? rawCv : this.lastCv, 0, 100);
     this.lastCv = cv;
     // The second valve: the controller's second output, or held where it is (manual, or a one-output controller).
     const mimo = this.proc.mimo;
     let cv2 = NaN;
     if (mimo) {
-      const out2 = this.auto ? this.ctrl.out2?.() : undefined;
       cv2 = clamp(out2 ?? (this.auto ? this.d[mimo.input] : this.manualOut2), 0, 100);
       this.d[mimo.input] = cv2;
     }
@@ -223,7 +243,7 @@ export class Loop {
 
     const sample: Sample = {
       t: this.t, sp: this.sp, pv, pvTrue: truePv(this.proc, this.p, this.d, this.x), cv, valve: this.x[0],
-      pv2: this.lastMeas2, ...pick(this.ctrl.internals()),
+      pv2: this.lastMeas2, ...pick(internals),
       pv2True: NaN, cv2, valve2: NaN,
     };
     if (mimo) {
@@ -254,6 +274,9 @@ export class Loop {
   }
 }
 
+/** Internals for a controller the simulation can't see into. */
+const NO_INTERNALS = { P: NaN, I: NaN, D: NaN, Kc: NaN, sp2: NaN, ff: 0, pred: NaN, alt: NaN } as ControllerInternals;
+
 const pick = ({ P, I, D, Kc, sp2, ff, pred, alt }: { P: number; I: number; D: number; Kc: number; sp2: number; ff: number; pred: number; alt: number }) => ({ P, I, D, Kc, sp2, ff, pred, alt });
 
 export type Trace = {
@@ -277,8 +300,10 @@ export function scaledScenario(proc: ProcessDef, p: Params, scenario: Scenario):
   };
 }
 
-/** Run one test script from start to finish. */
-export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Scenario): Run {
+const TRACE_KEYS = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred', 'alt', 'pv2True', 'cv2', 'valve2'] as const;
+
+/** A test script set up and ready to run: the loop, the trace to fill, and the events still to come. */
+function startScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Scenario) {
   const model = cleanParams(proc, setup.params);
   const scenario = scaledScenario(proc, model, rawScenario);
   // Changes at t = 0 describe the plant as it really is; the controller keeps the setup's view.
@@ -289,31 +314,75 @@ export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Sce
   const events = sorted.filter((e) => !initial(e));
   const loop = new Loop(proc, setup, { sp: scenario.initialSp, sp2: scenario.initialSp2, d: scenario.initialDist, plantParams: plant });
   const n = Math.floor(scenario.duration / loop.Ts) + 1;
-  const keys = ['t', 'sp', 'pv', 'pvTrue', 'cv', 'valve', 'P', 'I', 'D', 'Kc', 'pv2', 'sp2', 'ff', 'pred', 'alt', 'pv2True', 'cv2', 'valve2'] as const;
-  const trace = Object.fromEntries(keys.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
+  const trace = Object.fromEntries(TRACE_KEYS.map((k) => [k, new Float64Array(n)])) as unknown as Trace;
   trace.dist = Object.fromEntries(proc.disturbances.map((s) => [s.key, new Float64Array(n)]));
   let next = 0;
   let ramp: { to: number; rate: number } | null = null;
-  for (let i = 0; i < n; i++) {
-    while (next < events.length && events[next].t <= loop.t + 1e-9) {
-      const ev = events[next++];
-      if (ev.kind === 'sp' && ev.ramp) ramp = { to: ev.value, rate: Math.abs(ev.ramp) };
-      else if (ev.kind === 'sp') { loop.sp = ev.value; ramp = null; }
-      else if (ev.kind === 'sp2') loop.sp2 = ev.value;
-      else if (ev.kind === 'dist') loop.d[ev.key] = ev.value;
-      else if (ev.kind === 'param') applyParam(loop.p, ev.key, ev.value, ev.factor);
-      else loop.freeze(ev.duration);
-    }
-    if (ramp) {
-      const stepBy = ramp.rate * loop.Ts;
-      loop.sp = Math.abs(ramp.to - loop.sp) <= stepBy ? ramp.to : loop.sp + Math.sign(ramp.to - loop.sp) * stepBy;
-      if (loop.sp === ramp.to) ramp = null;
-    }
-    const s = loop.step();
-    for (const k of keys) trace[k][i] = s[k];
-    for (const key of Object.keys(trace.dist)) trace.dist[key][i] = loop.d[key];
+  return {
+    scenario, loop, trace, n,
+    /** Apply the events due before cycle i. */
+    events() {
+      while (next < events.length && events[next].t <= loop.t + 1e-9) {
+        const ev = events[next++];
+        if (ev.kind === 'sp' && ev.ramp) ramp = { to: ev.value, rate: Math.abs(ev.ramp) };
+        else if (ev.kind === 'sp') { loop.sp = ev.value; ramp = null; }
+        else if (ev.kind === 'sp2') loop.sp2 = ev.value;
+        else if (ev.kind === 'dist') loop.d[ev.key] = ev.value;
+        else if (ev.kind === 'param') applyParam(loop.p, ev.key, ev.value, ev.factor);
+        else loop.freeze(ev.duration);
+      }
+      if (ramp) {
+        const stepBy = ramp.rate * loop.Ts;
+        loop.sp = Math.abs(ramp.to - loop.sp) <= stepBy ? ramp.to : loop.sp + Math.sign(ramp.to - loop.sp) * stepBy;
+        if (loop.sp === ramp.to) ramp = null;
+      }
+    },
+    record(i: number, s: Sample) {
+      for (const k of TRACE_KEYS) trace[k][i] = s[k];
+      for (const key of Object.keys(trace.dist)) trace.dist[key][i] = loop.d[key];
+    },
+  };
+}
+
+/** Run one test script from start to finish. */
+export function runScenario(proc: ProcessDef, setup: LoopSetup, rawScenario: Scenario): Run {
+  const run = startScenario(proc, setup, rawScenario);
+  for (let i = 0; i < run.n; i++) {
+    run.events();
+    run.record(i, run.loop.step());
   }
-  return { scenario, trace, Ts: loop.Ts };
+  return { scenario: run.scenario, trace: run.trace, Ts: run.loop.Ts };
+}
+
+/** What a controller outside the browser reads each cycle (engineering units, % for valves). */
+export type ExternalInputs = ReturnType<Loop['sense']>;
+
+/** A controller that runs somewhere else, one cycle at a time: a PLC through the PLCSIM bridge. */
+export interface ExternalController {
+  /** Before the first cycle: the plant is at steady state; bring the controller to it bumplessly. */
+  start(inputs: ExternalInputs, valve: number, valve2: number): Promise<void>;
+  /** One cycle: the readings in, the valve signal(s) out. */
+  cycle(inputs: ExternalInputs): Promise<{ cv: number; cv2?: number }>;
+}
+
+/**
+ * The same test script with the controller somewhere else. The plant waits for each answer,
+ * so the run is exact however long the round trip takes.
+ */
+export async function runScenarioExternal(proc: ProcessDef, setup: LoopSetup, rawScenario: Scenario, ext: ExternalController,
+  onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Run> {
+  const run = startScenario(proc, setup, rawScenario);
+  const { loop } = run;
+  await ext.start(loop.peek(), loop.lastCv, proc.mimo ? loop.d[proc.mimo.input] : NaN);
+  for (let i = 0; i < run.n; i++) {
+    if (signal?.aborted) throw new Error('Stopped');
+    run.events();
+    const inputs = loop.sense();
+    const out = await ext.cycle(inputs);
+    run.record(i, loop.apply(inputs.pv, out.cv, proc.mimo ? out.cv2 : undefined));
+    if (onProgress && (i % 50 === 0 || i === run.n - 1)) onProgress(i + 1, run.n);
+  }
+  return { scenario: run.scenario, trace: run.trace, Ts: loop.Ts };
 }
 
 function applyParam(p: Params, key: string, value?: number, factor?: number) {

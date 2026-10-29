@@ -948,8 +948,9 @@ END_FUNCTION`;
 }
 
 /** How the blocks are called each cycle (OB30 in TIA; a cyclic task elsewhere). */
-function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Params) {
-  const tag = (name: string) => (d === 'scl' ? `"${name}"` : name.replace(/-/g, '_'));
+function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Params, io?: string) {
+  // With `io`, every signal is a member of that global DB instead of a PLC tag (the PLCSIM kit).
+  const tag = (name: string) => (io ? `"${io}".${name.replace(/-/g, '_')}` : d === 'scl' ? `"${name}"` : name.replace(/-/g, '_'));
   const db = d === 'scl' ? `"${proc.tags.loop.replace('-', '_')}_DB"` : `${proc.tags.loop.replace('-', '_')}`;
   const pv = tag(proc.tags.transmitter), out = tag(proc.tags.valve);
   const intro = d === 'scl'
@@ -1166,9 +1167,16 @@ function pidInputRange(proc: ProcessDef, config: ControllerConfig, p: Params) {
 
 export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams: Params, dialect: Dialect) {
   const p = cleanParams(proc, rawParams);
-  const parts: string[] = [];
   const title = dialect === 'scl' ? 'TIA Portal SCL (S7-1200 / S7-1500)' : 'IEC 61131-3 Structured Text (CODESYS, TwinCAT, ...)';
-  parts.push(`// Loop Lab export: ${proc.name}, ${proc.tags.loop}\n// ${title}. Generated code: review before use on a real plant.`);
+  const parts = [`// Loop Lab export: ${proc.name}, ${proc.tags.loop}\n// ${title}. Generated code: review before use on a real plant.`, ...blocks(proc, config, p, dialect)];
+  parts.push(callSite(dialect, proc, config, p));
+  if (proc.split && config.kind !== 'onoff') parts.push(splitRange(dialect, proc, p));
+  return parts.join('\n\n');
+}
+
+/** The functions and function blocks a controller needs, in the order they have to be declared. */
+function blocks(proc: ProcessDef, config: ControllerConfig, p: Params, dialect: Dialect) {
+  const parts: string[] = [];
   if (config.kind === 'onoff') {
     parts.push(onOffBlock(dialect, proc, config));
   } else {
@@ -1189,9 +1197,107 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     else if (config.kind === 'adaptive') { parts.push(pidBlock(dialect, config.pid, p.Ts, lo, hi)); parts.push(selfTuneBlock(dialect, proc, config, p.Ts, initialArx(proc, p))); }
     else parts.push(pidBlock(dialect, 'outer' in config ? config.outer : config.pid, p.Ts, lo, hi));
   }
-  parts.push(callSite(dialect, proc, config, p));
-  if (proc.split && config.kind !== 'onoff') parts.push(splitRange(dialect, proc, p));
-  return parts.join('\n\n');
+  return parts;
+}
+
+// ─── PLCSIM Advanced kit ────────────────────────────────────────────────────
+// The same blocks and call site as the SCL export, made into one source that
+// TIA Portal can generate blocks from: the signals live in one global DB (so the
+// bridge can reach them by name), the instance DBs are declared with the start-up
+// tuning, and the call site is an FC to call from OB30.
+
+export const SIL_DB = 'LoopLab_IO';
+export const SIL_FC = 'LoopLab_Cycle';
+/** Counts calls of the FC: the bridge uses it to know the controller ran exactly once per step. */
+export const SIL_COUNTER = 'Cycles';
+
+/** What a signal is to the plant in the browser. */
+export type SilRole = 'sp' | 'pv' | 'pv2' | 'sp2' | 'manual' | 'manualOut' | 'manualOut2' | 'cv' | 'cv2' | `d:${string}`;
+export type SilSignal = { member: string; type: 'Real' | 'Bool' | 'Int'; role: SilRole | null; dir: 'in' | 'out' | 'internal' };
+
+const member = (name: string) => name.replace(/-/g, '_');
+
+/** Every member of the signal DB the call site uses, and what each one is. */
+export function silSignals(proc: ProcessDef, config: ControllerConfig, rawParams: Params): SilSignal[] {
+  const p = cleanParams(proc, rawParams);
+  const code = callSite('scl', proc, config, p, SIL_DB);
+  const used = [...new Set([...code.matchAll(new RegExp(`"${SIL_DB}"\\.(\\w+)`, 'g'))].map((m) => m[1]))];
+  const roles: Record<string, SilRole> = { SP: 'sp', Manual: 'manual', ManualOut: 'manualOut', [member(proc.tags.transmitter)]: 'pv', [member(proc.tags.valve)]: 'cv' };
+  if (proc.secondary) roles[member(proc.secondary.tag)] = 'pv2';
+  if (proc.mimo) Object.assign(roles, { SP2: 'sp2', ManualOut2: 'manualOut2', [member(proc.mimo.valve)]: 'cv2' });
+  for (const d of proc.disturbances) if (!d.manipulated) roles[member(d.measured ?? d.key)] = `d:${d.key}`;
+  return used.map((m) => {
+    const role = roles[m] ?? null;
+    const type = m === 'Manual' || m === 'OvrSelected' ? 'Bool' : m === 'SatA' || m === 'SatB' ? 'Int' : 'Real';
+    return { member: m, type, role, dir: role === 'cv' || role === 'cv2' ? 'out' : role ? 'in' : 'internal' };
+  });
+}
+
+/** Which function block each instance DB in the call site is an instance of. */
+function instanceOf(db: string, proc: ProcessDef, config: ControllerConfig) {
+  const loop = proc.tags.loop.replace('-', '_');
+  if (db === `${loop}_DB`) {
+    const main: Partial<Record<ControllerConfig['kind'], string>> = { onoff: NAMES.onoff, statefb: NAMES.stateFb, mpc: NAMES.mpc, adrc: NAMES.adrc, custom: NAMES.custom };
+    return main[config.kind] ?? NAMES.pid;
+  }
+  if (db === `${loop}_Tune_DB`) return NAMES.selfTune;
+  if (db === `${loop}_Smith_DB`) return NAMES.smith;
+  if (db.startsWith('FF_')) return NAMES.leadLag;
+  return NAMES.pid;
+}
+
+/** One SCL source for TIA Portal ("Generate blocks from source"), ready for PLCSIM Advanced. */
+export function exportSilKit(proc: ProcessDef, config: ControllerConfig, rawParams: Params) {
+  const p = cleanParams(proc, rawParams);
+  const signals = silSignals(proc, config, rawParams);
+  const call = callSite('scl', proc, config, p, SIL_DB);
+  // Start-up tuning the plain export leaves to OB100 goes into the instance DBs here.
+  const start = new Map<string, string[]>();
+  for (const line of call.split('\n')) {
+    const at = line.indexOf('(OB100):');
+    if (at < 0) continue;
+    for (const stmt of line.slice(at + 8).split(';')) {
+      const m = stmt.trim().match(/^"(\w+)"\.(\w+) := (.+)$/);
+      if (m) start.set(m[1], [...(start.get(m[1]) ?? []), `   ${m[2]} := ${m[3]};`]);
+    }
+  }
+  const dbs = [...new Set([...call.matchAll(/"(\w+_DB)"/g)].map((m) => m[1]))];
+  const note = (s: SilSignal) => (s.dir === 'in' ? 'written by the bridge each cycle' : s.dir === 'out' ? 'read by the bridge each cycle' : 'internal');
+  const header = `// Loop Lab PLCSIM kit: ${proc.name}, ${proc.tags.loop} (${config.kind})
+// TIA Portal: External source files > Add new external file > this file, then Generate blocks from source.
+// Then call "${SIL_FC}"() from a Cyclic interrupt OB (OB30) with cycle time ${Math.round(p.Ts * 1e6) / 1000} ms,
+// compile, download to a PLCSIM Advanced instance and connect the Loop Lab PLCSIM bridge.
+// Generated code: the blocks are the ones in the SCL export; only the signals have moved into "${SIL_DB}".`;
+  const ioDb = `DATA_BLOCK "${SIL_DB}"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+NON_RETAIN
+   VAR
+${signals.map((s) => `      ${s.member} : ${s.type};   // ${note(s)}`).join('\n')}
+      ${SIL_COUNTER} : DInt;   // counts calls of "${SIL_FC}"
+   END_VAR
+
+BEGIN
+
+END_DATA_BLOCK`;
+  const instances = dbs.map((db) => `DATA_BLOCK "${db}"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+NON_RETAIN
+"${instanceOf(db, proc, config)}"
+
+BEGIN
+${(start.get(db) ?? []).join('\n')}
+END_DATA_BLOCK`);
+  const fc = `FUNCTION "${SIL_FC}" : Void
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+
+BEGIN
+    "${SIL_DB}".${SIL_COUNTER} := "${SIL_DB}".${SIL_COUNTER} + 1;
+${call.split('\n').map((l) => `    ${l}`).join('\n')}
+END_FUNCTION`;
+  return { source: [header, ioDb, ...blocks(proc, config, p, 'scl'), ...instances, fc].join('\n\n'), signals, Ts: p.Ts };
 }
 
 /** The same algorithm as plain TypeScript, with nothing hidden. */
