@@ -165,7 +165,7 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
     'STEP 1: Read 30 days of daily data', find, rows(summary), '',
     'STEP 2: Upload the daily data', upload(summary, ' (the first upload)'), '',
     'STEP 3: Show the first result', notify('this Contents of URL result'), '',
-    `STEP 4: Heart rate and energy, one day at a time (${loopDays} days)`,
+    `STEP 4: Heart rate and energy, one day at a time (today and the ${loopDays} days before)`,
     'Before the Repeat, add "Adjust Date": operation Add, amount 1, unit days, date = Current Date. Then add "Set Variable" named "Tomorrow". (Starting from tomorrow makes the first day of the loop include today.)',
     `Add a "Repeat" action that repeats ${loopDays + 1} times. Put all of the following inside the Repeat:`,
     '1. Add "Adjust Date": operation Subtract, amount = Repeat Index, unit = days, date = the variable Tomorrow. Then add "Set Variable" named "DayEnd".',
