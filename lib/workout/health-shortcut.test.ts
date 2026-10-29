@@ -13,7 +13,8 @@ test('the daily shortcut skips recent runs, remembers when it ran, and only noti
   assert.ok(prompt.includes('the key "alert" from the variable Response'));
   assert.ok(!prompt.includes('the key "message"'));
   assert.ok(prompt.includes(`URL ${url}/since`));
-  assert.ok(prompt.includes('Heart Rate: instead of "in the last N days", use the filter "Start Date is after Since"'));
+  assert.ok(prompt.includes('Heart Rate: NOT "in the last N days". Instead set the filter to: Start Date, is after'));
+  assert.ok(prompt.includes('"Subtract Minutes minutes from Current Date"'));
   assert.ok(prompt.includes('Steps: last 7 days'));
   assert.ok(prompt.indexOf('"Since"') < prompt.indexOf('Find Health Samples'));
   assert.ok(prompt.includes('- key: nsh_abc'));
@@ -23,4 +24,7 @@ test('the 30-day shortcut runs by hand: no skip check, and it shows what arrived
   const prompt = shortcutPrompt('backfill', { url });
   assert.ok(!prompt.includes(SYNC_STAMP_FILE));
   assert.ok(prompt.includes('the key "message"'));
+  // The day-by-day loop starts from tomorrow so its first day is the last 24 hours.
+  assert.ok(prompt.includes('named "Tomorrow"'));
+  assert.ok(prompt.includes('repeats 15 times'));
 });

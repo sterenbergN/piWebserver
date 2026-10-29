@@ -101,7 +101,9 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
   const daily = kind === 'daily';
   const days = (s: ShortcutSample) => (daily ? s.days : s.backfillDays);
   // The daily shortcut reads per-reading data only from "Since" (asked from the website first).
-  const range = (s: ShortcutSample) => (daily && s.detail ? 'instead of "in the last N days", use the filter "Start Date is after Since" (the variable from STEP 2)' : `last ${days(s)} days`);
+  const range = (s: ShortcutSample) => (daily && s.detail
+    ? 'NOT "in the last N days". Instead set the filter to: Start Date, is after, and for the date tap the field and pick the variable Since (from STEP 2). Do not pick Current Date'
+    : `last ${days(s)} days`);
   const rows = (list: ShortcutSample[], start = 1) => list.map((s, i) =>
     `${start + i}. ${s.type}: ${range(s)}${s.groupByDay ? ', Group By set to Day' : ''}. Save it with Set Variable as "${s.variable}".`).join('\n');
   const fields = (list: ShortcutSample[]) => list.flatMap((s) => s.fields.map((f) => fieldLine(s, f))).join('\n');
@@ -139,9 +141,11 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
       `   d. Add another "If": Time Between Dates "is less than" ${minutes}. Inside it, add "Stop This Shortcut". Then End If.`,
       '3. End the first If (leave its Otherwise empty).', '',
       'STEP 2: Ask the website how far back to read heart rate',
-      `1. Add "Get Contents of URL": URL ${sinceUrl(url)}, Method POST, Request Body JSON, with one Text field: key = ${key || KEY_PLACEHOLDER}`,
-      '2. Add "Get Dictionary Value" to get the value for the key "minutes" from that Contents of URL result.',
-      '3. Add "Adjust Date": Subtract, number = Dictionary Value, unit = minutes, from Current Date. Then add "Set Variable" named "Since".', '',
+      'The website answers with a number of minutes (a few hours up to 3 days). Since must end up as a date that many minutes BEFORE now.',
+      `1. Add "Get Contents of URL": URL ${sinceUrl(url)}, Method POST, Request Body JSON, with one Text field: key = ${key || KEY_PLACEHOLDER}. Then add "Set Variable" named "SinceReply".`,
+      '2. Add "Get Dictionary Value": Get Value for Key "minutes" in SinceReply. Then add "Set Variable" named "Minutes".',
+      '3. Add "Adjust Date" and set it exactly like this: operation Subtract, amount = the variable Minutes, unit = minutes, date = Current Date. (It reads "Subtract Minutes minutes from Current Date".) Then add "Set Variable" named "Since".',
+      'Since is only used by the Heart Rate and Active Energy searches marked below.', '',
       'STEP 3: Read the Health data', find, rows(SHORTCUT_SAMPLES), '',
       'STEP 4: Upload it', upload(SHORTCUT_SAMPLES, ''), 'Directly after this Get Contents of URL, add "Set Variable" named "Response".', '',
       'STEP 5: Remember when it ran',
@@ -162,10 +166,11 @@ export function shortcutPrompt(kind: ShortcutKind, { url, key }: { url: string; 
     'STEP 2: Upload the daily data', upload(summary, ' (the first upload)'), '',
     'STEP 3: Show the first result', notify('this Contents of URL result'), '',
     `STEP 4: Heart rate and energy, one day at a time (${loopDays} days)`,
-    `Add a "Repeat" action that repeats ${loopDays} times. Put all of the following inside the Repeat:`,
-    '1. Add "Adjust Date": Subtract, number = Repeat Index, unit = days, from Current Date. Then add "Set Variable" named "DayEnd".',
-    '2. Add another "Adjust Date": Subtract 1 day from DayEnd. Then add "Set Variable" named "DayStart".',
-    ...detail.map((s, i) => `${3 + i}. Add "Find Health Samples" of type ${s.type}, with two filters (match All): "Start Date is after DayStart" and "Start Date is before DayEnd". Leave Limit off and sort by Start Date, oldest first. Then add "Set Variable" named "${s.variable}".`),
+    'Before the Repeat, add "Adjust Date": operation Add, amount 1, unit days, date = Current Date. Then add "Set Variable" named "Tomorrow". (Starting from tomorrow makes the first day of the loop include today.)',
+    `Add a "Repeat" action that repeats ${loopDays + 1} times. Put all of the following inside the Repeat:`,
+    '1. Add "Adjust Date": operation Subtract, amount = Repeat Index, unit = days, date = the variable Tomorrow. Then add "Set Variable" named "DayEnd".',
+    '2. Add another "Adjust Date": operation Subtract, amount 1, unit days, date = the variable DayEnd. Then add "Set Variable" named "DayStart".',
+    ...detail.map((s, i) => `${3 + i}. Add "Find Health Samples" of type ${s.type}, with two filters (match All): Start Date is after (pick the variable DayStart) and Start Date is before (pick the variable DayEnd). Leave Limit off and sort by Start Date, oldest first. Then add "Set Variable" named "${s.variable}".`),
     `${3 + detail.length}. ${upload(detail, ' with only these fields')}`,
     'Do not show a notification inside the Repeat.', '',
     'STEP 5: After the Repeat ends, add "Show Notification" with the text "Heart rate and energy backfill finished".',

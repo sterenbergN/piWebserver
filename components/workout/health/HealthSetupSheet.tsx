@@ -161,7 +161,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
           />
           <PromptCard
             title={SHORTCUT_NAMES.backfill}
-            about="Run once. Sends 30 days of steps, sleep, daily calories, weight, body fat, resting heart rate and HRV, then heart rate and energy one day at a time for two weeks (14 small uploads, so the phone doesn’t run out of memory). Made one before? Delete it and copy this again."
+            about="Run once. Sends 30 days of steps, sleep, daily calories, weight, body fat, resting heart rate and HRV, then heart rate and energy one day at a time for two weeks up to now (15 small uploads, so the phone doesn’t run out of memory). Made one before? Delete it and copy this again."
             prompt={shortcutPrompt('backfill', { url, key })}
           />
           <p className="workout-hint">
@@ -207,7 +207,7 @@ export default function HealthSetupSheet({ health, onChanged, onClose }: Props) 
               To run it from {SYNC_TRIGGER_APP} without uploading every time, the prompt also adds a check at the top (stop if <code>{SYNC_STAMP_FILE}</code> in iCloud Drive › Shortcuts is under {SYNC_EVERY_HOURS} hours old),
               saves the time there after uploading, and shows the <code>alert</code> value instead of <code>message</code>, only when it isn&apos;t empty.
             </p>
-            <p className="workout-hint">For the 30-day version, use 30 days for the first eight rows. Then send Heart Rate and Active Energy one day at a time: a Repeat 14 times that finds each type between DayStart and DayEnd (Current Date minus Repeat Index days, and one day before that) and uploads them.</p>
+            <p className="workout-hint">For the 30-day version, use 30 days for the first eight rows. Then send Heart Rate and Active Energy one day at a time: a Repeat 15 times that finds each type between DayStart and DayEnd (tomorrow minus Repeat Index days, and one day before that, so the first pass is the last 24 hours) and uploads them.</p>
           </details>
         </Step>
 
