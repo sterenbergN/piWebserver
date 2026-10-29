@@ -661,7 +661,7 @@ export function syncAlert(summary: SyncSummary, newestHeartRateMs: number | null
     }
     const asked = sinceAsk && now - Date.parse(sinceAsk.at) < 15 * 60_000;
     return asked
-      ? `${head} The heart rate fields came but were empty, although the shortcut asked for the last ${sinceAsk!.minutes} minutes: its Heart Rate search found nothing, so its "Start Date is after Since" filter isn't working.`
+      ? `${head} The heart rate fields came but were empty, although the shortcut asked for the last ${sinceAsk!.minutes} minutes: its Heart Rate search found nothing. Check the Health app has recent heart rate (if not, the Watch isn't passing it to the phone); if it does, the search is set up wrong.`
       : `${head} The heart rate fields came but were empty, and the shortcut never asked the website how far back to read (STEP 2 didn't run).`;
   }
   return '';
