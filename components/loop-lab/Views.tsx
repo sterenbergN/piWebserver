@@ -24,7 +24,6 @@ import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt, type Series } from './Chart';
 import { BlockDiagram, type ProbeKey } from './Drawings';
 import PlantEditor from './PlantEditor';
-import { PlcsimPanel } from './Plcsim';
 import { PAndIdFor, ProcessDrawing } from './Schematics';
 import { PALETTE } from './Results';
 
@@ -772,7 +771,6 @@ export function AutomationView({ proc, exp }: { proc: ProcessDef; exp: Experimen
         <div className="ll-card-head"><h3>Code</h3><span className="ll-small">Generated from the current settings</span></div>
         <CodeTabs proc={proc} exp={exp} />
       </div>
-      <PlcsimPanel proc={proc} exp={exp} />
       <div className="ll-card">
         <h3 style={{ fontSize: '1rem', marginBottom: '0.4rem' }}>Commissioning checklist</h3>
         <ul className="ll-list" style={{ listStyle: 'none', paddingLeft: 0 }}>

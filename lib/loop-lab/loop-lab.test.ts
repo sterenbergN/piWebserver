@@ -1,18 +1,17 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { cexpj, cmul, cx, eig, expm, rng } from './linalg';
-import { cleanParams, defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
-import { attachRequest, plcController, WARMUP_CYCLES } from './plcsim';
-import { PROCESSES, getProcess } from './processes';
+import { defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
+import { getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
 import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
-import { CONTROLLER_KINDS, DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
-import { Loop, runAll, runScenario, runScenarioExternal, type ExternalController, type ExternalInputs } from './sim';
+import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
+import { Loop, runAll, runScenario } from './sim';
 import { fitModel, parseTable } from './ident';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { TUNING_RULES } from './tuning';
-import { exportCode, exportReference, exportSilKit, pidCompactParams, real, silSignals, SIL_DB, SIL_FC } from './export';
+import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
@@ -916,93 +915,4 @@ test('your own controller: edges matter, bad code holds the valve, and it export
     assert.deepEqual(cleanController(JSON.parse(JSON.stringify(cfg)), getProcess('batch')), cfg);
     assert.ok(exportCode(getProcess('batch'), cfg, defaultParams(getProcess('batch')), 'scl').length > 500);
   }
-});
-
-// ─── Phase 5: PLCSIM Advanced kit and bridge ────────────────────────────────
-
-/** A stand-in for the PLC: the browser's own controller, behind the external interface. */
-function inProcessPlc(proc: ReturnType<typeof getProcess>, setup: { params: Record<string, number>; controller: ControllerConfig }): ExternalController {
-  const model = cleanParams(proc, setup.params);
-  const ctrl = createController(proc, setup.controller, model, model.Ts);
-  const aux = (x: ExternalInputs) => ({ pv2: x.pv2, d: x.d, sp2: x.sp2 });
-  return {
-    async start(x, valve) { ctrl.track(valve, x.sp, x.pv, aux(x)); },
-    async cycle(x) {
-      if (x.auto) { const cv = ctrl.step(x.sp, x.pv, aux(x)); return { cv, cv2: ctrl.out2?.() }; }
-      ctrl.track(x.manualOut, x.sp, x.pv, aux(x));
-      return { cv: x.manualOut };
-    },
-  };
-}
-
-test('PLC in the loop: an external controller reproduces the browser run exactly', async () => {
-  for (const [pid, kind] of [['tank', 'pid'], ['drum', 'cascade'], ['mixing', 'mpc'], ['mixing', 'multiloop'], ['servo', 'statefb'], ['batch', 'adrc']] as const) {
-    const proc = getProcess(pid);
-    const setup = { params: defaultParams(proc), controller: defaultController(kind, proc) };
-    for (const sc of proc.scenarios.slice(0, 2)) {
-      const ref = runScenario(proc, setup, sc);
-      const ext = await runScenarioExternal(proc, setup, sc, inProcessPlc(proc, setup));
-      for (const k of ['pv', 'pvTrue', 'cv', 'valve', 'cv2', 'valve2'] as const) {
-        assert.deepEqual(Array.from(ext.trace[k]), Array.from(ref.trace[k]), `${pid}/${kind}/${sc.id}: ${k}`);
-      }
-    }
-  }
-});
-
-test('PLCSIM kit: signals know their roles; every member and instance DB is declared', () => {
-  const mixing = getProcess('mixing');
-  const sig = silSignals(mixing, defaultController('multiloop', mixing), defaultParams(mixing));
-  const role = (r: string) => sig.find((s) => s.role === r);
-  for (const r of ['sp', 'pv', 'pv2', 'sp2', 'manual', 'manualOut', 'manualOut2']) assert.equal(role(r)?.dir, 'in', r);
-  assert.equal(role('cv')?.member, 'FV_901');
-  assert.equal(role('cv2')?.member, 'FV_902');
-  assert.equal(role('manual')?.type, 'Bool');
-  assert.equal(sig.find((s) => s.member === 'SatA')?.dir, 'internal');
-  const drum = getProcess('drum');
-  const dsig = silSignals(drum, defaultController('cascade', drum), defaultParams(drum));
-  assert.equal(dsig.find((s) => s.member === 'SP2')?.dir, 'internal', 'a cascade inner setpoint belongs to the PLC');
-  assert.equal(dsig.find((s) => s.role === 'pv2')?.member, 'FT_502');
-
-  let kits = 0;
-  for (const proc of PROCESSES) for (const meta of CONTROLLER_KINDS) {
-    if (!isAvailable(proc, meta.kind)) continue;
-    const { source, signals } = exportSilKit(proc, defaultController(meta.kind, proc), defaultParams(proc));
-    const id = `${proc.id}/${meta.kind}`;
-    const fc = source.slice(source.indexOf(`FUNCTION "${SIL_FC}"`));
-    const db = source.slice(source.indexOf(`DATA_BLOCK "${SIL_DB}"`), source.indexOf('END_DATA_BLOCK'));
-    for (const m of fc.matchAll(/"LoopLab_IO"\.(\w+)/g)) assert.ok(new RegExp(`\\n\\s+${m[1]} : `).test(db), `${id}: ${m[1]} declared`);
-    for (const m of fc.matchAll(/"(\w+_DB)"/g)) assert.ok(source.indexOf(`DATA_BLOCK "${m[1]}"`) >= 0 && source.indexOf(`DATA_BLOCK "${m[1]}"`) < source.indexOf(`FUNCTION "${SIL_FC}"`), `${id}: instance DB ${m[1]} before the FC`);
-    for (const [open, close] of [['DATA_BLOCK "', 'END_DATA_BLOCK'], ['FUNCTION_BLOCK "', 'END_FUNCTION_BLOCK']]) {
-      assert.equal(source.split(open).length, source.split(close).length, `${id}: ${open} balanced`);
-    }
-    assert.ok(signals.some((s) => s.role === 'cv'), `${id}: reads the valve`);
-    assert.ok(signals.some((s) => s.role === 'pv'), `${id}: writes the measurement`);
-    assert.ok(!/OB100\)/.test(fc) || /BEGIN\n   \w+ := /.test(source), `${id}: start-up tuning in an instance DB`);
-    kits++;
-  }
-  assert.ok(kits > 100);
-});
-
-test('PLCSIM bridge protocol: warm-up in manual, outputs in attach order', async () => {
-  const mixing = getProcess('mixing');
-  const signals = silSignals(mixing, defaultController('mpc', mixing), defaultParams(mixing));
-  const req = attachRequest('PLC_1', 2, signals);
-  assert.ok(req.write.every((w) => w.tag.startsWith(`"${SIL_DB}".`)));
-  assert.deepEqual(req.read.map((r) => r.role), signals.filter((s) => s.dir === 'out').map((s) => s.role));
-  const calls: { values: number[]; cycles: number }[] = [];
-  const stats = { steps: 0, late: 0, doubled: 0, plcTime: 0 };
-  const plc = plcController(async (values, cycles) => {
-    calls.push({ values, cycles });
-    return { op: 'stepped', values: req.read.map((r) => (r.role === 'cv' ? 40 : 60)), ran: cycles, late: calls.length === 3, time: calls.length * 2 };
-  }, signals, stats);
-  const x: ExternalInputs = { pv: 35, pv2: 1, sp: 36, sp2: 1.1, auto: true, manualOut: 12, manualOut2: 34, d: { dOut: 70 } };
-  await plc.start(x, 50, 45);
-  const iManual = req.write.findIndex((w) => w.role === 'manual'), iMan = req.write.findIndex((w) => w.role === 'manualOut'), iMan2 = req.write.findIndex((w) => w.role === 'manualOut2');
-  assert.equal(calls[0].cycles, WARMUP_CYCLES);
-  assert.deepEqual([calls[0].values[iManual], calls[0].values[iMan], calls[0].values[iMan2]], [1, 50, 45]);
-  assert.deepEqual(await plc.cycle(x), { cv: 40, cv2: 60 });
-  assert.equal(calls[1].values[iManual], 0);
-  assert.equal(calls[1].values[req.write.findIndex((w) => w.role === 'sp2')], 1.1);
-  await plc.cycle(x);
-  assert.deepEqual(stats, { steps: 3, late: 1, doubled: 0, plcTime: 6 });
 });

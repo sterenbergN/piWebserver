@@ -61,7 +61,3 @@ next-env.d.ts
 
 # Daily question packs (kept on the Pi and on this PC, not in git)
 /daily-packs/
-
-# PLCSIM bridge build output
-/tools/plcsim-bridge/bin/
-/tools/plcsim-bridge/obj/
