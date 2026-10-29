@@ -118,11 +118,12 @@ export function useHabits() {
     return true;
   }, [today, load]);
 
-  // Linked habits tick themselves off: on days you logged a workout, or did that
-  // day's question on the day. Once per load (and per day, or when a habit is added).
+  // Linked habits tick themselves off: on days you logged a workout, did that
+  // day's question on the day, or wrote in your journal.
+  const linksKey = data.habits.filter((h) => isActive(h) && h.link).map((h) => `${h.id}:${h.link}`).join(',');
   useEffect(() => {
     if (mode !== 'account' && mode !== 'device') return;
-    const links = new Set(data.habits.filter((h) => isActive(h) && h.link).map((h) => h.link as HabitLink));
+    const links = new Set(dataRef.current.habits.filter((h) => isActive(h) && h.link).map((h) => h.link as HabitLink));
     if (!links.size) return;
     let cancelled = false;
     const from = addDays(today, -EDIT_WINDOW_DAYS);
@@ -135,7 +136,7 @@ export function useHabits() {
     const onTime = (attempts: { date: DateKey; answeredOn: DateKey; meta?: { core?: boolean } }[]) =>
       attempts.filter((a) => a.meta?.core && a.answeredOn === a.date).map((a) => a.date);
 
-    // Signed-out workouts are only a demo, so workouts link only for accounts.
+    // Signed-out workouts and journal entries only live in accounts.
     if (links.has('workout') && mode === 'account') {
       fetch('/api/workout/history', { cache: 'no-store' }).then((r) => r.json())
         .then((body) => { if (Array.isArray(body.history)) sync('workout', body.history.map((w: any) => (typeof w?.timestamp === 'string' ? localDayOf(w.timestamp) : null))); })
@@ -150,8 +151,13 @@ export function useHabits() {
         sync('daily-question', onTime(readDeviceAttempts()));
       }
     }
+    if (links.has('journal') && mode === 'account') {
+      fetch('/api/journal', { cache: 'no-store' }).then((r) => r.json())
+        .then((body) => { if (Array.isArray(body.entries)) sync('journal', body.entries.map((e: any) => (typeof e?.date === 'string' ? e.date : null))); })
+        .catch(() => { /* try again next visit */ });
+    }
     return () => { cancelled = true; };
-  }, [mode, today, data.habits.length]);
+  }, [mode, today, linksKey, dispatch]);
 
   const importDevice = useCallback(() => {
     if (!deviceData) return;

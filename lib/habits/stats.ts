@@ -263,6 +263,7 @@ export function habitMeta(habit: Habit, log: HabitLog, day: DateKey, today: Date
   else if (!parts.length && day === today) parts.push('Start a streak today');
   if (habit.link === 'workout') parts.push('auto from workouts');
   if (habit.link === 'daily-question') parts.push('auto from daily questions');
+  if (habit.link === 'journal') parts.push('auto from journal');
   return parts.join(' · ');
 }
 

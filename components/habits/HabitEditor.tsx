@@ -10,6 +10,7 @@ export const TEMPLATES: HabitInput[] = [
   { emoji: '💧', name: 'Drink water', kind: 'count', target: 8, unit: 'glasses' },
   { emoji: '🏋️', name: 'Work out', kind: 'check', schedule: { type: 'weekly', times: 3 }, link: 'workout' },
   { emoji: '🧠', name: 'Daily engineering question', kind: 'check', link: 'daily-question' },
+  { emoji: '✍️', name: 'Journal', kind: 'check', link: 'journal' },
   { emoji: '📖', name: 'Read', kind: 'duration', target: 20 },
   { emoji: '🧘', name: 'Meditate', kind: 'duration', target: 10 },
   { emoji: '🚶', name: 'Go for a walk', kind: 'check' },
@@ -151,6 +152,7 @@ export default function HabitEditor({ habit, onSave, onClose, onManage }: Props)
             <option value="">No, I’ll check it myself</option>
             <option value="workout">On days I log a workout</option>
             <option value="daily-question">On days I do the daily question</option>
+            <option value="journal">On days I write in my journal</option>
           </select>
         </>
       )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import JournalTabs from '@/components/journal/JournalTabs';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -41,6 +41,7 @@ export default function JournalPage() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queue = useRef(Promise.resolve());
   const area = useRef<HTMLTextAreaElement>(null);
+  const measure = useRef<HTMLTextAreaElement>(null);
 
   const putSummary = (date: DateKey, summary: JournalSummary | null) => setEntries((list) => {
     const rest = list.filter((s) => s.date !== date);
@@ -144,13 +145,36 @@ export default function JournalPage() {
     };
   }, []);
 
-  // Grow the page with the writing instead of scrolling inside a box.
+  // Grow the page with the writing instead of scrolling inside a box. A hidden
+  // twin with height 0 measures the text so the real textarea never collapses to
+  // `auto` (which would clamp and reset the page's scroll position on phones).
+  const syncHeight = useCallback(() => {
+    const el = area.current;
+    const m = measure.current;
+    if (!el || !m) return;
+    const border = el.offsetHeight - el.clientHeight;
+    const target = Math.max(m.scrollHeight + border, 280);
+    if (el.offsetHeight !== target) {
+      const x = window.scrollX;
+      const y = window.scrollY;
+      el.style.height = `${target}px`;
+      if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + border}px`;
+      if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+    }
+    if (el.scrollTop !== 0) el.scrollTop = 0;
+  }, []);
+
+  useLayoutEffect(() => {
+    syncHeight();
+  }, [text, mode, syncHeight]);
+
   useEffect(() => {
     const el = area.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.max(el.scrollHeight, 280)}px`;
-  }, [text, mode]);
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => syncHeight());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode, syncHeight]);
 
   // Search runs on the server, so the list never needs every entry's full text.
   useEffect(() => {
@@ -235,8 +259,16 @@ export default function JournalPage() {
               })}
             </div>
 
-            <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
-              disabled={save === 'loading'} onChange={(e) => edit({ text: e.target.value })} onBlur={() => { flush(); }} spellCheck />
+            <div className="jr-grow">
+              <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
+              <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
+                disabled={save === 'loading'} onChange={(e) => {
+                  const el = e.currentTarget;
+                  if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+                  if (el.scrollTop !== 0) el.scrollTop = 0;
+                  edit({ text: el.value });
+                }} onBlur={() => { flush(); }} spellCheck />
+            </div>
 
             <div className="jr-foot">
               <span>{wordCount(text).toLocaleString()} words</span>

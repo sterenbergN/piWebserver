@@ -11,7 +11,7 @@ export type HabitSchedule =
   | { type: 'weekdays'; days: number[] } // 0 = Sunday … 6 = Saturday
   | { type: 'weekly'; times: number }; // any days, this many times a week
 /** Habits that tick themselves off from another part of the site. */
-export const HABIT_LINKS = ['workout', 'daily-question'] as const;
+export const HABIT_LINKS = ['workout', 'daily-question', 'journal'] as const;
 export type HabitLink = (typeof HABIT_LINKS)[number];
 
 export type Habit = {
