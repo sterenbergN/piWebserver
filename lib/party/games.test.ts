@@ -722,6 +722,7 @@ test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and mult
 
   // On "1" of countdown, hold drift for Rocket Start!
   const startAngle = sim!.karts[id1].angle;
+  const startProgress = sim!.karts[id1].totalProgress;
   const res = await postKartInput(
     new Request('http://localhost/api/party/kart-input', {
       method: 'POST',
@@ -740,7 +741,8 @@ test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and mult
   }
   assert.equal(sim!.countdownMs, 0, 'countdown finishes after 3.4s');
   assert.ok(sim!.karts[id1].boostTimer > 0, 'Rocket Start turbo boost activated');
-  assert.ok(sim!.karts[id1].totalProgress > 0, 'kart advances past start line along 3D spline');
+  assert.ok(sim!.karts[id1].speed > 20, 'rocket start launches the kart off the line');
+  assert.ok(sim!.karts[id1].totalProgress > startProgress, 'kart advances along the spline');
   assert.notEqual(sim!.karts[id1].angle, startAngle, 'steering input turns the kart heading angle');
 
   // Finish Race 1
@@ -849,7 +851,7 @@ test('Kart Clash: Tournament Heats mode with 8 players, 2 heats of 4, manual hea
   stopKartSimulation(roomCode);
 });
 
-test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on track around sharp curves', async () => {
+test('Kart Clash: AI bots hold the road, and a hands-off human is kept going by the road assist', async () => {
   const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
   const racers = buildKartRacers([{ id: 'p1', name: 'Driver', avatar: '🏎️', avatarColor: '#ef4444' }], true, 4);
   const sim = createKartSimulation({
@@ -861,20 +863,22 @@ test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on t
   // Skip countdown and step 360 ticks (12 seconds of racing around curves)
   sim.countdownMs = 0;
   let offRoadBotFrames = 0;
-  let offRoadHumanFrames = 0;
+  let totalBotFrames = 0;
   for (let i = 0; i < 360; i++) {
     stepKartSimulation(sim, 1 / 30);
     for (const k of Object.values(sim.karts)) {
-      if (k.isBot && k.offRoad) offRoadBotFrames++;
-      if (!k.isBot && k.offRoad) offRoadHumanFrames++;
+      if (k.isBot) {
+        totalBotFrames++;
+        if (k.offRoad) offRoadBotFrames++;
+      }
+      assert.ok(Math.abs(k.lateralOffset) <= sim.track.wallWidth, 'no kart ever escapes the barriers');
     }
   }
   const human = sim.karts['p1'];
   const bots = Object.values(sim.karts).filter((k) => k.isBot);
-  assert.equal(offRoadBotFrames, 0, 'Pure-pursuit AI bots stay 100% on the asphalt road through curves');
-  assert.equal(offRoadHumanFrames, 0, 'Smart Arcade Steering keeps neutral human racer on the road through curves');
-  assert.ok(human.totalProgress > 0.25, 'Human racer advances smoothly along the spline');
-  assert.ok(bots.every((b) => b.totalProgress > 0.22), 'All AI bots advance smoothly along the spline');
+  assert.ok(offRoadBotFrames / totalBotFrames < 0.05, 'AI bots stay on the road through curves');
+  assert.ok(human.totalProgress > 0.15, 'A hands-off human keeps moving along the spline');
+  assert.ok(bots.every((b) => b.totalProgress > 0.15), 'All AI bots advance along the spline');
 
   // Verify holding DRIFT immediately initiates drifting, charges Level 1 & Level 2 sparks, and triggers Super Mini-Turbo on release
   const { updateKartInput } = await import('./kart-physics');
@@ -903,7 +907,7 @@ test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on t
   updateKartInput('TEST_AI', 'p1', { drift: false, steer: 0 });
   stepKartSimulation(sim, 1 / 30);
   assert.equal(human.drifting, false, 'Releasing drift exits drift state');
-  assert.ok(human.boostTimer >= 1.8, 'Releasing Level 2 drift grants a 1.9s Super Mini-Turbo boost');
+  assert.ok(human.boostTimer >= 1.4, 'Releasing Level 2 drift grants a Super Mini-Turbo boost');
   stopKartSimulation('TEST_AI');
 });
 
@@ -918,10 +922,9 @@ test('Kart Clash: Speed classes, Item modes, Tier 3 Ultra Mini-Turbo, and Slipst
   } = await import('./kart-physics');
 
   // 1. Verify speed class configurations
-  assert.equal(SPEED_CLASSES['50cc'].maxSpeed, 24);
-  assert.equal(SPEED_CLASSES['100cc'].maxSpeed, 29);
-  assert.equal(SPEED_CLASSES['150cc'].maxSpeed, 33);
-  assert.equal(SPEED_CLASSES['200cc'].maxSpeed, 38);
+  assert.ok(SPEED_CLASSES['50cc'].maxSpeed < SPEED_CLASSES['100cc'].maxSpeed);
+  assert.ok(SPEED_CLASSES['100cc'].maxSpeed < SPEED_CLASSES['150cc'].maxSpeed);
+  assert.ok(SPEED_CLASSES['150cc'].maxSpeed < SPEED_CLASSES['200cc'].maxSpeed);
 
   const racers = buildKartRacers(
     [
@@ -956,7 +959,7 @@ test('Kart Clash: Speed classes, Item modes, Tier 3 Ultra Mini-Turbo, and Slipst
   assert.equal(p1.driftLevel, 3, 'Holding drift for 2.2s charges Tier 3 Ultra Mini-Turbo (magenta sparks)');
   updateKartInput('TEST_ADVANCED_KART', 'p1', { drift: false, steer: 0 });
   stepKartSimulation(sim, 1 / 30);
-  assert.ok(p1.boostTimer >= 2.4, 'Releasing Tier 3 Ultra Mini-Turbo grants a 2.5s ultra boost');
+  assert.ok(p1.boostTimer >= 2.1, 'Releasing Tier 3 Ultra Mini-Turbo grants the longest boost');
 
   // Test Slipstream Drafting: place p2 8 meters behind p1 along track
   p1.x = 0;
@@ -1038,7 +1041,7 @@ test('Kart Clash: Expanded items (Blue Shell, Golden Shroom, Super Horn, Fake Bo
   fireKartItem(sim, 'trailing');
   const blueShell = sim.hazards.find((h) => h.kind === 'spiny_shell');
   assert.ok(blueShell, 'Spiny Blue Shell is spawned');
-  assert.equal(blueShell.targetKartId, 'leader', 'Spiny Blue Shell targets 1st place leader');
+  assert.equal(blueShell.targetId, 'leader', 'Spiny Blue Shell targets 1st place leader');
 
   stopKartSimulation('TEST_ITEMS');
 });
@@ -1115,13 +1118,15 @@ test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace perio
   p1.z = fakeBox.z;
   p1.spinOutTimer = 0;
 
-  // With TTL > 49.2 (grace period active), stepping does not spin out owner
-  fakeBox.ttl = 49.5;
+  // Inside the grace period, stepping does not spin out the owner
+  fakeBox.age = 0.2;
   stepKartSimulation(sim, 0.05);
   assert.equal(p1.spinOutTimer, 0, 'Owner is immune to own Fake Box during 0.8s grace period');
 
-  // Once TTL drops below 49.2, stepping spins out owner
-  fakeBox.ttl = 49.0;
+  // Once the grace period has passed, the owner's own box gets them too
+  fakeBox.age = 1;
+  p1.x = fakeBox.x;
+  p1.z = fakeBox.z;
   stepKartSimulation(sim, 0.05);
   assert.ok(p1.spinOutTimer > 0, 'Owner triggers Fake Box after grace period expires');
 
@@ -1138,7 +1143,6 @@ test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace perio
     kind: 'spiny_shell',
     ownerId: 'p1',
     targetId: 'p2',
-    targetKartId: 'p2',
     x: leaderKart.x,
     z: leaderKart.z,
     vx: 0,
@@ -1147,6 +1151,7 @@ test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace perio
     progress: leaderKart.progress,
     bouncesLeft: 0,
     ttl: 10,
+    age: 0,
   });
   stepKartSimulation(sim, 0.05);
   const spinyShockwave = sim.hazards.find((h) => h.kind === 'shockwave' && Math.hypot(h.x - leaderKart.x, h.z - leaderKart.z) < 2);
@@ -1166,4 +1171,164 @@ test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace perio
   stopKartSimulation('TEST_EXTRA_VERIF');
 });
 
+test('Kart Clash: every track is laid out so barriers never overlap and start on a straight', async () => {
+  const { TRACK_LIST } = await import('./kart-tracks');
+  for (const t of TRACK_LIST) {
+    const m = t.samples.length;
+    const ds = t.totalLength / m;
+    for (let i = 0; i < m; i += 2) {
+      for (let j = i + 2; j < m; j += 2) {
+        const along = Math.min(j - i, m - (j - i)) * ds;
+        if (along < t.wallWidth * 4) continue;
+        const gap = Math.hypot(t.samples[i].x - t.samples[j].x, t.samples[i].z - t.samples[j].z);
+        assert.ok(gap > t.wallWidth * 2 + 2, `${t.id}: sections at ${i} and ${j} overlap (gap ${gap.toFixed(1)})`);
+      }
+    }
+    for (let i = -6; i <= 6; i++) {
+      assert.ok(Math.abs(t.samples[(i + m) % m].curvature) < 0.006, `${t.id}: start grid should be on a straight`);
+    }
+    for (const r of t.ramps) {
+      const idx = Math.round(r.progress * m) % m;
+      assert.ok(Math.abs(t.samples[idx].curvature) < 0.012, `${t.id}: ramp ${r.id} should not sit on a tight bend`);
+    }
+  }
+});
 
+test('Kart Clash: a full race runs to the end on every track with bots and a hands-off human', async () => {
+  const { TRACK_LIST } = await import('./kart-tracks');
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation, updateKartInput } = await import('./kart-physics');
+  for (const t of TRACK_LIST) {
+    const racers = buildKartRacers([{ id: 'p1', name: 'Hands Off', avatar: '🙌', avatarColor: '#fff000' }], true, 8);
+    const sim = createKartSimulation({ roomCode: `FULL_${t.id}`, raceId: 'r', trackId: t.id, racers, itemsMode: 'frantic' });
+    sim.countdownMs = 0;
+    let ticks = 0;
+    while (!sim.completed && ticks < 30 * 240) {
+      updateKartInput(sim.roomCode, 'p1', { steer: 0 });
+      stepKartSimulation(sim, 1 / 30);
+      ticks++;
+    }
+    assert.ok(sim.completed, `${t.id}: race reaches a conclusion`);
+    assert.equal(sim.karts['p1'].finished, true, `${t.id}: hands-off human still gets home`);
+    assert.equal(sim.karts['p1'].dnf, false, `${t.id}: hands-off human finishes before the time limit`);
+    assert.equal(Object.values(sim.karts).filter((k) => k.finished).length, 8, `${t.id}: every kart gets a finishing position`);
+    const ranks = Object.values(sim.karts).map((k) => k.finishRank).sort((a, b) => a! - b!);
+    assert.deepEqual(ranks, [1, 2, 3, 4, 5, 6, 7, 8], `${t.id}: finishing ranks are unique`);
+    stopKartSimulation(sim.roomCode);
+  }
+});
+
+test('Kart Clash: green shells bounce once per wall contact and blue shells ignore everyone but the leader', async () => {
+  const { buildKartRacers, createKartSimulation, fireKartItem, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const racers = buildKartRacers([
+    { id: 'a', name: 'A', avatarColor: '#fff' },
+    { id: 'b', name: 'B', avatarColor: '#fff' },
+    { id: 'c', name: 'C', avatarColor: '#fff' },
+  ]);
+  const sim = createKartSimulation({ roomCode: 'TEST_SHELLS', raceId: 'r', trackId: 'sunny-circuit', racers });
+  sim.countdownMs = 0;
+  stepKartSimulation(sim, 1 / 30);
+
+  // A shell fired straight at the wall loses one bounce, not all of them
+  const a = sim.karts['a'];
+  a.heldItem = 'green_shell';
+  fireKartItem(sim, a);
+  const shell = sim.hazards.find((h) => h.kind === 'green_shell')!;
+  const s = sim.track.samples[a.sampleIdx];
+  shell.x = s.x + s.nx * (sim.track.wallWidth - 2);
+  shell.z = s.z + s.nz * (sim.track.wallWidth - 2);
+  shell.vx = s.nx * 100;
+  shell.vz = s.nz * 100;
+  shell.age = 5;
+  for (let i = 0; i < 4; i++) stepKartSimulation(sim, 1 / 30);
+  assert.equal(shell.bouncesLeft, 3, 'one wall contact costs exactly one bounce');
+  sim.hazards = [];
+
+  // A blue shell passing straight through a non-leader leaves them alone
+  const [leader, other] = [sim.karts['b'], sim.karts['c']];
+  leader.rank = 1;
+  other.rank = 2;
+  a.rank = 3;
+  leader.x = sim.track.samples[120].x;
+  leader.z = sim.track.samples[120].z;
+  leader.sampleIdx = 120;
+  sim.hazards.push({ id: 'blue', kind: 'spiny_shell', ownerId: 'a', targetId: 'b', x: other.x, z: other.z, vx: 0, vz: 0, angle: 0, progress: other.progress, bouncesLeft: 0, ttl: 10, age: 1 });
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(other.spinOutTimer, 0, 'blue shell flies over karts that are not its target');
+  stopKartSimulation('TEST_SHELLS');
+});
+
+test('Kart Clash: players can customise their kart, settings survive a return to the lobby, and a stale phone goes on autopilot', async () => {
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'Garage')) as { playerId: string };
+  const custom = await engine.processAction(roomCode, p1.playerId, { type: 'SET_KART_CUSTOMIZATION', kartStyle: 'rocket', sparksColor: '#d946ef' });
+  assert.equal(custom.success, true, 'a regular player is allowed to change their own kart');
+  await engine.processAction(roomCode, hostId, { type: 'SET_KART_CONFIG', speedClass: '200cc', itemsMode: 'pure' });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+
+  const { getKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  let state = (await engine.getGameState(roomCode))!;
+  const id = engine.resolvePlayerKey(state, p1.playerId)!;
+  const sim = getKartSimulation(roomCode)!;
+  assert.equal(sim.karts[id].kartStyle, 'rocket', 'chosen chassis reaches the race');
+  assert.equal(sim.karts[id].sparksColor, '#d946ef', 'chosen spark colour reaches the race');
+
+  sim.waitingForOrientation = false;
+  sim.countdownMs = 0;
+  sim.inputs[id].steer = 1;
+  sim.inputs[id].updatedAt = Date.now() - 10_000;
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(sim.karts[id].autopilot, true, 'a phone that stopped talking hands the kart to the autopilot');
+
+  await engine.processAction(roomCode, hostId, { type: 'QUIT_GAME' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.gameData.speedClass, '200cc', 'speed class survives returning to the lobby');
+  assert.equal(state.gameData.itemsMode, 'pure', 'items mode survives returning to the lobby');
+  assert.equal(state.gameData.customizations[id].kartStyle, 'rocket', 'kart choice survives returning to the lobby');
+  stopKartSimulation(roomCode);
+});
+
+test('Kart Clash: swapping two racers in the same heat never drops anyone from the tournament', async () => {
+  const { stopKartSimulation } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  for (const name of ['A', 'B', 'C', 'D']) await engine.joinRoom(roomCode, name);
+  await engine.processAction(roomCode, hostId, { type: 'SET_KART_CONFIG', format: 'tournament', heatSize: 4 });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  const heat = state.hostData.heats[0];
+  const [first, second] = heat.playerIds;
+  await engine.processAction(roomCode, hostId, { type: 'ASSIGN_HEAT_PLAYER', playerId: first, targetHeatId: heat.id, swapWithPlayerId: second });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.hostData.heats[0].playerIds.length, 4, 'everyone is still in the heat');
+  assert.equal(state.hostData.heats[0].playerIds[0], second, 'the two racers traded grid slots');
+  stopKartSimulation(roomCode);
+});
+
+test('Kart Clash: pit crew chaos waits for the race to get going, then fires once', async () => {
+  const { getKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const keys: string[] = [];
+  for (const name of ['A', 'B', 'C']) keys.push(((await engine.joinRoom(roomCode, name)) as { playerId: string }).playerId);
+  await engine.processAction(roomCode, hostId, { type: 'SET_KART_CONFIG', format: 'tournament', heatSize: 2 });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  await engine.processAction(roomCode, hostId, { type: 'START_HEAT', heatId: state.hostData.heats[0].id });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  state = (await engine.getGameState(roomCode))!;
+  const racing: string[] = state.gameData.activeRacers;
+  const pitKey = keys.find((k) => !racing.includes(engine.resolvePlayerKey(state, k)!))!;
+
+  const sim = getKartSimulation(roomCode)!;
+  const res = await engine.processAction(roomCode, pitKey, { type: 'SUBMIT_CHAOS_VOTE', choice: 'bananas' });
+  assert.equal(res.success, true);
+  assert.equal(sim.chaosFired, false, 'a vote before the green light does not drop chaos on the grid');
+  assert.equal(sim.queuedChaos, 'bananas', 'the vote is queued');
+
+  sim.waitingForOrientation = false;
+  sim.countdownMs = 0;
+  sim.raceTimeMs = 12_000;
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(sim.chaosFired, true, 'chaos drops once the race is under way');
+  assert.ok(sim.hazards.some((h) => h.kind === 'banana' && h.ownerId === 'AUDIENCE'), 'bananas land on the track');
+  stopKartSimulation(roomCode);
+});

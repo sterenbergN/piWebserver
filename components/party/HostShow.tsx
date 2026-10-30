@@ -42,7 +42,9 @@ export function useImmersive(className: 'party-tv' | 'party-phone') {
   }, [className]);
 }
 
-function moodFor(state: HostState): Mood {
+function moodFor(state: HostState): Mood | null {
+  // The race has its own track music and engine sounds
+  if (state.gameType === 'kart-clash' && state.phase === 'RACING') return null;
   if (state.phase === 'LOBBY') return 'lobby';
   if (state.phase === 'FINAL_RESULTS') return 'results';
   if (['KILLING_FLOOR', 'TIEBREAKER', 'FINAL_ESCAPE'].includes(state.phase)) return 'tense';
@@ -62,9 +64,9 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
     case 'kart-clash:HEAT_SETUP':
       return { card: intro || { title: 'Tournament Heats', subtitle: 'Set the bracket and launch the next heat!' }, sfx: 'whoosh', say: 'Set up your tournament heats and get ready to race!' };
     case 'kart-clash:TRACK_VOTE':
-      return { card: intro || { title: h.heatName || 'Vote for the Track!', subtitle: 'Calibrate your gyro steering wheel' }, sfx: 'whoosh', say: 'Vote for a track on your phones and calibrate your steering wheel!' };
+      return { card: intro || { title: h.heatName || 'Vote for the Track!', subtitle: 'Pick a course on your phone' }, sfx: 'whoosh', say: 'Vote for a track on your phones!' };
     case 'kart-clash:RACING':
-      return { sfx: 'slam', say: `${h.trackName || 'Race time'}! Hold drift on two for a rocket start!` };
+      return { sfx: 'slam', say: `${h.trackName || 'Race time'}! Hold drift on the one for a rocket start!` };
     case 'kart-clash:RACE_RESULTS': {
       const winnerName = h.topHumanId ? state.players[h.topHumanId]?.name : null;
       return { sfx: 'fanfare', say: winnerName ? `${winnerName} takes the checkered flag!` : 'Checkered flag!' };

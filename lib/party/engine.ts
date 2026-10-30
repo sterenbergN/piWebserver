@@ -397,7 +397,8 @@ function isPlayerAction(type: string) {
     type === 'UPDATE_PROFILE' ||
     type === 'CALL_VOTE' ||
     type === 'SPY_GUESS_LOCATION' ||
-    type === 'KART_INPUT'
+    type === 'KART_INPUT' ||
+    type === 'SET_KART_CUSTOMIZATION'
   );
 }
 
@@ -511,6 +512,9 @@ function resetToLobby(state: GameState) {
     totalRaces: state.gameData?.totalRaces,
     heatSize: state.gameData?.heatSize,
     aiBots: state.gameData?.aiBots,
+    speedClass: state.gameData?.speedClass,
+    itemsMode: state.gameData?.itemsMode,
+    customizations: state.gameData?.customizations,
   };
   state.audienceVote = null;
 }

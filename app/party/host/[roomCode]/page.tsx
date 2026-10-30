@@ -263,6 +263,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     ? 'FINISH_KART_RACE'
     : state?.hostData?.autoAdvanceAction;
   const canSkip = isPlaying && skipAction && skipAction !== 'RACE_TICK';
+  // The race takes over the whole screen, so the usual top bar and score strip step aside
+  const kartRacing = state?.gameType === 'kart-clash' && state?.phase === 'RACING';
   const currentMeta = HOST_GAME_META[state?.gameType] || HOST_GAME_META['quip-clash'];
   const gameColor = currentMeta.color;
   const gameName = currentMeta.name;
@@ -304,10 +306,10 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
       )}
       {show.card && <TitleCard card={show.card} color={GAME_TITLES[state.gameType]?.color} />}
       <ReactionLayer reactions={state.reactions} players={state.players} />
-      {isPlaying && <ScoreTicker players={state.players} order={state.playerOrder} />}
+      {isPlaying && !kartRacing && <ScoreTicker players={state.players} order={state.playerOrder} />}
 
       {/* Top bar */}
-      <div className="host-topbar party-content">
+      {!kartRacing && <div className="host-topbar party-content">
         <div>
           <div className={`host-topbar-game text-${gameColor}`}>{gameName}</div>
           {state.hostData?.totalRounds && (
@@ -355,7 +357,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
           </div>
           <SoundBar prefs={show.prefs} setPrefs={show.setPrefs} soundOn={show.soundOn} enableSound={show.enableSound} />
         </div>
-      </div>
+      </div>}
 
       <div className="host-stage party-content">
         {/* ===== LOBBY ===== */}
@@ -1611,10 +1613,13 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             secondsLeft={secondsLeft}
             pct={pct}
             sendAction={sendAction}
+            soundPrefs={show.prefs}
+            setSoundPrefs={show.setPrefs}
+            onRequestQuit={() => setShowQuitDialog(true)}
           />
         )}
 
-        {state.audienceVote && (
+        {state.audienceVote && !kartRacing && (
           <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 5, background: 'rgba(6,182,212,0.15)', border: '2px solid var(--party-cyan)', borderRadius: '999px', padding: '0.4rem 1rem', color: 'var(--party-cyan)', fontWeight: 800, fontSize: '0.9rem' }}>
             👀 Audience voting · {state.audienceVote.voteCount} vote{state.audienceVote.voteCount === 1 ? '' : 's'}
           </div>

@@ -5,6 +5,7 @@ import { emitStateUpdate } from '../emitter';
 import { waitingFor } from '../presence';
 import { KART_TRACKS, TRACK_LIST, TrackId } from '../kart-tracks';
 import {
+  ChaosEffect,
   KartRaceSim,
   KartSpeedClass,
   KartItemsMode,
@@ -12,15 +13,15 @@ import {
   createKartSimulation,
   forceStartCountdown,
   getKartSimulation,
-   getKartSnapshot,
+  getKartSnapshot,
+  queueChaosDrop,
   startKartSimulationLoop,
   stopKartSimulation,
-  triggerChaosDrop,
   updateKartInput,
 } from '../kart-physics';
 
 export type KartFormat = 'grand-prix' | 'tournament';
-export type ChaosChoice = 'bananas' | 'item-boxes' | 'boost-pack';
+export type ChaosChoice = ChaosEffect;
 
 export interface KartHeatStandingsRow {
   id: string;
@@ -31,6 +32,7 @@ export interface KartHeatStandingsRow {
   rank: number;
   points: number;
   timeMs: number | null;
+  dnf?: boolean;
 }
 
 export interface KartHeat {
@@ -49,7 +51,22 @@ const RANK_POINTS = [1500, 1200, 1000, 800, 600, 400, 200, 100];
 const CHAMPIONSHIP_FINAL_BONUS = 500;
 const PIT_CREW_PREDICT_BONUS = 300;
 const TRACK_VOTE_SECONDS = 14;
-const RESULTS_SECONDS = 12;
+const RESULTS_SECONDS = 16;
+const PREDICTION_WINDOW_MS = 30_000;
+
+/** Everyone's running Cup total, biggest first, with what they earned this race. */
+function cupStandings(state: GameState, gained: Record<string, number>) {
+  return activeRoomPlayers(state)
+    .map((pid) => ({
+      id: pid,
+      name: state.players[pid].name,
+      avatar: state.players[pid].avatar || '🏎️',
+      color: state.players[pid].avatarColor,
+      score: state.players[pid].score,
+      gained: gained[pid] || 0,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
 
 function activeRoomPlayers(state: GameState): string[] {
   return state.playerOrder.filter((pid) => state.players[pid] && !state.players[pid].left);
@@ -152,7 +169,6 @@ function startTrackVote(state: GameState, activeHeat?: KartHeat) {
   state.gameData.trackVotes = {};
   state.gameData.heatPredictions = {};
   state.gameData.chaosVotes = {};
-  state.gameData.chaosTriggered = false;
 
   const activeRacers = activeHeat
     ? activeHeat.playerIds.filter((pid) => state.players[pid] && !state.players[pid].left)
@@ -232,11 +248,11 @@ function chooseWinningTrack(state: GameState): TrackId {
     const tied = entries.filter(([, c]) => c === maxVotes).map(([tid]) => tid as TrackId);
     return tied[Math.floor(Math.random() * tied.length)];
   }
-  // Default rotation through tracks so a Grand Prix plays varied courses
+  // Nobody voted: pick something not raced yet so a Grand Prix stays varied
   const played: TrackId[] = state.gameData.playedTracks || [];
   const unplayed = TRACK_LIST.map((t) => t.id).filter((id) => !played.includes(id));
   const pool = unplayed.length > 0 ? unplayed : TRACK_LIST.map((t) => t.id);
-  return pool[(state.gameData.raceNumber - 1) % pool.length];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function launchRace(state: GameState, trackId: TrackId) {
@@ -262,7 +278,8 @@ function launchRace(state: GameState, trackId: TrackId) {
     })
     .filter(Boolean) as any[];
 
-  const targetGridSize = cfg.format === 'tournament' ? Math.max(cfg.heatSize, humanPlayers.length, cfg.aiBots ? 6 : humanPlayers.length) : 8;
+  // Bots fill out the grid so a two-player heat still has a pack to fight through
+  const targetGridSize = Math.max(humanPlayers.length, cfg.format === 'tournament' ? Math.max(cfg.heatSize, 6) : 8);
   const racers = buildKartRacers(humanPlayers, cfg.aiBots, targetGridSize);
   const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
   const raceId = `${state.roomCode}_R${state.gameData.raceNumber}_${Date.now()}`;
@@ -289,7 +306,7 @@ function launchRace(state: GameState, trackId: TrackId) {
 
   openAudienceVote(state, {
     key: `kart-race-${state.gameData.raceNumber}`,
-    prompt: `Who wins ${state.gameData.activeHeatName}?`,
+    prompt: `Who wins ${String(state.gameData.activeHeatName).replace(/^🏆\s*/u, '')}?`,
     choices: humanPlayers.map((p) => ({ id: p.id, label: `${p.avatar || '🏎️'} ${p.name}` })),
   });
 
@@ -308,8 +325,6 @@ function launchRace(state: GameState, trackId: TrackId) {
     trackEmoji: track.emoji,
     activeRacers: activeRacerIds,
     initialSnapshot,
-    chaosTriggered: false,
-    chaosChoice: null,
   };
 
   for (const pid of activeRoomPlayers(state)) {
@@ -338,7 +353,6 @@ function launchRace(state: GameState, trackId: TrackId) {
       })),
       predictedWinnerId: state.gameData.heatPredictions?.[pid] || null,
       chaosVote: state.gameData.chaosVotes?.[pid] || null,
-      chaosTriggered: false,
     };
   }
 }
@@ -362,6 +376,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       rank: idx + 1,
       points: !k.isBot ? (RANK_POINTS[idx] || 100) : 0,
       timeMs: k.finishTimeMs,
+      dnf: k.dnf || !k.finished,
     }));
 
     // Merge simulation stats into game award counters
@@ -409,9 +424,11 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   }
 
   // Award race points to human racers
+  const gained: Record<string, number> = {};
   for (const row of humanRows) {
     if (state.players[row.id]) {
       state.players[row.id].score += row.points;
+      gained[row.id] = row.points;
     }
   }
 
@@ -422,6 +439,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     for (const [watcherId, pickedId] of Object.entries(predictions)) {
       if (pickedId === topHuman.id && state.players[watcherId] && !activeRacerIds.includes(watcherId)) {
         state.players[watcherId].score += PIT_CREW_PREDICT_BONUS;
+        gained[watcherId] = (gained[watcherId] || 0) + PIT_CREW_PREDICT_BONUS;
         correctPredictors.push(watcherId);
         bumpStat(state, 'pitCrewOracle', watcherId, 1);
       }
@@ -452,7 +470,9 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     const allQualDone = qualifyingHeats.length > 1 && qualifyingHeats.every((h) => h.status === 'completed');
     const hasFinal = heats.some((h) => h.stage === 'final');
     if (allQualDone && !hasFinal) {
-      const finalists = [...new Set(qualifyingHeats.flatMap((h) => h.qualifiers || []))].slice(0, 8);
+      const finalists = [...new Set(qualifyingHeats.flatMap((h) => h.qualifiers || []))]
+        .filter((pid) => state.players[pid] && !state.players[pid].left)
+        .slice(0, 8);
       if (finalists.length >= 2) {
         heats.push({
           id: `heat_final_${Date.now()}`,
@@ -478,6 +498,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     isFinalHeat,
     trackId: state.gameData.currentTrackId,
     standings,
+    cupStandings: cupStandings(state, gained),
     fastestLap: activeSim?.stats?.fastestLap || null,
     topHumanId: topHuman?.id || null,
     correctPredictors,
@@ -496,7 +517,13 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     state.playerData[pid] = {
       phase: 'RACE_RESULTS',
       heatName: state.gameData.activeHeatName,
+      raceNumber: state.gameData.raceNumber,
+      totalRaces: cfg.format === 'grand-prix' ? cfg.totalRaces : heats.length,
       myRank: myRow?.rank || null,
+      myDnf: Boolean(myRow?.dnf),
+      myTimeMs: myRow?.timeMs ?? null,
+      myCupRank: cupStandings(state, gained).findIndex((row) => row.id === pid) + 1,
+      myCupScore: state.players[pid]?.score || 0,
       myPoints: myRow?.points || 0,
       qualified,
       wonPrediction,
@@ -576,10 +603,11 @@ export const kartClashLogic = {
       case 'SET_KART_CUSTOMIZATION': {
         const gd = (state.gameData ||= {});
         const custom = (gd.customizations ||= {});
+        if (!state.players[playerId]) return;
         const kartStyle = ['classic', 'rocket', 'cyber', 'bruiser'].includes(action.kartStyle)
           ? action.kartStyle
           : 'classic';
-        const sparksColor = typeof action.sparksColor === 'string' && action.sparksColor.startsWith('#')
+        const sparksColor = typeof action.sparksColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(action.sparksColor)
           ? action.sparksColor
           : (state.players[playerId]?.avatarColor || '#38bdf8');
         custom[playerId] = { kartStyle, sparksColor };
@@ -626,9 +654,11 @@ export const kartClashLogic = {
           sourceHeat.playerIds = sourceHeat.playerIds.map((id) => (id === targetPlayerId ? swapWithPlayerId : id));
           targetHeat.playerIds = targetHeat.playerIds.map((id) => (id === swapWithPlayerId ? targetPlayerId : id));
         } else if (targetHeat.playerIds.includes(targetPlayerId)) {
-          // Toggle out if heat has >1 player
-          if (targetHeat.playerIds.length > 1) {
-            targetHeat.playerIds = targetHeat.playerIds.filter((id) => id !== targetPlayerId);
+          // Both in the same heat: swap grid positions. Nobody ever falls out of the tournament.
+          if (swapWithPlayerId && targetHeat.playerIds.includes(swapWithPlayerId)) {
+            targetHeat.playerIds = targetHeat.playerIds.map((id) =>
+              id === targetPlayerId ? swapWithPlayerId : id === swapWithPlayerId ? targetPlayerId : id,
+            );
           }
         } else if (sourceHeat && targetHeat.playerIds.length >= cfg.heatSize) {
           // Target heat is already at heatSize capacity -> swap with last player in targetHeat so sizes stay balanced
@@ -692,8 +722,9 @@ export const kartClashLogic = {
         const completed = heats.filter((h) => h.status === 'completed');
         if (completed.length === 0) return;
 
-        const qualifiers = [...new Set(completed.flatMap((h) => h.qualifiers || []))].slice(0, 8);
-        const nonQualifiers = activeRoomPlayers(state)
+        const present = activeRoomPlayers(state);
+        const qualifiers = [...new Set(completed.flatMap((h) => h.qualifiers || []))].filter((pid) => present.includes(pid)).slice(0, 8);
+        const nonQualifiers = present
           .filter((pid) => !qualifiers.includes(pid))
           .slice(0, 8);
 
@@ -734,7 +765,7 @@ export const kartClashLogic = {
       }
 
       case 'END_TOURNAMENT': {
-        if (!isHost) return;
+        if (!isHost || state.phase === 'RACING') return;
         stopKartSimulation(state.roomCode);
         state.phase = 'FINAL_RESULTS';
         state.hostData = { message: 'Tournament Complete!' };
@@ -780,7 +811,7 @@ export const kartClashLogic = {
 
         // Lock in prediction during TRACK_VOTE or early RACING
         const sim = getKartSimulation(state.roomCode);
-        if (state.phase === 'RACING' && sim && sim.elapsedMs > 30_000) return;
+        if (state.phase === 'RACING' && sim && sim.raceTimeMs > PREDICTION_WINDOW_MS) return;
 
         state.gameData.heatPredictions = { ...(state.gameData.heatPredictions || {}), [playerId]: predictedId };
         if (state.playerData[playerId]) {
@@ -795,60 +826,26 @@ export const kartClashLogic = {
         if (activeRacers.includes(playerId)) return; // Only Pit Crew / waiting players vote on Chaos Drop
         const choice = String(action.choice || '') as ChaosChoice;
         if (!['bananas', 'item-boxes', 'boost-pack'].includes(choice)) return;
-        if (state.gameData.chaosTriggered) return;
+        const chaosSim = getKartSimulation(state.roomCode);
+        if (!chaosSim || chaosSim.chaosFired) return;
 
         state.gameData.chaosVotes = { ...(state.gameData.chaosVotes || {}), [playerId]: choice };
         if (state.playerData[playerId]) {
           state.playerData[playerId].chaosVote = choice;
         }
 
-        // Check if all waiting players have voted or if race is past 15s to trigger immediately
-        const waitingIds = activeRoomPlayers(state).filter((pid) => !activeRacers.includes(pid));
+        // The leading choice is queued and fires once the race is properly under way
         const voteValues = Object.values(state.gameData.chaosVotes) as ChaosChoice[];
-        const sim = getKartSimulation(state.roomCode);
-        const pastOpening = !sim || sim.elapsedMs >= 10_000 || voteValues.length >= Math.max(1, waitingIds.length);
-        if (pastOpening && voteValues.length > 0) {
-          const tally: Record<ChaosChoice, number> = { bananas: 0, 'item-boxes': 0, 'boost-pack': 0 };
-          for (const c of voteValues) tally[c] = (tally[c] || 0) + 1;
-          const winner = (Object.entries(tally).sort((a, b) => b[1] - a[1])[0][0]) as ChaosChoice;
-          state.gameData.chaosTriggered = true;
-          state.hostData.chaosTriggered = true;
-          state.hostData.chaosChoice = winner;
-          for (const pid of waitingIds) {
-            if (state.playerData[pid]) state.playerData[pid].chaosTriggered = true;
-          }
-          triggerChaosDrop(state.roomCode, winner);
-          emitStateUpdate(state.roomCode);
-        }
+        const tally: Record<ChaosChoice, number> = { bananas: 0, 'item-boxes': 0, 'boost-pack': 0 };
+        for (const c of voteValues) tally[c] = (tally[c] || 0) + 1;
+        const winner = (Object.entries(tally).sort((x, y) => y[1] - x[1])[0][0]) as ChaosChoice;
+        queueChaosDrop(state.roomCode, winner);
         break;
       }
 
       case 'KART_INPUT': {
         if (state.phase !== 'RACING') return;
         updateKartInput(state.roomCode, playerId, action.input || action);
-        break;
-      }
-
-      case 'HONK_HORN': {
-        if (state.phase !== 'RACING') return;
-        updateKartInput(state.roomCode, playerId, { honk: true });
-        break;
-      }
-
-      case 'PIT_CREW_EMOJI':
-      case 'SEND_EMOJI': {
-        if (state.phase !== 'RACING') return;
-        const emoji = typeof action.emoji === 'string' ? action.emoji.slice(0, 4) : '🏎️';
-        state.hostData = {
-          ...state.hostData,
-          latestEmoji: {
-            id: `${playerId}_${Date.now()}`,
-            playerId,
-            playerName: state.players[playerId]?.name || 'Pit Crew',
-            emoji,
-            timestamp: Date.now(),
-          },
-        };
         break;
       }
 

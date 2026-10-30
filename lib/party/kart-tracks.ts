@@ -8,6 +8,7 @@ export type TrackId =
 
 export interface TrackSample {
   x: number;
+  y: number; // road surface height at the centerline (visual only, physics is 2D)
   z: number;
   tx: number;
   tz: number;
@@ -15,7 +16,7 @@ export interface TrackSample {
   nz: number;
   angle: number;
   curvature: number;
-  bank?: number; // radians of road bank/camber into corner
+  bank: number; // radians of road camber; the outside of a corner is raised
   s: number;
   progress: number;
 }
@@ -23,8 +24,9 @@ export interface TrackSample {
 export interface BoostPadDef {
   id: string;
   progress: number;
-  lateral: number; // -0.6 to +0.6 of halfWidth
+  lateral: number; // -1..1 of the half road
   x: number;
+  y: number;
   z: number;
   angle: number;
 }
@@ -34,16 +36,21 @@ export interface ItemBoxSpawnDef {
   progress: number;
   lateral: number;
   x: number;
+  y: number;
   z: number;
 }
 
-export interface SceneryProp {
+/** A jump across the full road width. Crossing it launches the kart. */
+export interface RampDef {
+  id: string;
+  progress: number;
   x: number;
+  y: number;
   z: number;
-  kind: 'palm' | 'cactus' | 'rock' | 'pine' | 'snowman' | 'neon-pillar' | 'star-ring' | 'lava-spire' | 'cyber-arch';
-  scale: number;
-  color: string;
+  angle: number;
 }
+
+export type TrackBiome = 'beach' | 'canyon' | 'snow' | 'space' | 'lava' | 'city';
 
 export interface KartTrack {
   id: TrackId;
@@ -52,27 +59,42 @@ export interface KartTrack {
   tagline: string;
   difficulty: 'Easy' | 'Medium' | 'Hard' | 'Expert';
   roadWidth: number;
-  wallWidth: number; // distance from centerline to outer bounce wall
-  friction: number; // 1.0 = normal, <1.0 = icy/slippery
+  wallWidth: number; // distance from centerline to the barrier
+  friction: number; // 1.0 = normal, <1.0 = icy, karts slide further
+  biome: TrackBiome;
   theme: {
     skyTop: string;
-    skyBottom: string;
-    groundColor: string;
+    skyHorizon: string;
+    fog: string;
+    fogDensity: number;
+    sun: string;
+    sunDir: [number, number, number];
+    ambient: string;
+    groundLow: string;
+    groundHigh: string;
+    shoulder: string;
     roadColor: string;
+    roadGrain: string;
     roadStripeColor: string;
     curbColorA: string;
     curbColorB: string;
     wallColor: string;
+    wallTop: string;
+    wallHeight: number;
     accentColor: string;
     rainbowRoad?: boolean;
+    glowRoad?: boolean;
   };
+  music: { root: number; bpm: number; chords: number[][]; lead: number[] };
   controlPoints: [number, number][];
   samples: TrackSample[];
   totalLength: number;
   boostPads: BoostPadDef[];
   itemBoxes: ItemBoxSpawnDef[];
-  scenery: SceneryProp[];
+  ramps: RampDef[];
 }
+
+export const SAMPLE_COUNT = 360;
 
 function wrapAngle(a: number): number {
   let r = (a + Math.PI) % (Math.PI * 2);
@@ -106,11 +128,12 @@ function catmullRomPoint(
 
 /**
  * Build uniform arc-length resampled spline samples so sample[i].progress === i / targetCount
- * and sampleTrackAtProgress / projectOntoTrack are 100% consistent everywhere on the loop.
+ * and sampleTrackAtProgress / projectOntoTrack are consistent everywhere on the loop.
  */
 function buildSplineSamples(
   controlPoints: [number, number][],
-  targetCount = 240,
+  hills: [number, number, number][],
+  targetCount = SAMPLE_COUNT,
 ): { samples: TrackSample[]; totalLength: number } {
   const n = controlPoints.length;
   const denseSub = 40;
@@ -135,7 +158,6 @@ function buildSplineSamples(
     cumArc.push(totalLength);
   }
 
-  // Resample at uniform arc-length steps around the closed loop
   const rawPts: [number, number][] = [];
   let cursor = 0;
   for (let k = 0; k < targetCount; k++) {
@@ -162,13 +184,18 @@ function buildSplineSamples(
     const len = Math.hypot(dx, dz) || 1;
     const tx = dx / len;
     const tz = dz / len;
-    // Right-hand normal in XZ plane (+nx is right side of road when facing +tangent)
+    // Right-hand normal in XZ plane (+n is the right side of the road when facing +tangent)
     const nx = -tz;
     const nz = tx;
     const angle = Math.atan2(tx, tz);
-    const s = (i / m) * totalLength;
+    const progress = i / m;
+    // Whole-number wave counts keep the elevation seamless around the loop; the grid straddles
+    // progress 0, so hills fade out around the start line.
+    const startFade = Math.min(1, Math.min(progress, 1 - progress) / 0.06);
+    const y = hills.reduce((sum, [waves, amp, phase]) => sum + Math.sin(progress * Math.PI * 2 * waves + phase) * amp, 0) * startFade * startFade;
     samples.push({
       x: rawPts[i][0],
+      y,
       z: rawPts[i][1],
       tx,
       tz,
@@ -177,25 +204,32 @@ function buildSplineSamples(
       angle,
       curvature: 0,
       bank: 0,
-      s,
-      progress: i / m,
+      s: progress * totalLength,
+      progress,
     });
   }
 
-  // Compute smoothed signed curvature (rad per world unit) and corner banking camber
-  for (let i = 0; i < m; i++) {
+  // Smoothed signed curvature (rad per world unit) and corner camber
+  const raw = samples.map((_, i) => {
     const prev = samples[(i - 2 + m) % m];
     const next = samples[(i + 2) % m];
-    const curv = wrapAngle(next.angle - prev.angle) / (4 * ds);
-    samples[i].curvature = curv;
-    // Bank angle (radians): outside curb is elevated, inside is lowered into the curve
-    samples[i].bank = Math.max(-0.24, Math.min(0.24, curv * 14));
+    return wrapAngle(next.angle - prev.angle) / (4 * ds);
+  });
+  for (let i = 0; i < m; i++) {
+    let sum = 0;
+    for (let o = -3; o <= 3; o++) sum += raw[(i + o + m) % m];
+    samples[i].curvature = sum / 7;
+  }
+  for (let i = 0; i < m; i++) {
+    let sum = 0;
+    for (let o = -6; o <= 6; o++) sum += samples[(i + o + m) % m].curvature;
+    samples[i].bank = Math.max(-0.14, Math.min(0.14, (sum / 13) * 7));
   }
 
   return { samples, totalLength };
 }
 
-export function sampleTrackAtProgress(track: KartTrack, rawProgress: number): TrackSample {
+export function sampleTrackAtProgress(track: Pick<KartTrack, 'samples' | 'totalLength'>, rawProgress: number): TrackSample {
   const p = ((rawProgress % 1) + 1) % 1;
   const m = track.samples.length;
   const exact = p * m;
@@ -214,6 +248,7 @@ export function sampleTrackAtProgress(track: KartTrack, rawProgress: number): Tr
   const nTz = tz / tLen;
   return {
     x,
+    y: a.y + (b.y - a.y) * frac,
     z,
     tx: nTx,
     tz: nTz,
@@ -221,10 +256,16 @@ export function sampleTrackAtProgress(track: KartTrack, rawProgress: number): Tr
     nz: nTx,
     angle: Math.atan2(nTx, nTz),
     curvature: a.curvature + (b.curvature - a.curvature) * frac,
-    bank: (a.bank ?? 0) + ((b.bank ?? 0) - (a.bank ?? 0)) * frac,
+    bank: a.bank + (b.bank - a.bank) * frac,
     s: p * track.totalLength,
     progress: p,
   };
+}
+
+/** Road surface height at a lateral offset from the centerline at this progress. */
+export function trackHeightAt(track: Pick<KartTrack, 'samples' | 'totalLength'>, progress: number, lateral: number): number {
+  const s = sampleTrackAtProgress(track, progress);
+  return s.y + Math.sin(s.bank) * lateral;
 }
 
 export function projectOntoTrack(
@@ -243,46 +284,28 @@ export function projectOntoTrack(
   let bestIdx = 0;
   let bestDistSq = Infinity;
 
-  if (typeof hintSampleIdx === 'number' && hintSampleIdx >= 0 && hintSampleIdx < m) {
-    // Search local window first (±22 samples), fallback to full search if far away
-    const window = 22;
-    for (let offset = -window; offset <= window; offset++) {
-      const idx = (hintSampleIdx + offset + m) % m;
-      const s = track.samples[idx];
-      const dx = x - s.x;
-      const dz = z - s.z;
-      const dSq = dx * dx + dz * dz;
-      if (dSq < bestDistSq) {
-        bestDistSq = dSq;
-        bestIdx = idx;
-      }
+  const scan = (idx: number) => {
+    const s = track.samples[idx];
+    const dx = x - s.x;
+    const dz = z - s.z;
+    const dSq = dx * dx + dz * dz;
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      bestIdx = idx;
     }
+  };
+
+  if (typeof hintSampleIdx === 'number' && hintSampleIdx >= 0 && hintSampleIdx < m) {
+    // A local window keeps karts on their own stretch of road where sections run close together
+    const window = 24;
+    for (let offset = -window; offset <= window; offset++) scan((hintSampleIdx + offset + m) % m);
     if (bestDistSq > track.wallWidth * track.wallWidth * 2.2) {
-      for (let idx = 0; idx < m; idx++) {
-        const s = track.samples[idx];
-        const dx = x - s.x;
-        const dz = z - s.z;
-        const dSq = dx * dx + dz * dz;
-        if (dSq < bestDistSq) {
-          bestDistSq = dSq;
-          bestIdx = idx;
-        }
-      }
+      for (let idx = 0; idx < m; idx++) scan(idx);
     }
   } else {
-    for (let idx = 0; idx < m; idx++) {
-      const s = track.samples[idx];
-      const dx = x - s.x;
-      const dz = z - s.z;
-      const dSq = dx * dx + dz * dz;
-      if (dSq < bestDistSq) {
-        bestDistSq = dSq;
-        bestIdx = idx;
-      }
-    }
+    for (let idx = 0; idx < m; idx++) scan(idx);
   }
 
-  // Sub-sample projection along tangent for smooth continuous progress & lateral offset
   const sample = track.samples[bestIdx];
   const dx = x - sample.x;
   const dz = z - sample.z;
@@ -300,87 +323,6 @@ export function projectOntoTrack(
   };
 }
 
-function buildTrackFeatures(
-  samples: TrackSample[],
-  totalLength: number,
-  roadWidth: number,
-  wallWidth: number,
-  boostProgresses: { progress: number; lateral: number }[],
-  itemRowProgresses: number[],
-  sceneryKind: SceneryProp['kind'],
-  sceneryColors: string[],
-): {
-  boostPads: BoostPadDef[];
-  itemBoxes: ItemBoxSpawnDef[];
-  scenery: SceneryProp[];
-} {
-  const dummyTrack = { samples, totalLength } as KartTrack;
-  const boostPads: BoostPadDef[] = boostProgresses.map((bp, i) => {
-    const s = sampleTrackAtProgress(dummyTrack, bp.progress);
-    const offset = bp.lateral * (roadWidth * 0.38);
-    return {
-      id: `boost_${i}`,
-      progress: bp.progress,
-      lateral: bp.lateral,
-      x: s.x + s.nx * offset,
-      z: s.z + s.nz * offset,
-      angle: s.angle,
-    };
-  });
-
-  const itemBoxes: ItemBoxSpawnDef[] = [];
-  let boxCounter = 0;
-  for (const rowP of itemRowProgresses) {
-    const s = sampleTrackAtProgress(dummyTrack, rowP);
-    for (const lat of [-0.52, -0.18, 0.18, 0.52]) {
-      const offset = lat * (roadWidth * 0.42);
-      itemBoxes.push({
-        id: `box_${boxCounter++}`,
-        progress: rowP,
-        lateral: lat,
-        x: s.x + s.nx * offset,
-        z: s.z + s.nz * offset,
-      });
-    }
-  }
-
-  const scenery: SceneryProp[] = [];
-  const step = Math.max(1, Math.floor(samples.length / 44));
-  for (let i = 0; i < samples.length; i += step) {
-    const s = samples[i];
-    for (const side of [-1, 1]) {
-      if ((i + (side > 0 ? 1 : 0)) % 2 !== 0) continue;
-      const dist = wallWidth + 16 + ((i * 17) % 20);
-      const x = s.x + s.nx * side * dist;
-      const z = s.z + s.nz * side * dist;
-      let tooClose = false;
-      for (let j = 0; j < samples.length; j++) {
-        const other = samples[j];
-        if (Math.hypot(x - other.x, z - other.z) < wallWidth + 14) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (!tooClose) {
-        const kind = (sceneryKind === 'lava-spire' && (i % 2 === 0))
-          ? 'rock'
-          : (sceneryKind === 'cyber-arch' && (i % 2 === 0))
-          ? 'neon-pillar'
-          : sceneryKind;
-        scenery.push({
-          x,
-          z,
-          kind,
-          scale: 0.95 + ((i * 13) % 10) * 0.08,
-          color: sceneryColors[i % sceneryColors.length],
-        });
-      }
-    }
-  }
-
-  return { boostPads, itemBoxes, scenery };
-}
-
 function createTrack(config: {
   id: TrackId;
   name: string;
@@ -390,24 +332,54 @@ function createTrack(config: {
   roadWidth: number;
   wallWidth: number;
   friction: number;
+  biome: TrackBiome;
   theme: KartTrack['theme'];
+  music: KartTrack['music'];
   controlPoints: [number, number][];
-  boostProgresses: { progress: number; lateral: number }[];
-  itemRowProgresses: number[];
-  sceneryKind: SceneryProp['kind'];
-  sceneryColors: string[];
+  hills: [number, number, number][];
+  boosts: { progress: number; lateral: number }[];
+  itemRows: number[];
+  ramps: number[];
 }): KartTrack {
-  const { samples, totalLength } = buildSplineSamples(config.controlPoints, 240);
-  const { boostPads, itemBoxes, scenery } = buildTrackFeatures(
-    samples,
-    totalLength,
-    config.roadWidth,
-    config.wallWidth,
-    config.boostProgresses,
-    config.itemRowProgresses,
-    config.sceneryKind,
-    config.sceneryColors,
-  );
+  const { samples, totalLength } = buildSplineSamples(config.controlPoints, config.hills);
+  const halfRoad = config.roadWidth * 0.5;
+  const at = (progress: number) => sampleTrackAtProgress({ samples, totalLength }, progress);
+
+  const boostPads: BoostPadDef[] = config.boosts.map((bp, i) => {
+    const s = at(bp.progress);
+    const offset = bp.lateral * halfRoad;
+    return {
+      id: `boost_${i}`,
+      progress: bp.progress,
+      lateral: bp.lateral,
+      x: s.x + s.nx * offset,
+      y: s.y + Math.sin(s.bank) * offset,
+      z: s.z + s.nz * offset,
+      angle: s.angle,
+    };
+  });
+
+  const itemBoxes: ItemBoxSpawnDef[] = [];
+  config.itemRows.forEach((rowP) => {
+    const s = at(rowP);
+    for (const lat of [-0.66, -0.22, 0.22, 0.66]) {
+      const offset = lat * halfRoad;
+      itemBoxes.push({
+        id: `box_${itemBoxes.length}`,
+        progress: rowP,
+        lateral: lat,
+        x: s.x + s.nx * offset,
+        y: s.y + Math.sin(s.bank) * offset,
+        z: s.z + s.nz * offset,
+      });
+    }
+  });
+
+  const ramps: RampDef[] = config.ramps.map((progress, i) => {
+    const s = at(progress);
+    return { id: `ramp_${i}`, progress, x: s.x, y: s.y, z: s.z, angle: s.angle };
+  });
+
   return {
     id: config.id,
     name: config.name,
@@ -417,13 +389,15 @@ function createTrack(config: {
     roadWidth: config.roadWidth,
     wallWidth: config.wallWidth,
     friction: config.friction,
+    biome: config.biome,
     theme: config.theme,
+    music: config.music,
     controlPoints: config.controlPoints,
     samples,
     totalLength,
     boostPads,
     itemBoxes,
-    scenery,
+    ramps,
   };
 }
 
@@ -432,267 +406,291 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     id: 'sunny-circuit',
     name: 'Sunny Circuit',
     emoji: '🌴',
-    tagline: 'Wide tropical beach speedway with sweeping banked curves & boost pads',
+    tagline: 'A wide seaside speedway with a kink on the back straight and an easy jump over the dunes',
     difficulty: 'Easy',
-    roadWidth: 36,
-    wallWidth: 28,
+    roadWidth: 38,
+    wallWidth: 30,
     friction: 1.0,
+    biome: 'beach',
     theme: {
-      skyTop: '#0284c7',
-      skyBottom: '#bae6fd',
-      groundColor: '#15803d',
-      roadColor: '#334155',
-      roadStripeColor: '#f8fafc',
-      curbColorA: '#ef4444',
+      skyTop: '#1d7fe0',
+      skyHorizon: '#cdeeff',
+      fog: '#bfe6fb',
+      fogDensity: 0.0011,
+      sun: '#fff6d8',
+      sunDir: [0.45, 0.75, 0.35],
+      ambient: '#dff1ff',
+      groundLow: '#e9d38f',
+      groundHigh: '#3fa34d',
+      shoulder: '#58b65a',
+      roadColor: '#4a5160',
+      roadGrain: '#5c6474',
+      roadStripeColor: '#ffffff',
+      curbColorA: '#ef3b3b',
       curbColorB: '#ffffff',
-      wallColor: '#0ea5e9',
+      wallColor: '#2f8fe0',
+      wallTop: '#ffffff',
+      wallHeight: 2.2,
       accentColor: '#22c55e',
     },
+    music: { root: 60, bpm: 138, chords: [[0, 4, 7], [5, 9, 12], [9, 12, 16], [7, 11, 14]], lead: [12, 16, 19, 16, 14, 12, 9, 12] },
     controlPoints: [
-      [0, -150],
-      [0, -25],
-      [30, 95],
-      [120, 155],
-      [220, 120],
-      [260, 0],
-      [230, -110],
-      [240, -200],
-      [145, -268],
-      [35, -245],
+      [0, -170], [0, -40], [0, 90], [35, 195], [135, 250], [265, 225], [345, 130], [305, 25],
+      [225, -25], [240, -115], [325, -180], [315, -285], [205, -345], [85, -330], [15, -270],
     ],
-    boostProgresses: [
-      { progress: 0.16, lateral: 0.25 },
-      { progress: 0.46, lateral: -0.22 },
-      { progress: 0.78, lateral: 0.0 },
+    hills: [[2, 3.5, 0.6], [3, 1.6, 2.1]],
+    boosts: [
+      { progress: 0.1, lateral: 0.3 },
+      { progress: 0.4, lateral: -0.3 },
+      { progress: 0.62, lateral: 0.0 },
+      { progress: 0.84, lateral: -0.25 },
     ],
-    itemRowProgresses: [0.1, 0.36, 0.64, 0.88],
-    sceneryKind: 'palm',
-    sceneryColors: ['#16a34a', '#22c55e', '#4ade80'],
+    itemRows: [0.06, 0.29, 0.5, 0.74, 0.93],
+    ramps: [0.17],
   }),
 
   'canyon-driftway': createTrack({
     id: 'canyon-driftway',
     name: 'Canyon Driftway',
     emoji: '🏜️',
-    tagline: 'Sunset red-rock bends built for charging Orange Super Mini-Turbos',
+    tagline: 'Sunset hairpins between red mesas, built for chaining long Super Mini-Turbos',
     difficulty: 'Medium',
     roadWidth: 34,
     wallWidth: 27,
-    friction: 0.98,
+    friction: 0.97,
+    biome: 'canyon',
     theme: {
-      skyTop: '#7c2d12',
-      skyBottom: '#fb923c',
-      groundColor: '#9a3412',
-      roadColor: '#292524',
+      skyTop: '#5b2a86',
+      skyHorizon: '#ffb26b',
+      fog: '#f4a36a',
+      fogDensity: 0.0014,
+      sun: '#ffd3a1',
+      sunDir: [-0.7, 0.42, 0.45],
+      ambient: '#ffd9c2',
+      groundLow: '#c8743d',
+      groundHigh: '#8c3b1f',
+      shoulder: '#d8955a',
+      roadColor: '#4b3b35',
+      roadGrain: '#5e4a41',
       roadStripeColor: '#fcd34d',
       curbColorA: '#f97316',
       curbColorB: '#fef3c7',
-      wallColor: '#ea580c',
+      wallColor: '#a4492a',
+      wallTop: '#e8a15f',
+      wallHeight: 4.5,
       accentColor: '#f59e0b',
     },
+    music: { root: 57, bpm: 132, chords: [[0, 3, 7], [-2, 2, 5], [-4, 0, 3], [-5, -1, 2]], lead: [12, 15, 17, 15, 12, 10, 12, 7] },
     controlPoints: [
-      [0, -155],
-      [0, -20],
-      [50, 95],
-      [170, 145],
-      [275, 85],
-      [292, -25],
-      [232, -100],
-      [246, -192],
-      [170, -268],
-      [70, -272],
-      [10, -232],
+      [0, -170], [0, -30], [10, 100], [75, 190], [175, 175], [205, 80], [175, -25], [225, -105],
+      [320, -75], [355, 40], [420, 135], [530, 110], [570, 0], [535, -130], [510, -250],
+      [420, -335], [295, -320], [175, -350], [60, -310],
     ],
-    boostProgresses: [
-      { progress: 0.22, lateral: -0.28 },
-      { progress: 0.52, lateral: 0.28 },
-      { progress: 0.74, lateral: -0.2 },
-      { progress: 0.91, lateral: 0.0 },
+    hills: [[3, 5, 1.2], [5, 2, 0.4]],
+    boosts: [
+      { progress: 0.07, lateral: -0.3 },
+      { progress: 0.42, lateral: 0.3 },
+      { progress: 0.69, lateral: -0.2 },
+      { progress: 0.86, lateral: 0.0 },
     ],
-    itemRowProgresses: [0.12, 0.38, 0.62, 0.84],
-    sceneryKind: 'cactus',
-    sceneryColors: ['#15803d', '#d97706', '#b45309'],
+    itemRows: [0.11, 0.33, 0.56, 0.8],
+    ramps: [0.63],
   }),
 
   'frostbite-peak': createTrack({
     id: 'frostbite-peak',
     name: 'Frostbite Peak',
     emoji: '❄️',
-    tagline: 'Alpine glacier speedway with fast straightaways & sweeping S-curves',
+    tagline: 'Long icy straights and sliding chicanes under the mountain, the grip is not your friend',
     difficulty: 'Hard',
     roadWidth: 34,
     wallWidth: 27,
-    friction: 0.92,
+    friction: 0.82,
+    biome: 'snow',
     theme: {
-      skyTop: '#0f172a',
-      skyBottom: '#38bdf8',
-      groundColor: '#cbd5e1',
-      roadColor: '#1e293b',
-      roadStripeColor: '#7dd3fc',
+      skyTop: '#2b5da8',
+      skyHorizon: '#d8ecfb',
+      fog: '#d9e9f5',
+      fogDensity: 0.0017,
+      sun: '#ffffff',
+      sunDir: [0.3, 0.6, -0.65],
+      ambient: '#dbeeff',
+      groundLow: '#f4f9ff',
+      groundHigh: '#a8c0d8',
+      shoulder: '#e8f2fb',
+      roadColor: '#5f7c95',
+      roadGrain: '#8aa5bb',
+      roadStripeColor: '#e0f7ff',
       curbColorA: '#06b6d4',
       curbColorB: '#f0f9ff',
-      wallColor: '#38bdf8',
+      wallColor: '#8fd3f0',
+      wallTop: '#ffffff',
+      wallHeight: 3,
       accentColor: '#67e8f9',
     },
+    music: { root: 62, bpm: 128, chords: [[0, 3, 7], [8, 12, 15], [3, 7, 10], [10, 14, 17]], lead: [19, 15, 12, 15, 17, 14, 10, 14] },
     controlPoints: [
-      [0, -150],
-      [0, -15],
-      [-55, 85],
-      [25, 175],
-      [155, 175],
-      [245, 85],
-      [195, -25],
-      [245, -125],
-      [195, -225],
-      [85, -255],
-      [10, -225],
+      [0, -220], [0, -80], [0, 70], [0, 220], [30, 310], [120, 345], [205, 300], [220, 205],
+      [175, 120], [220, 40], [320, 25], [420, 55], [495, 10], [500, -90], [425, -160],
+      [310, -180], [205, -205], [145, -285], [75, -345], [10, -310],
     ],
-    boostProgresses: [
-      { progress: 0.19, lateral: 0.0 },
-      { progress: 0.42, lateral: -0.25 },
-      { progress: 0.68, lateral: 0.25 },
-      { progress: 0.89, lateral: 0.0 },
+    hills: [[2, 7, 2.4], [4, 2.5, 0.9]],
+    boosts: [
+      { progress: 0.09, lateral: 0.0 },
+      { progress: 0.45, lateral: -0.3 },
+      { progress: 0.66, lateral: 0.3 },
+      { progress: 0.88, lateral: 0.0 },
     ],
-    itemRowProgresses: [0.11, 0.33, 0.56, 0.8],
-    sceneryKind: 'pine',
-    sceneryColors: ['#0f766e', '#0284c7', '#f8fafc'],
+    itemRows: [0.13, 0.36, 0.55, 0.78],
+    ramps: [0.17],
   }),
 
   'neon-starway': createTrack({
     id: 'neon-starway',
     name: 'Neon Starway',
     emoji: '🌈',
-    tagline: 'Cosmic Rainbow Road highway in deep space with turbo star gates',
+    tagline: 'A narrow rainbow ribbon through deep space with blind jumps and no margin for error',
     difficulty: 'Expert',
-    roadWidth: 34,
-    wallWidth: 27,
+    roadWidth: 30,
+    wallWidth: 24,
     friction: 1.0,
+    biome: 'space',
     theme: {
-      skyTop: '#050510',
-      skyBottom: '#1e1b4b',
-      groundColor: '#090919',
-      roadColor: '#1e1b4b',
+      skyTop: '#04031a',
+      skyHorizon: '#2a1266',
+      fog: '#160b3a',
+      fogDensity: 0.0009,
+      sun: '#d8c8ff',
+      sunDir: [0.2, 0.9, 0.3],
+      ambient: '#b9a8ff',
+      groundLow: '#090520',
+      groundHigh: '#1a0d45',
+      shoulder: '#17103f',
+      roadColor: '#241a5c',
+      roadGrain: '#34277a',
       roadStripeColor: '#f472b6',
       curbColorA: '#ec4899',
       curbColorB: '#22d3ee',
-      wallColor: '#a855f7',
+      wallColor: '#7c3aed',
+      wallTop: '#22d3ee',
+      wallHeight: 1.5,
       accentColor: '#facc15',
       rainbowRoad: true,
+      glowRoad: true,
     },
+    music: { root: 64, bpm: 150, chords: [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [3, 7, 10]], lead: [12, 19, 24, 19, 15, 22, 19, 15] },
     controlPoints: [
-      [0, -155],
-      [0, -20],
-      [45, 85],
-      [60, 175],
-      [150, 228],
-      [258, 152],
-      [282, 22],
-      [208, -65],
-      [248, -172],
-      [168, -262],
-      [58, -264],
-      [6, -222],
+      [0, -170], [0, -40], [35, 75], [-30, 180], [25, 285], [140, 275], [205, 175], [305, 195],
+      [400, 255], [490, 180], [465, 85], [375, 5], [465, -80], [475, -190], [370, -255],
+      [265, -225], [195, -175], [115, -235], [40, -280],
     ],
-    boostProgresses: [
-      { progress: 0.14, lateral: 0.22 },
-      { progress: 0.31, lateral: -0.22 },
+    hills: [[3, 9, 0.2], [5, 3.5, 1.7]],
+    boosts: [
+      { progress: 0.06, lateral: 0.3 },
+      { progress: 0.26, lateral: -0.3 },
       { progress: 0.5, lateral: 0.0 },
-      { progress: 0.69, lateral: 0.25 },
-      { progress: 0.86, lateral: -0.22 },
+      { progress: 0.68, lateral: 0.3 },
+      { progress: 0.89, lateral: -0.3 },
     ],
-    itemRowProgresses: [0.09, 0.26, 0.44, 0.63, 0.82],
-    sceneryKind: 'neon-pillar',
-    sceneryColors: ['#f472b6', '#22d3ee', '#a855f7', '#facc15'],
+    itemRows: [0.1, 0.3, 0.47, 0.6, 0.83],
+    ramps: [0.365, 0.625],
   }),
 
   'volcano-inferno': createTrack({
     id: 'volcano-inferno',
     name: 'Volcano Inferno',
     emoji: '🌋',
-    tagline: 'Molten basalt highway with bubbling magma rivers, basalt spires & extreme drift chicanes',
+    tagline: 'A lap around an erupting crater over lava rivers, with drift chicanes along the rim',
     difficulty: 'Expert',
-    roadWidth: 34,
-    wallWidth: 27,
+    roadWidth: 32,
+    wallWidth: 26,
     friction: 0.96,
+    biome: 'lava',
     theme: {
-      skyTop: '#450a0a',
-      skyBottom: '#dc2626',
-      groundColor: '#1c1917',
-      roadColor: '#262626',
-      roadStripeColor: '#f97316',
+      skyTop: '#1c0606',
+      skyHorizon: '#c2410c',
+      fog: '#5a1a0a',
+      fogDensity: 0.0019,
+      sun: '#ffb38a',
+      sunDir: [-0.35, 0.6, -0.55],
+      ambient: '#ffb199',
+      groundLow: '#2a1512',
+      groundHigh: '#4a2219',
+      shoulder: '#36201b',
+      roadColor: '#3a3236',
+      roadGrain: '#4c4247',
+      roadStripeColor: '#fb923c',
       curbColorA: '#ef4444',
       curbColorB: '#facc15',
-      wallColor: '#ea580c',
+      wallColor: '#44241c',
+      wallTop: '#f97316',
+      wallHeight: 2.6,
       accentColor: '#f97316',
     },
+    music: { root: 52, bpm: 144, chords: [[0, 3, 7], [1, 4, 8], [-2, 2, 5], [0, 3, 7]], lead: [12, 13, 15, 12, 10, 8, 7, 8] },
     controlPoints: [
-      [0, -160],
-      [0, -30],
-      [-70, 70],
-      [-30, 160],
-      [80, 180],
-      [180, 140],
-      [240, 40],
-      [190, -40],
-      [230, -130],
-      [180, -220],
-      [60, -250],
-      [-10, -220],
+      [0, -190], [0, -70], [-30, 40], [-105, 125], [-95, 235], [0, 305], [125, 320], [220, 255],
+      [240, 160], [320, 95], [385, -5], [330, -105], [235, -125], [175, -200], [195, -300],
+      [110, -365], [10, -320],
     ],
-    boostProgresses: [
-      { progress: 0.12, lateral: -0.22 },
-      { progress: 0.35, lateral: 0.25 },
-      { progress: 0.58, lateral: 0.0 },
-      { progress: 0.77, lateral: -0.22 },
-      { progress: 0.92, lateral: 0.22 },
+    hills: [[2, 4.5, 3.6], [3, 2.2, 0.5]],
+    boosts: [
+      { progress: 0.07, lateral: -0.3 },
+      { progress: 0.26, lateral: 0.3 },
+      { progress: 0.55, lateral: 0.0 },
+      { progress: 0.8, lateral: -0.3 },
     ],
-    itemRowProgresses: [0.08, 0.28, 0.52, 0.72, 0.88],
-    sceneryKind: 'lava-spire',
-    sceneryColors: ['#7f1d1d', '#991b1b', '#b91c1c', '#f97316'],
+    itemRows: [0.12, 0.22, 0.48, 0.71, 0.91],
+    ramps: [0.305],
   }),
 
   'cyber-metro': createTrack({
     id: 'cyber-metro',
     name: 'Cyber Metropolis',
     emoji: '🌃',
-    tagline: 'Midnight skyscraper canyons, high-speed overpasses & holographic lightspeed gates',
+    tagline: 'Hard city-block corners and rain-slick boulevards between towers of neon',
     difficulty: 'Hard',
-    roadWidth: 35,
-    wallWidth: 28,
-    friction: 1.0,
+    roadWidth: 33,
+    wallWidth: 26,
+    friction: 0.95,
+    biome: 'city',
     theme: {
-      skyTop: '#020617',
-      skyBottom: '#0f172a',
-      groundColor: '#090d16',
-      roadColor: '#0f172a',
+      skyTop: '#05061c',
+      skyHorizon: '#47197a',
+      fog: '#1c0f3f',
+      fogDensity: 0.0016,
+      sun: '#b7c8ff',
+      sunDir: [0.4, 0.7, 0.3],
+      ambient: '#a9b7ff',
+      groundLow: '#0d1022',
+      groundHigh: '#1a1b38',
+      shoulder: '#1a1d36',
+      roadColor: '#23263e',
+      roadGrain: '#32365a',
       roadStripeColor: '#00f5ff',
       curbColorA: '#06b6d4',
       curbColorB: '#ec4899',
-      wallColor: '#00f5ff',
+      wallColor: '#23263e',
+      wallTop: '#00f5ff',
+      wallHeight: 2.2,
       accentColor: '#38bdf8',
+      glowRoad: true,
     },
+    music: { root: 55, bpm: 146, chords: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]], lead: [12, 15, 19, 22, 19, 15, 12, 10] },
     controlPoints: [
-      [0, -150],
-      [0, -10],
-      [75, 90],
-      [140, 170],
-      [230, 170],
-      [275, 80],
-      [220, 0],
-      [280, -90],
-      [220, -190],
-      [120, -260],
-      [20, -240],
+      [0, -190], [0, -60], [0, 70], [20, 165], [100, 200], [200, 195], [265, 225], [290, 300],
+      [365, 345], [470, 325], [510, 245], [515, 120], [515, -10], [480, -95], [395, -120],
+      [290, -115], [215, -85], [150, -80], [110, -160], [115, -260], [65, -320], [10, -290],
     ],
-    boostProgresses: [
-      { progress: 0.15, lateral: 0.25 },
-      { progress: 0.38, lateral: -0.25 },
-      { progress: 0.62, lateral: 0.0 },
-      { progress: 0.83, lateral: 0.22 },
+    hills: [[2, 4, 1.0], [6, 1.4, 0.3]],
+    boosts: [
+      { progress: 0.08, lateral: 0.3 },
+      { progress: 0.28, lateral: -0.3 },
+      { progress: 0.47, lateral: 0.0 },
+      { progress: 0.68, lateral: 0.3 },
     ],
-    itemRowProgresses: [0.10, 0.32, 0.55, 0.75, 0.90],
-    sceneryKind: 'cyber-arch',
-    sceneryColors: ['#00f5ff', '#ec4899', '#a855f7', '#38bdf8'],
+    itemRows: [0.11, 0.25, 0.42, 0.59, 0.78, 0.92],
+    ramps: [0.53],
   }),
 };
 

@@ -302,7 +302,7 @@ export default function PartyLobby() {
                   </h3>
                   <button type="button" onClick={() => setGuideGame('kart-clash')} className="badge party-game-card-guide" aria-label="How to play Kart Clash" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
-                <p>3D split-screen Mario Kart racing on the TV! Tilt your phone like a steering wheel, drift for mini-turbos, and run Grand Prix or Tournament Heats!</p>
+                <p>3D split-screen kart racing on the TV! Tilt your phone like a steering wheel, drift for mini-turbos, launch off jumps, and run a Grand Prix or Tournament Heats!</p>
                 <div className="badges"><span className="badge">1–16 Players</span><span className="badge">Gyro Steering</span><span className="badge">Tournament Heats</span></div>
               </div>
               <div className="party-game-card yellow">

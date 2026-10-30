@@ -31,13 +31,10 @@ export async function POST(request: Request) {
 
     const cacheKey = `${code}:${actorKey}`;
     let resolvedId: string | null = keyCache.get(cacheKey) || null;
-    if (!resolvedId || !sim.karts[resolvedId]) {
-      if (sim.karts[actorKey]) {
-        resolvedId = actorKey;
-      } else {
-        const state = await getGameState(code);
-        resolvedId = state ? resolvePlayerKey(state, actorKey) : null;
-      }
+    if (!resolvedId) {
+      // The secret player key only: public ids are visible to everyone and must not drive a kart
+      const state = await getGameState(code);
+      resolvedId = state ? resolvePlayerKey(state, actorKey) : null;
       if (resolvedId) {
         if (keyCache.size > 500) keyCache.clear();
         keyCache.set(cacheKey, resolvedId);

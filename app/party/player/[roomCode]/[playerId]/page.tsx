@@ -7,6 +7,7 @@ import { shareResultsCard } from '@/components/party/resultsCard';
 import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
 import KartClashPhoneController from '@/components/party/KartClashPhoneController';
+import { KART_STYLES } from '@/lib/party/kart-shared';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
@@ -457,26 +458,21 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
             {/* Kart Clash Garage Customization Card */}
             {state.gameType === 'kart-clash' && (() => {
-              const myCustom = state.gameData?.customizations?.[me.id] || { kartStyle: 'classic', sparksColor: me.avatarColor || '#38bdf8' };
-              const currentStyle = myCustom.kartStyle || 'classic';
+              const myCustom = state.kartConfig?.myCustomization || { kartStyle: 'classic', sparksColor: me.avatarColor || '#38bdf8' };
+              const currentStyle = (myCustom.kartStyle || 'classic') as keyof typeof KART_STYLES;
               const currentSpark = myCustom.sparksColor || me.avatarColor || '#38bdf8';
               return (
                 <div style={{ width: '100%', marginTop: '0.85rem', background: 'rgba(15,23,42,0.92)', border: '1.5px solid rgba(6,182,212,0.4)', borderRadius: '16px', padding: '0.85rem 1rem', textAlign: 'left' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                     <span style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--party-cyan)' }}>
-                      🏎️ Kart Garage &amp; Chassis
+                      🏎️ Pick your kart
                     </span>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--party-text-muted)' }}>Custom 3D Model</span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--party-text-muted)' }}>{KART_STYLES[currentStyle]?.blurb}</span>
                   </div>
 
                   {/* Chassis Styles */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.4rem', marginBottom: '0.65rem' }}>
-                    {[
-                      { id: 'classic', emoji: '🏎️', label: 'Classic' },
-                      { id: 'rocket', emoji: '🚀', label: 'Rocket' },
-                      { id: 'cyber', emoji: '⚡', label: 'Cyber' },
-                      { id: 'bruiser', emoji: '🛡️', label: 'Bruiser' },
-                    ].map((st) => (
+                    {(Object.entries(KART_STYLES) as [keyof typeof KART_STYLES, (typeof KART_STYLES)[keyof typeof KART_STYLES]][]).map(([id, st]) => ({ id, ...st })).map((st) => (
                       <button
                         key={st.id}
                         type="button"
@@ -502,7 +498,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
                   {/* Drift Sparks / Underglow Palette */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>Neon Sparks:</span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>Sparks:</span>
                     {['#38bdf8', '#f97316', '#d946ef', '#22c55e', '#ef4444', '#facc15'].map((hex) => (
                       <button
                         key={hex}

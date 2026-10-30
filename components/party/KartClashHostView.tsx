@@ -1,1045 +1,442 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { KART_TRACKS, KartTrack, TRACK_LIST, TrackId, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
-import { KartItemType, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
-import { KartHeat } from '@/lib/party/games/kart-clash';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { DRIFT_TIER_COLORS, ITEM_META, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
+import { KART_TRACKS, KartTrack, TRACK_LIST, TrackId } from '@/lib/party/kart-tracks';
+import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
+import type { KartHeat } from '@/lib/party/games/kart-clash';
+import type { SoundPrefs } from '@/components/party/audio';
+import { CameraMode, KartScene, computeSplitGrid } from '@/components/party/kart/kartScene';
+import { KartAudio } from '@/components/party/kart/kartAudio';
+import TrackMinimap from '@/components/party/kart/TrackMinimap';
 
-export const ITEM_META: Record<KartItemType, { emoji: string; name: string; color: string }> = {
-  mushroom: { emoji: '🍄', name: 'Turbo Mushroom', color: '#ef4444' },
-  green_shell: { emoji: '🟢', name: 'Green Shell', color: '#22c55e' },
-  red_shell: { emoji: '🔴', name: 'Homing Shell', color: '#f97316' },
-  banana: { emoji: '🍌', name: 'Banana Peel', color: '#facc15' },
-  lightning: { emoji: '⚡', name: 'Lightning Bolt', color: '#38bdf8' },
-  star: { emoji: '⭐', name: 'Super Star', color: '#a855f7' },
-  spiny_shell: { emoji: '👑', name: 'Spiny Blue Shell', color: '#38bdf8' },
-  golden_mushroom: { emoji: '✨', name: 'Golden Mushroom', color: '#eab308' },
-  super_horn: { emoji: '🎺', name: 'Super Horn', color: '#ec4899' },
-  fake_box: { emoji: '❓', name: 'Fake Item Box', color: '#ef4444' },
-};
+type SnapKart = KartTelemetrySnapshot['karts'][number];
 
-const RANK_LABELS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
-const RANK_COLORS = ['#facc15', '#e2e8f0', '#fb923c', '#38bdf8', '#a855f7', '#94a3b8', '#94a3b8', '#94a3b8'];
+const HUD_INTERVAL_MS = 90; // The 3D view runs at full rate from a ref; React only redraws the HUD
 
-export function computeSplitGrid(count: number): { cols: number; rows: number } {
-  if (count <= 1) return { cols: 1, rows: 1 };
-  if (count === 2) return { cols: 2, rows: 1 };
-  if (count <= 4) return { cols: 2, rows: 2 };
-  if (count <= 6) return { cols: 3, rows: 2 };
-  return { cols: 4, rows: 2 };
+const CAMERA_OPTIONS: { id: CameraMode; label: string }[] = [
+  { id: 'split', label: '🏁 Drivers' },
+  { id: 'leader', label: '🏎️ Leader' },
+  { id: 'helicopter', label: '🚁 Blimp' },
+  { id: 'action', label: '⚡ Battle' },
+];
+
+function ItemSlot({ kart }: { kart: SnapKart }) {
+  const [spin, setSpin] = useState(0);
+  useEffect(() => {
+    if (!kart.itemRoulette) return;
+    const id = setInterval(() => setSpin((s) => s + 1), 70);
+    return () => clearInterval(id);
+  }, [kart.itemRoulette]);
+  const item = kart.heldItem ? ITEM_META[kart.heldItem] : null;
+  return (
+    <div
+      className="kart-item-slot"
+      style={{
+        borderColor: kart.itemRoulette ? '#facc15' : item ? item.color : undefined,
+        boxShadow: item ? `0 0 18px ${item.color}` : undefined,
+      }}
+    >
+      {kart.itemRoulette ? ROULETTE_EMOJIS[spin % ROULETTE_EMOJIS.length] : item ? item.emoji : null}
+    </div>
+  );
 }
 
-/** 2D SVG Track Minimap showing the multi-layer circuit, start line, and live racer badges. */
-export function TrackMinimap({
-  trackId,
-  karts,
-  size = 180,
-}: {
-  trackId: TrackId;
-  karts?: { id: string; name: string; color: string; x: number; z: number; isBot: boolean; rank: number }[];
-  size?: number;
-}) {
-  const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
-  const xs = track.samples.map((s) => s.x);
-  const zs = track.samples.map((s) => s.z);
-  const pad = 68;
-  const rawMinX = Math.min(...xs) - pad;
-  const rawMaxX = Math.max(...xs) + pad;
-  const rawMinZ = Math.min(...zs) - pad;
-  const rawMaxZ = Math.max(...zs) + pad;
-  const rawW = rawMaxX - rawMinX || 1;
-  const rawH = rawMaxZ - rawMinZ || 1;
-  const span = Math.max(rawW, rawH, 1);
-  const minX = (rawMinX + rawMaxX) * 0.5 - span * 0.5;
-  const minZ = (rawMinZ + rawMaxZ) * 0.5 - span * 0.5;
+/** One driver's viewport overlay. */
+function DriverHud({ kart, totalLaps, racing, compact }: { kart: SnapKart; totalLaps: number; racing: boolean; compact: boolean }) {
+  const boosting = kart.boostTimer > 0 || kart.starTimer > 0;
+  const kmh = Math.max(0, Math.round(Math.abs(kart.speed) * 2.2));
+  const rankColor = RANK_COLORS[Math.min(RANK_COLORS.length - 1, kart.rank - 1)];
+  const suffix = ordinal(kart.rank).replace(String(kart.rank), '');
+  const tierColor = DRIFT_TIER_COLORS[kart.driftLevel];
+  return (
+    <div className="kart-tile">
+      {racing && boosting && (
+        <>
+          <div className="kart-speedlines" />
+          <div className="kart-boost-fx" />
+        </>
+      )}
+      {racing && kart.hasIncomingShell && (
+        <>
+          <div className="kart-warn" />
+          <div className="kart-warn-text">⚠️ SHELL INCOMING!</div>
+        </>
+      )}
 
-  const pointsAttr = track.samples.map((s) => `${s.x.toFixed(1)},${s.z.toFixed(1)}`).join(' ');
-  const start = track.samples[0];
-  const bots = (karts || []).filter((k) => k.isBot);
-  const humans = (karts || []).filter((k) => !k.isBot);
+      <div style={{ position: 'absolute', top: '2cqh', left: '1.6cqw', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25em', fontSize: 'clamp(11px, 3.3cqh, 22px)', maxWidth: '36cqw' }}>
+        <span className="kart-chip" style={{ boxShadow: `inset 0 0 0 2px ${kart.color}` }}>
+          <span>{kart.avatar}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{kart.name}</span>
+        </span>
+        {!kart.finished && (
+          <span className="kart-chip">LAP {kart.lap}<span style={{ opacity: 0.6 }}>/{totalLaps}</span></span>
+        )}
+        {kart.autopilot && <span className="kart-chip" style={{ color: '#fbbf24' }}>📡 Autopilot</span>}
+      </div>
+
+      {!kart.finished && <ItemSlot kart={kart} />}
+
+      {kart.statusText && !kart.finished && <div className="kart-status" key={kart.statusText}>{kart.statusText}</div>}
+
+      {!kart.finished && (
+        <>
+          <div className="kart-speedo">
+            <span style={{ textShadow: '0 2px 5px #000' }}>
+              {kmh}<span style={{ fontSize: '0.65em', opacity: 0.75 }}> km/h</span>
+              {kart.offRoad && !compact && <span style={{ marginLeft: '0.5em', color: '#fbbf24' }}>OFF-ROAD</span>}
+            </span>
+            <div className="kart-drift-bar" style={{ opacity: kart.drifting ? 1 : 0.35 }}>
+              <div
+                className="kart-drift-fill"
+                style={{
+                  width: `${kart.drifting ? (kart.driftLevel === 3 ? 100 : (kart.driftLevel * 100 + kart.driftCharge) / 3) : 0}%`,
+                  background: kart.driftLevel === 0 ? '#e2e8f0' : tierColor,
+                  boxShadow: kart.driftLevel > 0 ? `0 0 10px ${tierColor}` : undefined,
+                }}
+              />
+            </div>
+          </div>
+          <div className="kart-rank-big" style={{ color: rankColor }} key={kart.rank}>
+            {kart.rank}<small>{suffix}</small>
+          </div>
+        </>
+      )}
+
+      {kart.finished && (
+        <div className="kart-finish">
+          <div className="kart-finish-rank" style={{ color: rankColor }}>{ordinal(kart.finishRank || kart.rank)}</div>
+          <div className="kart-chip" style={{ fontSize: 'clamp(12px, 5cqh, 30px)', marginTop: '0.3em' }}>
+            🏁 {formatRaceTime(kart.finishTimeMs)}
+          </div>
+          {kart.bestLapTimeMs && (
+            <div style={{ fontWeight: 800, fontSize: 'clamp(10px, 3cqh, 20px)', marginTop: '0.3em', textShadow: '0 2px 6px #000' }}>
+              Best lap {formatRaceTime(kart.bestLapTimeMs)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Standings({ karts, fastestLapId }: { karts: SnapKart[]; fastestLapId?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.08rem' }}>
+      {karts.map((k) => {
+        const item = k.heldItem ? ITEM_META[k.heldItem] : null;
+        return (
+          <div
+            key={k.id}
+            className="kart-rank-row"
+            style={{
+              background: k.isBot ? 'transparent' : 'rgba(255,255,255,0.08)',
+              boxShadow: `inset 3px 0 0 ${k.color}`,
+              opacity: k.isBot ? 0.85 : 1,
+            }}
+          >
+            <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, k.rank - 1)], fontWeight: 900, textAlign: 'center' }}>{k.rank}</span>
+            <span style={{ textAlign: 'center' }}>{k.avatar}</span>
+            <span className="kart-rank-name">{k.name}</span>
+            <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
+              {item && <span>{item.emoji}</span>}
+              {fastestLapId === k.id && <span title="Fastest lap" style={{ color: '#d946ef' }}>⏱</span>}
+              {k.finished ? '🏁' : `L${k.lap}`}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The live race: full-screen canvas, HUD overlays and a broadcast sidebar. */
+function RaceView({
+  hd,
+  roomCode,
+  sendAction,
+  soundPrefs,
+  setSoundPrefs,
+  onRequestQuit,
+}: {
+  hd: any;
+  roomCode: string;
+  sendAction: (action: any) => void;
+  soundPrefs?: SoundPrefs;
+  setSoundPrefs?: (next: SoundPrefs) => void;
+  onRequestQuit?: () => void;
+}) {
+  const trackId: TrackId = hd.trackId || 'sunny-circuit';
+  const raceId: string = hd.raceId || '';
+  const track: KartTrack = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const sceneRef = useRef<KartScene | null>(null);
+  const audioRef = useRef<KartAudio | null>(null);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('split');
+  const cameraRef = useRef<CameraMode>('split');
+  const [snap, setSnap] = useState<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
+  const [aspect, setAspect] = useState(16 / 9);
+  const [flashKey, setFlashKey] = useState(0);
+  const [needsSoundTap, setNeedsSoundTap] = useState(false);
+  const [webglFailed, setWebglFailed] = useState(false);
+  const snapRef = useRef<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
+  const prefsRef = useRef(soundPrefs);
+
+  useEffect(() => {
+    cameraRef.current = cameraMode;
+  }, [cameraMode]);
+
+  const handleEvent = useCallback((e: KartEvent) => {
+    const karts = snapRef.current?.karts || [];
+    const kart = e.kartId ? karts.find((k) => k.id === e.kartId) : null;
+    // Events with no kart (explosions, chaos) are world-level and worth hearing
+    const human = kart ? !kart.isBot : e.type === 'go' || e.type === 'clash';
+    audioRef.current?.event(e, human);
+    if (e.type === 'lightning') setFlashKey(Date.now());
+  }, []);
+
+  // Scene, audio and the render loop live for one race on one track
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let scene: KartScene;
+    try {
+      scene = new KartScene(canvas, track, handleEvent);
+    } catch (err) {
+      console.error('Kart Clash could not start WebGL', err);
+      setWebglFailed(true);
+      return;
+    }
+    sceneRef.current = scene;
+    const audio = new KartAudio(track);
+    audioRef.current = audio;
+    audio.resume();
+    audio.setPrefs(prefsRef.current?.music !== false, prefsRef.current?.sfx !== false);
+    if (snapRef.current) scene.setSnapshot(snapRef.current);
+
+    let animId = 0;
+    let lastAspect = 0;
+    const loop = (now: number) => {
+      animId = requestAnimationFrame(loop);
+      const width = Math.max(1, canvas.clientWidth);
+      const height = Math.max(1, canvas.clientHeight);
+      const nextAspect = width / height;
+      if (Math.abs(nextAspect - lastAspect) > 0.01) {
+        lastAspect = nextAspect;
+        setAspect(nextAspect);
+      }
+      scene.render(now, cameraRef.current, width, height);
+    };
+    animId = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(animId);
+      scene.dispose();
+      audio.dispose();
+      sceneRef.current = null;
+      audioRef.current = null;
+    };
+  }, [track, handleEvent]);
+
+  // 30Hz telemetry: straight to the scene and audio, throttled to React for the HUD
+  useEffect(() => {
+    if (!raceId) return;
+    const sse = new EventSource(`/api/party/stream/kart?roomCode=${encodeURIComponent(roomCode)}&role=host`);
+    let lastHud = 0;
+    sse.onmessage = (ev) => {
+      if (!ev.data) return;
+      let data: KartTelemetrySnapshot;
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (data.raceId !== raceId) return; // a late tick from the previous race
+      snapRef.current = data;
+      sceneRef.current?.setSnapshot(data);
+      audioRef.current?.update(data);
+      const now = performance.now();
+      if (now - lastHud >= HUD_INTERVAL_MS) {
+        lastHud = now;
+        setSnap(data);
+        setNeedsSoundTap(Boolean(audioRef.current) && !audioRef.current!.running);
+      }
+    };
+    return () => sse.close();
+  }, [raceId, roomCode]);
+
+  useEffect(() => {
+    prefsRef.current = soundPrefs;
+    audioRef.current?.setPrefs(soundPrefs?.music !== false, soundPrefs?.sfx !== false);
+  }, [soundPrefs]);
+
+  const allKarts = snap?.karts || [];
+  const humanKarts = allKarts.filter((k) => !k.isBot);
+  const views = humanKarts.length > 0 ? humanKarts : allKarts.slice(0, 1);
+  const { cols, rows } = computeSplitGrid(views.length, aspect);
+  const compact = views.length > 2;
+  const sorted = [...allKarts].sort((a, b) => a.rank - b.rank);
+  const totalLaps = snap?.totalLaps || 3;
+  const racing = Boolean(snap && !snap.waitingForOrientation && snap.countdownMs <= 0);
+  const countdownSec = snap && !snap.waitingForOrientation && snap.countdownMs > 0 ? Math.min(3, Math.ceil(snap.countdownMs / 1000)) : 0;
+  const showGo = Boolean(snap && racing && snap.raceTimeMs < 1100);
+  const leaderLap = sorted[0]?.lap || 1;
+  const spareTiles = cols * rows - views.length;
 
   return (
-    <svg
-      viewBox={`${minX} ${minZ} ${span} ${span}`}
-      width={size}
-      height={size}
-      style={{ display: 'block', overflow: 'visible', filter: 'drop-shadow(0 6px 14px rgba(0,0,0,0.75))' }}
-    >
-      {/* Radar card background */}
-      <rect
-        x={minX + span * 0.02}
-        y={minZ + span * 0.02}
-        width={span * 0.96}
-        height={span * 0.96}
-        rx={span * 0.08}
-        fill="rgba(7, 11, 20, 0.86)"
-        stroke="rgba(255, 255, 255, 0.18)"
-        strokeWidth={span * 0.012}
-      />
-      {/* Outer curb casing */}
-      <polygon
-        points={pointsAttr}
-        fill="none"
-        stroke="rgba(2, 6, 23, 0.96)"
-        strokeWidth={38}
-        strokeLinejoin="round"
-      />
-      {/* Main asphalt road */}
-      <polygon
-        points={pointsAttr}
-        fill="none"
-        stroke="#334155"
-        strokeWidth={28}
-        strokeLinejoin="round"
-      />
-      {/* Theme accent racing groove */}
-      <polygon
-        points={pointsAttr}
-        fill="none"
-        stroke={track.theme.accentColor}
-        strokeWidth={13}
-        strokeOpacity={0.88}
-        strokeLinejoin="round"
-      />
-      {/* Dashed white centerline */}
-      <polygon
-        points={pointsAttr}
-        fill="none"
-        stroke="rgba(255, 255, 255, 0.65)"
-        strokeWidth={3.2}
-        strokeDasharray="14 14"
-        strokeLinejoin="round"
-      />
-      {/* Checkered Start / Finish Line */}
-      {start && (
-        <g>
-          <line
-            x1={start.x - start.nx * 20}
-            y1={start.z - start.nz * 20}
-            x2={start.x + start.nx * 20}
-            y2={start.z + start.nz * 20}
-            stroke="#ffffff"
-            strokeWidth={9}
-            strokeLinecap="round"
-          />
-          <line
-            x1={start.x - start.nx * 20}
-            y1={start.z - start.nz * 20}
-            x2={start.x + start.nx * 20}
-            y2={start.z + start.nz * 20}
-            stroke="#0f172a"
-            strokeWidth={9}
-            strokeDasharray="7 7"
-            strokeLinecap="round"
-          />
-        </g>
-      )}
-      {/* AI Bot Dots (rendered underneath human racers) */}
-      {bots.map((k) => (
-        <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
-          <circle r={5} fill={k.color} stroke="#020617" strokeWidth={1.8} opacity={0.92} />
-        </g>
-      ))}
-      {/* Human Racer Badges with Live Rank */}
-      {humans.map((k) => (
-        <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
-          <circle r={8.5} fill={k.color} stroke="#ffffff" strokeWidth={2.4} />
-          <text
-            x={0}
-            y={3.5}
-            textAnchor="middle"
-            fill="#020617"
-            fontSize={10}
-            fontWeight={900}
-            style={{ fontFamily: 'sans-serif' }}
-          >
-            {k.rank}
-          </text>
-        </g>
-      ))}
-    </svg>
+    <div className="kart-race-root">
+      <div className="kart-race-stage" onPointerDown={() => audioRef.current?.resume()}>
+        <canvas ref={canvasRef} />
+
+        {webglFailed && (
+          <div className="kart-center-overlay">
+            <div className="kart-title-banner">This screen can&rsquo;t run 3D graphics, so the race can&rsquo;t be shown here. Try opening the host page in Chrome or Edge.</div>
+          </div>
+        )}
+
+        {cameraMode === 'split' && (
+          <div className="kart-hud-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
+            {views.map((k) => (
+              <DriverHud key={k.id} kart={k} totalLaps={totalLaps} racing={racing} compact={compact} />
+            ))}
+            {Array.from({ length: spareTiles }).map((_, i) => (
+              <div className="kart-tile" key={i}>
+                <span className="kart-chip" style={{ position: 'absolute', top: '3cqh', left: '2cqw', fontSize: 'clamp(11px, 4cqh, 20px)' }}>
+                  <span style={{ color: '#f87171' }}>●</span> LIVE · {sorted[0]?.name || 'Leader'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {snap?.announcement && !snap.waitingForOrientation && (
+          <div className="kart-announce" key={snap.announcement}>{snap.announcement}</div>
+        )}
+        {!snap?.announcement && snap?.finishCountdownMs != null && !snap.celebrating && (
+          <div className="kart-announce">🏁 Race ends in {Math.ceil(snap.finishCountdownMs / 1000)}s</div>
+        )}
+
+        {flashKey > 0 && <div className="kart-flash" key={flashKey} />}
+
+        {snap?.waitingForOrientation && (
+          <div className="kart-center-overlay">
+            <div className="kart-title-banner">
+              <div style={{ fontSize: '2.6rem', lineHeight: 1 }}>{track.emoji}</div>
+              <div style={{ fontFamily: 'var(--party-font-display)', fontSize: 'clamp(1.6rem, 3.6vw, 2.8rem)', fontWeight: 900 }}>{track.name}</div>
+              <div style={{ color: '#cbd5e1', fontSize: '0.95rem', margin: '0.15rem 0 0.7rem' }}>
+                {hd.heatName} · {snap.speedClass} · {totalLaps} laps
+              </div>
+              <div style={{ fontWeight: 900, fontSize: '1.15rem', color: 'var(--party-cyan)', marginBottom: '0.5rem' }}>📱 Turn your phone sideways to get ready!</div>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '0.7rem' }}>
+                {(snap.humanRacersStatus || []).map((r) => (
+                  <span
+                    key={r.id}
+                    style={{
+                      background: r.isHorizontal ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.07)',
+                      border: `1.5px solid ${r.isHorizontal ? 'var(--party-green)' : 'rgba(255,255,255,0.25)'}`,
+                      borderRadius: '999px',
+                      padding: '0.28rem 0.8rem',
+                      fontWeight: 800,
+                      fontSize: '0.88rem',
+                    }}
+                  >
+                    {r.avatar} {r.name} {r.isHorizontal ? '✅' : '⏳'}
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => sendAction({ type: 'FORCE_START_COUNTDOWN' })}
+                className="party-btn party-btn-yellow party-btn-inline"
+                style={{ fontSize: '0.95rem', padding: '0.55rem 1.2rem' }}
+              >
+                🏁 Start now <span style={{ opacity: 0.7, fontWeight: 700 }}>(auto in {Math.ceil((snap.orientationAutoStartMs || 0) / 1000)}s)</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {countdownSec > 0 && (
+          <div className="kart-center-overlay">
+            <div className="kart-countdown" key={countdownSec} style={{ color: countdownSec === 1 ? '#facc15' : '#ffffff' }}>{countdownSec}</div>
+            <div className="kart-chip" style={{ fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)', color: countdownSec === 1 ? '#facc15' : '#fff' }}>
+              {countdownSec === 1 ? '🚀 HOLD DRIFT NOW!' : 'Wait for the 1, then hold DRIFT for a rocket start'}
+            </div>
+          </div>
+        )}
+        {showGo && (
+          <div className="kart-center-overlay">
+            <div className="kart-countdown" style={{ color: '#22ff66' }}>GO!</div>
+          </div>
+        )}
+      </div>
+
+      <aside className="kart-side">
+        <div className="kart-side-card" style={{ textAlign: 'center' }}>
+          <div style={{ fontWeight: 900, fontSize: '0.98rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.emoji} {track.name}</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontWeight: 800, fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.1rem' }}>
+            <span>LAP {Math.min(leaderLap, totalLaps)}/{totalLaps}</span>
+            <span style={{ fontFamily: 'monospace', fontSize: '1.05rem', color: '#f8fafc' }}>{formatRaceTime(snap?.raceTimeMs ?? 0)}</span>
+          </div>
+        </div>
+
+        <div className="kart-side-card" style={{ flex: '0 1 auto', minHeight: 0, overflow: 'hidden' }}>
+          <Standings karts={sorted} fastestLapId={snap?.fastestLap?.racerId} />
+        </div>
+
+        <div className="kart-side-card" style={{ display: 'flex', justifyContent: 'center', flex: '1 1 0', minHeight: 110, alignItems: 'center', overflow: 'hidden' }}>
+          <TrackMinimap trackId={trackId} karts={allKarts} size={260} />
+        </div>
+
+        {snap?.fastestLap && (
+          <div className="kart-side-card" style={{ fontSize: '0.74rem', fontWeight: 800, display: 'flex', justifyContent: 'space-between', gap: '0.4rem' }}>
+            <span style={{ color: '#f0abfc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>⏱ {snap.fastestLap.racerName}</span>
+            <span style={{ fontFamily: 'monospace' }}>{formatRaceTime(snap.fastestLap.timeMs)}</span>
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem' }}>
+          {CAMERA_OPTIONS.map((opt) => (
+            <button key={opt.id} type="button" className="kart-side-btn" data-on={cameraMode === opt.id} onClick={() => setCameraMode(opt.id)}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.25rem' }}>
+          {needsSoundTap ? (
+            <button type="button" className="kart-side-btn" style={{ background: '#facc15', color: '#000' }} onClick={() => { audioRef.current?.resume(); setNeedsSoundTap(false); }}>
+              🔊 Tap for sound
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="kart-side-btn"
+                data-on={soundPrefs?.music !== false}
+                onClick={() => soundPrefs && setSoundPrefs?.({ ...soundPrefs, music: !soundPrefs.music })}
+              >
+                🎵 Music
+              </button>
+              <button
+                type="button"
+                className="kart-side-btn"
+                data-on={soundPrefs?.sfx !== false}
+                onClick={() => soundPrefs && setSoundPrefs?.({ ...soundPrefs, sfx: !soundPrefs.sfx })}
+              >
+                🔊 SFX
+              </button>
+            </>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.25rem' }}>
+          <button type="button" className="kart-side-btn" onClick={() => sendAction({ type: 'FINISH_KART_RACE' })}>⏭️ End race</button>
+          <button type="button" className="kart-side-btn" onClick={() => onRequestQuit?.()}>🚪 Quit</button>
+        </div>
+      </aside>
+    </div>
   );
-}
-
-// ─── Three.js 3D Track & Kart Scene Builder ────────────────────────────────────
-
-function buildContinuousStripMesh(
-  samples: KartTrack['samples'],
-  innerOffset: number,
-  outerOffset: number,
-  yBottom: number,
-  yTop: number,
-  colorA: THREE.Color,
-  colorB: THREE.Color,
-  stripePeriod: number,
-): THREE.Mesh {
-  const m = samples.length;
-  const positions: number[] = [];
-  const colors: number[] = [];
-
-  const pushQuad = (
-    ax: number, ay: number, az: number,
-    bx: number, by: number, bz: number,
-    cx: number, cy: number, cz: number,
-    dx: number, dy: number, dz: number,
-    col: THREE.Color,
-  ) => {
-    positions.push(
-      ax, ay, az, bx, by, bz, cx, cy, cz,
-      bx, by, bz, dx, dy, dz, cx, cy, cz,
-    );
-    for (let k = 0; k < 6; k++) {
-      colors.push(col.r, col.g, col.b);
-    }
-  };
-
-  for (let i = 0; i < m; i++) {
-    const s0 = samples[i];
-    const s1 = samples[(i + 1) % m];
-    const col = Math.floor(i / stripePeriod) % 2 === 0 ? colorA : colorB;
-
-    const b0 = s0.bank || 0;
-    const b1 = s1.bank || 0;
-
-    const i0x = s0.x + s0.nx * innerOffset;
-    const i0z = s0.z + s0.nz * innerOffset;
-    const o0x = s0.x + s0.nx * outerOffset;
-    const o0z = s0.z + s0.nz * outerOffset;
-
-    const i1x = s1.x + s1.nx * innerOffset;
-    const i1z = s1.z + s1.nz * innerOffset;
-    const o1x = s1.x + s1.nx * outerOffset;
-    const o1z = s1.z + s1.nz * outerOffset;
-
-    const i0yT = yTop + Math.sin(b0) * innerOffset;
-    const o0yT = yTop + Math.sin(b0) * outerOffset;
-    const i1yT = yTop + Math.sin(b1) * innerOffset;
-    const o1yT = yTop + Math.sin(b1) * outerOffset;
-
-    const i0yB = yBottom + Math.sin(b0) * innerOffset;
-    const o0yB = yBottom + Math.sin(b0) * outerOffset;
-    const i1yB = yBottom + Math.sin(b1) * innerOffset;
-    const o1yB = yBottom + Math.sin(b1) * outerOffset;
-
-    // Top face
-    pushQuad(
-      i0x, i0yT, i0z,
-      o0x, o0yT, o0z,
-      i1x, i1yT, i1z,
-      o1x, o1yT, o1z,
-      col,
-    );
-    // Inner vertical face (facing road)
-    pushQuad(
-      i0x, i0yB, i0z,
-      i0x, i0yT, i0z,
-      i1x, i1yB, i1z,
-      i1x, i1yT, i1z,
-      col,
-    );
-    // Outer vertical face
-    pushQuad(
-      o0x, o0yT, o0z,
-      o0x, o0yB, o0z,
-      o1x, o1yT, o1z,
-      o1x, o1yB, o1z,
-      col,
-    );
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geo.computeVertexNormals();
-  return new THREE.Mesh(
-    geo,
-    new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-  );
-}
-
-function buildTrackMeshGroup(track: KartTrack): {
-  group: THREE.Group;
-  itemBoxMeshes: Map<string, THREE.Mesh>;
-  gantryLights: THREE.Mesh[];
-} {
-  const group = new THREE.Group();
-  const itemBoxMeshes = new Map<string, THREE.Mesh>();
-  const gantryLights: THREE.Mesh[] = [];
-
-  // Ground plane lowered well below road to prevent any Z-fighting
-  const groundGeo = new THREE.PlaneGeometry(1800, 1800);
-  const groundMat = new THREE.MeshLambertMaterial({ color: track.theme.groundColor });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.35;
-  group.add(ground);
-
-  const samples = track.samples;
-  const m = samples.length;
-  const halfW = track.roadWidth * 0.5;
-  const curbW = 2.4;
-  const shoulderW = track.wallWidth + 2.5;
-
-  // 1. Continuous Shoulder / Gravel Apron Ribbon under the track & walls with Banking Elevation
-  const shoulderPositions: number[] = [];
-  const shoulderIndices: number[] = [];
-  for (let i = 0; i <= m; i++) {
-    const s = samples[i % m];
-    const b = s.bank || 0;
-    const lx = s.x - s.nx * shoulderW;
-    const lz = s.z - s.nz * shoulderW;
-    const rx = s.x + s.nx * shoulderW;
-    const rz = s.z + s.nz * shoulderW;
-    const ly = 0.01 + Math.sin(b) * (-shoulderW);
-    const ry = 0.01 + Math.sin(b) * shoulderW;
-    shoulderPositions.push(lx, ly, lz, rx, ry, rz);
-    if (i < m) {
-      const v = i * 2;
-      shoulderIndices.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
-    }
-  }
-  const shoulderGeo = new THREE.BufferGeometry();
-  shoulderGeo.setAttribute('position', new THREE.Float32BufferAttribute(shoulderPositions, 3));
-  shoulderGeo.setIndex(shoulderIndices);
-  shoulderGeo.computeVertexNormals();
-  const shoulderColor = new THREE.Color(track.theme.groundColor).lerp(new THREE.Color('#0f172a'), 0.38);
-  group.add(
-    new THREE.Mesh(
-      shoulderGeo,
-      new THREE.MeshLambertMaterial({ color: shoulderColor, side: THREE.DoubleSide }),
-    ),
-  );
-
-  // 2. Multi-Lane Sculpted Road Ribbon with 3D Banking Camber
-  const roadPositions: number[] = [];
-  const roadColors: number[] = [];
-  const roadIndices: number[] = [];
-
-  const rainbowPalette = [
-    new THREE.Color('#ef4444'),
-    new THREE.Color('#f97316'),
-    new THREE.Color('#facc15'),
-    new THREE.Color('#22c55e'),
-    new THREE.Color('#06b6d4'),
-    new THREE.Color('#a855f7'),
-    new THREE.Color('#ec4899'),
-  ];
-  const baseRoadColor = new THREE.Color(track.theme.roadColor);
-  const edgeRoadColor = baseRoadColor.clone().multiplyScalar(0.82);
-  const centerGrooveColor = baseRoadColor.clone().lerp(new THREE.Color(track.theme.accentColor), 0.12);
-
-  for (let i = 0; i <= m; i++) {
-    const s = samples[i % m];
-    const b = s.bank || 0;
-    const offsets = [-halfW, -halfW * 0.45, halfW * 0.45, halfW];
-    for (let j = 0; j < 4; j++) {
-      const off = offsets[j];
-      const y = 0.12 + Math.sin(b) * off;
-      roadPositions.push(s.x + s.nx * off, y, s.z + s.nz * off);
-      if (track.theme.rainbowRoad) {
-        const rc = rainbowPalette[(i + j) % rainbowPalette.length];
-        roadColors.push(rc.r, rc.g, rc.b);
-      } else {
-        const col = j === 0 || j === 3 ? edgeRoadColor : centerGrooveColor;
-        roadColors.push(col.r, col.g, col.b);
-      }
-    }
-
-    if (i < m) {
-      const row0 = i * 4;
-      const row1 = (i + 1) * 4;
-      for (let j = 0; j < 3; j++) {
-        const a = row0 + j;
-        const b = row0 + j + 1;
-        const c = row1 + j;
-        const d = row1 + j + 1;
-        roadIndices.push(a, b, c, b, d, c);
-      }
-    }
-  }
-
-  const roadGeo = new THREE.BufferGeometry();
-  roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(roadPositions, 3));
-  roadGeo.setAttribute('color', new THREE.Float32BufferAttribute(roadColors, 3));
-  roadGeo.setIndex(roadIndices);
-  roadGeo.computeVertexNormals();
-  const roadMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  group.add(new THREE.Mesh(roadGeo, roadMat));
-
-  // 3. Continuous Extruded 3D Left & Right Rumble Curbs with Bank Camber
-  const curbColorA = new THREE.Color(track.theme.curbColorA);
-  const curbColorB = new THREE.Color(track.theme.curbColorB);
-  group.add(
-    buildContinuousStripMesh(samples, -halfW - curbW, -halfW, 0.08, 0.34, curbColorA, curbColorB, 2),
-  );
-  group.add(
-    buildContinuousStripMesh(samples, halfW, halfW + curbW, 0.08, 0.34, curbColorA, curbColorB, 2),
-  );
-
-  // 4. Continuous 3D Outer Track Barrier Walls
-  const wallInner = track.wallWidth;
-  const wallOuter = track.wallWidth + 1.35;
-  const wallColorA = new THREE.Color(track.theme.curbColorA).lerp(new THREE.Color('#0f172a'), 0.2);
-  const wallColorB = new THREE.Color(track.theme.curbColorB).lerp(new THREE.Color('#1e293b'), 0.25);
-  group.add(
-    buildContinuousStripMesh(samples, -wallOuter, -wallInner, 0.0, 1.65, wallColorA, wallColorB, 3),
-  );
-  group.add(
-    buildContinuousStripMesh(samples, wallInner, wallOuter, 0.0, 1.65, wallColorA, wallColorB, 3),
-  );
-
-  // 5. Centerline & Edge Racing Stripes with Bank Camber
-  const dashGeo = new THREE.PlaneGeometry(0.95, 3.6);
-  const dashMat = new THREE.MeshBasicMaterial({ color: track.theme.roadStripeColor, side: THREE.DoubleSide });
-  for (let i = 0; i < m; i += 3) {
-    const s = samples[i];
-    const dash = new THREE.Mesh(dashGeo, dashMat);
-    dash.rotation.x = -Math.PI / 2;
-    dash.rotation.z = -s.angle;
-    dash.position.set(s.x, 0.16, s.z);
-    group.add(dash);
-  }
-
-  // 6. Automatic 3D Turn Chevron Warning Signs on the outside of sharp turns
-  const signBoardGeo = new THREE.BoxGeometry(3.6, 2.2, 0.35);
-  const signBoardMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
-  const signArrowGeo = new THREE.ConeGeometry(0.85, 1.6, 3);
-  const signArrowMat = new THREE.MeshBasicMaterial({ color: '#facc15' });
-  const signPostGeo = new THREE.CylinderGeometry(0.18, 0.22, 2.6, 8);
-  const signPostMat = new THREE.MeshLambertMaterial({ color: '#64748b' });
-
-  for (let i = 0; i < m; i += 5) {
-    const s = samples[i];
-    if (Math.abs(s.curvature) < 0.012) continue;
-    // Strictly on the true outside of the turn (beyond the barrier walls)
-    const outsideSign = s.curvature > 0 ? 1 : -1;
-    const dist = track.wallWidth + 3.2;
-    const sx = s.x + s.nx * outsideSign * dist;
-    const sz = s.z + s.nz * outsideSign * dist;
-
-    // Guaranteed clearance from all other track sections
-    let tooClose = false;
-    for (let j = 0; j < m; j++) {
-      if (Math.abs(i - j) <= 6 || Math.abs(i - j) >= m - 6) continue;
-      const other = samples[j];
-      if (Math.hypot(sx - other.x, sz - other.z) < track.wallWidth + 4) {
-        tooClose = true;
-        break;
-      }
-    }
-    if (tooClose) continue;
-
-    const signGroup = new THREE.Group();
-    signGroup.position.set(sx, 0, sz);
-    signGroup.rotation.y = s.angle + Math.PI + outsideSign * 0.25;
-
-    const post = new THREE.Mesh(signPostGeo, signPostMat);
-    post.position.y = 1.3;
-    const board = new THREE.Mesh(signBoardGeo, signBoardMat);
-    board.position.y = 2.6;
-    const arrow = new THREE.Mesh(signArrowGeo, signArrowMat);
-    arrow.position.set(0, 2.6, 0.22);
-    arrow.rotation.z = s.curvature > 0 ? -Math.PI / 2 : Math.PI / 2;
-
-    signGroup.add(post, board, arrow);
-    group.add(signGroup);
-  }
-
-  // 7. Start / Finish Checkered Line, Overhead Gantry & 3D Animated Traffic Lights
-  const startSample = samples[0];
-  if (startSample) {
-    const finishGroup = new THREE.Group();
-    finishGroup.position.set(startSample.x, 0, startSample.z);
-    finishGroup.rotation.y = startSample.angle;
-
-    // Checkered road strip
-    const tileCount = 14;
-    const tileW = track.roadWidth / tileCount;
-    const tileGeo = new THREE.PlaneGeometry(tileW, 2.4);
-    const whiteMat = new THREE.MeshBasicMaterial({ color: '#ffffff', side: THREE.DoubleSide });
-    const blackMat = new THREE.MeshBasicMaterial({ color: '#0f172a', side: THREE.DoubleSide });
-    for (let row = 0; row < 2; row++) {
-      for (let col = 0; col < tileCount; col++) {
-        const tile = new THREE.Mesh(tileGeo, (row + col) % 2 === 0 ? whiteMat : blackMat);
-        tile.rotation.x = -Math.PI / 2;
-        tile.position.set(-halfW + tileW * (col + 0.5), 0.17, (row - 0.5) * 2.4);
-        finishGroup.add(tile);
-      }
-    }
-
-    // Gantry pillars safely outside outer barrier walls
-    const pillarDist = track.wallWidth + 3.5;
-    const pillarGeo = new THREE.CylinderGeometry(0.95, 1.15, 15, 12);
-    const pillarMat = new THREE.MeshLambertMaterial({ color: track.theme.accentColor });
-    const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    leftPillar.position.set(-pillarDist, 7.5, 0);
-    const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    rightPillar.position.set(pillarDist, 7.5, 0);
-    const bannerGeo = new THREE.BoxGeometry(pillarDist * 2 + 4, 2.8, 1.6);
-    const bannerMat = new THREE.MeshLambertMaterial({ color: '#facc15' });
-    const banner = new THREE.Mesh(bannerGeo, bannerMat);
-    banner.position.set(0, 14.0, 0);
-    finishGroup.add(leftPillar, rightPillar, banner);
-
-    // 3 Gantry Countdown Traffic Light Bulbs
-    for (let li = 0; li < 3; li++) {
-      const bulb = new THREE.Mesh(
-        new THREE.SphereGeometry(0.65, 12, 10),
-        new THREE.MeshBasicMaterial({ color: '#334155' }),
-      );
-      bulb.position.set((li - 1) * 3.2, 14.0, 0.95);
-      finishGroup.add(bulb);
-      gantryLights.push(bulb);
-    }
-
-    // Trackside Grandstands on both sides of start straight (with collision clearance)
-    for (const side of [-1, 1]) {
-      const standDist = track.wallWidth + 12.0;
-      const cos = Math.cos(startSample.angle);
-      const sin = Math.sin(startSample.angle);
-      const worldCenterX = startSample.x + (side * (standDist + 3.0) * cos + (-8) * sin);
-      const worldCenterZ = startSample.z + (-side * (standDist + 3.0) * sin + (-8) * cos);
-      let overlapsOther = false;
-      for (let i = 8; i < m - 8; i++) {
-        const s = samples[i];
-        if (Math.hypot(worldCenterX - s.x, worldCenterZ - s.z) < track.wallWidth + 14) {
-          overlapsOther = true;
-          break;
-        }
-      }
-      if (overlapsOther) continue;
-
-      const standGroup = new THREE.Group();
-      standGroup.position.set(side * standDist, 0, -8);
-      const tierColors = ['#ef4444', '#38bdf8', '#facc15'];
-      for (let t = 0; t < 3; t++) {
-        const tier = new THREE.Mesh(
-          new THREE.BoxGeometry(3.2, 1.8 * (t + 1), 26),
-          new THREE.MeshLambertMaterial({ color: tierColors[t] }),
-        );
-        tier.position.set(side * t * 2.8, 0.9 * (t + 1), 0);
-        standGroup.add(tier);
-      }
-      const roof = new THREE.Mesh(
-        new THREE.BoxGeometry(10, 0.6, 28),
-        new THREE.MeshLambertMaterial({ color: '#1e293b' }),
-      );
-      roof.position.set(side * 2.5, 8.2, 0);
-      standGroup.add(roof);
-      finishGroup.add(standGroup);
-    }
-
-    group.add(finishGroup);
-  }
-
-  // 8. Boost Pads
-  const padGeo = new THREE.PlaneGeometry(5.4, 7.6);
-  const padMat = new THREE.MeshBasicMaterial({ color: '#f97316', side: THREE.DoubleSide });
-  const padInnerGeo = new THREE.PlaneGeometry(3.6, 5.0);
-  const padInnerMat = new THREE.MeshBasicMaterial({ color: '#facc15', side: THREE.DoubleSide });
-  for (const pad of track.boostPads) {
-    const padGroup = new THREE.Group();
-    padGroup.position.set(pad.x, 0.18, pad.z);
-    padGroup.rotation.y = pad.angle;
-
-    const outer = new THREE.Mesh(padGeo, padMat);
-    outer.rotation.x = -Math.PI / 2;
-    const inner = new THREE.Mesh(padInnerGeo, padInnerMat);
-    inner.rotation.x = -Math.PI / 2;
-    inner.position.y = 0.02;
-    padGroup.add(outer, inner);
-    group.add(padGroup);
-  }
-
-  // 9. Item Boxes
-  const boxGeo = new THREE.BoxGeometry(2.4, 2.4, 2.4);
-  const boxMat = new THREE.MeshLambertMaterial({
-    color: '#38bdf8',
-    emissive: '#a855f7',
-    emissiveIntensity: 0.48,
-  });
-  for (const b of track.itemBoxes) {
-    const mesh = new THREE.Mesh(boxGeo, boxMat);
-    mesh.position.set(b.x, 2.2, b.z);
-    group.add(mesh);
-    itemBoxMeshes.set(b.id, mesh);
-  }
-
-  // 10. Scenery Props with rich theme props (lava-spire, cyber-arch, rock, palm, cactus, pine)
-  for (const prop of track.scenery) {
-    const propGroup = new THREE.Group();
-    propGroup.position.set(prop.x, 0, prop.z);
-    propGroup.scale.setScalar(prop.scale);
-
-    if (prop.kind === 'palm') {
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.8, 9, 8),
-        new THREE.MeshLambertMaterial({ color: '#92400e' }),
-      );
-      trunk.position.y = 4.5;
-      const crown = new THREE.Mesh(
-        new THREE.SphereGeometry(3.8, 8, 6),
-        new THREE.MeshLambertMaterial({ color: prop.color }),
-      );
-      crown.position.y = 9.2;
-      crown.scale.y = 0.55;
-      propGroup.add(trunk, crown);
-    } else if (prop.kind === 'cactus') {
-      const stem = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.8, 0.95, 8, 8),
-        new THREE.MeshLambertMaterial({ color: prop.color }),
-      );
-      stem.position.y = 4;
-      propGroup.add(stem);
-    } else if (prop.kind === 'pine') {
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.7, 3, 8),
-        new THREE.MeshLambertMaterial({ color: '#78350f' }),
-      );
-      trunk.position.y = 1.5;
-      const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(3.8, 10.5, 8),
-        new THREE.MeshLambertMaterial({ color: prop.color }),
-      );
-      cone.position.y = 7;
-      propGroup.add(trunk, cone);
-    } else if (prop.kind === 'lava-spire') {
-      const spire = new THREE.Mesh(
-        new THREE.ConeGeometry(3.2, 16, 7),
-        new THREE.MeshLambertMaterial({ color: '#1c1917' }),
-      );
-      spire.position.y = 8;
-      const lavaTip = new THREE.Mesh(
-        new THREE.ConeGeometry(1.2, 4.5, 7),
-        new THREE.MeshBasicMaterial({ color: '#f97316' }),
-      );
-      lavaTip.position.y = 13.5;
-      propGroup.add(spire, lavaTip);
-    } else if (prop.kind === 'cyber-arch') {
-      // Futuristic Cyber-Spire Skyscraper Monolith
-      const tower = new THREE.Mesh(
-        new THREE.BoxGeometry(2.4, 20, 2.4),
-        new THREE.MeshLambertMaterial({ color: '#090d16' }),
-      );
-      tower.position.y = 10;
-      const neonStripe = new THREE.Mesh(
-        new THREE.BoxGeometry(0.35, 19.5, 2.45),
-        new THREE.MeshBasicMaterial({ color: prop.color }),
-      );
-      neonStripe.position.y = 10;
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.8, 0.16, 8, 16),
-        new THREE.MeshBasicMaterial({ color: '#00f5ff' }),
-      );
-      ring.position.y = 15;
-      ring.rotation.x = Math.PI / 2;
-      const beacon = new THREE.Mesh(
-        new THREE.ConeGeometry(1.4, 3.8, 4),
-        new THREE.MeshBasicMaterial({ color: '#ec4899' }),
-      );
-      beacon.position.y = 21.9;
-      propGroup.add(tower, neonStripe, ring, beacon);
-    } else if (prop.kind === 'rock') {
-      const rock = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(2.8, 1),
-        new THREE.MeshLambertMaterial({ color: prop.color || '#334155' }),
-      );
-      rock.position.y = 2.2;
-      rock.scale.set(1.2, 0.85, 1.1);
-      propGroup.add(rock);
-    } else {
-      const pillar = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.1, 1.1, 14, 8),
-        new THREE.MeshLambertMaterial({
-          color: prop.color,
-          emissive: prop.color,
-          emissiveIntensity: 0.55,
-        }),
-      );
-      pillar.position.y = 7;
-      propGroup.add(pillar);
-    }
-    group.add(propGroup);
-  }
-
-  // 11. Overhead Cyber Lightspeed Arches on Cyber Metropolis (spanning safely above the road)
-  if (track.id === 'cyber-metro') {
-    const archDist = track.wallWidth + 3.0;
-    const gateP = [0.35, 0.70];
-    for (const p of gateP) {
-      const s = sampleTrackAtProgress(track, p);
-      const gateGroup = new THREE.Group();
-      gateGroup.position.set(s.x, 0, s.z);
-      gateGroup.rotation.y = s.angle;
-
-      const colGeo = new THREE.BoxGeometry(1.2, 17, 1.2);
-      const colMat = new THREE.MeshBasicMaterial({ color: '#00f5ff' });
-      const leftCol = new THREE.Mesh(colGeo, colMat);
-      leftCol.position.set(-archDist, 8.5, 0);
-      const rightCol = new THREE.Mesh(colGeo, colMat);
-      rightCol.position.set(archDist, 8.5, 0);
-
-      const crossGeo = new THREE.BoxGeometry(archDist * 2 + 2, 1.4, 1.4);
-      const crossMat = new THREE.MeshBasicMaterial({ color: '#ec4899' });
-      const crossBeam = new THREE.Mesh(crossGeo, crossMat);
-      crossBeam.position.set(0, 16.5, 0);
-
-      gateGroup.add(leftCol, rightCol, crossBeam);
-      group.add(gateGroup);
-    }
-  }
-
-  return { group, itemBoxMeshes, gantryLights };
-}
-
-interface KartMeshRefs {
-  root: THREE.Group;
-  bodyMat: THREE.MeshLambertMaterial;
-  baseColor: THREE.Color;
-  flame: THREE.Mesh;
-  flame2: THREE.Mesh;
-  sparkLeft: THREE.Mesh;
-  sparkRight: THREE.Mesh;
-  sparkMat: THREE.MeshBasicMaterial;
-  frontWheelGroup: THREE.Group;
-  wheels: THREE.Mesh[];
-  shadowDisc: THREE.Mesh;
-  windStreaks: THREE.Group;
-  style: string;
-  currX: number;
-  currY: number;
-  currZ: number;
-  currAngle: number;
-  targetX: number;
-  targetY: number;
-  targetZ: number;
-  targetAngle: number;
-}
-
-function createKartMesh(
-  colorHex: string,
-  x: number,
-  z: number,
-  angle: number,
-  kartStyle: string = 'classic',
-  sparksColorHex: string = '#38bdf8',
-): KartMeshRefs {
-  const root = new THREE.Group();
-  root.position.set(x, 0.12, z);
-  root.rotation.y = angle;
-
-  const baseColor = new THREE.Color(colorHex);
-  const bodyMat = new THREE.MeshLambertMaterial({ color: baseColor });
-  const darkTrimMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
-  const silverMat = new THREE.MeshLambertMaterial({ color: '#cbd5e1' });
-  const accentMat = new THREE.MeshLambertMaterial({ color: sparksColorHex });
-
-  // 1. Soft Contact Shadow Disc on asphalt
-  const shadowGeo = new THREE.CircleGeometry(1.55, 16);
-  const shadowMat = new THREE.MeshBasicMaterial({ color: '#000000', opacity: 0.45, transparent: true });
-  const shadowDisc = new THREE.Mesh(shadowGeo, shadowMat);
-  shadowDisc.rotation.x = -Math.PI / 2;
-  shadowDisc.position.y = -0.06;
-  root.add(shadowDisc);
-
-  // 2. Chassis variants based on kartStyle
-  if (kartStyle === 'rocket') {
-    // Sleek Jet-Turbine Fuselage
-    const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.84, 3.8, 12), bodyMat);
-    fuselage.rotation.x = Math.PI / 2;
-    fuselage.position.y = 0.58;
-    const coneNose = new THREE.Mesh(new THREE.ConeGeometry(0.72, 1.35, 12), darkTrimMat);
-    coneNose.rotation.x = -Math.PI / 2;
-    coneNose.position.set(0, 0.58, 2.5);
-    const deltaWings = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 1.4), bodyMat);
-    deltaWings.position.set(0, 0.45, -0.2);
-    const vertFin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.25, 1.1), darkTrimMat);
-    vertFin.position.set(0, 1.3, -1.2);
-    root.add(fuselage, coneNose, deltaWings, vertFin);
-  } else if (kartStyle === 'cyber') {
-    // Angular Stealth Wedge with Neon Underglow Disc
-    const wedge = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.52, 3.6), bodyMat);
-    wedge.position.y = 0.5;
-    const frontBevel = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.8, 4), darkTrimMat);
-    frontBevel.rotation.x = -Math.PI / 2;
-    frontBevel.rotation.y = Math.PI / 4;
-    frontBevel.position.set(0, 0.44, 2.3);
-    const finL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.9, 1.4), accentMat);
-    finL.position.set(-1.05, 0.85, -1.0);
-    const finR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.9, 1.4), accentMat);
-    finR.position.set(1.05, 0.85, -1.0);
-    const underglow = new THREE.Mesh(
-      new THREE.CircleGeometry(1.8, 16),
-      new THREE.MeshBasicMaterial({ color: sparksColorHex, opacity: 0.65, transparent: true }),
-    );
-    underglow.rotation.x = -Math.PI / 2;
-    underglow.position.y = -0.04;
-    root.add(wedge, frontBevel, finL, finR, underglow);
-  } else if (kartStyle === 'bruiser') {
-    // Heavy Muscular Off-Road Frame with Bull-Bar & Roll-Cage
-    const heavyBody = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.68, 3.5), bodyMat);
-    heavyBody.position.y = 0.58;
-    const bullBar = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.15, 8, 16, Math.PI), silverMat);
-    bullBar.position.set(0, 0.45, 2.0);
-    bullBar.rotation.x = Math.PI / 2;
-    const rollCage = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.12, 8, 16, Math.PI), darkTrimMat);
-    rollCage.position.set(0, 1.05, -0.2);
-    rollCage.rotation.x = -Math.PI / 2;
-    const exhaust1 = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.4, 8), silverMat);
-    exhaust1.position.set(-0.85, 1.25, -1.35);
-    const exhaust2 = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.4, 8), silverMat);
-    exhaust2.position.set(0.85, 1.25, -1.35);
-    root.add(heavyBody, bullBar, rollCage, exhaust1, exhaust2);
-  } else {
-    // Classic Formula-style Racing Kart
-    const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.58, 3.5), bodyMat);
-    chassis.position.y = 0.52;
-    for (const side of [-1, 1]) {
-      const pod = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.44, 2.1), bodyMat);
-      pod.position.set(side * 1.05, 0.46, -0.1);
-      root.add(pod);
-    }
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.42, 1.35), bodyMat);
-    nose.position.set(0, 0.44, 2.05);
-    const frontWing = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.14, 0.55), darkTrimMat);
-    frontWing.position.set(0, 0.3, 2.55);
-    const engine = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.55, 0.9), silverMat);
-    engine.position.set(0, 0.85, -1.25);
-    const spoiler = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.18, 0.65), darkTrimMat);
-    spoiler.position.set(0, 1.32, -1.65);
-    root.add(chassis, nose, frontWing, engine, spoiler);
-  }
-
-  // Driver torso, helmet & visor
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.75, 10), bodyMat);
-  torso.position.set(0, 1.02, -0.15);
-  const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.56, 14, 12),
-    new THREE.MeshLambertMaterial({ color: '#ffffff' }),
-  );
-  helmet.position.set(0, 1.48, -0.12);
-  const visor = new THREE.Mesh(
-    new THREE.BoxGeometry(0.76, 0.28, 0.45),
-    new THREE.MeshLambertMaterial({ color: '#020617' }),
-  );
-  visor.position.set(0, 1.5, 0.32);
-  root.add(torso, helmet, visor);
-
-  // 4 Alloy Racing Wheels with Pivoting Front Steering
-  const wheelGeo = new THREE.CylinderGeometry(0.52, 0.52, 0.52, 14);
-  wheelGeo.rotateZ(Math.PI / 2);
-  const rimGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.55, 10);
-  rimGeo.rotateZ(Math.PI / 2);
-  const wheelMat = new THREE.MeshLambertMaterial({ color: '#111827' });
-
-  const wheels: THREE.Mesh[] = [];
-  const frontWheelGroup = new THREE.Group();
-  frontWheelGroup.position.set(0, 0.52, 1.25);
-  root.add(frontWheelGroup);
-
-  for (const side of [-1, 1]) {
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
-    w.position.set(side * 1.25, 0, 0);
-    const rim = new THREE.Mesh(rimGeo, silverMat);
-    w.add(rim);
-    frontWheelGroup.add(w);
-    wheels.push(w);
-  }
-
-  for (const side of [-1, 1]) {
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
-    w.position.set(side * 1.3, 0.52, -1.25);
-    const rim = new THREE.Mesh(rimGeo, silverMat);
-    w.add(rim);
-    root.add(w);
-    wheels.push(w);
-  }
-
-  // Dual Exhaust Flames
-  const flameGeo = new THREE.ConeGeometry(0.55, 2.2, 8);
-  flameGeo.rotateX(-Math.PI / 2);
-  const flameMat1 = new THREE.MeshBasicMaterial({ color: '#f97316' });
-  const flame = new THREE.Mesh(flameGeo, flameMat1);
-  flame.position.set(-0.45, 0.65, -2.6);
-  flame.visible = false;
-
-  const flameMat2 = new THREE.MeshBasicMaterial({ color: '#facc15' });
-  const flame2 = new THREE.Mesh(flameGeo, flameMat2);
-  flame2.position.set(0.45, 0.65, -2.6);
-  flame2.visible = false;
-  root.add(flame, flame2);
-
-  // 3-Tier Drift Sparks behind rear tires
-  const sparkGeo = new THREE.SphereGeometry(0.6, 10, 10);
-  const sparkMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
-  const sparkLeft = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkLeft.position.set(-1.25, 0.48, -2.05);
-  sparkLeft.visible = false;
-  const sparkRight = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkRight.position.set(1.25, 0.48, -2.05);
-  sparkRight.visible = false;
-  root.add(sparkLeft, sparkRight);
-
-  // Wind speed streaks
-  const windStreaks = new THREE.Group();
-  for (let s = 0; s < 4; s++) {
-    const lineGeo = new THREE.CylinderGeometry(0.04, 0.04, 3.2, 4);
-    lineGeo.rotateX(Math.PI / 2);
-    const lineMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55 });
-    const streak = new THREE.Mesh(lineGeo, lineMat);
-    streak.position.set((s - 1.5) * 0.9, 0.8 + (s % 2) * 0.5, -2.2);
-    windStreaks.add(streak);
-  }
-  windStreaks.visible = false;
-  root.add(windStreaks);
-
-  return {
-    root,
-    bodyMat,
-    baseColor,
-    flame,
-    flame2,
-    sparkLeft,
-    sparkRight,
-    sparkMat,
-    frontWheelGroup,
-    wheels,
-    shadowDisc,
-    windStreaks,
-    style: kartStyle,
-    currX: x,
-    currY: 0.12,
-    currZ: z,
-    currAngle: angle,
-    targetX: x,
-    targetY: 0.12,
-    targetZ: z,
-    targetAngle: angle,
-  };
-}
-
-function lerpAngle(a: number, b: number, t: number): number {
-  let diff = (b - a) % (Math.PI * 2);
-  if (diff > Math.PI) diff -= Math.PI * 2;
-  if (diff < -Math.PI) diff += Math.PI * 2;
-  return a + diff * t;
-}
-
-// ─── Web Audio Racing Synthesizer (Engine drone, drift screech, boost whoosh, horn) ──
-class KartAudioEngine {
-  private ctx: AudioContext | null = null;
-  private engineOsc: OscillatorNode | null = null;
-  private engineGain: GainNode | null = null;
-  public enabled = true;
-
-  public init() {
-    if (this.ctx) return;
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      this.ctx = new AudioCtx();
-    } catch {}
-  }
-
-  public enable() {
-    this.init();
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
-    this.enabled = true;
-  }
-
-  public disable() {
-    this.enabled = false;
-    this.stopEngine();
-  }
-
-  public updateEngine(speedRatio: number, isDrifting: boolean) {
-    if (!this.enabled || !this.ctx) return;
-    if (this.ctx.state === 'suspended') return;
-    if (!this.engineOsc) {
-      try {
-        this.engineOsc = this.ctx.createOscillator();
-        this.engineOsc.type = 'sawtooth';
-        this.engineGain = this.ctx.createGain();
-        this.engineGain.gain.setValueAtTime(0.035, this.ctx.currentTime);
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(380, this.ctx.currentTime);
-        this.engineOsc.connect(filter);
-        filter.connect(this.engineGain);
-        this.engineGain.connect(this.ctx.destination);
-        this.engineOsc.start();
-      } catch {}
-    }
-    if (this.engineOsc && this.engineGain) {
-      const targetFreq = 54 + Math.max(0, Math.min(1, speedRatio)) * 145 + (isDrifting ? 35 : 0);
-      this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.08);
-    }
-  }
-
-  public playBoost() {
-    if (!this.enabled || !this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(110, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(540, this.ctx.currentTime + 0.35);
-      g.gain.setValueAtTime(0.12, this.ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.38);
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.4);
-    } catch {}
-  }
-
-  public playCountdown(isGo: boolean) {
-    if (!this.enabled || !this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = 'sine';
-      const freq = isGo ? 880 : 440;
-      osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-      g.gain.setValueAtTime(0.16, this.ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + (isGo ? 0.6 : 0.22));
-      osc.connect(g);
-      g.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + (isGo ? 0.65 : 0.25));
-    } catch {}
-  }
-
-  public playHonk() {
-    if (!this.enabled || !this.ctx) return;
-    try {
-      for (const freq of [440, 554]) {
-        const osc = this.ctx.createOscillator();
-        const g = this.ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-        g.gain.setValueAtTime(0.08, this.ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.32);
-        osc.connect(g);
-        g.connect(this.ctx.destination);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.35);
-      }
-    } catch {}
-  }
-
-  public stopEngine() {
-    if (this.engineOsc) {
-      try {
-        this.engineOsc.stop();
-        this.engineOsc.disconnect();
-      } catch {}
-      this.engineOsc = null;
-    }
-  }
 }
 
 // ─── Main Host View Component ──────────────────────────────────────────────────
@@ -1050,474 +447,21 @@ export default function KartClashHostView({
   secondsLeft,
   pct,
   sendAction,
+  soundPrefs,
+  setSoundPrefs,
+  onRequestQuit,
 }: {
   state: any;
   roomCode: string;
   secondsLeft: number | null;
   pct: number;
   sendAction: (action: any) => void;
+  soundPrefs?: SoundPrefs;
+  setSoundPrefs?: (next: SoundPrefs) => void;
+  onRequestQuit?: () => void;
 }) {
   const hd = state.hostData || {};
   const [selectedPlayerForSwap, setSelectedPlayerForSwap] = useState<string | null>(null);
-  const [snapshot, setSnapshot] = useState<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
-  const snapshotRef = useRef<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Broadcast & Spectator Camera Modes + Synthesizer Audio
-  const [cameraMode, setCameraMode] = useState<'split' | 'leader' | 'helicopter' | 'action'>('split');
-  const cameraModeRef = useRef<'split' | 'leader' | 'helicopter' | 'action'>('split');
-  cameraModeRef.current = cameraMode;
-  const [audioEnabled, setAudioEnabled] = useState<boolean>(false);
-  const audioEnabledRef = useRef<boolean>(false);
-  audioEnabledRef.current = audioEnabled;
-  const audioEngineRef = useRef<KartAudioEngine | null>(null);
-  const lastCountdownSecRef = useRef<number>(-1);
-  const boostedKartsRef = useRef<Set<string>>(new Set());
-  const honkedKartsRef = useRef<Set<string>>(new Set());
-
-  const toggleAudio = () => {
-    if (!audioEngineRef.current) {
-      audioEngineRef.current = new KartAudioEngine();
-    }
-    if (audioEnabled) {
-      audioEngineRef.current.disable();
-      setAudioEnabled(false);
-    } else {
-      audioEngineRef.current.enable();
-      setAudioEnabled(true);
-    }
-  };
-
-  // Subscribe to real-time 30Hz kart telemetry during RACING
-  useEffect(() => {
-    if (state.phase !== 'RACING') return;
-    if (hd.initialSnapshot && !snapshotRef.current) {
-      snapshotRef.current = hd.initialSnapshot;
-      setSnapshot(hd.initialSnapshot);
-    }
-    const sse = new EventSource(`/api/party/stream/kart?roomCode=${encodeURIComponent(roomCode)}&role=host`);
-    sse.onmessage = (ev) => {
-      if (!ev.data || ev.data === ':') return;
-      try {
-        const data: KartTelemetrySnapshot = JSON.parse(ev.data);
-        snapshotRef.current = data;
-        setSnapshot(data);
-      } catch {
-        // ignore malformed tick
-      }
-    };
-    return () => sse.close();
-  }, [state.phase, roomCode, hd.initialSnapshot]);
-
-  // Three.js Split-Screen & Cinematic Broadcast 60fps Renderer during RACING
-  useEffect(() => {
-    if (state.phase !== 'RACING') return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const trackId: TrackId = hd.trackId || 'sunny-circuit';
-    const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
-
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setScissorTest(true);
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(track.theme.skyTop);
-    scene.fog = new THREE.FogExp2(track.theme.skyBottom, 0.0022);
-
-    const ambient = new THREE.AmbientLight('#ffffff', 0.85);
-    const dirLight = new THREE.DirectionalLight('#fffbeb', 1.15);
-    dirLight.position.set(120, 220, 90);
-    scene.add(ambient, dirLight);
-
-    const { group: trackGroup, itemBoxMeshes, gantryLights } = buildTrackMeshGroup(track);
-    scene.add(trackGroup);
-
-    const kartMeshes = new Map<string, KartMeshRefs>();
-    const hazardMeshes = new Map<string, THREE.Mesh>();
-    const cameraPool: THREE.PerspectiveCamera[] = [];
-
-    let animId = 0;
-    const clock = new THREE.Clock();
-
-    const renderLoop = () => {
-      animId = requestAnimationFrame(renderLoop);
-      const dt = Math.min(clock.getDelta(), 0.1);
-      const elapsed = clock.getElapsedTime();
-      const snap = snapshotRef.current;
-      if (!snap) return;
-
-      const width = Math.max(1, Math.floor(canvas.clientWidth || window.innerWidth));
-      const height = Math.max(1, Math.floor(canvas.clientHeight || window.innerHeight));
-      if (canvas.width !== width * renderer.getPixelRatio() || canvas.height !== height * renderer.getPixelRatio()) {
-        renderer.setSize(width, height, false);
-      }
-
-      // 1. Animate Gantry Countdown Bulbs
-      if (gantryLights && gantryLights.length >= 3) {
-        const isWaiting = Boolean(snap.waitingForOrientation);
-        const cd = snap.countdownMs;
-        if (isWaiting) {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#334155');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#334155');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
-        } else if (cd > 2000) {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#334155');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
-        } else if (cd > 1000) {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
-        } else if (cd > 0) {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#ef4444');
-        } else if (cd === 0 && snap.elapsedMs < 2800) {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#22c55e');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#22c55e');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#22c55e');
-        } else {
-          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#334155');
-          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#334155');
-          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
-        }
-      }
-
-      // 2. Synthesizer Audio Cues
-      const audio = audioEngineRef.current;
-      if (audio && audioEnabledRef.current) {
-        if (!snap.waitingForOrientation) {
-          const sec = snap.countdownMs > 0 ? Math.ceil(snap.countdownMs / 1000) : 0;
-          if (sec > 0 && sec !== lastCountdownSecRef.current) {
-            lastCountdownSecRef.current = sec;
-            audio.playCountdown(false);
-          } else if (sec === 0 && lastCountdownSecRef.current > 0) {
-            lastCountdownSecRef.current = 0;
-            audio.playCountdown(true);
-          }
-        }
-
-        for (const k of snap.karts) {
-          if (k.boostTimer > 0 && !boostedKartsRef.current.has(k.id)) {
-            boostedKartsRef.current.add(k.id);
-            audio.playBoost();
-          } else if (k.boostTimer <= 0) {
-            boostedKartsRef.current.delete(k.id);
-          }
-
-          if (k.horn && !honkedKartsRef.current.has(k.id)) {
-            honkedKartsRef.current.add(k.id);
-            audio.playHonk();
-          } else if (!k.horn) {
-            honkedKartsRef.current.delete(k.id);
-          }
-        }
-
-        const leader = snap.karts.find((k) => k.rank === 1) || snap.karts[0];
-        if (leader) {
-          audio.updateEngine((leader.speed || 0) / 42, Boolean(leader.drifting));
-        }
-      }
-
-      // 3. Rotate & float item boxes
-      for (const box of snap.itemBoxes) {
-        let mesh = itemBoxMeshes.get(box.id);
-        if (!mesh && box.active) {
-          mesh = new THREE.Mesh(
-            new THREE.BoxGeometry(2.3, 2.3, 2.3),
-            new THREE.MeshLambertMaterial({ color: '#facc15', emissive: '#ec4899', emissiveIntensity: 0.5 }),
-          );
-          mesh.position.set(box.x, 2.1, box.z);
-          scene.add(mesh);
-          itemBoxMeshes.set(box.id, mesh);
-        }
-        if (mesh) {
-          mesh.visible = box.active;
-          mesh.rotation.y = elapsed * 2.2;
-          mesh.rotation.x = elapsed * 1.4;
-          mesh.position.y = 2.0 + Math.sin(elapsed * 3.5 + box.x) * 0.35;
-        }
-      }
-
-      // 4. Update / interpolate karts & animated parts with 3D road camber banking
-      const activeKartIds = new Set(snap.karts.map((k) => k.id));
-      for (const [id, ref] of kartMeshes.entries()) {
-        if (!activeKartIds.has(id)) {
-          scene.remove(ref.root);
-          kartMeshes.delete(id);
-        }
-      }
-
-      for (const k of snap.karts) {
-        let ref = kartMeshes.get(k.id);
-        if (!ref) {
-          ref = createKartMesh(k.color, k.x, k.z, k.angle, k.kartStyle, k.sparksColor);
-          scene.add(ref.root);
-          kartMeshes.set(k.id, ref);
-        }
-
-        const sample = track.samples[k.sampleIdx] || track.samples[0];
-        const b = sample?.bank || 0;
-        const roadY = Math.sin(b) * (k.lateralOffset || 0);
-        const charge = k.driftCharge ?? 0;
-        const hopY = k.drifting && charge > 0 && charge < 22
-          ? Math.sin((charge / 22) * Math.PI) * 0.55
-          : 0;
-
-        ref.targetX = k.x;
-        ref.targetY = 0.12 + roadY + hopY;
-        ref.targetZ = k.z;
-        ref.targetAngle = k.angle;
-
-        const blend = Math.min(1, dt * 18);
-        ref.currX += (ref.targetX - ref.currX) * blend;
-        ref.currY += (ref.targetY - ref.currY) * blend;
-        ref.currZ += (ref.targetZ - ref.currZ) * blend;
-        ref.currAngle = lerpAngle(ref.currAngle, ref.targetAngle, blend);
-
-        ref.root.position.set(ref.currX, ref.currY, ref.currZ);
-        const spinYaw = k.spinOutTimer > 0 ? elapsed * 16 : 0;
-        const driftYaw = k.drifting ? -k.driftDir * 0.42 : 0;
-        ref.root.rotation.y = ref.currAngle + driftYaw + spinYaw;
-
-        // Lean & roll into the corner matching 3D road bank camber
-        const relHeading = ref.currAngle - (sample?.angle || 0);
-        ref.root.rotation.x = -Math.sin(b) * Math.sin(relHeading);
-        ref.root.rotation.z = Math.sin(b) * Math.cos(relHeading) + (k.drifting ? k.driftDir * 0.16 : 0);
-
-        // Wheel spinning & Front steering deflection
-        for (const w of ref.wheels) {
-          w.rotation.x += dt * (k.speed || 0) * 2.6;
-        }
-        const steerDelta = ref.targetAngle - ref.currAngle;
-        const steerAngle = k.drifting ? -k.driftDir * 0.42 : Math.max(-0.45, Math.min(0.45, steerDelta * 3.0));
-        ref.frontWheelGroup.rotation.y = THREE.MathUtils.lerp(ref.frontWheelGroup.rotation.y, steerAngle, Math.min(1, dt * 16));
-
-        const targetScale = k.shrinkTimer > 0 ? 0.58 : 1.0;
-        ref.root.scale.setScalar(targetScale);
-
-        if (k.starTimer > 0) {
-          ref.bodyMat.color.setHSL((elapsed * 2.5) % 1, 0.9, 0.55);
-        } else {
-          ref.bodyMat.color.copy(ref.baseColor);
-        }
-
-        // Dual Boost & Golden Shroom Flames
-        const hasBoost = k.boostTimer > 0 || k.starTimer > 0 || (k.goldenShroomTimer ?? 0) > 0;
-        ref.flame.visible = hasBoost;
-        ref.flame2.visible = hasBoost;
-        if (hasBoost) {
-          const flScale = 0.95 + Math.sin(elapsed * 45) * 0.35;
-          const isGold = (k.goldenShroomTimer ?? 0) > 0;
-          (ref.flame.material as THREE.MeshBasicMaterial).color.set(isGold ? '#facc15' : '#f97316');
-          (ref.flame2.material as THREE.MeshBasicMaterial).color.set(isGold ? '#facc15' : '#f97316');
-          ref.flame.scale.set(flScale, flScale, flScale * (isGold ? 1.4 : 1.0));
-          ref.flame2.scale.set(flScale, flScale, flScale * (isGold ? 1.4 : 1.0));
-        }
-
-        // Wind Speed Streaks (High speed, boost, or slipstream draft)
-        ref.windStreaks.visible = (k.speed || 0) > 28 || hasBoost || (k.slipstreamTimer ?? 0) > 0;
-
-        // 3-Tier Mini-Turbo Drift Sparks
-        const showSparks = k.drifting;
-        ref.sparkLeft.visible = showSparks;
-        ref.sparkRight.visible = showSparks;
-        if (showSparks) {
-          const sparkColor = k.driftLevel === 3
-            ? '#d946ef'
-            : k.driftLevel === 2
-            ? '#f97316'
-            : (k.sparksColor || '#38bdf8');
-          ref.sparkMat.color.set(sparkColor);
-          const baseScale = k.driftLevel === 3 ? 2.1 : k.driftLevel === 2 ? 1.6 : 1.1;
-          const pulse = baseScale + Math.sin(elapsed * 38) * 0.35;
-          ref.sparkLeft.scale.setScalar(pulse);
-          ref.sparkRight.scale.setScalar(pulse);
-        }
-      }
-
-      // 5. Sync active hazards (shells, bananas, spiny shell, fake boxes, shockwave)
-      const activeHazardIds = new Set(snap.hazards.map((h) => h.id));
-      for (const [id, mesh] of hazardMeshes.entries()) {
-        if (!activeHazardIds.has(id)) {
-          scene.remove(mesh);
-          mesh.geometry?.dispose();
-          if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
-          else mesh.material?.dispose();
-          hazardMeshes.delete(id);
-        }
-      }
-      for (const h of snap.hazards) {
-        let mesh = hazardMeshes.get(h.id);
-        if (!mesh) {
-          let geo: THREE.BufferGeometry;
-          let mat: THREE.Material;
-          if (h.kind === 'banana') {
-            geo = new THREE.ConeGeometry(0.95, 1.9, 8);
-            mat = new THREE.MeshLambertMaterial({ color: '#facc15' });
-          } else if (h.kind === 'spiny_shell') {
-            geo = new THREE.SphereGeometry(1.35, 14, 12);
-            mat = new THREE.MeshLambertMaterial({ color: '#0284c7', emissive: '#0ea5e9', emissiveIntensity: 0.6 });
-          } else if (h.kind === 'fake_box') {
-            geo = new THREE.BoxGeometry(2.3, 2.3, 2.3);
-            mat = new THREE.MeshLambertMaterial({ color: '#ef4444', emissive: '#dc2626', emissiveIntensity: 0.7 });
-          } else if (h.kind === 'shockwave') {
-            geo = new THREE.RingGeometry(0.5, 1.8, 24);
-            mat = new THREE.MeshBasicMaterial({ color: '#d946ef', side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
-          } else {
-            geo = new THREE.SphereGeometry(1.15, 12, 10);
-            mat = new THREE.MeshLambertMaterial({ color: h.kind === 'red_shell' ? '#ef4444' : '#22c55e' });
-          }
-          mesh = new THREE.Mesh(geo, mat);
-          scene.add(mesh);
-          hazardMeshes.set(h.id, mesh);
-        }
-        if (h.kind === 'shockwave') {
-          const age = Math.max(0, 0.9 - Math.max(0, (h as any).ttl || 0));
-          const expandScale = 1.0 + age * 14.0;
-          mesh.scale.set(expandScale, expandScale, 1);
-          mesh.rotation.x = -Math.PI / 2;
-          mesh.position.set(h.x, 0.35, h.z);
-          (mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, ((h as any).ttl || 0) / 0.9);
-        } else {
-          mesh.position.set(h.x, h.kind === 'spiny_shell' ? 2.2 : 0.95, h.z);
-          mesh.rotation.y = elapsed * (h.kind === 'spiny_shell' ? 10 : 6);
-          if (h.kind === 'fake_box') {
-            mesh.rotation.x = elapsed * 1.5;
-          }
-        }
-      }
-
-      // 6. Camera Viewport Rendering (Split vs Leader vs Blimp vs Action Battle)
-      const mode = cameraModeRef.current;
-      const sortedKarts = [...snap.karts].sort((a, b) => a.rank - b.rank);
-      const leaderKart = sortedKarts[0] || snap.karts[0];
-      const secondKart = sortedKarts[1] || sortedKarts[0];
-
-      renderer.setViewport(0, 0, width, height);
-      renderer.setScissor(0, 0, width, height);
-      renderer.clear();
-
-      if (mode === 'leader' && leaderKart) {
-        while (cameraPool.length <= 0) {
-          cameraPool.push(new THREE.PerspectiveCamera(65, width / height, 0.5, 950));
-        }
-        const cam = cameraPool[0];
-        cam.aspect = width / height;
-        cam.updateProjectionMatrix();
-
-        const ref = kartMeshes.get(leaderKart.id);
-        const kx = ref ? ref.currX : leaderKart.x;
-        const ky = ref ? ref.currY : 0.12;
-        const kz = ref ? ref.currZ : leaderKart.z;
-        const ka = ref ? ref.currAngle : leaderKart.angle;
-
-        const chaseDist = leaderKart.boostTimer > 0 ? 16.5 : 14.5;
-        const chaseHeight = 7.2;
-        cam.position.set(kx - Math.sin(ka) * chaseDist, ky + chaseHeight, kz - Math.cos(ka) * chaseDist);
-        cam.lookAt(kx + Math.sin(ka) * 20.0, ky + 1.8, kz + Math.cos(ka) * 20.0);
-
-        renderer.render(scene, cam);
-      } else if (mode === 'helicopter') {
-        while (cameraPool.length <= 0) {
-          cameraPool.push(new THREE.PerspectiveCamera(55, width / height, 0.5, 950));
-        }
-        const cam = cameraPool[0];
-        cam.aspect = width / height;
-        cam.updateProjectionMatrix();
-
-        const kx = leaderKart ? leaderKart.x : (track.samples[0]?.x ?? 0);
-        const kz = leaderKart ? leaderKart.z : (track.samples[0]?.z ?? 0);
-        const orbitAngle = elapsed * 0.16;
-        const orbitRadius = 72;
-        cam.position.set(kx + Math.cos(orbitAngle) * orbitRadius, 60, kz + Math.sin(orbitAngle) * orbitRadius);
-        cam.lookAt(kx, 1.5, kz);
-
-        renderer.render(scene, cam);
-      } else if (mode === 'action' && secondKart && leaderKart) {
-        while (cameraPool.length <= 0) {
-          cameraPool.push(new THREE.PerspectiveCamera(70, width / height, 0.5, 950));
-        }
-        const cam = cameraPool[0];
-        cam.aspect = width / height;
-        cam.updateProjectionMatrix();
-
-        const chaser = kartMeshes.get(secondKart.id);
-        const leader = kartMeshes.get(leaderKart.id);
-        const cx = chaser ? chaser.currX : secondKart.x;
-        const cy = chaser ? chaser.currY : 0.12;
-        const cz = chaser ? chaser.currZ : secondKart.z;
-        const ca = chaser ? chaser.currAngle : secondKart.angle;
-        const lx = leader ? leader.currX : leaderKart.x;
-        const ly = leader ? leader.currY : 0.12;
-        const lz = leader ? leader.currZ : leaderKart.z;
-
-        cam.position.set(cx - Math.sin(ca) * 11.5, cy + 5.5, cz - Math.cos(ca) * 11.5);
-        cam.lookAt(lx, ly + 2.0, lz);
-
-        renderer.render(scene, cam);
-      } else {
-        // Split-Screen Viewports for active human racers
-        const humanKarts = snap.karts.filter((k) => !k.isBot);
-        const viewportKarts = humanKarts.length > 0 ? humanKarts : snap.karts.slice(0, 1);
-        const { cols, rows } = computeSplitGrid(viewportKarts.length);
-        const tileW = Math.floor(width / cols);
-        const tileH = Math.floor(height / rows);
-
-        viewportKarts.forEach((k, idx) => {
-          while (cameraPool.length <= idx) {
-            cameraPool.push(new THREE.PerspectiveCamera(65, 16 / 9, 0.5, 950));
-          }
-          const cam = cameraPool[idx];
-          cam.aspect = Math.max(0.5, tileW / Math.max(1, tileH));
-          cam.updateProjectionMatrix();
-
-          const col = idx % cols;
-          const row = Math.floor(idx / cols);
-          const vx = col * tileW;
-          const vy = height - (row + 1) * tileH;
-
-          const ref = kartMeshes.get(k.id);
-          const kx = ref ? ref.currX : k.x;
-          const ky = ref ? ref.currY : 0.12;
-          const kz = ref ? ref.currZ : k.z;
-          const ka = ref ? ref.currAngle : k.angle;
-
-          const chaseDist = k.boostTimer > 0 ? 15.2 : 13.4;
-          const chaseHeight = 6.9;
-          const camX = kx - Math.sin(ka) * chaseDist;
-          const camZ = kz - Math.cos(ka) * chaseDist;
-          cam.position.set(camX, ky + chaseHeight, camZ);
-          cam.lookAt(
-            kx + Math.sin(ka) * 16.5,
-            ky + 1.6,
-            kz + Math.cos(ka) * 16.5,
-          );
-
-          renderer.setViewport(vx, Math.max(0, vy), tileW, tileH);
-          renderer.setScissor(vx, Math.max(0, vy), tileW, tileH);
-          renderer.render(scene, cam);
-        });
-      }
-    };
-
-    animId = requestAnimationFrame(renderLoop);
-    return () => {
-      cancelAnimationFrame(animId);
-      scene.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh) {
-          const m = obj as THREE.Mesh;
-          m.geometry?.dispose();
-          if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
-          else m.material?.dispose();
-        }
-      });
-      renderer.dispose();
-      audioEngineRef.current?.disable();
-    };
-  }, [state.phase, hd.trackId]);
 
   // ─── Phase 1: HEAT_SETUP (Host-Controlled Tournament Heat Board) ─────────────
   if (state.phase === 'HEAT_SETUP') {
@@ -1639,7 +583,7 @@ export default function KartClashHostView({
                     <div style={{ fontSize: '0.75rem', color: 'var(--party-text-muted)', fontWeight: 700 }}>
                       {heat.status === 'completed'
                         ? `✅ Completed · ${KART_TRACKS[heat.trackId || 'sunny-circuit']?.name}`
-                        : `${heat.playerIds.length} Racer${heat.playerIds.length === 1 ? '' : 's'} (${computeSplitGrid(heat.playerIds.length).cols}×${computeSplitGrid(heat.playerIds.length).rows} Split-Screen)`}
+                        : `${heat.playerIds.length} Racer${heat.playerIds.length === 1 ? '' : 's'}`}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
@@ -1836,22 +780,21 @@ export default function KartClashHostView({
   if (state.phase === 'TRACK_VOTE') {
     const trackVotes: Record<string, TrackId> = hd.trackVotes || {};
     const activeRacers: string[] = hd.activeRacers || [];
+    const leadingVotes = Math.max(0, ...TRACK_LIST.map((t) => Object.values(trackVotes).filter((v) => v === t.id).length));
 
     return (
-      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '1080px' }}>
+      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '1280px' }}>
         <div style={{ fontSize: '0.85rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--party-cyan)' }}>
           {hd.heatName}
+          {hd.speedClass ? ` · ${hd.speedClass}` : ''}
+          {hd.itemsMode && hd.itemsMode !== 'normal' ? ` · ${hd.itemsMode} items` : ''}
         </div>
         <div className="host-phase-title" style={{ marginBottom: '0.25rem' }}>
-          🗳️ Vote for the Next Track!
+          <span className="host-emoji">🗳️</span> Vote for the Next Track!
         </div>
-        <p className="host-prompting-sub" style={{ marginBottom: '0.75rem' }}>
-          Racers: pick a course on your phone &amp; tap <strong>&ldquo;Enable Tilt Steering&rdquo;</strong>!
-          {hd.format === 'tournament' && ' Waiting players: lock in your Pit Crew Winner Prediction (+300 pts)!'}
-        </p>
 
         {secondsLeft !== null && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '500px', width: '100%', margin: '0 auto 1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '500px', width: '100%', margin: '0 auto 0.9rem' }}>
             <div className="host-timer-bar-wrap" style={{ flex: 1, margin: 0 }}>
               <div className="host-timer-bar" style={{ width: `${pct}%`, background: 'var(--party-yellow)' }} />
             </div>
@@ -1859,63 +802,63 @@ export default function KartClashHostView({
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '1rem', width: '100%' }}>
+        <div className="kart-vote-grid">
           {TRACK_LIST.map((t) => {
             const voters = Object.entries(trackVotes)
               .filter(([, tid]) => tid === t.id)
               .map(([pid]) => pid);
+            const leading = voters.length > 0 && voters.length === leadingVotes;
             return (
               <div
                 key={t.id}
-                className="party-card"
                 style={{
-                  maxWidth: 'none',
-                  padding: '1rem',
-                  border: `2.5px solid ${voters.length > 0 ? 'var(--party-yellow)' : 'var(--party-border)'}`,
-                  display: 'flex',
-                  flexDirection: 'column',
+                  display: 'grid',
+                  gridTemplateColumns: '120px minmax(0, 1fr)',
+                  gap: '0.85rem',
                   alignItems: 'center',
-                  textAlign: 'center',
-                  gap: '0.5rem',
+                  padding: '0.75rem',
+                  borderRadius: '18px',
+                  border: `2.5px solid ${leading ? 'var(--party-yellow)' : 'rgba(255,255,255,0.14)'}`,
+                  background: `linear-gradient(120deg, ${t.theme.skyHorizon}3d, ${t.theme.skyTop}70)`,
+                  boxShadow: leading ? '0 0 24px rgba(250,204,21,0.45)' : undefined,
+                  textAlign: 'left',
+                  transition: 'box-shadow 200ms, border-color 200ms',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 900, fontSize: '1.1rem' }}>
-                    {t.emoji} {t.name}
-                  </span>
-                  <span className="badge" style={{ fontSize: '0.7rem' }}>{t.difficulty}</span>
+                <div style={{ background: 'rgba(5,8,18,0.6)', borderRadius: '14px', padding: '0.3rem' }}>
+                  <TrackMinimap trackId={t.id} size={108} />
                 </div>
-                <TrackMinimap trackId={t.id} size={115} />
-                <div style={{ fontSize: '0.8rem', color: 'var(--party-text-muted)', lineHeight: 1.3 }}>
-                  {t.tagline}
-                </div>
-                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', justifyContent: 'center', minHeight: '28px', marginTop: 'auto' }}>
-                  {voters.map((pid) => (
-                    <span
-                      key={pid}
-                      style={{
-                        background: 'rgba(250,204,21,0.2)',
-                        border: `1.5px solid ${state.players?.[pid]?.avatarColor || '#fff'}`,
-                        borderRadius: '999px',
-                        padding: '0.1rem 0.5rem',
-                        fontSize: '0.75rem',
-                        fontWeight: 800,
-                      }}
-                    >
-                      {state.players?.[pid]?.avatar} {state.players?.[pid]?.name}
-                    </span>
-                  ))}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ fontWeight: 900, fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.emoji} {t.name}</span>
+                    <span className="badge" style={{ fontSize: '0.7rem', flexShrink: 0 }}>{t.difficulty}</span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#d7deea', lineHeight: 1.3, margin: '0.2rem 0 0.4rem' }}>{t.tagline}</div>
+                  <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', minHeight: '26px' }}>
+                    {voters.map((pid) => (
+                      <span
+                        key={pid}
+                        style={{
+                          background: 'rgba(5,8,18,0.6)',
+                          border: `1.5px solid ${state.players?.[pid]?.avatarColor || '#fff'}`,
+                          borderRadius: '999px',
+                          padding: '0.08rem 0.5rem',
+                          fontSize: '0.78rem',
+                          fontWeight: 800,
+                        }}
+                      >
+                        {state.players?.[pid]?.avatar} {state.players?.[pid]?.name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        {/* Active Heat Lineup Strip */}
-        <div style={{ marginTop: '1.1rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 900, color: 'var(--party-text-muted)', textTransform: 'uppercase' }}>
-            On the Starting Grid:
-          </span>
+        <div style={{ marginTop: '0.9rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 900, color: 'var(--party-text-muted)', textTransform: 'uppercase' }}>On the grid:</span>
           {activeRacers.map((pid) => {
             const p = state.players?.[pid];
             if (!p) return null;
@@ -1927,7 +870,7 @@ export default function KartClashHostView({
                   border: `2px solid ${p.avatarColor}`,
                   background: voted ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.05)',
                   borderRadius: '999px',
-                  padding: '0.25rem 0.75rem',
+                  padding: '0.2rem 0.7rem',
                   fontWeight: 800,
                   fontSize: '0.85rem',
                 }}
@@ -1936,741 +879,184 @@ export default function KartClashHostView({
               </span>
             );
           })}
+          <button
+            type="button"
+            onClick={() => sendAction({ type: 'LOCK_TRACK_VOTE' })}
+            className="party-btn party-btn-yellow party-btn-inline"
+            style={{ fontSize: '0.9rem', padding: '0.4rem 1rem', marginLeft: '0.5rem' }}
+          >
+            🏁 Lock in &amp; race
+          </button>
         </div>
       </div>
     );
   }
 
-  // ─── Phase 3: RACING (Dynamic Split-Screen 3D Chase Cam) ────────────────────
+  // ─── Phase 3: RACING ────────────────────────────────────────────────────────
   if (state.phase === 'RACING') {
-    const snap = snapshot || hd.initialSnapshot;
-    const allKarts: KartTelemetrySnapshot['karts'] = snap?.karts || [];
-    const humanKarts = allKarts.filter((k) => !k.isBot);
-    const viewportKarts = humanKarts.length > 0 ? humanKarts : allKarts.slice(0, 1);
-    const { cols, rows } = computeSplitGrid(viewportKarts.length);
-    const totalCells = cols * rows;
-    const hasSpareOverviewTile = totalCells > viewportKarts.length;
-    const countdownSec = snap && snap.countdownMs > 0 ? Math.ceil(snap.countdownMs / 1000) : 0;
-    const sortedKarts = [...allKarts].sort((a, b) => a.rank - b.rank);
-    const fastestLap = snap?.fastestLap || hd.fastestLap;
+    return (
+      <RaceView
+        key={hd.raceId}
+        hd={hd}
+        roomCode={roomCode}
+        sendAction={sendAction}
+        soundPrefs={soundPrefs}
+        setSoundPrefs={setSoundPrefs}
+        onRequestQuit={onRequestQuit}
+      />
+    );
+  }
+
+  // ─── Phase 4: RACE_RESULTS ──────────────────────────────────────────────────
+  if (state.phase === 'RACE_RESULTS') {
+    const standings: any[] = hd.standings || [];
+    const cup: any[] = hd.cupStandings || [];
+    const qualifiers: string[] = hd.qualifiers || [];
+    const predictors: string[] = hd.correctPredictors || [];
+    const fastestLap = hd.fastestLap;
+    const podium: { row: any; height: number; medal: string; color: string; delay: number }[] = [
+      { row: standings[1], height: 96, medal: '🥈', color: '#cbd5e1', delay: 200 },
+      { row: standings[0], height: 142, medal: '🥇', color: '#facc15', delay: 450 },
+      { row: standings[2], height: 68, medal: '🥉', color: '#f59e0b', delay: 0 },
+    ];
+    const nextLabel = hd.format === 'grand-prix'
+      ? (hd.raceNumber >= hd.totalRaces ? 'Final standings' : `Race ${hd.raceNumber + 1} of ${hd.totalRaces}`)
+      : 'Back to the heat board';
 
     return (
-      <div style={{ position: 'relative', width: '100%', height: 'calc(100vh - 115px)', minHeight: '520px', borderRadius: '20px', overflow: 'hidden', border: '2px solid var(--party-border)', background: '#050510' }}>
-        {/* Single Three.js WebGL Split-Screen / Cinematic Canvas */}
-        <canvas
-          ref={canvasRef}
-          style={{ width: '100%', height: '100%', display: 'block' }}
-        />
-
-        {/* Top Control Bar: Camera Mode Toolbar + Audio Toggle */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '12px',
-            right: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.45rem',
-            background: 'rgba(7, 11, 20, 0.85)',
-            border: '1.5px solid rgba(255,255,255,0.18)',
-            backdropFilter: 'blur(8px)',
-            borderRadius: '999px',
-            padding: '0.3rem 0.65rem',
-            zIndex: 30,
-          }}
-        >
-          <span style={{ fontSize: '0.72rem', fontWeight: 900, color: 'var(--party-cyan)', textTransform: 'uppercase' }}>
-            🎥 Cam:
-          </span>
-          {[
-            { id: 'split', label: '🏁 Grid' },
-            { id: 'leader', label: '🏎️ Leader' },
-            { id: 'helicopter', label: '🚁 Blimp' },
-            { id: 'action', label: '⚡ Battle' },
-          ].map((modeOpt) => (
-            <button
-              key={modeOpt.id}
-              type="button"
-              onClick={() => setCameraMode(modeOpt.id as any)}
-              style={{
-                background: cameraMode === modeOpt.id ? 'var(--party-cyan)' : 'transparent',
-                color: cameraMode === modeOpt.id ? '#000' : '#fff',
-                border: 'none',
-                borderRadius: '999px',
-                padding: '0.2rem 0.55rem',
-                fontSize: '0.74rem',
-                fontWeight: 900,
-                cursor: 'pointer',
-              }}
-            >
-              {modeOpt.label}
-            </button>
-          ))}
-
-          <button
-            type="button"
-            onClick={toggleAudio}
-            style={{
-              marginLeft: '0.25rem',
-              background: audioEnabled ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.08)',
-              border: `1.5px solid ${audioEnabled ? 'var(--party-green)' : 'rgba(255,255,255,0.2)'}`,
-              color: audioEnabled ? 'var(--party-green)' : 'var(--party-text-muted)',
-              borderRadius: '999px',
-              padding: '0.2rem 0.65rem',
-              fontSize: '0.74rem',
-              fontWeight: 900,
-              cursor: 'pointer',
-            }}
-          >
-            {audioEnabled ? '🔊 Sound: ON' : '🔈 Sound: OFF'}
-          </button>
+      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '1240px' }}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--party-cyan)' }}>
+          {hd.heatName}
+          {hd.trackId && KART_TRACKS[hd.trackId as TrackId] ? ` · ${KART_TRACKS[hd.trackId as TrackId].emoji} ${KART_TRACKS[hd.trackId as TrackId].name}` : ''}
+        </div>
+        <div className="host-phase-title" style={{ marginBottom: '0.5rem' }}>
+          <span className="host-emoji">🏁</span> Race Results
         </div>
 
-        {/* F1 Broadcast Standings Tower (Left Edge) */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '12px',
-            left: '12px',
-            background: 'rgba(7, 11, 20, 0.88)',
-            border: '1.5px solid rgba(255,255,255,0.18)',
-            backdropFilter: 'blur(8px)',
-            borderRadius: '16px',
-            padding: '0.5rem 0.65rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.25rem',
-            zIndex: 30,
-            minWidth: '175px',
-            pointerEvents: 'none',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.12)', paddingBottom: '0.25rem', marginBottom: '0.15rem' }}>
-            <span style={{ fontSize: '0.7rem', fontWeight: 900, color: 'var(--party-yellow)', textTransform: 'uppercase' }}>
-              ⏱️ Standings
-            </span>
-            <span style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>
-              L{Math.min(snap?.totalLaps || 3, sortedKarts[0]?.lap || 1)}/{snap?.totalLaps || 3}
-            </span>
-          </div>
-
-          {sortedKarts.slice(0, 8).map((k) => {
-            const isFastest = Boolean(fastestLap && ((fastestLap.racerId && fastestLap.racerId === k.id) || (fastestLap as any).playerId === k.id));
-            const item = k.heldItem ? ITEM_META[k.heldItem] : null;
-            const rankIdx = Math.max(0, Math.min(7, (k.rank || 1) - 1));
-
-            return (
-              <div
-                key={k.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '0.35rem',
-                  padding: '0.18rem 0.35rem',
-                  borderRadius: '6px',
-                  background: k.isBot ? 'transparent' : 'rgba(255,255,255,0.06)',
-                  borderLeft: `3px solid ${k.color}`,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', minWidth: 0, overflow: 'hidden' }}>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: '0.75rem', color: RANK_COLORS[rankIdx] || '#fff' }}>
-                    {k.rank}
-                  </span>
-                  <span style={{ fontSize: '0.85rem' }}>{k.avatar}</span>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: k.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>
-                    {k.name}
-                  </span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: '1.1rem', width: '100%', alignItems: 'start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', minWidth: 0 }}>
+            <div className="kart-podium">
+              {podium.map(({ row, height, medal, color, delay }, i) => row ? (
+                <div key={row.id} className="kart-podium-col" style={{ animationDelay: `${delay}ms`, flex: i === 1 ? 1.2 : 1 }}>
+                  {i === 1 && <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>👑</span>}
+                  <span style={{ fontSize: i === 1 ? '3.2rem' : '2.5rem', lineHeight: 1.1 }}>{row.avatar}</span>
+                  <span style={{ fontWeight: 900, fontSize: i === 1 ? '1.15rem' : '1rem', color: row.color, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
+                  <div
+                    style={{
+                      width: '100%',
+                      height: `${height}px`,
+                      background: `linear-gradient(180deg, ${color}, ${color}55)`,
+                      border: `2px solid ${color}`,
+                      borderRadius: '14px 14px 0 0',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontFamily: 'var(--party-font-display)',
+                      fontWeight: 900,
+                      color: '#0b0f1a',
+                    }}
+                  >
+                    <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>{medal}</span>
+                    {row.points > 0 && <span style={{ fontSize: '0.95rem' }}>+{row.points.toLocaleString()}</span>}
+                  </div>
                 </div>
+              ) : <div key={i} style={{ flex: 1 }} />)}
+            </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
-                  {item && <span style={{ fontSize: '0.75rem' }}>{item.emoji}</span>}
-                  {isFastest && (
-                    <span title="Session Fastest Lap!" style={{ color: '#d946ef', fontSize: '0.75rem', fontWeight: 900 }}>
-                      ⚡
-                    </span>
-                  )}
-                  <span style={{ fontSize: '0.68rem', fontFamily: 'monospace', color: 'var(--party-text-muted)' }}>
-                    {k.finished ? 'FIN' : `L${k.lap}`}
-                  </span>
-                </div>
+            {fastestLap && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', background: 'rgba(217,70,239,0.16)', border: '1.5px solid #d946ef', borderRadius: '12px', padding: '0.5rem 0.9rem' }}>
+                <span style={{ fontWeight: 900 }}>⏱ Fastest lap · {fastestLap.racerName}</span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 900, color: '#f0abfc' }}>{formatRaceTime(fastestLap.timeMs)}</span>
               </div>
-            );
-          })}
-        </div>
+            )}
 
-        {/* Floating Pit Crew Emoji Cannon Overlay */}
-        {hd.latestEmoji && Date.now() - (hd.latestEmoji.timestamp || 0) < 4000 && (
-          <div
-            key={hd.latestEmoji.id}
-            style={{
-              position: 'absolute',
-              bottom: '24px',
-              left: `${25 + ((hd.latestEmoji.timestamp || 0) % 50)}%`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem',
-              background: 'rgba(11, 11, 18, 0.92)',
-              border: '2px solid var(--party-cyan)',
-              borderRadius: '999px',
-              padding: '0.35rem 0.85rem',
-              boxShadow: '0 0 20px rgba(6,182,212,0.6)',
-              zIndex: 35,
-              pointerEvents: 'none',
-              animation: 'bounce 0.4s ease',
-            }}
-          >
-            <span style={{ fontSize: '1.6rem' }}>{hd.latestEmoji.emoji}</span>
-            <span style={{ fontSize: '0.82rem', fontWeight: 900, color: '#fff' }}>
-              {hd.latestEmoji.playerName}
-            </span>
+            {predictors.length > 0 && (
+              <div style={{ background: 'rgba(250, 204, 21, 0.12)', border: '1.5px solid var(--party-yellow)', borderRadius: '12px', padding: '0.5rem 0.9rem', color: 'var(--party-yellow)', fontWeight: 900 }}>
+                🔮 Pit Crew Bonus (+300): {predictors.map((pid) => state.players?.[pid]?.name).filter(Boolean).join(', ')} called it!
+              </div>
+            )}
+
+            {cup.length > 1 && (
+              <div style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--party-border)', borderRadius: '14px', padding: '0.6rem 0.8rem' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--party-yellow)', marginBottom: '0.3rem' }}>
+                  🏆 {hd.format === 'grand-prix' ? `Cup standings after race ${hd.raceNumber} of ${hd.totalRaces}` : 'Tournament standings'}
+                </div>
+                {cup.map((row, i) => (
+                  <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.6rem 1.6rem minmax(0, 1fr) auto auto', gap: '0.35rem', alignItems: 'center', padding: '0.14rem 0', fontWeight: 800 }}>
+                    <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, i)] }}>{i + 1}</span>
+                    <span>{row.avatar}</span>
+                    <span style={{ color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--party-green)' }}>{row.gained ? `+${row.gained.toLocaleString()}` : ''}</span>
+                    <span style={{ fontFamily: 'monospace', minWidth: '4.2ch', textAlign: 'right' }}>{row.score.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Split-Screen HTML HUD Grid Overlay (Visible in 'split' mode) */}
-        {cameraMode === 'split' && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'grid',
-              gridTemplateColumns: `repeat(${cols}, 1fr)`,
-              gridTemplateRows: `repeat(${rows}, 1fr)`,
-              pointerEvents: 'none',
-            }}
-          >
-            {viewportKarts.map((k) => {
-              const rankIdx = Math.max(0, Math.min(7, (k.rank || 1) - 1));
-              const itemInfo = k.heldItem ? ITEM_META[k.heldItem] : null;
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: 0 }}>
+            {standings.map((row, i) => {
+              const isQual = qualifiers.includes(row.id);
               return (
                 <div
-                  key={k.id}
+                  key={row.id}
+                  className="kart-podium-col"
                   style={{
-                    position: 'relative',
-                    border: `2.5px solid ${k.color}`,
-                    boxShadow: 'inset 0 0 24px rgba(0,0,0,0.55)',
-                    padding: '0.65rem 0.85rem',
-                    display: 'flex',
-                    flexDirection: 'column',
+                    animationDelay: `${600 + i * 70}ms`,
+                    flexDirection: 'row',
                     justifyContent: 'space-between',
+                    padding: '0.42rem 0.8rem',
+                    borderRadius: '12px',
+                    background: row.isBot ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.09)',
+                    border: `1.5px solid ${row.rank === 1 ? 'var(--party-yellow)' : isQual ? 'var(--party-green)' : 'rgba(255,255,255,0.1)'}`,
+                    opacity: row.isBot ? 0.78 : 1,
                   }}
                 >
-                  {/* Top HUD Row: Player Name Badge + Item Box */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div
-                      style={{
-                        background: 'rgba(11, 11, 18, 0.82)',
-                        border: `2px solid ${k.color}`,
-                        borderRadius: '999px',
-                        padding: '0.22rem 0.75rem',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        fontWeight: 900,
-                        fontSize: cols >= 3 ? '0.82rem' : '0.95rem',
-                        color: '#fff',
-                      }}
-                    >
-                      <span>{k.avatar}</span>
-                      <span style={{ color: k.color }}>{k.name}</span>
-                    </div>
-
-                    {/* Item Roulette / Held Item Slot */}
-                    <div
-                      style={{
-                        width: cols >= 3 ? '42px' : '52px',
-                        height: cols >= 3 ? '42px' : '52px',
-                        borderRadius: '14px',
-                        background: 'rgba(11, 11, 18, 0.85)',
-                        border: `2.5px solid ${k.itemRoulette ? '#facc15' : itemInfo ? itemInfo.color : 'rgba(255,255,255,0.22)'}`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: cols >= 3 ? '1.35rem' : '1.7rem',
-                        boxShadow: itemInfo ? `0 0 16px ${itemInfo.color}` : undefined,
-                      }}
-                    >
-                      {k.itemRoulette ? '🎲' : itemInfo ? itemInfo.emoji : ''}
-                    </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                    <span style={{ fontFamily: 'var(--party-font-display)', fontSize: '1.15rem', fontWeight: 900, width: '2.1rem', color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, row.rank - 1)] }}>
+                      {ordinal(row.rank)}
+                    </span>
+                    <span style={{ fontSize: '1.2rem' }}>{row.avatar}</span>
+                    <span style={{ fontWeight: 900, color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.name}
+                    </span>
+                    {row.isBot && <span style={{ fontSize: '0.68rem', color: 'var(--party-text-muted)', fontWeight: 800 }}>BOT</span>}
+                    {hd.format === 'tournament' && isQual && !hd.isFinalHeat && (
+                      <span className="badge" style={{ borderColor: 'var(--party-green)', color: 'var(--party-green)', fontWeight: 900, fontSize: '0.68rem' }}>
+                        ✅ Finals
+                      </span>
+                    )}
                   </div>
-
-                  {/* Center Viewport Status Alert */}
-                  {k.statusText && (
-                    <div
-                      style={{
-                        alignSelf: 'center',
-                        background: 'rgba(0,0,0,0.82)',
-                        border: '2px solid var(--party-yellow)',
-                        color: 'var(--party-yellow)',
-                        borderRadius: '999px',
-                        padding: '0.25rem 0.9rem',
-                        fontWeight: 900,
-                        fontSize: cols >= 3 ? '0.82rem' : '1.05rem',
-                        textAlign: 'center',
-                        textShadow: '0 2px 8px rgba(0,0,0,0.9)',
-                      }}
-                    >
-                      {k.statusText}
-                    </div>
-                  )}
-
-                  {/* Bottom HUD Row: Lap + Drift Meter + Rank Badge */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <div
-                      style={{
-                        background: 'rgba(11, 11, 18, 0.82)',
-                        border: '1.5px solid rgba(255,255,255,0.2)',
-                        borderRadius: '10px',
-                        padding: '0.2rem 0.65rem',
-                        fontWeight: 900,
-                        fontSize: cols >= 3 ? '0.78rem' : '0.9rem',
-                      }}
-                    >
-                      {k.finished ? '🏁 FINISHED' : `LAP ${k.lap}/${snap?.totalLaps || 3}`}
-                      {k.drifting && (
-                        <span
-                          style={{
-                            marginLeft: '0.45rem',
-                            color: k.driftLevel === 3 ? '#d946ef' : k.driftLevel === 2 ? '#f97316' : k.driftLevel === 1 ? '#38bdf8' : '#94a3b8',
-                          }}
-                        >
-                          {k.driftLevel === 3 ? '⚡ ULTRA TURBO' : k.driftLevel === 2 ? '🔥 SUPER TURBO' : k.driftLevel === 1 ? '💨 MINI-TURBO' : '〰️ DRIFT'}
-                        </span>
-                      )}
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.45rem', background: 'rgba(11, 11, 18, 0.82)', borderRadius: '12px', padding: '0.15rem 0.65rem', border: `2px solid ${RANK_COLORS[rankIdx]}` }}>
-                      <span
-                        style={{
-                          fontFamily: 'var(--party-font-display)',
-                          fontWeight: 900,
-                          fontSize: cols >= 3 ? '1.35rem' : '1.85rem',
-                          color: RANK_COLORS[rankIdx],
-                          lineHeight: 1,
-                        }}
-                      >
-                        {RANK_LABELS[rankIdx] || `#${k.rank}`}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', flexShrink: 0 }}>
+                    <span style={{ fontFamily: 'monospace', color: 'var(--party-text-muted)', fontSize: '0.88rem' }}>
+                      {row.dnf || !row.timeMs ? 'DNF' : formatRaceTime(row.timeMs)}
+                    </span>
+                    {!row.isBot && (
+                      <span style={{ fontWeight: 900, color: 'var(--party-green)', minWidth: '3.4rem', textAlign: 'right' }}>
+                        +{row.points.toLocaleString()}
                       </span>
-                      <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: 'var(--party-text-muted)', fontWeight: 800 }}>
-                        {Math.max(0, Math.round(k.speed * 2.2))} km/h
-                      </span>
-                    </div>
+                    )}
                   </div>
                 </div>
               );
             })}
-
-            {hasSpareOverviewTile && (
-              <div
-                style={{
-                  background: 'rgba(11, 11, 18, 0.94)',
-                  border: '2px solid var(--party-border)',
-                  padding: '0.75rem 1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.75rem',
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 900, color: 'var(--party-cyan)', textTransform: 'uppercase' }}>
-                    {hd.trackEmoji} {hd.trackName}
-                  </div>
-                  <TrackMinimap trackId={hd.trackId || 'sunny-circuit'} karts={allKarts} size={rows === 2 && cols >= 3 ? 120 : 155} />
-                </div>
-              </div>
-            )}
           </div>
-        )}
-
-        {/* Floating Center Minimap when not spare overview */}
-        {(!hasSpareOverviewTile || cameraMode !== 'split') && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '12px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(7, 11, 20, 0.72)',
-              border: '1.5px solid rgba(255,255,255,0.22)',
-              borderRadius: '18px',
-              padding: '0.25rem',
-              pointerEvents: 'none',
-              zIndex: 10,
-              backdropFilter: 'blur(6px)',
-            }}
-          >
-            <TrackMinimap trackId={hd.trackId || 'sunny-circuit'} karts={allKarts} size={118} />
-          </div>
-        )}
-
-        {/* Waiting for Racers to Rotate Phone to Horizontal */}
-        {snap?.waitingForOrientation && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(7, 11, 20, 0.78)',
-              backdropFilter: 'blur(5px)',
-              zIndex: 25,
-              padding: '1.5rem',
-            }}
-          >
-            <div
-              style={{
-                background: 'rgba(15, 23, 42, 0.94)',
-                border: '2.5px solid var(--party-cyan)',
-                boxShadow: '0 0 35px rgba(6,182,212,0.45)',
-                borderRadius: '24px',
-                padding: '1.8rem 2.4rem',
-                maxWidth: '620px',
-                width: '90%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                textAlign: 'center',
-                gap: '1.1rem',
-              }}
-            >
-              <div style={{ fontSize: '3.2rem', animation: 'spin 3s ease-in-out infinite' }}>
-                📱🔄
-              </div>
-              <div>
-                <h2
-                  style={{
-                    fontFamily: 'var(--party-font-display)',
-                    fontSize: '1.75rem',
-                    fontWeight: 900,
-                    margin: 0,
-                    color: '#fff',
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  Hold Phones Sideways to Race!
-                </h2>
-                <p style={{ margin: '0.4rem 0 0', color: 'var(--party-text-muted)', fontSize: '0.92rem' }}>
-                  Countdown starts automatically once all drivers turn their devices horizontally.
-                </p>
-              </div>
-
-              {/* Racer Orientation Status Badges */}
-              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {(snap.humanRacersStatus || []).map((r: { id: string; name: string; avatar: string; color: string; isHorizontal: boolean }) => (
-                  <div
-                    key={r.id}
-                    style={{
-                      background: r.isHorizontal ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)',
-                      border: `1.5px solid ${r.isHorizontal ? 'var(--party-green)' : 'var(--party-red)'}`,
-                      borderRadius: '999px',
-                      padding: '0.35rem 0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.45rem',
-                      fontSize: '0.85rem',
-                      fontWeight: 800,
-                    }}
-                  >
-                    <span>{r.avatar}</span>
-                    <span style={{ color: r.color }}>{r.name}</span>
-                    <span>{r.isHorizontal ? '✅ Ready' : '📱 Waiting'}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Host Skip / Start Anyway Button */}
-              <button
-                type="button"
-                onClick={() => sendAction({ type: 'FORCE_START_COUNTDOWN' })}
-                style={{
-                  marginTop: '0.5rem',
-                  background: 'var(--party-yellow)',
-                  color: '#0f172a',
-                  border: 'none',
-                  borderRadius: '12px',
-                  padding: '0.6rem 1.4rem',
-                  fontWeight: 900,
-                  fontSize: '0.92rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 12px rgba(250,204,21,0.35)',
-                }}
-              >
-                🏁 Start Race Anyway
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 3-2-1-GO Center Countdown Overlay */}
-        {snap && !snap.waitingForOrientation && (snap.countdownMs > 0 || (snap.elapsedMs < 3800 && snap.countdownMs === 0)) && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: snap.countdownMs > 0 ? 'rgba(0,0,0,0.35)' : 'transparent',
-              pointerEvents: 'none',
-              zIndex: 20,
-            }}
-          >
-            <div
-              style={{
-                fontFamily: 'var(--party-font-display)',
-                fontSize: '6.5rem',
-                fontWeight: 900,
-                color: countdownSec === 0 ? 'var(--party-green)' : 'var(--party-yellow)',
-                textShadow: '0 0 40px rgba(0,0,0,0.95)',
-              }}
-            >
-              {countdownSec > 0 ? countdownSec : '🏁 GO!'}
-            </div>
-            {countdownSec > 0 && (
-              <div style={{ background: 'rgba(0,0,0,0.75)', padding: '0.4rem 1.1rem', borderRadius: '999px', fontWeight: 800, color: '#fff', fontSize: '1rem' }}>
-                Hold 💨 DRIFT on &ldquo;1&rdquo; for a 🚀 Rocket Start!
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Live Announcement Banner */}
-        {(snap?.announcement || (snap?.finishCountdownMs !== null && snap?.finishCountdownMs !== undefined)) && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '18px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(11, 11, 18, 0.92)',
-              border: '2px solid var(--party-yellow)',
-              borderRadius: '999px',
-              padding: '0.4rem 1.4rem',
-              color: 'var(--party-yellow)',
-              fontWeight: 900,
-              fontSize: '1rem',
-              zIndex: 25,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.8)',
-            }}
-          >
-            {snap?.announcement || `🏁 Race Finishes in ${Math.ceil((snap?.finishCountdownMs || 0) / 1000)}s!`}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ─── Phase 4: RACE_RESULTS (3D Podium & Fastest Lap Showcase) ───────────────
-  if (state.phase === 'RACE_RESULTS') {
-    const standings: any[] = hd.standings || [];
-    const qualifiers: string[] = hd.qualifiers || [];
-    const predictors: string[] = hd.correctPredictors || [];
-    const fastestLap = hd.fastestLap;
-
-    const first = standings[0];
-    const second = standings[1];
-    const third = standings[2];
-
-    return (
-      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '920px' }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--party-cyan)' }}>
-          {hd.heatName}
-        </div>
-        <div className="host-phase-title" style={{ marginBottom: '0.35rem' }}>
-          🏁 Checkered Flag Podium!
         </div>
 
-        {secondsLeft !== null && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '340px', width: '100%', margin: '0 auto 0.75rem' }}>
-            <div className="host-timer-bar-wrap" style={{ flex: 1, height: '6px', margin: 0 }}>
-              <div className="host-timer-bar" style={{ width: `${pct}%`, background: 'var(--party-green)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+          {secondsLeft !== null && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '260px' }}>
+              <div className="host-timer-bar-wrap" style={{ flex: 1, height: '6px', margin: 0 }}>
+                <div className="host-timer-bar" style={{ width: `${pct}%`, background: 'var(--party-green)' }} />
+              </div>
+              <div style={{ fontSize: '1rem', fontWeight: 900, fontFamily: 'monospace' }}>{Math.ceil(secondsLeft)}s</div>
             </div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 900, fontFamily: 'monospace' }}>{Math.ceil(secondsLeft)}s</div>
-          </div>
-        )}
-
-        {/* 3D Olympic/Championship Trophy Podium */}
-        {standings.length >= 2 && (
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '1.25rem', margin: '0.8rem 0 1.5rem', width: '100%', maxWidth: '650px' }}>
-            {/* 2nd Place Silver Column */}
-            {second && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{ fontSize: '2.2rem' }}>{second.avatar}</span>
-                <span style={{ fontWeight: 900, fontSize: '0.95rem', color: second.color }}>{second.name}</span>
-                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>+{second.points} pts</span>
-                <div
-                  style={{
-                    width: '100%',
-                    height: '110px',
-                    background: 'linear-gradient(180deg, #94a3b8, #475569)',
-                    border: '2.5px solid #cbd5e1',
-                    borderRadius: '14px 14px 0 0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontFamily: 'var(--party-font-display)',
-                    fontSize: '2.4rem',
-                    fontWeight: 900,
-                    color: '#fff',
-                    boxShadow: '0 8px 24px rgba(148,163,184,0.3)',
-                  }}
-                >
-                  🥈 2
-                </div>
-              </div>
-            )}
-
-            {/* 1st Place Gold Center Column */}
-            {first && (
-              <div style={{ flex: 1.15, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{ fontSize: '3rem' }}>👑</span>
-                <span style={{ fontSize: '2.5rem' }}>{first.avatar}</span>
-                <span style={{ fontWeight: 900, fontSize: '1.2rem', color: first.color }}>{first.name}</span>
-                <span style={{ fontSize: '0.88rem', fontWeight: 900, color: 'var(--party-green)' }}>+{first.points} pts</span>
-                <div
-                  style={{
-                    width: '100%',
-                    height: '155px',
-                    background: 'linear-gradient(180deg, #facc15, #ca8a04)',
-                    border: '3px solid #fef08a',
-                    borderRadius: '16px 16px 0 0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontFamily: 'var(--party-font-display)',
-                    fontSize: '3.2rem',
-                    fontWeight: 900,
-                    color: '#000',
-                    boxShadow: '0 12px 36px rgba(250,204,21,0.45)',
-                  }}
-                >
-                  🥇 1
-                </div>
-              </div>
-            )}
-
-            {/* 3rd Place Bronze Column */}
-            {third && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{ fontSize: '2.2rem' }}>{third.avatar}</span>
-                <span style={{ fontWeight: 900, fontSize: '0.95rem', color: third.color }}>{third.name}</span>
-                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>+{third.points} pts</span>
-                <div
-                  style={{
-                    width: '100%',
-                    height: '80px',
-                    background: 'linear-gradient(180deg, #d97706, #92400e)',
-                    border: '2.5px solid #f59e0b',
-                    borderRadius: '14px 14px 0 0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontFamily: 'var(--party-font-display)',
-                    fontSize: '2.2rem',
-                    fontWeight: 900,
-                    color: '#fff',
-                    boxShadow: '0 6px 20px rgba(217,119,6,0.25)',
-                  }}
-                >
-                  🥉 3
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ⚡ Fastest Lap Record Showcase Banner */}
-        {fastestLap && (
-          <div
-            style={{
-              width: '100%',
-              background: 'linear-gradient(90deg, rgba(217,70,239,0.18), rgba(168,85,247,0.25), rgba(217,70,239,0.18))',
-              border: '2px solid #d946ef',
-              borderRadius: '14px',
-              padding: '0.75rem 1.25rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '0.75rem',
-              boxShadow: '0 0 20px rgba(217,70,239,0.28)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-              <span style={{ fontSize: '1.6rem' }}>⚡</span>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 900, color: '#f0abfc', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                  Speed Demon · Fastest Lap Record
-                </div>
-                <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#fff' }}>
-                  {fastestLap.racerName || (fastestLap as any).playerName}
-                </div>
-              </div>
-            </div>
-            <div style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: '1.3rem', color: '#f0abfc' }}>
-              {(((fastestLap.timeMs ?? (fastestLap as any).lapTimeMs) || 0) / 1000).toFixed(2)}s
-            </div>
-          </div>
-        )}
-
-        {/* Full Standings List */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', width: '100%' }}>
-          {standings.map((row) => {
-            const isQual = qualifiers.includes(row.id);
-            return (
-              <div
-                key={row.id}
-                className="party-card"
-                style={{
-                  maxWidth: 'none',
-                  padding: '0.75rem 1.25rem',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  border: `2.5px solid ${row.rank === 1 ? 'var(--party-yellow)' : isQual ? 'var(--party-green)' : 'var(--party-border)'}`,
-                  opacity: row.isBot ? 0.72 : 1,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontFamily: 'var(--party-font-display)', fontSize: '1.4rem', fontWeight: 900, width: '42px', color: RANK_COLORS[row.rank - 1] || '#fff' }}>
-                    {['🥇', '🥈', '🥉'][row.rank - 1] || `#${row.rank}`}
-                  </span>
-                  <span style={{ fontSize: '1.35rem' }}>{row.avatar}</span>
-                  <span style={{ fontWeight: 900, fontSize: '1.15rem', color: row.color }}>
-                    {row.name} {row.isBot ? '(Bot)' : ''}
-                  </span>
-                  {hd.format === 'tournament' && isQual && !hd.isFinalHeat && (
-                    <span className="badge" style={{ borderColor: 'var(--party-green)', color: 'var(--party-green)', fontWeight: 900 }}>
-                      ✅ Advances to Finals!
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  {row.timeMs && (
-                    <span style={{ fontFamily: 'monospace', color: 'var(--party-text-muted)', fontSize: '0.9rem' }}>
-                      {(row.timeMs / 1000).toFixed(1)}s
-                    </span>
-                  )}
-                  <span style={{ fontWeight: 900, fontSize: '1.2rem', color: row.points > 0 ? 'var(--party-green)' : 'var(--party-text-muted)' }}>
-                    {row.points > 0 ? `+${row.points.toLocaleString()} pts` : '—'}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          )}
+          <button type="button" onClick={() => sendAction({ type: 'NEXT_KART_STEP' })} className="party-btn party-btn-primary party-btn-inline" style={{ fontSize: '0.95rem', padding: '0.55rem 1.2rem' }}>
+            {nextLabel} →
+          </button>
         </div>
-
-        {predictors.length > 0 && (
-          <div style={{ marginTop: '1rem', background: 'rgba(250, 204, 21, 0.12)', border: '1.5px solid var(--party-yellow)', borderRadius: '14px', padding: '0.65rem 1.2rem', color: 'var(--party-yellow)', fontWeight: 900 }}>
-            🔮 Pit Crew Bonus (+300 pts): {predictors.map((pid) => state.players?.[pid]?.name).filter(Boolean).join(', ')} called the winner!
-          </div>
-        )}
       </div>
     );
   }

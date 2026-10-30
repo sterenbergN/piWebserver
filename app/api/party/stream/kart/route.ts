@@ -1,6 +1,6 @@
 import { normalizeRoomCode } from '@/lib/party/engine';
 import { partyEmitter } from '@/lib/party/emitter';
-import { KartTelemetrySnapshot, getKartSimulation, getKartSnapshot } from '@/lib/party/kart-physics';
+import { getKartSimulation, getKartSnapshot } from '@/lib/party/kart-physics';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,10 +29,11 @@ export async function GET(request: Request) {
         }
       };
 
-      const onTick = (snapshot: KartTelemetrySnapshot, tickCount: number) => {
+      // The sim serializes each tick once, so a room full of phones doesn't multiply the work
+      const onTick = (json: string, tickCount: number) => {
         // Host TV gets full 30Hz stream; phones get 10Hz (every 3rd tick) to save mobile battery/bandwidth
         if (role === 'player' && tickCount % 3 !== 0) return;
-        send(`data: ${JSON.stringify(snapshot)}\n\n`);
+        send(`data: ${json}\n\n`);
       };
 
       const heartbeat = setInterval(() => send(':\n\n'), 15000);
