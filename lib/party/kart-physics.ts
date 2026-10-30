@@ -594,16 +594,29 @@ function fireKartItem(sim: KartRaceSim, k: KartState) {
 }
 
 function computeBotInput(sim: KartRaceSim, k: KartState, dt: number, leaderProgress: number): KartInputState {
-  // Look ahead on the track spline
-  const lookAheadProgress = (k.progress + 0.045) % 1;
-  const targetSample = sampleTrackAtProgress(sim.track, lookAheadProgress);
-  const targetX = targetSample.x + targetSample.nx * k.aiTargetLateral;
-  const targetZ = targetSample.z + targetSample.nz * k.aiTargetLateral;
+  const m = sim.track.samples.length;
+  // Pure-pursuit lookahead along uniform spline samples
+  const lookAheadIdx = (k.sampleIdx + 9) % m;
+  const farAheadIdx = (k.sampleIdx + 18) % m;
+  const targetSample = sim.track.samples[lookAheadIdx];
+  const farSample = sim.track.samples[farAheadIdx];
+
+  // Pull bot's target lane toward the apex on sharper corners so bots carve clean racing lines
+  const cornerDiff = normalizeAngle(farSample.angle - targetSample.angle);
+  const apexBias = Math.max(-1, Math.min(1, -cornerDiff * 1.4)) * (sim.track.roadWidth * 0.16);
+  const laneLateral = Math.max(
+    -sim.track.roadWidth * 0.28,
+    Math.min(sim.track.roadWidth * 0.28, k.aiTargetLateral * 0.7 + apexBias),
+  );
+
+  const targetX = targetSample.x + targetSample.nx * laneLateral;
+  const targetZ = targetSample.z + targetSample.nz * laneLateral;
 
   const desiredAngle = Math.atan2(targetX - k.x, targetZ - k.z);
   const diff = normalizeAngle(desiredAngle - k.angle);
-  const steer = Math.max(-1, Math.min(1, -diff * 2.2));
-  const sharpTurn = Math.abs(diff) > 0.35;
+  // Since +steer decreases k.angle (turns right), steer = -diff * gain
+  const steer = Math.max(-1, Math.min(1, -diff * 2.6));
+  const sharpTurn = Math.abs(cornerDiff) > 0.28 && Math.abs(diff) < 0.45;
 
   let useItem = false;
   if (k.heldItem) {
@@ -614,11 +627,10 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number, leaderProgr
     }
   }
 
-  // Slight rubber-banding handled in speed cap, bot drifts on sharp corners
   void leaderProgress;
   return {
     steer,
-    drift: sharpTurn && k.speed > 36,
+    drift: sharpTurn && k.speed > 40,
     brake: false,
     useItem,
     updatedAt: sim.elapsedMs,
@@ -733,29 +745,32 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       k.driftLevel = 0;
     } else {
       // Drifting logic
-      const wantsDrift = inp.drift && !inp.brake && k.speed > 24;
+      const wantsDrift = inp.drift && !inp.brake && k.speed > 22;
       if (wantsDrift) {
-        if (!k.drifting && Math.abs(inp.steer) > 0.12) {
+        if (!k.drifting && Math.abs(inp.steer) > 0.08) {
           k.drifting = true;
           k.driftDir = Math.sign(inp.steer);
           k.driftTime = 0;
           k.driftLevel = 0;
         }
         if (k.drifting) {
-          // Charge faster when steering into the drift
-          const intoTurn = Math.max(0.4, 1 + inp.steer * k.driftDir * 0.7);
+          // Allow switching drift direction if player steers strongly the other way
+          if (!k.isBot && inp.steer * k.driftDir < -0.55 && k.driftTime < 0.4) {
+            k.driftDir = Math.sign(inp.steer);
+          }
+          const intoTurn = Math.max(0.5, 1 + inp.steer * k.driftDir * 0.75);
           k.driftTime += dt * intoTurn;
-          if (k.driftTime >= 1.65) k.driftLevel = 2;
-          else if (k.driftTime >= 0.75) k.driftLevel = 1;
+          if (k.driftTime >= 1.35) k.driftLevel = 2;
+          else if (k.driftTime >= 0.6) k.driftLevel = 1;
         }
       } else if (k.drifting) {
         // Released drift -> check mini-turbo!
         if (k.driftLevel === 2) {
-          k.boostTimer = Math.max(k.boostTimer, 1.75);
+          k.boostTimer = Math.max(k.boostTimer, 1.85);
           sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
           setKartStatus(k, '🔥 SUPER MINI-TURBO!', sim.elapsedMs, 1600);
         } else if (k.driftLevel === 1) {
-          k.boostTimer = Math.max(k.boostTimer, 1.05);
+          k.boostTimer = Math.max(k.boostTimer, 1.15);
           sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
           setKartStatus(k, '💨 MINI-TURBO!', sim.elapsedMs, 1300);
         }
@@ -765,43 +780,90 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         k.driftLevel = 0;
       }
 
-      // Steering angular velocity (in Three.js right-handed +Y up, looking +Z: right turn is -angle)
-      const turnRate = k.drifting ? 2.45 : 2.05;
-      const frictionTurn = 0.75 + 0.25 * sim.track.friction;
-      const effectiveSteer = k.drifting
-        ? k.driftDir * 0.55 + inp.steer * 0.65
-        : inp.steer;
-      const speedFactor = Math.min(1, Math.max(0.35, Math.abs(k.speed) / 30));
-      k.angle = normalizeAngle(k.angle - effectiveSteer * turnRate * frictionTurn * speedFactor * dt);
+      const trackSample = sim.track.samples[k.sampleIdx] || sim.track.samples[0];
+      const isBotLike = k.isBot || k.finished;
+
+      if (isBotLike) {
+        // Pure-pursuit spline steering for AI bots & post-finish autopilot
+        const m = sim.track.samples.length;
+        const lookSample = sim.track.samples[(k.sampleIdx + 8) % m];
+        const laneTarget = Math.max(
+          -sim.track.roadWidth * 0.26,
+          Math.min(sim.track.roadWidth * 0.26, k.aiTargetLateral),
+        );
+        const tx = lookSample.x + lookSample.nx * laneTarget;
+        const tz = lookSample.z + lookSample.nz * laneTarget;
+        const desiredAngle = Math.atan2(tx - k.x, tz - k.z);
+        const diff = normalizeAngle(desiredAngle - k.angle);
+        const maxBotTurn = 3.8 * dt;
+        k.angle = normalizeAngle(k.angle + Math.max(-maxBotTurn, Math.min(maxBotTurn, diff)));
+      } else {
+        // Human Smart Arcade Steering (Mario Kart 8 style):
+        // 1. Follow 72% of natural road curvature while moving forward so sweeping curves feel effortless
+        const forwardStep = Math.max(0, k.speed) * dt;
+        const roadCurveDelta = forwardStep * (trackSample.curvature || 0) * 0.72;
+
+        // 2. Apply responsive player steering (in Three.js chase cam, +steer turns right = -angle)
+        const turnRate = k.drifting ? 2.85 : 2.45;
+        const frictionTurn = 0.8 + 0.2 * sim.track.friction;
+        const effectiveSteer = k.drifting
+          ? k.driftDir * 0.42 + inp.steer * 0.78
+          : inp.steer;
+        const speedFactor = Math.min(1, Math.max(0.45, Math.abs(k.speed) / 26));
+        const playerDelta = -effectiveSteer * turnRate * frictionTurn * speedFactor * dt;
+
+        k.angle = normalizeAngle(k.angle + roadCurveDelta + playerDelta);
+
+        // 3. Self-aligning assist when steering wheel is held near neutral & clamp max angle to ±52° so you never spin backwards
+        let headingRel = normalizeAngle(k.angle - trackSample.angle);
+        const neutralAmount = Math.max(0, 1 - Math.abs(effectiveSteer) * 1.8);
+        if (neutralAmount > 0 && k.speed > 5) {
+          headingRel *= Math.exp(-3.0 * neutralAmount * dt);
+        }
+
+        // 4. Smart Curb Assist: when near road edge, gently deflect heading back toward the asphalt
+        const halfRoad = sim.track.roadWidth * 0.5;
+        const edgeRatio = k.lateralOffset / halfRoad; // -1 = left curb, +1 = right curb
+        // Note: headingRel < 0 points toward +lateralOffset (right side); headingRel > 0 points toward -lateralOffset (left side)
+        if (edgeRatio > 0.78 && headingRel < 0.08) {
+          headingRel += (edgeRatio - 0.78) * 4.5 * dt;
+        } else if (edgeRatio < -0.78 && headingRel > -0.08) {
+          headingRel += (edgeRatio + 0.78) * 4.5 * dt;
+        }
+
+        const maxHeading = 0.92; // ±52 deg max deviation from track forward direction
+        headingRel = Math.max(-maxHeading, Math.min(maxHeading, headingRel));
+        k.angle = normalizeAngle(trackSample.angle + headingRel);
+      }
 
       // Top speed & acceleration calculation
-      let baseTopSpeed = 54;
+      let baseTopSpeed = 55;
       if (k.isBot) {
         const gap = leaderProgress - k.totalProgress;
-        if (gap > 0.22) baseTopSpeed = 57; // Catch-up
-        else if (gap < -0.12) baseTopSpeed = 50.5; // Let humans catch up
-        else baseTopSpeed = 52.5;
+        if (gap > 0.22) baseTopSpeed = 56.5; // Catch-up
+        else if (gap < -0.1) baseTopSpeed = 50.0; // Let humans catch up
+        else baseTopSpeed = 52.0;
       } else {
         // Gentle position rubber-banding for trailing humans
         const rankRatio = (k.rank - 1) / Math.max(1, allKarts.length - 1);
-        baseTopSpeed = 54 + rankRatio * 3.5;
+        baseTopSpeed = 55.5 + rankRatio * 3.5;
       }
 
       if (k.finished) baseTopSpeed = 38;
-      if (k.shrinkTimer > 0) baseTopSpeed *= 0.74;
+      if (k.shrinkTimer > 0) baseTopSpeed *= 0.76;
       if (k.starTimer > 0) baseTopSpeed *= 1.28;
       else if (k.boostTimer > 0) baseTopSpeed *= 1.32;
 
       const ignoreOffRoad = k.boostTimer > 0 || k.starTimer > 0;
       if (k.offRoad && !ignoreOffRoad) {
-        baseTopSpeed *= 0.62;
+        baseTopSpeed *= 0.8;
       }
 
       if (inp.brake && !k.finished) {
         // Brake / Reverse
-        k.speed = Math.max(-18, k.speed - 58 * dt);
+        k.speed = Math.max(-16, k.speed - 58 * dt);
       } else {
-        const accel = k.boostTimer > 0 || k.starTimer > 0 ? 78 : 36;
+        const accel = k.boostTimer > 0 || k.starTimer > 0 ? 82 : 42;
         if (k.speed < baseTopSpeed) {
           k.speed = Math.min(baseTopSpeed, k.speed + accel * dt);
         } else {
@@ -819,17 +881,26 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     k.sampleIdx = proj.sampleIdx;
     k.lateralOffset = proj.lateralOffset;
     const halfRoad = sim.track.roadWidth * 0.5;
-    k.offRoad = Math.abs(proj.lateralOffset) > halfRoad;
 
-    // Outer wall bounce & gentle guidance back onto track
-    if (Math.abs(proj.lateralOffset) > sim.track.wallWidth) {
+    // Keep AI bots strictly inside the asphalt road
+    if ((k.isBot || k.finished) && Math.abs(k.lateralOffset) > halfRoad * 0.8) {
+      const clampedLat = Math.sign(k.lateralOffset) * halfRoad * 0.8;
+      k.x = proj.sample.x + proj.sample.nx * clampedLat;
+      k.z = proj.sample.z + proj.sample.nz * clampedLat;
+      k.lateralOffset = clampedLat;
+    }
+
+    k.offRoad = Math.abs(k.lateralOffset) > halfRoad;
+
+    // Soft Smart Curb / Outer Wall cushion for human racers so you never get stuck on a wall
+    const maxWallOffset = sim.track.wallWidth - 1.5;
+    if (Math.abs(proj.lateralOffset) > maxWallOffset) {
       const sign = Math.sign(proj.lateralOffset);
-      k.x = proj.sample.x + proj.sample.nx * sign * (sim.track.wallWidth - 0.5);
-      k.z = proj.sample.z + proj.sample.nz * sign * (sim.track.wallWidth - 0.5);
-      k.speed *= 0.78;
-      // Nudge angle toward track tangent
-      const angleDiff = normalizeAngle(proj.sample.angle - k.angle);
-      k.angle = normalizeAngle(k.angle + angleDiff * 0.45);
+      k.x = proj.sample.x + proj.sample.nx * sign * maxWallOffset;
+      k.z = proj.sample.z + proj.sample.nz * sign * maxWallOffset;
+      k.lateralOffset = sign * maxWallOffset;
+      k.speed *= 0.92;
+      k.angle = proj.sample.angle;
     }
 
     // Lap & checkpoint tracking

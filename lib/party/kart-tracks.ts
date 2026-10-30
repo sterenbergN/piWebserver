@@ -8,6 +8,7 @@ export interface TrackSample {
   nx: number;
   nz: number;
   angle: number;
+  curvature: number;
   s: number;
   progress: number;
 }
@@ -66,6 +67,12 @@ export interface KartTrack {
   scenery: SceneryProp[];
 }
 
+function wrapAngle(a: number): number {
+  let r = (a + Math.PI) % (Math.PI * 2);
+  if (r < 0) r += Math.PI * 2;
+  return r - Math.PI;
+}
+
 function catmullRomPoint(
   p0: [number, number],
   p1: [number, number],
@@ -90,30 +97,55 @@ function catmullRomPoint(
   return [x, z];
 }
 
-function buildSplineSamples(controlPoints: [number, number][], subdivisionsPerSegment = 20): { samples: TrackSample[]; totalLength: number } {
+/**
+ * Build uniform arc-length resampled spline samples so sample[i].progress === i / targetCount
+ * and sampleTrackAtProgress / projectOntoTrack are 100% consistent everywhere on the loop.
+ */
+function buildSplineSamples(
+  controlPoints: [number, number][],
+  targetCount = 240,
+): { samples: TrackSample[]; totalLength: number } {
   const n = controlPoints.length;
-  const rawPts: [number, number][] = [];
+  const denseSub = 40;
+  const densePts: [number, number][] = [];
   for (let i = 0; i < n; i++) {
     const p0 = controlPoints[(i - 1 + n) % n];
     const p1 = controlPoints[i];
     const p2 = controlPoints[(i + 1) % n];
     const p3 = controlPoints[(i + 2) % n];
-    for (let s = 0; s < subdivisionsPerSegment; s++) {
-      rawPts.push(catmullRomPoint(p0, p1, p2, p3, s / subdivisionsPerSegment));
+    for (let s = 0; s < denseSub; s++) {
+      densePts.push(catmullRomPoint(p0, p1, p2, p3, s / denseSub));
     }
   }
 
-  const m = rawPts.length;
-  const cumulative: number[] = [0];
+  const denseLen = densePts.length;
+  const cumArc: number[] = [0];
   let totalLength = 0;
-  for (let i = 1; i <= m; i++) {
-    const prev = rawPts[i - 1];
-    const curr = rawPts[i % m];
-    const seg = Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
-    totalLength += seg;
-    if (i < m) cumulative.push(totalLength);
+  for (let i = 1; i <= denseLen; i++) {
+    const prev = densePts[i - 1];
+    const curr = densePts[i % denseLen];
+    totalLength += Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
+    cumArc.push(totalLength);
   }
 
+  // Resample at uniform arc-length steps around the closed loop
+  const rawPts: [number, number][] = [];
+  let cursor = 0;
+  for (let k = 0; k < targetCount; k++) {
+    const targetS = (k / targetCount) * totalLength;
+    while (cursor < denseLen - 1 && cumArc[cursor + 1] < targetS) {
+      cursor++;
+    }
+    const s0 = cumArc[cursor];
+    const s1 = cumArc[cursor + 1];
+    const frac = s1 > s0 ? (targetS - s0) / (s1 - s0) : 0;
+    const a = densePts[cursor];
+    const b = densePts[(cursor + 1) % denseLen];
+    rawPts.push([a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac]);
+  }
+
+  const m = rawPts.length;
+  const ds = totalLength / m;
   const samples: TrackSample[] = [];
   for (let i = 0; i < m; i++) {
     const prev = rawPts[(i - 1 + m) % m];
@@ -123,11 +155,11 @@ function buildSplineSamples(controlPoints: [number, number][], subdivisionsPerSe
     const len = Math.hypot(dx, dz) || 1;
     const tx = dx / len;
     const tz = dz / len;
-    // Right-hand normal in XZ plane
+    // Right-hand normal in XZ plane (+nx is right side of road when facing +tangent)
     const nx = -tz;
     const nz = tx;
     const angle = Math.atan2(tx, tz);
-    const s = cumulative[i];
+    const s = (i / m) * totalLength;
     samples.push({
       x: rawPts[i][0],
       z: rawPts[i][1],
@@ -136,9 +168,17 @@ function buildSplineSamples(controlPoints: [number, number][], subdivisionsPerSe
       nx,
       nz,
       angle,
+      curvature: 0,
       s,
-      progress: s / totalLength,
+      progress: i / m,
     });
+  }
+
+  // Compute smoothed signed curvature (rad per world unit)
+  for (let i = 0; i < m; i++) {
+    const prev = samples[(i - 2 + m) % m];
+    const next = samples[(i + 2) % m];
+    samples[i].curvature = wrapAngle(next.angle - prev.angle) / (4 * ds);
   }
 
   return { samples, totalLength };
@@ -169,6 +209,7 @@ export function sampleTrackAtProgress(track: KartTrack, rawProgress: number): Tr
     nx: -nTz,
     nz: nTx,
     angle: Math.atan2(nTx, nTz),
+    curvature: a.curvature + (b.curvature - a.curvature) * frac,
     s: p * track.totalLength,
     progress: p,
   };
@@ -191,8 +232,8 @@ export function projectOntoTrack(
   let bestDistSq = Infinity;
 
   if (typeof hintSampleIdx === 'number' && hintSampleIdx >= 0 && hintSampleIdx < m) {
-    // Search local window first (±25 samples), fallback to full search if far away
-    const window = 28;
+    // Search local window first (±22 samples), fallback to full search if far away
+    const window = 22;
     for (let offset = -window; offset <= window; offset++) {
       const idx = (hintSampleIdx + offset + m) % m;
       const s = track.samples[idx];
@@ -204,7 +245,7 @@ export function projectOntoTrack(
         bestIdx = idx;
       }
     }
-    if (bestDistSq > track.wallWidth * track.wallWidth * 2.5) {
+    if (bestDistSq > track.wallWidth * track.wallWidth * 2.2) {
       for (let idx = 0; idx < m; idx++) {
         const s = track.samples[idx];
         const dx = x - s.x;
@@ -229,13 +270,18 @@ export function projectOntoTrack(
     }
   }
 
+  // Sub-sample projection along tangent for smooth continuous progress & lateral offset
   const sample = track.samples[bestIdx];
   const dx = x - sample.x;
   const dz = z - sample.z;
   const lateralOffset = dx * sample.nx + dz * sample.nz;
+  const alongOffset = dx * sample.tx + dz * sample.tz;
+  const rawProgress = sample.progress + alongOffset / track.totalLength;
+  const progress = ((rawProgress % 1) + 1) % 1;
+
   return {
     sampleIdx: bestIdx,
-    progress: sample.progress,
+    progress,
     lateralOffset,
     distanceToCenter: Math.sqrt(bestDistSq),
     sample,
@@ -259,7 +305,7 @@ function buildTrackFeatures(
   const dummyTrack = { samples, totalLength } as KartTrack;
   const boostPads: BoostPadDef[] = boostProgresses.map((bp, i) => {
     const s = sampleTrackAtProgress(dummyTrack, bp.progress);
-    const offset = bp.lateral * (roadWidth * 0.45);
+    const offset = bp.lateral * (roadWidth * 0.38);
     return {
       id: `boost_${i}`,
       progress: bp.progress,
@@ -274,8 +320,8 @@ function buildTrackFeatures(
   let boxCounter = 0;
   for (const rowP of itemRowProgresses) {
     const s = sampleTrackAtProgress(dummyTrack, rowP);
-    for (const lat of [-0.55, -0.18, 0.18, 0.55]) {
-      const offset = lat * (roadWidth * 0.48);
+    for (const lat of [-0.52, -0.18, 0.18, 0.52]) {
+      const offset = lat * (roadWidth * 0.42);
       itemBoxes.push({
         id: `box_${boxCounter++}`,
         progress: rowP,
@@ -287,30 +333,31 @@ function buildTrackFeatures(
   }
 
   const scenery: SceneryProp[] = [];
-  const step = Math.max(1, Math.floor(samples.length / 36));
+  const step = Math.max(1, Math.floor(samples.length / 44));
   for (let i = 0; i < samples.length; i += step) {
     const s = samples[i];
-    const side = i % (step * 2) === 0 ? 1 : -1;
-    const dist = wallWidth + 10 + ((i * 17) % 18);
-    const x = s.x + s.nx * side * dist;
-    const z = s.z + s.nz * side * dist;
-    // Ensure scenery prop doesn't overlap another part of the track
-    let tooClose = false;
-    for (let j = 0; j < samples.length; j += 8) {
-      const other = samples[j];
-      if (Math.hypot(x - other.x, z - other.z) < wallWidth + 5) {
-        tooClose = true;
-        break;
+    for (const side of [-1, 1]) {
+      if ((i + (side > 0 ? 1 : 0)) % 2 !== 0) continue;
+      const dist = wallWidth + 12 + ((i * 17) % 24);
+      const x = s.x + s.nx * side * dist;
+      const z = s.z + s.nz * side * dist;
+      let tooClose = false;
+      for (let j = 0; j < samples.length; j += 6) {
+        const other = samples[j];
+        if (Math.hypot(x - other.x, z - other.z) < wallWidth + 7) {
+          tooClose = true;
+          break;
+        }
       }
-    }
-    if (!tooClose) {
-      scenery.push({
-        x,
-        z,
-        kind: sceneryKind,
-        scale: 0.85 + ((i * 13) % 10) * 0.08,
-        color: sceneryColors[i % sceneryColors.length],
-      });
+      if (!tooClose) {
+        scenery.push({
+          x,
+          z,
+          kind: sceneryKind,
+          scale: 0.95 + ((i * 13) % 10) * 0.09,
+          color: sceneryColors[i % sceneryColors.length],
+        });
+      }
     }
   }
 
@@ -333,7 +380,7 @@ function createTrack(config: {
   sceneryKind: SceneryProp['kind'];
   sceneryColors: string[];
 }): KartTrack {
-  const { samples, totalLength } = buildSplineSamples(config.controlPoints, 22);
+  const { samples, totalLength } = buildSplineSamples(config.controlPoints, 240);
   const { boostPads, itemBoxes, scenery } = buildTrackFeatures(
     samples,
     totalLength,
@@ -368,15 +415,15 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     id: 'sunny-circuit',
     name: 'Sunny Circuit',
     emoji: '🌴',
-    tagline: 'Wide tropical beach boardwalk with sweeping curves & boost pads',
+    tagline: 'Wide tropical beach speedway with sweeping banked curves & boost pads',
     difficulty: 'Easy',
-    roadWidth: 26,
-    wallWidth: 38,
+    roadWidth: 36,
+    wallWidth: 46,
     friction: 1.0,
     theme: {
       skyTop: '#0284c7',
       skyBottom: '#bae6fd',
-      groundColor: '#fde047',
+      groundColor: '#15803d',
       roadColor: '#334155',
       roadStripeColor: '#f8fafc',
       curbColorA: '#ef4444',
@@ -385,86 +432,85 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       accentColor: '#22c55e',
     },
     controlPoints: [
-      [0, -140],
-      [0, -40],
-      [15, 65],
-      [95, 130],
-      [185, 95],
-      [210, 0],
-      [165, -85],
-      [195, -175],
-      [120, -230],
-      [20, -215],
+      [0, -150],
+      [0, -25],
+      [25, 95],
+      [115, 155],
+      [220, 115],
+      [255, 0],
+      [220, -115],
+      [235, -210],
+      [135, -265],
+      [25, -235],
     ],
     boostProgresses: [
-      { progress: 0.16, lateral: 0.3 },
-      { progress: 0.46, lateral: -0.25 },
+      { progress: 0.16, lateral: 0.25 },
+      { progress: 0.46, lateral: -0.22 },
       { progress: 0.78, lateral: 0.0 },
     ],
     itemRowProgresses: [0.1, 0.36, 0.64, 0.88],
     sceneryKind: 'palm',
-    sceneryColors: ['#16a34a', '#15803d', '#22c55e'],
+    sceneryColors: ['#16a34a', '#22c55e', '#4ade80'],
   }),
 
   'canyon-driftway': createTrack({
     id: 'canyon-driftway',
     name: 'Canyon Driftway',
     emoji: '🏜️',
-    tagline: 'Sunset red-rock hairpins built for charging Orange Super Mini-Turbos',
+    tagline: 'Sunset red-rock bends built for charging Orange Super Mini-Turbos',
     difficulty: 'Medium',
-    roadWidth: 24,
-    wallWidth: 35,
-    friction: 0.96,
+    roadWidth: 34,
+    wallWidth: 44,
+    friction: 0.98,
     theme: {
       skyTop: '#7c2d12',
       skyBottom: '#fb923c',
-      groundColor: '#c2410c',
-      roadColor: '#451a03',
+      groundColor: '#9a3412',
+      roadColor: '#292524',
       roadStripeColor: '#fcd34d',
       curbColorA: '#f97316',
       curbColorB: '#fef3c7',
-      wallColor: '#9a3412',
+      wallColor: '#ea580c',
       accentColor: '#f59e0b',
     },
     controlPoints: [
-      [0, -150],
-      [0, -35],
-      [50, 75],
-      [155, 115],
-      [230, 45],
-      [160, -25],
-      [95, -5],
-      [75, -85],
-      [175, -145],
-      [195, -225],
-      [95, -255],
-      [10, -225],
+      [0, -155],
+      [0, -20],
+      [55, 95],
+      [175, 140],
+      [265, 65],
+      [225, -35],
+      [145, -75],
+      [215, -165],
+      [185, -255],
+      [75, -265],
+      [10, -230],
     ],
     boostProgresses: [
-      { progress: 0.22, lateral: -0.35 },
-      { progress: 0.52, lateral: 0.35 },
+      { progress: 0.22, lateral: -0.28 },
+      { progress: 0.52, lateral: 0.28 },
       { progress: 0.74, lateral: -0.2 },
       { progress: 0.91, lateral: 0.0 },
     ],
     itemRowProgresses: [0.12, 0.38, 0.62, 0.84],
     sceneryKind: 'cactus',
-    sceneryColors: ['#15803d', '#b45309', '#92400e'],
+    sceneryColors: ['#15803d', '#d97706', '#b45309'],
   }),
 
   'frostbite-peak': createTrack({
     id: 'frostbite-peak',
     name: 'Frostbite Peak',
     emoji: '❄️',
-    tagline: 'Slippery alpine glacier with fast straightaways & icy chicanes',
+    tagline: 'Alpine glacier speedway with fast straightaways & sweeping S-curves',
     difficulty: 'Hard',
-    roadWidth: 24,
-    wallWidth: 36,
-    friction: 0.86, // Slippery ice feel
+    roadWidth: 34,
+    wallWidth: 45,
+    friction: 0.92,
     theme: {
       skyTop: '#0f172a',
       skyBottom: '#38bdf8',
-      groundColor: '#e0f2fe',
-      roadColor: '#1e3a8a',
+      groundColor: '#cbd5e1',
+      roadColor: '#1e293b',
       roadStripeColor: '#7dd3fc',
       curbColorA: '#06b6d4',
       curbColorB: '#f0f9ff',
@@ -472,37 +518,37 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       accentColor: '#67e8f9',
     },
     controlPoints: [
-      [0, -145],
-      [0, -30],
-      [-55, 65],
-      [15, 145],
-      [125, 145],
-      [205, 70],
-      [150, -10],
-      [215, -95],
-      [175, -195],
-      [80, -230],
-      [5, -210],
+      [0, -150],
+      [0, -15],
+      [-55, 85],
+      [25, 175],
+      [155, 175],
+      [245, 85],
+      [195, -25],
+      [245, -125],
+      [195, -225],
+      [85, -255],
+      [10, -225],
     ],
     boostProgresses: [
       { progress: 0.19, lateral: 0.0 },
-      { progress: 0.42, lateral: -0.3 },
-      { progress: 0.68, lateral: 0.3 },
+      { progress: 0.42, lateral: -0.25 },
+      { progress: 0.68, lateral: 0.25 },
       { progress: 0.89, lateral: 0.0 },
     ],
     itemRowProgresses: [0.11, 0.33, 0.56, 0.8],
     sceneryKind: 'pine',
-    sceneryColors: ['#0f766e', '#0369a1', '#e2e8f0'],
+    sceneryColors: ['#0f766e', '#0284c7', '#f8fafc'],
   }),
 
   'neon-starway': createTrack({
     id: 'neon-starway',
     name: 'Neon Starway',
     emoji: '🌈',
-    tagline: 'Cosmic Rainbow Road highway in deep space with chaos item clusters',
+    tagline: 'Cosmic Rainbow Road highway in deep space with turbo star gates',
     difficulty: 'Expert',
-    roadWidth: 23,
-    wallWidth: 33,
+    roadWidth: 34,
+    wallWidth: 44,
     friction: 1.0,
     theme: {
       skyTop: '#050510',
@@ -517,25 +563,25 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       rainbowRoad: true,
     },
     controlPoints: [
-      [0, -150],
-      [0, -30],
-      [65, 55],
-      [15, 135],
-      [115, 185],
-      [215, 115],
-      [235, 5],
-      [145, -55],
-      [215, -140],
-      [155, -235],
-      [55, -245],
-      [0, -215],
+      [0, -155],
+      [0, -20],
+      [60, 80],
+      [35, 175],
+      [145, 220],
+      [255, 140],
+      [275, 10],
+      [195, -70],
+      [245, -175],
+      [165, -260],
+      [55, -260],
+      [5, -220],
     ],
     boostProgresses: [
-      { progress: 0.14, lateral: 0.25 },
-      { progress: 0.31, lateral: -0.25 },
+      { progress: 0.14, lateral: 0.22 },
+      { progress: 0.31, lateral: -0.22 },
       { progress: 0.5, lateral: 0.0 },
-      { progress: 0.69, lateral: 0.3 },
-      { progress: 0.86, lateral: -0.25 },
+      { progress: 0.69, lateral: 0.25 },
+      { progress: 0.86, lateral: -0.22 },
     ],
     itemRowProgresses: [0.09, 0.26, 0.44, 0.63, 0.82],
     sceneryKind: 'neon-pillar',

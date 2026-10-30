@@ -52,7 +52,12 @@ export default function KartClashPhoneController({
   const [isDraggingTouch, setIsDraggingTouch] = useState<boolean>(false);
   const [rouletteIdx, setRouletteIdx] = useState<number>(0);
   const [landscapeSide, setLandscapeSide] = useState<'left' | 'right'>('left');
-  const [viewport, setViewport] = useState<{ w: number; h: number }>({ w: 800, h: 450 });
+  const [viewport, setViewport] = useState<{ top: number; left: number; w: number; h: number }>({
+    top: 0,
+    left: 0,
+    w: 800,
+    h: 450,
+  });
 
   // Selected racer for VIP host heat swapping on phone
   const [selectedRacerId, setSelectedRacerId] = useState<string | null>(null);
@@ -62,6 +67,7 @@ export default function KartClashPhoneController({
 
   // Refs for high-frequency gyro & network loop
   const steerRef = useRef<number>(0);
+  const smoothedSteerRef = useRef<number>(0);
   const driftRef = useRef<boolean>(false);
   const brakeRef = useRef<boolean>(false);
   const useItemRef = useRef<boolean>(false);
@@ -86,18 +92,37 @@ export default function KartClashPhoneController({
     } catch {}
   }, []);
 
-  // Track viewport size so if the phone OS flips to portrait mid-race, we keep the UI locked horizontally
+  // Track visualViewport (exact unobstructed area below iOS Safari landscape tab bars)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const updateSize = () => {
-      setViewport({ w: window.innerWidth, h: window.innerHeight });
+      const vv = window.visualViewport;
+      if (vv) {
+        setViewport({
+          top: Math.max(0, Math.round(vv.offsetTop)),
+          left: Math.max(0, Math.round(vv.offsetLeft)),
+          w: Math.max(240, Math.round(vv.width)),
+          h: Math.max(180, Math.round(vv.height)),
+        });
+      } else {
+        setViewport({
+          top: 0,
+          left: 0,
+          w: window.innerWidth,
+          h: window.innerHeight,
+        });
+      }
     };
     updateSize();
     window.addEventListener('resize', updateSize);
     window.addEventListener('orientationchange', updateSize);
+    window.visualViewport?.addEventListener('resize', updateSize);
+    window.visualViewport?.addEventListener('scroll', updateSize);
     return () => {
       window.removeEventListener('resize', updateSize);
       window.removeEventListener('orientationchange', updateSize);
+      window.visualViewport?.removeEventListener('resize', updateSize);
+      window.visualViewport?.removeEventListener('scroll', updateSize);
     };
   }, []);
 
@@ -105,6 +130,9 @@ export default function KartClashPhoneController({
   useEffect(() => {
     if (phase === 'RACING' && pd?.isRacing) {
       tryLockLandscape();
+      try {
+        window.scrollTo(0, 0);
+      } catch {}
       const prevOverflow = document.body.style.overflow;
       const prevTouchAction = document.documentElement.style.touchAction;
       document.body.style.overflow = 'hidden';
@@ -224,14 +252,19 @@ export default function KartClashPhoneController({
 
       rawAngleRef.current = tiltDeg;
       const calibrated = tiltDeg - neutralOffsetRef.current;
-      const deadzone = 2.0;
-      const maxAngle = 26;
-      let norm = 0;
+      const deadzone = 3.5;
+      const maxAngle = 28;
+      let rawNorm = 0;
       if (Math.abs(calibrated) > deadzone) {
         const sign = Math.sign(calibrated);
-        norm = (sign * (Math.abs(calibrated) - deadzone)) / (maxAngle - deadzone);
+        const linear = Math.min(1, (Math.abs(calibrated) - deadzone) / (maxAngle - deadzone));
+        // Gentle non-linear curve for fine center control and confident full lock
+        rawNorm = sign * Math.pow(linear, 1.28);
       }
-      const clamped = Math.max(-1, Math.min(1, norm));
+      // Exponential low-pass filter to eliminate hand jitter
+      const smoothed = smoothedSteerRef.current * 0.6 + rawNorm * 0.4;
+      const clamped = Math.abs(smoothed) < 0.015 ? 0 : Math.max(-1, Math.min(1, smoothed));
+      smoothedSteerRef.current = clamped;
       steerRef.current = clamped;
       setSteerValue(clamped);
     };
@@ -244,6 +277,7 @@ export default function KartClashPhoneController({
   const recenterGyro = useCallback(() => {
     tryLockLandscape();
     neutralOffsetRef.current = rawAngleRef.current;
+    smoothedSteerRef.current = 0;
     steerRef.current = 0;
     setSteerValue(0);
     transmitInput({ steer: 0 });
@@ -1060,36 +1094,42 @@ export default function KartClashPhoneController({
     const cockpitContainerStyle: React.CSSProperties = isPortraitViewport
       ? {
           position: 'fixed',
-          top: '50%',
-          left: '50%',
+          top: `${viewport.top + viewport.h * 0.5}px`,
+          left: `${viewport.left + viewport.w * 0.5}px`,
           width: `${viewport.h}px`,
           height: `${viewport.w}px`,
           transform: `translate(-50%, -50%) rotate(${landscapeSide === 'left' ? 90 : -90}deg)`,
           zIndex: 90,
           background: '#070b14',
-          padding: '0.6rem 0.85rem',
+          padding: '0.45rem 0.65rem',
           display: 'grid',
-          gridTemplateColumns: '1.05fr 1.35fr 1.05fr',
-          gap: '0.65rem',
+          gridTemplateColumns: '1fr 1.38fr 1fr',
+          gap: '0.5rem',
           alignItems: 'stretch',
           boxSizing: 'border-box',
+          overflow: 'hidden',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           touchAction: 'none',
         }
       : {
           position: 'fixed',
-          inset: 0,
-          width: '100vw',
-          height: '100dvh',
+          top: `${viewport.top}px`,
+          left: `${viewport.left}px`,
+          width: `${viewport.w}px`,
+          height: `${viewport.h}px`,
           zIndex: 90,
           background: '#070b14',
-          padding: '0.6rem 0.85rem',
+          paddingTop: 'max(0.4rem, env(safe-area-inset-top))',
+          paddingBottom: 'max(0.4rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(0.6rem, env(safe-area-inset-left))',
+          paddingRight: 'max(0.6rem, env(safe-area-inset-right))',
           display: 'grid',
-          gridTemplateColumns: '1.05fr 1.35fr 1.05fr',
-          gap: '0.65rem',
+          gridTemplateColumns: '1fr 1.38fr 1fr',
+          gap: '0.5rem',
           alignItems: 'stretch',
           boxSizing: 'border-box',
+          overflow: 'hidden',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           touchAction: 'none',
@@ -1112,7 +1152,8 @@ export default function KartClashPhoneController({
           }}
           style={{
             height: '100%',
-            borderRadius: '22px',
+            minHeight: 0,
+            borderRadius: '18px',
             border: heldItem
               ? `3px solid ${ITEM_META[heldItem].color}`
               : isRoulette
@@ -1128,19 +1169,20 @@ export default function KartClashPhoneController({
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '0.35rem',
-            padding: '0.65rem',
+            gap: '0.25rem',
+            padding: '0.45rem',
             cursor: 'pointer',
+            overflow: 'hidden',
             boxShadow: heldItem ? `0 0 24px ${ITEM_META[heldItem].color}44` : 'none',
           }}
         >
-          <span style={{ fontSize: '3.1rem', lineHeight: 1 }}>
+          <span style={{ fontSize: 'clamp(2rem, 10vh, 3rem)', lineHeight: 1 }}>
             {isRoulette ? ROULETTE_EMOJIS[rouletteIdx] : heldItem ? ITEM_META[heldItem].emoji : '🎁'}
           </span>
-          <span style={{ fontWeight: 900, fontSize: '0.98rem', textAlign: 'center' }}>
+          <span style={{ fontWeight: 900, fontSize: 'clamp(0.78rem, 3.4vh, 0.96rem)', textAlign: 'center', lineHeight: 1.1 }}>
             {isRoulette ? 'ROLLING...' : heldItem ? ITEM_META[heldItem].label : 'USE ITEM'}
           </span>
-          <span style={{ fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>
+          <span style={{ fontSize: 'clamp(0.62rem, 2.5vh, 0.72rem)', color: '#94a3b8', textAlign: 'center', lineHeight: 1.1 }}>
             {heldItem ? ITEM_META[heldItem].hint : 'Hit rainbow boxes!'}
           </span>
         </button>
@@ -1150,18 +1192,20 @@ export default function KartClashPhoneController({
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.5rem',
+            gap: '0.35rem',
             height: '100%',
+            minHeight: 0,
             minWidth: 0,
           }}
         >
           {/* Top Telemetry Strip */}
           <div
             style={{
+              flexShrink: 0,
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              gap: '0.4rem',
+              gap: '0.35rem',
               background: isStar
                 ? 'linear-gradient(90deg, rgba(250,204,21,0.3), rgba(236,72,153,0.3), rgba(56,189,248,0.3))'
                 : isSpunOut
@@ -1172,15 +1216,15 @@ export default function KartClashPhoneController({
                 : isBoost
                   ? '2px solid #38bdf8'
                   : '1.5px solid rgba(255,255,255,0.14)',
-              borderRadius: '14px',
-              padding: '0.4rem 0.65rem',
+              borderRadius: '12px',
+              padding: '0.28rem 0.5rem',
             }}
           >
             <div>
-              <div style={{ fontSize: '0.58rem', fontWeight: 800, color: '#94a3b8' }}>POS</div>
+              <div style={{ fontSize: '0.52rem', fontWeight: 800, color: '#94a3b8', lineHeight: 1 }}>POS</div>
               <div
                 style={{
-                  fontSize: '1.35rem',
+                  fontSize: 'clamp(1.05rem, 4.5vh, 1.3rem)',
                   fontWeight: 900,
                   color: rank === 1 ? '#facc15' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fb923c' : '#38bdf8',
                   lineHeight: 1,
@@ -1190,34 +1234,34 @@ export default function KartClashPhoneController({
               </div>
             </div>
 
-            <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ textAlign: 'center', flex: 1, minWidth: 0 }}>
               {isCountdown ? (
-                <div style={{ fontSize: '1.05rem', fontWeight: 900, color: countdownSec <= 2 ? '#facc15' : '#f8fafc' }}>
+                <div style={{ fontSize: 'clamp(0.82rem, 3.6vh, 1rem)', fontWeight: 900, color: countdownSec <= 2 ? '#facc15' : '#f8fafc', whiteSpace: 'nowrap' }}>
                   🚦 {countdownSec > 0 ? `READY: ${countdownSec}` : 'GO!!'}
                 </div>
               ) : myKart?.finished ? (
-                <div style={{ fontSize: '1rem', fontWeight: 900, color: '#4ade80' }}>🏁 FINISHED!</div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 900, color: '#4ade80' }}>🏁 FINISHED!</div>
               ) : isSpunOut ? (
-                <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#fca5a5' }}>💫 SPUN OUT!</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 900, color: '#fca5a5' }}>💫 SPUN OUT!</div>
               ) : (
-                <div style={{ fontSize: '0.82rem', fontWeight: 900, color: '#f8fafc' }}>
+                <div style={{ fontSize: 'clamp(0.72rem, 3.1vh, 0.84rem)', fontWeight: 900, color: '#f8fafc', whiteSpace: 'nowrap' }}>
                   LAP {lap}/{snapshot?.totalLaps || 3} • {speedKmh} km/h
                 </div>
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', gap: '0.25rem', flexShrink: 0 }}>
               <button
                 type="button"
                 onClick={gyroStatus === 'granted' ? recenterGyro : enableGyro}
                 style={{
-                  padding: '0.3rem 0.5rem',
-                  borderRadius: '8px',
+                  padding: '0.25rem 0.42rem',
+                  borderRadius: '7px',
                   border: '1px solid rgba(56,189,248,0.45)',
                   background: 'rgba(56,189,248,0.16)',
                   color: '#38bdf8',
                   fontWeight: 800,
-                  fontSize: '0.66rem',
+                  fontSize: '0.62rem',
                   cursor: 'pointer',
                 }}
               >
@@ -1228,13 +1272,13 @@ export default function KartClashPhoneController({
                 onClick={flipLandscapeSide}
                 title="Flip horizontal screen & tilt direction 180°"
                 style={{
-                  padding: '0.3rem 0.45rem',
-                  borderRadius: '8px',
+                  padding: '0.25rem 0.4rem',
+                  borderRadius: '7px',
                   border: '1px solid rgba(255,255,255,0.2)',
                   background: 'rgba(255,255,255,0.08)',
                   color: '#cbd5e1',
                   fontWeight: 800,
-                  fontSize: '0.66rem',
+                  fontSize: '0.62rem',
                   cursor: 'pointer',
                 }}
               >
@@ -1246,13 +1290,13 @@ export default function KartClashPhoneController({
                   onClick={() => sendHostAction({ type: 'FINISH_KART_RACE' })}
                   title="End Race Now (VIP Host)"
                   style={{
-                    padding: '0.3rem 0.45rem',
-                    borderRadius: '8px',
+                    padding: '0.25rem 0.4rem',
+                    borderRadius: '7px',
                     border: '1px solid rgba(250,204,21,0.45)',
                     background: 'rgba(250,204,21,0.14)',
                     color: '#fde047',
                     fontWeight: 800,
-                    fontSize: '0.66rem',
+                    fontSize: '0.62rem',
                     cursor: 'pointer',
                   }}
                 >
@@ -1279,6 +1323,7 @@ export default function KartClashPhoneController({
             onPointerUp={() => {
               draggingTouchRef.current = false;
               setIsDraggingTouch(false);
+              smoothedSteerRef.current = 0;
               steerRef.current = 0;
               setSteerValue(0);
               transmitInput({ steer: 0 });
@@ -1286,11 +1331,13 @@ export default function KartClashPhoneController({
             onPointerCancel={() => {
               draggingTouchRef.current = false;
               setIsDraggingTouch(false);
+              smoothedSteerRef.current = 0;
               steerRef.current = 0;
               setSteerValue(0);
             }}
             style={{
               flex: 1,
+              minHeight: 0,
               position: 'relative',
               background: 'radial-gradient(circle at center, rgba(30,41,59,0.92), rgba(15,23,42,0.98))',
               border:
@@ -1299,34 +1346,36 @@ export default function KartClashPhoneController({
                   : driftCharge === 1
                     ? '2.5px solid #38bdf8'
                     : '1.5px solid rgba(255,255,255,0.14)',
-              borderRadius: '20px',
-              padding: '0.5rem 0.65rem',
+              borderRadius: '16px',
+              padding: '0.35rem 0.55rem',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'space-between',
+              overflow: 'hidden',
               cursor: 'grab',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '0.64rem', color: '#94a3b8', fontWeight: 800 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '0.58rem', color: '#94a3b8', fontWeight: 800, flexShrink: 0 }}>
               <span>◀ LEFT</span>
-              <span>{gyroStatus === 'granted' ? 'TILT OR DRAG WHEEL' : 'DRAG WHEEL'}</span>
+              <span>{gyroStatus === 'granted' ? 'SMART STEER + TILT' : 'DRAG WHEEL'}</span>
               <span>RIGHT ▶</span>
             </div>
 
-            {/* SVG Racing Steering Wheel that rotates with steerValue */}
+            {/* SVG Racing Steering Wheel that rotates with steerValue and scales fluidly to fit short iPhone landscape viewports */}
             <div
               style={{
-                width: '112px',
-                height: '112px',
+                width: 'clamp(62px, 28vh, 102px)',
+                height: 'clamp(62px, 28vh, 102px)',
                 transform: `rotate(${steerValue * 68}deg)`,
-                transition: isDraggingTouch ? 'none' : 'transform 50ms linear',
+                transition: isDraggingTouch ? 'none' : 'transform 45ms linear',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 1,
               }}
             >
-              <svg viewBox="0 0 120 120" width="110" height="110">
+              <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%' }}>
                 <circle
                   cx="60"
                   cy="60"
@@ -1349,10 +1398,11 @@ export default function KartClashPhoneController({
             <div
               style={{
                 width: '100%',
-                height: '8px',
+                height: '6px',
                 borderRadius: '999px',
                 background: 'rgba(255,255,255,0.08)',
                 position: 'relative',
+                flexShrink: 0,
               }}
             >
               <div
@@ -1360,10 +1410,10 @@ export default function KartClashPhoneController({
                   position: 'absolute',
                   top: 0,
                   bottom: 0,
-                  width: '26px',
+                  width: '24px',
                   borderRadius: '999px',
                   background: driftCharge === 2 ? '#f97316' : '#38bdf8',
-                  left: `calc(${50 + steerValue * 44}% - 13px)`,
+                  left: `calc(${50 + steerValue * 44}% - 12px)`,
                 }}
               />
             </div>
@@ -1371,7 +1421,7 @@ export default function KartClashPhoneController({
         </div>
 
         {/* RIGHT COLUMN: DRIFT / ROCKET START + BRAKE */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', height: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', height: '100%', minHeight: 0 }}>
           <button
             type="button"
             onPointerDown={(e) => {
@@ -1397,7 +1447,8 @@ export default function KartClashPhoneController({
             }}
             style={{
               flex: 1,
-              borderRadius: '20px',
+              minHeight: 0,
+              borderRadius: '18px',
               border:
                 driftCharge === 2
                   ? '3px solid #f97316'
@@ -1421,15 +1472,16 @@ export default function KartClashPhoneController({
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.2rem',
-              padding: '0.5rem',
+              gap: '0.15rem',
+              padding: '0.4rem',
+              overflow: 'hidden',
               cursor: 'pointer',
             }}
           >
-            <span style={{ fontSize: '2rem', lineHeight: 1 }}>
+            <span style={{ fontSize: 'clamp(1.5rem, 7.5vh, 2.1rem)', lineHeight: 1 }}>
               {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : '💨'}
             </span>
-            <span style={{ fontWeight: 900, fontSize: '0.92rem', textAlign: 'center' }}>
+            <span style={{ fontWeight: 900, fontSize: 'clamp(0.76rem, 3.2vh, 0.92rem)', textAlign: 'center', lineHeight: 1.1 }}>
               {isCountdown
                 ? 'ROCKET START'
                 : driftCharge === 2
@@ -1438,7 +1490,7 @@ export default function KartClashPhoneController({
                     ? 'MINI-TURBO!'
                     : 'HOLD DRIFT'}
             </span>
-            <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textAlign: 'center' }}>
+            <span style={{ fontSize: 'clamp(0.58rem, 2.4vh, 0.66rem)', color: '#cbd5e1', textAlign: 'center', lineHeight: 1.1 }}>
               {isCountdown ? 'Hold on "1" for boost!' : 'Release after sparks'}
             </span>
           </button>
@@ -1464,13 +1516,14 @@ export default function KartClashPhoneController({
               transmitInput({ brake: false });
             }}
             style={{
-              height: '52px',
-              borderRadius: '14px',
+              height: 'clamp(36px, 14vh, 48px)',
+              flexShrink: 0,
+              borderRadius: '12px',
               border: isBraking ? '2px solid #ef4444' : '1.5px solid rgba(239,68,68,0.38)',
               background: isBraking ? 'rgba(239,68,68,0.32)' : 'rgba(239,68,68,0.12)',
               color: '#fca5a5',
               fontWeight: 900,
-              fontSize: '0.8rem',
+              fontSize: 'clamp(0.68rem, 2.8vh, 0.78rem)',
               cursor: 'pointer',
             }}
           >

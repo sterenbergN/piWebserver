@@ -294,10 +294,22 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     const next = activePacks.includes(id) ? activePacks.filter(p => p !== id) : [...activePacks, id];
     if (next.length) sendHostAction({ type: 'SET_PACKS', packs: next });
   };
+  const isKartRacing = state.gameType === 'kart-clash' && state.phase === 'RACING' && Boolean(pd?.isRacing);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--party-bg)' }}>
-      {/* Top Player Header */}
+    <div
+      style={{
+        minHeight: isKartRacing ? undefined : '100vh',
+        height: isKartRacing ? '100dvh' : undefined,
+        maxHeight: isKartRacing ? '100dvh' : undefined,
+        overflow: isKartRacing ? 'hidden' : undefined,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--party-bg)',
+      }}
+    >
+      {/* Top Player Header (hidden during active Kart Clash racing to maximize landscape viewport on iOS Safari) */}
+      {!isKartRacing && (
       <div className="player-header party-content" style={{ borderBottomColor: me.avatarColor, gap: '0.5rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flex: '1 1 110px', minWidth: 0, overflow: 'hidden' }}>
           {me.avatar && <span style={{ fontSize: '1.65rem', flexShrink: 0 }}>{me.avatar}</span>}
@@ -325,9 +337,10 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           </div>
         </div>
       </div>
+      )}
 
       {/* Live Countdown & VIP Action Strip during Gameplay */}
-      {isPlaying && (secondsLeft !== null || hostId || (state.waitingOn?.length > 0 && !state.waitingOn.includes(me.name))) && (
+      {!isKartRacing && isPlaying && (secondsLeft !== null || hostId || (state.waitingOn?.length > 0 && !state.waitingOn.includes(me.name))) && (
         <div style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid var(--party-border)', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', zIndex: 5 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>
             {currentGameInfo.label}
@@ -2045,7 +2058,9 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           </div>
         )}
       </div>
-      <ReactionBar onReact={(emoji) => { sendAction({ type: 'SUBMIT_REACTION', emoji }); }} />
+      {!isKartRacing && (
+        <ReactionBar onReact={(emoji) => { sendAction({ type: 'SUBMIT_REACTION', emoji }); }} />
+      )}
       {showRulesModal && (
         <HowToPlayModal
           initialGameType={state.gameType}

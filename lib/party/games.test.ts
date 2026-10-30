@@ -828,3 +828,33 @@ test('Kart Clash: Tournament Heats mode with 8 players, 2 heats of 4, manual hea
   stopKartSimulation(roomCode);
 });
 
+test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on track around sharp curves', async () => {
+  const { buildKartRacers, createKartSimulation, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const racers = buildKartRacers([{ id: 'p1', name: 'Driver', avatar: '🏎️', avatarColor: '#ef4444' }], true, 4);
+  const sim = createKartSimulation({
+    roomCode: 'TEST_AI',
+    raceId: 'race-1',
+    trackId: 'canyon-driftway',
+    racers,
+  });
+  // Skip countdown and step 360 ticks (12 seconds of racing around curves)
+  sim.countdownMs = 0;
+  let offRoadBotFrames = 0;
+  let offRoadHumanFrames = 0;
+  for (let i = 0; i < 360; i++) {
+    stepKartSimulation(sim, 1 / 30);
+    for (const k of Object.values(sim.karts)) {
+      if (k.isBot && k.offRoad) offRoadBotFrames++;
+      if (!k.isBot && k.offRoad) offRoadHumanFrames++;
+    }
+  }
+  const human = sim.karts['p1'];
+  const bots = Object.values(sim.karts).filter((k) => k.isBot);
+  assert.equal(offRoadBotFrames, 0, 'Pure-pursuit AI bots stay 100% on the asphalt road through curves');
+  assert.equal(offRoadHumanFrames, 0, 'Smart Arcade Steering keeps neutral human racer on the road through curves');
+  assert.ok(human.totalProgress > 0.25, 'Human racer advances smoothly along the spline');
+  assert.ok(bots.every((b) => b.totalProgress > 0.22), 'All AI bots advance smoothly along the spline');
+  stopKartSimulation('TEST_AI');
+});
+
+

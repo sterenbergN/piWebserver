@@ -26,7 +26,7 @@ export function computeSplitGrid(count: number): { cols: number; rows: number } 
   return { cols: 4, rows: 2 };
 }
 
-/** 2D SVG Track Minimap showing the spline loop, start line, and live kart dots. */
+/** 2D SVG Track Minimap showing the multi-layer circuit, start line, and live racer badges. */
 export function TrackMinimap({
   trackId,
   karts,
@@ -39,48 +39,119 @@ export function TrackMinimap({
   const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
   const xs = track.samples.map((s) => s.x);
   const zs = track.samples.map((s) => s.z);
-  const minX = Math.min(...xs) - 35;
-  const maxX = Math.max(...xs) + 35;
-  const minZ = Math.min(...zs) - 35;
-  const maxZ = Math.max(...zs) + 35;
-  const width = maxX - minX || 1;
-  const height = maxZ - minZ || 1;
+  const pad = 68;
+  const rawMinX = Math.min(...xs) - pad;
+  const rawMaxX = Math.max(...xs) + pad;
+  const rawMinZ = Math.min(...zs) - pad;
+  const rawMaxZ = Math.max(...zs) + pad;
+  const rawW = rawMaxX - rawMinX || 1;
+  const rawH = rawMaxZ - rawMinZ || 1;
+  const span = Math.max(rawW, rawH, 1);
+  const minX = (rawMinX + rawMaxX) * 0.5 - span * 0.5;
+  const minZ = (rawMinZ + rawMaxZ) * 0.5 - span * 0.5;
 
-  const pointsAttr = track.samples.map((s) => `${s.x},${s.z}`).join(' ');
+  const pointsAttr = track.samples.map((s) => `${s.x.toFixed(1)},${s.z.toFixed(1)}`).join(' ');
   const start = track.samples[0];
+  const bots = (karts || []).filter((k) => k.isBot);
+  const humans = (karts || []).filter((k) => !k.isBot);
 
   return (
     <svg
-      viewBox={`${minX} ${minZ} ${width} ${height}`}
+      viewBox={`${minX} ${minZ} ${span} ${span}`}
       width={size}
       height={size}
-      style={{ overflow: 'visible', filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.65))' }}
+      style={{ display: 'block', overflow: 'visible', filter: 'drop-shadow(0 6px 14px rgba(0,0,0,0.75))' }}
     >
+      {/* Radar card background */}
+      <rect
+        x={minX + span * 0.02}
+        y={minZ + span * 0.02}
+        width={span * 0.96}
+        height={span * 0.96}
+        rx={span * 0.08}
+        fill="rgba(7, 11, 20, 0.86)"
+        stroke="rgba(255, 255, 255, 0.18)"
+        strokeWidth={span * 0.012}
+      />
+      {/* Outer curb casing */}
       <polygon
         points={pointsAttr}
         fill="none"
-        stroke="rgba(0,0,0,0.75)"
+        stroke="rgba(2, 6, 23, 0.96)"
+        strokeWidth={38}
+        strokeLinejoin="round"
+      />
+      {/* Main asphalt road */}
+      <polygon
+        points={pointsAttr}
+        fill="none"
+        stroke="#334155"
         strokeWidth={28}
         strokeLinejoin="round"
       />
+      {/* Theme accent racing groove */}
       <polygon
         points={pointsAttr}
         fill="none"
         stroke={track.theme.accentColor}
-        strokeWidth={14}
+        strokeWidth={13}
+        strokeOpacity={0.88}
         strokeLinejoin="round"
       />
+      {/* Dashed white centerline */}
+      <polygon
+        points={pointsAttr}
+        fill="none"
+        stroke="rgba(255, 255, 255, 0.65)"
+        strokeWidth={3.2}
+        strokeDasharray="14 14"
+        strokeLinejoin="round"
+      />
+      {/* Checkered Start / Finish Line */}
       {start && (
-        <circle cx={start.x} cy={start.z} r={14} fill="#ffffff" stroke="#000" strokeWidth={4} />
-      )}
-      {karts?.map((k) => (
-        <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
-          <circle
-            r={k.isBot ? 11 : 17}
-            fill={k.color}
-            stroke={k.isBot ? '#000' : '#fff'}
-            strokeWidth={k.isBot ? 3 : 5}
+        <g>
+          <line
+            x1={start.x - start.nx * 20}
+            y1={start.z - start.nz * 20}
+            x2={start.x + start.nx * 20}
+            y2={start.z + start.nz * 20}
+            stroke="#ffffff"
+            strokeWidth={9}
+            strokeLinecap="round"
           />
+          <line
+            x1={start.x - start.nx * 20}
+            y1={start.z - start.nz * 20}
+            x2={start.x + start.nx * 20}
+            y2={start.z + start.nz * 20}
+            stroke="#0f172a"
+            strokeWidth={9}
+            strokeDasharray="7 7"
+            strokeLinecap="round"
+          />
+        </g>
+      )}
+      {/* AI Bot Dots (rendered underneath human racers) */}
+      {bots.map((k) => (
+        <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
+          <circle r={11} fill={k.color} stroke="#020617" strokeWidth={3.5} opacity={0.88} />
+        </g>
+      ))}
+      {/* Human Racer Badges with Live Rank */}
+      {humans.map((k) => (
+        <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
+          <circle r={20} fill={k.color} stroke="#ffffff" strokeWidth={5.5} />
+          <text
+            x={0}
+            y={7}
+            textAnchor="middle"
+            fill="#020617"
+            fontSize={21}
+            fontWeight={900}
+            style={{ fontFamily: 'sans-serif' }}
+          >
+            {k.rank}
+          </text>
         </g>
       ))}
     </svg>
@@ -89,6 +160,87 @@ export function TrackMinimap({
 
 // ─── Three.js 3D Track & Kart Scene Builder ────────────────────────────────────
 
+function buildContinuousStripMesh(
+  samples: KartTrack['samples'],
+  innerOffset: number,
+  outerOffset: number,
+  yBottom: number,
+  yTop: number,
+  colorA: THREE.Color,
+  colorB: THREE.Color,
+  stripePeriod: number,
+): THREE.Mesh {
+  const m = samples.length;
+  const positions: number[] = [];
+  const colors: number[] = [];
+
+  const pushQuad = (
+    ax: number, ay: number, az: number,
+    bx: number, by: number, bz: number,
+    cx: number, cy: number, cz: number,
+    dx: number, dy: number, dz: number,
+    col: THREE.Color,
+  ) => {
+    positions.push(
+      ax, ay, az, bx, by, bz, cx, cy, cz,
+      bx, by, bz, dx, dy, dz, cx, cy, cz,
+    );
+    for (let k = 0; k < 6; k++) {
+      colors.push(col.r, col.g, col.b);
+    }
+  };
+
+  for (let i = 0; i < m; i++) {
+    const s0 = samples[i];
+    const s1 = samples[(i + 1) % m];
+    const col = Math.floor(i / stripePeriod) % 2 === 0 ? colorA : colorB;
+
+    const i0x = s0.x + s0.nx * innerOffset;
+    const i0z = s0.z + s0.nz * innerOffset;
+    const o0x = s0.x + s0.nx * outerOffset;
+    const o0z = s0.z + s0.nz * outerOffset;
+
+    const i1x = s1.x + s1.nx * innerOffset;
+    const i1z = s1.z + s1.nz * innerOffset;
+    const o1x = s1.x + s1.nx * outerOffset;
+    const o1z = s1.z + s1.nz * outerOffset;
+
+    // Top face
+    pushQuad(
+      i0x, yTop, i0z,
+      o0x, yTop, o0z,
+      i1x, yTop, i1z,
+      o1x, yTop, o1z,
+      col,
+    );
+    // Inner vertical face (facing road)
+    pushQuad(
+      i0x, yBottom, i0z,
+      i0x, yTop, i0z,
+      i1x, yBottom, i1z,
+      i1x, yTop, i1z,
+      col,
+    );
+    // Outer vertical face
+    pushQuad(
+      o0x, yTop, o0z,
+      o0x, yBottom, o0z,
+      o1x, yTop, o1z,
+      o1x, yBottom, o1z,
+      col,
+    );
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return new THREE.Mesh(
+    geo,
+    new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+  );
+}
+
 function buildTrackMeshGroup(track: KartTrack): {
   group: THREE.Group;
   itemBoxMeshes: Map<string, THREE.Mesh>;
@@ -96,20 +248,48 @@ function buildTrackMeshGroup(track: KartTrack): {
   const group = new THREE.Group();
   const itemBoxMeshes = new Map<string, THREE.Mesh>();
 
-  // Ground plane
-  const groundGeo = new THREE.PlaneGeometry(1400, 1400);
+  // Ground plane lowered well below road to prevent any Z-fighting
+  const groundGeo = new THREE.PlaneGeometry(1800, 1800);
   const groundMat = new THREE.MeshLambertMaterial({ color: track.theme.groundColor });
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.15;
+  ground.position.y = -0.35;
   group.add(ground);
 
-  // Build Road Ribbon & Curbs
   const samples = track.samples;
   const m = samples.length;
   const halfW = track.roadWidth * 0.5;
-  const curbW = 2.2;
+  const curbW = 2.4;
+  const shoulderW = track.wallWidth + 2.5;
 
+  // 1. Continuous Shoulder / Gravel Apron Ribbon under the track & walls
+  const shoulderPositions: number[] = [];
+  const shoulderIndices: number[] = [];
+  for (let i = 0; i <= m; i++) {
+    const s = samples[i % m];
+    const lx = s.x - s.nx * shoulderW;
+    const lz = s.z - s.nz * shoulderW;
+    const rx = s.x + s.nx * shoulderW;
+    const rz = s.z + s.nz * shoulderW;
+    shoulderPositions.push(lx, 0.01, lz, rx, 0.01, rz);
+    if (i < m) {
+      const v = i * 2;
+      shoulderIndices.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+    }
+  }
+  const shoulderGeo = new THREE.BufferGeometry();
+  shoulderGeo.setAttribute('position', new THREE.Float32BufferAttribute(shoulderPositions, 3));
+  shoulderGeo.setIndex(shoulderIndices);
+  shoulderGeo.computeVertexNormals();
+  const shoulderColor = new THREE.Color(track.theme.groundColor).lerp(new THREE.Color('#0f172a'), 0.38);
+  group.add(
+    new THREE.Mesh(
+      shoulderGeo,
+      new THREE.MeshLambertMaterial({ color: shoulderColor, side: THREE.DoubleSide }),
+    ),
+  );
+
+  // 2. Multi-Lane Sculpted Road Ribbon
   const roadPositions: number[] = [];
   const roadColors: number[] = [];
   const roadIndices: number[] = [];
@@ -124,24 +304,34 @@ function buildTrackMeshGroup(track: KartTrack): {
     new THREE.Color('#ec4899'),
   ];
   const baseRoadColor = new THREE.Color(track.theme.roadColor);
+  const edgeRoadColor = baseRoadColor.clone().multiplyScalar(0.82);
+  const centerGrooveColor = baseRoadColor.clone().lerp(new THREE.Color(track.theme.accentColor), 0.12);
 
   for (let i = 0; i <= m; i++) {
     const s = samples[i % m];
-    const lx = s.x - s.nx * halfW;
-    const lz = s.z - s.nz * halfW;
-    const rx = s.x + s.nx * halfW;
-    const rz = s.z + s.nz * halfW;
-
-    roadPositions.push(lx, 0.02, lz, rx, 0.02, rz);
-
-    const c = track.theme.rainbowRoad
-      ? rainbowPalette[i % rainbowPalette.length]
-      : baseRoadColor;
-    roadColors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    const offsets = [-halfW, -halfW * 0.45, halfW * 0.45, halfW];
+    for (let j = 0; j < 4; j++) {
+      const off = offsets[j];
+      roadPositions.push(s.x + s.nx * off, 0.12, s.z + s.nz * off);
+      if (track.theme.rainbowRoad) {
+        const rc = rainbowPalette[(i + j) % rainbowPalette.length];
+        roadColors.push(rc.r, rc.g, rc.b);
+      } else {
+        const col = j === 0 || j === 3 ? edgeRoadColor : centerGrooveColor;
+        roadColors.push(col.r, col.g, col.b);
+      }
+    }
 
     if (i < m) {
-      const v = i * 2;
-      roadIndices.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      const row0 = i * 4;
+      const row1 = (i + 1) * 4;
+      for (let j = 0; j < 3; j++) {
+        const a = row0 + j;
+        const b = row0 + j + 1;
+        const c = row1 + j;
+        const d = row1 + j + 1;
+        roadIndices.push(a, b, c, b, d, c);
+      }
     }
   }
 
@@ -153,38 +343,76 @@ function buildTrackMeshGroup(track: KartTrack): {
   const roadMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   group.add(new THREE.Mesh(roadGeo, roadMat));
 
-  // Alternating colored curbs along both edges
+  // 3. Continuous Extruded 3D Left & Right Rumble Curbs (Zero gaps)
   const curbColorA = new THREE.Color(track.theme.curbColorA);
   const curbColorB = new THREE.Color(track.theme.curbColorB);
-  const curbGeo = new THREE.BoxGeometry(curbW, 0.45, 5.2);
-  for (let i = 0; i < m; i += 2) {
-    const s = samples[i];
-    const mat = new THREE.MeshLambertMaterial({ color: (i / 2) % 2 === 0 ? curbColorA : curbColorB });
-    for (const side of [-1, 1]) {
-      const curb = new THREE.Mesh(curbGeo, mat);
-      curb.position.set(
-        s.x + s.nx * side * (halfW + curbW * 0.45),
-        0.22,
-        s.z + s.nz * side * (halfW + curbW * 0.45),
-      );
-      curb.rotation.y = s.angle;
-      group.add(curb);
-    }
-  }
+  group.add(
+    buildContinuousStripMesh(samples, -halfW - curbW, -halfW, 0.08, 0.34, curbColorA, curbColorB, 2),
+  );
+  group.add(
+    buildContinuousStripMesh(samples, halfW, halfW + curbW, 0.08, 0.34, curbColorA, curbColorB, 2),
+  );
 
-  // Centerline dashed markers
-  const dashGeo = new THREE.PlaneGeometry(0.9, 3.8);
+  // 4. Continuous 3D Outer Track Barrier Walls at +-wallWidth so boundaries are unmistakable
+  const wallInner = track.wallWidth;
+  const wallOuter = track.wallWidth + 1.35;
+  const wallColorA = new THREE.Color(track.theme.curbColorA).lerp(new THREE.Color('#0f172a'), 0.2);
+  const wallColorB = new THREE.Color(track.theme.curbColorB).lerp(new THREE.Color('#1e293b'), 0.25);
+  group.add(
+    buildContinuousStripMesh(samples, -wallOuter, -wallInner, 0.0, 1.65, wallColorA, wallColorB, 3),
+  );
+  group.add(
+    buildContinuousStripMesh(samples, wallInner, wallOuter, 0.0, 1.65, wallColorA, wallColorB, 3),
+  );
+
+  // 5. Centerline & Edge Racing Stripes
+  const dashGeo = new THREE.PlaneGeometry(0.95, 3.6);
   const dashMat = new THREE.MeshBasicMaterial({ color: track.theme.roadStripeColor, side: THREE.DoubleSide });
-  for (let i = 0; i < m; i += 4) {
+  for (let i = 0; i < m; i += 3) {
     const s = samples[i];
     const dash = new THREE.Mesh(dashGeo, dashMat);
     dash.rotation.x = -Math.PI / 2;
     dash.rotation.z = -s.angle;
-    dash.position.set(s.x, 0.06, s.z);
+    dash.position.set(s.x, 0.16, s.z);
     group.add(dash);
   }
 
-  // Start / Finish Checkered Line & Overhead Arch Gantry
+  // 6. Automatic 3D Turn Chevron Warning Signs on the outside of sharp turns
+  const signBoardGeo = new THREE.BoxGeometry(3.2, 2.2, 0.35);
+  const signBoardMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
+  const signArrowGeo = new THREE.ConeGeometry(0.85, 1.6, 3);
+  const signArrowMat = new THREE.MeshBasicMaterial({ color: '#facc15' });
+  const signPostGeo = new THREE.CylinderGeometry(0.18, 0.22, 2.6, 8);
+  const signPostMat = new THREE.MeshLambertMaterial({ color: '#64748b' });
+
+  for (let i = 0; i < m; i += 5) {
+    const s = samples[i];
+    if (Math.abs(s.curvature) < 0.011) continue;
+    // Place sign on the OUTSIDE of the curve
+    const outsideSign = s.curvature > 0 ? -1 : 1;
+    const dist = halfW + curbW + 2.8;
+    const sx = s.x + s.nx * outsideSign * dist;
+    const sz = s.z + s.nz * outsideSign * dist;
+
+    const signGroup = new THREE.Group();
+    signGroup.position.set(sx, 0, sz);
+    // Face approaching karts
+    signGroup.rotation.y = s.angle + Math.PI + outsideSign * 0.35;
+
+    const post = new THREE.Mesh(signPostGeo, signPostMat);
+    post.position.y = 1.3;
+    const board = new THREE.Mesh(signBoardGeo, signBoardMat);
+    board.position.y = 2.6;
+    const arrow = new THREE.Mesh(signArrowGeo, signArrowMat);
+    arrow.position.set(0, 2.6, 0.22);
+    // Point arrow into the turn direction
+    arrow.rotation.z = s.curvature > 0 ? -Math.PI / 2 : Math.PI / 2;
+
+    signGroup.add(post, board, arrow);
+    group.add(signGroup);
+  }
+
+  // 7. Start / Finish Checkered Line, Overhead Gantry & Trackside Grandstand
   const startSample = samples[0];
   if (startSample) {
     const finishGroup = new THREE.Group();
@@ -192,43 +420,66 @@ function buildTrackMeshGroup(track: KartTrack): {
     finishGroup.rotation.y = startSample.angle;
 
     // Checkered road strip
-    const tileCount = 12;
+    const tileCount = 14;
     const tileW = track.roadWidth / tileCount;
-    const tileGeo = new THREE.PlaneGeometry(tileW, 2.2);
+    const tileGeo = new THREE.PlaneGeometry(tileW, 2.4);
     const whiteMat = new THREE.MeshBasicMaterial({ color: '#ffffff', side: THREE.DoubleSide });
     const blackMat = new THREE.MeshBasicMaterial({ color: '#0f172a', side: THREE.DoubleSide });
     for (let row = 0; row < 2; row++) {
       for (let col = 0; col < tileCount; col++) {
         const tile = new THREE.Mesh(tileGeo, (row + col) % 2 === 0 ? whiteMat : blackMat);
         tile.rotation.x = -Math.PI / 2;
-        tile.position.set(-halfW + tileW * (col + 0.5), 0.08, (row - 0.5) * 2.2);
+        tile.position.set(-halfW + tileW * (col + 0.5), 0.17, (row - 0.5) * 2.4);
         finishGroup.add(tile);
       }
     }
 
     // Gantry pillars & top banner
-    const pillarGeo = new THREE.CylinderGeometry(0.9, 1.1, 14, 12);
+    const pillarGeo = new THREE.CylinderGeometry(0.95, 1.15, 15, 12);
     const pillarMat = new THREE.MeshLambertMaterial({ color: track.theme.accentColor });
     const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    leftPillar.position.set(-halfW - 1.5, 7, 0);
+    leftPillar.position.set(-halfW - 1.8, 7.5, 0);
     const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    rightPillar.position.set(halfW + 1.5, 7, 0);
-    const bannerGeo = new THREE.BoxGeometry(track.roadWidth + 5, 2.6, 1.4);
+    rightPillar.position.set(halfW + 1.8, 7.5, 0);
+    const bannerGeo = new THREE.BoxGeometry(track.roadWidth + 6, 2.8, 1.6);
     const bannerMat = new THREE.MeshLambertMaterial({ color: '#facc15' });
     const banner = new THREE.Mesh(bannerGeo, bannerMat);
-    banner.position.set(0, 13.2, 0);
+    banner.position.set(0, 14.0, 0);
     finishGroup.add(leftPillar, rightPillar, banner);
+
+    // Trackside Grandstands on both sides of start straight
+    for (const side of [-1, 1]) {
+      const standGroup = new THREE.Group();
+      standGroup.position.set(side * (track.wallWidth + 7.5), 0, -6);
+      const tierColors = ['#ef4444', '#38bdf8', '#facc15'];
+      for (let t = 0; t < 3; t++) {
+        const tier = new THREE.Mesh(
+          new THREE.BoxGeometry(3.2, 1.8 * (t + 1), 26),
+          new THREE.MeshLambertMaterial({ color: tierColors[t] }),
+        );
+        tier.position.set(side * t * 2.8, 0.9 * (t + 1), 0);
+        standGroup.add(tier);
+      }
+      const roof = new THREE.Mesh(
+        new THREE.BoxGeometry(10, 0.6, 28),
+        new THREE.MeshLambertMaterial({ color: '#1e293b' }),
+      );
+      roof.position.set(side * 2.5, 8.2, 0);
+      standGroup.add(roof);
+      finishGroup.add(standGroup);
+    }
+
     group.add(finishGroup);
   }
 
-  // Boost Pads
-  const padGeo = new THREE.PlaneGeometry(4.8, 6.8);
+  // 8. Boost Pads
+  const padGeo = new THREE.PlaneGeometry(5.4, 7.6);
   const padMat = new THREE.MeshBasicMaterial({ color: '#f97316', side: THREE.DoubleSide });
-  const padInnerGeo = new THREE.PlaneGeometry(3.2, 4.4);
+  const padInnerGeo = new THREE.PlaneGeometry(3.6, 5.0);
   const padInnerMat = new THREE.MeshBasicMaterial({ color: '#facc15', side: THREE.DoubleSide });
   for (const pad of track.boostPads) {
     const padGroup = new THREE.Group();
-    padGroup.position.set(pad.x, 0.09, pad.z);
+    padGroup.position.set(pad.x, 0.18, pad.z);
     padGroup.rotation.y = pad.angle;
 
     const outer = new THREE.Mesh(padGeo, padMat);
@@ -240,21 +491,21 @@ function buildTrackMeshGroup(track: KartTrack): {
     group.add(padGroup);
   }
 
-  // Item Boxes
-  const boxGeo = new THREE.BoxGeometry(2.3, 2.3, 2.3);
+  // 9. Item Boxes
+  const boxGeo = new THREE.BoxGeometry(2.4, 2.4, 2.4);
   const boxMat = new THREE.MeshLambertMaterial({
     color: '#38bdf8',
     emissive: '#a855f7',
-    emissiveIntensity: 0.45,
+    emissiveIntensity: 0.48,
   });
   for (const b of track.itemBoxes) {
     const mesh = new THREE.Mesh(boxGeo, boxMat);
-    mesh.position.set(b.x, 2.1, b.z);
+    mesh.position.set(b.x, 2.2, b.z);
     group.add(mesh);
     itemBoxMeshes.set(b.id, mesh);
   }
 
-  // Scenery Props
+  // 10. Scenery Props
   for (const prop of track.scenery) {
     const propGroup = new THREE.Group();
     propGroup.position.set(prop.x, 0, prop.z);
@@ -267,7 +518,7 @@ function buildTrackMeshGroup(track: KartTrack): {
       );
       trunk.position.y = 4.5;
       const crown = new THREE.Mesh(
-        new THREE.SphereGeometry(3.6, 8, 6),
+        new THREE.SphereGeometry(3.8, 8, 6),
         new THREE.MeshLambertMaterial({ color: prop.color }),
       );
       crown.position.y = 9.2;
@@ -287,7 +538,7 @@ function buildTrackMeshGroup(track: KartTrack): {
       );
       trunk.position.y = 1.5;
       const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(3.6, 10, 8),
+        new THREE.ConeGeometry(3.8, 10.5, 8),
         new THREE.MeshLambertMaterial({ color: prop.color }),
       );
       cone.position.y = 7;
@@ -328,71 +579,92 @@ interface KartMeshRefs {
 
 function createKartMesh(colorHex: string, x: number, z: number, angle: number): KartMeshRefs {
   const root = new THREE.Group();
-  root.position.set(x, 0, z);
+  root.position.set(x, 0.12, z);
   root.rotation.y = angle;
 
   const baseColor = new THREE.Color(colorHex);
   const bodyMat = new THREE.MeshLambertMaterial({ color: baseColor });
+  const darkTrimMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
+  const silverMat = new THREE.MeshLambertMaterial({ color: '#cbd5e1' });
 
-  // Main chassis
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.65, 3.4), bodyMat);
-  chassis.position.y = 0.55;
+  // Main sculpted chassis
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.58, 3.5), bodyMat);
+  chassis.position.y = 0.52;
   root.add(chassis);
 
-  // Nose cone
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.45, 1.2), bodyMat);
-  nose.position.set(0, 0.45, 2.0);
-  root.add(nose);
+  // Left & Right aerodynamic sidepods
+  for (const side of [-1, 1]) {
+    const pod = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.44, 2.1), bodyMat);
+    pod.position.set(side * 1.05, 0.46, -0.1);
+    root.add(pod);
+  }
 
-  // Rear spoiler
-  const spoiler = new THREE.Mesh(
-    new THREE.BoxGeometry(2.2, 0.2, 0.6),
-    new THREE.MeshLambertMaterial({ color: '#0f172a' }),
-  );
-  spoiler.position.set(0, 1.25, -1.55);
-  root.add(spoiler);
+  // Sloped nose cone + front wing
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.42, 1.35), bodyMat);
+  nose.position.set(0, 0.44, 2.05);
+  const frontWing = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.14, 0.55), darkTrimMat);
+  frontWing.position.set(0, 0.3, 2.55);
+  root.add(nose, frontWing);
 
-  // Driver helmet / head
+  // Rear engine block + high spoiler wing
+  const engine = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.55, 0.9), silverMat);
+  engine.position.set(0, 0.85, -1.25);
+  const spoiler = new THREE.Mesh(new THREE.BoxGeometry(2.35, 0.18, 0.65), darkTrimMat);
+  spoiler.position.set(0, 1.32, -1.65);
+  root.add(engine, spoiler);
+
+  // Driver torso, helmet & visor
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.75, 10), bodyMat);
+  torso.position.set(0, 1.02, -0.15);
   const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.58, 12, 10),
+    new THREE.SphereGeometry(0.56, 14, 12),
     new THREE.MeshLambertMaterial({ color: '#ffffff' }),
   );
-  helmet.position.set(0, 1.35, -0.1);
-  root.add(helmet);
+  helmet.position.set(0, 1.48, -0.12);
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.76, 0.28, 0.45),
+    new THREE.MeshLambertMaterial({ color: '#020617' }),
+  );
+  visor.position.set(0, 1.5, 0.32);
+  root.add(torso, helmet, visor);
 
-  // 4 Wheels
-  const wheelGeo = new THREE.CylinderGeometry(0.48, 0.48, 0.45, 12);
+  // 4 Wide Racing Tires + Silver Rims
+  const wheelGeo = new THREE.CylinderGeometry(0.52, 0.52, 0.52, 14);
   wheelGeo.rotateZ(Math.PI / 2);
+  const rimGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.55, 10);
+  rimGeo.rotateZ(Math.PI / 2);
   const wheelMat = new THREE.MeshLambertMaterial({ color: '#111827' });
   const wheelOffsets: [number, number, number][] = [
-    [-1.15, 0.48, 1.2],
-    [1.15, 0.48, 1.2],
-    [-1.2, 0.48, -1.2],
-    [1.2, 0.48, -1.2],
+    [-1.25, 0.52, 1.25],
+    [1.25, 0.52, 1.25],
+    [-1.3, 0.52, -1.25],
+    [1.3, 0.52, -1.25],
   ];
   for (const [wx, wy, wz] of wheelOffsets) {
     const w = new THREE.Mesh(wheelGeo, wheelMat);
     w.position.set(wx, wy, wz);
-    root.add(w);
+    const rim = new THREE.Mesh(rimGeo, silverMat);
+    rim.position.set(wx, wy, wz);
+    root.add(w, rim);
   }
 
   // Exhaust boost flame
-  const flameGeo = new THREE.ConeGeometry(0.55, 2.2, 8);
+  const flameGeo = new THREE.ConeGeometry(0.62, 2.4, 8);
   flameGeo.rotateX(-Math.PI / 2);
   const flameMat = new THREE.MeshBasicMaterial({ color: '#f97316' });
   const flame = new THREE.Mesh(flameGeo, flameMat);
-  flame.position.set(0, 0.6, -2.7);
+  flame.position.set(0, 0.65, -2.8);
   flame.visible = false;
   root.add(flame);
 
   // Drift sparks behind rear tires
-  const sparkGeo = new THREE.SphereGeometry(0.38, 8, 8);
+  const sparkGeo = new THREE.SphereGeometry(0.42, 8, 8);
   const sparkMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
   const sparkLeft = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkLeft.position.set(-1.1, 0.35, -1.65);
+  sparkLeft.position.set(-1.15, 0.38, -1.7);
   sparkLeft.visible = false;
   const sparkRight = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkRight.position.set(1.1, 0.35, -1.65);
+  sparkRight.position.set(1.15, 0.38, -1.7);
   sparkRight.visible = false;
   root.add(sparkLeft, sparkRight);
 
@@ -545,7 +817,7 @@ export default function KartClashHostView({
         ref.currZ += (ref.targetZ - ref.currZ) * blend;
         ref.currAngle = lerpAngle(ref.currAngle, ref.targetAngle, blend);
 
-        ref.root.position.set(ref.currX, 0, ref.currZ);
+        ref.root.position.set(ref.currX, 0.12, ref.currZ);
         const spinYaw = k.spinOutTimer > 0 ? elapsed * 16 : 0;
         const driftYaw = k.drifting ? -k.driftDir * 0.24 : 0;
         ref.root.rotation.y = ref.currAngle + driftYaw + spinYaw;
@@ -613,7 +885,7 @@ export default function KartClashHostView({
 
       viewportKarts.forEach((k, idx) => {
         while (cameraPool.length <= idx) {
-          cameraPool.push(new THREE.PerspectiveCamera(62, 16 / 9, 0.5, 900));
+          cameraPool.push(new THREE.PerspectiveCamera(65, 16 / 9, 0.5, 950));
         }
         const cam = cameraPool[idx];
         cam.aspect = Math.max(0.5, tileW / Math.max(1, tileH));
@@ -630,15 +902,15 @@ export default function KartClashHostView({
         const kz = ref ? ref.currZ : k.z;
         const ka = ref ? ref.currAngle : k.angle;
 
-        const chaseDist = k.boostTimer > 0 ? 15.5 : 13.5;
-        const chaseHeight = 6.4;
+        const chaseDist = k.boostTimer > 0 ? 15.2 : 13.4;
+        const chaseHeight = 6.9;
         const camX = kx - Math.sin(ka) * chaseDist;
         const camZ = kz - Math.cos(ka) * chaseDist;
         cam.position.set(camX, chaseHeight, camZ);
         cam.lookAt(
-          kx + Math.sin(ka) * 14,
-          1.4,
-          kz + Math.cos(ka) * 14,
+          kx + Math.sin(ka) * 16.5,
+          1.6,
+          kz + Math.cos(ka) * 16.5,
         );
 
         renderer.setViewport(vx, Math.max(0, vy), tileW, tileH);
@@ -1281,18 +1553,19 @@ export default function KartClashHostView({
           <div
             style={{
               position: 'absolute',
-              top: rows === 2 ? '50%' : '14px',
+              top: rows === 2 ? '50%' : '12px',
               left: '50%',
               transform: rows === 2 ? 'translate(-50%, -50%)' : 'translateX(-50%)',
-              background: 'rgba(11, 11, 18, 0.78)',
-              border: '2px solid rgba(255,255,255,0.25)',
-              borderRadius: '999px',
-              padding: '0.45rem',
+              background: 'rgba(7, 11, 20, 0.72)',
+              border: '1.5px solid rgba(255,255,255,0.22)',
+              borderRadius: '18px',
+              padding: '0.25rem',
               pointerEvents: 'none',
               zIndex: 10,
+              backdropFilter: 'blur(6px)',
             }}
           >
-            <TrackMinimap trackId={hd.trackId || 'sunny-circuit'} karts={allKarts} size={105} />
+            <TrackMinimap trackId={hd.trackId || 'sunny-circuit'} karts={allKarts} size={rows === 2 ? 126 : 134} />
           </div>
         )}
 
