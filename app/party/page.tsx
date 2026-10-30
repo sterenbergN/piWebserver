@@ -295,6 +295,16 @@ export default function PartyLobby() {
               <div className="party-label" style={{ textAlign: 'center', marginBottom: '0.6rem', color: 'var(--party-purple-lt)' }}>
                 🎉 Classic Party Games
               </div>
+              <div className="party-game-card cyan">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>
+                    <button type="button" onClick={() => handleHost('kart-clash')} disabled={loading} className="party-game-card-host">🏎️ Kart Clash</button>
+                  </h3>
+                  <button type="button" onClick={() => setGuideGame('kart-clash')} className="badge party-game-card-guide" aria-label="How to play Kart Clash" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
+                </div>
+                <p>3D split-screen Mario Kart racing on the TV! Tilt your phone like a steering wheel, drift for mini-turbos, and run Grand Prix or Tournament Heats!</p>
+                <div className="badges"><span className="badge">1–16 Players</span><span className="badge">Gyro Steering</span><span className="badge">Tournament Heats</span></div>
+              </div>
               <div className="party-game-card yellow">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ color: 'var(--party-yellow)', margin: 0 }}>

@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { shareResultsCard } from '@/components/party/resultsCard';
 import { GAME_TITLES, ReactionLayer, ScoreTicker, SoundBar, TitleCard, VoterFaces, useImmersive, useShowDirector } from '@/components/party/HostShow';
 import { HowToPlayModal, ShareInviteButton } from '@/components/party/PhoneExtras';
+import KartClashHostView from '@/components/party/KartClashHostView';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
@@ -129,6 +130,7 @@ function PostGameOptions({ gameType, onPlayAgain, onSwitch, onCloseRoom, onReset
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '480px', padding: '0.5rem 0' }}>
       <button onClick={onPlayAgain} className="party-btn party-btn-primary" style={{ fontSize: '1.3rem', padding: '1.2rem' }}>🔁 Play Again</button>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center' }}>
+        {gameType !== 'kart-clash' && <button onClick={() => onSwitch('kart-clash')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏎️ Kart Clash</button>}
         {gameType !== 'quip-clash' && <button onClick={() => onSwitch('quip-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>⚡ Quip Clash</button>}
         {gameType !== 'the-faker' && <button onClick={() => onSwitch('the-faker')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️ The Faker</button>}
         {gameType !== 'trivia-death' && <button onClick={() => onSwitch('trivia-death')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>💀 Trivia Death</button>}
@@ -151,6 +153,7 @@ function PostGameOptions({ gameType, onPlayAgain, onSwitch, onCloseRoom, onReset
 }
 
 const HOST_GAME_META: Record<string, { name: string; color: string; minPlayers: number }> = {
+  'kart-clash': { name: '🏎️ Kart Clash', color: 'cyan', minPlayers: 1 },
   'quip-clash': { name: '⚡ Quip Clash', color: 'yellow', minPlayers: 3 },
   'the-faker': { name: '🕵️ The Faker', color: 'red', minPlayers: 3 },
   'trivia-death': { name: '💀 Trivia Death', color: 'purple-lt', minPlayers: 3 },
@@ -256,7 +259,10 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   };
 
   const isPlaying = state && state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';
-  const canSkip = isPlaying && state.hostData?.autoAdvanceAction && state.hostData.autoAdvanceAction !== 'RACE_TICK';
+  const skipAction = state?.gameType === 'kart-clash' && state?.phase === 'RACING'
+    ? 'FINISH_KART_RACE'
+    : state?.hostData?.autoAdvanceAction;
+  const canSkip = isPlaying && skipAction && skipAction !== 'RACE_TICK';
   const currentMeta = HOST_GAME_META[state?.gameType] || HOST_GAME_META['quip-clash'];
   const gameColor = currentMeta.color;
   const gameName = currentMeta.name;
@@ -333,7 +339,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             </button>
             {canSkip && (
               <button
-                onClick={() => sendAction({ type: state.hostData.autoAdvanceAction })}
+                onClick={() => sendAction({ type: skipAction })}
                 title="Skip current timer or advance to next step"
                 style={{ background: 'rgba(255,255,255,0.1)', border: '2px solid var(--party-border)', borderRadius: '12px', color: 'var(--party-text)', fontWeight: 800, padding: '0.6rem 1rem', cursor: 'pointer' }}
               >
@@ -449,6 +455,99 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </div>
             )}
 
+            {state.gameType === 'kart-clash' && (() => {
+              const format = state.gameData?.format || (state.playerOrder.length > 8 ? 'tournament' : 'grand-prix');
+              const totalRaces = state.gameData?.totalRaces || 3;
+              const heatSize = state.gameData?.heatSize || 4;
+              const aiBots = state.gameData?.aiBots !== false;
+              return (
+                <div className="party-card" style={{ maxWidth: '720px', margin: '1.5rem auto 0', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontWeight: 800, color: 'var(--party-cyan)' }}>🏁 Race Format:</span>
+                    {[
+                      { id: 'grand-prix', label: '🏆 Grand Prix Cup (All Together)' },
+                      { id: 'tournament', label: '🔥 Tournament Heats (Bracket Heats)' },
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => sendAction({ type: 'SET_KART_CONFIG', format: opt.id })}
+                        style={{
+                          background: format === opt.id ? 'var(--party-cyan)' : 'transparent',
+                          color: format === opt.id ? '#0b0b12' : '#fff',
+                          border: '2px solid var(--party-cyan)',
+                          padding: '0.45rem 1rem',
+                          borderRadius: '10px',
+                          fontWeight: 900,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
+                    {format === 'grand-prix' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Cup Races:</span>
+                        {[1, 2, 3, 4].map(r => (
+                          <button
+                            key={r}
+                            onClick={() => sendAction({ type: 'SET_KART_CONFIG', totalRaces: r })}
+                            style={{
+                              background: totalRaces === r ? 'var(--party-yellow)' : 'transparent',
+                              color: totalRaces === r ? '#000' : '#fff',
+                              border: '2px solid var(--party-yellow)',
+                              padding: '0.35rem 0.8rem',
+                              borderRadius: '8px',
+                              fontWeight: 900,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Racers per Heat:</span>
+                        {[2, 4, 8].map(sz => (
+                          <button
+                            key={sz}
+                            onClick={() => sendAction({ type: 'SET_KART_CONFIG', heatSize: sz })}
+                            style={{
+                              background: heatSize === sz ? 'var(--party-yellow)' : 'transparent',
+                              color: heatSize === sz ? '#000' : '#fff',
+                              border: '2px solid var(--party-yellow)',
+                              padding: '0.35rem 0.8rem',
+                              borderRadius: '8px',
+                              fontWeight: 900,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {sz} Racers
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => sendAction({ type: 'SET_KART_CONFIG', aiBots: !aiBots })}
+                      style={{
+                        background: aiBots ? 'rgba(34,197,94,0.2)' : 'transparent',
+                        color: aiBots ? '#4ade80' : 'var(--party-text-muted)',
+                        border: `2px solid ${aiBots ? '#22c55e' : 'var(--party-border)'}`,
+                        padding: '0.35rem 0.9rem',
+                        borderRadius: '8px',
+                        fontWeight: 900,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🤖 AI Bots Fill: {aiBots ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {packs.length > 1 && PACK_LIST_KEY[state.gameType] && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center', alignItems: 'center', margin: '1rem 0' }}>
                 <span style={{ fontWeight: 'bold' }}>Prompt packs:</span>
@@ -475,6 +574,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             <div style={{ marginTop: '3rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '2rem' }}>
               <div style={{ fontSize: '0.9rem', color: 'var(--party-text-muted)', marginBottom: '1rem' }}>Change Game:</div>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                {state.gameType !== 'kart-clash' && <button onClick={() => handleSwitch('kart-clash')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏎️ Kart Clash</button>}
                 {state.gameType !== 'quip-clash' && <button onClick={() => handleSwitch('quip-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>⚡ Quip Clash</button>}
                 {state.gameType !== 'the-faker' && <button onClick={() => handleSwitch('the-faker')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️ The Faker</button>}
                 {state.gameType !== 'trivia-death' && <button onClick={() => handleSwitch('trivia-death')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>💀 Trivia Death</button>}
@@ -1430,6 +1530,17 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </>
             )}
           </div>
+        )}
+
+        {/* ===== KART CLASH ===== */}
+        {state.gameType === 'kart-clash' && (state.phase === 'HEAT_SETUP' || state.phase === 'TRACK_VOTE' || state.phase === 'RACING' || state.phase === 'RACE_RESULTS') && (
+          <KartClashHostView
+            state={state}
+            roomCode={roomCode}
+            secondsLeft={secondsLeft}
+            pct={pct}
+            sendAction={sendAction}
+          />
         )}
 
         {state.audienceVote && (

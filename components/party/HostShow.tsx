@@ -20,6 +20,7 @@ type HostState = {
 };
 
 export const GAME_TITLES: Record<string, { title: string; tagline: string; color: string }> = {
+  'kart-clash': { title: 'Kart Clash', tagline: 'Tilt your phone. Drift the corners. Rule the track.', color: 'var(--party-cyan)' },
   'quip-clash': { title: 'Quip Clash', tagline: 'Be funny. Get votes. Crush your friends.', color: 'var(--party-yellow)' },
   'the-faker': { title: 'The Faker', tagline: 'One of you has no idea what’s going on.', color: 'var(--party-red)' },
   'trivia-death': { title: 'Trivia Death', tagline: 'Answer right… or visit the Killing Floor.', color: 'var(--party-purple-lt)' },
@@ -58,6 +59,16 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
   const starting = prevPhase === 'LOBBY';
   const intro = starting ? { title: g.title, subtitle: g.tagline } : undefined;
   switch (`${state.gameType}:${state.phase}`) {
+    case 'kart-clash:HEAT_SETUP':
+      return { card: intro || { title: 'Tournament Heats', subtitle: 'Set the bracket and launch the next heat!' }, sfx: 'whoosh', say: 'Set up your tournament heats and get ready to race!' };
+    case 'kart-clash:TRACK_VOTE':
+      return { card: intro || { title: h.heatName || 'Vote for the Track!', subtitle: 'Calibrate your gyro steering wheel' }, sfx: 'whoosh', say: 'Vote for a track on your phones and calibrate your steering wheel!' };
+    case 'kart-clash:RACING':
+      return { sfx: 'slam', say: `${h.trackName || 'Race time'}! Hold drift on two for a rocket start!` };
+    case 'kart-clash:RACE_RESULTS': {
+      const winnerName = h.topHumanId ? state.players[h.topHumanId]?.name : null;
+      return { sfx: 'fanfare', say: winnerName ? `${winnerName} takes the checkered flag!` : 'Checkered flag!' };
+    }
     case 'quip-clash:PROMPTING':
       return { card: intro || { title: 'Next Round!', subtitle: 'New prompts on your phones' }, sfx: 'whoosh',
         say: line(['Check your phones and write something funny. The dumber, the better.', 'Prompts are out! You have one minute to be hilarious.', 'Write your answers. Remember: your mother might be watching.']) };
@@ -194,7 +205,7 @@ export function useShowDirector(state: HostState | null, secondsLeft: number | n
   // Phase changes (and new prompts/matches within a phase).
   useEffect(() => {
     if (!state) return;
-    const hostKey = `${state.phase}|${state.hostData?.prompt || ''}|${state.hostData?.matchId ?? ''}|${state.hostData?.round ?? ''}|${state.hostData?.question || ''}`;
+    const hostKey = `${state.phase}|${state.hostData?.prompt || ''}|${state.hostData?.matchId ?? ''}|${state.hostData?.round ?? ''}|${state.hostData?.question || ''}|${state.hostData?.raceId || ''}`;
     if (prevPhase.current === null) { prevPhase.current = state.phase; prevHostKey.current = hostKey; return; }
     if (hostKey === prevHostKey.current) return;
     const from = prevPhase.current;

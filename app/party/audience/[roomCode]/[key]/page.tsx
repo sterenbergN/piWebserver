@@ -17,6 +17,7 @@ type AudienceState = {
 };
 
 const POLL_HINT: Record<string, string> = {
+  'kart-clash': 'Pick the race winner for an audience point!',
   'quip-clash': 'Your favorite gets an audience bonus!',
   'bracket-battles': 'The audience majority counts as one vote.',
   'trivia-death': 'Play along — a point for every right answer.',

@@ -78,6 +78,13 @@ const AWARDS: Record<GameType, AwardDef[]> = {
   'emoji-telephone': [
     { stat: 'votes', emoji: '🔗', title: 'Emoji Poet', detail: (n) => `${plural(n, 'vote')} for funniest chain`, atLeast: 1 },
   ],
+  'kart-clash': [
+    { stat: 'raceWins', emoji: '🏎️', title: 'Pole Position', detail: (n) => plural(n, 'race win'), atLeast: 1 },
+    { stat: 'drifts', emoji: '💨', title: 'Drift King', detail: (n) => plural(n, 'mini-turbo boost'), atLeast: 1 },
+    { stat: 'hits', emoji: '🎯', title: 'Shell Sniper', detail: (n) => `hit rivals ${plural(n, 'time')}`, atLeast: 1 },
+    { stat: 'spunOut', emoji: '🍌', title: 'Banana Magnet', detail: (n) => `spun out ${plural(n, 'time')}`, atLeast: 1 },
+    { stat: 'pitCrewOracle', emoji: '🔮', title: 'Pit Crew Prophet', detail: (n) => `called ${plural(n, 'heat winner')}`, atLeast: 1 },
+  ],
 };
 
 export type Award = { emoji: string; title: string; detail: string; playerIds: string[] };

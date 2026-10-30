@@ -13,6 +13,8 @@ import { herdMentalityLogic } from './games/herd-mentality';
 import { wavelengthLogic } from './games/wavelength';
 import { bluffClashLogic } from './games/bluff-clash';
 import { emojiTelephoneLogic } from './games/emoji-telephone';
+import { kartClashLogic } from './games/kart-clash';
+import { stopKartSimulation } from './kart-physics';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
 import { AVATARS, isAvatar, isReaction } from './avatars';
@@ -38,6 +40,7 @@ export const GAME_TYPES: GameType[] = [
   'wavelength',
   'bluff-clash',
   'emoji-telephone',
+  'kart-clash',
 ];
 
 type GameLogic = {
@@ -56,6 +59,7 @@ const LOGIC: Record<GameType, GameLogic> = {
   'wavelength': wavelengthLogic,
   'bluff-clash': bluffClashLogic,
   'emoji-telephone': emojiTelephoneLogic,
+  'kart-clash': kartClashLogic,
 };
 
 /** Minimum players needed to start each game. */
@@ -70,6 +74,7 @@ export const MIN_PLAYERS: Record<GameType, number> = {
   'wavelength': 2,
   'bluff-clash': 3,
   'emoji-telephone': 3,
+  'kart-clash': 1,
 };
 
 export function normalizeRoomCode(roomCode: unknown): string | null {
@@ -386,11 +391,13 @@ export async function setPlayerConnected(roomCode: string, playerId: string, con
 function isPlayerAction(type: string) {
   return (
     type.startsWith('SUBMIT_') ||
+    type === 'VOTE_TRACK' ||
     type === 'PLACE_BET' ||
     type === 'LEAVE_ROOM' ||
     type === 'UPDATE_PROFILE' ||
     type === 'CALL_VOTE' ||
-    type === 'SPY_GUESS_LOCATION'
+    type === 'SPY_GUESS_LOCATION' ||
+    type === 'KART_INPUT'
   );
 }
 
@@ -491,13 +498,20 @@ function updateProfile(
 }
 
 function resetToLobby(state: GameState) {
+  stopKartSimulation(state.roomCode);
   for (const pid of [...state.playerOrder]) {
     if (state.players[pid]?.left) purgePlayer(state, pid);
   }
   state.phase = 'LOBBY';
   state.hostData = {};
   state.playerData = {};
-  state.gameData = { targetRounds: state.gameData?.targetRounds };
+  state.gameData = {
+    targetRounds: state.gameData?.targetRounds,
+    format: state.gameData?.format,
+    totalRaces: state.gameData?.totalRaces,
+    heatSize: state.gameData?.heatSize,
+    aiBots: state.gameData?.aiBots,
+  };
   state.audienceVote = null;
 }
 
@@ -565,6 +579,7 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         break;
       }
       case 'CLOSE_ROOM': {
+        stopKartSimulation(state.roomCode);
         const existingTimer = autoTimers.get(state.roomCode);
         if (existingTimer) clearTimeout(existingTimer);
         autoTimers.delete(state.roomCode);

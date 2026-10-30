@@ -51,6 +51,9 @@ function computeWaitingOnNames(state: GameState): string[] {
         if (state.phase === 'TRANSLATE' || state.phase === 'GUESS') return Boolean(pd?.submitted);
         if (state.phase === 'VOTING') return Boolean(pd?.voted);
         return true;
+      case 'kart-clash':
+        if (state.phase === 'TRACK_VOTE') return !pd?.isRacing || Boolean(pd?.votedTrackId);
+        return true;
       default:
         return true;
     }
@@ -96,6 +99,12 @@ export async function GET(request: Request) {
           hostData: state.hostData || {},
           baseScores: state.gameData?.baseScores || null,
           targetRounds: state.gameData?.targetRounds || null,
+          kartConfig: state.gameType === 'kart-clash' ? {
+            format: state.gameData?.format || (state.playerOrder.length > 8 ? 'tournament' : 'grand-prix'),
+            totalRaces: state.gameData?.totalRaces || 3,
+            heatSize: state.gameData?.heatSize || 4,
+            aiBots: state.gameData?.aiBots !== false,
+          } : null,
           waitingOn: computeWaitingOnNames(state),
           me: state.players[playerId],
           data: state.playerData[playerId] || null,
