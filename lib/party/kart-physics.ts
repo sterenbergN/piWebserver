@@ -291,7 +291,7 @@ const TICK_HZ = 30;
 const TICK_DT = 1 / TICK_HZ;
 const TICK_MS = 1000 / TICK_HZ;
 const COUNTDOWN_MS = 3400;
-const MAX_RACE_DURATION_MS = 210_000;
+const MAX_RACE_DURATION_MS = 300_000;
 const POST_FIRST_FINISH_MS = 25_000;
 const CELEBRATION_MS = 4_500;
 const ORIENTATION_TIMEOUT_MS = 20_000;
@@ -1003,7 +1003,7 @@ function botWantsItem(sim: KartRaceSim, k: KartState, curvAhead: number): boolea
       return true;
     case 'mushroom':
     case 'golden_mushroom':
-      return Math.abs(curvAhead) < 0.007 || k.offRoad || patience;
+      return Math.abs(curvAhead) < 0.0055 || k.offRoad || patience;
     case 'star':
       return incoming || k.rank > 2 || patience;
     case 'super_horn':
@@ -1033,7 +1033,7 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   k.aiCurvAhead = curvAhead;
 
   // Positive curvature = left turn; the inside of a left turn is negative lateral offset
-  const apex = -clamp(curvAhead * 42, -1, 1) * halfRoad * 0.55;
+  const apex = -clamp(curvAhead * 55, -1, 1) * halfRoad * 0.55;
   let laneTarget = apex + Math.sin(sim.elapsedMs / 2300 + k.aiPhase) * halfRoad * 0.22;
 
   if (!k.finished) {
@@ -1086,7 +1086,7 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   const headingErr = normalizeAngle(Math.atan2(tx, tz) - k.angle);
   let steer = clamp(-headingErr * 2.6, -1, 1);
 
-  const sharpCorner = Math.abs(curvAhead) > 0.0125;
+  const sharpCorner = Math.abs(curvAhead) > 0.0095;
   const cornerSteer = -Math.sign(curvAhead);
   const wantsDrift = !k.finished && k.speed > 34 && k.airTimer <= 0 && sharpCorner;
   if (k.drifting) {

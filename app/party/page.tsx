@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { GameType } from '@/lib/party/types';
 import { AVATARS } from '@/lib/party/avatars';
 import { HowToPlayModal } from '@/components/party/PhoneExtras';
+import { TV_ONLY_GAMES } from '@/lib/party/guides';
 
 export default function PartyLobby() {
   const router = useRouter();
@@ -95,6 +96,10 @@ export default function PartyLobby() {
   const handleJoin = (e: React.FormEvent) => { e.preventDefault(); join(false); };
 
   const handleHost = async (gameType: GameType) => {
+    if (hostMode === 'vip' && TV_ONLY_GAMES.includes(gameType)) {
+      setError('Kart Clash shows the race on a shared screen. Switch to Big Screen / TV to host it.');
+      return;
+    }
     if (hostMode === 'vip' && !playerName.trim()) {
       setError('Enter your nickname above to host & play on your phone!');
       return;
@@ -295,15 +300,20 @@ export default function PartyLobby() {
               <div className="party-label" style={{ textAlign: 'center', marginBottom: '0.6rem', color: 'var(--party-purple-lt)' }}>
                 🎉 Classic Party Games
               </div>
-              <div className="party-game-card cyan">
+              <div className="party-game-card cyan" style={hostMode === 'vip' ? { opacity: 0.72 } : undefined}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ color: 'var(--party-cyan)', margin: 0 }}>
-                    <button type="button" onClick={() => handleHost('kart-clash')} disabled={loading} className="party-game-card-host">🏎️ Kart Clash</button>
+                    <button type="button" onClick={() => handleHost('kart-clash')} disabled={loading || hostMode === 'vip'} className="party-game-card-host">🏎️ Kart Clash</button>
                   </h3>
                   <button type="button" onClick={() => setGuideGame('kart-clash')} className="badge party-game-card-guide" aria-label="How to play Kart Clash" style={{ borderColor: 'rgba(6,182,212,0.5)', color: 'var(--party-cyan)', cursor: 'pointer' }}>❓ How to Play</button>
                 </div>
                 <p>3D split-screen kart racing on the TV! Tilt your phone like a steering wheel, drift for mini-turbos, launch off jumps, and run a Grand Prix or Tournament Heats!</p>
-                <div className="badges"><span className="badge">1–16 Players</span><span className="badge">Gyro Steering</span><span className="badge">Tournament Heats</span></div>
+                {hostMode === 'vip' && (
+                  <button type="button" onClick={() => setHostMode('tv')} className="party-btn party-btn-outline" style={{ fontSize: '0.8rem', padding: '0.45rem', margin: '0.2rem 0 0.5rem' }}>
+                    📺 Needs a TV: switch to Big Screen
+                  </button>
+                )}
+                <div className="badges"><span className="badge">1–16 Players</span><span className="badge">Gyro Steering</span><span className="badge">TV Only</span></div>
               </div>
               <div className="party-game-card yellow">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

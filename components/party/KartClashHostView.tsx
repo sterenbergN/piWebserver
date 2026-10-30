@@ -385,7 +385,7 @@ function RaceView({
         </div>
 
         <div className="kart-side-card" style={{ display: 'flex', justifyContent: 'center', flex: '1 1 0', minHeight: 110, alignItems: 'center', overflow: 'hidden' }}>
-          <TrackMinimap trackId={trackId} karts={allKarts} size={260} />
+          <TrackMinimap trackId={trackId} karts={allKarts} size={360} />
         </div>
 
         {snap?.fastestLap && (
@@ -813,7 +813,7 @@ export default function KartClashHostView({
                 key={t.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '120px minmax(0, 1fr)',
+                  gridTemplateColumns: '156px minmax(0, 1fr)',
                   gap: '0.85rem',
                   alignItems: 'center',
                   padding: '0.75rem',
@@ -826,7 +826,7 @@ export default function KartClashHostView({
                 }}
               >
                 <div style={{ background: 'rgba(5,8,18,0.6)', borderRadius: '14px', padding: '0.3rem' }}>
-                  <TrackMinimap trackId={t.id} size={108} />
+                  <TrackMinimap trackId={t.id} size={144} />
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>

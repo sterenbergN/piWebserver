@@ -7,10 +7,12 @@ import { KART_TRACKS, TrackId } from '@/lib/party/kart-tracks';
 export default function TrackMinimap({
   trackId,
   karts,
+  highlightId,
   size = 180,
 }: {
   trackId: TrackId;
   karts?: { id: string; color: string; x: number; z: number; isBot: boolean; rank: number }[];
+  highlightId?: string;
   size?: number;
 }) {
   const track = KART_TRACKS[trackId] || KART_TRACKS['sunny-circuit'];
@@ -41,9 +43,8 @@ export default function TrackMinimap({
   return (
     <svg
       viewBox={`${map.vx} ${map.vz} ${map.span} ${map.span}`}
-      width={size}
-      height={size}
-      style={{ display: 'block', flexShrink: 0, maxWidth: '100%', height: 'auto', aspectRatio: '1 / 1' }}
+      // Fits whichever way its container is tighter; the viewBox keeps the map square
+      style={{ display: 'block', width: size, height: size, maxWidth: '100%', maxHeight: '100%', flexShrink: 1, minWidth: 0, minHeight: 0 }}
       aria-hidden
     >
       <polygon points={map.points} fill="none" stroke="rgba(0,0,0,0.65)" strokeWidth={unit * 9} strokeLinejoin="round" />
@@ -56,6 +57,7 @@ export default function TrackMinimap({
       ))}
       {humans.map((k) => (
         <g key={k.id} transform={`translate(${k.x} ${k.z})`}>
+          {k.id === highlightId && <circle r={unit * 8} fill="none" stroke="#ffffff" strokeWidth={unit * 1.2} opacity={0.85} />}
           <circle r={unit * 5} fill={k.color} stroke="#ffffff" strokeWidth={unit * 1.1} />
           <text textAnchor="middle" dominantBaseline="central" fill="#04060c" fontSize={unit * 6.4} fontWeight={900} style={{ fontFamily: 'sans-serif' }}>
             {k.rank}

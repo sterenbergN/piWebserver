@@ -1332,3 +1332,9 @@ test('Kart Clash: pit crew chaos waits for the race to get going, then fires onc
   assert.ok(sim.hazards.some((h) => h.kind === 'banana' && h.ownerId === 'AUDIENCE'), 'bananas land on the track');
   stopKartSimulation(roomCode);
 });
+
+test('Kart Clash: only the games a phones-only room can actually play are offered to it', async () => {
+  const { TV_ONLY_GAMES } = await import('./guides');
+  assert.ok(TV_ONLY_GAMES.includes('kart-clash'), 'the race needs a shared screen');
+  assert.ok(!TV_ONLY_GAMES.includes('quip-clash'), 'everything else still works on phones alone');
+});

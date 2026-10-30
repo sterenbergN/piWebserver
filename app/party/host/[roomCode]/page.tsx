@@ -466,13 +466,13 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               const itemsMode = state.gameData?.itemsMode || 'normal';
 
               return (
-                <div className="party-card" style={{ maxWidth: '820px', margin: '1.5rem auto 0', padding: '1.1rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.95rem' }}>
+                <div className="party-card" style={{ maxWidth: 'min(820px, 100%)', boxSizing: 'border-box', margin: '1.5rem auto 0', padding: '1.1rem clamp(0.7rem, 3vw, 1.4rem)', display: 'flex', flexDirection: 'column', gap: '0.95rem' }}>
                   {/* Format Selector */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', justifyContent: 'center' }}>
                     <span style={{ fontWeight: 800, color: 'var(--party-cyan)' }}>🏁 Race Format:</span>
                     {[
-                      { id: 'grand-prix', label: '🏆 Grand Prix Cup (All Together)' },
-                      { id: 'tournament', label: '🔥 Tournament Heats (Bracket Heats)' },
+                      { id: 'grand-prix', label: '🏆 Grand Prix' },
+                      { id: 'tournament', label: '🔥 Tournament Heats' },
                     ].map((opt) => (
                       <button
                         key={opt.id}
@@ -496,7 +496,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   {/* Speed Class & Item Mode */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
                     {/* Speed Class */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--party-yellow)' }}>⚡ Engine:</span>
                       {[
                         { id: '50cc', label: '50cc' },
@@ -525,7 +525,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                     </div>
 
                     {/* Item Mode */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--party-pink)' }}>🎁 Items:</span>
                       {[
                         { id: 'normal', label: 'Normal' },
@@ -557,7 +557,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                   {/* Cup Races / Heat Size & AI Bots */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
                     {format === 'grand-prix' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Cup Races:</span>
                         {[1, 2, 3, 4, 6].map((r) => (
                           <button
@@ -579,7 +579,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                         ))}
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Racers per Heat:</span>
                         {[2, 4, 8].map((sz) => (
                           <button
@@ -596,7 +596,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                               cursor: 'pointer',
                             }}
                           >
-                            {sz} Racers
+                            {sz}
                           </button>
                         ))}
                       </div>

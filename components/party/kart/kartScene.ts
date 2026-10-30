@@ -492,7 +492,7 @@ function buildTerrain(track: KartTrack, noiseTex: THREE.Texture): TerrainInfo {
   const span = Math.max(maxX - minX, maxZ - minZ) + margin * 2;
   const cx = (minX + maxX) / 2;
   const cz = (minZ + maxZ) / 2;
-  const res = 200;
+  const res = 240;
   const geo = new THREE.PlaneGeometry(span, span, res, res);
   geo.rotateX(-Math.PI / 2);
   geo.translate(cx, 0, cz);
@@ -681,7 +681,8 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
   const maxZ = Math.max(...zs) + 260;
 
   /** Random spots at least `minGap` beyond the barrier, biased to stay visible from the road. */
-  const scatter = (count: number, minGap: number, maxGap: number, scale: [number, number]) => {
+  const scatter = (baseCount: number, minGap: number, maxGap: number, scale: [number, number]) => {
+    const count = Math.round(baseCount * 1.6);
     const out: { x: number; y: number; z: number; ry: number; s: number }[] = [];
     for (let tries = 0; tries < count * 30 && out.length < count; tries++) {
       const x = minX + rng() * (maxX - minX);
@@ -759,7 +760,7 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
   for (let i = 0; i < m; i++) {
     const s = track.samples[i];
     const side = i % 16 < 8 ? 1 : -1;
-    if (i % 8 === 0 && Math.abs(s.curvature) < 0.012) {
+    if (i % 8 === 0 && Math.abs(s.curvature) < 0.0092) {
       const off = side * (wall + 2.4);
       const x = s.x + s.nx * off;
       const z = s.z + s.nz * off;
@@ -768,7 +769,7 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
       if (isNight) lampHeads.push({ x: x, y: y + 9.9, z: z, ry: 0, s: 1, color: accent });
     }
     // Chevrons on the outside of proper corners
-    if (i % 5 === 0 && Math.abs(s.curvature) > 0.0115) {
+    if (i % 6 === 0 && Math.abs(s.curvature) > 0.0088) {
       const outside = s.curvature > 0 ? 1 : -1;
       const off = outside * (wall + 3);
       const y = s.y + Math.sin(s.bank) * wall * outside;
@@ -2272,7 +2273,7 @@ export class KartScene {
       while (v.dustAcc >= 1) {
         v.dustAcc -= 1;
         const side = this.rng() > 0.5 ? 1.3 : -1.3;
-        this.smoke.emit(rearX(side, 1.5), v.y + 0.4, rearZ(side, 1.5), (this.rng() - 0.5) * 8, 3 + this.rng() * 5, (this.rng() - 0.5) * 8, this.dustColor(), 3.2, 0.7, -2, 0.5);
+        this.smoke.emit(rearX(side, 1.5), v.y + 0.4, rearZ(side, 1.5), (this.rng() - 0.5) * 8, 3 + this.rng() * 5, (this.rng() - 0.5) * 8, this.dustColor(), 2.2, 0.6, -2, 0.5);
       }
     }
     if (k.spinOutTimer > 0 && this.rng() < dt * 30) {

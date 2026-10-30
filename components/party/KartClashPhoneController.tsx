@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DRIFT_TIER_COLORS, ITEM_META, KartItemType, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
 import { REACTIONS } from '@/lib/party/avatars';
 import type { KartTelemetrySnapshot } from '@/lib/party/kart-physics';
+import type { TrackId } from '@/lib/party/kart-tracks';
+import TrackMinimap from '@/components/party/kart/TrackMinimap';
 
 interface Props {
   state: any;
@@ -63,7 +65,7 @@ function HoldButton({
       onPointerCancel={() => onUp?.()}
       onLostPointerCapture={() => onUp?.()}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ touchAction: 'none', WebkitTouchCallout: 'none', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'pointer', ...style }}
+      style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent', userSelect: 'none', WebkitUserSelect: 'none', cursor: 'pointer', ...style }}
     >
       {children}
     </button>
@@ -87,6 +89,13 @@ export default function KartClashPhoneController({
   // Tilt: `tiltLive` means real sensor events are arriving, not just that permission was given
   const [gyroStatus, setGyroStatus] = useState<'unknown' | 'granted' | 'denied' | 'unsupported'>('unknown');
   const [tiltLive, setTiltLive] = useState(false);
+  const [noSensor, setNoSensor] = useState(false);
+  const [preferTouch, setPreferTouch] = useState(false);
+  const [hasFinePointer, setHasFinePointer] = useState(false);
+  const [isIosSafari, setIsIosSafari] = useState(false);
+  const [screenShortSide, setScreenShortSide] = useState(0);
+  const [barsHintDismissed, setBarsHintDismissed] = useState(false);
+  const [flash, setFlash] = useState<{ key: number; color: string } | null>(null);
   const [physicallySideways, setPhysicallySideways] = useState<0 | 1 | -1>(0);
   const [forceSideways, setForceSideways] = useState(false);
   const [isDrifting, setIsDrifting] = useState(false);
@@ -114,8 +123,8 @@ export default function KartClashPhoneController({
   const inFlightRef = useRef(false);
   const lastSentRef = useRef({ steer: 99, drift: false, brake: false, horizontal: false, at: 0 });
   const horizontalRef = useRef(false);
-  const permissionAskedRef = useRef(false);
-  const wheelRef = useRef<HTMLDivElement | null>(null);
+  const tiltLiveRef = useRef(false);
+  const cockpitGaugeRef = useRef<HTMLDivElement | null>(null);
   const steerBarRef = useRef<HTMLDivElement | null>(null);
   const gaugeRef = useRef<HTMLDivElement | null>(null);
   const padRef = useRef<HTMLDivElement | null>(null);
@@ -135,6 +144,15 @@ export default function KartClashPhoneController({
   // Track visualViewport (exact unobstructed area below iOS Safari landscape tab bars)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    setHasFinePointer(window.matchMedia?.('(pointer: fine)').matches ?? false);
+    const standalone = (navigator as unknown as { standalone?: boolean }).standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+    setIsIosSafari(/iP(hone|od)/.test(navigator.userAgent) && !standalone);
+    setScreenShortSide(Math.min(window.screen?.width || 0, window.screen?.height || 0));
+    try {
+      setBarsHintDismissed(localStorage.getItem('kartBarsHintDismissed') === '1');
+    } catch {
+      // Storage unavailable: the hint just shows again
+    }
     const updateSize = () => {
       const vv = window.visualViewport;
       if (vv) {
@@ -173,9 +191,18 @@ export default function KartClashPhoneController({
       // Harmless
     }
     const prevOverflow = document.body.style.overflow;
+    const prevMinHeight = document.body.style.minHeight;
     const prevTouchAction = document.documentElement.style.touchAction;
-    document.body.style.overflow = 'hidden';
-    document.documentElement.style.touchAction = 'none';
+    if (isIosSafari) {
+      // Safari only collapses its tab bar when the page itself scrolls, and brings it back when
+      // the page returns to the top. So keep a scrollable page behind the fixed cockpit for the
+      // whole race; the cockpit decides when a swipe may reach it.
+      document.body.style.minHeight = '220vh';
+      document.documentElement.style.touchAction = 'pan-y';
+    } else {
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.touchAction = 'none';
+    }
     const blockGesture = (event: Event) => event.preventDefault();
     const blockPinch = (event: TouchEvent) => {
       if (event.touches.length > 1) event.preventDefault();
@@ -185,7 +212,13 @@ export default function KartClashPhoneController({
     document.addEventListener('touchmove', blockPinch, { passive: false });
     return () => {
       document.body.style.overflow = prevOverflow;
+      document.body.style.minHeight = prevMinHeight;
       document.documentElement.style.touchAction = prevTouchAction;
+      try {
+        window.scrollTo(0, 0);
+      } catch {
+        // Harmless
+      }
       document.removeEventListener('gesturestart', blockGesture);
       document.removeEventListener('gesturechange', blockGesture);
       document.removeEventListener('touchmove', blockPinch);
@@ -195,9 +228,11 @@ export default function KartClashPhoneController({
         // Harmless
       }
     };
-  }, [inRace, tryLockLandscape]);
+  }, [inRace, isIosSafari, tryLockLandscape]);
 
   const landscapeViewport = viewport.w > viewport.h;
+  // Safari's bars take well over 15% of a sideways iPhone; collapsed they take much less
+  const safariBarsShowing = inRace && isIosSafari && landscapeViewport && screenShortSide > 0 && viewport.h < screenShortSide * 0.84;
   const isDeviceHorizontal = landscapeViewport || physicallySideways !== 0 || forceSideways;
   // With rotation lock on, the phone is sideways but the page isn't. Turn the cockpit to match.
   const rotateCockpit = !landscapeViewport && (physicallySideways !== 0 || forceSideways);
@@ -284,14 +319,16 @@ export default function KartClashPhoneController({
       setGyroStatus('unsupported');
       return;
     }
+    setPreferTouch(false);
     const doe = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> };
     if (typeof doe.requestPermission === 'function') {
-      permissionAskedRef.current = true;
       try {
         const res = await doe.requestPermission();
         setGyroStatus(res === 'granted' ? 'granted' : 'denied');
       } catch {
-        setGyroStatus('denied');
+        // A rejection isn't the player saying no: iOS refuses anything but a completed tap, and
+        // needs HTTPS. Only an answer of "denied" should stop us offering this again.
+        setGyroStatus(window.isSecureContext ? 'unknown' : 'unsupported');
       }
     } else {
       setGyroStatus('granted');
@@ -314,7 +351,9 @@ export default function KartClashPhoneController({
       if (e.beta === null || e.gamma === null) return;
       if (!sawEvent) {
         sawEvent = true;
+        tiltLiveRef.current = true;
         setTiltLive(true);
+        setNoSensor(false);
         setGyroStatus('granted');
       }
       const b = (e.beta * Math.PI) / 180;
@@ -350,7 +389,16 @@ export default function KartClashPhoneController({
     };
 
     window.addEventListener('deviceorientation', handleOrientation, true);
-    return () => window.removeEventListener('deviceorientation', handleOrientation, true);
+    // Allowed but silent means this device really has nothing to offer
+    const silence = gyroStatus === 'granted'
+      ? setTimeout(() => {
+          if (!tiltLiveRef.current) setNoSensor(true);
+        }, 2000)
+      : undefined;
+    return () => {
+      if (silence) clearTimeout(silence);
+      window.removeEventListener('deviceorientation', handleOrientation, true);
+    };
   }, [gyroStatus]);
 
   // Move the on-screen wheel on the animation frame, not on every sensor event
@@ -360,7 +408,7 @@ export default function KartClashPhoneController({
     const tick = () => {
       id = requestAnimationFrame(tick);
       const steer = padSteerRef.current ?? (keySteerRef.current !== 0 ? keySteerRef.current : tiltSteerRef.current);
-      if (wheelRef.current) wheelRef.current.style.transform = `rotate(${steer * 70}deg)`;
+      if (cockpitGaugeRef.current) cockpitGaugeRef.current.style.left = `calc(${50 + steer * 46}% - 9px)`;
       if (steerBarRef.current) steerBarRef.current.style.left = `calc(${50 + steer * 46}% - 12px)`;
       if (gaugeRef.current) gaugeRef.current.style.left = `calc(${50 + steer * 44}% - 11px)`;
     };
@@ -444,6 +492,8 @@ export default function KartClashPhoneController({
       if (e.id <= lastEventIdRef.current) continue;
       lastEventIdRef.current = e.id;
       if (e.kartId && e.kartId !== myKart.id) continue;
+      const flashColor = e.type === 'hit' ? '#ef4444' : e.type === 'box' && e.value ? '#facc15' : e.type === 'miniturbo' || e.type === 'boost' || e.type === 'pad' || e.type === 'rocket' ? '#22d3ee' : null;
+      if (flashColor) setFlash({ key: e.id, color: flashColor });
       switch (e.type) {
         case 'hit': buzz([90, 40, 110]); break;
         case 'wall': if (e.kartId) buzz(35); break;
@@ -536,16 +586,6 @@ export default function KartClashPhoneController({
       keysRef.current = { left: false, right: false };
     };
   }, [inRace, pressDrift, releaseDrift, pressBrake, releaseBrake, pressItem, triggerHonk]);
-
-  // Any first touch in the cockpit is a good moment to ask iOS for motion access
-  const askTiltOnce = useCallback(() => {
-    tryLockLandscape();
-    getAudio();
-    const doe = (typeof DeviceOrientationEvent !== 'undefined' ? DeviceOrientationEvent : null) as unknown as { requestPermission?: () => Promise<string> } | null;
-    if (!permissionAskedRef.current && typeof doe?.requestPermission === 'function' && !tiltLive) {
-      enableGyro();
-    }
-  }, [enableGyro, getAudio, tiltLive, tryLockLandscape]);
 
   // Touch steering pad: drag from wherever your thumb lands, full lock is a short slide
   const padUpdate = useCallback((clientX: number, clientY: number) => {
@@ -1025,9 +1065,8 @@ export default function KartClashPhoneController({
                     textAlign: 'center',
                   }}
                 >
-                  <span style={{ fontSize: '2rem' }}>{t.emoji}</span>
-                  <span style={{ fontWeight: 900, fontSize: '0.92rem' }}>{t.name}</span>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: 1.25 }}>{t.tagline}</span>
+                  <TrackMinimap trackId={t.id as TrackId} size={112} />
+                  <span style={{ fontWeight: 900, fontSize: '0.92rem' }}>{t.emoji} {t.name}</span>
                   <span
                     style={{
                       marginTop: '0.2rem',
@@ -1303,7 +1342,7 @@ export default function KartClashPhoneController({
             <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-cyan, #06b6d4)', textTransform: 'uppercase' }}>
               🎉 Pit crew emoji cannon (shows on the TV)
             </span>
-            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PIT_EMOJIS.length}, 1fr)`, gap: '0.3rem', width: '100%' }}>
               {PIT_EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
@@ -1316,7 +1355,7 @@ export default function KartClashPhoneController({
                     background: 'rgba(255,255,255,0.06)',
                     border: '1px solid rgba(255,255,255,0.18)',
                     borderRadius: '12px',
-                    padding: '0.4rem 0.6rem',
+                    padding: '0.4rem 0',
                     fontSize: '1.4rem',
                     cursor: 'pointer',
                   }}
@@ -1331,6 +1370,7 @@ export default function KartClashPhoneController({
     }
 
     // ACTIVE RACER COCKPIT
+    const needsTiltTap = !tiltLive && typeof DeviceOrientationEvent !== 'undefined' && typeof (DeviceOrientationEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function' && (gyroStatus === 'unknown' || (gyroStatus === 'granted' && !noSensor));
     // Held upright: ask them to turn the phone. A phone on rotation lock can't turn the page, so
     // offer a way through instead of leaving them stuck on this screen.
     if (!isDeviceHorizontal) {
@@ -1365,7 +1405,7 @@ export default function KartClashPhoneController({
           <button
             type="button"
             onClick={() => {
-              askTiltOnce();
+              if (needsTiltTap) enableGyro();
               setForceSideways(true);
             }}
             style={{ background: 'rgba(56,189,248,0.14)', border: '1.5px solid rgba(56,189,248,0.5)', color: '#7dd3fc', borderRadius: '12px', padding: '0.65rem 1rem', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer' }}
@@ -1397,15 +1437,17 @@ export default function KartClashPhoneController({
     const showTrickPrompt = inAir && !myKart?.trick;
     const finished = Boolean(myKart?.finished);
     const rankColor = RANK_COLORS[Math.min(RANK_COLORS.length - 1, rank - 1)];
-    const useTilt = tiltLive;
-    const needsTiltPermission = !tiltLive && typeof DeviceOrientationEvent !== 'undefined' && typeof (DeviceOrientationEvent as unknown as { requestPermission?: unknown }).requestPermission === 'function' && gyroStatus !== 'denied';
+    const useTilt = tiltLive && !preferTouch;
+    const showTiltPrompt = needsTiltTap && !preferTouch;
     const compact = cockpitH < 300;
+
+    const smallBtn: React.CSSProperties = { flex: 1, minWidth: 0, padding: '0.22rem 0.2rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.07)', color: '#cbd5e1', fontWeight: 800, fontSize: '0.66rem', cursor: 'pointer', whiteSpace: 'nowrap' };
 
     const itemColor = heldItem ? ITEM_META[heldItem].color : roulette ? '#facc15' : 'rgba(255,255,255,0.22)';
     const itemButton = (
       <HoldButton
         onDown={() => {
-          askTiltOnce();
+          tryLockLandscape();
           pressItem();
         }}
         style={{
@@ -1443,7 +1485,7 @@ export default function KartClashPhoneController({
     const driftButton = (
       <HoldButton
         onDown={() => {
-          askTiltOnce();
+          tryLockLandscape();
           pressDrift();
         }}
         onUp={releaseDrift}
@@ -1522,7 +1564,6 @@ export default function KartClashPhoneController({
       <div
         ref={padRef}
         onPointerDown={(e) => {
-          askTiltOnce();
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
           } catch {
@@ -1568,7 +1609,8 @@ export default function KartClashPhoneController({
 
     return (
       <div
-        onPointerDownCapture={askTiltOnce}
+        // Touch end, not touch start: iOS only unlocks audio on a completed tap
+        onTouchEndCapture={() => getAudio()}
         style={{
           position: 'fixed',
           top: rotateCockpit ? `${viewport.top + (viewport.h - cockpitH) / 2}px` : `${viewport.top}px`,
@@ -1590,7 +1632,8 @@ export default function KartClashPhoneController({
           overflow: 'hidden',
           userSelect: 'none',
           WebkitUserSelect: 'none',
-          touchAction: 'none',
+          // While Safari's bars are up, a swipe on anything but a control scrolls them away
+          touchAction: safariBarsShowing ? 'pan-y' : 'none',
         }}
       >
         {/* Left thumb */}
@@ -1600,7 +1643,7 @@ export default function KartClashPhoneController({
 
         {/* Centre: position, lap, wheel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', minHeight: 0, minWidth: 0, alignItems: 'stretch' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '0.5rem', flexShrink: 0, lineHeight: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '0.5rem', flexShrink: 0, lineHeight: 1, visibility: isCountdown && showTiltPrompt ? 'hidden' : undefined }}>
             <span style={{ fontFamily: 'var(--party-font-display)', fontSize: 'clamp(1.8rem, 15vmin, 3.2rem)', fontWeight: 900, color: rankColor }}>{ordinal(rank)}</span>
             <span style={{ fontWeight: 900, fontSize: 'clamp(0.8rem, 4.4vmin, 1.1rem)', color: '#cbd5e1' }}>LAP {lap}/{totalLaps}</span>
           </div>
@@ -1613,45 +1656,85 @@ export default function KartClashPhoneController({
             })}
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-            <div
-              ref={wheelRef}
-              style={{ height: '100%', maxHeight: '100%', aspectRatio: '1 / 1', maxWidth: '100%', position: 'relative' }}
-            >
-              <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%', display: 'block' }}>
-                <circle cx="60" cy="60" r="50" fill="none" stroke={tier > 0 ? tierColor : '#39445a'} strokeWidth="13" />
-                <path d="M 54 9 L 66 9 L 64 23 L 56 23 Z" fill="#ef4444" />
-                <line x1="14" y1="60" x2="106" y2="60" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-                <line x1="60" y1="60" x2="60" y2="106" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-                <circle cx="60" cy="60" r="21" fill="#0f172a" stroke={myKart?.color || '#38bdf8'} strokeWidth="3.5" />
-              </svg>
+          {safariBarsShowing && !barsHintDismissed && (
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.3rem', background: 'rgba(56,189,248,0.95)', color: '#04121a', borderRadius: '10px', padding: '0.18rem 0.4rem', fontWeight: 900, fontSize: 'clamp(0.62rem, 3.2vmin, 0.78rem)', lineHeight: 1.1, pointerEvents: 'none' }}>
+              <span style={{ flex: 1, textAlign: 'center' }}>⬆️ Swipe up here to hide Safari&rsquo;s tabs</span>
+              <button
+                type="button"
+                aria-label="Dismiss"
+                onClick={() => {
+                  setBarsHintDismissed(true);
+                  try {
+                    localStorage.setItem('kartBarsHintDismissed', '1');
+                  } catch {
+                    // Storage unavailable: it only hides for this game
+                  }
+                }}
+                style={{ pointerEvents: 'auto', background: 'none', border: 'none', color: '#04121a', fontWeight: 900, fontSize: '0.9rem', padding: '0 0.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
             </div>
-            <button
-              type="button"
-              aria-label="Horn"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                triggerHonk();
-              }}
-              style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 'clamp(36px, 16vmin, 54px)', height: 'clamp(36px, 16vmin, 54px)', borderRadius: '50%', border: 'none', background: 'transparent', fontSize: 'clamp(1.2rem, 9vmin, 1.9rem)', cursor: 'pointer', touchAction: 'none' }}
-            >
-              {state?.me?.avatar || '📣'}
-            </button>
+          )}
+
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+            {showTiltPrompt ? (
+              <button
+                type="button"
+                onClick={enableGyro}
+                style={{ width: '100%', height: '100%', borderRadius: '16px', border: '3px solid #fff', background: '#facc15', color: '#0f172a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.15rem', padding: '0.3rem', fontWeight: 900, cursor: 'pointer', animation: 'kartGlow 700ms ease-in-out infinite alternate' }}
+              >
+                <span style={{ fontSize: 'clamp(1.6rem, 13vmin, 2.8rem)', lineHeight: 1 }}>🛞</span>
+                <span style={{ fontSize: 'clamp(0.85rem, 5vmin, 1.25rem)', lineHeight: 1.05 }}>Tap to turn on tilt steering</span>
+                <span style={{ fontSize: 'clamp(0.6rem, 3vmin, 0.74rem)', fontWeight: 700, opacity: 0.8 }}>Then choose Allow</span>
+              </button>
+            ) : snapshot?.trackId ? (
+              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} highlightId={meId} size={260} />
+            ) : null}
           </div>
+
+          {!showTiltPrompt && (
+            <div style={{ flexShrink: 0, height: 'clamp(7px, 2.6vmin, 10px)', borderRadius: '999px', background: 'rgba(255,255,255,0.12)', position: 'relative' }}>
+              <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: '2px', background: 'rgba(255,255,255,0.35)' }} />
+              <div ref={cockpitGaugeRef} style={{ position: 'absolute', top: 0, bottom: 0, width: '18px', borderRadius: '999px', left: 'calc(50% - 9px)', background: tier > 0 ? tierColor : (myKart?.color || '#38bdf8') }} />
+            </div>
+          )}
 
           <div style={{ flexShrink: 0, display: 'flex', gap: '0.25rem', justifyContent: 'center', alignItems: 'center', minHeight: 'clamp(24px, 9vmin, 32px)' }}>
             {useTilt ? (
               <>
-                <button type="button" onClick={recenterGyro} style={{ flex: 1, padding: '0.22rem 0.2rem', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.45)', background: 'rgba(56,189,248,0.14)', color: '#7dd3fc', fontWeight: 800, fontSize: '0.66rem', cursor: 'pointer' }}>🎯 Center</button>
-                <button type="button" onClick={flipTilt} style={{ flex: 1, padding: '0.22rem 0.2rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.07)', color: '#cbd5e1', fontWeight: 800, fontSize: '0.66rem', cursor: 'pointer' }}>⇄ Invert</button>
+                <button type="button" onClick={recenterGyro} style={{ ...smallBtn, border: '1px solid rgba(56,189,248,0.45)', background: 'rgba(56,189,248,0.14)', color: '#7dd3fc' }}>🎯 Center</button>
+                <button type="button" onClick={flipTilt} style={smallBtn}>⇄ Invert</button>
+                <button type="button" onClick={() => setPreferTouch(true)} style={smallBtn}>👆 Touch</button>
               </>
-            ) : needsTiltPermission ? (
-              <button type="button" onClick={enableGyro} style={{ flex: 1, padding: '0.22rem 0.2rem', borderRadius: '8px', border: 'none', background: '#facc15', color: '#0f172a', fontWeight: 900, fontSize: '0.68rem', cursor: 'pointer' }}>🛞 Enable tilt</button>
+            ) : showTiltPrompt ? (
+              <button type="button" onClick={() => setPreferTouch(true)} style={smallBtn}>👆 Use the touch pad instead</button>
+            ) : tiltLive || needsTiltTap ? (
+              <button type="button" onClick={() => (tiltLive ? setPreferTouch(false) : enableGyro())} style={{ ...smallBtn, background: 'rgba(250,204,21,0.16)', border: '1px solid rgba(250,204,21,0.5)', color: '#fde047' }}>🛞 Use tilt</button>
             ) : (
-              <span style={{ fontSize: '0.62rem', color: '#64748b', fontWeight: 700 }}>No tilt sensor: drag to steer</span>
+              <span style={{ fontSize: '0.62rem', color: '#94a3b8', fontWeight: 700, textAlign: 'center', lineHeight: 1.15 }}>
+                {gyroStatus === 'denied'
+                  ? 'Motion access is off. Close this tab and rejoin to turn on tilt.'
+                  : hasFinePointer
+                    ? '← → steer · Space drift · E item · S brake · H horn'
+                    : 'Tilt isn’t available here: drag the pad to steer'}
+              </span>
+            )}
+            {!showTiltPrompt && (
+              <button
+                type="button"
+                aria-label="Horn"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  triggerHonk();
+                }}
+                style={{ ...smallBtn, flex: '0 0 auto', touchAction: 'none', fontSize: '0.9rem', padding: '0.12rem 0.5rem' }}
+              >
+                📣
+              </button>
             )}
             {hostId && (
-              <button type="button" onClick={() => sendHostAction({ type: 'FINISH_KART_RACE' })} style={{ padding: '0.22rem 0.4rem', borderRadius: '8px', border: '1px solid rgba(250,204,21,0.45)', background: 'rgba(250,204,21,0.12)', color: '#fde047', fontWeight: 800, fontSize: '0.66rem', cursor: 'pointer' }}>⏭️ End</button>
+              <button type="button" onClick={() => sendHostAction({ type: 'FINISH_KART_RACE' })} style={{ ...smallBtn, flex: '0 0 auto', border: '1px solid rgba(250,204,21,0.45)', background: 'rgba(250,204,21,0.12)', color: '#fde047' }}>⏭️</button>
             )}
           </div>
         </div>
@@ -1664,6 +1747,9 @@ export default function KartClashPhoneController({
         </div>
 
         {/* Overlays */}
+        {flash && (
+          <div key={flash.key} className="kart-edge-flash" style={{ boxShadow: `inset 0 0 36px 12px ${flash.color}` }} />
+        )}
         {waiting && (
           <div style={{ position: 'absolute', bottom: 'clamp(2rem, 13vmin, 3rem)', left: '50%', transform: 'translateX(-50%)', background: 'rgba(56,189,248,0.95)', color: '#04121a', borderRadius: '999px', padding: '0.2rem 1rem', fontWeight: 900, fontSize: '0.82rem', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
             ✅ You&rsquo;re ready! Waiting for the others...
@@ -1679,8 +1765,8 @@ export default function KartClashPhoneController({
           </button>
         )}
         {isCountdown && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-            <div key={countdownSec} style={{ fontFamily: 'var(--party-font-display)', fontWeight: 900, fontSize: 'clamp(4rem, 42vmin, 9rem)', lineHeight: 1, color: countdownSec === 1 ? '#facc15' : '#fff', textShadow: '0 4px 24px #000', animation: 'kartCount 800ms ease' }}>{countdownSec}</div>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: showTiltPrompt ? 'flex-start' : 'center', pointerEvents: 'none' }}>
+            <div key={countdownSec} style={{ fontFamily: 'var(--party-font-display)', fontWeight: 900, fontSize: showTiltPrompt ? 'clamp(2rem, 17vmin, 3.6rem)' : 'clamp(4rem, 42vmin, 9rem)', lineHeight: 1, color: countdownSec === 1 ? '#facc15' : '#fff', textShadow: '0 4px 24px #000', animation: 'kartCount 800ms ease' }}>{countdownSec}</div>
           </div>
         )}
         {incoming && !finished && (

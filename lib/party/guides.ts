@@ -216,7 +216,7 @@ export const GAME_GUIDES: Record<GameType, GameGuide> = {
     name: 'Kart Clash',
     emoji: '🏎️',
     tagline: '3D split-screen kart racing with phone gyro steering',
-    players: '1–16 Players',
+    players: '1–16 Players · TV required',
     rounds: 'Grand Prix or Tournament Heats',
     goal: 'Tilt your phone like a steering wheel, drift around corners, and fire power-ups to win the Cup or Tournament!',
     steps: [
@@ -232,6 +232,9 @@ export const GAME_GUIDES: Record<GameType, GameGuide> = {
     tip: 'Hold DRIFT when the countdown shows "1" for a Rocket Start. Press too early and you flood the engine!',
   },
 };
+
+/** Games drawn on one shared screen, so a room with only phones can't play them. */
+export const TV_ONLY_GAMES: readonly string[] = ['kart-clash'];
 
 export const GUIDE_ORDER: GameType[] = [
   'kart-clash',

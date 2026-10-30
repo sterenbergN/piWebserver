@@ -94,7 +94,10 @@ export interface KartTrack {
   ramps: RampDef[];
 }
 
-export const SAMPLE_COUNT = 360;
+export const SAMPLE_COUNT = 440;
+
+/** Every course is drawn at this size. The one place to make all maps larger or smaller. */
+const TRACK_SCALE = 1.3;
 
 function wrapAngle(a: number): number {
   let r = (a + Math.PI) % (Math.PI * 2);
@@ -223,7 +226,7 @@ function buildSplineSamples(
   for (let i = 0; i < m; i++) {
     let sum = 0;
     for (let o = -6; o <= 6; o++) sum += samples[(i + o + m) % m].curvature;
-    samples[i].bank = Math.max(-0.14, Math.min(0.14, (sum / 13) * 7));
+    samples[i].bank = Math.max(-0.14, Math.min(0.14, (sum / 13) * 9));
   }
 
   return { samples, totalLength };
@@ -341,7 +344,8 @@ function createTrack(config: {
   itemRows: number[];
   ramps: number[];
 }): KartTrack {
-  const { samples, totalLength } = buildSplineSamples(config.controlPoints, config.hills);
+  const controlPoints = config.controlPoints.map(([x, z]): [number, number] => [x * TRACK_SCALE, z * TRACK_SCALE]);
+  const { samples, totalLength } = buildSplineSamples(controlPoints, config.hills);
   const halfRoad = config.roadWidth * 0.5;
   const at = (progress: number) => sampleTrackAtProgress({ samples, totalLength }, progress);
 
@@ -392,7 +396,7 @@ function createTrack(config: {
     biome: config.biome,
     theme: config.theme,
     music: config.music,
-    controlPoints: config.controlPoints,
+    controlPoints,
     samples,
     totalLength,
     boostPads,
@@ -443,9 +447,10 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.1, lateral: 0.3 },
       { progress: 0.4, lateral: -0.3 },
       { progress: 0.62, lateral: 0.0 },
-      { progress: 0.84, lateral: -0.25 },
+      { progress: 0.8, lateral: -0.25 },
+      { progress: 0.27, lateral: 0.3 },
     ],
-    itemRows: [0.06, 0.29, 0.5, 0.74, 0.93],
+    itemRows: [0.06, 0.23, 0.36, 0.5, 0.74, 0.86, 0.95],
     ramps: [0.17],
   }),
 
@@ -493,7 +498,7 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.69, lateral: -0.2 },
       { progress: 0.86, lateral: 0.0 },
     ],
-    itemRows: [0.11, 0.33, 0.56, 0.8],
+    itemRows: [0.11, 0.25, 0.37, 0.56, 0.72, 0.8, 0.94],
     ramps: [0.63],
   }),
 
@@ -541,7 +546,7 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.66, lateral: 0.3 },
       { progress: 0.88, lateral: 0.0 },
     ],
-    itemRows: [0.13, 0.36, 0.55, 0.78],
+    itemRows: [0.05, 0.13, 0.28, 0.36, 0.55, 0.78, 0.92],
     ramps: [0.17],
   }),
 
@@ -592,7 +597,7 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.68, lateral: 0.3 },
       { progress: 0.89, lateral: -0.3 },
     ],
-    itemRows: [0.1, 0.3, 0.47, 0.6, 0.83],
+    itemRows: [0.1, 0.2, 0.3, 0.47, 0.6, 0.73, 0.83, 0.95],
     ramps: [0.365, 0.625],
   }),
 
@@ -640,7 +645,7 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.55, lateral: 0.0 },
       { progress: 0.8, lateral: -0.3 },
     ],
-    itemRows: [0.12, 0.22, 0.48, 0.71, 0.91],
+    itemRows: [0.12, 0.22, 0.38, 0.48, 0.62, 0.71, 0.84, 0.95],
     ramps: [0.305],
   }),
 
@@ -689,7 +694,7 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
       { progress: 0.47, lateral: 0.0 },
       { progress: 0.68, lateral: 0.3 },
     ],
-    itemRows: [0.11, 0.25, 0.42, 0.59, 0.78, 0.92],
+    itemRows: [0.05, 0.14, 0.25, 0.42, 0.59, 0.72, 0.84, 0.94],
     ramps: [0.53],
   }),
 };

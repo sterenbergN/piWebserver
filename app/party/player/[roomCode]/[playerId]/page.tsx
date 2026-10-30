@@ -8,6 +8,7 @@ import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
 import KartClashPhoneController from '@/components/party/KartClashPhoneController';
 import { KART_STYLES } from '@/lib/party/kart-shared';
+import { TV_ONLY_GAMES } from '@/lib/party/guides';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
@@ -426,36 +427,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               </div>
             )}
 
-            {/* Quick 3-Step How to Play Card in Lobby */}
-            {(() => {
-              const guide = GAME_GUIDES[state.gameType as GameType];
-              if (!guide) return null;
-              return (
-                <div style={{ width: '100%', marginTop: '0.85rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--party-border)', borderRadius: '16px', padding: '0.85rem 1rem', textAlign: 'left' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.45rem' }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--party-cyan)' }}>
-                      🕹️ How to Play {guide.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowRulesModal(true)}
-                      style={{ background: 'rgba(6, 182, 212, 0.15)', border: '1px solid rgba(6, 182, 212, 0.45)', borderRadius: '999px', color: 'var(--party-cyan)', fontSize: '0.72rem', fontWeight: 800, padding: '0.2rem 0.65rem', cursor: 'pointer' }}
-                    >
-                      ❓ Scoring &amp; All Games
-                    </button>
-                  </div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#fff', marginBottom: '0.4rem' }}>
-                    🎯 {guide.goal}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>
-                    {guide.steps.map((s, idx) => (
-                      <div key={idx}><strong>{idx + 1}.</strong> {s}</div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-
             {/* Kart Clash Garage Customization Card */}
             {state.gameType === 'kart-clash' && (() => {
               const myCustom = state.kartConfig?.myCustomization || { kartStyle: 'classic', sparksColor: me.avatarColor || '#38bdf8' };
@@ -514,6 +485,36 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                           cursor: 'pointer',
                         }}
                       />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Quick 3-Step How to Play Card in Lobby */}
+            {(() => {
+              const guide = GAME_GUIDES[state.gameType as GameType];
+              if (!guide) return null;
+              return (
+                <div style={{ width: '100%', marginTop: '0.85rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--party-border)', borderRadius: '16px', padding: '0.85rem 1rem', textAlign: 'left' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.45rem' }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--party-cyan)' }}>
+                      🕹️ How to Play {guide.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowRulesModal(true)}
+                      style={{ background: 'rgba(6, 182, 212, 0.15)', border: '1px solid rgba(6, 182, 212, 0.45)', borderRadius: '999px', color: 'var(--party-cyan)', fontSize: '0.72rem', fontWeight: 800, padding: '0.2rem 0.65rem', cursor: 'pointer' }}
+                    >
+                      ❓ Scoring &amp; All Games
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#fff', marginBottom: '0.4rem' }}>
+                    🎯 {guide.goal}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>
+                    {guide.steps.map((s, idx) => (
+                      <div key={idx}><strong>{idx + 1}.</strong> {s}</div>
                     ))}
                   </div>
                 </div>
@@ -628,7 +629,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                       <div style={{ display: 'flex', gap: '0.45rem' }}>
                         {[
                           { id: 'grand-prix', label: '🏆 Grand Prix' },
-                          { id: 'tournament', label: '🔥 Tournament Heats' },
+                          { id: 'tournament', label: '🔥 Heats' },
                         ].map((opt) => (
                           <button
                             key={opt.id}
@@ -636,6 +637,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                             onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', format: opt.id })}
                             style={{
                               flex: 1,
+                              minWidth: 0,
                               background: kc.format === opt.id ? 'var(--party-cyan)' : 'transparent',
                               color: kc.format === opt.id ? '#0b0b12' : '#fff',
                               border: '2px solid var(--party-cyan)',
@@ -820,7 +822,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                     Switch Game
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
-                    {ALL_GAMES.map((g) => {
+                    {ALL_GAMES.filter((g) => !TV_ONLY_GAMES.includes(g.id) || g.id === state.gameType).map((g) => {
                       const active = g.id === state.gameType;
                       return (
                         <button
@@ -2139,7 +2141,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   🔁 Play Again
                 </button>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
-                  {ALL_GAMES.filter((g) => g.id !== state.gameType).map((g) => (
+                  {ALL_GAMES.filter((g) => g.id !== state.gameType && !TV_ONLY_GAMES.includes(g.id)).map((g) => (
                     <button
                       key={g.id}
                       type="button"
@@ -2180,7 +2182,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         <HowToPlayModal
           initialGameType={state.gameType}
           onClose={() => setShowRulesModal(false)}
-          onAction={hostId ? (g) => { if (g !== state.gameType) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
+          onAction={hostId ? (g) => { if (g !== state.gameType && !TV_ONLY_GAMES.includes(g)) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
           actionLabel={hostId ? 'Switch to This Game 🎮' : undefined}
         />
       )}
