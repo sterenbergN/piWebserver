@@ -53,7 +53,6 @@ export default function KartClashPhoneController({
   const [rouletteIdx, setRouletteIdx] = useState<number>(0);
   const [landscapeSide, setLandscapeSide] = useState<'left' | 'right'>('left');
   const [viewport, setViewport] = useState<{ w: number; h: number }>({ w: 800, h: 450 });
-  const [isDraggingTouch, setIsDraggingTouch] = useState<boolean>(false);
 
   // Selected racer for VIP host heat swapping on phone
   const [selectedRacerId, setSelectedRacerId] = useState<string | null>(null);
