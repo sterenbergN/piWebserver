@@ -657,14 +657,14 @@ function createKartMesh(colorHex: string, x: number, z: number, angle: number): 
   flame.visible = false;
   root.add(flame);
 
-  // Drift sparks behind rear tires
-  const sparkGeo = new THREE.SphereGeometry(0.42, 8, 8);
+  // Drift sparks behind rear tires (positioned behind rear wheels for clear chase-cam visibility)
+  const sparkGeo = new THREE.SphereGeometry(0.55, 10, 10);
   const sparkMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
   const sparkLeft = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkLeft.position.set(-1.15, 0.38, -1.7);
+  sparkLeft.position.set(-1.25, 0.48, -2.05);
   sparkLeft.visible = false;
   const sparkRight = new THREE.Mesh(sparkGeo, sparkMat);
-  sparkRight.position.set(1.15, 0.38, -1.7);
+  sparkRight.position.set(1.25, 0.48, -2.05);
   sparkRight.visible = false;
   root.add(sparkLeft, sparkRight);
 
@@ -817,10 +817,15 @@ export default function KartClashHostView({
         ref.currZ += (ref.targetZ - ref.currZ) * blend;
         ref.currAngle = lerpAngle(ref.currAngle, ref.targetAngle, blend);
 
-        ref.root.position.set(ref.currX, 0.12, ref.currZ);
+        const charge = k.driftCharge ?? 0;
+        const hopY = k.drifting && charge > 0 && charge < 22
+          ? Math.sin((charge / 22) * Math.PI) * 0.55
+          : 0;
+        ref.root.position.set(ref.currX, 0.12 + hopY, ref.currZ);
         const spinYaw = k.spinOutTimer > 0 ? elapsed * 16 : 0;
-        const driftYaw = k.drifting ? -k.driftDir * 0.24 : 0;
+        const driftYaw = k.drifting ? -k.driftDir * 0.42 : 0;
         ref.root.rotation.y = ref.currAngle + driftYaw + spinYaw;
+        ref.root.rotation.z = k.drifting ? k.driftDir * 0.1 : 0;
 
         const targetScale = k.shrinkTimer > 0 ? 0.58 : 1.0;
         ref.root.scale.setScalar(targetScale);
@@ -833,15 +838,18 @@ export default function KartClashHostView({
 
         ref.flame.visible = k.boostTimer > 0 || k.starTimer > 0;
         if (ref.flame.visible) {
-          ref.flame.scale.setScalar(0.85 + Math.sin(elapsed * 40) * 0.25);
+          ref.flame.scale.setScalar(0.95 + Math.sin(elapsed * 40) * 0.3);
         }
 
-        const showSparks = k.drifting && k.driftLevel > 0;
+        const showSparks = k.drifting;
         ref.sparkLeft.visible = showSparks;
         ref.sparkRight.visible = showSparks;
         if (showSparks) {
-          ref.sparkMat.color.set(k.driftLevel === 2 ? '#f97316' : '#38bdf8');
-          const pulse = 0.8 + Math.sin(elapsed * 30) * 0.35;
+          ref.sparkMat.color.set(
+            k.driftLevel === 2 ? '#f97316' : k.driftLevel === 1 ? '#38bdf8' : '#fde047',
+          );
+          const baseScale = k.driftLevel === 2 ? 1.65 : k.driftLevel === 1 ? 1.25 : 0.8;
+          const pulse = baseScale + Math.sin(elapsed * 34) * 0.3;
           ref.sparkLeft.scale.setScalar(pulse);
           ref.sparkRight.scale.setScalar(pulse);
         }

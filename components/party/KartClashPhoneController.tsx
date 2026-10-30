@@ -1087,9 +1087,47 @@ export default function KartClashPhoneController({
     const heldItem: KartItemType | null = myKart?.heldItem || null;
     const isRoulette = Boolean(myKart?.itemRoulette);
     const driftCharge = myKart?.driftLevel || 0;
+    const driftPct = myKart?.driftCharge ?? (driftCharge === 2 ? 100 : driftCharge === 1 ? 55 : isDrifting ? 18 : 0);
     const isSpunOut = (myKart?.spinOutTimer || 0) > 0;
     const isStar = (myKart?.starTimer || 0) > 0;
     const isBoost = (myKart?.boostTimer || 0) > 0;
+
+    const startDriftHold = () => {
+      tryLockLandscape();
+      if (!driftRef.current) {
+        driftRef.current = true;
+        setIsDrifting(true);
+        transmitInput({ drift: true });
+        try {
+          navigator.vibrate?.(25);
+        } catch {}
+      }
+    };
+
+    const endDriftHold = () => {
+      if (driftRef.current) {
+        driftRef.current = false;
+        setIsDrifting(false);
+        transmitInput({ drift: false });
+      }
+    };
+
+    const startBrakeHold = () => {
+      tryLockLandscape();
+      if (!brakeRef.current) {
+        brakeRef.current = true;
+        setIsBraking(true);
+        transmitInput({ brake: true });
+      }
+    };
+
+    const endBrakeHold = () => {
+      if (brakeRef.current) {
+        brakeRef.current = false;
+        setIsBraking(false);
+        transmitInput({ brake: false });
+      }
+    };
 
     const cockpitContainerStyle: React.CSSProperties = isPortraitViewport
       ? {
@@ -1424,27 +1462,29 @@ export default function KartClashPhoneController({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', height: '100%', minHeight: 0 }}>
           <button
             type="button"
-            onPointerDown={(e) => {
+            onTouchStart={(e) => {
               e.preventDefault();
-              tryLockLandscape();
-              e.currentTarget.setPointerCapture(e.pointerId);
-              driftRef.current = true;
-              setIsDrifting(true);
-              transmitInput({ drift: true });
-              try {
-                navigator.vibrate?.(25);
-              } catch {}
+              startDriftHold();
             }}
-            onPointerUp={() => {
-              driftRef.current = false;
-              setIsDrifting(false);
-              transmitInput({ drift: false });
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              if (e.targetTouches.length === 0) {
+                endDriftHold();
+              }
             }}
-            onPointerCancel={() => {
-              driftRef.current = false;
-              setIsDrifting(false);
-              transmitInput({ drift: false });
+            onTouchCancel={(e) => {
+              e.preventDefault();
+              if (e.targetTouches.length === 0) {
+                endDriftHold();
+              }
             }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startDriftHold();
+            }}
+            onMouseUp={() => endDriftHold()}
+            onMouseLeave={() => endDriftHold()}
+            onContextMenu={(e) => e.preventDefault()}
             style={{
               flex: 1,
               minHeight: 0,
@@ -1459,62 +1499,99 @@ export default function KartClashPhoneController({
                       : '2px solid rgba(56,189,248,0.45)',
               background:
                 driftCharge === 2
-                  ? 'linear-gradient(135deg, rgba(249,115,22,0.42), rgba(239,68,68,0.32))'
+                  ? 'linear-gradient(135deg, rgba(249,115,22,0.45), rgba(239,68,68,0.35))'
                   : driftCharge === 1
-                    ? 'linear-gradient(135deg, rgba(56,189,248,0.38), rgba(37,99,235,0.32))'
+                    ? 'linear-gradient(135deg, rgba(56,189,248,0.42), rgba(37,99,235,0.35))'
                     : isCountdown
                       ? 'linear-gradient(135deg, rgba(250,204,21,0.3), rgba(245,158,11,0.2))'
                       : isDrifting
-                        ? 'rgba(56,189,248,0.28)'
+                        ? 'linear-gradient(135deg, rgba(250,204,21,0.28), rgba(56,189,248,0.25))'
                         : 'rgba(15,23,42,0.9)',
               color: '#f8fafc',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.15rem',
-              padding: '0.4rem',
+              gap: '0.18rem',
+              padding: '0.4rem 0.5rem',
               overflow: 'hidden',
               cursor: 'pointer',
+              WebkitTouchCallout: 'none',
             }}
           >
-            <span style={{ fontSize: 'clamp(1.5rem, 7.5vh, 2.1rem)', lineHeight: 1 }}>
-              {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : '💨'}
+            <span style={{ fontSize: 'clamp(1.45rem, 7.2vh, 2.05rem)', lineHeight: 1 }}>
+              {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : isDrifting ? '〰️' : '💨'}
             </span>
-            <span style={{ fontWeight: 900, fontSize: 'clamp(0.76rem, 3.2vh, 0.92rem)', textAlign: 'center', lineHeight: 1.1 }}>
+            <span style={{ fontWeight: 900, fontSize: 'clamp(0.74rem, 3.1vh, 0.9rem)', textAlign: 'center', lineHeight: 1.1 }}>
               {isCountdown
                 ? 'ROCKET START'
                 : driftCharge === 2
-                  ? 'SUPER TURBO!'
+                  ? 'RELEASE FOR SUPER!'
                   : driftCharge === 1
-                    ? 'MINI-TURBO!'
-                    : 'HOLD DRIFT'}
+                    ? 'MINI-TURBO READY!'
+                    : isDrifting
+                      ? 'DRIFTING...'
+                      : 'HOLD DRIFT'}
             </span>
-            <span style={{ fontSize: 'clamp(0.58rem, 2.4vh, 0.66rem)', color: '#cbd5e1', textAlign: 'center', lineHeight: 1.1 }}>
-              {isCountdown ? 'Hold on "1" for boost!' : 'Release after sparks'}
+            <span style={{ fontSize: 'clamp(0.56rem, 2.3vh, 0.65rem)', color: '#cbd5e1', textAlign: 'center', lineHeight: 1.1 }}>
+              {isCountdown ? 'Hold on "1" for boost!' : 'Hold in turns • Release to boost'}
             </span>
+            {/* Live Drift Spark Charge Meter */}
+            {!isCountdown && (
+              <div
+                style={{
+                  width: '88%',
+                  height: '6px',
+                  borderRadius: '999px',
+                  background: 'rgba(255,255,255,0.12)',
+                  overflow: 'hidden',
+                  marginTop: '0.15rem',
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: `${driftPct}%`,
+                    height: '100%',
+                    borderRadius: '999px',
+                    background:
+                      driftCharge === 2
+                        ? '#f97316'
+                        : driftCharge === 1
+                          ? '#38bdf8'
+                          : '#facc15',
+                    transition: 'width 80ms linear',
+                  }}
+                />
+              </div>
+            )}
           </button>
 
           <button
             type="button"
-            onPointerDown={(e) => {
+            onTouchStart={(e) => {
               e.preventDefault();
-              tryLockLandscape();
-              e.currentTarget.setPointerCapture(e.pointerId);
-              brakeRef.current = true;
-              setIsBraking(true);
-              transmitInput({ brake: true });
+              startBrakeHold();
             }}
-            onPointerUp={() => {
-              brakeRef.current = false;
-              setIsBraking(false);
-              transmitInput({ brake: false });
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              if (e.targetTouches.length === 0) {
+                endBrakeHold();
+              }
             }}
-            onPointerCancel={() => {
-              brakeRef.current = false;
-              setIsBraking(false);
-              transmitInput({ brake: false });
+            onTouchCancel={(e) => {
+              e.preventDefault();
+              if (e.targetTouches.length === 0) {
+                endBrakeHold();
+              }
             }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startBrakeHold();
+            }}
+            onMouseUp={() => endBrakeHold()}
+            onMouseLeave={() => endBrakeHold()}
+            onContextMenu={(e) => e.preventDefault()}
             style={{
               height: 'clamp(36px, 14vh, 48px)',
               flexShrink: 0,
@@ -1525,6 +1602,7 @@ export default function KartClashPhoneController({
               fontWeight: 900,
               fontSize: 'clamp(0.68rem, 2.8vh, 0.78rem)',
               cursor: 'pointer',
+              WebkitTouchCallout: 'none',
             }}
           >
             🛑 BRAKE / REV

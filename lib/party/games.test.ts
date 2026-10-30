@@ -854,6 +854,26 @@ test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on t
   assert.equal(offRoadHumanFrames, 0, 'Smart Arcade Steering keeps neutral human racer on the road through curves');
   assert.ok(human.totalProgress > 0.25, 'Human racer advances smoothly along the spline');
   assert.ok(bots.every((b) => b.totalProgress > 0.22), 'All AI bots advance smoothly along the spline');
+
+  // Verify holding DRIFT immediately initiates drifting, charges Level 1 & Level 2 sparks, and triggers Super Mini-Turbo on release
+  const { updateKartInput } = await import('./kart-physics');
+  updateKartInput('TEST_AI', 'p1', { drift: true, steer: 0 });
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(human.drifting, true, 'Holding drift starts drifting immediately even before tilting the wheel');
+  for (let i = 0; i < 16; i++) {
+    updateKartInput('TEST_AI', 'p1', { drift: true, steer: 0.5 });
+    stepKartSimulation(sim, 1 / 30);
+  }
+  assert.equal(human.driftLevel, 1, 'Holding drift into a turn for ~0.5s charges Level 1 Blue Mini-Turbo sparks');
+  for (let i = 0; i < 18; i++) {
+    updateKartInput('TEST_AI', 'p1', { drift: true, steer: 0.5 });
+    stepKartSimulation(sim, 1 / 30);
+  }
+  assert.equal(human.driftLevel, 2, 'Holding drift into a turn for ~1.1s charges Level 2 Orange Super Mini-Turbo sparks');
+  updateKartInput('TEST_AI', 'p1', { drift: false, steer: 0 });
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(human.drifting, false, 'Releasing drift exits drift state');
+  assert.ok(human.boostTimer >= 1.8, 'Releasing Level 2 drift grants a 1.9s Super Mini-Turbo boost');
   stopKartSimulation('TEST_AI');
 });
 
