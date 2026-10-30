@@ -19,9 +19,13 @@ const ITEM_META: Record<KartItemType, { emoji: string; label: string; color: str
   banana: { emoji: '🍌', label: 'Banana Peel', color: '#facc15', hint: 'Drops behind your kart!' },
   lightning: { emoji: '⚡', label: 'Lightning Bolt', color: '#fde047', hint: 'Zaps & shrinks every rival!' },
   star: { emoji: '⭐', label: 'Super Star', color: '#fbbf24', hint: 'Invincible turbo rampage!' },
+  spiny_shell: { emoji: '👑', label: 'Spiny Blue Shell', color: '#0284c7', hint: 'Tracks 1st place with blastwave!' },
+  golden_mushroom: { emoji: '🏆', label: 'Golden Shroom', color: '#eab308', hint: 'Spam tap for continuous turbo!' },
+  super_horn: { emoji: '📢', label: 'Super Horn', color: '#a855f7', hint: 'Shatters nearby karts & shells!' },
+  fake_box: { emoji: '❓', label: 'Fake Item Box', color: '#ef4444', hint: 'Drops an explosive decoy box!' },
 };
 
-const ROULETTE_EMOJIS = ['🍄', '🟢', '🔴', '🍌', '⚡', '⭐'];
+const ROULETTE_EMOJIS = ['🍄', '🟢', '🔴', '🍌', '⚡', '⭐', '👑', '🏆', '📢', '❓'];
 
 function ordinal(n: number): string {
   if (n === 1) return '1st';
@@ -187,6 +191,7 @@ export default function KartClashPhoneController({
   // Request iOS 13+ DeviceOrientation permission or verify support
   const enableGyro = useCallback(async () => {
     tryLockLandscape();
+    getPhoneAudioCtx();
     if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
       setGyroStatus('unsupported');
       return;
@@ -337,8 +342,56 @@ export default function KartClashPhoneController({
     return () => clearInterval(interval);
   }, [phase, pd?.isRacing, transmitInput]);
 
-  // Spin roulette emoji animation & haptic feedback on spinout / boost
+  // Spin roulette emoji animation & haptic feedback on spinout / boost / drift tiers / incoming shell
   const myKart = snapshot?.karts?.find((k) => k.id === meId) || null;
+  const prevDriftTierRef = useRef<number>(0);
+  const prevIncomingShellRef = useRef<boolean>(false);
+  const phoneAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const getPhoneAudioCtx = useCallback(() => {
+    if (!phoneAudioCtxRef.current) {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          phoneAudioCtxRef.current = new AudioCtx();
+        }
+      } catch {}
+    }
+    if (phoneAudioCtxRef.current && phoneAudioCtxRef.current.state === 'suspended') {
+      phoneAudioCtxRef.current.resume().catch(() => {});
+    }
+    return phoneAudioCtxRef.current;
+  }, []);
+
+  // Synthesize pleasant two-tone horn on phone
+  const playPhoneHorn = useCallback(() => {
+    try {
+      const ctx = getPhoneAudioCtx();
+      if (!ctx) return;
+      for (const freq of [440, 554]) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        g.gain.setValueAtTime(0.12, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      }
+    } catch {}
+  }, [getPhoneAudioCtx]);
+
+  const triggerHonk = useCallback(() => {
+    tryLockLandscape();
+    playPhoneHorn();
+    sendAction({ type: 'HONK_HORN' });
+    try {
+      navigator.vibrate?.(30);
+    } catch {}
+  }, [playPhoneHorn, sendAction, tryLockLandscape]);
+
   useEffect(() => {
     if (!myKart) return;
     if (myKart.spinOutTimer > 0 && prevSpinRef.current === 0) {
@@ -353,6 +406,25 @@ export default function KartClashPhoneController({
     }
     prevSpinRef.current = myKart.spinOutTimer;
     prevBoostRef.current = myKart.boostTimer;
+
+    // 3-Tier Drift Vibration Alerts
+    const currentTier = myKart.driftLevel ?? 0;
+    if (currentTier !== prevDriftTierRef.current) {
+      try {
+        if (currentTier === 3) navigator.vibrate?.([40, 30, 80]);
+        else if (currentTier === 2) navigator.vibrate?.(55);
+        else if (currentTier === 1) navigator.vibrate?.(35);
+      } catch {}
+      prevDriftTierRef.current = currentTier;
+    }
+
+    // Incoming Shell Warning Radar Haptic
+    if (myKart.hasIncomingShell && !prevIncomingShellRef.current) {
+      try {
+        navigator.vibrate?.([120, 60, 120, 60, 200]);
+      } catch {}
+    }
+    prevIncomingShellRef.current = Boolean(myKart.hasIncomingShell);
   }, [myKart]);
 
   useEffect(() => {
@@ -398,8 +470,12 @@ export default function KartClashPhoneController({
         setSelectedRacerId(pid);
       } else if (selectedRacerId === pid) {
         setSelectedRacerId(null);
-      } else {
-        sendHostAction({ type: 'ASSIGN_HEAT_PLAYER', targetPlayerId: selectedRacerId, targetHeatId: heatId });
+        sendHostAction({
+          type: 'ASSIGN_HEAT_PLAYER',
+          targetPlayerId: selectedRacerId,
+          targetHeatId: heatId,
+          swapWithPlayerId: pid,
+        });
         setSelectedRacerId(null);
       }
     };
@@ -1071,6 +1147,48 @@ export default function KartClashPhoneController({
               ))}
             </div>
           )}
+
+          {/* Pit Crew Floating Emoji Cannon */}
+          <div
+            style={{
+              background: 'rgba(15,23,42,0.88)',
+              border: '1.5px solid rgba(6,182,212,0.4)',
+              borderRadius: '16px',
+              padding: '0.75rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.45rem',
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-cyan, #06b6d4)', textTransform: 'uppercase' }}>
+              🎉 Pit Crew Emoji Cannon (Tap to Send to Host TV)
+            </span>
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {['🎉', '🔥', '💀', '💩', '⚡', '🏎️', '💨', '👏'].map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => {
+                    sendAction({ type: 'SEND_EMOJI', emoji });
+                    try {
+                      navigator.vibrate?.(25);
+                    } catch {}
+                  }}
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    borderRadius: '12px',
+                    padding: '0.4rem 0.6rem',
+                    fontSize: '1.4rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       );
     }
@@ -1225,17 +1343,78 @@ export default function KartClashPhoneController({
           </span>
         </button>
 
-        {/* CENTER COLUMN: TELEMETRY BAR + ROTATING STEERING WHEEL */}
+        {/* Incoming Shell Hazard Radar Alert */}
+        {myKart?.hasIncomingShell && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '6px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(239, 68, 68, 0.95)',
+              border: '2.5px solid #fff',
+              borderRadius: '999px',
+              padding: '0.22rem 1.1rem',
+              color: '#fff',
+              fontWeight: 900,
+              fontSize: '0.78rem',
+              letterSpacing: '0.04em',
+              boxShadow: '0 0 25px rgba(239,68,68,0.9)',
+              zIndex: 99,
+              animation: 'pulse 0.5s infinite alternate',
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ⚠️ INCOMING SHELL DETECTED!
+          </div>
+        )}
+
+        {/* CENTER COLUMN: TELEMETRY BAR + F1 TACHOMETER + ROTATING STEERING WHEEL */}
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.35rem',
+            gap: '0.3rem',
             height: '100%',
             minHeight: 0,
             minWidth: 0,
           }}
         >
+          {/* F1 Rev-Counter Shift LED Lights */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '1px 0',
+              flexShrink: 0,
+            }}
+          >
+            {Array.from({ length: 9 }).map((_, i) => {
+              const speedRatio = Math.min(1, speedKmh / 75);
+              const lit = i / 9 <= speedRatio;
+              const ledColor =
+                i < 3 ? '#22c55e' : i < 6 ? '#facc15' : i < 8 ? '#ef4444' : '#d946ef';
+              const isPulsing = driftCharge > 0 && lit;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    width: 'clamp(6px, 1.8vw, 10px)',
+                    height: 'clamp(6px, 1.8vw, 10px)',
+                    borderRadius: '50%',
+                    background: lit ? ledColor : 'rgba(255,255,255,0.12)',
+                    boxShadow: lit ? `0 0 8px ${ledColor}` : 'none',
+                    transition: 'background 50ms, box-shadow 50ms',
+                    opacity: isPulsing ? 0.85 : 1,
+                  }}
+                />
+              );
+            })}
+          </div>
+
           {/* Top Telemetry Strip */}
           <div
             style={{
@@ -1379,11 +1558,13 @@ export default function KartClashPhoneController({
               position: 'relative',
               background: 'radial-gradient(circle at center, rgba(30,41,59,0.92), rgba(15,23,42,0.98))',
               border:
-                driftCharge === 2
-                  ? '2.5px solid #f97316'
-                  : driftCharge === 1
-                    ? '2.5px solid #38bdf8'
-                    : '1.5px solid rgba(255,255,255,0.14)',
+                driftCharge === 3
+                  ? '2.5px solid #d946ef'
+                  : driftCharge === 2
+                    ? '2.5px solid #f97316'
+                    : driftCharge === 1
+                      ? '2.5px solid #38bdf8'
+                      : '1.5px solid rgba(255,255,255,0.14)',
               borderRadius: '16px',
               padding: '0.35rem 0.55rem',
               display: 'flex',
@@ -1400,36 +1581,74 @@ export default function KartClashPhoneController({
               <span>RIGHT ▶</span>
             </div>
 
-            {/* SVG Racing Steering Wheel that rotates with steerValue and scales fluidly to fit short iPhone landscape viewports */}
+            {/* SVG Racing Steering Wheel */}
             <div
               style={{
+                position: 'relative',
                 width: 'clamp(62px, 28vh, 102px)',
                 height: 'clamp(62px, 28vh, 102px)',
-                transform: `rotate(${steerValue * 68}deg)`,
-                transition: isDraggingTouch ? 'none' : 'transform 45ms linear',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 1,
               }}
             >
-              <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%' }}>
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="50"
-                  fill="none"
-                  stroke={driftCharge === 2 ? '#f97316' : driftCharge === 1 ? '#38bdf8' : '#334155'}
-                  strokeWidth="14"
-                />
-                <path d="M 54 10 L 66 10 L 64 24 L 56 24 Z" fill="#ef4444" />
-                <line x1="16" y1="60" x2="104" y2="60" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-                <line x1="60" y1="60" x2="60" y2="104" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-                <circle cx="60" cy="60" r="18" fill="#0f172a" stroke="#38bdf8" strokeWidth="3" />
-                <text x="60" y="66" textAnchor="middle" fontSize="16">
-                  {state?.me?.avatar || '🏎️'}
-                </text>
-              </svg>
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  transform: `rotate(${steerValue * 68}deg)`,
+                  transition: isDraggingTouch ? 'none' : 'transform 45ms linear',
+                }}
+              >
+                <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%' }}>
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    fill="none"
+                    stroke={driftCharge === 3 ? '#d946ef' : driftCharge === 2 ? '#f97316' : driftCharge === 1 ? '#38bdf8' : '#334155'}
+                    strokeWidth="14"
+                  />
+                  <path d="M 54 10 L 66 10 L 64 24 L 56 24 Z" fill="#ef4444" />
+                  <line x1="16" y1="60" x2="104" y2="60" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
+                  <line x1="60" y1="60" x2="60" y2="104" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
+                  <circle cx="60" cy="60" r="18" fill="#0f172a" stroke="#38bdf8" strokeWidth="3" />
+                  <text x="60" y="66" textAnchor="middle" fontSize="16">
+                    {state?.me?.avatar || '🏎️'}
+                  </text>
+                </svg>
+              </div>
+
+              {/* Center Horn Button */}
+              <button
+                type="button"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  triggerHonk();
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  width: '38px',
+                  height: '38px',
+                  borderRadius: '999px',
+                  border: '2px solid #facc15',
+                  background: 'rgba(250,204,21,0.25)',
+                  color: '#fde047',
+                  fontSize: '1.05rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  zIndex: 10,
+                }}
+                title="Tap to Honk Horn!"
+              >
+                📣
+              </button>
             </div>
 
             {/* Horizontal Steer Bar Indicator */}
@@ -1450,7 +1669,7 @@ export default function KartClashPhoneController({
                   bottom: 0,
                   width: '24px',
                   borderRadius: '999px',
-                  background: driftCharge === 2 ? '#f97316' : '#38bdf8',
+                  background: driftCharge === 3 ? '#d946ef' : driftCharge === 2 ? '#f97316' : '#38bdf8',
                   left: `calc(${50 + steerValue * 44}% - 12px)`,
                 }}
               />
@@ -1490,23 +1709,27 @@ export default function KartClashPhoneController({
               minHeight: 0,
               borderRadius: '18px',
               border:
-                driftCharge === 2
-                  ? '3px solid #f97316'
-                  : driftCharge === 1
-                    ? '3px solid #38bdf8'
-                    : isDrifting
-                      ? '2.5px solid #facc15'
-                      : '2px solid rgba(56,189,248,0.45)',
-              background:
-                driftCharge === 2
-                  ? 'linear-gradient(135deg, rgba(249,115,22,0.45), rgba(239,68,68,0.35))'
-                  : driftCharge === 1
-                    ? 'linear-gradient(135deg, rgba(56,189,248,0.42), rgba(37,99,235,0.35))'
-                    : isCountdown
-                      ? 'linear-gradient(135deg, rgba(250,204,21,0.3), rgba(245,158,11,0.2))'
+                driftCharge === 3
+                  ? '3.5px solid #d946ef'
+                  : driftCharge === 2
+                    ? '3px solid #f97316'
+                    : driftCharge === 1
+                      ? '3px solid #38bdf8'
                       : isDrifting
-                        ? 'linear-gradient(135deg, rgba(250,204,21,0.28), rgba(56,189,248,0.25))'
-                        : 'rgba(15,23,42,0.9)',
+                        ? '2.5px solid #facc15'
+                        : '2px solid rgba(56,189,248,0.45)',
+              background:
+                driftCharge === 3
+                  ? 'linear-gradient(135deg, rgba(217,70,239,0.5), rgba(168,85,247,0.4))'
+                  : driftCharge === 2
+                    ? 'linear-gradient(135deg, rgba(249,115,22,0.45), rgba(239,68,68,0.35))'
+                    : driftCharge === 1
+                      ? 'linear-gradient(135deg, rgba(56,189,248,0.42), rgba(37,99,235,0.35))'
+                      : isCountdown
+                        ? 'linear-gradient(135deg, rgba(250,204,21,0.3), rgba(245,158,11,0.2))'
+                        : isDrifting
+                          ? 'linear-gradient(135deg, rgba(250,204,21,0.28), rgba(56,189,248,0.25))'
+                          : 'rgba(15,23,42,0.9)',
               color: '#f8fafc',
               display: 'flex',
               flexDirection: 'column',
@@ -1517,21 +1740,24 @@ export default function KartClashPhoneController({
               overflow: 'hidden',
               cursor: 'pointer',
               WebkitTouchCallout: 'none',
+              boxShadow: driftCharge === 3 ? '0 0 25px rgba(217,70,239,0.6)' : undefined,
             }}
           >
             <span style={{ fontSize: 'clamp(1.45rem, 7.2vh, 2.05rem)', lineHeight: 1 }}>
-              {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : isDrifting ? '〰️' : '💨'}
+              {isCountdown ? '🚀' : driftCharge === 3 ? '⚡' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '💨' : isDrifting ? '〰️' : '💨'}
             </span>
             <span style={{ fontWeight: 900, fontSize: 'clamp(0.74rem, 3.1vh, 0.9rem)', textAlign: 'center', lineHeight: 1.1 }}>
               {isCountdown
                 ? 'ROCKET START'
-                : driftCharge === 2
-                  ? 'RELEASE FOR SUPER!'
-                  : driftCharge === 1
-                    ? 'MINI-TURBO READY!'
-                    : isDrifting
-                      ? 'DRIFTING...'
-                      : 'HOLD DRIFT'}
+                : driftCharge === 3
+                  ? 'ULTRA TURBO READY!'
+                  : driftCharge === 2
+                    ? 'RELEASE FOR SUPER!'
+                    : driftCharge === 1
+                      ? 'MINI-TURBO READY!'
+                      : isDrifting
+                        ? 'DRIFTING...'
+                        : 'HOLD DRIFT'}
             </span>
             <span style={{ fontSize: 'clamp(0.56rem, 2.3vh, 0.65rem)', color: '#cbd5e1', textAlign: 'center', lineHeight: 1.1 }}>
               {isCountdown ? 'Hold on "1" for boost!' : 'Hold in turns • Release to boost'}
@@ -1555,11 +1781,13 @@ export default function KartClashPhoneController({
                     height: '100%',
                     borderRadius: '999px',
                     background:
-                      driftCharge === 2
-                        ? '#f97316'
-                        : driftCharge === 1
-                          ? '#38bdf8'
-                          : '#facc15',
+                      driftCharge === 3
+                        ? '#d946ef'
+                        : driftCharge === 2
+                          ? '#f97316'
+                          : driftCharge === 1
+                            ? '#38bdf8'
+                            : '#facc15',
                     transition: 'width 80ms linear',
                   }}
                 />
@@ -1660,6 +1888,23 @@ export default function KartClashPhoneController({
                   }}
                 >
                   🏆 QUALIFIED FOR THE CHAMPIONSHIP FINAL!
+                </div>
+              )}
+              {pd?.fastestLap && (
+                <div
+                  style={{
+                    marginTop: '0.65rem',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '10px',
+                    background: 'rgba(217,70,239,0.18)',
+                    border: '1px solid #d946ef',
+                    color: '#f0abfc',
+                    fontSize: '0.78rem',
+                    fontWeight: 800,
+                  }}
+                >
+                  ⚡ Fastest Lap: {pd.fastestLap.racerName || (pd.fastestLap as any).playerName} (
+                  {(((pd.fastestLap.timeMs ?? (pd.fastestLap as any).lapTimeMs) || 0) / 1000).toFixed(2)}s)
                 </div>
               )}
             </>

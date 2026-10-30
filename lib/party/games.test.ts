@@ -857,6 +857,15 @@ test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on t
 
   // Verify holding DRIFT immediately initiates drifting, charges Level 1 & Level 2 sparks, and triggers Super Mini-Turbo on release
   const { updateKartInput } = await import('./kart-physics');
+  sim.hazards = [];
+  for (const k of Object.values(sim.karts)) {
+    if (k.isBot) {
+      k.heldItem = null;
+      k.pendingItem = null;
+    }
+  }
+  human.spinOutTimer = 0;
+  human.speed = Math.max(30, human.speed);
   updateKartInput('TEST_AI', 'p1', { drift: true, steer: 0 });
   stepKartSimulation(sim, 1 / 30);
   assert.equal(human.drifting, true, 'Holding drift starts drifting immediately even before tilting the wheel');
@@ -875,6 +884,265 @@ test('Kart Clash: Pure-pursuit AI bots and Smart Arcade Steering keep karts on t
   assert.equal(human.drifting, false, 'Releasing drift exits drift state');
   assert.ok(human.boostTimer >= 1.8, 'Releasing Level 2 drift grants a 1.9s Super Mini-Turbo boost');
   stopKartSimulation('TEST_AI');
+});
+
+test('Kart Clash: Speed classes, Item modes, Tier 3 Ultra Mini-Turbo, and Slipstream Drafting', async () => {
+  const {
+    createKartSimulation,
+    stepKartSimulation,
+    stopKartSimulation,
+    buildKartRacers,
+    updateKartInput,
+    SPEED_CLASSES,
+  } = await import('./kart-physics');
+
+  // 1. Verify speed class configurations
+  assert.equal(SPEED_CLASSES['50cc'].maxSpeed, 24);
+  assert.equal(SPEED_CLASSES['100cc'].maxSpeed, 29);
+  assert.equal(SPEED_CLASSES['150cc'].maxSpeed, 33);
+  assert.equal(SPEED_CLASSES['200cc'].maxSpeed, 38);
+
+  const racers = buildKartRacers(
+    [
+      { id: 'p1', name: 'Racer1', avatar: '🏎️', avatarColor: '#ef4444' },
+      { id: 'p2', name: 'Racer2', avatar: '🚀', avatarColor: '#38bdf8' },
+    ],
+    false,
+    2,
+  );
+
+  const sim = createKartSimulation({
+    roomCode: 'TEST_ADVANCED_KART',
+    raceId: 'race-tier3',
+    trackId: 'cyber-metro',
+    racers,
+    speedClass: '200cc',
+    itemsMode: 'frantic',
+  });
+
+  sim.countdownMs = 0;
+  assert.equal(sim.speedClass, '200cc');
+  assert.equal(sim.itemsMode, 'frantic');
+
+  const p1 = sim.karts['p1'];
+  const p2 = sim.karts['p2'];
+
+  // Test Tier 3 Ultra Mini-Turbo: drift for ~2.3 seconds
+  updateKartInput('TEST_ADVANCED_KART', 'p1', { drift: true, steer: 0.6 });
+  for (let i = 0; i < 75; i++) {
+    stepKartSimulation(sim, 1 / 30);
+  }
+  assert.equal(p1.driftLevel, 3, 'Holding drift for 2.2s charges Tier 3 Ultra Mini-Turbo (magenta sparks)');
+  updateKartInput('TEST_ADVANCED_KART', 'p1', { drift: false, steer: 0 });
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.boostTimer >= 2.4, 'Releasing Tier 3 Ultra Mini-Turbo grants a 2.5s ultra boost');
+
+  // Test Slipstream Drafting: place p2 8 meters behind p1 along track
+  p1.x = 0;
+  p1.z = 20;
+  p1.speed = 25;
+  p2.x = 0;
+  p2.z = 12;
+  p1.angle = 0;
+  p2.angle = 0;
+  p2.speed = 25;
+
+  for (let i = 0; i < 50; i++) {
+    p1.x = 0;
+    p1.z = 20;
+    p2.x = 0;
+    p2.z = 12;
+    p1.angle = 0;
+    p2.angle = 0;
+    p2.speed = 25;
+    stepKartSimulation(sim, 1 / 30);
+  }
+  assert.ok(p2.slipstreamTimer > 1.0, 'Drafting directly behind leader charges slipstream draft');
+
+  stopKartSimulation('TEST_ADVANCED_KART');
+});
+
+test('Kart Clash: Expanded items (Blue Shell, Golden Shroom, Super Horn, Fake Box)', async () => {
+  const {
+    createKartSimulation,
+    stepKartSimulation,
+    stopKartSimulation,
+    buildKartRacers,
+    fireKartItem,
+  } = await import('./kart-physics');
+
+  const racers = buildKartRacers(
+    [
+      { id: 'leader', name: 'Leader', avatar: '👑', avatarColor: '#facc15' },
+      { id: 'trailing', name: 'Chaser', avatar: '🏎️', avatarColor: '#38bdf8' },
+    ],
+    false,
+    2,
+  );
+
+  const sim = createKartSimulation({
+    roomCode: 'TEST_ITEMS',
+    raceId: 'race-items',
+    trackId: 'volcano-inferno',
+    racers,
+  });
+
+  sim.countdownMs = 0;
+  const leader = sim.karts['leader'];
+  const chaser = sim.karts['trailing'];
+  leader.rank = 1;
+  chaser.rank = 2;
+
+  // 1. Golden Mushroom test
+  chaser.heldItem = 'golden_mushroom';
+  fireKartItem(sim, 'trailing');
+  assert.ok((chaser.goldenShroomTimer ?? 0) > 0, 'Golden mushroom activates multi-use timer');
+  assert.equal(chaser.heldItem, 'golden_mushroom', 'Golden mushroom stays held while timer is active');
+
+  // 2. Fake Item Box hazard test
+  leader.heldItem = 'fake_box';
+  fireKartItem(sim, 'leader');
+  const fakeBox = sim.hazards.find((h) => h.kind === 'fake_box');
+  assert.ok(fakeBox, 'Fake Item Box drops as a stationary hazard');
+
+  // 3. Super Horn test (shatters nearby hazards)
+  chaser.heldItem = 'super_horn';
+  fakeBox.x = chaser.x + 1;
+  fakeBox.z = chaser.z + 1;
+  fireKartItem(sim, 'trailing');
+  assert.ok(!sim.hazards.some((h) => h.id === fakeBox.id), 'Super Horn sonic blast shatters nearby hazards');
+
+  // 4. Blue Spiny Shell test
+  chaser.heldItem = 'spiny_shell';
+  fireKartItem(sim, 'trailing');
+  const blueShell = sim.hazards.find((h) => h.kind === 'spiny_shell');
+  assert.ok(blueShell, 'Spiny Blue Shell is spawned');
+  assert.equal(blueShell.targetKartId, 'leader', 'Spiny Blue Shell targets 1st place leader');
+
+  stopKartSimulation('TEST_ITEMS');
+});
+
+test('Kart Clash: 6 Tracks registered with banking camber samples and theme scenery', async () => {
+  const { KART_TRACKS, TRACK_LIST } = await import('./kart-tracks');
+  assert.equal(TRACK_LIST.length, 6, 'Total of 6 playable courses available in Kart Clash');
+  assert.ok(KART_TRACKS['volcano-inferno'], 'Volcano Inferno track exists');
+  assert.ok(KART_TRACKS['cyber-metro'], 'Cyber Metropolis track exists');
+
+  for (const track of TRACK_LIST) {
+    assert.ok(track.samples.length >= 200, `${track.id} has high-resolution spline samples`);
+    assert.ok(track.samples.some((s) => s.bank !== undefined && s.bank !== 0), `${track.id} has 3D road camber banking`);
+    assert.ok(track.itemBoxes.length >= 4, `${track.id} has item box locations`);
+    assert.ok(track.boostPads.length >= 2, `${track.id} has boost pads`);
+  }
+});
+
+test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace period, and telemetry snapshot', async () => {
+  const {
+    createKartSimulation,
+    stepKartSimulation,
+    stopKartSimulation,
+    buildKartRacers,
+    fireKartItem,
+    getKartSnapshot,
+  } = await import('./kart-physics');
+
+  // 1. Verify 6-race Grand Prix configuration
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  await engine.joinRoom(roomCode, 'Speedy');
+  await engine.processAction(roomCode, hostId, {
+    type: 'SET_KART_CONFIG',
+    format: 'grand-prix',
+    totalRaces: 6,
+    speedClass: '200cc',
+    itemsMode: 'frantic',
+  });
+  const state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.gameData.totalRaces, 6, 'Grand Prix allows configuring all 6 tracks');
+  assert.equal(state.gameData.speedClass, '200cc', 'Speed class configured to 200cc');
+  assert.equal(state.gameData.itemsMode, 'frantic', 'Items mode configured to frantic');
+
+  // 2. Test Super Horn spawns a shockwave hazard
+  const racers = buildKartRacers([
+    { id: 'p1', name: 'Racer 1', avatar: '🏎️', avatarColor: '#38bdf8' },
+    { id: 'p2', name: 'Racer 2', avatar: '🚗', avatarColor: '#f43f5e' },
+  ]);
+  const sim = createKartSimulation({
+    roomCode: 'TEST_EXTRA_VERIF',
+    raceId: 'race_test_extra',
+    trackId: 'neon-starway',
+    speedClass: '150cc',
+    itemsMode: 'normal',
+    racers,
+  });
+  sim.countdownMs = 0;
+  sim.karts['p1'].heldItem = 'super_horn';
+  fireKartItem(sim, 'p1');
+
+  const shockwave = sim.hazards.find((h) => h.kind === 'shockwave');
+  assert.ok(shockwave, 'Super Horn creates a shockwave hazard');
+  assert.equal(shockwave.ownerId, 'p1', 'Shockwave hazard is attributed to firing racer');
+
+  // 3. Test Fake Box grace period (immune for first 0.8s, vulnerable afterwards)
+  const p1 = sim.karts['p1'];
+  p1.heldItem = 'fake_box';
+  fireKartItem(sim, 'p1');
+  const fakeBox = sim.hazards.find((h) => h.kind === 'fake_box');
+  assert.ok(fakeBox, 'Fake Box hazard dropped');
+
+  // Place p1 directly on top of fakeBox
+  p1.x = fakeBox.x;
+  p1.z = fakeBox.z;
+  p1.spinOutTimer = 0;
+
+  // With TTL > 49.2 (grace period active), stepping does not spin out owner
+  fakeBox.ttl = 49.5;
+  stepKartSimulation(sim, 0.05);
+  assert.equal(p1.spinOutTimer, 0, 'Owner is immune to own Fake Box during 0.8s grace period');
+
+  // Once TTL drops below 49.2, stepping spins out owner
+  fakeBox.ttl = 49.0;
+  stepKartSimulation(sim, 0.05);
+  assert.ok(p1.spinOutTimer > 0, 'Owner triggers Fake Box after grace period expires');
+
+  // 4. Test Spiny Shell explosion spawns shockwave hazard on impact
+  const leaderKart = sim.karts['p2'];
+  leaderKart.totalProgress = 5000;
+  leaderKart.rank = 1;
+  sim.karts['p1'].totalProgress = 100;
+  sim.karts['p1'].rank = 2;
+  leaderKart.spinOutTimer = 0;
+
+  sim.hazards.push({
+    id: 'test_blue_shell',
+    kind: 'spiny_shell',
+    ownerId: 'p1',
+    targetId: 'p2',
+    targetKartId: 'p2',
+    x: leaderKart.x,
+    z: leaderKart.z,
+    vx: 0,
+    vz: 0,
+    angle: 0,
+    progress: leaderKart.progress,
+    bouncesLeft: 0,
+    ttl: 10,
+  });
+  stepKartSimulation(sim, 0.05);
+  const spinyShockwave = sim.hazards.find((h) => h.kind === 'shockwave' && Math.hypot(h.x - leaderKart.x, h.z - leaderKart.z) < 2);
+  assert.ok(spinyShockwave, 'Spiny Blue Shell impact spawns a shockwave hazard');
+
+  // 5. Test getKartSnapshot exposes fastestLap, lateralOffset, and sampleIdx
+  sim.stats.fastestLap = { racerId: 'p1', racerName: 'Racer 1', timeMs: 24500 };
+  p1.lateralOffset = 3.5;
+  p1.sampleIdx = 42;
+  const snapshot = getKartSnapshot(sim);
+  assert.deepEqual(snapshot.fastestLap, { racerId: 'p1', racerName: 'Racer 1', timeMs: 24500 });
+  const snapKart = snapshot.karts.find((k) => k.id === 'p1');
+  assert.ok(snapKart, 'Kart found in snapshot');
+  assert.equal(snapKart.lateralOffset, 3.5, 'lateralOffset exposed in snapshot');
+  assert.equal(snapKart.sampleIdx, 42, 'sampleIdx exposed in snapshot');
+
+  stopKartSimulation('TEST_EXTRA_VERIF');
 });
 
 

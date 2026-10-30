@@ -455,6 +455,75 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               );
             })()}
 
+            {/* Kart Clash Garage Customization Card */}
+            {state.gameType === 'kart-clash' && (() => {
+              const myCustom = state.gameData?.customizations?.[me.id] || { kartStyle: 'classic', sparksColor: me.avatarColor || '#38bdf8' };
+              const currentStyle = myCustom.kartStyle || 'classic';
+              const currentSpark = myCustom.sparksColor || me.avatarColor || '#38bdf8';
+              return (
+                <div style={{ width: '100%', marginTop: '0.85rem', background: 'rgba(15,23,42,0.92)', border: '1.5px solid rgba(6,182,212,0.4)', borderRadius: '16px', padding: '0.85rem 1rem', textAlign: 'left' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--party-cyan)' }}>
+                      🏎️ Kart Garage &amp; Chassis
+                    </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--party-text-muted)' }}>Custom 3D Model</span>
+                  </div>
+
+                  {/* Chassis Styles */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.4rem', marginBottom: '0.65rem' }}>
+                    {[
+                      { id: 'classic', emoji: '🏎️', label: 'Classic' },
+                      { id: 'rocket', emoji: '🚀', label: 'Rocket' },
+                      { id: 'cyber', emoji: '⚡', label: 'Cyber' },
+                      { id: 'bruiser', emoji: '🛡️', label: 'Bruiser' },
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => sendAction({ type: 'SET_KART_CUSTOMIZATION', kartStyle: st.id, sparksColor: currentSpark })}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '0.2rem',
+                          padding: '0.45rem 0.2rem',
+                          borderRadius: '10px',
+                          border: currentStyle === st.id ? '2px solid var(--party-cyan)' : '1px solid rgba(255,255,255,0.12)',
+                          background: currentStyle === st.id ? 'rgba(6,182,212,0.22)' : 'rgba(255,255,255,0.04)',
+                          color: '#fff',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span style={{ fontSize: '1.3rem' }}>{st.emoji}</span>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 800 }}>{st.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Drift Sparks / Underglow Palette */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>Neon Sparks:</span>
+                    {['#38bdf8', '#f97316', '#d946ef', '#22c55e', '#ef4444', '#facc15'].map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() => sendAction({ type: 'SET_KART_CUSTOMIZATION', kartStyle: currentStyle, sparksColor: hex })}
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          background: hex,
+                          border: currentSpark === hex ? '2.5px solid #fff' : '1px solid rgba(0,0,0,0.5)',
+                          boxShadow: currentSpark === hex ? `0 0 10px ${hex}` : 'none',
+                          cursor: 'pointer',
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Players in Room */}
             <div style={{ width: '100%', marginTop: '1rem' }}>
               <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--party-text-muted)', marginBottom: '0.5rem', textAlign: 'center' }}>
@@ -589,7 +658,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                         {kc.format === 'grand-prix' ? (
                           <>
                             <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>Races:</span>
-                            {[1, 2, 3, 4].map((r) => (
+                            {[1, 2, 3, 4, 6].map((r) => (
                               <button
                                 key={r}
                                 type="button"
@@ -649,6 +718,56 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                         >
                           🤖 Bots: {kc.aiBots ? 'ON' : 'OFF'}
                         </button>
+                      </div>
+
+                      {/* Speed Class & Items Mode on mobile host controls */}
+                      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-yellow)' }}>Speed:</span>
+                        {['50cc', '100cc', '150cc', '200cc'].map((sc) => (
+                          <button
+                            key={sc}
+                            type="button"
+                            onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', speedClass: sc })}
+                            style={{
+                              background: (kc.speedClass || '150cc') === sc ? 'var(--party-yellow)' : 'transparent',
+                              color: (kc.speedClass || '150cc') === sc ? '#000' : '#fff',
+                              border: '1px solid var(--party-yellow)',
+                              padding: '0.18rem 0.5rem',
+                              borderRadius: '6px',
+                              fontWeight: 800,
+                              fontSize: '0.74rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {sc}
+                          </button>
+                        ))}
+
+                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--party-pink)', marginLeft: '0.3rem' }}>Items:</span>
+                        {[
+                          { id: 'normal', label: 'Normal' },
+                          { id: 'frantic', label: 'Frantic' },
+                          { id: 'shells-only', label: 'Shells' },
+                          { id: 'pure', label: 'Pure' },
+                        ].map((im) => (
+                          <button
+                            key={im.id}
+                            type="button"
+                            onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', itemsMode: im.id })}
+                            style={{
+                              background: (kc.itemsMode || 'normal') === im.id ? 'var(--party-pink)' : 'transparent',
+                              color: (kc.itemsMode || 'normal') === im.id ? '#fff' : 'var(--party-text-muted)',
+                              border: '1px solid var(--party-pink)',
+                              padding: '0.18rem 0.5rem',
+                              borderRadius: '6px',
+                              fontWeight: 800,
+                              fontSize: '0.74rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {im.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );

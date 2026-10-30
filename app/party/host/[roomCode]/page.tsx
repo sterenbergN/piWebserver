@@ -460,16 +460,21 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               const totalRaces = state.gameData?.totalRaces || 3;
               const heatSize = state.gameData?.heatSize || 4;
               const aiBots = state.gameData?.aiBots !== false;
+              const speedClass = state.gameData?.speedClass || '150cc';
+              const itemsMode = state.gameData?.itemsMode || 'normal';
+
               return (
-                <div className="party-card" style={{ maxWidth: '720px', margin: '1.5rem auto 0', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div className="party-card" style={{ maxWidth: '820px', margin: '1.5rem auto 0', padding: '1.1rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.95rem' }}>
+                  {/* Format Selector */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', justifyContent: 'center' }}>
                     <span style={{ fontWeight: 800, color: 'var(--party-cyan)' }}>🏁 Race Format:</span>
                     {[
                       { id: 'grand-prix', label: '🏆 Grand Prix Cup (All Together)' },
                       { id: 'tournament', label: '🔥 Tournament Heats (Bracket Heats)' },
-                    ].map(opt => (
+                    ].map((opt) => (
                       <button
                         key={opt.id}
+                        type="button"
                         onClick={() => sendAction({ type: 'SET_KART_CONFIG', format: opt.id })}
                         style={{
                           background: format === opt.id ? 'var(--party-cyan)' : 'transparent',
@@ -485,13 +490,77 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                       </button>
                     ))}
                   </div>
+
+                  {/* Speed Class & Item Mode */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
+                    {/* Speed Class */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--party-yellow)' }}>⚡ Engine:</span>
+                      {[
+                        { id: '50cc', label: '50cc' },
+                        { id: '100cc', label: '100cc' },
+                        { id: '150cc', label: '150cc' },
+                        { id: '200cc', label: '200cc 🔥' },
+                      ].map((sc) => (
+                        <button
+                          key={sc.id}
+                          type="button"
+                          onClick={() => sendAction({ type: 'SET_KART_CONFIG', speedClass: sc.id })}
+                          style={{
+                            background: speedClass === sc.id ? 'var(--party-yellow)' : 'transparent',
+                            color: speedClass === sc.id ? '#000' : '#fff',
+                            border: '1.5px solid var(--party-yellow)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: '8px',
+                            fontWeight: 900,
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {sc.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Item Mode */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <span style={{ fontWeight: 800, fontSize: '0.85rem', color: 'var(--party-pink)' }}>🎁 Items:</span>
+                      {[
+                        { id: 'normal', label: 'Normal' },
+                        { id: 'frantic', label: 'Frantic 💥' },
+                        { id: 'shells-only', label: 'Shells 🟢' },
+                        { id: 'pure', label: 'Pure 🏎️' },
+                      ].map((im) => (
+                        <button
+                          key={im.id}
+                          type="button"
+                          onClick={() => sendAction({ type: 'SET_KART_CONFIG', itemsMode: im.id })}
+                          style={{
+                            background: itemsMode === im.id ? 'var(--party-pink)' : 'transparent',
+                            color: itemsMode === im.id ? '#fff' : '#cbd5e1',
+                            border: '1.5px solid var(--party-pink)',
+                            padding: '0.25rem 0.6rem',
+                            borderRadius: '8px',
+                            fontWeight: 900,
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {im.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Cup Races / Heat Size & AI Bots */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
                     {format === 'grand-prix' ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Cup Races:</span>
-                        {[1, 2, 3, 4].map(r => (
+                        {[1, 2, 3, 4, 6].map((r) => (
                           <button
                             key={r}
+                            type="button"
                             onClick={() => sendAction({ type: 'SET_KART_CONFIG', totalRaces: r })}
                             style={{
                               background: totalRaces === r ? 'var(--party-yellow)' : 'transparent',
@@ -510,9 +579,10 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>Racers per Heat:</span>
-                        {[2, 4, 8].map(sz => (
+                        {[2, 4, 8].map((sz) => (
                           <button
                             key={sz}
+                            type="button"
                             onClick={() => sendAction({ type: 'SET_KART_CONFIG', heatSize: sz })}
                             style={{
                               background: heatSize === sz ? 'var(--party-yellow)' : 'transparent',
@@ -530,6 +600,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                       </div>
                     )}
                     <button
+                      type="button"
                       onClick={() => sendAction({ type: 'SET_KART_CONFIG', aiBots: !aiBots })}
                       style={{
                         background: aiBots ? 'rgba(34,197,94,0.2)' : 'transparent',

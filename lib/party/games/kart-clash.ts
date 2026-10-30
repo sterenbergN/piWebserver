@@ -6,6 +6,8 @@ import { waitingFor } from '../presence';
 import { KART_TRACKS, TRACK_LIST, TrackId } from '../kart-tracks';
 import {
   KartRaceSim,
+  KartSpeedClass,
+  KartItemsMode,
   buildKartRacers,
   createKartSimulation,
   getKartSimulation,
@@ -60,10 +62,16 @@ function getKartConfig(state: GameState) {
     : gd.format === 'tournament'
     ? 'tournament'
     : 'grand-prix';
-  const totalRaces = typeof gd.totalRaces === 'number' ? Math.max(1, Math.min(4, gd.totalRaces)) : 3;
+  const totalRaces = typeof gd.totalRaces === 'number' ? Math.max(1, Math.min(6, gd.totalRaces)) : 3;
   const heatSize: 2 | 4 | 8 = gd.heatSize === 2 || gd.heatSize === 8 ? gd.heatSize : 4;
   const aiBots = typeof gd.aiBots === 'boolean' ? gd.aiBots : true;
-  return { format, totalRaces, heatSize, aiBots };
+  const speedClass: KartSpeedClass = gd.speedClass === '50cc' || gd.speedClass === '100cc' || gd.speedClass === '200cc'
+    ? gd.speedClass
+    : '150cc';
+  const itemsMode: KartItemsMode = gd.itemsMode === 'frantic' || gd.itemsMode === 'shells-only' || gd.itemsMode === 'pure'
+    ? gd.itemsMode
+    : 'normal';
+  return { format, totalRaces, heatSize, aiBots, speedClass, itemsMode };
 }
 
 function createBalancedHeats(playerIds: string[], heatSize: 2 | 4 | 8, shuffle = false): KartHeat[] {
@@ -103,6 +111,8 @@ function syncHeatSetupViews(state: GameState) {
   state.hostData = {
     phase: 'HEAT_SETUP',
     format: cfg.format,
+    speedClass: cfg.speedClass,
+    itemsMode: cfg.itemsMode,
     heatSize: cfg.heatSize,
     aiBots: cfg.aiBots,
     totalRaces: cfg.totalRaces,
@@ -116,15 +126,20 @@ function syncHeatSetupViews(state: GameState) {
     const myNextHeat = heats.find((h) => h.status === 'pending' && h.playerIds.includes(pid))
       || heats.find((h) => h.playerIds.includes(pid))
       || null;
+    const custom = state.gameData?.customizations?.[pid] || {};
     state.playerData[pid] = {
       phase: 'HEAT_SETUP',
       format: cfg.format,
+      speedClass: cfg.speedClass,
+      itemsMode: cfg.itemsMode,
       heatSize: cfg.heatSize,
       aiBots: cfg.aiBots,
       myHeatId: myNextHeat?.id || null,
       myHeatName: myNextHeat?.name || null,
       nextHeatId: nextPending?.id || null,
       nextHeatName: nextPending?.name || null,
+      kartStyle: custom.kartStyle || 'classic',
+      sparksColor: custom.sparksColor || state.players[pid]?.avatarColor || '#38bdf8',
     };
   }
 }
@@ -153,6 +168,8 @@ function startTrackVote(state: GameState, activeHeat?: KartHeat) {
   state.hostData = {
     phase: 'TRACK_VOTE',
     format: cfg.format,
+    speedClass: cfg.speedClass,
+    itemsMode: cfg.itemsMode,
     raceNumber: state.gameData.raceNumber,
     totalRaces: cfg.format === 'grand-prix' ? cfg.totalRaces : (state.gameData.heats?.length || 1),
     heatId: activeHeat?.id || null,
@@ -179,9 +196,14 @@ function startTrackVote(state: GameState, activeHeat?: KartHeat) {
     const myUpcomingHeat = (state.gameData.heats || []).find(
       (h: KartHeat) => h.status === 'pending' && h.playerIds.includes(pid),
     );
+    const custom = state.gameData?.customizations?.[pid] || {};
     state.playerData[pid] = {
       phase: 'TRACK_VOTE',
       isRacing,
+      speedClass: cfg.speedClass,
+      itemsMode: cfg.itemsMode,
+      kartStyle: custom.kartStyle || 'classic',
+      sparksColor: custom.sparksColor || state.players[pid]?.avatarColor || '#38bdf8',
       heatName: state.gameData.activeHeatName,
       myUpcomingHeatName: myUpcomingHeat?.name || null,
       activeRacers: activeRacers.map((rid) => ({
@@ -224,8 +246,20 @@ function launchRace(state: GameState, trackId: TrackId) {
 
   const activeRacerIds: string[] = state.gameData.activeRacers || activeRoomPlayers(state).slice(0, 8);
   const humanPlayers = activeRacerIds
-    .map((pid) => state.players[pid])
-    .filter(Boolean);
+    .map((pid) => {
+      const p = state.players[pid];
+      if (!p) return null;
+      const custom = state.gameData?.customizations?.[pid] || {};
+      return {
+        id: p.id,
+        name: p.name,
+        avatar: p.avatar,
+        avatarColor: p.avatarColor,
+        kartStyle: custom.kartStyle || 'classic',
+        sparksColor: custom.sparksColor || p.avatarColor || '#38bdf8',
+      };
+    })
+    .filter(Boolean) as any[];
 
   const targetGridSize = cfg.format === 'tournament' ? Math.max(cfg.heatSize, humanPlayers.length, cfg.aiBots ? 6 : humanPlayers.length) : 8;
   const racers = buildKartRacers(humanPlayers, cfg.aiBots, targetGridSize);
@@ -238,6 +272,8 @@ function launchRace(state: GameState, trackId: TrackId) {
     trackId: track.id,
     racers,
     totalLaps: 3,
+    speedClass: cfg.speedClass,
+    itemsMode: cfg.itemsMode,
     onFinish: () => {
       // Automatically transition room state to RACE_RESULTS when physics loop completes
       import('../engine')
@@ -258,6 +294,8 @@ function launchRace(state: GameState, trackId: TrackId) {
   state.hostData = {
     phase: 'RACING',
     format: cfg.format,
+    speedClass: cfg.speedClass,
+    itemsMode: cfg.itemsMode,
     raceId,
     raceNumber: state.gameData.raceNumber,
     totalRaces: cfg.format === 'grand-prix' ? cfg.totalRaces : (state.gameData.heats?.length || 1),
@@ -277,12 +315,17 @@ function launchRace(state: GameState, trackId: TrackId) {
     const myUpcomingHeat = (state.gameData.heats || []).find(
       (h: KartHeat) => h.status === 'pending' && h.id !== state.gameData.activeHeatId && h.playerIds.includes(pid),
     );
+    const custom = state.gameData?.customizations?.[pid] || {};
     state.playerData[pid] = {
       phase: 'RACING',
       isRacing,
       raceId,
       trackId: track.id,
       trackName: `${track.emoji} ${track.name}`,
+      speedClass: cfg.speedClass,
+      itemsMode: cfg.itemsMode,
+      kartStyle: custom.kartStyle || 'classic',
+      sparksColor: custom.sparksColor || state.players[pid]?.avatarColor || '#38bdf8',
       heatName: state.gameData.activeHeatName,
       myUpcomingHeatName: myUpcomingHeat?.name || null,
       activeRacers: humanPlayers.map((p) => ({
@@ -328,6 +371,9 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     }
     for (const [pid, count] of Object.entries(activeSim.stats.spunOut)) {
       bumpStat(state, 'spunOut', pid, count);
+    }
+    if (activeSim.stats.fastestLap?.racerId) {
+      bumpStat(state, 'fastestLap', activeSim.stats.fastestLap.racerId, 1);
     }
   } else {
     standings = activeRacerIds.map((pid, idx) => ({
@@ -421,6 +467,8 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   state.hostData = {
     phase: 'RACE_RESULTS',
     format: cfg.format,
+    speedClass: cfg.speedClass,
+    itemsMode: cfg.itemsMode,
     raceNumber: state.gameData.raceNumber,
     totalRaces: cfg.format === 'grand-prix' ? cfg.totalRaces : heats.length,
     heatId: currentHeat?.id || null,
@@ -428,6 +476,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     isFinalHeat,
     trackId: state.gameData.currentTrackId,
     standings,
+    fastestLap: activeSim?.stats?.fastestLap || null,
     topHumanId: topHuman?.id || null,
     correctPredictors,
     qualifiers: currentHeat?.qualifiers || [],
@@ -451,6 +500,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       wonPrediction,
       predictionBonus: wonPrediction ? PIT_CREW_PREDICT_BONUS : 0,
       topHumanName: topHuman?.name || standings[0]?.name || 'Winner',
+      fastestLap: activeSim?.stats?.fastestLap || null,
       standings: standings.slice(0, 8),
     };
   }
@@ -494,7 +544,7 @@ export const kartClashLogic = {
         if (action.format === 'grand-prix' || action.format === 'tournament') {
           gd.format = action.format;
         }
-        if (typeof action.totalRaces === 'number' && action.totalRaces >= 1 && action.totalRaces <= 4) {
+        if (typeof action.totalRaces === 'number' && action.totalRaces >= 1 && action.totalRaces <= 6) {
           gd.totalRaces = Math.round(action.totalRaces);
         }
         if (action.heatSize === 2 || action.heatSize === 4 || action.heatSize === 8) {
@@ -502,6 +552,12 @@ export const kartClashLogic = {
         }
         if (typeof action.aiBots === 'boolean') {
           gd.aiBots = action.aiBots;
+        }
+        if (action.speedClass === '50cc' || action.speedClass === '100cc' || action.speedClass === '150cc' || action.speedClass === '200cc') {
+          gd.speedClass = action.speedClass;
+        }
+        if (action.itemsMode === 'normal' || action.itemsMode === 'frantic' || action.itemsMode === 'shells-only' || action.itemsMode === 'pure') {
+          gd.itemsMode = action.itemsMode;
         }
 
         if (state.phase === 'HEAT_SETUP') {
@@ -511,6 +567,23 @@ export const kartClashLogic = {
             gd.heats = createBalancedHeats(activeRoomPlayers(state), gd.heatSize, false);
           }
           syncHeatSetupViews(state);
+        }
+        break;
+      }
+
+      case 'SET_KART_CUSTOMIZATION': {
+        const gd = (state.gameData ||= {});
+        const custom = (gd.customizations ||= {});
+        const kartStyle = ['classic', 'rocket', 'cyber', 'bruiser'].includes(action.kartStyle)
+          ? action.kartStyle
+          : 'classic';
+        const sparksColor = typeof action.sparksColor === 'string' && action.sparksColor.startsWith('#')
+          ? action.sparksColor
+          : (state.players[playerId]?.avatarColor || '#38bdf8');
+        custom[playerId] = { kartStyle, sparksColor };
+        if (state.playerData[playerId]) {
+          state.playerData[playerId].kartStyle = kartStyle;
+          state.playerData[playerId].sparksColor = sparksColor;
         }
         break;
       }
@@ -751,6 +824,29 @@ export const kartClashLogic = {
       case 'KART_INPUT': {
         if (state.phase !== 'RACING') return;
         updateKartInput(state.roomCode, playerId, action.input || action);
+        break;
+      }
+
+      case 'HONK_HORN': {
+        if (state.phase !== 'RACING') return;
+        updateKartInput(state.roomCode, playerId, { honk: true });
+        break;
+      }
+
+      case 'PIT_CREW_EMOJI':
+      case 'SEND_EMOJI': {
+        if (state.phase !== 'RACING') return;
+        const emoji = typeof action.emoji === 'string' ? action.emoji.slice(0, 4) : '🏎️';
+        state.hostData = {
+          ...state.hostData,
+          latestEmoji: {
+            id: `${playerId}_${Date.now()}`,
+            playerId,
+            playerName: state.players[playerId]?.name || 'Pit Crew',
+            emoji,
+            timestamp: Date.now(),
+          },
+        };
         break;
       }
 

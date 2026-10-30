@@ -1,7 +1,27 @@
 import { partyEmitter } from './emitter';
 import { KART_TRACKS, KartTrack, TrackId, projectOntoTrack, sampleTrackAtProgress } from './kart-tracks';
 
-export type KartItemType = 'mushroom' | 'green_shell' | 'red_shell' | 'banana' | 'lightning' | 'star';
+export type KartItemType =
+  | 'mushroom'
+  | 'green_shell'
+  | 'red_shell'
+  | 'banana'
+  | 'lightning'
+  | 'star'
+  | 'spiny_shell'
+  | 'golden_mushroom'
+  | 'super_horn'
+  | 'fake_box';
+
+export type KartSpeedClass = '50cc' | '100cc' | '150cc' | '200cc';
+export type KartItemsMode = 'normal' | 'frantic' | 'shells-only' | 'pure';
+
+export const SPEED_CLASSES: Record<KartSpeedClass, { maxSpeed: number }> = {
+  '50cc': { maxSpeed: 24 },
+  '100cc': { maxSpeed: 29 },
+  '150cc': { maxSpeed: 33 },
+  '200cc': { maxSpeed: 38 },
+};
 
 export interface KartInputState {
   steer: number; // -1 (left) to +1 (right)
@@ -9,6 +29,7 @@ export interface KartInputState {
   brake: boolean;
   useItem: boolean;
   rocketTap?: boolean;
+  honk?: boolean;
   updatedAt: number;
 }
 
@@ -18,6 +39,8 @@ export interface KartRacerInit {
   avatar: string;
   color: string;
   isBot: boolean;
+  kartStyle?: 'classic' | 'rocket' | 'bruiser' | 'cyber';
+  sparksColor?: string;
 }
 
 export interface KartState {
@@ -26,6 +49,8 @@ export interface KartState {
   avatar: string;
   color: string;
   isBot: boolean;
+  kartStyle: 'classic' | 'rocket' | 'bruiser' | 'cyber';
+  sparksColor: string;
   x: number;
   z: number;
   angle: number; // radians, 0 = +Z, PI/2 = +X
@@ -40,17 +65,22 @@ export interface KartState {
   finished: boolean;
   finishTimeMs: number | null;
   finishRank: number | null;
+  lapStartTimeMs: number;
+  bestLapTimeMs: number | null;
   // Drifting & boosts
   drifting: boolean;
   driftDir: number; // -1 or +1
   driftTime: number;
-  driftLevel: 0 | 1 | 2; // 0=none, 1=blue sparks, 2=orange sparks
+  driftLevel: 0 | 1 | 2 | 3; // 0=none, 1=blue, 2=orange, 3=ultra purple
   boostTimer: number;
+  slipstreamTimer: number;
+  goldenShroomTimer: number;
   // Status effects
   spinOutTimer: number;
   shrinkTimer: number;
   starTimer: number;
   offRoad: boolean;
+  hornUntil: number;
   // Items
   heldItem: KartItemType | null;
   itemRouletteTimer: number;
@@ -69,9 +99,10 @@ export interface KartState {
 
 export interface KartHazard {
   id: string;
-  kind: 'green_shell' | 'red_shell' | 'banana';
+  kind: 'green_shell' | 'red_shell' | 'banana' | 'spiny_shell' | 'fake_box' | 'shockwave';
   ownerId: string;
   targetId: string | null;
+  targetKartId?: string | null;
   x: number;
   z: number;
   vx: number;
@@ -94,6 +125,7 @@ export interface KartRaceStats {
   drifts: Record<string, number>;
   hits: Record<string, number>;
   spunOut: Record<string, number>;
+  fastestLap?: { racerId: string; racerName: string; timeMs: number } | null;
 }
 
 export interface KartRaceSim {
@@ -102,6 +134,8 @@ export interface KartRaceSim {
   trackId: TrackId;
   track: KartTrack;
   totalLaps: number;
+  speedClass: KartSpeedClass;
+  itemsMode: KartItemsMode;
   startedAt: number;
   elapsedMs: number;
   countdownMs: number; // >0 during 3-2-1 countdown
@@ -127,35 +161,46 @@ export interface KartTelemetrySnapshot {
   raceId: string;
   trackId: TrackId;
   totalLaps: number;
+  speedClass: KartSpeedClass;
   elapsedMs: number;
   countdownMs: number;
   finishCountdownMs: number | null;
   announcement: string | null;
+  fastestLap?: { racerId: string; racerName: string; timeMs: number } | null;
   karts: {
     id: string;
     name: string;
     avatar: string;
     color: string;
     isBot: boolean;
+    kartStyle: 'classic' | 'rocket' | 'bruiser' | 'cyber';
+    sparksColor: string;
     x: number;
     z: number;
     angle: number;
     speed: number;
     lap: number;
     progress: number;
+    lateralOffset: number;
+    sampleIdx: number;
     rank: number;
     finished: boolean;
     finishRank: number | null;
     finishTimeMs: number | null;
+    bestLapTimeMs: number | null;
     drifting: boolean;
     driftDir: number;
-    driftLevel: 0 | 1 | 2;
-    driftCharge: number; // 0..100% progress toward Super Mini-Turbo
+    driftLevel: 0 | 1 | 2 | 3;
+    driftCharge: number; // 0..100% progress
     boostTimer: number;
+    slipstreamTimer: number;
+    goldenShroomTimer: number;
     spinOutTimer: number;
     shrinkTimer: number;
     starTimer: number;
     offRoad: boolean;
+    horn: boolean;
+    hasIncomingShell: boolean;
     heldItem: KartItemType | null;
     itemRoulette: boolean;
     statusText: string | null;
@@ -201,41 +246,59 @@ function setKartStatus(k: KartState, text: string, elapsedMs: number, durationMs
   k.statusUntil = elapsedMs + durationMs;
 }
 
-function rollWeightedItem(rank: number, totalKarts: number): KartItemType {
+function rollWeightedItem(rank: number, totalKarts: number, itemsMode: KartItemsMode = 'normal'): KartItemType {
+  if (itemsMode === 'pure') {
+    return Math.random() < 0.28 ? 'golden_mushroom' : 'mushroom';
+  }
+  if (itemsMode === 'shells-only') {
+    const r = Math.random();
+    if (rank === 1) return r < 0.62 ? 'banana' : 'green_shell';
+    if (rank >= totalKarts - 1 && r < 0.35) return 'spiny_shell';
+    return r < 0.45 ? 'red_shell' : r < 0.72 ? 'green_shell' : 'banana';
+  }
   const normPos = totalKarts > 1 ? (rank - 1) / (totalKarts - 1) : 0.5; // 0 = 1st place, 1 = last place
   const r = Math.random();
+
   if (normPos <= 0.2) {
-    // Leader / 2nd place: defensive & skill items
-    if (r < 0.45) return 'banana';
-    if (r < 0.85) return 'green_shell';
+    // Leader / 2nd place: defensive items + rare super horn to counter blue shells
+    if (r < 0.36) return 'banana';
+    if (r < 0.60) return 'fake_box';
+    if (r < 0.86) return 'green_shell';
+    if (r < 0.94) return 'super_horn';
     return 'mushroom';
   }
   if (normPos <= 0.6) {
     // Mid-pack: offensive & boost items
-    if (r < 0.30) return 'mushroom';
-    if (r < 0.60) return 'red_shell';
-    if (r < 0.80) return 'green_shell';
-    if (r < 0.92) return 'banana';
-    return 'star';
+    if (r < 0.22) return 'mushroom';
+    if (r < 0.44) return 'red_shell';
+    if (r < 0.62) return 'green_shell';
+    if (r < 0.76) return 'super_horn';
+    if (r < 0.88) return 'golden_mushroom';
+    if (r < 0.95) return 'star';
+    return 'banana';
   }
-  // Back of the pack: powerful catch-up items!
-  if (r < 0.30) return 'red_shell';
-  if (r < 0.58) return 'mushroom';
-  if (r < 0.82) return 'star';
+  // Back of the pack: powerful comeback items!
+  if (r < 0.24) return 'red_shell';
+  if (r < 0.48) return 'golden_mushroom';
+  if (r < 0.70) return 'star';
+  if (r < 0.88) return 'spiny_shell';
+  if (r < 0.96) return 'mushroom';
   return 'lightning';
 }
 
 export function buildKartRacers(
-  humanRacers: { id: string; name: string; avatar?: string; avatarColor: string }[],
+  humanRacers: { id: string; name: string; avatar?: string; avatarColor: string; kartStyle?: any; sparksColor?: string }[],
   fillWithBots: boolean,
   targetGridSize = 8,
 ): KartRacerInit[] {
-  const racers: KartRacerInit[] = humanRacers.map((p) => ({
+  const racers: KartRacerInit[] = humanRacers.map((p, idx) => ({
     id: p.id,
     name: p.name,
     avatar: p.avatar || '🏎️',
     color: p.avatarColor || '#38bdf8',
     isBot: false,
+    kartStyle: p.kartStyle || (idx % 4 === 1 ? 'rocket' : idx % 4 === 2 ? 'cyber' : idx % 4 === 3 ? 'bruiser' : 'classic'),
+    sparksColor: p.sparksColor || p.avatarColor || '#38bdf8',
   }));
 
   if (fillWithBots) {
@@ -250,6 +313,8 @@ export function buildKartRacers(
         avatar: candidate.avatar,
         color: candidate.color,
         isBot: true,
+        kartStyle: botIdx % 4 === 1 ? 'rocket' : botIdx % 4 === 2 ? 'cyber' : botIdx % 4 === 3 ? 'bruiser' : 'classic',
+        sparksColor: candidate.color,
       });
     }
   }
@@ -262,12 +327,16 @@ export function createKartSimulation(opts: {
   trackId: TrackId;
   racers: KartRacerInit[];
   totalLaps?: number;
+  speedClass?: KartSpeedClass;
+  itemsMode?: KartItemsMode;
   onFinish?: (sim: KartRaceSim) => void;
 }): KartRaceSim {
   stopKartSimulation(opts.roomCode);
 
   const track = KART_TRACKS[opts.trackId] || KART_TRACKS['sunny-circuit'];
   const totalLaps = opts.totalLaps || 3;
+  const speedClass: KartSpeedClass = opts.speedClass || '150cc';
+  const itemsMode: KartItemsMode = opts.itemsMode || 'normal';
   const karts: Record<string, KartState> = {};
   const kartOrder: string[] = [];
   const inputs: Record<string, KartInputState> = {};
@@ -288,6 +357,7 @@ export function createKartSimulation(opts: {
       drift: false,
       brake: false,
       useItem: false,
+      honk: false,
       updatedAt: Date.now(),
     };
 
@@ -297,6 +367,8 @@ export function createKartSimulation(opts: {
       avatar: r.avatar,
       color: r.color,
       isBot: r.isBot,
+      kartStyle: r.kartStyle || 'classic',
+      sparksColor: r.sparksColor || r.color,
       x,
       z,
       angle: sample.angle,
@@ -311,15 +383,20 @@ export function createKartSimulation(opts: {
       finished: false,
       finishTimeMs: null,
       finishRank: null,
+      lapStartTimeMs: 0,
+      bestLapTimeMs: null,
       drifting: false,
       driftDir: 0,
       driftTime: 0,
       driftLevel: 0,
       boostTimer: 0,
+      slipstreamTimer: 0,
+      goldenShroomTimer: 0,
       spinOutTimer: 0,
       shrinkTimer: 0,
       starTimer: 0,
       offRoad: false,
+      hornUntil: 0,
       heldItem: null,
       itemRouletteTimer: 0,
       pendingItem: null,
@@ -346,6 +423,8 @@ export function createKartSimulation(opts: {
     trackId: track.id,
     track,
     totalLaps,
+    speedClass,
+    itemsMode,
     startedAt: Date.now(),
     elapsedMs: 0,
     countdownMs: 3400, // 3.4s 3-2-1-GO countdown
@@ -361,7 +440,7 @@ export function createKartSimulation(opts: {
     halfwayChaosTriggered: false,
     announcement: 'Get Ready! Hold DRIFT on "1" for Rocket Start!',
     announcementUntil: 3200,
-    stats: { drifts: {}, hits: {}, spunOut: {} },
+    stats: { drifts: {}, hits: {}, spunOut: {}, fastestLap: null },
     onFinish: opts.onFinish,
   };
 
@@ -399,7 +478,7 @@ export function getKartSimulation(roomCode: string): KartRaceSim | undefined {
 export function updateKartInput(roomCode: string, playerId: string, raw: Partial<KartInputState>): boolean {
   const sim = activeSims.get(roomCode);
   if (!sim || !sim.karts[playerId]) return false;
-  const prev = sim.inputs[playerId] || { steer: 0, drift: false, brake: false, useItem: false, updatedAt: 0 };
+  const prev = sim.inputs[playerId] || { steer: 0, drift: false, brake: false, useItem: false, honk: false, updatedAt: 0 };
   const steer = typeof raw.steer === 'number' && Number.isFinite(raw.steer)
     ? Math.max(-1, Math.min(1, raw.steer))
     : prev.steer;
@@ -408,6 +487,11 @@ export function updateKartInput(roomCode: string, playerId: string, raw: Partial
   // Latch useItem=true until the next physics tick consumes it so a quick tap is never missed
   const useItem = raw.useItem === true ? true : prev.useItem;
   const rocketTap = raw.rocketTap === true ? true : prev.rocketTap;
+  const honk = raw.honk === true ? true : prev.honk;
+  if (honk) {
+    const k = sim.karts[playerId];
+    if (k) k.hornUntil = sim.elapsedMs + 800;
+  }
 
   sim.inputs[playerId] = {
     steer,
@@ -415,6 +499,7 @@ export function updateKartInput(roomCode: string, playerId: string, raw: Partial
     brake,
     useItem,
     rocketTap,
+    honk,
     updatedAt: Date.now(),
   };
   return true;
@@ -478,10 +563,14 @@ export function triggerChaosDrop(roomCode: string, effect: 'bananas' | 'item-box
   return true;
 }
 
-function fireKartItem(sim: KartRaceSim, k: KartState) {
+export function fireKartItem(sim: KartRaceSim, target: string | KartState) {
+  const k = typeof target === 'string' ? sim.karts[target] : target;
+  if (!k) return;
   const item = k.heldItem;
   if (!item) return;
-  k.heldItem = null;
+  if (item !== 'golden_mushroom') {
+    k.heldItem = null;
+  }
 
   switch (item) {
     case 'mushroom': {
@@ -579,6 +668,7 @@ function fireKartItem(sim: KartRaceSim, k: KartState) {
         kind: 'red_shell',
         ownerId: k.id,
         targetId: target ? target.id : null,
+        targetKartId: target ? target.id : null,
         x: sx,
         z: sz,
         vx: Math.sin(k.angle) * shellSpeed,
@@ -589,6 +679,100 @@ function fireKartItem(sim: KartRaceSim, k: KartState) {
         ttl: 10,
       });
       setKartStatus(k, '🔴 HOMING SHELL FIRED!', sim.elapsedMs, 1500);
+      break;
+    }
+    case 'spiny_shell': {
+      const fwdDist = 4.5;
+      const shellSpeed = 118;
+      const sx = k.x + Math.sin(k.angle) * fwdDist;
+      const sz = k.z + Math.cos(k.angle) * fwdDist;
+      const ranked = Object.values(sim.karts).sort((a, b) => a.rank - b.rank);
+      const leader = ranked[0] || null;
+      if (leader && !leader.finished) {
+        setKartStatus(leader, '🚨 BLUE SHELL INCOMING!', sim.elapsedMs, 3500);
+      }
+      sim.hazards.push({
+        id: `haz_${sim.nextHazardId++}`,
+        kind: 'spiny_shell',
+        ownerId: k.id,
+        targetId: leader ? leader.id : null,
+        targetKartId: leader ? leader.id : null,
+        x: sx,
+        z: sz,
+        vx: Math.sin(k.angle) * shellSpeed,
+        vz: Math.cos(k.angle) * shellSpeed,
+        angle: k.angle,
+        progress: (k.progress + 0.01) % 1,
+        bouncesLeft: 0,
+        ttl: 14,
+      });
+      sim.announcement = `🚨 ${k.name} launched a Blue Spiny Shell at the leader!`;
+      sim.announcementUntil = sim.elapsedMs + 3200;
+      setKartStatus(k, '🚨 BLUE SPINY SHELL LAUNCHED!', sim.elapsedMs, 2200);
+      break;
+    }
+    case 'golden_mushroom': {
+      k.goldenShroomTimer = Math.max(k.goldenShroomTimer, 5.5);
+      k.boostTimer = Math.max(k.boostTimer, 1.8);
+      setKartStatus(k, '👑 GOLDEN TURBO ACTIVE (TAP TO BURST)!', sim.elapsedMs, 2500);
+      break;
+    }
+    case 'super_horn': {
+      const blastRadius = 14;
+      sim.hazards.push({
+        id: `haz_${sim.nextHazardId++}`,
+        kind: 'shockwave',
+        ownerId: k.id,
+        targetId: null,
+        x: k.x,
+        z: k.z,
+        vx: 0,
+        vz: 0,
+        angle: k.angle,
+        progress: k.progress,
+        bouncesLeft: 0,
+        ttl: 0.85,
+      });
+      sim.hazards = sim.hazards.filter((h) => {
+        if (h.kind === 'shockwave') return true;
+        const d = Math.hypot(h.x - k.x, h.z - k.z);
+        return d > blastRadius;
+      });
+      for (const other of Object.values(sim.karts)) {
+        if (other.id === k.id || other.finished || other.starTimer > 0) continue;
+        const d = Math.hypot(other.x - k.x, other.z - k.z);
+        if (d <= blastRadius) {
+          other.spinOutTimer = 1.0;
+          other.speed *= 0.3;
+          other.drifting = false;
+          other.driftLevel = 0;
+          sim.stats.hits[k.id] = (sim.stats.hits[k.id] || 0) + 1;
+          sim.stats.spunOut[other.id] = (sim.stats.spunOut[other.id] || 0) + 1;
+          setKartStatus(other, `📢 BLASTED BY ${k.name}'s HORN!`, sim.elapsedMs, 1800);
+        }
+      }
+      setKartStatus(k, '📢 SUPER HORN BLAST!', sim.elapsedMs, 1600);
+      break;
+    }
+    case 'fake_box': {
+      const backDist = 4.2;
+      const bx = k.x - Math.sin(k.angle) * backDist;
+      const bz = k.z - Math.cos(k.angle) * backDist;
+      sim.hazards.push({
+        id: `haz_${sim.nextHazardId++}`,
+        kind: 'fake_box',
+        ownerId: k.id,
+        targetId: null,
+        x: bx,
+        z: bz,
+        vx: 0,
+        vz: 0,
+        angle: k.angle,
+        progress: k.progress,
+        bouncesLeft: 0,
+        ttl: 50,
+      });
+      setKartStatus(k, '📦 FAKE ITEM BOX DROPPED!', sim.elapsedMs, 1400);
       break;
     }
   }
@@ -724,6 +908,12 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
 
     // Decrement active timers
     if (k.boostTimer > 0) k.boostTimer = Math.max(0, k.boostTimer - dt);
+    if (k.goldenShroomTimer > 0) {
+      k.goldenShroomTimer = Math.max(0, k.goldenShroomTimer - dt);
+      if (k.goldenShroomTimer === 0 && k.heldItem === 'golden_mushroom') {
+        k.heldItem = null;
+      }
+    }
     if (k.spinOutTimer > 0) k.spinOutTimer = Math.max(0, k.spinOutTimer - dt);
     if (k.shrinkTimer > 0) k.shrinkTimer = Math.max(0, k.shrinkTimer - dt);
     if (k.starTimer > 0) k.starTimer = Math.max(0, k.starTimer - dt);
@@ -731,11 +921,14 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     // Finished karts cruise on gentle autopilot
     const inp = k.isBot || k.finished
       ? computeBotInput(sim, k, dt)
-      : sim.inputs[k.id] || { steer: 0, drift: false, brake: false, useItem: false, updatedAt: 0 };
+      : sim.inputs[k.id] || { steer: 0, drift: false, brake: false, useItem: false, honk: false, updatedAt: 0 };
 
-    // Consume item use
+    // Consume item use or golden mushroom tap
     if (inp.useItem && !k.finished && k.spinOutTimer <= 0) {
-      if (k.itemRouletteTimer > 0 && k.pendingItem) {
+      if (k.goldenShroomTimer > 0) {
+        k.boostTimer = Math.max(k.boostTimer, 1.45);
+        setKartStatus(k, '👑 GOLDEN BURST!', sim.elapsedMs, 800);
+      } else if (k.itemRouletteTimer > 0 && k.pendingItem) {
         // Fast-stop the roulette on tap
         k.itemRouletteTimer = 0;
         k.heldItem = k.pendingItem;
@@ -747,6 +940,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     if (!k.isBot && sim.inputs[k.id]) {
       sim.inputs[k.id].useItem = false;
       sim.inputs[k.id].rocketTap = false;
+      sim.inputs[k.id].honk = false;
     }
 
     const trackSample = sim.track.samples[k.sampleIdx] || sim.track.samples[0];
@@ -760,7 +954,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       k.driftTime = 0;
       k.driftLevel = 0;
     } else {
-      // Drifting & Mini-Turbo logic
+      // Drifting & 3-Tier Mini-Turbo logic
       const wantsDrift = inp.drift && !inp.brake && k.speed > 18;
       if (wantsDrift) {
         if (!k.drifting) {
@@ -777,19 +971,24 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
           k.driftLevel = 0;
         }
         if (k.drifting) {
-          // If player started drifting right before tilting the wheel, lock onto their tilt direction
           if (!k.isBot && k.driftTime < 0.45 && Math.abs(inp.steer) > 0.2) {
             k.driftDir = Math.sign(inp.steer);
           }
           const intoTurn = Math.max(0.8, 1.05 + inp.steer * k.driftDir * 0.65);
           k.driftTime += dt * intoTurn;
           const prevLevel = k.driftLevel;
-          if (k.driftTime >= 1.08) k.driftLevel = 2;
-          else if (k.driftTime >= 0.48) k.driftLevel = 1;
+          if (k.driftTime >= 1.85) k.driftLevel = 3;
+          else if (k.driftTime >= 1.05) k.driftLevel = 2;
+          else if (k.driftTime >= 0.45) k.driftLevel = 1;
+
           if (!k.isBot && k.driftLevel > prevLevel) {
             setKartStatus(
               k,
-              k.driftLevel === 2 ? '🔥 SUPER TURBO READY! RELEASE!' : '💨 MINI-TURBO READY!',
+              k.driftLevel === 3
+                ? '💜 ULTRA TURBO CHARGED!'
+                : k.driftLevel === 2
+                ? '🔥 SUPER TURBO READY!'
+                : '💨 MINI-TURBO READY!',
               sim.elapsedMs,
               900,
             );
@@ -797,17 +996,22 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         }
       }
 
-      // Trigger Mini-Turbo on drift release (or auto-trigger if Super Turbo is held past 2.2s)
-      const autoPopSuper = k.drifting && !k.isBot && k.driftLevel === 2 && k.driftTime >= 2.2;
-      if ((k.drifting && !wantsDrift) || autoPopSuper) {
-        if (k.driftLevel === 2) {
-          k.boostTimer = Math.max(k.boostTimer, 1.9);
-          sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
-          setKartStatus(k, '🔥 SUPER MINI-TURBO!', sim.elapsedMs, 1600);
-        } else if (k.driftLevel === 1) {
-          k.boostTimer = Math.max(k.boostTimer, 1.2);
-          sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
-          setKartStatus(k, '💨 MINI-TURBO!', sim.elapsedMs, 1300);
+      // Trigger Mini-Turbo on drift release
+      if (k.drifting && !wantsDrift) {
+        if (!inp.brake && k.speed > 15) {
+          if (k.driftLevel === 3) {
+            k.boostTimer = Math.max(k.boostTimer, 2.6);
+            sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
+            setKartStatus(k, '💜 ULTRA MINI-TURBO!!', sim.elapsedMs, 1800);
+          } else if (k.driftLevel === 2) {
+            k.boostTimer = Math.max(k.boostTimer, 1.9);
+            sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
+            setKartStatus(k, '🔥 SUPER MINI-TURBO!', sim.elapsedMs, 1500);
+          } else if (k.driftLevel === 1) {
+            k.boostTimer = Math.max(k.boostTimer, 1.2);
+            sim.stats.drifts[k.id] = (sim.stats.drifts[k.id] || 0) + 1;
+            setKartStatus(k, '💨 MINI-TURBO!', sim.elapsedMs, 1200);
+          }
         }
         k.drifting = false;
         k.driftDir = 0;
@@ -815,9 +1019,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         k.driftLevel = 0;
       }
 
-      // Unified Curvilinear Smart Arcade Steering (shared by humans and AI bots):
-      // Map steering input (and drift carve bias) to a target heading offset relative to the track tangent.
-      // Positive headingRel points toward -lateralOffset (left side of road); negative points toward +lateralOffset (right side).
+      // Unified Curvilinear Smart Arcade Steering
       const effectiveSteer = k.drifting
         ? Math.max(-1.2, Math.min(1.2, k.driftDir * 0.35 + inp.steer * 0.85))
         : inp.steer;
@@ -825,14 +1027,12 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       let targetRel = -effectiveSteer * maxAngle;
 
       // Smart Curb Assist: prevent steering off the asphalt near the left/right curbs
-      const edgeRatio = k.lateralOffset / halfRoad; // -1 = left curb, +1 = right curb
+      const edgeRatio = k.lateralOffset / halfRoad;
       if (edgeRatio > 0.72) {
-        // Near right curb: limit rightward heading (negative targetRel) and gently guide inward
         const allowRight = Math.max(0, (0.9 - edgeRatio) / 0.18) * maxAngle;
         const inwardNudge = Math.max(0, edgeRatio - 0.86) * 0.9;
         targetRel = Math.max(targetRel, -allowRight + inwardNudge);
       } else if (edgeRatio < -0.72) {
-        // Near left curb: limit leftward heading (positive targetRel) and gently guide inward
         const allowLeft = Math.max(0, (0.9 + edgeRatio) / 0.18) * maxAngle;
         const inwardNudge = Math.max(0, -edgeRatio - 0.86) * 0.9;
         targetRel = Math.min(targetRel, allowLeft - inwardNudge);
@@ -849,20 +1049,27 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       const curveAdvance = Math.max(0, k.speed) * dt * trackSample.curvature;
       k.angle = normalizeAngle(trackSample.angle + curveAdvance + nextRel);
 
-      // Top speed & acceleration calculation
-      let baseTopSpeed = 55;
+      // Top speed & acceleration calculation with speedClass scaling
+      const speedScale = sim.speedClass === '200cc'
+        ? 1.25
+        : sim.speedClass === '100cc'
+        ? 0.94
+        : sim.speedClass === '50cc'
+        ? 0.85
+        : 1.06;
+
+      let baseTopSpeed = 55 * speedScale;
       if (k.isBot) {
         const gap = leaderProgress - k.totalProgress;
-        if (gap > 0.22) baseTopSpeed = 56.5; // Catch-up
-        else if (gap < -0.1) baseTopSpeed = 50.0; // Let humans catch up
-        else baseTopSpeed = 52.0;
+        if (gap > 0.22) baseTopSpeed = 56.5 * speedScale;
+        else if (gap < -0.1) baseTopSpeed = 50.0 * speedScale;
+        else baseTopSpeed = 52.0 * speedScale;
       } else {
-        // Gentle position rubber-banding for trailing humans
         const rankRatio = (k.rank - 1) / Math.max(1, allKarts.length - 1);
-        baseTopSpeed = 55.5 + rankRatio * 3.5;
+        baseTopSpeed = (55.5 + rankRatio * 3.5) * speedScale;
       }
 
-      if (k.finished) baseTopSpeed = 38;
+      if (k.finished) baseTopSpeed = 38 * speedScale;
       if (k.drifting) baseTopSpeed *= 1.06;
       if (k.shrinkTimer > 0) baseTopSpeed *= 0.76;
       if (k.starTimer > 0) baseTopSpeed *= 1.28;
@@ -874,16 +1081,46 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       }
 
       if (inp.brake && !k.finished) {
-        // Brake / Reverse
         k.speed = Math.max(-16, k.speed - 58 * dt);
       } else {
-        const accel = k.boostTimer > 0 || k.starTimer > 0 ? 84 : 46;
+        const accel = (k.boostTimer > 0 || k.starTimer > 0 ? 84 : 46) * (sim.speedClass === '200cc' ? 1.25 : 1.0);
         if (k.speed < baseTopSpeed) {
           k.speed = Math.min(baseTopSpeed, k.speed + accel * dt);
         } else {
           k.speed = Math.max(baseTopSpeed, k.speed - 28 * dt);
         }
       }
+    }
+
+    // Slipstream Drafting behind opponent ahead
+    if (!k.finished && k.speed > 20) {
+      let inSlipstream = false;
+      for (const other of allKarts) {
+        if (other.id === k.id || other.finished) continue;
+        const dx = other.x - k.x;
+        const dz = other.z - k.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 3.0 && dist < 19.0) {
+          const fwd = (dx * Math.sin(k.angle) + dz * Math.cos(k.angle)) / dist;
+          const lat = Math.abs(dx * Math.cos(k.angle) - dz * Math.sin(k.angle));
+          if ((fwd > 0.88 && lat < 3.2) || (dist < 14.0 && fwd > 0.65 && lat < 6.0)) {
+            inSlipstream = true;
+            break;
+          }
+        }
+      }
+      if (inSlipstream) {
+        k.slipstreamTimer += dt;
+        if (k.slipstreamTimer >= 1.8) {
+          k.boostTimer = Math.max(k.boostTimer, 1.45);
+          k.slipstreamTimer = 0;
+          setKartStatus(k, '💨 SLIPSTREAM DRAFT!', sim.elapsedMs, 1400);
+        }
+      } else {
+        k.slipstreamTimer = Math.max(0, k.slipstreamTimer - dt * 1.5);
+      }
+    } else {
+      k.slipstreamTimer = 0;
     }
 
     // Move kart in XZ plane
@@ -907,16 +1144,29 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       k.angle = proj.sample.angle;
     }
 
-    // Lap & checkpoint tracking
+    // Lap & checkpoint tracking with timing
     const prevProgress = k.progress;
     const newProgress = proj.progress;
     if (newProgress >= 0.42 && newProgress <= 0.68) {
       k.passedHalfway = true;
     }
 
+    if (k.lapStartTimeMs === 0 && sim.countdownMs === 0) {
+      k.lapStartTimeMs = sim.elapsedMs;
+    }
+
     if (!k.finished && sim.elapsedMs > 2500) {
       // Crossed start/finish line forward
       if (prevProgress > 0.78 && newProgress < 0.22 && k.passedHalfway) {
+        const lapDuration = Math.round(sim.elapsedMs - k.lapStartTimeMs);
+        k.lapStartTimeMs = sim.elapsedMs;
+        if (!k.bestLapTimeMs || lapDuration < k.bestLapTimeMs) {
+          k.bestLapTimeMs = lapDuration;
+        }
+        if (!sim.stats.fastestLap || lapDuration < sim.stats.fastestLap.timeMs) {
+          sim.stats.fastestLap = { racerId: k.id, racerName: k.name, timeMs: lapDuration };
+        }
+
         k.lap++;
         k.passedHalfway = false;
         if (k.lap === sim.totalLaps) {
@@ -926,7 +1176,8 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
           k.finishTimeMs = Math.round(sim.elapsedMs);
           k.finishRank = sim.nextFinishRank++;
           setKartStatus(k, `🏁 FINISHED #${k.finishRank}!`, sim.elapsedMs, 10000);
-          if (!k.isBot && sim.finishCountdownMs === null) {
+          const hasHumanRacers = allKarts.some((kart) => !kart.isBot);
+          if (sim.finishCountdownMs === null && (!k.isBot || !hasHumanRacers)) {
             sim.finishCountdownMs = POST_FIRST_FINISH_MS;
             sim.announcement = `🏁 ${k.name} crossed the finish line! 18s remaining!`;
             sim.announcementUntil = sim.elapsedMs + 4000;
@@ -938,7 +1189,6 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     k.progress = newProgress;
     if (!k.finished) {
       const lapBase = k.lap - 1;
-      // Avoid rank jump right before start line on lap 1 before passing halfway
       const effectiveProgress = k.lap === 1 && !k.passedHalfway && newProgress > 0.85
         ? newProgress - 1
         : newProgress;
@@ -950,8 +1200,8 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     // Check boost pads
     for (const pad of sim.track.boostPads) {
       if (Math.hypot(k.x - pad.x, k.z - pad.z) < 4.2) {
-        if (k.boostTimer < 1.2) {
-          k.boostTimer = 1.25;
+        if (k.boostTimer < 1.25) {
+          k.boostTimer = 1.35;
           setKartStatus(k, '⚡ BOOST PAD!', sim.elapsedMs, 1000);
         }
       }
@@ -964,7 +1214,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         box.respawnTimer = box.isBonus ? 999 : 4.5;
         if (!k.heldItem && k.itemRouletteTimer <= 0 && !k.finished) {
           k.itemRouletteTimer = 1.1;
-          k.pendingItem = rollWeightedItem(k.rank, allKarts.length);
+          k.pendingItem = rollWeightedItem(k.rank, allKarts.length, sim.itemsMode);
         }
       }
     }
@@ -1005,7 +1255,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
     }
   }
 
-  // Step hazards (shells & bananas)
+  // Step hazards (green/red/spiny shells, bananas, fake boxes)
   const remainingHazards: KartHazard[] = [];
   for (const h of sim.hazards) {
     h.ttl -= dt;
@@ -1018,7 +1268,6 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       if (Math.abs(proj.lateralOffset) > sim.track.wallWidth - 1) {
         if (h.bouncesLeft > 0) {
           h.bouncesLeft--;
-          // Reflect velocity across track normal
           const dot = h.vx * proj.sample.nx + h.vz * proj.sample.nz;
           h.vx -= 2 * dot * proj.sample.nx;
           h.vz -= 2 * dot * proj.sample.nz;
@@ -1028,18 +1277,62 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         }
       }
     } else if (h.kind === 'red_shell') {
-      const target = h.targetId ? sim.karts[h.targetId] : null;
-      const speed = 90;
+      const speed = 92;
+      let target = h.targetId ? sim.karts[h.targetId] : null;
+      if (target?.finished) {
+        const sortedActive = Object.values(sim.karts).sort((a, b) => a.rank - b.rank).filter((r) => !r.finished && r.id !== h.ownerId);
+        target = sortedActive[0] || null;
+        if (target) {
+          h.targetId = target.id;
+          h.targetKartId = target.id;
+        }
+      }
       if (target && !target.finished && Math.hypot(target.x - h.x, target.z - h.z) < 28) {
-        // Direct lock-on when close
+        const distToTarget = Math.hypot(target.x - h.x, target.z - h.z);
         const desired = Math.atan2(target.x - h.x, target.z - h.z);
         h.angle = desired;
         h.vx = Math.sin(desired) * speed;
         h.vz = Math.cos(desired) * speed;
-        h.x += h.vx * dt;
-        h.z += h.vz * dt;
+        if (distToTarget <= speed * dt) {
+          h.x = target.x;
+          h.z = target.z;
+        } else {
+          h.x += h.vx * dt;
+          h.z += h.vz * dt;
+        }
+        h.progress = projectOntoTrack(sim.track, h.x, h.z, target.sampleIdx).progress;
       } else {
-        // Follow track centerline spline
+        h.progress = (h.progress + (speed * dt) / sim.track.totalLength) % 1;
+        const s = sampleTrackAtProgress(sim.track, h.progress);
+        h.x = s.x;
+        h.z = s.z;
+        h.angle = s.angle;
+      }
+    } else if (h.kind === 'spiny_shell') {
+      // Blue shell tracks toward active leader
+      const sortedActive = Object.values(sim.karts).sort((a, b) => a.rank - b.rank).filter((r) => !r.finished);
+      const currentLeader = sortedActive[0] || null;
+      if (currentLeader) {
+        h.targetId = currentLeader.id;
+        h.targetKartId = currentLeader.id;
+      }
+      const target = h.targetId ? sim.karts[h.targetId] : null;
+      const speed = 118;
+      if (target && !target.finished && Math.hypot(target.x - h.x, target.z - h.z) < 28) {
+        const distToTarget = Math.hypot(target.x - h.x, target.z - h.z);
+        const desired = Math.atan2(target.x - h.x, target.z - h.z);
+        h.angle = desired;
+        h.vx = Math.sin(desired) * speed;
+        h.vz = Math.cos(desired) * speed;
+        if (distToTarget <= speed * dt) {
+          h.x = target.x;
+          h.z = target.z;
+        } else {
+          h.x += h.vx * dt;
+          h.z += h.vz * dt;
+        }
+        h.progress = projectOntoTrack(sim.track, h.x, h.z, target.sampleIdx).progress;
+      } else {
         h.progress = (h.progress + (speed * dt) / sim.track.totalLength) % 1;
         const s = sampleTrackAtProgress(sim.track, h.progress);
         h.x = s.x;
@@ -1048,13 +1341,18 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
       }
     }
 
+    // Shockwaves do not collide with karts (instant damage already dealt)
+    if (h.kind === 'shockwave') {
+      remainingHazards.push(h);
+      continue;
+    }
+
     // Check collision with karts
     let hitKart: KartState | null = null;
     for (const k of allKarts) {
       if (k.finished) continue;
-      // Brief grace period for the thrower right after firing
-      if (k.id === h.ownerId && h.ttl > (h.kind === 'banana' ? 44.2 : 8.4)) continue;
-      const hitRadius = h.kind === 'banana' ? 2.4 : 2.9;
+      if (k.id === h.ownerId && h.ttl > (h.kind === 'fake_box' ? 49.2 : h.kind === 'banana' ? 44.2 : 8.4)) continue;
+      const hitRadius = h.kind === 'banana' || h.kind === 'fake_box' ? 2.6 : 3.2;
       if (Math.hypot(k.x - h.x, k.z - h.z) < hitRadius) {
         hitKart = k;
         break;
@@ -1063,8 +1361,9 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
 
     if (hitKart) {
       if (hitKart.starTimer <= 0) {
-        hitKart.spinOutTimer = 1.15;
-        hitKart.speed *= 0.25;
+        const isSpiny = h.kind === 'spiny_shell';
+        hitKart.spinOutTimer = isSpiny ? 1.7 : 1.15;
+        hitKart.speed *= isSpiny ? 0.15 : 0.25;
         hitKart.drifting = false;
         hitKart.driftLevel = 0;
         if (h.ownerId && h.ownerId !== hitKart.id && sim.karts[h.ownerId]) {
@@ -1072,10 +1371,45 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
           setKartStatus(sim.karts[h.ownerId], `🎯 HIT ${hitKart.name}!`, sim.elapsedMs, 1800);
         }
         sim.stats.spunOut[hitKart.id] = (sim.stats.spunOut[hitKart.id] || 0) + 1;
-        const label = h.kind === 'banana' ? '🍌 SLIPPED ON BANANA!' : '💥 HIT BY SHELL!';
-        setKartStatus(hitKart, label, sim.elapsedMs, 1800);
+        const label = h.kind === 'banana'
+          ? '🍌 SLIPPED ON BANANA!'
+          : h.kind === 'fake_box'
+          ? '📦 TRICKED BY FAKE BOX!'
+          : isSpiny
+          ? '💥 CRUSHED BY BLUE SHELL!'
+          : '💥 HIT BY SHELL!';
+        setKartStatus(hitKart, label, sim.elapsedMs, 2000);
+
+        // Blue shell blast damages surrounding karts too & spawns expanding visual shockwave
+        if (isSpiny) {
+          remainingHazards.push({
+            id: `haz_${sim.nextHazardId++}`,
+            kind: 'shockwave',
+            ownerId: h.ownerId,
+            targetId: null,
+            x: h.x,
+            z: h.z,
+            vx: 0,
+            vz: 0,
+            angle: 0,
+            progress: h.progress,
+            bouncesLeft: 0,
+            ttl: 1.1,
+          });
+          for (const other of allKarts) {
+            if (other.id !== hitKart.id && !other.finished && other.starTimer <= 0) {
+              if (Math.hypot(other.x - h.x, other.z - h.z) < 9.0) {
+                other.spinOutTimer = 1.0;
+                other.speed *= 0.3;
+                other.drifting = false;
+                other.driftLevel = 0;
+                setKartStatus(other, '💥 BLUE SHELL BLASTWAVE!', sim.elapsedMs, 1500);
+              }
+            }
+          }
+        }
       }
-      continue; // Hazard consumed
+      continue;
     }
 
     remainingHazards.push(h);
@@ -1096,6 +1430,7 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
   // Check race completion conditions
   const humanKarts = allKarts.filter((k) => !k.isBot);
   const allHumansFinished = humanKarts.length > 0 && humanKarts.every((k) => k.finished);
+  const allKartsFinished = allKarts.length > 0 && allKarts.every((k) => k.finished);
 
   if (sim.finishCountdownMs !== null) {
     sim.finishCountdownMs = Math.max(0, sim.finishCountdownMs - dtMs);
@@ -1103,10 +1438,10 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
 
   if (
     allHumansFinished ||
+    allKartsFinished ||
     (sim.finishCountdownMs !== null && sim.finishCountdownMs <= 0) ||
     sim.elapsedMs >= MAX_RACE_DURATION_MS
   ) {
-    // Assign final ranks to any unfinished karts based on current progress order
     for (const k of sorted) {
       if (!k.finished) {
         k.finished = true;
@@ -1124,37 +1459,62 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
     raceId: sim.raceId,
     trackId: sim.trackId,
     totalLaps: sim.totalLaps,
+    speedClass: sim.speedClass,
     elapsedMs: Math.round(sim.elapsedMs),
     countdownMs: Math.round(sim.countdownMs),
     finishCountdownMs: sim.finishCountdownMs !== null ? Math.round(sim.finishCountdownMs) : null,
     announcement: sim.announcement,
+    fastestLap: sim.stats.fastestLap || null,
     karts: sim.kartOrder.map((id) => {
       const k = sim.karts[id];
+      const driftChargePct = k.drifting
+        ? k.driftLevel === 3
+          ? 100
+          : k.driftLevel === 2
+          ? Math.min(100, Math.round(((k.driftTime - 1.05) / 0.8) * 100))
+          : k.driftLevel === 1
+          ? Math.min(100, Math.round(((k.driftTime - 0.45) / 0.6) * 100))
+          : Math.min(100, Math.round((k.driftTime / 0.45) * 100))
+        : 0;
+
+      const hasIncomingShell = sim.hazards.some(
+        (h) => (h.kind === 'red_shell' || h.kind === 'spiny_shell') && h.targetId === k.id,
+      );
+
       return {
         id: k.id,
         name: k.name,
         avatar: k.avatar,
         color: k.color,
         isBot: k.isBot,
+        kartStyle: k.kartStyle,
+        sparksColor: k.sparksColor,
         x: Math.round(k.x * 100) / 100,
         z: Math.round(k.z * 100) / 100,
         angle: Math.round(k.angle * 1000) / 1000,
         speed: Math.round(k.speed * 10) / 10,
         lap: Math.min(k.lap, sim.totalLaps),
         progress: Math.round(k.progress * 1000) / 1000,
+        lateralOffset: Math.round(k.lateralOffset * 100) / 100,
+        sampleIdx: k.sampleIdx,
         rank: k.rank,
         finished: k.finished,
         finishRank: k.finishRank,
         finishTimeMs: k.finishTimeMs,
+        bestLapTimeMs: k.bestLapTimeMs,
         drifting: k.drifting,
         driftDir: k.driftDir,
         driftLevel: k.driftLevel,
-        driftCharge: k.drifting ? Math.min(100, Math.round((k.driftTime / 1.08) * 100)) : 0,
+        driftCharge: driftChargePct,
         boostTimer: Math.round(k.boostTimer * 10) / 10,
+        slipstreamTimer: Math.round(k.slipstreamTimer * 10) / 10,
+        goldenShroomTimer: Math.round(k.goldenShroomTimer * 10) / 10,
         spinOutTimer: Math.round(k.spinOutTimer * 10) / 10,
         shrinkTimer: Math.round(k.shrinkTimer * 10) / 10,
         starTimer: Math.round(k.starTimer * 10) / 10,
         offRoad: k.offRoad,
+        horn: sim.elapsedMs < k.hornUntil,
+        hasIncomingShell,
         heldItem: k.heldItem,
         itemRoulette: k.itemRouletteTimer > 0,
         statusText: k.statusText,

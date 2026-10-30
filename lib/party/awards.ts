@@ -84,6 +84,7 @@ const AWARDS: Record<GameType, AwardDef[]> = {
     { stat: 'hits', emoji: '🎯', title: 'Shell Sniper', detail: (n) => `hit rivals ${plural(n, 'time')}`, atLeast: 1 },
     { stat: 'spunOut', emoji: '🍌', title: 'Banana Magnet', detail: (n) => `spun out ${plural(n, 'time')}`, atLeast: 1 },
     { stat: 'pitCrewOracle', emoji: '🔮', title: 'Pit Crew Prophet', detail: (n) => `called ${plural(n, 'heat winner')}`, atLeast: 1 },
+    { stat: 'fastestLap', emoji: '⚡', title: 'Speed Demon', detail: (n) => plural(n, 'fastest lap'), atLeast: 1 },
   ],
 };
 

@@ -1,4 +1,10 @@
-export type TrackId = 'sunny-circuit' | 'canyon-driftway' | 'frostbite-peak' | 'neon-starway';
+export type TrackId =
+  | 'sunny-circuit'
+  | 'canyon-driftway'
+  | 'frostbite-peak'
+  | 'neon-starway'
+  | 'volcano-inferno'
+  | 'cyber-metro';
 
 export interface TrackSample {
   x: number;
@@ -9,6 +15,7 @@ export interface TrackSample {
   nz: number;
   angle: number;
   curvature: number;
+  bank?: number; // radians of road bank/camber into corner
   s: number;
   progress: number;
 }
@@ -33,7 +40,7 @@ export interface ItemBoxSpawnDef {
 export interface SceneryProp {
   x: number;
   z: number;
-  kind: 'palm' | 'cactus' | 'rock' | 'pine' | 'snowman' | 'neon-pillar' | 'star-ring';
+  kind: 'palm' | 'cactus' | 'rock' | 'pine' | 'snowman' | 'neon-pillar' | 'star-ring' | 'lava-spire' | 'cyber-arch';
   scale: number;
   color: string;
 }
@@ -169,16 +176,20 @@ function buildSplineSamples(
       nz,
       angle,
       curvature: 0,
+      bank: 0,
       s,
       progress: i / m,
     });
   }
 
-  // Compute smoothed signed curvature (rad per world unit)
+  // Compute smoothed signed curvature (rad per world unit) and corner banking camber
   for (let i = 0; i < m; i++) {
     const prev = samples[(i - 2 + m) % m];
     const next = samples[(i + 2) % m];
-    samples[i].curvature = wrapAngle(next.angle - prev.angle) / (4 * ds);
+    const curv = wrapAngle(next.angle - prev.angle) / (4 * ds);
+    samples[i].curvature = curv;
+    // Bank angle (radians): outside curb is elevated, inside is lowered into the curve
+    samples[i].bank = Math.max(-0.24, Math.min(0.24, curv * 14));
   }
 
   return { samples, totalLength };
@@ -210,6 +221,7 @@ export function sampleTrackAtProgress(track: KartTrack, rawProgress: number): Tr
     nz: nTx,
     angle: Math.atan2(nTx, nTz),
     curvature: a.curvature + (b.curvature - a.curvature) * frac,
+    bank: (a.bank ?? 0) + ((b.bank ?? 0) - (a.bank ?? 0)) * frac,
     s: p * track.totalLength,
     progress: p,
   };
@@ -350,10 +362,15 @@ function buildTrackFeatures(
         }
       }
       if (!tooClose) {
+        const kind = (sceneryKind === 'lava-spire' && (i % 2 === 0))
+          ? 'rock'
+          : (sceneryKind === 'cyber-arch' && (i % 2 === 0))
+          ? 'neon-pillar'
+          : sceneryKind;
         scenery.push({
           x,
           z,
-          kind: sceneryKind,
+          kind,
           scale: 0.95 + ((i * 13) % 10) * 0.09,
           color: sceneryColors[i % sceneryColors.length],
         });
@@ -587,6 +604,96 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     sceneryKind: 'neon-pillar',
     sceneryColors: ['#f472b6', '#22d3ee', '#a855f7', '#facc15'],
   }),
+
+  'volcano-inferno': createTrack({
+    id: 'volcano-inferno',
+    name: 'Volcano Inferno',
+    emoji: '🌋',
+    tagline: 'Molten basalt highway with bubbling magma rivers, basalt spires & extreme drift chicanes',
+    difficulty: 'Expert',
+    roadWidth: 34,
+    wallWidth: 27,
+    friction: 0.96,
+    theme: {
+      skyTop: '#450a0a',
+      skyBottom: '#dc2626',
+      groundColor: '#1c1917',
+      roadColor: '#262626',
+      roadStripeColor: '#f97316',
+      curbColorA: '#ef4444',
+      curbColorB: '#facc15',
+      wallColor: '#ea580c',
+      accentColor: '#f97316',
+    },
+    controlPoints: [
+      [0, -160],
+      [0, -30],
+      [-70, 70],
+      [-30, 160],
+      [80, 180],
+      [180, 140],
+      [240, 40],
+      [190, -40],
+      [230, -130],
+      [180, -220],
+      [60, -250],
+      [-10, -220],
+    ],
+    boostProgresses: [
+      { progress: 0.12, lateral: -0.22 },
+      { progress: 0.35, lateral: 0.25 },
+      { progress: 0.58, lateral: 0.0 },
+      { progress: 0.77, lateral: -0.22 },
+      { progress: 0.92, lateral: 0.22 },
+    ],
+    itemRowProgresses: [0.08, 0.28, 0.52, 0.72, 0.88],
+    sceneryKind: 'lava-spire',
+    sceneryColors: ['#7f1d1d', '#991b1b', '#b91c1c', '#f97316'],
+  }),
+
+  'cyber-metro': createTrack({
+    id: 'cyber-metro',
+    name: 'Cyber Metropolis',
+    emoji: '🌃',
+    tagline: 'Midnight skyscraper canyons, high-speed overpasses & holographic lightspeed gates',
+    difficulty: 'Hard',
+    roadWidth: 35,
+    wallWidth: 28,
+    friction: 1.0,
+    theme: {
+      skyTop: '#020617',
+      skyBottom: '#0f172a',
+      groundColor: '#090d16',
+      roadColor: '#0f172a',
+      roadStripeColor: '#00f5ff',
+      curbColorA: '#06b6d4',
+      curbColorB: '#ec4899',
+      wallColor: '#00f5ff',
+      accentColor: '#38bdf8',
+    },
+    controlPoints: [
+      [0, -150],
+      [0, -10],
+      [75, 90],
+      [140, 170],
+      [230, 170],
+      [275, 80],
+      [220, 0],
+      [280, -90],
+      [220, -190],
+      [120, -260],
+      [20, -240],
+    ],
+    boostProgresses: [
+      { progress: 0.15, lateral: 0.25 },
+      { progress: 0.38, lateral: -0.25 },
+      { progress: 0.62, lateral: 0.0 },
+      { progress: 0.83, lateral: 0.22 },
+    ],
+    itemRowProgresses: [0.10, 0.32, 0.55, 0.75, 0.90],
+    sceneryKind: 'cyber-arch',
+    sceneryColors: ['#00f5ff', '#ec4899', '#a855f7', '#38bdf8'],
+  }),
 };
 
 export const TRACK_LIST: KartTrack[] = [
@@ -594,4 +701,6 @@ export const TRACK_LIST: KartTrack[] = [
   KART_TRACKS['canyon-driftway'],
   KART_TRACKS['frostbite-peak'],
   KART_TRACKS['neon-starway'],
+  KART_TRACKS['volcano-inferno'],
+  KART_TRACKS['cyber-metro'],
 ];
