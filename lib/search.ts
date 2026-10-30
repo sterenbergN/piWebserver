@@ -89,7 +89,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Case study: mixing tank', url: '/loop-lab/cases/mixing-mimo', subtitle: 'Loop Lab: interaction, decoupling and MPC', body: 'multivariable mimo interaction relative gain array rga pairing decoupler decoupling mpc model predictive control constraints mixing blending level temperature' },
   { kind: 'page', title: 'Case study: batch reactor', url: '/loop-lab/cases/batch-adaptive', subtitle: 'Loop Lab: adaptive control, ADRC and the cooling margin', body: 'batch reactor exothermic runaway semenov cooling margin adaptive self-tuning rls adrc disturbance observer' },
   { kind: 'page', title: 'Write your own controller', url: '/loop-lab/cases/write-your-own', subtitle: 'Loop Lab: Structured Text on the bench', body: 'structured text st iec 61131 scl custom controller code plc pi anti-windup bumpless' },
-  { kind: 'page', title: 'Recipes', url: '/recipes', subtitle: 'Engineering-style recipe specs, scaling, timers and grocery lists', body: 'cooking food meal prep kitchen ingredients gantt' },
+  { kind: 'page', title: 'Recipes', url: '/recipes', subtitle: 'Step-by-step cook mode, scaling, timers and grocery lists', body: 'cooking food meal prep kitchen ingredients' },
   { kind: 'page', title: 'Unit converter', url: '/tools', subtitle: 'Tools', body: 'calculator convert length weight temperature' },
   { kind: 'page', title: 'Movie picker', url: '/tools', subtitle: 'Tools', body: 'film watch random' },
   { kind: 'page', title: 'Restaurant finder', url: '/tools', subtitle: 'Tools', body: 'food eat dinner' },

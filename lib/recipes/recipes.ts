@@ -99,7 +99,7 @@ export type TimerToken = {
   /** Upper-bound seconds for countdowns & Gantt scheduling. */
   seconds: number;
   minutes: number;
-  /** Display text (e.g. "5–6 min" or "15 min"). */
+  /** Display text (e.g. "5–6 min" or "15 min"); `passive` says whether it's hands-off. */
   label: string;
   passive: boolean;
 };
@@ -467,7 +467,7 @@ function parseBracketToken(content: string): IngredientToken | TimerToken | Temp
       raw,
       seconds,
       minutes,
-      label: passive ? `${rangeText} (passive)` : rangeText,
+      label: rangeText,
       passive,
     };
   }
@@ -664,7 +664,7 @@ function stepSummaryLabel(step: string, index: number): string {
     .replace(/\s+/g, ' ')
     .trim();
   const firstClause = plain.split(/[.;:—–]/)[0].trim();
-  const words = firstClause.split(/\s+/).slice(0, 4).join(' ');
+  const words = firstClause.split(/\s+/).slice(0, 4).join(' ').replace(/[,\s]+$/, '');
   return words || `Step ${index + 1}`;
 }
 
@@ -764,6 +764,13 @@ export function buildSchedule(recipe: Pick<Recipe, 'sections' | 'prepMinutes' | 
     passiveMinutes: Math.round(passiveMinutes),
     tracks,
   };
+}
+
+/** Every step in the order to do them when the parts run in parallel: by when each starts. */
+export function cookOrder(schedule: RecipeSchedule): GanttBlock[] {
+  return schedule.tracks
+    .flatMap((t) => t.blocks)
+    .sort((a, b) => a.startMin - b.startMin || a.sectionIndex - b.sectionIndex || a.stepIndex - b.stepIndex);
 }
 
 // ─── Pantry / Fridge Matcher ──────────────────────────────────────────────────

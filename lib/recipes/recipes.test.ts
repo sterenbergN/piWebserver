@@ -4,6 +4,7 @@ import {
   DEFAULT_RECIPES,
   buildSchedule,
   canonicalIngredientKey,
+  cookOrder,
   extractIngredients,
   formatBomAmount,
   formatIngredientAmount,
@@ -251,4 +252,18 @@ test('normalizeRecipe only keeps uploaded photos, clears a null rating, and keep
   assert.equal(cleared.ownerId, 'user-1');
   assert.equal(normalizeRecipe(base, existing).rating, 8);
   assert.equal(normalizeRecipesData({ recipes: [existing] }).recipes[0].ownerId, 'user-1');
+});
+
+test('cookOrder merges parallel parts by start time and keeps each part in order', () => {
+  const order = cookOrder(buildSchedule(DEFAULT_RECIPES[0]));
+  assert.equal(order.length, 7);
+  assert.equal(order[0].sectionName, 'Jasmine Rice');
+  // The glaze (ready for the chicken's last step) comes before that step.
+  const glaze = order.findIndex((b) => b.sectionName === 'Honey-Garlic Glaze');
+  const pourGlaze = order.findIndex((b) => b.stepKey === '1:2');
+  assert.ok(glaze < pourGlaze);
+  for (const part of [0, 1]) {
+    const steps = order.filter((b) => b.sectionIndex === part).map((b) => b.stepIndex);
+    assert.deepEqual(steps, [...steps].sort((a, b) => a - b));
+  }
 });
