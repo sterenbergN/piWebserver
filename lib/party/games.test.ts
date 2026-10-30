@@ -662,3 +662,155 @@ test('prompt store: new games\' content is validated, back-filled into older fil
     check((await engine.getGameState(roomCode))!);
   }
 });
+
+test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and multi-race scoring', async () => {
+  const { getKartSimulation, updateKartInput, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'Mario')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Luigi')) as { playerId: string };
+
+  // Configure 2-race Grand Prix
+  await engine.processAction(roomCode, hostId, {
+    type: 'SET_KART_CONFIG',
+    format: 'grand-prix',
+    totalRaces: 2,
+    aiBots: true,
+  });
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'TRACK_VOTE');
+
+  const id1 = engine.resolvePlayerKey(state, p1.playerId)!;
+  const id2 = engine.resolvePlayerKey(state, p2.playerId)!;
+
+  // Both players vote for neon-starway; once all active racers vote, race launches immediately
+  await engine.processAction(roomCode, p1.playerId, { type: 'VOTE_TRACK', trackId: 'neon-starway' });
+  await engine.processAction(roomCode, p2.playerId, { type: 'VOTE_TRACK', trackId: 'neon-starway' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACING');
+  assert.equal(state.hostData.trackId, 'neon-starway');
+
+  const sim = getKartSimulation(roomCode);
+  assert.ok(sim, 'in-memory 30Hz physics simulation is active');
+  assert.equal(Object.keys(sim!.karts).length, 8, '2 humans + 6 AI bots fill the 8-kart grid');
+
+  // Step through "3... 2..." of countdown, then hold drift on "1" for a Rocket Start boost!
+  for (let i = 0; i < 65; i++) {
+    stepKartSimulation(sim!, 1 / 30);
+  }
+  updateKartInput(roomCode, id1, { steer: 0.25, drift: true, useItem: false, brake: false });
+  for (let i = 0; i < 65; i++) {
+    stepKartSimulation(sim!, 1 / 30);
+  }
+  assert.equal(sim!.countdownMs, 0, 'countdown finishes after 3.4s');
+  assert.ok(sim!.karts[id1].boostTimer > 0, 'Rocket Start turbo boost activated');
+  assert.ok(sim!.karts[id1].totalProgress > 0, 'kart advances past start line along 3D spline');
+
+  // Finish Race 1
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACE_RESULTS');
+  assert.ok(state.players[id1].score > 0 && state.players[id2].score > 0, 'cup points awarded');
+
+  // Advance to Race 2
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_KART_STEP' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'TRACK_VOTE');
+
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACING');
+
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_KART_STEP' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'FINAL_RESULTS');
+  stopKartSimulation(roomCode);
+});
+
+test('Kart Clash: Tournament Heats mode with 8 players, 2 heats of 4, manual heat swap, Pit Crew bonus, and Championship Final seeding', async () => {
+  const { stopKartSimulation } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const keys: string[] = [];
+  for (const name of ['Racer1', 'Racer2', 'Racer3', 'Racer4', 'Racer5', 'Racer6', 'Racer7', 'Racer8']) {
+    const joined = (await engine.joinRoom(roomCode, name)) as { playerId: string };
+    keys.push(joined.playerId);
+  }
+
+  // Host configures Tournament Heats with 4 racers per heat
+  await engine.processAction(roomCode, hostId, {
+    type: 'SET_KART_CONFIG',
+    format: 'tournament',
+    heatSize: 4,
+    aiBots: false,
+  });
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'HEAT_SETUP');
+  assert.equal(state.hostData.heats.length, 2, '8 players with heatSize 4 creates 2 Qualifying Heats');
+  assert.equal(state.hostData.heats[0].playerIds.length, 4);
+  assert.equal(state.hostData.heats[1].playerIds.length, 4);
+
+  // Test RANDOMIZE_HEATS and manual ASSIGN_HEAT_PLAYER swap
+  await engine.processAction(roomCode, hostId, { type: 'RANDOMIZE_HEATS' });
+  state = (await engine.getGameState(roomCode))!;
+  const h1Player = state.hostData.heats[0].playerIds[0];
+  await engine.processAction(roomCode, hostId, {
+    type: 'ASSIGN_HEAT_PLAYER',
+    targetPlayerId: h1Player,
+    targetHeatId: state.hostData.heats[1].id,
+  });
+  state = (await engine.getGameState(roomCode))!;
+  assert.ok(state.hostData.heats[1].playerIds.includes(h1Player), 'manual heat swap moves player to Heat 2 while keeping Heat 2 capped at heatSize');
+  assert.equal(state.hostData.heats[0].playerIds.length, 4);
+  assert.equal(state.hostData.heats[1].playerIds.length, 4);
+
+  // Launch Qualifying Heat 1
+  const heat1Id = state.hostData.heats[0].id;
+  const heat1Players: string[] = state.hostData.heats[0].playerIds;
+  const heat2Players: string[] = state.hostData.heats[1].playerIds;
+  await engine.processAction(roomCode, hostId, { type: 'START_NEXT_HEAT', heatId: heat1Id });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'TRACK_VOTE');
+  assert.deepEqual(state.hostData.activeRacers, heat1Players);
+
+  // A Pit Crew player (from Heat 2) predicts who wins Heat 1
+  const pitCrewId = heat2Players[0];
+  const pitCrewKey = keys.find((k) => engine.resolvePlayerKey(state, k) === pitCrewId)!;
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACING');
+
+  const { getKartSimulation } = await import('./kart-physics');
+  const sim1 = getKartSimulation(roomCode)!;
+  const rank1RacerId = Object.values(sim1.karts).sort((a, b) => a.rank - b.rank)[0].id;
+
+  await engine.processAction(roomCode, pitCrewKey, { type: 'SUBMIT_HEAT_PREDICTION', racerId: rank1RacerId });
+  await engine.processAction(roomCode, pitCrewKey, { type: 'SUBMIT_CHAOS_VOTE', choice: 'boost-pack' });
+
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACE_RESULTS');
+  assert.equal(state.players[pitCrewId].score, 300, 'Pit Crew player earns +300 bonus points for predicting Heat 1 winner');
+
+  // Return to HEAT_SETUP and run Qualifying Heat 2
+  await engine.processAction(roomCode, hostId, { type: 'NEXT_KART_STEP' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'HEAT_SETUP');
+
+  const heat2Id = state.hostData.heats[1].id;
+  await engine.processAction(roomCode, hostId, { type: 'START_NEXT_HEAT', heatId: heat2Id });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACE_RESULTS');
+  const finalHeat = state.hostData.heats.find((h: any) => h.stage === 'final');
+  assert.ok(finalHeat, 'Championship Final heat is automatically seeded once all Qualifying Heats complete');
+  assert.equal(finalHeat.playerIds.length, 4, 'top 2 finishers from each 4-player heat advance to the 4-player Championship Final');
+  stopKartSimulation(roomCode);
+});
+

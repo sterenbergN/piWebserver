@@ -6,10 +6,12 @@ import QRCode from 'qrcode';
 import { shareResultsCard } from '@/components/party/resultsCard';
 import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
+import KartClashPhoneController from '@/components/party/KartClashPhoneController';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
 const GAME_NAMES: Record<string, string> = {
+  'kart-clash': 'Kart Clash',
   'quip-clash': 'Quip Clash',
   'the-faker': 'The Faker',
   'trivia-death': 'Trivia Death',
@@ -23,6 +25,7 @@ const GAME_NAMES: Record<string, string> = {
 };
 
 const ALL_GAMES: { id: string; label: string; minPlayers: number }[] = [
+  { id: 'kart-clash', label: '🏎️ Kart Clash', minPlayers: 1 },
   { id: 'quip-clash', label: '⚡ Quip Clash', minPlayers: 3 },
   { id: 'the-faker', label: '🕵️ The Faker', minPlayers: 3 },
   { id: 'trivia-death', label: '💀 Trivia Death', minPlayers: 3 },
@@ -136,7 +139,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const inputPhases = [
     'PROMPTING', 'VOTING', 'QUESTION', 'FINAL_ESCAPE', 'PREDICTION', 'MATCHUP',
     'TIEBREAKER', 'RACING', 'TASK_DELIVERY', 'DISCUSSION', 'CLUE_GIVING',
-    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS',
+    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP',
   ];
   useTurnBuzz(
     state ? `${state.phase}|${state.data?.phase}|${state.data?.prompt || state.data?.question || state.data?.clue || ''}|${state.data?.isOnFloor ? 'floor' : ''}` : null,
@@ -270,7 +273,10 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const myRank = standings.findIndex((p) => p.id === me.id) + 1;
 
   const isPlaying = state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';
-  const canSkip = !!hostId && isPlaying && hd?.autoAdvanceAction && hd.autoAdvanceAction !== 'RACE_TICK';
+  const skipAction = state.gameType === 'kart-clash' && state.phase === 'RACING'
+    ? 'FINISH_KART_RACE'
+    : hd?.autoAdvanceAction;
+  const canSkip = !!hostId && isPlaying && skipAction && skipAction !== 'RACE_TICK';
   const currentGameInfo = ALL_GAMES.find((g) => g.id === state.gameType) || ALL_GAMES[0];
   const PACK_LIST_KEY: Record<string, string> = {
     'quip-clash': 'quipClash',
@@ -347,7 +353,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               {canSkip && (
                 <button
                   type="button"
-                  onClick={() => sendHostAction({ type: hd.autoAdvanceAction })}
+                  onClick={() => sendHostAction({ type: skipAction })}
                   style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid var(--party-border)', borderRadius: '8px', color: 'var(--party-text)', fontSize: '0.75rem', fontWeight: 800, padding: '0.25rem 0.6rem', cursor: 'pointer' }}
                 >
                   ⏭️ Skip
@@ -536,6 +542,104 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                     ))}
                   </div>
                 )}
+
+                {state.gameType === 'kart-clash' && (() => {
+                  const kc = state.kartConfig || { format: activePlayers.length > 8 ? 'tournament' : 'grand-prix', totalRaces: 3, heatSize: 4, aiBots: true };
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      <div style={{ display: 'flex', gap: '0.45rem' }}>
+                        {[
+                          { id: 'grand-prix', label: '🏆 Grand Prix' },
+                          { id: 'tournament', label: '🔥 Tournament Heats' },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', format: opt.id })}
+                            style={{
+                              flex: 1,
+                              background: kc.format === opt.id ? 'var(--party-cyan)' : 'transparent',
+                              color: kc.format === opt.id ? '#0b0b12' : '#fff',
+                              border: '2px solid var(--party-cyan)',
+                              padding: '0.45rem',
+                              borderRadius: '10px',
+                              fontWeight: 900,
+                              fontSize: '0.8rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {kc.format === 'grand-prix' ? (
+                          <>
+                            <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>Races:</span>
+                            {[1, 2, 3, 4].map((r) => (
+                              <button
+                                key={r}
+                                type="button"
+                                onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', totalRaces: r })}
+                                style={{
+                                  background: kc.totalRaces === r ? 'var(--party-yellow)' : 'transparent',
+                                  color: kc.totalRaces === r ? '#000' : '#fff',
+                                  border: '1.5px solid var(--party-yellow)',
+                                  padding: '0.22rem 0.6rem',
+                                  borderRadius: '8px',
+                                  fontWeight: 800,
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {r}
+                              </button>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>Racers/Heat:</span>
+                            {[2, 4, 8].map((sz) => (
+                              <button
+                                key={sz}
+                                type="button"
+                                onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', heatSize: sz })}
+                                style={{
+                                  background: kc.heatSize === sz ? 'var(--party-yellow)' : 'transparent',
+                                  color: kc.heatSize === sz ? '#000' : '#fff',
+                                  border: '1.5px solid var(--party-yellow)',
+                                  padding: '0.22rem 0.6rem',
+                                  borderRadius: '8px',
+                                  fontWeight: 800,
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {sz}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => sendHostAction({ type: 'SET_KART_CONFIG', aiBots: !kc.aiBots })}
+                          style={{
+                            background: kc.aiBots ? 'rgba(34,197,94,0.2)' : 'transparent',
+                            color: kc.aiBots ? '#4ade80' : 'var(--party-text-muted)',
+                            border: `1.5px solid ${kc.aiBots ? '#22c55e' : 'var(--party-border)'}`,
+                            padding: '0.22rem 0.65rem',
+                            borderRadius: '8px',
+                            fontWeight: 800,
+                            fontSize: '0.78rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          🤖 Bots: {kc.aiBots ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {packs.length > 1 && PACK_LIST_KEY[state.gameType] && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center', alignItems: 'center' }}>
@@ -1823,6 +1927,18 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               ))
             )}
           </div>
+        )}
+
+        {/* ===== KART CLASH ===== */}
+        {state.gameType === 'kart-clash' && (state.phase === 'HEAT_SETUP' || state.phase === 'TRACK_VOTE' || state.phase === 'RACING' || state.phase === 'RACE_RESULTS') && (
+          <KartClashPhoneController
+            state={state}
+            roomCode={roomCode}
+            playerKey={playerId}
+            hostId={hostId}
+            sendAction={sendAction}
+            sendHostAction={sendHostAction}
+          />
         )}
 
         {/* ===== FINAL RESULTS ===== */}

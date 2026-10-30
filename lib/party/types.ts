@@ -8,7 +8,8 @@ export type GameType =
   | 'herd-mentality'
   | 'wavelength'
   | 'bluff-clash'
-  | 'emoji-telephone';
+  | 'emoji-telephone'
+  | 'kart-clash';
 
 export interface Player {
   id: string;

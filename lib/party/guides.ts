@@ -211,9 +211,30 @@ export const GAME_GUIDES: Record<GameType, GameGuide> = {
     ],
     tip: 'Use the quick-pick emoji palette or your phone’s emoji keyboard to build visual stories.',
   },
+  'kart-clash': {
+    id: 'kart-clash',
+    name: 'Kart Clash',
+    emoji: '🏎️',
+    tagline: '3D split-screen kart racing with phone gyro steering',
+    players: '1–16 Players',
+    rounds: 'Grand Prix or Tournament Heats',
+    goal: 'Tilt your phone like a steering wheel, drift around corners, and fire power-ups to win the Cup or Tournament!',
+    steps: [
+      'Pick a track on your phone and tap "Enable Tilt Steering" (or use the touch wheel).',
+      'Watch your 3D split-screen viewport on the TV — tilt to steer, hold DRIFT on turns for Mini-Turbos, and tap ITEM to fire shells & boosts!',
+      'In Tournament Heats mode, race in heats of 2, 4, or 8 to qualify for the Championship Final while waiting players bet & drop Chaos as the Pit Crew!',
+    ],
+    scoring: [
+      '+1,500 / +1,200 / +1,000 / +800 / +600 / +400 / +200 / +100 pts for 1st–8th place finishes',
+      '+300 pts Pit Crew bonus for predicting the winner of a heat you are spectating',
+      '+500 pts Championship Final winner bonus in Tournament Heats mode',
+    ],
+    tip: 'Hold DRIFT right as the 3-2-1 countdown hits "1" for a Rocket Start, and charge blue/orange sparks around corners!',
+  },
 };
 
 export const GUIDE_ORDER: GameType[] = [
+  'kart-clash',
   'quip-clash',
   'the-faker',
   'trivia-death',
