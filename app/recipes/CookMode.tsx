@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { parseStepTokens, type GanttBlock, type Recipe, type TimerToken, type UnitMode } from '@/lib/recipes/recipes';
-import { PAUSE, PLAY, StepText, TimerPills, formatClock, timerIdFor, timerLabel } from './shared';
+import { useEffect, useRef, useState } from 'react';
+import { parseStepTokens, stepPlainText, type BomItem, type GanttBlock, type Recipe, type TimerToken, type UnitMode } from '@/lib/recipes/recipes';
+import { IngredientRows, PAUSE, PLAY, StepText, TimerPills, formatClock, timerIdFor, timerLabel } from './shared';
 import { isRunning, secondsLeft, type RecipeTimers } from './useRecipeTimers';
 
 /** A big timer under the step: tap to start, pause or resume; fills up as it runs. */
@@ -52,33 +52,46 @@ function BigTimer({ id, seg, label, recipeSlug, timers }: { id: string; seg: Tim
 export default function CookMode({
   recipe,
   order,
+  bom,
+  isIngredientUsed,
+  sectionScales,
   step,
   scale,
   unitMode,
   timers,
   canLog,
   cookLogged,
+  rating,
+  onRate,
   onStep,
   onClose,
   onLogCook,
 }: {
   recipe: Recipe;
   order: GanttBlock[];
+  bom: BomItem[];
+  isIngredientUsed?: (item: BomItem) => boolean;
+  /** For a prep session: each section's own scale, instead of `scale`. */
+  sectionScales?: number[];
   step: number;
   scale: number;
   unitMode: UnitMode;
   timers: RecipeTimers;
   canLog: boolean;
   cookLogged: boolean;
+  rating?: number;
+  onRate?: (rating: number) => void;
   onStep: (step: number) => void;
   onClose: () => void;
   onLogCook: (undo?: boolean) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [showIngredients, setShowIngredients] = useState(false);
   const finished = step >= order.length;
   const block = finished ? null : order[step];
   const text = block ? recipe.sections[block.sectionIndex]?.steps[block.stepIndex] ?? '' : '';
   const next = order[step + 1];
+  const nextText = next ? stepPlainText(recipe.sections[next.sectionIndex]?.steps[next.stepIndex] ?? '') : '';
 
   // The page behind doesn't scroll; arrow keys and Escape work on a laptop.
   useEffect(() => {
@@ -90,14 +103,16 @@ export default function CookMode({
     };
   }, []);
 
-  const stepRef = useRef({ step, finished });
+  const stepRef = useRef({ step, finished, showIngredients });
   useEffect(() => {
-    stepRef.current = { step, finished };
-  }, [step, finished]);
+    stepRef.current = { step, finished, showIngredients };
+  }, [step, finished, showIngredients]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const cur = stepRef.current;
-      if (e.key === 'Escape') onClose();
+      if (cur.showIngredients) {
+        if (e.key === 'Escape') setShowIngredients(false);
+      } else if (e.key === 'Escape') onClose();
       else if (e.key === 'ArrowRight' && !cur.finished) onStep(cur.step + 1);
       else if (e.key === 'ArrowLeft' && cur.step > 0) onStep(cur.step - 1);
     };
@@ -146,7 +161,9 @@ export default function CookMode({
           ×
         </button>
         <span className="rc-meta">{finished ? 'Finished' : `Step ${step + 1} of ${order.length}`}</span>
-        <span className="rc-icon-spacer" />
+        <button type="button" className="rc-text-btn rc-cook-peek" onClick={() => setShowIngredients(true)}>
+          Ingredients
+        </button>
       </div>
       <div className="rc-cook-progress" aria-hidden="true">
         <div style={{ width: `${(Math.min(step, order.length) / Math.max(1, order.length)) * 100}%` }} />
@@ -156,7 +173,7 @@ export default function CookMode({
         <div className="rc-cook-body" aria-live="polite">
           {recipe.sections.length > 1 && <div className="rc-cook-part">{block.sectionName}</div>}
           <p className="rc-cook-text">
-            <StepText step={text} scale={scale} unitMode={unitMode} renderTimer={(seg) => <strong className="rc-amt">{seg.label}</strong>} />
+            <StepText step={text} scale={sectionScales?.[block.sectionIndex] ?? scale} unitMode={unitMode} renderTimer={(seg) => <strong className="rc-amt">{seg.label}</strong>} />
           </p>
           {stepTimers.map(({ seg, id }) => (
             <BigTimer
@@ -183,12 +200,30 @@ export default function CookMode({
                 Log this cook
               </button>
             ))}
+          {onRate && (
+            <div className="rc-rate" role="group" aria-label="Rate this recipe">
+              <span className="rc-meta">How was it?</span>
+              <div>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    className={(rating || 0) >= star * 2 ? 'is-on' : ''}
+                    aria-label={`${star} of 5 stars`}
+                    onClick={() => onRate(star * 2)}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       <div className="rc-cook-foot">
         <TimerPills timers={timers} hide={(id) => stepTimerIds.has(id)} />
-        {next && <div className="rc-cook-next rc-meta">Next: {next.label}</div>}
+        {next && <div className="rc-cook-next rc-meta">Next: {nextText}</div>}
         <div className="rc-cook-nav">
           <button type="button" className="btn btn-secondary" disabled={step === 0} onClick={() => onStep(step - 1)}>
             Back
@@ -204,6 +239,25 @@ export default function CookMode({
           )}
         </div>
       </div>
+
+      {showIngredients && (
+        <div
+          className="rc-sheet-backdrop"
+          onClick={() => setShowIngredients(false)}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
+          <div className="rc-sheet" role="dialog" aria-modal="true" aria-label="Ingredients" onClick={(e) => e.stopPropagation()}>
+            <div className="rc-sheet-head">
+              <h2>Ingredients</h2>
+              <button type="button" className="rc-icon-btn" onClick={() => setShowIngredients(false)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <IngredientRows items={bom} scale={scale} unitMode={unitMode} isChecked={isIngredientUsed} isStruck={isIngredientUsed} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

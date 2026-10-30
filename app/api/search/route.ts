@@ -49,7 +49,7 @@ async function buildIndex(): Promise<SearchDoc[]> {
     path.join(process.cwd(), '.data', 'recipes', 'recipes.json'),
     { version: 1, recipes: DEFAULT_RECIPES },
   );
-  for (const recipe of normalizeRecipesData(recipesRaw).recipes) {
+  for (const recipe of normalizeRecipesData(recipesRaw).recipes.filter((r) => !r.private)) {
     const bom = extractIngredients(recipe).map((b) => b.name).join(' ');
     docs.push({
       kind: 'page',

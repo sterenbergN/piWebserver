@@ -18,11 +18,16 @@ export type RunningTimer = {
   /** Seconds left while paused. */
   remainingSec: number;
   done: boolean;
+  /** Went off and nobody has acknowledged it yet. */
+  ringing?: boolean;
 };
 
 const TIMERS_PREF = 'recipes:timers';
 /** Coming back to a timer that went off longer ago than this doesn't beep late. */
 const LATE_ALARM_MS = 2 * 60 * 1000;
+/** A timer repeats its alarm until it's acknowledged, but not forever. */
+const RING_EVERY_MS = 4000;
+const RING_FOR_MS = 60 * 1000;
 
 export const secondsLeft = (t: RunningTimer, now: number) =>
   t.endsAt !== null ? Math.max(0, Math.ceil((t.endsAt - now) / 1000)) : t.remainingSec;
@@ -32,7 +37,9 @@ export const isRunning = (t: RunningTimer | undefined) => Boolean(t && t.endsAt 
 function readSavedTimers(): Record<string, RunningTimer> {
   try {
     const saved = JSON.parse(readPref(TIMERS_PREF) || '{}');
-    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+    // A reload is an acknowledgement: whatever was ringing has been seen, or is long past.
+    return Object.fromEntries(Object.entries(saved as Record<string, RunningTimer>).map(([id, t]) => [id, { ...t, ringing: false }]));
   } catch {
     return {};
   }
@@ -45,6 +52,11 @@ export function useRecipeTimers() {
   const [now, setNow] = useState(() => Date.now());
   const timersRef = useRef(timers);
   const audioRef = useRef<AudioContext | null>(null);
+
+  const ringOnce = useCallback(() => {
+    vibrate([300, 150, 300, 150, 300]);
+    playBeep(audioRef.current, 3);
+  }, []);
 
   useEffect(() => {
     setTimers(readSavedTimers());
@@ -61,11 +73,9 @@ export function useRecipeTimers() {
     const finish = (id: string) => {
       const t = timersRef.current[id];
       if (!t || t.done || t.endsAt === null) return;
-      if (Date.now() - t.endsAt < LATE_ALARM_MS) {
-        vibrate([300, 150, 300, 150, 300]);
-        playBeep(audioRef.current, 3);
-      }
-      setTimers((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], endsAt: null, remainingSec: 0, done: true } } : prev));
+      const onTime = Date.now() - t.endsAt < LATE_ALARM_MS;
+      if (onTime) ringOnce();
+      setTimers((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], endsAt: null, remainingSec: 0, done: true, ringing: onTime } } : prev));
     };
     const alarms = running.map((t) => window.setTimeout(() => finish(t.id), Math.max(0, t.endsAt! - Date.now())));
     const tick = window.setInterval(() => setNow(Date.now()), 500);
@@ -74,7 +84,21 @@ export function useRecipeTimers() {
       alarms.forEach((handle) => window.clearTimeout(handle));
       window.clearInterval(tick);
     };
-  }, [timers]);
+  }, [timers, ringOnce]);
+
+  // Keep ringing until acknowledged (or a minute has gone by).
+  const anyRinging = Object.values(timers).some((t) => t.ringing);
+  useEffect(() => {
+    if (!anyRinging) return;
+    const repeat = window.setInterval(ringOnce, RING_EVERY_MS);
+    const stop = window.setTimeout(() => {
+      setTimers((prev) => Object.fromEntries(Object.entries(prev).map(([id, t]) => [id, { ...t, ringing: false }])));
+    }, RING_FOR_MS);
+    return () => {
+      window.clearInterval(repeat);
+      window.clearTimeout(stop);
+    };
+  }, [anyRinging, ringOnce]);
 
   // Every tap re-unlocks audio, which iPhones suspend when the screen locks or
   // another app plays sound — otherwise the alarm is silently dropped.

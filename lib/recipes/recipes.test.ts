@@ -10,13 +10,13 @@ import {
   formatIngredientAmount,
   formatQuantity,
   formatTemp,
-  matchPantry,
   isRecipePhotoSrc,
   normalizeRecipe,
   normalizeRecipesData,
   parseQuantity,
   parseStepTokens,
   smartAnnotateText,
+  stepPlainText,
 } from './recipes';
 
 test('parseQuantity handles integers, decimals, fractions, and mixed numbers', () => {
@@ -26,6 +26,8 @@ test('parseQuantity handles integers, decimals, fractions, and mixed numbers', (
   assert.equal(parseQuantity('1 1/2'), 1.5);
   assert.equal(parseQuantity('¾'), 0.75);
   assert.equal(parseQuantity('2½'), 2.5);
+  const mixed = parseStepTokens('[1½ cups sugar] [1 ½ cups rice]');
+  assert.deepEqual(mixed.flatMap((t) => (t.kind === 'ingredient' ? [[t.usQty, t.usUnit, t.name]] : [])), [[1.5, 'cup', 'sugar'], [1.5, 'cup', 'rice']]);
   assert.equal(parseQuantity('invalid'), null);
 });
 
@@ -126,14 +128,6 @@ test('buildSchedule back-schedules parallel sub-assemblies so they finish togeth
   assert.equal(schedule.tracks[1].startOffsetMin, 15);
 });
 
-test('matchPantry computes match percentage and missing ingredients', () => {
-  const recipe = DEFAULT_RECIPES[0]; // Crispy Cold-Pan Honey-Garlic Chicken Thighs
-  const res = matchPantry(recipe, 'chicken thighs, jasmine rice, honey, soy sauce, garlic');
-  assert.ok(res.matched >= 5);
-  assert.ok(res.ratio > 0.5);
-  assert.ok(res.missing.length < res.total);
-});
-
 test('smartAnnotateText wraps durations, temperatures, and quantities in brackets', () => {
   const annotated = smartAnnotateText('Bake 2 cups flour at 375°F for 15 minutes then rest 10 min.');
   assert.ok(annotated.includes('[375°F]'));
@@ -208,14 +202,6 @@ test('buildSchedule splits a step with active and passive timers', () => {
   assert.equal(schedule.passiveMinutes, 10);
 });
 
-test('matchPantry matches whole words only', () => {
-  const sections = [{ name: 'x', steps: ['[1 eggplant]', '[2 tbsp olive oil]'] }];
-  assert.equal(matchPantry({ sections }, 'egg').matched, 0);
-  assert.equal(matchPantry({ sections }, 'a').matched, 0);
-  assert.equal(matchPantry({ sections }, 'oil').matched, 1);
-  assert.equal(matchPantry({ sections }, 'eggplant, extra virgin olive oil').matched, 2);
-});
-
 test('smartAnnotateText stops an ingredient at linking words and handles unicode fractions', () => {
   assert.equal(smartAnnotateText('Whisk in 1 cup milk until smooth.'), 'Whisk in [1 cup milk] until smooth.');
   assert.equal(smartAnnotateText('Add ½ cup flour and stir.'), 'Add [½ cup flour] and stir.');
@@ -266,4 +252,44 @@ test('cookOrder merges parallel parts by start time and keeps each part in order
     const steps = order.filter((b) => b.sectionIndex === part).map((b) => b.stepIndex);
     assert.deepEqual(steps, [...steps].sort((a, b) => a - b));
   }
+});
+
+test('amounts use the right form of the unit for the scaled quantity', () => {
+  const amount = (step: string, scale = 1) => {
+    const ing = parseStepTokens(step)[0];
+    assert.ok(ing.kind === 'ingredient');
+    return formatIngredientAmount(ing, scale, 'us');
+  };
+  assert.equal(amount('[1/2 cup flour]'), '½ cup');
+  assert.equal(amount('[1 cup flour]'), '1 cup');
+  assert.equal(amount('[1 cup flour]', 2.25), '2 ¼ cups');
+  assert.equal(amount('[2 cloves garlic]', 0.5), '1 clove');
+  assert.equal(amount('[1 clove garlic]'), '1 clove');
+  assert.equal(amount('[3 tbsp butter]'), '3 tbsp');
+  assert.equal(amount('[2 eggs]'), '2');
+});
+
+test('stepPlainText reads as a sentence, with amounts left out', () => {
+  assert.equal(
+    stepPlainText('Melt [1 cup | 227 g butter] at [350°F] for [5 min], then rest [10 min passive].'),
+    'Melt butter at 350°F for 5 min, then rest 10 min.',
+  );
+});
+
+test('smartAnnotateText reads more ways of writing times and temperatures', () => {
+  assert.equal(smartAnnotateText('Bake at 350 degrees F for 20 to 25 minutes.'), 'Bake at [350°F] for [20-25 min].');
+  assert.equal(smartAnnotateText('Preheat to 350°F (175°C).'), 'Preheat to [350°F].');
+  assert.equal(smartAnnotateText('Tilt it 45 degrees.'), 'Tilt it 45 degrees.');
+  assert.equal(smartAnnotateText('Refrigerate for 2 hours.'), 'Refrigerate for [2 hr passive].');
+  assert.equal(smartAnnotateText('Add 2 tbsp butter.', { quantities: false }), 'Add 2 tbsp butter.');
+});
+
+test('normalizeRecipe keeps a web source and the private flag', () => {
+  const base = { title: 'T', sections: [{ name: 'Main', steps: ['Cook [3 min].'] }] };
+  const imported = normalizeRecipe({ ...base, sourceUrl: 'https://example.com/a', private: true });
+  assert.equal(imported.sourceUrl, 'https://example.com/a');
+  assert.equal(imported.private, true);
+  assert.equal(normalizeRecipe({ ...base, sourceUrl: 'javascript:alert(1)' }).sourceUrl, undefined);
+  assert.equal(normalizeRecipe(base, imported).private, true);
+  assert.equal(normalizeRecipe({ ...base, private: false }, imported).private, undefined);
 });

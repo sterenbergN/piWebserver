@@ -39,7 +39,8 @@ const unusedPhoto = (recipes: Recipe[], photo: string | undefined) =>
 export async function GET() {
   try {
     const [raw, viewer] = await Promise.all([readJson<RecipesData>(RECIPES_FILE, defaultData()), getViewer()]);
-    const { recipes } = normalizeRecipesData(raw);
+    // Imported recipes stay private by default: they're someone else's writing and photos.
+    const recipes = normalizeRecipesData(raw).recipes.filter((r) => viewer.canEdit || !r.private);
     return NextResponse.json({
       success: true,
       recipes: recipes.map(publicRecipe),
@@ -140,6 +141,23 @@ export async function POST(request: Request) {
           if (previous && !Number.isNaN(Date.parse(previous))) recipe.lastCookedAt = new Date(previous).toISOString();
           else delete recipe.lastCookedAt;
         }
+        recipe.updatedAt = now;
+        stored.version = 1;
+        stored.recipes = data.recipes;
+        return recipe;
+      });
+      return NextResponse.json({ success: true, recipe: publicRecipe(updated) });
+    }
+
+    if (type === 'rate') {
+      const id = String(body.id || '').trim();
+      const rating = Number(body.rating);
+      if (!id || !(rating >= 1 && rating <= 10)) throw new ApiError(400, 'Rate it from 1 to 10.');
+      const updated = await updateJson<RecipesData, Recipe>(RECIPES_FILE, defaultData(), (stored) => {
+        const data = normalizeRecipesData(stored);
+        const recipe = data.recipes.find((r) => r.id === id);
+        if (!recipe) throw new ApiError(404, 'Recipe not found.');
+        recipe.rating = Math.round(rating * 10) / 10;
         recipe.updatedAt = now;
         stored.version = 1;
         stored.recipes = data.recipes;

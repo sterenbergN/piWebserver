@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
+import { readPref } from '@/lib/workout/device-prefs';
 import {
   formatBomAmount,
   formatIngredientAmount,
@@ -22,6 +23,43 @@ export function formatClock(sec: number): string {
   const mins = Math.floor((s % 3600) / 60);
   const rem = String(s % 60).padStart(2, '0');
   return hrs > 0 ? `${hrs}:${String(mins).padStart(2, '0')}:${rem}` : `${mins}:${rem}`;
+}
+
+/** Cooking progress on this device, so a reload or leaving the recipe doesn't lose your place. */
+export type SavedCook = { slug: string; title: string; step: number; scale: number; at: number; open: boolean };
+export const COOK_PREF = 'recipes:cooking';
+const COOK_RESUME_MS = 12 * 60 * 60 * 1000;
+
+export function readSavedCook(): SavedCook | null {
+  try {
+    const saved = JSON.parse(readPref(COOK_PREF) || 'null') as SavedCook | null;
+    return saved && Date.now() - saved.at < COOK_RESUME_MS ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "45 min", "1 hr 20 min". */
+export function formatMinutes(minutes: number): string {
+  const m = Math.round(minutes);
+  if (m < 60) return `${m} min`;
+  const rest = m % 60;
+  return `${Math.floor(m / 60)} hr${rest ? ` ${rest} min` : ''}`;
+}
+
+/** The phone's back button leaves cook mode rather than the page. Returns how to close it the same way. */
+export function useCookHistory(active: boolean, onExit: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    if (!window.history.state?.rcCook) window.history.pushState({ rcCook: true }, '');
+    window.addEventListener('popstate', onExit);
+    return () => window.removeEventListener('popstate', onExit);
+  }, [active, onExit]);
+
+  return useCallback(() => {
+    if (window.history.state?.rcCook) window.history.back();
+    else onExit();
+  }, [onExit]);
 }
 
 export const timerIdFor = (recipeId: string, stepKey: string, segIdx: number) => `${recipeId}:${stepKey}:${segIdx}`;
@@ -105,7 +143,7 @@ export function TimerPills({
         const running = isRunning(t);
         return (
           <div key={t.id} className={`rc-pill${t.done ? ' is-done' : ''}`}>
-            {onOpenRecipe ? (
+            {onOpenRecipe && t.recipeSlug ? (
               <button type="button" className="rc-pill-label" onClick={() => onOpenRecipe(t.recipeSlug)}>
                 {t.label}
               </button>
@@ -127,6 +165,70 @@ export function TimerPills({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Ingredient rows. With `onToggle` they're tap-to-check; without, just a list. */
+export function IngredientRows({
+  items,
+  scale,
+  unitMode,
+  isChecked,
+  isStruck,
+  onToggle,
+}: {
+  items: BomItem[];
+  scale: number;
+  unitMode: UnitMode;
+  isChecked?: (item: BomItem) => boolean;
+  /** Crossed out, e.g. already used in this cook. */
+  isStruck?: (item: BomItem) => boolean;
+  onToggle?: (item: BomItem) => void;
+}) {
+  return (
+    <ul className="rc-ingredients">
+      {items.map((item) => {
+        const checked = Boolean(isChecked?.(item));
+        const className = `rc-ing-row${checked ? ' is-checked' : ''}${isStruck?.(item) ? ' is-done' : ''}`;
+        const content = (
+          <>
+            <span className="rc-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+            <span className="rc-ing-amt">{formatBomAmount(item, scale, unitMode)}</span>
+            <span className="rc-ing-name">{item.name}</span>
+          </>
+        );
+        return (
+          <li key={item.key}>
+            {onToggle ? (
+              <button type="button" className={className} aria-pressed={checked} onClick={() => onToggle(item)}>
+                {content}
+              </button>
+            ) : (
+              <div className={className}>{content}</div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** A loud banner for each timer that has gone off, over everything including cook mode. */
+export function TimerAlerts({ timers }: { timers: RecipeTimers }) {
+  const ringing = Object.values(timers.timers).filter((t) => t.ringing);
+  if (!ringing.length) return null;
+  return (
+    <div className="rc-alerts" role="alert">
+      {ringing.map((t) => (
+        <button key={t.id} type="button" className="rc-alert" onClick={() => timers.dismiss(t.id)}>
+          <span>
+            <strong>Time’s up</strong>
+            <span className="rc-alert-label">{t.label}</span>
+          </span>
+          <span className="rc-alert-ok">OK</span>
+        </button>
+      ))}
     </div>
   );
 }

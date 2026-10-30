@@ -14,6 +14,7 @@ import {
   type RecipeCategory,
   type RecipeSection,
 } from '@/lib/recipes/recipes';
+import type { ImportedRecipe } from '@/lib/recipes/import';
 import { TimerPills } from './shared';
 import type { RecipeTimers } from './useRecipeTimers';
 
@@ -34,6 +35,8 @@ export type EditorDraft = {
   fat: string;
   rating: string;
   notes: string;
+  sourceUrl: string;
+  isPrivate: boolean;
   sections: RecipeSection[];
 };
 
@@ -54,7 +57,32 @@ export function emptyDraft(): EditorDraft {
     fat: '',
     rating: '',
     notes: '',
+    sourceUrl: '',
+    isPrivate: false,
     sections: [{ name: 'Main', steps: [''] }],
+  };
+}
+
+/** An imported recipe, ready to check over. Private until you say otherwise: it's someone else's writing. */
+export function importedToDraft(recipe: ImportedRecipe & { photo?: string }): EditorDraft {
+  return {
+    ...emptyDraft(),
+    title: recipe.title,
+    summary: recipe.summary,
+    category: recipe.category,
+    servings: recipe.servings,
+    prepMinutes: recipe.prepMinutes ? String(recipe.prepMinutes) : '',
+    cookMinutes: recipe.cookMinutes ? String(recipe.cookMinutes) : '',
+    equipmentText: recipe.equipment.join(', '),
+    tagsText: recipe.tags.join(', '),
+    photo: recipe.photo || '',
+    calories: recipe.macros?.calories !== undefined ? String(recipe.macros.calories) : '',
+    protein: recipe.macros?.protein !== undefined ? String(recipe.macros.protein) : '',
+    carbs: recipe.macros?.carbs !== undefined ? String(recipe.macros.carbs) : '',
+    fat: recipe.macros?.fat !== undefined ? String(recipe.macros.fat) : '',
+    sourceUrl: recipe.sourceUrl || '',
+    isPrivate: true,
+    sections: recipe.sections.length ? recipe.sections : [{ name: 'Main', steps: [''] }],
   };
 }
 
@@ -76,6 +104,8 @@ export function recipeToDraft(r: Recipe): EditorDraft {
     fat: r.macros?.fat !== undefined ? String(r.macros.fat) : '',
     rating: r.rating !== undefined ? String(r.rating) : '',
     notes: r.notes || '',
+    sourceUrl: r.sourceUrl || '',
+    isPrivate: Boolean(r.private),
     sections: r.sections.length ? r.sections.map((s) => ({ ...s, steps: [...s.steps] })) : [{ name: 'Main', steps: [''] }],
   };
 }
@@ -169,6 +199,8 @@ export default function RecipeEditor({
             },
             rating: draft.rating ? Number(draft.rating) : null, // null clears it
             notes: draft.notes,
+            sourceUrl: draft.sourceUrl,
+            private: draft.isPrivate,
             sections: draft.sections,
           },
         }),
@@ -263,13 +295,19 @@ export default function RecipeEditor({
         <button type="button" className="rc-text-btn" onClick={onCancel}>
           Cancel
         </button>
-        <span className="rc-editor-title">{draft.id ? 'Edit recipe' : 'New recipe'}</span>
+        <span className="rc-editor-title">{draft.id ? 'Edit recipe' : draft.sourceUrl ? 'Check the import' : 'New recipe'}</span>
         <button type="button" className="btn btn-primary rc-btn-small" disabled={saving} onClick={handleSave}>
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
 
       <div className="rc-form">
+        {!draft.id && draft.sourceUrl && (
+          <p className="rc-import-note">
+            Imported from {draft.sourceUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}. Give it a quick read: amounts were matched to the steps automatically.
+          </p>
+        )}
+
         <label className="rc-field">
           Name
           <input className="rc-input" value={draft.title} onChange={(e) => update('title', e.target.value)} placeholder="Honey-garlic chicken thighs" />
@@ -475,6 +513,14 @@ export default function RecipeEditor({
           </div>
         </div>
 
+        <label className="rc-toggle">
+          <input type="checkbox" checked={draft.isPrivate} onChange={(e) => update('isPrivate', e.target.checked)} />
+          <span>
+            Private
+            <small>Only people signed in can see it. Best for recipes from other sites.</small>
+          </span>
+        </label>
+
         <details className="rc-details">
           <summary>
             Preview · {previewBom.length} {previewBom.length === 1 ? 'ingredient' : 'ingredients'}, {previewSchedule.totalMinutes} min
@@ -534,6 +580,10 @@ export default function RecipeEditor({
             <label className="rc-field">
               Rating (1–10)
               <input type="number" inputMode="decimal" step="0.1" min={1} max={10} className="rc-input" value={draft.rating} onChange={(e) => update('rating', e.target.value)} />
+            </label>
+            <label className="rc-field">
+              Source link
+              <input type="url" className="rc-input" value={draft.sourceUrl} onChange={(e) => update('sourceUrl', e.target.value)} placeholder="Where it came from" />
             </label>
             <label className="rc-field">
               Notes

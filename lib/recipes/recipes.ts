@@ -63,6 +63,10 @@ export type Recipe = {
   timesCooked: number;
   lastCookedAt?: string;
   sections: RecipeSection[];
+  /** The page it was imported from. */
+  sourceUrl?: string;
+  /** Only shown to people signed in (the default for imported recipes). */
+  private?: boolean;
   /** Workout account that created it (may delete it); never sent to the browser. */
   ownerId?: string;
   createdAt: string;
@@ -412,7 +416,7 @@ function cleanBaseName(rawName: string): string {
 
 function parseQtyAndUnit(part: string): { qty: number | null; unit: string; rest: string } {
   const trimmed = part.trim();
-  const m = trimmed.match(/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|\d*[¼⅓⅔½¾⅛⅜⅝⅞]))\s*(.*)$/);
+  const m = trimmed.match(/^((?:\d*\s*[¼⅓⅔½¾⅛⅜⅝⅞]|\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?))\s*(.*)$/);
   if (!m) return { qty: null, unit: '', rest: trimmed };
   const qty = parseQuantity(m[1]);
   const afterQty = m[2].trim();
@@ -524,6 +528,29 @@ export function parseStepTokens(step: string): TextSegment[] {
   return segments;
 }
 
+/** Units that change with the amount: `[singular, plural]`. Units are stored in one fixed form. */
+const UNIT_FORMS: Record<string, [string, string]> = {
+  cup: ['cup', 'cups'],
+  cloves: ['clove', 'cloves'],
+  slices: ['slice', 'slices'],
+  cans: ['can', 'cans'],
+  sprigs: ['sprig', 'sprigs'],
+  stalks: ['stalk', 'stalks'],
+  pieces: ['piece', 'pieces'],
+  bunch: ['bunch', 'bunches'],
+  pinch: ['pinch', 'pinches'],
+  dash: ['dash', 'dashes'],
+  head: ['head', 'heads'],
+};
+
+/** "½ cup", "1 clove", "2 ¼ cups". */
+function formatAmount(qty: number, unit: string, isMetric: boolean): string {
+  const text = formatQuantity(qty, isMetric);
+  const forms = UNIT_FORMS[unit];
+  const label = forms ? forms[qty > 1 && text !== '1' ? 1 : 0] : unit;
+  return label ? `${text} ${label}` : text;
+}
+
 /** Format an ingredient's scaled amount according to `unitMode` (`us`, `metric`, or `both`). */
 export function formatIngredientAmount(
   item: Pick<IngredientToken, 'usQty' | 'usUnit' | 'metricQty' | 'metricUnit'>,
@@ -531,14 +558,8 @@ export function formatIngredientAmount(
   unitMode: UnitMode,
 ): string {
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  const us =
-    item.usQty !== null
-      ? `${formatQuantity(item.usQty * s, false)}${item.usUnit ? ` ${item.usUnit}` : ''}`
-      : '';
-  const metric =
-    item.metricQty !== null
-      ? `${formatQuantity(item.metricQty * s, METRIC_UNITS.has(item.metricUnit))}${item.metricUnit ? ` ${item.metricUnit}` : ''}`
-      : '';
+  const us = item.usQty !== null ? formatAmount(item.usQty * s, item.usUnit, false) : '';
+  const metric = item.metricQty !== null ? formatAmount(item.metricQty * s, item.metricUnit, METRIC_UNITS.has(item.metricUnit)) : '';
 
   if (unitMode === 'us') return us || metric;
   if (unitMode === 'metric') return metric || us;
@@ -640,29 +661,65 @@ export function extractIngredients(recipe: Pick<Recipe, 'sections'>): BomItem[] 
           continue;
         }
         if (!existing.stepKeys.includes(stepKey)) existing.stepKeys.push(stepKey);
-        const main = addAmounts(existing, amount);
-        if (main) {
-          Object.assign(existing, main);
-          continue;
-        }
-        const extraIdx = existing.extras.findIndex((extra) => addAmounts(extra, amount));
-        if (extraIdx >= 0) existing.extras[extraIdx] = addAmounts(existing.extras[extraIdx], amount)!;
-        else existing.extras.push(amount);
+        addToBomItem(existing, amount);
       }
     });
   });
   return [...map.values()];
 }
 
+function addToBomItem(item: BomItem, amount: Amount) {
+  const main = addAmounts(item, amount);
+  if (main) {
+    item.usQty = main.usQty;
+    item.usUnit = main.usUnit;
+    item.metricQty = main.metricQty;
+    item.metricUnit = main.metricUnit;
+    return;
+  }
+  const extraIdx = item.extras.findIndex((extra) => addAmounts(extra, amount));
+  if (extraIdx >= 0) item.extras[extraIdx] = addAmounts(item.extras[extraIdx], amount)!;
+  else item.extras.push(amount);
+}
+
+/** Merge several recipes' ingredient lists, each at its own scale. */
+export function mergeBoms(lists: { items: BomItem[]; scale: number }[]): BomItem[] {
+  const map = new Map<string, BomItem>();
+  for (const { items, scale } of lists) {
+    for (const item of items) {
+      for (const a of [item, ...item.extras]) {
+        const amount: Amount = {
+          usQty: a.usQty === null ? null : a.usQty * scale,
+          usUnit: a.usUnit,
+          metricQty: a.metricQty === null ? null : a.metricQty * scale,
+          metricUnit: a.metricUnit,
+        };
+        const existing = map.get(item.key);
+        if (existing) addToBomItem(existing, amount);
+        else map.set(item.key, { key: item.key, name: item.name, ...amount, extras: [], stepKeys: [] });
+      }
+    }
+  }
+  return [...map.values()];
+}
+
 // ─── Back-Scheduled Parallel Gantt Timeline ───────────────────────────────────
 
-function stepSummaryLabel(step: string, index: number): string {
-  // Tokens read as words ("Pat chicken thighs dry"), not as their raw "2 lb | 900 g" text.
-  const plain = parseStepTokens(step)
-    .map((seg) => (seg.kind === 'text' ? seg.text : seg.kind === 'ingredient' ? seg.name : ''))
+/** A step as plain words ("Pat chicken thighs dry"), not its raw "2 lb | 900 g" tokens. */
+export function stepPlainText(step: string): string {
+  return parseStepTokens(step)
+    .map((seg) => {
+      if (seg.kind === 'text') return seg.text;
+      if (seg.kind === 'ingredient') return seg.name;
+      return seg.kind === 'timer' ? seg.label : `${seg.fahrenheit}°F`;
+    })
     .join('')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function stepSummaryLabel(step: string, index: number): string {
+  const plain = stepPlainText(step);
   const firstClause = plain.split(/[.;:—–]/)[0].trim();
   const words = firstClause.split(/\s+/).slice(0, 4).join(' ').replace(/[,\s]+$/, '');
   return words || `Step ${index + 1}`;
@@ -743,7 +800,8 @@ export function buildSchedule(recipe: Pick<Recipe, 'sections' | 'prepMinutes' | 
   const span = Math.max(0, ...rawTracks.map((t, i) => starts[i] + shift + t.durationMin));
 
   const manualTotal = (recipe.prepMinutes || 0) + (recipe.cookMinutes || 0);
-  const totalMinutes = Math.max(Math.round(span), manualTotal || Math.round(span));
+  // A stated time beats our estimate, which only guesses at untimed steps.
+  const totalMinutes = manualTotal || Math.round(span);
 
   const tracks: GanttTrack[] = rawTracks.map((t, i) => {
     const offset = Math.max(0, Math.round((starts[i] + shift) * 10) / 10);
@@ -773,43 +831,8 @@ export function cookOrder(schedule: RecipeSchedule): GanttBlock[] {
     .sort((a, b) => a.startMin - b.startMin || a.sectionIndex - b.sectionIndex || a.stepIndex - b.stepIndex);
 }
 
-// ─── Pantry / Fridge Matcher ──────────────────────────────────────────────────
-
-const PANTRY_FREEBIES = new Set(['water', 'salt', 'black pepper', 'pepper', 'ice']);
-
-export function matchPantry(
-  recipe: Pick<Recipe, 'sections'>,
-  pantryQuery: string,
-): { matched: number; total: number; ratio: number; missing: string[] } {
-  const haveTerms = pantryQuery
-    .split(/[,;\n]+|\s+and\s+/i)
-    .map((s) => canonicalIngredientKey(s))
-    .filter(Boolean);
-  const bom = extractIngredients(recipe).filter((item) => !PANTRY_FREEBIES.has(item.key));
-  if (!bom.length) return { matched: 0, total: 0, ratio: 1, missing: [] };
-  if (!haveTerms.length) return { matched: 0, total: bom.length, ratio: 0, missing: bom.map((b) => b.name) };
-
-  // Whole words, either way round: "chicken" covers "chicken thigh" and
-  // "jasmine rice" covers "rice", but "egg" doesn't cover "eggplant".
-  const covers = (outer: string[], inner: string[]) => inner.every((w) => outer.includes(w));
-  const missing: string[] = [];
-  let matched = 0;
-  for (const item of bom) {
-    const keyWords = item.key.split(/\s+/);
-    const hasIt = haveTerms.some((term) => {
-      const termWords = term.split(/\s+/);
-      return covers(keyWords, termWords) || covers(termWords, keyWords);
-    });
-    if (hasIt) matched++;
-    else missing.push(item.name);
-  }
-  return {
-    matched,
-    total: bom.length,
-    ratio: matched / bom.length,
-    missing,
-  };
-}
+/** Never worth putting on a shopping list. */
+export const ALWAYS_HAVE = ['water', 'ice'];
 
 // ─── Smart Paste Auto-Annotator ───────────────────────────────────────────────
 
@@ -821,8 +844,10 @@ const STOP_WORDS = new Set(
  * Convert plain-text recipe instructions into bracket-annotated steps:
  * wraps temperatures (`375°F`), durations (`12 minutes`), and common
  * `quantity + unit + ingredient` phrases (`1/2 cup flour`) in `[...]`.
+ * Leave `quantities` off when the amounts already come from an ingredient
+ * list, so a step's "add 2 tbsp of the butter" doesn't count it twice.
  */
-export function smartAnnotateText(raw: string): string {
+export function smartAnnotateText(raw: string, { quantities = true }: { quantities?: boolean } = {}): string {
   // Don't double-wrap existing brackets.
   const placeholders: string[] = [];
   let text = raw.replace(/\[[^\]]+\]/g, (m) => {
@@ -830,26 +855,29 @@ export function smartAnnotateText(raw: string): string {
     return `__BRACKET_${placeholders.length - 1}__`;
   });
 
-  // 1. Wrap temperatures: e.g. 375°F, 400 F, 200°C
-  text = text.replace(/\b(\d{2,3}\s*°\s*[FCfc]|\d{3}\s*degrees\s*[FCfc]?)\b/g, (m) => {
-    const clean = m.replace(/degrees\s*/i, '°').replace(/\s+/g, '');
-    return `[${clean.endsWith('°') ? `${clean}F` : clean}]`;
-  });
+  // 1. Wrap temperatures: 375°F, 350 degrees, 180 degrees Celsius, 200C. Two
+  // digits need the scale, so "45 degrees" stays an angle. "350°F (175°C)" is one token.
+  text = text.replace(
+    /\b(\d{3})\s*(?:°|degrees?)\s*(f(?:ahrenheit)?|c(?:elsius)?)?(?![a-z])|\b(\d{2})\s*(?:°|degrees?)\s*(f(?:ahrenheit)?|c(?:elsius)?)(?![a-z])/gi,
+    (_m, big, bigScale, small, smallScale) => `[${big || small}°${String(bigScale || smallScale || 'F')[0].toUpperCase()}]`,
+  );
+  text = text.replace(/\b(\d{3})\s?([FC])\b/g, '[$1°$2]');
+  text = text.replace(/(\[\d+°[FC]\])\s*[(/]\s*\[\d+°[FC]\]\s*\)?/g, '$1');
 
   // 2. Wrap durations: e.g. "12 minutes", "5-6 min", "45 seconds"
   text = text.replace(
-    /\b(?:(rest|resting|cool|cooling|chill|steep|marinate|stand|let\s+sit)(?:\s+for)?\s+)?(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?)\s*(minutes|minute|mins|min|seconds|second|secs|sec|hours|hour|hrs|hr)\b/gi,
+    /\b(?:(rest|resting|cool|cooling|chill|chilling|steep|marinate|stand|let\s+sit|refrigerate|freeze|bake|baking|roast|roasting|simmer|simmering|rise|proof)(?:\s+(?:for|about|until|at\s+least))*\s+)?(\d+(?:\.\d+)?(?:\s*(?:[-–]|to)\s*\d+(?:\.\d+)?)?)\s*(minutes|minute|mins|min|seconds|second|secs|sec|hours|hour|hrs|hr)\b/gi,
     (m, passiveVerb, num, unit) => {
       const u = /^h/i.test(unit) ? 'hr' : /^s/i.test(unit) ? 'sec' : 'min';
       const prefix = passiveVerb ? m.slice(0, m.toLowerCase().indexOf(String(num).toLowerCase())) : '';
       const suffix = passiveVerb ? ' passive' : '';
-      return `${prefix}[${num.replace(/\s+/g, '')} ${u}${suffix}]`;
+      return `${prefix}[${num.replace(/\s*(?:to|–)\s*/gi, '-').replace(/\s+/g, '')} ${u}${suffix}]`;
     },
   );
 
   // 3. Wrap quantity + unit + 1–3 ingredient words: e.g. "1/2 cup all-purpose flour".
   // The name stops at the first linking word, so "1 cup milk until smooth" wraps just "1 cup milk".
-  text = text.replace(
+  if (quantities) text = text.replace(
     /(?<![\w¼⅓⅔½¾⅛/.])((?:\d*[¼⅓⅔½¾⅛]|\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|cloves?)\s+(?:of\s+)?)([a-zA-Z][a-zA-Z-]*(?:\s+[a-zA-Z][a-zA-Z-]*){0,2})/g,
     (m, amount: string, words: string) => {
       const list = words.split(/\s+/);
@@ -943,6 +971,8 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
     Number(ratingInput) >= 1 && Number(ratingInput) <= 10 ? Math.round(Number(ratingInput) * 10) / 10 : undefined;
   const notes = typeof input?.notes === 'string' ? input.notes.trim().slice(0, 1000) : existing?.notes;
   const photo = isRecipePhotoSrc(input?.photo) ? input.photo : undefined;
+  const sourceUrl = typeof input?.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(input.sourceUrl.trim()) ? input.sourceUrl.trim().slice(0, 500) : undefined;
+  const isPrivate = typeof input?.private === 'boolean' ? input.private : Boolean(existing?.private);
 
   const id = existing?.id || (typeof input?.id === 'string' && /^[\w-]{1,48}$/.test(input.id) ? input.id : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`);
   const slug = existing?.slug || slugify(title);
@@ -965,6 +995,8 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
     timesCooked: Math.max(0, Math.round(Number(existing?.timesCooked ?? input?.timesCooked ?? 0))),
     ...(existing?.lastCookedAt || input?.lastCookedAt ? { lastCookedAt: existing?.lastCookedAt || input?.lastCookedAt } : {}),
     sections,
+    ...(sourceUrl ? { sourceUrl } : {}),
+    ...(isPrivate ? { private: true } : {}),
     ...(existing?.ownerId ? { ownerId: existing.ownerId } : {}),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
