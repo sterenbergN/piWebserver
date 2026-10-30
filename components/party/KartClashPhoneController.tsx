@@ -49,6 +49,7 @@ export default function KartClashPhoneController({
   const [isDrifting, setIsDrifting] = useState<boolean>(false);
   const [isBraking, setIsBraking] = useState<boolean>(false);
   const [itemPressed, setItemPressed] = useState<boolean>(false);
+  const [isDraggingTouch, setIsDraggingTouch] = useState<boolean>(false);
   const [rouletteIdx, setRouletteIdx] = useState<number>(0);
 
   // Selected racer for VIP host heat swapping on phone
@@ -1043,6 +1044,7 @@ export default function KartClashPhoneController({
           ref={wheelBoxRef}
           onPointerDown={(e) => {
             draggingTouchRef.current = true;
+            setIsDraggingTouch(true);
             e.currentTarget.setPointerCapture(e.pointerId);
             updateTouchSteer(e.clientX);
           }}
@@ -1052,12 +1054,14 @@ export default function KartClashPhoneController({
           }}
           onPointerUp={() => {
             draggingTouchRef.current = false;
+            setIsDraggingTouch(false);
             steerRef.current = 0;
             setSteerValue(0);
             transmitInput({ steer: 0 });
           }}
           onPointerCancel={() => {
             draggingTouchRef.current = false;
+            setIsDraggingTouch(false);
             steerRef.current = 0;
             setSteerValue(0);
           }}
@@ -1091,7 +1095,7 @@ export default function KartClashPhoneController({
               width: '126px',
               height: '126px',
               transform: `rotate(${steerValue * 68}deg)`,
-              transition: draggingTouchRef.current ? 'none' : 'transform 55ms linear',
+              transition: isDraggingTouch ? 'none' : 'transform 55ms linear',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
