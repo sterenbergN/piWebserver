@@ -14,11 +14,11 @@ interface Props {
 
 const ITEM_META: Record<KartItemType, { emoji: string; label: string; color: string; hint: string }> = {
   mushroom: { emoji: '🍄', label: 'Turbo Mushroom', color: '#ef4444', hint: 'Tap for instant speed burst!' },
-  green_shell: { emoji: '🟢', label: 'Green Shell', color: '#22c55e', hint: 'Fires straight & ricochets off walls!' },
-  red_shell: { emoji: '🔴', label: 'Homing Red Shell', color: '#f97316', hint: 'Hunts down the racer ahead of you!' },
-  banana: { emoji: '🍌', label: 'Banana Peel', color: '#facc15', hint: 'Drops behind your kart to spin tailgaters!' },
-  lightning: { emoji: '⚡', label: 'Lightning Bolt', color: '#fde047', hint: 'Zaps & shrinks every rival on the track!' },
-  star: { emoji: '⭐', label: 'Super Star', color: '#fbbf24', hint: 'Invincible turbo rampage — ram anyone!' },
+  green_shell: { emoji: '🟢', label: 'Green Shell', color: '#22c55e', hint: 'Fires straight & ricochets!' },
+  red_shell: { emoji: '🔴', label: 'Homing Red Shell', color: '#f97316', hint: 'Hunts down the racer ahead!' },
+  banana: { emoji: '🍌', label: 'Banana Peel', color: '#facc15', hint: 'Drops behind your kart!' },
+  lightning: { emoji: '⚡', label: 'Lightning Bolt', color: '#fde047', hint: 'Zaps & shrinks every rival!' },
+  star: { emoji: '⭐', label: 'Super Star', color: '#fbbf24', hint: 'Invincible turbo rampage!' },
 };
 
 const ROULETTE_EMOJIS = ['🍄', '🟢', '🔴', '🍌', '⚡', '⭐'];
@@ -43,7 +43,7 @@ export default function KartClashPhoneController({
   const hd = state?.hostData || {};
   const meId: string = state?.me?.id || '';
 
-  // Gyro state
+  // Gyro & controller state
   const [gyroStatus, setGyroStatus] = useState<'unknown' | 'granted' | 'denied' | 'unsupported'>('unknown');
   const [steerValue, setSteerValue] = useState<number>(0);
   const [isDrifting, setIsDrifting] = useState<boolean>(false);
@@ -51,6 +51,9 @@ export default function KartClashPhoneController({
   const [itemPressed, setItemPressed] = useState<boolean>(false);
   const [isDraggingTouch, setIsDraggingTouch] = useState<boolean>(false);
   const [rouletteIdx, setRouletteIdx] = useState<number>(0);
+  const [landscapeSide, setLandscapeSide] = useState<'left' | 'right'>('left');
+  const [viewport, setViewport] = useState<{ w: number; h: number }>({ w: 800, h: 450 });
+  const [isDraggingTouch, setIsDraggingTouch] = useState<boolean>(false);
 
   // Selected racer for VIP host heat swapping on phone
   const [selectedRacerId, setSelectedRacerId] = useState<string | null>(null);
@@ -65,21 +68,84 @@ export default function KartClashPhoneController({
   const useItemRef = useRef<boolean>(false);
   const rawAngleRef = useRef<number>(0);
   const neutralOffsetRef = useRef<number>(0);
+  const landscapeSignRef = useRef<number>(1);
   const draggingTouchRef = useRef<boolean>(false);
   const wheelBoxRef = useRef<HTMLDivElement | null>(null);
   const prevSpinRef = useRef<number>(0);
   const prevBoostRef = useRef<number>(0);
 
-  // Send input packet to zero-disk-I/O endpoint
+  // Try locking the OS screen orientation to horizontal landscape
+  const tryLockLandscape = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const ori = window.screen?.orientation as unknown as {
+        lock?: (mode: string) => Promise<void>;
+      };
+      if (ori && typeof ori.lock === 'function') {
+        ori.lock('landscape').catch(() => {});
+      }
+    } catch {}
+  }, []);
+
+  // Track viewport size so if the phone OS flips to portrait mid-race, we keep the UI locked horizontally
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateSize = () => {
+      setViewport({ w: window.innerWidth, h: window.innerHeight });
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    window.addEventListener('orientationchange', updateSize);
+    return () => {
+      window.removeEventListener('resize', updateSize);
+      window.removeEventListener('orientationchange', updateSize);
+    };
+  }, []);
+
+  // Lock screen orientation to landscape and prevent iPhone Safari multi-touch pinch/scroll while racing
+  useEffect(() => {
+    if (phase === 'RACING' && pd?.isRacing) {
+      tryLockLandscape();
+      const prevOverflow = document.body.style.overflow;
+      const prevTouchAction = document.documentElement.style.touchAction;
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.touchAction = 'none';
+      const blockGesture = (event: Event) => event.preventDefault();
+      const blockPinch = (event: TouchEvent) => {
+        if (event.touches.length > 1) event.preventDefault();
+      };
+      document.addEventListener('gesturestart', blockGesture, { passive: false });
+      document.addEventListener('gesturechange', blockGesture, { passive: false });
+      document.addEventListener('touchmove', blockPinch, { passive: false });
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        document.documentElement.style.touchAction = prevTouchAction;
+        document.removeEventListener('gesturestart', blockGesture);
+        document.removeEventListener('gesturechange', blockGesture);
+        document.removeEventListener('touchmove', blockPinch);
+        try {
+          const ori = window.screen?.orientation as unknown as { unlock?: () => void };
+          ori?.unlock?.();
+        } catch {}
+      };
+    }
+  }, [phase, pd?.isRacing, tryLockLandscape]);
+
+  // Send input packet to zero-disk-I/O endpoint (/api/party/kart-input)
   const transmitInput = useCallback(
     (override?: Partial<{ steer: number; drift: boolean; useItem: boolean; brake: boolean }>) => {
-      const payload = {
-        roomCode,
-        playerKey,
+      const input = {
         steer: override?.steer !== undefined ? override.steer : steerRef.current,
         drift: override?.drift !== undefined ? override.drift : driftRef.current,
         useItem: override?.useItem !== undefined ? override.useItem : useItemRef.current,
         brake: override?.brake !== undefined ? override.brake : brakeRef.current,
+      };
+      const payload = {
+        roomCode,
+        playerId: playerKey,
+        playerKey,
+        input,
+        ...input,
       };
       fetch('/api/party/kart-input', {
         method: 'POST',
@@ -93,6 +159,7 @@ export default function KartClashPhoneController({
 
   // Request iOS 13+ DeviceOrientation permission or verify support
   const enableGyro = useCallback(async () => {
+    tryLockLandscape();
     if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') {
       setGyroStatus('unsupported');
       return;
@@ -116,9 +183,12 @@ export default function KartClashPhoneController({
       setGyroStatus('granted');
       neutralOffsetRef.current = rawAngleRef.current;
     }
-  }, []);
+  }, [tryLockLandscape]);
 
-  // Attach DeviceOrientation listener whenever granted or on non-iOS browsers
+  // Attach DeviceOrientation listener
+  // Note: Per W3C DeviceOrientation spec, e.beta is ALWAYS rotation around the physical short X-axis of the phone.
+  // When holding the phone horizontally like a steering wheel, steering left/right is ALWAYS e.beta,
+  // even if the phone OS tries to flip the browser viewport to portrait!
   useEffect(() => {
     if (typeof window === 'undefined' || typeof DeviceOrientationEvent === 'undefined') return;
     const doe = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
@@ -128,32 +198,35 @@ export default function KartClashPhoneController({
 
     const handleOrientation = (e: DeviceOrientationEvent) => {
       if (draggingTouchRef.current) return;
-      // Detect whether phone is held in landscape or portrait
+
       const screenAngle =
         typeof window.screen?.orientation?.angle === 'number'
           ? window.screen.orientation.angle
           : typeof (window as any).orientation === 'number'
             ? (window as any).orientation
-            : window.innerWidth > window.innerHeight
-              ? 90
-              : 0;
+            : 0;
+
+      // During RACING (or when phone is held horizontally), always use e.beta (physical landscape steering wheel axis)
+      // so OS portrait/landscape flips never break steering!
+      const isHorizonLocked = phase === 'RACING' || Math.abs(screenAngle) === 90 || Math.abs(e.gamma ?? 0) > 22;
 
       let tiltDeg = 0;
-      if (screenAngle === 90) {
-        // Landscape primary: beta tilts left/right like a steering wheel
-        tiltDeg = e.beta ?? 0;
-      } else if (screenAngle === -90 || screenAngle === 270) {
-        // Landscape secondary: inverted beta
-        tiltDeg = -(e.beta ?? 0);
+      if (isHorizonLocked) {
+        if (screenAngle === -90 || screenAngle === 270) {
+          landscapeSignRef.current = -1;
+        } else if (screenAngle === 90) {
+          landscapeSignRef.current = 1;
+        }
+        tiltDeg = (e.beta ?? 0) * landscapeSignRef.current;
       } else {
-        // Portrait mode: gamma tilts left/right
+        // Pre-race portrait preview fallback if holding phone upright in TRACK_VOTE
         tiltDeg = e.gamma ?? 0;
       }
 
       rawAngleRef.current = tiltDeg;
       const calibrated = tiltDeg - neutralOffsetRef.current;
-      const deadzone = 2.5;
-      const maxAngle = 28;
+      const deadzone = 2.0;
+      const maxAngle = 26;
       let norm = 0;
       if (Math.abs(calibrated) > deadzone) {
         const sign = Math.sign(calibrated);
@@ -166,10 +239,11 @@ export default function KartClashPhoneController({
 
     window.addEventListener('deviceorientation', handleOrientation, true);
     return () => window.removeEventListener('deviceorientation', handleOrientation, true);
-  }, [gyroStatus]);
+  }, [gyroStatus, phase]);
 
   // Recenter steering wheel neutral angle
   const recenterGyro = useCallback(() => {
+    tryLockLandscape();
     neutralOffsetRef.current = rawAngleRef.current;
     steerRef.current = 0;
     setSteerValue(0);
@@ -177,7 +251,18 @@ export default function KartClashPhoneController({
     try {
       navigator.vibrate?.(20);
     } catch {}
-  }, [transmitInput]);
+  }, [transmitInput, tryLockLandscape]);
+
+  // Flip horizontal orientation side (+90deg vs -90deg & invert beta sign)
+  const flipLandscapeSide = useCallback(() => {
+    tryLockLandscape();
+    landscapeSignRef.current = -landscapeSignRef.current;
+    neutralOffsetRef.current = -neutralOffsetRef.current;
+    setLandscapeSide((prev) => (prev === 'left' ? 'right' : 'left'));
+    try {
+      navigator.vibrate?.(20);
+    } catch {}
+  }, [tryLockLandscape]);
 
   // Subscribe to 10Hz telemetry stream during RACING
   useEffect(() => {
@@ -192,21 +277,30 @@ export default function KartClashPhoneController({
     return () => es.close();
   }, [phase, roomCode]);
 
-  // Continuous 18Hz steering transmitter while racing
+  // Continuous 20Hz steering transmitter while racing (with periodic keepalive so server never misses steering)
   useEffect(() => {
     if (phase !== 'RACING' || !pd?.isRacing) return;
     let lastSentSteer = 0;
+    let ticksSinceSend = 0;
     const interval = setInterval(() => {
+      ticksSinceSend++;
       const diff = Math.abs(steerRef.current - lastSentSteer);
-      if (diff >= 0.02 || driftRef.current || brakeRef.current || useItemRef.current) {
+      if (
+        diff >= 0.01 ||
+        ticksSinceSend >= 5 ||
+        driftRef.current ||
+        brakeRef.current ||
+        useItemRef.current
+      ) {
         lastSentSteer = steerRef.current;
+        ticksSinceSend = 0;
         transmitInput();
         if (useItemRef.current) {
           useItemRef.current = false;
           setItemPressed(false);
         }
       }
-    }, 55);
+    }, 50);
     return () => clearInterval(interval);
   }, [phase, pd?.isRacing, transmitInput]);
 
@@ -236,15 +330,25 @@ export default function KartClashPhoneController({
     return () => clearInterval(id);
   }, [myKart?.itemRoulette]);
 
-  // Touch-drag steering on the steering wheel (fallback or hybrid control)
-  const updateTouchSteer = (clientX: number) => {
+  // Touch-drag steering on the steering wheel (supports both native landscape and CSS-rotated portrait lock)
+  const updateTouchSteer = (clientX: number, clientY: number, isRotatedPortrait: boolean) => {
     const box = wheelBoxRef.current?.getBoundingClientRect();
     if (!box) return;
-    const center = box.left + box.width / 2;
-    const halfWidth = Math.max(60, box.width * 0.44);
-    const norm = Math.max(-1, Math.min(1, (clientX - center) / halfWidth));
-    steerRef.current = norm;
-    setSteerValue(norm);
+    let norm = 0;
+    if (isRotatedPortrait) {
+      const center = box.top + box.height / 2;
+      const halfSpan = Math.max(55, box.height * 0.42);
+      const dir = landscapeSide === 'left' ? 1 : -1;
+      norm = (((clientY - center) * dir) / halfSpan);
+    } else {
+      const center = box.left + box.width / 2;
+      const halfSpan = Math.max(55, box.width * 0.42);
+      norm = (clientX - center) / halfSpan;
+    }
+    const clamped = Math.max(-1, Math.min(1, norm));
+    steerRef.current = clamped;
+    setSteerValue(clamped);
+    transmitInput({ steer: clamped });
   };
 
   // ============================================================================
@@ -262,7 +366,6 @@ export default function KartClashPhoneController({
       } else if (selectedRacerId === pid) {
         setSelectedRacerId(null);
       } else {
-        // Assign first selected racer into this racer's heat (swapping them)
         sendHostAction({ type: 'ASSIGN_HEAT_PLAYER', targetPlayerId: selectedRacerId, targetHeatId: heatId });
         setSelectedRacerId(null);
       }
@@ -645,7 +748,7 @@ export default function KartClashPhoneController({
               />
             </div>
             <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-              Tilt your phone like a steering wheel (or drag the wheel during the race)
+              Hold phone horizontally once race starts — screen locks to landscape!
             </span>
           </div>
         )}
@@ -659,7 +762,10 @@ export default function KartClashPhoneController({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => sendAction({ type: 'VOTE_TRACK', trackId: t.id })}
+                  onClick={() => {
+                    tryLockLandscape();
+                    sendAction({ type: 'SUBMIT_TRACK_VOTE', trackId: t.id });
+                  }}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -738,7 +844,10 @@ export default function KartClashPhoneController({
         {hostId && (
           <button
             type="button"
-            onClick={() => sendHostAction({ type: 'LOCK_TRACK_VOTE' })}
+            onClick={() => {
+              tryLockLandscape();
+              sendHostAction({ type: 'LOCK_TRACK_VOTE' });
+            }}
             style={{
               padding: '0.7rem',
               borderRadius: '12px',
@@ -758,7 +867,7 @@ export default function KartClashPhoneController({
   }
 
   // ============================================================================
-  // PHASE 3: RACING (Gyro Steering Wheel Controller OR Pit Crew Chaos Console)
+  // PHASE 3: RACING (Horizontal-Locked Gyro Steering Wheel OR Pit Crew Console)
   // ============================================================================
   if (phase === 'RACING') {
     const isRacing = Boolean(pd?.isRacing);
@@ -933,7 +1042,10 @@ export default function KartClashPhoneController({
       );
     }
 
-    // ACTIVE RACER GYRO STEERING WHEEL COCKPIT
+    // ACTIVE RACER HORIZONTAL-LOCKED GYRO STEERING WHEEL COCKPIT
+    // If the phone OS flips the browser viewport into portrait (viewport.h > viewport.w) while tilting,
+    // we counter-rotate the fullscreen cockpit by 90deg so it NEVER flips to portrait in the player's hands!
+    const isPortraitViewport = viewport.h > viewport.w;
     const isCountdown = (snapshot?.countdownMs || 0) > 0;
     const countdownSec = isCountdown ? Math.ceil((snapshot?.countdownMs || 0) / 1000) : 0;
     const rank = myKart?.rank || 1;
@@ -946,363 +1058,425 @@ export default function KartClashPhoneController({
     const isStar = (myKart?.starTimer || 0) > 0;
     const isBoost = (myKart?.boostTimer || 0) > 0;
 
-    return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
+    const cockpitContainerStyle: React.CSSProperties = isPortraitViewport
+      ? {
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          width: `${viewport.h}px`,
+          height: `${viewport.w}px`,
+          transform: `translate(-50%, -50%) rotate(${landscapeSide === 'left' ? 90 : -90}deg)`,
+          zIndex: 90,
+          background: '#070b14',
+          padding: '0.6rem 0.85rem',
+          display: 'grid',
+          gridTemplateColumns: '1.05fr 1.35fr 1.05fr',
           gap: '0.65rem',
-          width: '100%',
+          alignItems: 'stretch',
+          boxSizing: 'border-box',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           touchAction: 'none',
-        }}
-      >
-        {/* Top Cockpit Telemetry Strip */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr auto 1fr',
-            alignItems: 'center',
-            background: isStar
-              ? 'linear-gradient(90deg, rgba(250,204,21,0.3), rgba(236,72,153,0.3), rgba(56,189,248,0.3))'
-              : isSpunOut
-                ? 'rgba(239,68,68,0.28)'
-                : 'rgba(15,23,42,0.92)',
-            border: isStar
-              ? '2px solid #facc15'
-              : isBoost
-                ? '2px solid #38bdf8'
-                : '1.5px solid rgba(255,255,255,0.14)',
-            borderRadius: '16px',
-            padding: '0.55rem 0.85rem',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>
-              POSITION
-            </div>
-            <div
-              style={{
-                fontSize: '1.55rem',
-                fontWeight: 900,
-                color: rank === 1 ? '#facc15' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fb923c' : '#38bdf8',
-                lineHeight: 1.05,
-              }}
-            >
-              {ordinal(rank)}
-            </div>
-          </div>
+        }
+      : {
+          position: 'fixed',
+          inset: 0,
+          width: '100vw',
+          height: '100dvh',
+          zIndex: 90,
+          background: '#070b14',
+          padding: '0.6rem 0.85rem',
+          display: 'grid',
+          gridTemplateColumns: '1.05fr 1.35fr 1.05fr',
+          gap: '0.65rem',
+          alignItems: 'stretch',
+          boxSizing: 'border-box',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          touchAction: 'none',
+        };
 
-          <div style={{ textAlign: 'center' }}>
-            {isCountdown ? (
-              <div
-                style={{
-                  fontSize: '1.3rem',
-                  fontWeight: 900,
-                  color: countdownSec <= 2 ? '#facc15' : '#f8fafc',
-                }}
-              >
-                🚦 {countdownSec > 0 ? `READY: ${countdownSec}` : 'GO!!'}
-              </div>
-            ) : myKart?.finished ? (
-              <div style={{ fontSize: '1.15rem', fontWeight: 900, color: '#4ade80' }}>🏁 FINISHED!</div>
-            ) : isSpunOut ? (
-              <div style={{ fontSize: '1.05rem', fontWeight: 900, color: '#fca5a5' }}>💫 SPUN OUT!</div>
-            ) : (
-              <div style={{ fontSize: '0.88rem', fontWeight: 900, color: '#f8fafc' }}>
-                LAP {lap}/{snapshot?.totalLaps || 3}
-              </div>
-            )}
-            <div style={{ fontSize: '0.72rem', fontWeight: 800, color: isBoost ? '#38bdf8' : '#94a3b8' }}>
-              {speedKmh} km/h {isBoost ? '🔥 BOOST' : ''}
-            </div>
-          </div>
-
-          <div style={{ textAlign: 'right' }}>
-            <button
-              type="button"
-              onClick={gyroStatus === 'granted' ? recenterGyro : enableGyro}
-              style={{
-                padding: '0.35rem 0.6rem',
-                borderRadius: '10px',
-                border: '1px solid rgba(56,189,248,0.45)',
-                background: 'rgba(56,189,248,0.16)',
-                color: '#38bdf8',
-                fontWeight: 800,
-                fontSize: '0.7rem',
-                cursor: 'pointer',
-              }}
-            >
-              {gyroStatus === 'granted' ? '🎯 Center' : '🛞 Enable Gyro'}
-            </button>
-          </div>
-        </div>
-
-        {/* Interactive Rotating Steering Wheel + Touch Slider */}
-        <div
-          ref={wheelBoxRef}
+    return (
+      <div style={cockpitContainerStyle}>
+        {/* LEFT COLUMN: LEFT THUMB ITEM BUTTON */}
+        <button
+          type="button"
           onPointerDown={(e) => {
-            draggingTouchRef.current = true;
-            setIsDraggingTouch(true);
-            e.currentTarget.setPointerCapture(e.pointerId);
-            updateTouchSteer(e.clientX);
-          }}
-          onPointerMove={(e) => {
-            if (!draggingTouchRef.current) return;
-            updateTouchSteer(e.clientX);
-          }}
-          onPointerUp={() => {
-            draggingTouchRef.current = false;
-            setIsDraggingTouch(false);
-            steerRef.current = 0;
-            setSteerValue(0);
-            transmitInput({ steer: 0 });
-          }}
-          onPointerCancel={() => {
-            draggingTouchRef.current = false;
-            setIsDraggingTouch(false);
-            steerRef.current = 0;
-            setSteerValue(0);
+            e.preventDefault();
+            tryLockLandscape();
+            useItemRef.current = true;
+            setItemPressed(true);
+            transmitInput({ useItem: true });
+            try {
+              navigator.vibrate?.(35);
+            } catch {}
           }}
           style={{
-            position: 'relative',
-            background: 'radial-gradient(circle at center, rgba(30,41,59,0.92), rgba(15,23,42,0.98))',
-            border:
-              driftCharge === 2
-                ? '2.5px solid #f97316'
-                : driftCharge === 1
-                  ? '2.5px solid #38bdf8'
-                  : '1.5px solid rgba(255,255,255,0.14)',
-            borderRadius: '20px',
-            padding: '0.75rem',
+            height: '100%',
+            borderRadius: '22px',
+            border: heldItem
+              ? `3px solid ${ITEM_META[heldItem].color}`
+              : isRoulette
+                ? '3px solid #facc15'
+                : '2px dashed rgba(255,255,255,0.2)',
+            background: itemPressed
+              ? 'rgba(250,204,21,0.35)'
+              : heldItem
+                ? 'linear-gradient(145deg, rgba(250,204,21,0.22), rgba(15,23,42,0.95))'
+                : 'rgba(15,23,42,0.88)',
+            color: '#f8fafc',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '0.4rem',
-            cursor: 'grab',
+            justifyContent: 'center',
+            gap: '0.35rem',
+            padding: '0.65rem',
+            cursor: 'pointer',
+            boxShadow: heldItem ? `0 0 24px ${ITEM_META[heldItem].color}44` : 'none',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '0.68rem', color: '#94a3b8', fontWeight: 700 }}>
-            <span>◀ LEFT</span>
-            <span>{gyroStatus === 'granted' ? 'TILT PHONE OR DRAG WHEEL' : 'DRAG WHEEL TO STEER'}</span>
-            <span>RIGHT ▶</span>
-          </div>
+          <span style={{ fontSize: '3.1rem', lineHeight: 1 }}>
+            {isRoulette ? ROULETTE_EMOJIS[rouletteIdx] : heldItem ? ITEM_META[heldItem].emoji : '🎁'}
+          </span>
+          <span style={{ fontWeight: 900, fontSize: '0.98rem', textAlign: 'center' }}>
+            {isRoulette ? 'ROLLING...' : heldItem ? ITEM_META[heldItem].label : 'USE ITEM'}
+          </span>
+          <span style={{ fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>
+            {heldItem ? ITEM_META[heldItem].hint : 'Hit rainbow boxes!'}
+          </span>
+        </button>
 
-          {/* SVG Racing Steering Wheel that rotates with steerValue */}
+        {/* CENTER COLUMN: TELEMETRY BAR + ROTATING STEERING WHEEL */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
+            height: '100%',
+            minWidth: 0,
+          }}
+        >
+          {/* Top Telemetry Strip */}
           <div
             style={{
-              width: '126px',
-              height: '126px',
-              transform: `rotate(${steerValue * 68}deg)`,
-              transition: isDraggingTouch ? 'none' : 'transform 55ms linear',
               display: 'flex',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: '0.4rem',
+              background: isStar
+                ? 'linear-gradient(90deg, rgba(250,204,21,0.3), rgba(236,72,153,0.3), rgba(56,189,248,0.3))'
+                : isSpunOut
+                  ? 'rgba(239,68,68,0.28)'
+                  : 'rgba(15,23,42,0.95)',
+              border: isStar
+                ? '2px solid #facc15'
+                : isBoost
+                  ? '2px solid #38bdf8'
+                  : '1.5px solid rgba(255,255,255,0.14)',
+              borderRadius: '14px',
+              padding: '0.4rem 0.65rem',
             }}
           >
-            <svg viewBox="0 0 120 120" width="122" height="122">
-              {/* Outer Grip Ring */}
-              <circle
-                cx="60"
-                cy="60"
-                r="50"
-                fill="none"
-                stroke={driftCharge === 2 ? '#f97316' : driftCharge === 1 ? '#38bdf8' : '#334155'}
-                strokeWidth="14"
-              />
-              {/* Top Center Stripe */}
-              <path d="M 54 10 L 66 10 L 64 24 L 56 24 Z" fill="#ef4444" />
-              {/* Wheel Spokes */}
-              <line x1="16" y1="60" x2="104" y2="60" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-              <line x1="60" y1="60" x2="60" y2="104" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
-              {/* Center Hub */}
-              <circle cx="60" cy="60" r="18" fill="#0f172a" stroke="#38bdf8" strokeWidth="3" />
-              <text x="60" y="66" textAnchor="middle" fontSize="16">
-                {state?.me?.avatar || '🏎️'}
-              </text>
-            </svg>
+            <div>
+              <div style={{ fontSize: '0.58rem', fontWeight: 800, color: '#94a3b8' }}>POS</div>
+              <div
+                style={{
+                  fontSize: '1.35rem',
+                  fontWeight: 900,
+                  color: rank === 1 ? '#facc15' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#fb923c' : '#38bdf8',
+                  lineHeight: 1,
+                }}
+              >
+                {ordinal(rank)}
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              {isCountdown ? (
+                <div style={{ fontSize: '1.05rem', fontWeight: 900, color: countdownSec <= 2 ? '#facc15' : '#f8fafc' }}>
+                  🚦 {countdownSec > 0 ? `READY: ${countdownSec}` : 'GO!!'}
+                </div>
+              ) : myKart?.finished ? (
+                <div style={{ fontSize: '1rem', fontWeight: 900, color: '#4ade80' }}>🏁 FINISHED!</div>
+              ) : isSpunOut ? (
+                <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#fca5a5' }}>💫 SPUN OUT!</div>
+              ) : (
+                <div style={{ fontSize: '0.82rem', fontWeight: 900, color: '#f8fafc' }}>
+                  LAP {lap}/{snapshot?.totalLaps || 3} • {speedKmh} km/h
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.3rem' }}>
+              <button
+                type="button"
+                onClick={gyroStatus === 'granted' ? recenterGyro : enableGyro}
+                style={{
+                  padding: '0.3rem 0.5rem',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(56,189,248,0.45)',
+                  background: 'rgba(56,189,248,0.16)',
+                  color: '#38bdf8',
+                  fontWeight: 800,
+                  fontSize: '0.66rem',
+                  cursor: 'pointer',
+                }}
+              >
+                {gyroStatus === 'granted' ? '🎯 Center' : '🛞 Gyro'}
+              </button>
+              <button
+                type="button"
+                onClick={flipLandscapeSide}
+                title="Flip horizontal screen & tilt direction 180°"
+                style={{
+                  padding: '0.3rem 0.45rem',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  background: 'rgba(255,255,255,0.08)',
+                  color: '#cbd5e1',
+                  fontWeight: 800,
+                  fontSize: '0.66rem',
+                  cursor: 'pointer',
+                }}
+              >
+                🔄 Flip
+              </button>
+              {hostId && (
+                <button
+                  type="button"
+                  onClick={() => sendHostAction({ type: 'FINISH_KART_RACE' })}
+                  title="End Race Now (VIP Host)"
+                  style={{
+                    padding: '0.3rem 0.45rem',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(250,204,21,0.45)',
+                    background: 'rgba(250,204,21,0.14)',
+                    color: '#fde047',
+                    fontWeight: 800,
+                    fontSize: '0.66rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ⏭️ End
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Horizontal Steer Bar Indicator */}
+          {/* Interactive Rotating Steering Wheel + Touch Slider */}
           <div
+            ref={wheelBoxRef}
+            onPointerDown={(e) => {
+              tryLockLandscape();
+              draggingTouchRef.current = true;
+              setIsDraggingTouch(true);
+              e.currentTarget.setPointerCapture(e.pointerId);
+              updateTouchSteer(e.clientX, e.clientY, isPortraitViewport);
+            }}
+            onPointerMove={(e) => {
+              if (!draggingTouchRef.current) return;
+              updateTouchSteer(e.clientX, e.clientY, isPortraitViewport);
+            }}
+            onPointerUp={() => {
+              draggingTouchRef.current = false;
+              setIsDraggingTouch(false);
+              steerRef.current = 0;
+              setSteerValue(0);
+              transmitInput({ steer: 0 });
+            }}
+            onPointerCancel={() => {
+              draggingTouchRef.current = false;
+              setIsDraggingTouch(false);
+              steerRef.current = 0;
+              setSteerValue(0);
+            }}
             style={{
-              width: '100%',
-              height: '8px',
-              borderRadius: '999px',
-              background: 'rgba(255,255,255,0.08)',
+              flex: 1,
               position: 'relative',
+              background: 'radial-gradient(circle at center, rgba(30,41,59,0.92), rgba(15,23,42,0.98))',
+              border:
+                driftCharge === 2
+                  ? '2.5px solid #f97316'
+                  : driftCharge === 1
+                    ? '2.5px solid #38bdf8'
+                    : '1.5px solid rgba(255,255,255,0.14)',
+              borderRadius: '20px',
+              padding: '0.5rem 0.65rem',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'grab',
             }}
           >
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '0.64rem', color: '#94a3b8', fontWeight: 800 }}>
+              <span>◀ LEFT</span>
+              <span>{gyroStatus === 'granted' ? 'TILT OR DRAG WHEEL' : 'DRAG WHEEL'}</span>
+              <span>RIGHT ▶</span>
+            </div>
+
+            {/* SVG Racing Steering Wheel that rotates with steerValue */}
             <div
               style={{
-                position: 'absolute',
-                top: 0,
-                bottom: 0,
-                width: '26px',
-                borderRadius: '999px',
-                background: driftCharge === 2 ? '#f97316' : '#38bdf8',
-                left: `calc(${50 + steerValue * 44}% - 13px)`,
+                width: '112px',
+                height: '112px',
+                transform: `rotate(${steerValue * 68}deg)`,
+                transition: isDraggingTouch ? 'none' : 'transform 50ms linear',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
-            />
+            >
+              <svg viewBox="0 0 120 120" width="110" height="110">
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="50"
+                  fill="none"
+                  stroke={driftCharge === 2 ? '#f97316' : driftCharge === 1 ? '#38bdf8' : '#334155'}
+                  strokeWidth="14"
+                />
+                <path d="M 54 10 L 66 10 L 64 24 L 56 24 Z" fill="#ef4444" />
+                <line x1="16" y1="60" x2="104" y2="60" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
+                <line x1="60" y1="60" x2="60" y2="104" stroke="#475569" strokeWidth="9" strokeLinecap="round" />
+                <circle cx="60" cy="60" r="18" fill="#0f172a" stroke="#38bdf8" strokeWidth="3" />
+                <text x="60" y="66" textAnchor="middle" fontSize="16">
+                  {state?.me?.avatar || '🏎️'}
+                </text>
+              </svg>
+            </div>
+
+            {/* Horizontal Steer Bar Indicator */}
+            <div
+              style={{
+                width: '100%',
+                height: '8px',
+                borderRadius: '999px',
+                background: 'rgba(255,255,255,0.08)',
+                position: 'relative',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  width: '26px',
+                  borderRadius: '999px',
+                  background: driftCharge === 2 ? '#f97316' : '#38bdf8',
+                  left: `calc(${50 + steerValue * 44}% - 13px)`,
+                }}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Left & Right Thumb Arcade Action Pads */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
-          {/* LEFT THUMB: ITEM BUTTON */}
+        {/* RIGHT COLUMN: DRIFT / ROCKET START + BRAKE */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', height: '100%' }}>
           <button
             type="button"
             onPointerDown={(e) => {
               e.preventDefault();
-              useItemRef.current = true;
-              setItemPressed(true);
-              transmitInput({ useItem: true });
+              tryLockLandscape();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              driftRef.current = true;
+              setIsDrifting(true);
+              transmitInput({ drift: true });
               try {
-                navigator.vibrate?.(35);
+                navigator.vibrate?.(25);
               } catch {}
             }}
+            onPointerUp={() => {
+              driftRef.current = false;
+              setIsDrifting(false);
+              transmitInput({ drift: false });
+            }}
+            onPointerCancel={() => {
+              driftRef.current = false;
+              setIsDrifting(false);
+              transmitInput({ drift: false });
+            }}
             style={{
-              minHeight: '148px',
-              borderRadius: '22px',
-              border: heldItem
-                ? `3px solid ${ITEM_META[heldItem].color}`
-                : isRoulette
-                  ? '3px solid #facc15'
-                  : '2px dashed rgba(255,255,255,0.18)',
-              background: itemPressed
-                ? 'rgba(250,204,21,0.35)'
-                : heldItem
-                  ? 'linear-gradient(145deg, rgba(250,204,21,0.22), rgba(15,23,42,0.95))'
-                  : 'rgba(15,23,42,0.85)',
+              flex: 1,
+              borderRadius: '20px',
+              border:
+                driftCharge === 2
+                  ? '3px solid #f97316'
+                  : driftCharge === 1
+                    ? '3px solid #38bdf8'
+                    : isDrifting
+                      ? '2.5px solid #facc15'
+                      : '2px solid rgba(56,189,248,0.45)',
+              background:
+                driftCharge === 2
+                  ? 'linear-gradient(135deg, rgba(249,115,22,0.42), rgba(239,68,68,0.32))'
+                  : driftCharge === 1
+                    ? 'linear-gradient(135deg, rgba(56,189,248,0.38), rgba(37,99,235,0.32))'
+                    : isCountdown
+                      ? 'linear-gradient(135deg, rgba(250,204,21,0.3), rgba(245,158,11,0.2))'
+                      : isDrifting
+                        ? 'rgba(56,189,248,0.28)'
+                        : 'rgba(15,23,42,0.9)',
               color: '#f8fafc',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.3rem',
-              padding: '0.75rem',
+              gap: '0.2rem',
+              padding: '0.5rem',
               cursor: 'pointer',
-              boxShadow: heldItem ? `0 0 24px ${ITEM_META[heldItem].color}44` : 'none',
             }}
           >
-            <span style={{ fontSize: '2.7rem', lineHeight: 1 }}>
-              {isRoulette ? ROULETTE_EMOJIS[rouletteIdx] : heldItem ? ITEM_META[heldItem].emoji : '🎁'}
+            <span style={{ fontSize: '2rem', lineHeight: 1 }}>
+              {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : '💨'}
             </span>
-            <span style={{ fontWeight: 900, fontSize: '0.92rem' }}>
-              {isRoulette ? 'ROLLING...' : heldItem ? ITEM_META[heldItem].label : 'NO ITEM'}
+            <span style={{ fontWeight: 900, fontSize: '0.92rem', textAlign: 'center' }}>
+              {isCountdown
+                ? 'ROCKET START'
+                : driftCharge === 2
+                  ? 'SUPER TURBO!'
+                  : driftCharge === 1
+                    ? 'MINI-TURBO!'
+                    : 'HOLD DRIFT'}
             </span>
-            <span style={{ fontSize: '0.68rem', color: '#94a3b8', textAlign: 'center' }}>
-              {heldItem ? ITEM_META[heldItem].hint : 'Drive through rainbow boxes!'}
+            <span style={{ fontSize: '0.66rem', color: '#cbd5e1', textAlign: 'center' }}>
+              {isCountdown ? 'Hold on "1" for boost!' : 'Release after sparks'}
             </span>
           </button>
 
-          {/* RIGHT THUMB: DRIFT / HOP / ROCKET START + BRAKE */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                driftRef.current = true;
-                setIsDrifting(true);
-                transmitInput({ drift: true });
-                try {
-                  navigator.vibrate?.(25);
-                } catch {}
-              }}
-              onPointerUp={() => {
-                driftRef.current = false;
-                setIsDrifting(false);
-                transmitInput({ drift: false });
-              }}
-              onPointerCancel={() => {
-                driftRef.current = false;
-                setIsDrifting(false);
-                transmitInput({ drift: false });
-              }}
-              style={{
-                flex: 1,
-                minHeight: '96px',
-                borderRadius: '20px',
-                border:
-                  driftCharge === 2
-                    ? '3px solid #f97316'
-                    : driftCharge === 1
-                      ? '3px solid #38bdf8'
-                      : isDrifting
-                        ? '2.5px solid #facc15'
-                        : '2px solid rgba(56,189,248,0.45)',
-                background:
-                  driftCharge === 2
-                    ? 'linear-gradient(135deg, rgba(249,115,22,0.42), rgba(239,68,68,0.32))'
-                    : driftCharge === 1
-                      ? 'linear-gradient(135deg, rgba(56,189,248,0.38), rgba(37,99,235,0.32))'
-                      : isCountdown
-                        ? 'linear-gradient(135deg, rgba(250,204,21,0.3), rgba(245,158,11,0.2))'
-                        : isDrifting
-                          ? 'rgba(56,189,248,0.28)'
-                          : 'rgba(15,23,42,0.9)',
-                color: '#f8fafc',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.2rem',
-                padding: '0.5rem',
-                cursor: 'pointer',
-              }}
-            >
-              <span style={{ fontSize: '1.6rem', lineHeight: 1 }}>
-                {isCountdown ? '🚀' : driftCharge === 2 ? '🔥' : driftCharge === 1 ? '⚡' : '💨'}
-              </span>
-              <span style={{ fontWeight: 900, fontSize: '0.9rem' }}>
-                {isCountdown
-                  ? 'ROCKET START'
-                  : driftCharge === 2
-                    ? 'SUPER TURBO READY!'
-                    : driftCharge === 1
-                      ? 'MINI-TURBO READY!'
-                      : 'HOLD TO DRIFT'}
-              </span>
-              <span style={{ fontSize: '0.66rem', color: '#cbd5e1' }}>
-                {isCountdown ? 'Hold on 2 for boost!' : 'Release after sparks for boost'}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                brakeRef.current = true;
-                setIsBraking(true);
-                transmitInput({ brake: true });
-              }}
-              onPointerUp={() => {
-                brakeRef.current = false;
-                setIsBraking(false);
-                transmitInput({ brake: false });
-              }}
-              onPointerCancel={() => {
-                brakeRef.current = false;
-                setIsBraking(false);
-                transmitInput({ brake: false });
-              }}
-              style={{
-                height: '44px',
-                borderRadius: '14px',
-                border: isBraking ? '2px solid #ef4444' : '1.5px solid rgba(239,68,68,0.38)',
-                background: isBraking ? 'rgba(239,68,68,0.32)' : 'rgba(239,68,68,0.12)',
-                color: '#fca5a5',
-                fontWeight: 900,
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-              }}
-            >
-              🛑 BRAKE / REVERSE
-            </button>
-          </div>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              tryLockLandscape();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              brakeRef.current = true;
+              setIsBraking(true);
+              transmitInput({ brake: true });
+            }}
+            onPointerUp={() => {
+              brakeRef.current = false;
+              setIsBraking(false);
+              transmitInput({ brake: false });
+            }}
+            onPointerCancel={() => {
+              brakeRef.current = false;
+              setIsBraking(false);
+              transmitInput({ brake: false });
+            }}
+            style={{
+              height: '52px',
+              borderRadius: '14px',
+              border: isBraking ? '2px solid #ef4444' : '1.5px solid rgba(239,68,68,0.38)',
+              background: isBraking ? 'rgba(239,68,68,0.32)' : 'rgba(239,68,68,0.12)',
+              color: '#fca5a5',
+              fontWeight: 900,
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+            }}
+          >
+            🛑 BRAKE / REV
+          </button>
         </div>
       </div>
     );

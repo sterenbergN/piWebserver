@@ -7,12 +7,20 @@ const keyCache = new Map<string, string>();
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
+    }
 
     const code = normalizeRoomCode(body.roomCode);
-    const actorKey = typeof body.playerId === 'string' ? body.playerId : '';
-    const input = body.input;
-    if (!code || !actorKey || !input || typeof input !== 'object') {
+    const actorKey =
+      typeof body.playerId === 'string' && body.playerId
+        ? body.playerId
+        : typeof body.playerKey === 'string' && body.playerKey
+          ? body.playerKey
+          : '';
+    const input = body.input && typeof body.input === 'object' ? body.input : body;
+
+    if (!code || !actorKey) {
       return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
     }
 

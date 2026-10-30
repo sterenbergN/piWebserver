@@ -169,9 +169,7 @@ const globalForKart = globalThis as unknown as {
 };
 
 const activeSims: Map<string, KartRaceSim> = globalForKart.kartSims || new Map();
-if (process.env.NODE_ENV !== 'production') {
-  globalForKart.kartSims = activeSims;
-}
+globalForKart.kartSims = activeSims;
 
 const BOT_POOL: { name: string; avatar: string; color: string }[] = [
   { name: 'Mario-Bot', avatar: '🍄', color: '#ef4444' },
@@ -604,7 +602,7 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number, leaderProgr
 
   const desiredAngle = Math.atan2(targetX - k.x, targetZ - k.z);
   const diff = normalizeAngle(desiredAngle - k.angle);
-  const steer = Math.max(-1, Math.min(1, diff * 2.2));
+  const steer = Math.max(-1, Math.min(1, -diff * 2.2));
   const sharpTurn = Math.abs(diff) > 0.35;
 
   let useItem = false;
@@ -767,14 +765,14 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
         k.driftLevel = 0;
       }
 
-      // Steering angular velocity
-      const turnRate = k.drifting ? 1.85 : 1.55;
+      // Steering angular velocity (in Three.js right-handed +Y up, looking +Z: right turn is -angle)
+      const turnRate = k.drifting ? 2.45 : 2.05;
       const frictionTurn = 0.75 + 0.25 * sim.track.friction;
       const effectiveSteer = k.drifting
         ? k.driftDir * 0.55 + inp.steer * 0.65
         : inp.steer;
       const speedFactor = Math.min(1, Math.max(0.35, Math.abs(k.speed) / 30));
-      k.angle = normalizeAngle(k.angle + effectiveSteer * turnRate * frictionTurn * speedFactor * dt);
+      k.angle = normalizeAngle(k.angle - effectiveSteer * turnRate * frictionTurn * speedFactor * dt);
 
       // Top speed & acceleration calculation
       let baseTopSpeed = 54;

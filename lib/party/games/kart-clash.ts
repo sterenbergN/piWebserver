@@ -450,6 +450,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       qualified,
       wonPrediction,
       predictionBonus: wonPrediction ? PIT_CREW_PREDICT_BONUS : 0,
+      topHumanName: topHuman?.name || standings[0]?.name || 'Winner',
       standings: standings.slice(0, 8),
     };
   }

@@ -700,13 +700,27 @@ test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and mult
   for (let i = 0; i < 65; i++) {
     stepKartSimulation(sim!, 1 / 30);
   }
-  updateKartInput(roomCode, id1, { steer: 0.25, drift: true, useItem: false, brake: false });
+  const { POST: postKartInput } = await import('../../app/api/party/kart-input/route');
+  const startAngle = sim!.karts[id1].angle;
+  const res = await postKartInput(
+    new Request('http://localhost/api/party/kart-input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomCode, playerKey: p1.playerId, steer: 0.75, drift: true, useItem: false, brake: false }),
+    }),
+  );
+  assert.equal(res.status, 200);
+  const resJson = await res.json();
+  assert.equal(resJson.ok, true, '/api/party/kart-input accepts phone gyro payload');
+  assert.equal(sim!.inputs[id1].steer, 0.75, 'phone gyro steer value stored on active simulation');
+
   for (let i = 0; i < 65; i++) {
     stepKartSimulation(sim!, 1 / 30);
   }
   assert.equal(sim!.countdownMs, 0, 'countdown finishes after 3.4s');
   assert.ok(sim!.karts[id1].boostTimer > 0, 'Rocket Start turbo boost activated');
   assert.ok(sim!.karts[id1].totalProgress > 0, 'kart advances past start line along 3D spline');
+  assert.notEqual(sim!.karts[id1].angle, startAngle, 'steering input turns the kart heading angle');
 
   // Finish Race 1
   await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });

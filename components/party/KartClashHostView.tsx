@@ -547,7 +547,7 @@ export default function KartClashHostView({
 
         ref.root.position.set(ref.currX, 0, ref.currZ);
         const spinYaw = k.spinOutTimer > 0 ? elapsed * 16 : 0;
-        const driftYaw = k.drifting ? k.driftDir * 0.24 : 0;
+        const driftYaw = k.drifting ? -k.driftDir * 0.24 : 0;
         ref.root.rotation.y = ref.currAngle + driftYaw + spinYaw;
 
         const targetScale = k.shrinkTimer > 0 ? 0.58 : 1.0;
