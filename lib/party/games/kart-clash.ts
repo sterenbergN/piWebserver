@@ -10,6 +10,7 @@ import {
   KartItemsMode,
   buildKartRacers,
   createKartSimulation,
+  forceStartCountdown,
   getKartSimulation,
    getKartSnapshot,
   startKartSimulationLoop,
@@ -274,6 +275,7 @@ function launchRace(state: GameState, trackId: TrackId) {
     totalLaps: 3,
     speedClass: cfg.speedClass,
     itemsMode: cfg.itemsMode,
+    requireOrientation: humanPlayers.length > 0,
     onFinish: () => {
       // Automatically transition room state to RACE_RESULTS when physics loop completes
       import('../engine')
@@ -847,6 +849,13 @@ export const kartClashLogic = {
             timestamp: Date.now(),
           },
         };
+        break;
+      }
+
+      case 'FORCE_START_COUNTDOWN':
+      case 'START_COUNTDOWN_NOW': {
+        if (!isHost || state.phase !== 'RACING') return;
+        forceStartCountdown(state.roomCode);
         break;
       }
 

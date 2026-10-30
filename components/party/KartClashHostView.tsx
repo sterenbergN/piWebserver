@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { KART_TRACKS, KartTrack, TRACK_LIST, TrackId } from '@/lib/party/kart-tracks';
+import { KART_TRACKS, KartTrack, TRACK_LIST, TrackId, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
 import { KartItemType, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 import { KartHeat } from '@/lib/party/games/kart-clash';
 
@@ -138,19 +138,19 @@ export function TrackMinimap({
       {/* AI Bot Dots (rendered underneath human racers) */}
       {bots.map((k) => (
         <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
-          <circle r={11} fill={k.color} stroke="#020617" strokeWidth={3.5} opacity={0.88} />
+          <circle r={5} fill={k.color} stroke="#020617" strokeWidth={1.8} opacity={0.92} />
         </g>
       ))}
       {/* Human Racer Badges with Live Rank */}
       {humans.map((k) => (
         <g key={k.id} transform={`translate(${k.x}, ${k.z})`}>
-          <circle r={20} fill={k.color} stroke="#ffffff" strokeWidth={5.5} />
+          <circle r={8.5} fill={k.color} stroke="#ffffff" strokeWidth={2.4} />
           <text
             x={0}
-            y={7}
+            y={3.5}
             textAnchor="middle"
             fill="#020617"
-            fontSize={21}
+            fontSize={10}
             fontWeight={900}
             style={{ fontFamily: 'sans-serif' }}
           >
@@ -402,7 +402,7 @@ function buildTrackMeshGroup(track: KartTrack): {
   }
 
   // 6. Automatic 3D Turn Chevron Warning Signs on the outside of sharp turns
-  const signBoardGeo = new THREE.BoxGeometry(3.2, 2.2, 0.35);
+  const signBoardGeo = new THREE.BoxGeometry(3.6, 2.2, 0.35);
   const signBoardMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
   const signArrowGeo = new THREE.ConeGeometry(0.85, 1.6, 3);
   const signArrowMat = new THREE.MeshBasicMaterial({ color: '#facc15' });
@@ -411,15 +411,28 @@ function buildTrackMeshGroup(track: KartTrack): {
 
   for (let i = 0; i < m; i += 5) {
     const s = samples[i];
-    if (Math.abs(s.curvature) < 0.011) continue;
-    const outsideSign = s.curvature > 0 ? -1 : 1;
-    const dist = halfW + curbW + 2.8;
+    if (Math.abs(s.curvature) < 0.012) continue;
+    // Strictly on the true outside of the turn (beyond the barrier walls)
+    const outsideSign = s.curvature > 0 ? 1 : -1;
+    const dist = track.wallWidth + 3.2;
     const sx = s.x + s.nx * outsideSign * dist;
     const sz = s.z + s.nz * outsideSign * dist;
 
+    // Guaranteed clearance from all other track sections
+    let tooClose = false;
+    for (let j = 0; j < m; j++) {
+      if (Math.abs(i - j) <= 6 || Math.abs(i - j) >= m - 6) continue;
+      const other = samples[j];
+      if (Math.hypot(sx - other.x, sz - other.z) < track.wallWidth + 4) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (tooClose) continue;
+
     const signGroup = new THREE.Group();
     signGroup.position.set(sx, 0, sz);
-    signGroup.rotation.y = s.angle + Math.PI + outsideSign * 0.35;
+    signGroup.rotation.y = s.angle + Math.PI + outsideSign * 0.25;
 
     const post = new THREE.Mesh(signPostGeo, signPostMat);
     post.position.y = 1.3;
@@ -455,14 +468,15 @@ function buildTrackMeshGroup(track: KartTrack): {
       }
     }
 
-    // Gantry pillars & top banner
+    // Gantry pillars safely outside outer barrier walls
+    const pillarDist = track.wallWidth + 3.5;
     const pillarGeo = new THREE.CylinderGeometry(0.95, 1.15, 15, 12);
     const pillarMat = new THREE.MeshLambertMaterial({ color: track.theme.accentColor });
     const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    leftPillar.position.set(-halfW - 1.8, 7.5, 0);
+    leftPillar.position.set(-pillarDist, 7.5, 0);
     const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
-    rightPillar.position.set(halfW + 1.8, 7.5, 0);
-    const bannerGeo = new THREE.BoxGeometry(track.roadWidth + 6, 2.8, 1.6);
+    rightPillar.position.set(pillarDist, 7.5, 0);
+    const bannerGeo = new THREE.BoxGeometry(pillarDist * 2 + 4, 2.8, 1.6);
     const bannerMat = new THREE.MeshLambertMaterial({ color: '#facc15' });
     const banner = new THREE.Mesh(bannerGeo, bannerMat);
     banner.position.set(0, 14.0, 0);
@@ -479,10 +493,25 @@ function buildTrackMeshGroup(track: KartTrack): {
       gantryLights.push(bulb);
     }
 
-    // Trackside Grandstands on both sides of start straight
+    // Trackside Grandstands on both sides of start straight (with collision clearance)
     for (const side of [-1, 1]) {
+      const standDist = track.wallWidth + 12.0;
+      const cos = Math.cos(startSample.angle);
+      const sin = Math.sin(startSample.angle);
+      const worldCenterX = startSample.x + (side * (standDist + 3.0) * cos + (-8) * sin);
+      const worldCenterZ = startSample.z + (-side * (standDist + 3.0) * sin + (-8) * cos);
+      let overlapsOther = false;
+      for (let i = 8; i < m - 8; i++) {
+        const s = samples[i];
+        if (Math.hypot(worldCenterX - s.x, worldCenterZ - s.z) < track.wallWidth + 14) {
+          overlapsOther = true;
+          break;
+        }
+      }
+      if (overlapsOther) continue;
+
       const standGroup = new THREE.Group();
-      standGroup.position.set(side * (track.wallWidth + 7.5), 0, -6);
+      standGroup.position.set(side * standDist, 0, -8);
       const tierColors = ['#ef4444', '#38bdf8', '#facc15'];
       for (let t = 0; t < 3; t++) {
         const tier = new THREE.Mesh(
@@ -588,22 +617,29 @@ function buildTrackMeshGroup(track: KartTrack): {
       lavaTip.position.y = 13.5;
       propGroup.add(spire, lavaTip);
     } else if (prop.kind === 'cyber-arch') {
-      const leftCol = new THREE.Mesh(
-        new THREE.BoxGeometry(0.8, 16, 0.8),
-        new THREE.MeshBasicMaterial({ color: '#06b6d4' }),
+      // Futuristic Cyber-Spire Skyscraper Monolith
+      const tower = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, 20, 2.4),
+        new THREE.MeshLambertMaterial({ color: '#090d16' }),
       );
-      leftCol.position.set(-4.5, 8, 0);
-      const rightCol = new THREE.Mesh(
-        new THREE.BoxGeometry(0.8, 16, 0.8),
-        new THREE.MeshBasicMaterial({ color: '#d946ef' }),
+      tower.position.y = 10;
+      const neonStripe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.35, 19.5, 2.45),
+        new THREE.MeshBasicMaterial({ color: prop.color }),
       );
-      rightCol.position.set(4.5, 8, 0);
-      const topBeam = new THREE.Mesh(
-        new THREE.BoxGeometry(9.8, 0.8, 0.8),
-        new THREE.MeshBasicMaterial({ color: '#38bdf8' }),
+      neonStripe.position.y = 10;
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.8, 0.16, 8, 16),
+        new THREE.MeshBasicMaterial({ color: '#00f5ff' }),
       );
-      topBeam.position.set(0, 16, 0);
-      propGroup.add(leftCol, rightCol, topBeam);
+      ring.position.y = 15;
+      ring.rotation.x = Math.PI / 2;
+      const beacon = new THREE.Mesh(
+        new THREE.ConeGeometry(1.4, 3.8, 4),
+        new THREE.MeshBasicMaterial({ color: '#ec4899' }),
+      );
+      beacon.position.y = 21.9;
+      propGroup.add(tower, neonStripe, ring, beacon);
     } else if (prop.kind === 'rock') {
       const rock = new THREE.Mesh(
         new THREE.DodecahedronGeometry(2.8, 1),
@@ -625,6 +661,33 @@ function buildTrackMeshGroup(track: KartTrack): {
       propGroup.add(pillar);
     }
     group.add(propGroup);
+  }
+
+  // 11. Overhead Cyber Lightspeed Arches on Cyber Metropolis (spanning safely above the road)
+  if (track.id === 'cyber-metro') {
+    const archDist = track.wallWidth + 3.0;
+    const gateP = [0.35, 0.70];
+    for (const p of gateP) {
+      const s = sampleTrackAtProgress(track, p);
+      const gateGroup = new THREE.Group();
+      gateGroup.position.set(s.x, 0, s.z);
+      gateGroup.rotation.y = s.angle;
+
+      const colGeo = new THREE.BoxGeometry(1.2, 17, 1.2);
+      const colMat = new THREE.MeshBasicMaterial({ color: '#00f5ff' });
+      const leftCol = new THREE.Mesh(colGeo, colMat);
+      leftCol.position.set(-archDist, 8.5, 0);
+      const rightCol = new THREE.Mesh(colGeo, colMat);
+      rightCol.position.set(archDist, 8.5, 0);
+
+      const crossGeo = new THREE.BoxGeometry(archDist * 2 + 2, 1.4, 1.4);
+      const crossMat = new THREE.MeshBasicMaterial({ color: '#ec4899' });
+      const crossBeam = new THREE.Mesh(crossGeo, crossMat);
+      crossBeam.position.set(0, 16.5, 0);
+
+      gateGroup.add(leftCol, rightCol, crossBeam);
+      group.add(gateGroup);
+    }
   }
 
   return { group, itemBoxMeshes, gantryLights };
@@ -1093,8 +1156,13 @@ export default function KartClashHostView({
 
       // 1. Animate Gantry Countdown Bulbs
       if (gantryLights && gantryLights.length >= 3) {
+        const isWaiting = Boolean(snap.waitingForOrientation);
         const cd = snap.countdownMs;
-        if (cd > 2000) {
+        if (isWaiting) {
+          (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#334155');
+          (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#334155');
+          (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
+        } else if (cd > 2000) {
           (gantryLights[0].material as THREE.MeshBasicMaterial).color.set('#ef4444');
           (gantryLights[1].material as THREE.MeshBasicMaterial).color.set('#334155');
           (gantryLights[2].material as THREE.MeshBasicMaterial).color.set('#334155');
@@ -1120,13 +1188,15 @@ export default function KartClashHostView({
       // 2. Synthesizer Audio Cues
       const audio = audioEngineRef.current;
       if (audio && audioEnabledRef.current) {
-        const sec = snap.countdownMs > 0 ? Math.ceil(snap.countdownMs / 1000) : 0;
-        if (sec > 0 && sec !== lastCountdownSecRef.current) {
-          lastCountdownSecRef.current = sec;
-          audio.playCountdown(false);
-        } else if (sec === 0 && lastCountdownSecRef.current > 0) {
-          lastCountdownSecRef.current = 0;
-          audio.playCountdown(true);
+        if (!snap.waitingForOrientation) {
+          const sec = snap.countdownMs > 0 ? Math.ceil(snap.countdownMs / 1000) : 0;
+          if (sec > 0 && sec !== lastCountdownSecRef.current) {
+            lastCountdownSecRef.current = sec;
+            audio.playCountdown(false);
+          } else if (sec === 0 && lastCountdownSecRef.current > 0) {
+            lastCountdownSecRef.current = 0;
+            audio.playCountdown(true);
+          }
         }
 
         for (const k of snap.karts) {
@@ -2234,8 +2304,109 @@ export default function KartClashHostView({
           </div>
         )}
 
+        {/* Waiting for Racers to Rotate Phone to Horizontal */}
+        {snap?.waitingForOrientation && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(7, 11, 20, 0.78)',
+              backdropFilter: 'blur(5px)',
+              zIndex: 25,
+              padding: '1.5rem',
+            }}
+          >
+            <div
+              style={{
+                background: 'rgba(15, 23, 42, 0.94)',
+                border: '2.5px solid var(--party-cyan)',
+                boxShadow: '0 0 35px rgba(6,182,212,0.45)',
+                borderRadius: '24px',
+                padding: '1.8rem 2.4rem',
+                maxWidth: '620px',
+                width: '90%',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                textAlign: 'center',
+                gap: '1.1rem',
+              }}
+            >
+              <div style={{ fontSize: '3.2rem', animation: 'spin 3s ease-in-out infinite' }}>
+                📱🔄
+              </div>
+              <div>
+                <h2
+                  style={{
+                    fontFamily: 'var(--party-font-display)',
+                    fontSize: '1.75rem',
+                    fontWeight: 900,
+                    margin: 0,
+                    color: '#fff',
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Hold Phones Sideways to Race!
+                </h2>
+                <p style={{ margin: '0.4rem 0 0', color: 'var(--party-text-muted)', fontSize: '0.92rem' }}>
+                  Countdown starts automatically once all drivers turn their devices horizontally.
+                </p>
+              </div>
+
+              {/* Racer Orientation Status Badges */}
+              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {(snap.humanRacersStatus || []).map((r: { id: string; name: string; avatar: string; color: string; isHorizontal: boolean }) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      background: r.isHorizontal ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)',
+                      border: `1.5px solid ${r.isHorizontal ? 'var(--party-green)' : 'var(--party-red)'}`,
+                      borderRadius: '999px',
+                      padding: '0.35rem 0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      fontSize: '0.85rem',
+                      fontWeight: 800,
+                    }}
+                  >
+                    <span>{r.avatar}</span>
+                    <span style={{ color: r.color }}>{r.name}</span>
+                    <span>{r.isHorizontal ? '✅ Ready' : '📱 Waiting'}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Host Skip / Start Anyway Button */}
+              <button
+                type="button"
+                onClick={() => sendAction({ type: 'FORCE_START_COUNTDOWN' })}
+                style={{
+                  marginTop: '0.5rem',
+                  background: 'var(--party-yellow)',
+                  color: '#0f172a',
+                  border: 'none',
+                  borderRadius: '12px',
+                  padding: '0.6rem 1.4rem',
+                  fontWeight: 900,
+                  fontSize: '0.92rem',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(250,204,21,0.35)',
+                }}
+              >
+                🏁 Start Race Anyway
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 3-2-1-GO Center Countdown Overlay */}
-        {snap && (snap.countdownMs > 0 || (snap.elapsedMs < 3800 && snap.countdownMs === 0)) && (
+        {snap && !snap.waitingForOrientation && (snap.countdownMs > 0 || (snap.elapsedMs < 3800 && snap.countdownMs === 0)) && (
           <div
             style={{
               position: 'absolute',

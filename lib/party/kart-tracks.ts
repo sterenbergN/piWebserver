@@ -350,13 +350,13 @@ function buildTrackFeatures(
     const s = samples[i];
     for (const side of [-1, 1]) {
       if ((i + (side > 0 ? 1 : 0)) % 2 !== 0) continue;
-      const dist = wallWidth + 12 + ((i * 17) % 24);
+      const dist = wallWidth + 16 + ((i * 17) % 20);
       const x = s.x + s.nx * side * dist;
       const z = s.z + s.nz * side * dist;
       let tooClose = false;
-      for (let j = 0; j < samples.length; j += 6) {
+      for (let j = 0; j < samples.length; j++) {
         const other = samples[j];
-        if (Math.hypot(x - other.x, z - other.z) < wallWidth + 7) {
+        if (Math.hypot(x - other.x, z - other.z) < wallWidth + 14) {
           tooClose = true;
           break;
         }
@@ -371,7 +371,7 @@ function buildTrackFeatures(
           x,
           z,
           kind,
-          scale: 0.95 + ((i * 13) % 10) * 0.09,
+          scale: 0.95 + ((i * 13) % 10) * 0.08,
           color: sceneryColors[i % sceneryColors.length],
         });
       }

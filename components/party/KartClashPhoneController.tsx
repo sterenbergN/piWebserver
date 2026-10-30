@@ -162,14 +162,24 @@ export default function KartClashPhoneController({
     }
   }, [phase, pd?.isRacing, tryLockLandscape]);
 
+  const isDeviceHorizontal =
+    viewport.w > viewport.h ||
+    (typeof window !== 'undefined' &&
+      Math.abs(window.screen?.orientation?.angle ?? (window as any).orientation ?? 0) === 90);
+
   // Send input packet to zero-disk-I/O endpoint (/api/party/kart-input)
   const transmitInput = useCallback(
-    (override?: Partial<{ steer: number; drift: boolean; useItem: boolean; brake: boolean }>) => {
+    (override?: Partial<{ steer: number; drift: boolean; useItem: boolean; brake: boolean; isHorizontal: boolean }>) => {
+      const isHorizontal =
+        override?.isHorizontal !== undefined
+          ? override.isHorizontal
+          : (viewport.w > viewport.h || (typeof window !== 'undefined' && Math.abs(window.screen?.orientation?.angle ?? (window as any).orientation ?? 0) === 90));
       const input = {
         steer: override?.steer !== undefined ? override.steer : steerRef.current,
         drift: override?.drift !== undefined ? override.drift : driftRef.current,
         useItem: override?.useItem !== undefined ? override.useItem : useItemRef.current,
         brake: override?.brake !== undefined ? override.brake : brakeRef.current,
+        isHorizontal,
       };
       const payload = {
         roomCode,
@@ -185,8 +195,13 @@ export default function KartClashPhoneController({
         keepalive: true,
       }).catch(() => {});
     },
-    [roomCode, playerKey],
+    [roomCode, playerKey, viewport.w, viewport.h],
   );
+
+  // Immediately broadcast orientation whenever device rotates between portrait & landscape
+  useEffect(() => {
+    transmitInput({ isHorizontal: isDeviceHorizontal });
+  }, [isDeviceHorizontal, transmitInput]);
 
   // Request iOS 13+ DeviceOrientation permission or verify support
   const enableGyro = useCallback(async () => {
@@ -503,25 +518,41 @@ export default function KartClashPhoneController({
           </p>
         </div>
 
-        {/* Gyro Pre-Check Button */}
-        <button
-          onClick={enableGyro}
-          style={{
-            width: '100%',
-            padding: '0.8rem 1rem',
-            borderRadius: '14px',
-            border: gyroStatus === 'granted' ? '1.5px solid rgba(34,197,94,0.5)' : '1.5px solid rgba(250,204,21,0.5)',
-            background: gyroStatus === 'granted' ? 'rgba(34,197,94,0.14)' : 'rgba(250,204,21,0.14)',
-            color: gyroStatus === 'granted' ? '#4ade80' : '#fde047',
-            fontWeight: 800,
-            fontSize: '0.9rem',
-            cursor: 'pointer',
-          }}
-        >
-          {gyroStatus === 'granted'
-            ? '✅ Tilt Steering Calibrated & Ready (Tap to Recenter)'
-            : '🛞 Tap to Enable Gyro Tilt Steering'}
-        </button>
+        {/* Gyro Pre-Check Button (Prompts only when phone is held horizontally) */}
+        {isDeviceHorizontal ? (
+          <button
+            onClick={enableGyro}
+            style={{
+              width: '100%',
+              padding: '0.8rem 1rem',
+              borderRadius: '14px',
+              border: gyroStatus === 'granted' ? '1.5px solid rgba(34,197,94,0.5)' : '1.5px solid rgba(250,204,21,0.5)',
+              background: gyroStatus === 'granted' ? 'rgba(34,197,94,0.14)' : 'rgba(250,204,21,0.14)',
+              color: gyroStatus === 'granted' ? '#4ade80' : '#fde047',
+              fontWeight: 800,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+            }}
+          >
+            {gyroStatus === 'granted'
+              ? '✅ Tilt Steering Calibrated & Ready (Tap to Recenter)'
+              : '🛞 Tap to Enable Gyro Tilt Steering'}
+          </button>
+        ) : (
+          <div
+            style={{
+              background: 'rgba(56,189,248,0.08)',
+              border: '1.5px dashed rgba(56,189,248,0.3)',
+              borderRadius: '14px',
+              padding: '0.65rem 0.9rem',
+              textAlign: 'center',
+              fontSize: '0.8rem',
+              color: '#94a3b8',
+            }}
+          >
+            📱 <strong>Horizontal Steering:</strong> You will hold your phone sideways like a steering wheel to race.
+          </div>
+        )}
 
         {/* VIP Host Tournament Controls on Phone */}
         {hostId && (
@@ -786,80 +817,96 @@ export default function KartClashPhoneController({
           )}
         </div>
 
-        {/* Gyro Calibration Banner for Active Racers */}
+        {/* Gyro Calibration Banner for Active Racers (shown when phone is held horizontally) */}
         {isRacing && (
-          <div
-            style={{
-              background: 'rgba(15,23,42,0.9)',
-              border: gyroStatus === 'granted' ? '1.5px solid rgba(34,197,94,0.45)' : '2px solid #facc15',
-              borderRadius: '16px',
-              padding: '0.85rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.55rem',
-              alignItems: 'center',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#e2e8f0' }}>
-                🛞 Gyro Steering Check
-              </span>
-              <button
-                type="button"
-                onClick={gyroStatus === 'granted' ? recenterGyro : enableGyro}
-                style={{
-                  padding: '0.38rem 0.75rem',
-                  borderRadius: '999px',
-                  border: 'none',
-                  background: gyroStatus === 'granted' ? 'rgba(56,189,248,0.22)' : '#facc15',
-                  color: gyroStatus === 'granted' ? '#38bdf8' : '#0f172a',
-                  fontWeight: 900,
-                  fontSize: '0.76rem',
-                  cursor: 'pointer',
-                }}
-              >
-                {gyroStatus === 'granted' ? '🎯 Recenter Wheel' : '🔓 Enable Tilt Steering'}
-              </button>
-            </div>
-
-            {/* Live tilt gauge */}
+          isDeviceHorizontal ? (
             <div
               style={{
-                width: '100%',
-                height: '12px',
-                background: 'rgba(255,255,255,0.08)',
-                borderRadius: '999px',
-                position: 'relative',
-                overflow: 'hidden',
+                background: 'rgba(15,23,42,0.9)',
+                border: gyroStatus === 'granted' ? '1.5px solid rgba(34,197,94,0.45)' : '2px solid #facc15',
+                borderRadius: '16px',
+                padding: '0.85rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.55rem',
+                alignItems: 'center',
               }}
             >
+              <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#e2e8f0' }}>
+                  🛞 Gyro Steering Check
+                </span>
+                <button
+                  type="button"
+                  onClick={gyroStatus === 'granted' ? recenterGyro : enableGyro}
+                  style={{
+                    padding: '0.38rem 0.75rem',
+                    borderRadius: '999px',
+                    border: 'none',
+                    background: gyroStatus === 'granted' ? 'rgba(56,189,248,0.22)' : '#facc15',
+                    color: gyroStatus === 'granted' ? '#38bdf8' : '#0f172a',
+                    fontWeight: 900,
+                    fontSize: '0.76rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {gyroStatus === 'granted' ? '🎯 Recenter Wheel' : '🔓 Enable Tilt Steering'}
+                </button>
+              </div>
+
+              {/* Live tilt gauge */}
               <div
                 style={{
-                  position: 'absolute',
-                  left: '50%',
-                  top: 0,
-                  bottom: 0,
-                  width: '2px',
-                  background: 'rgba(255,255,255,0.35)',
-                }}
-              />
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '1px',
-                  bottom: '1px',
-                  width: '22px',
+                  width: '100%',
+                  height: '12px',
+                  background: 'rgba(255,255,255,0.08)',
                   borderRadius: '999px',
-                  background: '#38bdf8',
-                  left: `calc(${50 + steerValue * 44}% - 11px)`,
-                  transition: 'left 60ms linear',
+                  position: 'relative',
+                  overflow: 'hidden',
                 }}
-              />
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: 0,
+                    bottom: 0,
+                    width: '2px',
+                    background: 'rgba(255,255,255,0.35)',
+                  }}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '1px',
+                    bottom: '1px',
+                    width: '22px',
+                    borderRadius: '999px',
+                    background: '#38bdf8',
+                    left: `calc(${50 + steerValue * 44}% - 11px)`,
+                    transition: 'left 60ms linear',
+                  }}
+                />
+              </div>
+              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                Tilt steering is calibrated for horizontal orientation!
+              </span>
             </div>
-            <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-              Hold phone horizontally once race starts — screen locks to landscape!
-            </span>
-          </div>
+          ) : (
+            <div
+              style={{
+                background: 'rgba(56,189,248,0.08)',
+                border: '1.5px dashed rgba(56,189,248,0.3)',
+                borderRadius: '14px',
+                padding: '0.65rem 0.9rem',
+                textAlign: 'center',
+                fontSize: '0.8rem',
+                color: '#94a3b8',
+              }}
+            >
+              📱 Turn your phone sideways to test & calibrate your steering wheel.
+            </div>
+          )
         )}
 
         {/* Track Voting Cards (for Active Racers) */}
@@ -1194,9 +1241,99 @@ export default function KartClashPhoneController({
     }
 
     // ACTIVE RACER HORIZONTAL-LOCKED GYRO STEERING WHEEL COCKPIT
-    // If the phone OS flips the browser viewport into portrait (viewport.h > viewport.w) while tilting,
-    // we counter-rotate the fullscreen cockpit by 90deg so it NEVER flips to portrait in the player's hands!
+    // If the phone is held vertically in portrait, guide the user to turn sideways.
+    // Never prompt to calibrate or enable gyro until the phone is physically horizontal!
     const isPortraitViewport = viewport.h > viewport.w;
+    if (isPortraitViewport) {
+      return (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#070b14',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem 1.5rem',
+            textAlign: 'center',
+            color: '#f8fafc',
+            zIndex: 99,
+          }}
+        >
+          <div
+            style={{
+              fontSize: '4.5rem',
+              animation: 'pulse 1.5s ease-in-out infinite alternate',
+              marginBottom: '1rem',
+            }}
+          >
+            📱🔄
+          </div>
+          <h2
+            style={{
+              fontFamily: 'var(--party-font-display)',
+              fontSize: '1.8rem',
+              fontWeight: 900,
+              margin: '0 0 0.5rem',
+              color: '#38bdf8',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Rotate Phone to Horizontal
+          </h2>
+          <p
+            style={{
+              fontSize: '1rem',
+              color: '#94a3b8',
+              maxWidth: '340px',
+              margin: '0 0 1.5rem',
+              lineHeight: 1.4,
+            }}
+          >
+            Turn your phone sideways like a steering wheel to drive your kart!
+          </p>
+          <div
+            style={{
+              background: 'rgba(56,189,248,0.12)',
+              border: '1.5px solid rgba(56,189,248,0.4)',
+              borderRadius: '999px',
+              padding: '0.45rem 1.2rem',
+              fontSize: '0.85rem',
+              fontWeight: 800,
+              color: '#38bdf8',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+            }}
+          >
+            <span>📱</span>
+            <span>Waiting for landscape orientation...</span>
+          </div>
+          <div
+            style={{
+              marginTop: '2rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              background: 'rgba(255,255,255,0.06)',
+              borderRadius: '12px',
+              padding: '0.5rem 1rem',
+              fontSize: '0.82rem',
+              color: '#cbd5e1',
+            }}
+          >
+            <span>{myKart?.avatar || '🏎️'}</span>
+            <span style={{ fontWeight: 800, color: myKart?.color || '#38bdf8' }}>
+              {myKart?.name || state?.players?.[meId]?.name || 'Racer'}
+            </span>
+            <span>• {pd?.trackName || 'Circuit'}</span>
+          </div>
+        </div>
+      );
+    }
+
     const isCountdown = (snapshot?.countdownMs || 0) > 0;
     const countdownSec = isCountdown ? Math.ceil((snapshot?.countdownMs || 0) / 1000) : 0;
     const rank = myKart?.rank || 1;
@@ -1213,7 +1350,7 @@ export default function KartClashPhoneController({
     const startDriftHold = () => {
       tryLockLandscape();
       if (!driftRef.current) {
-        driftRef.current = true;
+        driftRef.current = false || true;
         setIsDrifting(true);
         transmitInput({ drift: true });
         try {
@@ -1247,49 +1384,28 @@ export default function KartClashPhoneController({
       }
     };
 
-    const cockpitContainerStyle: React.CSSProperties = isPortraitViewport
-      ? {
-          position: 'fixed',
-          top: `${viewport.top + viewport.h * 0.5}px`,
-          left: `${viewport.left + viewport.w * 0.5}px`,
-          width: `${viewport.h}px`,
-          height: `${viewport.w}px`,
-          transform: `translate(-50%, -50%) rotate(${landscapeSide === 'left' ? 90 : -90}deg)`,
-          zIndex: 90,
-          background: '#070b14',
-          padding: '0.45rem 0.65rem',
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.38fr 1fr',
-          gap: '0.5rem',
-          alignItems: 'stretch',
-          boxSizing: 'border-box',
-          overflow: 'hidden',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-          touchAction: 'none',
-        }
-      : {
-          position: 'fixed',
-          top: `${viewport.top}px`,
-          left: `${viewport.left}px`,
-          width: `${viewport.w}px`,
-          height: `${viewport.h}px`,
-          zIndex: 90,
-          background: '#070b14',
-          paddingTop: 'max(0.4rem, env(safe-area-inset-top))',
-          paddingBottom: 'max(0.4rem, env(safe-area-inset-bottom))',
-          paddingLeft: 'max(0.6rem, env(safe-area-inset-left))',
-          paddingRight: 'max(0.6rem, env(safe-area-inset-right))',
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.38fr 1fr',
-          gap: '0.5rem',
-          alignItems: 'stretch',
-          boxSizing: 'border-box',
-          overflow: 'hidden',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-          touchAction: 'none',
-        };
+    const cockpitContainerStyle: React.CSSProperties = {
+      position: 'fixed',
+      top: `${viewport.top}px`,
+      left: `${viewport.left}px`,
+      width: `${viewport.w}px`,
+      height: `${viewport.h}px`,
+      zIndex: 90,
+      background: '#070b14',
+      paddingTop: 'max(0.4rem, env(safe-area-inset-top))',
+      paddingBottom: 'max(0.4rem, env(safe-area-inset-bottom))',
+      paddingLeft: 'max(0.6rem, env(safe-area-inset-left))',
+      paddingRight: 'max(0.6rem, env(safe-area-inset-right))',
+      display: 'grid',
+      gridTemplateColumns: '1fr 1.38fr 1fr',
+      gap: '0.5rem',
+      alignItems: 'stretch',
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+      userSelect: 'none',
+      WebkitUserSelect: 'none',
+      touchAction: 'none',
+    };
 
     return (
       <div style={cockpitContainerStyle}>
@@ -1531,11 +1647,11 @@ export default function KartClashPhoneController({
               draggingTouchRef.current = true;
               setIsDraggingTouch(true);
               e.currentTarget.setPointerCapture(e.pointerId);
-              updateTouchSteer(e.clientX, e.clientY, isPortraitViewport);
+              updateTouchSteer(e.clientX, e.clientY, false);
             }}
             onPointerMove={(e) => {
               if (!draggingTouchRef.current) return;
-              updateTouchSteer(e.clientX, e.clientY, isPortraitViewport);
+              updateTouchSteer(e.clientX, e.clientY, false);
             }}
             onPointerUp={() => {
               draggingTouchRef.current = false;

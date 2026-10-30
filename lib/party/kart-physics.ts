@@ -30,6 +30,8 @@ export interface KartInputState {
   useItem: boolean;
   rocketTap?: boolean;
   honk?: boolean;
+  isHorizontal?: boolean;
+  isReady?: boolean;
   updatedAt: number;
 }
 
@@ -138,6 +140,8 @@ export interface KartRaceSim {
   itemsMode: KartItemsMode;
   startedAt: number;
   elapsedMs: number;
+  waitingForOrientation: boolean;
+  orientationWaitTimerMs: number;
   countdownMs: number; // >0 during 3-2-1 countdown
   finishCountdownMs: number | null; // starts at 18000ms once first human finishes
   completed: boolean;
@@ -163,6 +167,14 @@ export interface KartTelemetrySnapshot {
   totalLaps: number;
   speedClass: KartSpeedClass;
   elapsedMs: number;
+  waitingForOrientation?: boolean;
+  humanRacersStatus?: {
+    id: string;
+    name: string;
+    avatar: string;
+    color: string;
+    isHorizontal: boolean;
+  }[];
   countdownMs: number;
   finishCountdownMs: number | null;
   announcement: string | null;
@@ -329,6 +341,7 @@ export function createKartSimulation(opts: {
   totalLaps?: number;
   speedClass?: KartSpeedClass;
   itemsMode?: KartItemsMode;
+  requireOrientation?: boolean;
   onFinish?: (sim: KartRaceSim) => void;
 }): KartRaceSim {
   stopKartSimulation(opts.roomCode);
@@ -417,6 +430,7 @@ export function createKartSimulation(opts: {
     respawnTimer: 0,
   }));
 
+  const waitingForOrientation = Boolean(opts.requireOrientation);
   const sim: KartRaceSim = {
     roomCode: opts.roomCode,
     raceId: opts.raceId,
@@ -427,6 +441,8 @@ export function createKartSimulation(opts: {
     itemsMode,
     startedAt: Date.now(),
     elapsedMs: 0,
+    waitingForOrientation,
+    orientationWaitTimerMs: 0,
     countdownMs: 3400, // 3.4s 3-2-1-GO countdown
     finishCountdownMs: null,
     completed: false,
@@ -438,7 +454,9 @@ export function createKartSimulation(opts: {
     nextHazardId: 1,
     nextFinishRank: 1,
     halfwayChaosTriggered: false,
-    announcement: 'Get Ready! Hold DRIFT on "1" for Rocket Start!',
+    announcement: waitingForOrientation
+      ? '📱 Waiting for racers to rotate phones horizontally...'
+      : 'Get Ready! Hold DRIFT on "1" for Rocket Start!',
     announcementUntil: 3200,
     stats: { drifts: {}, hits: {}, spunOut: {}, fastestLap: null },
     onFinish: opts.onFinish,
@@ -475,10 +493,20 @@ export function getKartSimulation(roomCode: string): KartRaceSim | undefined {
   return activeSims.get(roomCode);
 }
 
+export function forceStartCountdown(roomCode: string): boolean {
+  const sim = activeSims.get(roomCode);
+  if (!sim) return false;
+  sim.waitingForOrientation = false;
+  sim.countdownMs = 3400;
+  sim.announcement = 'Get Ready! Hold DRIFT on "1" for Rocket Start!';
+  sim.announcementUntil = sim.elapsedMs + 3200;
+  return true;
+}
+
 export function updateKartInput(roomCode: string, playerId: string, raw: Partial<KartInputState>): boolean {
   const sim = activeSims.get(roomCode);
   if (!sim || !sim.karts[playerId]) return false;
-  const prev = sim.inputs[playerId] || { steer: 0, drift: false, brake: false, useItem: false, honk: false, updatedAt: 0 };
+  const prev = sim.inputs[playerId] || { steer: 0, drift: false, brake: false, useItem: false, honk: false, isHorizontal: false, isReady: false, updatedAt: 0 };
   const steer = typeof raw.steer === 'number' && Number.isFinite(raw.steer)
     ? Math.max(-1, Math.min(1, raw.steer))
     : prev.steer;
@@ -488,6 +516,8 @@ export function updateKartInput(roomCode: string, playerId: string, raw: Partial
   const useItem = raw.useItem === true ? true : prev.useItem;
   const rocketTap = raw.rocketTap === true ? true : prev.rocketTap;
   const honk = raw.honk === true ? true : prev.honk;
+  const isHorizontal = typeof raw.isHorizontal === 'boolean' ? raw.isHorizontal : prev.isHorizontal;
+  const isReady = typeof raw.isReady === 'boolean' ? raw.isReady : prev.isReady;
   if (honk) {
     const k = sim.karts[playerId];
     if (k) k.hornUntil = sim.elapsedMs + 800;
@@ -500,6 +530,8 @@ export function updateKartInput(roomCode: string, playerId: string, raw: Partial
     useItem,
     rocketTap,
     honk,
+    isHorizontal,
+    isReady,
     updatedAt: Date.now(),
   };
   return true;
@@ -838,6 +870,21 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
 
   const dtMs = dt * 1000;
   sim.elapsedMs += dtMs;
+
+  // Wait for all connected human racers to rotate their phones horizontally
+  if (sim.waitingForOrientation) {
+    const humanRacers = Object.values(sim.karts).filter((k) => !k.isBot);
+    const allHorizontal = humanRacers.length === 0 || humanRacers.every((k) => Boolean(sim.inputs[k.id]?.isHorizontal));
+    if (allHorizontal || (sim.orientationWaitTimerMs && sim.orientationWaitTimerMs > 25000)) {
+      sim.waitingForOrientation = false;
+      sim.countdownMs = 3400;
+      sim.announcement = 'Get Ready! Hold DRIFT on "1" for Rocket Start!';
+      sim.announcementUntil = sim.elapsedMs + 3200;
+    } else {
+      sim.orientationWaitTimerMs = (sim.orientationWaitTimerMs || 0) + dtMs;
+      return; // Hold starting grid while waiting for horizontal orientation
+    }
+  }
 
   // Handle 3-2-1 Countdown
   if (sim.countdownMs > 0) {
@@ -1454,6 +1501,15 @@ export function stepKartSimulation(sim: KartRaceSim, dt: number) {
 }
 
 export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
+  const humanRacers = Object.values(sim.karts).filter((k) => !k.isBot);
+  const humanRacersStatus = humanRacers.map((k) => ({
+    id: k.id,
+    name: k.name,
+    avatar: k.avatar,
+    color: k.color,
+    isHorizontal: Boolean(sim.inputs[k.id]?.isHorizontal),
+  }));
+
   return {
     roomCode: sim.roomCode,
     raceId: sim.raceId,
@@ -1461,6 +1517,8 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
     totalLaps: sim.totalLaps,
     speedClass: sim.speedClass,
     elapsedMs: Math.round(sim.elapsedMs),
+    waitingForOrientation: Boolean(sim.waitingForOrientation),
+    humanRacersStatus,
     countdownMs: Math.round(sim.countdownMs),
     finishCountdownMs: sim.finishCountdownMs !== null ? Math.round(sim.finishCountdownMs) : null,
     announcement: sim.announcement,

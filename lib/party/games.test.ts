@@ -695,18 +695,38 @@ test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and mult
   const sim = getKartSimulation(roomCode);
   assert.ok(sim, 'in-memory 30Hz physics simulation is active');
   assert.equal(Object.keys(sim!.karts).length, 8, '2 humans + 6 AI bots fill the 8-kart grid');
+  assert.equal(sim!.waitingForOrientation, true, 'race holds on grid waiting for all racers to rotate to landscape');
 
-  // Step through "3... 2..." of countdown, then hold drift on "1" for a Rocket Start boost!
+  // Both players rotate their phones horizontally to unlock countdown
+  const { POST: postKartInput } = await import('../../app/api/party/kart-input/route');
+  await postKartInput(
+    new Request('http://localhost/api/party/kart-input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomCode, playerKey: p1.playerId, isHorizontal: true }),
+    }),
+  );
+  await postKartInput(
+    new Request('http://localhost/api/party/kart-input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomCode, playerKey: p2.playerId, isHorizontal: true }),
+    }),
+  );
+
+  // Step through "3... 2..." of countdown now that both racers are horizontal
   for (let i = 0; i < 65; i++) {
     stepKartSimulation(sim!, 1 / 30);
   }
-  const { POST: postKartInput } = await import('../../app/api/party/kart-input/route');
+  assert.equal(sim!.waitingForOrientation, false, 'countdown unlocked once all human racers are horizontal');
+
+  // On "1" of countdown, hold drift for Rocket Start!
   const startAngle = sim!.karts[id1].angle;
   const res = await postKartInput(
     new Request('http://localhost/api/party/kart-input', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomCode, playerKey: p1.playerId, steer: 0.75, drift: true, useItem: false, brake: false }),
+      body: JSON.stringify({ roomCode, playerKey: p1.playerId, steer: 0.75, drift: true, useItem: false, brake: false, isHorizontal: true }),
     }),
   );
   assert.equal(res.status, 200);
@@ -714,6 +734,7 @@ test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and mult
   assert.equal(resJson.ok, true, '/api/party/kart-input accepts phone gyro payload');
   assert.equal(sim!.inputs[id1].steer, 0.75, 'phone gyro steer value stored on active simulation');
 
+  // Step through remaining countdown to GO!
   for (let i = 0; i < 65; i++) {
     stepKartSimulation(sim!, 1 / 30);
   }
