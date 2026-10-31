@@ -41,6 +41,8 @@ export default async function Home() {
   const photoCount = countPhotos(albums);
 
   const explore = [
+    { href: '/today', icon: '☀️', title: 'Today', text: 'Your day at a glance' },
+    { href: '/recipes', icon: '🍳', title: 'Kitchen', text: 'Recipes, meal plan, groceries' },
     { href: '/gallery', icon: '📷', title: 'Gallery', text: photoCount ? plural(photoCount, 'photo') : 'Photo albums' },
     { href: '/blog', icon: '✍️', title: 'Posts', text: posts.length ? plural(posts.length, 'write-up') : 'Write-ups' },
     { href: '/library', icon: '📚', title: 'Library', text: documents.length ? plural(documents.length, 'document') : 'Books & manuals' },

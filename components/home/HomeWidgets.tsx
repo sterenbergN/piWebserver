@@ -109,6 +109,8 @@ export default function HomeWidgets() {
           <Link href="/daily">🧠 Questions</Link>
           <Link href="/habits">✅ Habits</Link>
           <Link href="/chores">🧹 Chores</Link>
+          <Link href="/journal">📓 Journal</Link>
+          <Link href="/recipes?view=list">🛒 Groceries</Link>
           <Link href="/daily/leaderboard">🏆 Leaderboard</Link>
         </nav>
       </article>

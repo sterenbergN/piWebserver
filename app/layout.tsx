@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from "@/lib/security/server-auth";
@@ -57,7 +58,9 @@ export default async function RootLayout({
         <ThemeProvider>
           <AnalyticsTracker />
           <ServiceWorkerRegistrar />
-          <Navbar isAdmin={isAdmin} user={user} />
+          <Suspense fallback={null}>
+            <Navbar isAdmin={isAdmin} user={user} />
+          </Suspense>
           <main className="container">
             {children}
           </main>

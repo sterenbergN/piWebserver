@@ -198,6 +198,32 @@ export function buildShoppingList(recipes: Recipe[], kitchen: KitchenState, week
   };
 }
 
+/** How many things are left to buy for a week: its plan, plus anything typed onto the list. */
+export function groceriesLeft(recipes: Recipe[], kitchen: KitchenState, week: DateKey) {
+  const planned = buildShoppingList(recipes, kitchen, week).need.filter((i) => !kitchen.got.includes(`${week}|${i.key}`));
+  return planned.length + kitchen.listItems.filter((i) => !kitchen.got.includes(i.id)).length;
+}
+
+/** Type something onto the list, unless it's already there and unticked. */
+export function addListItem(kitchen: KitchenState, text: string): KitchenState {
+  const clean = text.trim().slice(0, 120);
+  const open = kitchen.listItems.some((i) => i.text.toLowerCase() === clean.toLowerCase() && !kitchen.got.includes(i.id));
+  if (!clean || open) return kitchen;
+  return { ...kitchen, listItems: [...kitchen.listItems, { id: newKitchenId(), text: clean }] };
+}
+
+/** Today's meals from the plan: what's on for today, and the week's meal prep still in the fridge or to cook. */
+export function mealsToday(recipes: Recipe[], kitchen: KitchenState, today = localToday()) {
+  const week = currentWeek(today);
+  const day = Math.round((new Date(`${today}T12:00:00`).getTime() - new Date(`${week}T12:00:00`).getTime()) / 86_400_000);
+  const byId = new Map(recipes.map((r) => [r.id, r]));
+  const entries = (kitchen.plans[week] || []).flatMap((entry) => {
+    const recipe = byId.get(entry.recipeId);
+    return recipe ? [{ entry, recipe }] : [];
+  });
+  return { week, tonight: entries.filter((e) => e.entry.day === day), prep: entries.filter((e) => e.entry.day === null && !e.entry.cooked) };
+}
+
 // ─── Meal prep session ────────────────────────────────────────────────────────
 
 /**

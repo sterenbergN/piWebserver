@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Noah Stuf',
     short_name: 'Noah Stuf',
-    description: 'Workout tracker, tools, games and gallery — hosted on a Raspberry Pi.',
+    description: 'Your day, workouts, recipes, games and more — hosted on a Raspberry Pi.',
     start_url: '/workout',
     scope: '/',
     display: 'standalone',
@@ -17,9 +17,10 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
     shortcuts: [
+      { name: 'Today', url: '/today', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
       { name: 'Start workout', url: '/workout', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
-      { name: 'Workout analytics', url: '/workout/analytics' },
-      { name: 'Tools', url: '/tools' },
+      { name: 'Grocery list', url: '/recipes?view=list', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'Journal', url: '/journal', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
     ],
   };
 }

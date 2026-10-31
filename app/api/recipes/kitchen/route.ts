@@ -1,10 +1,10 @@
 import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import path from 'path';
-import { readJson, writeJsonAtomic } from '@/lib/json-store';
+import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
-import { normalizeKitchen, type KitchenState } from '@/lib/recipes/kitchen';
+import { addListItem, emptyKitchen, normalizeKitchen, type KitchenState } from '@/lib/recipes/kitchen';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +26,23 @@ export async function GET() {
     return NextResponse.json({ success: true, kitchen: stored ? normalizeKitchen(stored) : null });
   } catch (error) {
     return handleApiError(error, 'Load kitchen failed');
+  }
+}
+
+/** Add one thing to the list (`{ add }`) on top of what's stored, whichever device last saved it. */
+export async function POST(request: Request) {
+  try {
+    const file = await kitchenFile();
+    const body = await readJsonObject(request);
+    const text = typeof body.add === 'string' ? body.add.trim() : '';
+    if (!text) throw new ApiError(400, 'Nothing to add.');
+    const created = (await readJson<KitchenState | null>(file, null)) === null;
+    await updateJson<KitchenState, void>(file, emptyKitchen(), (stored) => {
+      Object.assign(stored, addListItem(normalizeKitchen(stored), text));
+    });
+    return NextResponse.json({ success: true, created });
+  } catch (error) {
+    return handleApiError(error, 'Add to list failed');
   }
 }
 

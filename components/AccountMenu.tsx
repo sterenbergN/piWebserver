@@ -76,6 +76,8 @@ export default function AccountMenu({ user }: { user: NavUser }) {
             <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
             <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
             <Link href="/chores" onClick={() => setMenuOpen(false)}><span aria-hidden>🧹</span>Chores</Link>
+            <Link href="/journal" onClick={() => setMenuOpen(false)}><span aria-hidden>📓</span>Journal</Link>
+            <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
             <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
             <button type="button" onClick={signOut}><span aria-hidden>🚪</span>Sign out</button>
           </div>
@@ -128,7 +130,7 @@ function SignInDialog({ onClose }: { onClose: () => void }) {
     <div className="signin-backdrop" role="dialog" aria-modal="true" aria-labelledby="signin-title" onClick={onClose}>
       <form className="signin-card" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <h2 id="signin-title">Sign in</h2>
-        <p className="signin-sub">Saves your workouts, habits, chores and daily questions to your account. Everything also works without signing in, on this device only.</p>
+        <p className="signin-sub">Saves your journal, workouts, habits, chores, meal plans, grocery list and daily questions to your account. Everything also works without signing in, on this device only.</p>
         <label htmlFor="signin-username" className="sr-only">Username</label>
         <input id="signin-username" ref={inputRef} name="username" autoComplete="username" placeholder="Username"
           value={username} onChange={(e) => setUsername(e.target.value)} />

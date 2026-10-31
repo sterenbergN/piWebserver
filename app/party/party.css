@@ -1977,7 +1977,7 @@
 }
 
 /* ─── Show layer: immersive TV/phone, title cards, reactions, score ticker ─── */
-body.party-tv .glass-nav, body.party-tv footer,
+body.party-tv .glass-nav, body.party-tv .section-bar, body.party-tv footer,
 body.party-phone .glass-nav, body.party-phone footer { display: none !important; }
 body.party-tv main.container, body.party-phone main.container { max-width: none; padding: 0; }
 

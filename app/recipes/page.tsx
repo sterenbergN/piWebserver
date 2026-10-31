@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
-import { buildShoppingList, currentWeek } from '@/lib/recipes/kitchen';
+import { currentWeek, groceriesLeft } from '@/lib/recipes/kitchen';
 import type { Recipe, UnitMode } from '@/lib/recipes/recipes';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import AddRecipeSheet from './AddRecipeSheet';
@@ -18,6 +19,8 @@ import { useRecipeTimers } from './useRecipeTimers';
 import './recipes.css';
 
 const UNITS_PREF = 'recipes:units';
+/** The last recipes seen, so the list and plan still work with no signal at the store. */
+const RECIPES_COPY = 'recipes:copy';
 
 type View = 'recipes' | 'week' | 'list';
 
@@ -27,7 +30,16 @@ const readView = (params: URLSearchParams): View => {
 };
 
 export default function RecipesPage() {
+  return (
+    <Suspense fallback={<p className="rc-page rc-empty">Loading recipes…</p>}>
+      <Recipes />
+    </Suspense>
+  );
+}
+
+function Recipes() {
   const { confirm, showAlert, popup } = useSitePopup();
+  const searchParams = useSearchParams();
 
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -54,7 +66,6 @@ export default function RecipesPage() {
       setSelectedSlug(params.get('recipe'));
       setView(readView(params));
     };
-    syncFromUrl();
     window.addEventListener('popstate', syncFromUrl);
     if (readPref(UNITS_PREF) === 'metric') setUnitMode('metric');
 
@@ -66,10 +77,29 @@ export default function RecipesPage() {
         setCanEdit(Boolean(data.canEdit));
         setDeletableIds(Array.isArray(data.deletableIds) ? data.deletableIds : []);
         setLoadState('ready');
+        savePref(RECIPES_COPY, JSON.stringify({ recipes: data.recipes, canEdit: Boolean(data.canEdit) }));
       })
-      .catch(() => setLoadState('error'));
+      .catch(() => {
+        try {
+          const copy = JSON.parse(readPref(RECIPES_COPY) || 'null');
+          if (!Array.isArray(copy?.recipes)) throw new Error('No copy');
+          setRecipes(copy.recipes);
+          setCanEdit(Boolean(copy.canEdit));
+          setLoadState('ready');
+          setFlash('Offline: showing your saved recipes');
+        } catch {
+          setLoadState('error');
+        }
+      });
     return () => window.removeEventListener('popstate', syncFromUrl);
   }, []);
+
+  // A link to another view from outside the page (the launcher, search) lands here too.
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    setSelectedSlug(params.get('recipe'));
+    setView(readView(params));
+  }, [searchParams]);
 
   useEffect(() => {
     if (!lastCook) return;
@@ -113,11 +143,7 @@ export default function RecipesPage() {
     [recipes, selectedSlug],
   );
 
-  const toBuy = useMemo(() => {
-    const { got, listItems } = kitchen.state;
-    const needLeft = buildShoppingList(recipes, kitchen.state, week).need.filter((i) => !got.includes(`${week}|${i.key}`));
-    return needLeft.length + listItems.filter((i) => !got.includes(i.id)).length;
-  }, [recipes, kitchen.state, week]);
+  const toBuy = useMemo(() => groceriesLeft(recipes, kitchen.state, week), [recipes, kitchen.state, week]);
 
   const postRecipe = async (body: Record<string, unknown>) => {
     const res = await fetch('/api/recipes', {

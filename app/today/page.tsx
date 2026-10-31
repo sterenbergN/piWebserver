@@ -21,6 +21,7 @@ import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
+import { JournalCard, KitchenCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
 import './today.css';
@@ -46,6 +47,7 @@ export default function TodayPage() {
   const [workout, setWorkout] = useState<WorkoutState | null>(null);
   /** The level panel, opened from the level badge (or /today#level). */
   const [showLevel, setShowLevel] = useState(false);
+  const [journalWritten, setJournalWritten] = useState(false);
   useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
 
   // Today's question, and how the question streak stands.
@@ -102,6 +104,20 @@ export default function TodayPage() {
 
   const core = question?.day?.core;
 
+  // The day at a glance: the question, each daily habit, chores due today, and the journal once signed in.
+  const dueToday = dueChores.filter((x) => ['overdue', 'today'].includes(dueStatus(x, today).status)).length;
+  const questionDone = core && question?.status ? 1 : 0;
+  const journalDone = journalWritten ? 1 : 0;
+  const dayTotal = (core ? 1 : 0) + daily.length + dueToday + (signedIn ? 1 : 0);
+  const dayDone = questionDone + doneDaily + (signedIn ? journalDone : 0);
+  const left = [
+    core && !questionDone ? 'question' : '',
+    daily.length > doneDaily ? `${daily.length - doneDaily} habit${daily.length - doneDaily === 1 ? '' : 's'}` : '',
+    dueToday ? `${dueToday} chore${dueToday === 1 ? '' : 's'}` : '',
+    signedIn && !journalDone ? 'journal' : '',
+  ].filter(Boolean);
+  const dayLeft = left.length ? `Left: ${left.join(', ')}` : '';
+
   return (
     <div className="td animate-fade-in">
       <header className="td-head">
@@ -125,11 +141,12 @@ export default function TodayPage() {
         )}
       </header>
 
-      <nav className="td-quick" aria-label="Quick links">
-        <Link href="/journal"><span aria-hidden>📓</span> Write in your journal</Link>
-        <Link href="/recipes?view=list"><span aria-hidden>🛒</span> Grocery list</Link>
-        <Link href="/recipes?view=week"><span aria-hidden>🍳</span> Meal plan</Link>
-      </nav>
+      {dayTotal > 0 && (
+        <div className="td-progress" role="group" aria-label="Today’s progress">
+          <div className="progress-label"><span>{dayDone === dayTotal ? '✨ All done for today' : `${dayDone} of ${dayTotal} done today`}</span><span>{dayLeft}</span></div>
+          <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={dayTotal} aria-valuenow={dayDone}><div style={{ width: `${(dayDone / dayTotal) * 100}%` }} /></div>
+        </div>
+      )}
 
       {showLevel && h.mode !== 'loading' && h.mode !== 'error' && (
         <LevelInfo sources={xpSources} weeks={question?.weeks} onClose={() => setShowLevel(false)} />
@@ -180,6 +197,8 @@ export default function TodayPage() {
             )}
           </section>
 
+          <JournalCard today={today} onWritten={setJournalWritten} />
+
           {/* Workout */}
           <section className="td-card td-workout">
             <div className="td-card-head">
@@ -226,6 +245,8 @@ export default function TodayPage() {
               </>
             )}
           </section>
+
+          <KitchenCard today={today} />
 
           {/* Chores */}
           <section className="td-card td-chores">

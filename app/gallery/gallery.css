@@ -170,7 +170,7 @@
   backdrop-filter: blur(4px);
 }
 
-.gal-toast { position: fixed; bottom: 1rem; right: 1rem; left: auto; z-index: 999999; width: min(320px, calc(100vw - 2rem)); padding: 1.25rem; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+.gal-toast { position: fixed; bottom: calc(1rem + var(--dock-h, 0px)); right: 1rem; left: auto; z-index: 999999; width: min(320px, calc(100vw - 2rem)); padding: 1.25rem; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
 
 @media (max-width: 600px) {
   .gal-page { padding-top: 1rem; }

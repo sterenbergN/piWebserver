@@ -5,9 +5,7 @@
 .td-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
 .td-head p { margin: 0.3rem 0 0; color: var(--muted); }
 
-.td-quick { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
-.td-quick a { padding: 0.45rem 0.85rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font-size: 0.9rem; font-weight: 600; }
-.td-quick a:hover { border-color: var(--accent-light); background: var(--surface-hover); }
+.td-progress { margin-bottom: 1.1rem; }
 
 /* Two columns that each stack on their own (a long habit list leaves no gap
    beside it). On phones the columns dissolve and the cards take this order. */
@@ -18,8 +16,10 @@
   .td-col { display: contents; }
   .td-question { order: 1; }
   .td-habits { order: 2; }
-  .td-chores { order: 3; }
-  .td-workout { order: 4; }
+  .td-journal { order: 3; }
+  .td-kitchen { order: 4; }
+  .td-chores { order: 5; }
+  .td-workout { order: 6; }
 }
 
 .td-card { display: flex; flex-direction: column; align-items: flex-start; gap: 0.6rem; padding: 1.1rem 1.2rem 1.2rem; border-radius: 18px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
@@ -41,6 +41,31 @@
 .td-question-title { font-size: 1.25rem; line-height: 1.3; }
 .td-status { margin: 0; font-size: 0.95rem; }
 .td-more { color: var(--accent-light); font-size: 0.88rem; margin-top: 0.2rem; }
+
+/* Journal: a mood in one tap, the words a tap away */
+.td-moods { display: flex; gap: 0.3rem; align-self: stretch; }
+.td-moods button { flex: 1; min-height: 2.5rem; padding: 0; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); font-size: 1.2rem; line-height: 1; cursor: pointer; filter: grayscale(0.65); transition: filter 0.12s, border-color 0.12s, background 0.12s; }
+.td-moods button:hover { filter: none; }
+.td-moods button[aria-checked="true"] { filter: none; border-color: var(--accent-light); background: rgba(var(--accent-rgb), 0.22); }
+.td-prompt { font-style: italic; }
+.td-journal-preview { margin: 0; font-size: 0.9rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+
+/* Kitchen: tonight's meals, and the list without leaving the page */
+.td-meals { list-style: none; margin: 0; padding: 0; align-self: stretch; display: flex; flex-direction: column; gap: 0.35rem; }
+.td-meals li { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.65rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.td-meals a { flex: 1; min-width: 0; font-weight: 600; }
+.td-meals small { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+.td-meals li.is-done a { text-decoration: line-through; color: var(--muted); }
+.td-meal-check { flex-shrink: 0; width: 1.5rem; height: 1.5rem; padding: 0; border-radius: 50%; border: 2px solid var(--surface-border); background: none; color: var(--primary-fg); font-size: 0.85rem; font-weight: 800; line-height: 1; cursor: pointer; }
+.td-meal-check:hover { border-color: var(--accent-light); }
+.td-meal-check[aria-pressed="true"] { border-color: var(--primary-bg); background: var(--primary-bg); }
+.td-inline { color: var(--accent-light); font-weight: 600; }
+.td-add { display: flex; gap: 0.4rem; align-self: stretch; }
+.td-add input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { flex: 1; min-width: 0; padding: 0.55rem 0.8rem; font-size: 0.92rem; }
+.td-add .btn { margin: 0; padding: 0.5rem 0.9rem; }
+.td-add .btn:disabled { opacity: 0.5; cursor: default; }
+.td-links { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; font-size: 0.86rem; }
+.td-links a { color: var(--accent-light); }
 
 /* Garden: every habit and chore plant in one strip */
 .td-garden { margin-top: 1rem; }

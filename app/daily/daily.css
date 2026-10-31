@@ -270,7 +270,7 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-check input { margin-top: 0.2rem; }
 
 .dq-toast {
-  position: fixed; left: 50%; bottom: calc(1.5rem + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 1100;
+  position: fixed; left: 50%; bottom: calc(1.5rem + env(safe-area-inset-bottom) + var(--dock-h, 0px)); transform: translateX(-50%); z-index: 1100;
   padding: 0.75rem 1.2rem; border-radius: 999px; background: var(--primary-bg); color: var(--primary-fg); font-weight: 700;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); animation: dqToast 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); white-space: nowrap; max-width: calc(100vw - 2rem); overflow: hidden; text-overflow: ellipsis;
 }
@@ -278,13 +278,13 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 
 /* Pop-up calculator */
 .dq-calc-fab {
-  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 1050;
+  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px)); z-index: 1050;
   width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--surface-border); background: var(--surface-glass);
   font-size: 1.35rem; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); opacity: 0.85;
 }
 .dq-calc-fab:hover { opacity: 1; border-color: var(--accent-light); }
 .dq-calc {
-  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom)); z-index: 1050;
+  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px)); z-index: 1050;
   width: min(300px, calc(100vw - 2rem)); padding: 0.6rem; border-radius: 18px; border: 1px solid var(--surface-border);
   background: var(--card-bg); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 0.4rem;
   animation: popIn 0.18s ease-out;

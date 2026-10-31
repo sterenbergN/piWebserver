@@ -1,22 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { readPref, savePref } from '@/lib/workout/device-prefs';
-import { emptyKitchen, newKitchenId, normalizeKitchen, type KitchenState, type PlanEntry } from '@/lib/recipes/kitchen';
+import { savePref } from '@/lib/workout/device-prefs';
+import { addListItem, emptyKitchen, newKitchenId, type KitchenState, type PlanEntry } from '@/lib/recipes/kitchen';
+import { isEmptyKitchen as isEmpty, KITCHEN_CHANGED, KITCHEN_PREF, readLocalKitchen as readLocal } from '@/lib/recipes/grocery-client';
 import type { DateKey } from '@/lib/habits/dates';
 
-const KITCHEN_PREF = 'recipes:kitchen';
 const SYNC_DELAY_MS = 800;
-
-function readLocal(): KitchenState {
-  try {
-    return normalizeKitchen(JSON.parse(readPref(KITCHEN_PREF) || 'null'));
-  } catch {
-    return emptyKitchen();
-  }
-}
-
-const isEmpty = (k: KitchenState) => !k.have.length && !Object.keys(k.plans).length && !k.listRecipes.length && !k.listItems.length;
 
 export type Kitchen = ReturnType<typeof useKitchen>;
 
@@ -64,19 +54,32 @@ export function useKitchen(signedIn: boolean) {
       .catch(() => {});
   }, [send]);
 
+  // Something was added from outside this page (the launcher, the Today page).
+  useEffect(() => {
+    const onChanged = () => { if (signedIn) pull(); else setState(readLocal()); };
+    window.addEventListener(KITCHEN_CHANGED, onChanged);
+    return () => window.removeEventListener(KITCHEN_CHANGED, onChanged);
+  }, [signedIn, pull]);
+
   useEffect(() => {
     if (!signedIn) return;
     pull();
+    const catchUp = () => {
+      if (dirty.current && !timer.current) send();
+      else pull();
+    };
     const onVisible = () => {
-      if (document.visibilityState === 'visible') pull();
+      if (document.visibilityState === 'visible') catchUp();
       else if (timer.current) {
         clearTimeout(timer.current);
         send();
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', catchUp);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', catchUp);
       if (timer.current) {
         clearTimeout(timer.current);
         send();
@@ -118,7 +121,7 @@ export function useKitchen(signedIn: boolean) {
       removeListRecipe: (recipeId: string) =>
         update((k) => ({ ...k, listRecipes: k.listRecipes.filter((r) => r.recipeId !== recipeId) })),
       addListItem: (text: string) =>
-        update((k) => ({ ...k, listItems: [...k.listItems, { id: newKitchenId(), text: text.trim().slice(0, 120) }] })),
+        update((k) => addListItem(k, text)),
       removeListItem: (id: string) =>
         update((k) => ({ ...k, listItems: k.listItems.filter((i) => i.id !== id), got: k.got.filter((g) => g !== id) })),
       toggleGot: (key: string) =>

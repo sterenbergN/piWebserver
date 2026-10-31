@@ -1,12 +1,17 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import SiteSearch from './SiteSearch';
 import AccountMenu, { type NavUser } from './AccountMenu';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
-import { isCurrentItem, navGroups, sectionOf, type NavGroup, type NavItem } from './nav-links';
+import { isCurrentItem, navGroups, sectionOf, type NavItem } from './nav-links';
+import { rememberPage, useNavPins } from './useNavPins';
+
+// Loaded when first opened: it brings the recipe and habit code along for its counts.
+const loadLauncher = () => import('./Launcher');
+const Launcher = dynamic(loadLauncher, { ssr: false });
 
 // The URL's #hash, which picks the open tool on /tools.
 const subscribeHash = (onChange: () => void) => {
@@ -15,172 +20,132 @@ const subscribeHash = (onChange: () => void) => {
 };
 const readHash = () => window.location.hash.slice(1);
 
+/** How many pins fit along the bottom of a phone, beside the All button. */
+const DOCK_PINS = 4;
+/** These have their own bottom bar. */
+const NO_DOCK = ['/workout', '/party'];
+/** Full-screen, printable or shared-by-link pages, where a row of other pages is only in the way. */
+const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report'];
+
+const GridIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden>
+    <rect x="1" y="1" width="6" height="6" rx="1.5" /><rect x="9" y="1" width="6" height="6" rx="1.5" />
+    <rect x="1" y="9" width="6" height="6" rx="1.5" /><rect x="9" y="9" width="6" height="6" rx="1.5" />
+  </svg>
+);
+
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
   const pathname = usePathname();
+  const search = useSearchParams().toString();
   const hash = useSyncExternalStore(subscribeHash, readHash, () => '');
   const { theme, toggleTheme } = useTheme();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
-  const groupsRef = useRef<HTMLDivElement>(null);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const openedByHover = useRef<string | null>(null);
+  const { pins, togglePin } = useNavPins(!!user);
+  const [launcher, setLauncher] = useState(false);
+  const barRef = useRef<HTMLElement>(null);
 
   const groups = navGroups(isAdmin);
   const section = sectionOf(pathname);
   const allItems = groups.flatMap((g) => g.items);
-  const itemIsCurrent = (item: NavItem) => isCurrentItem(item, section, hash, allItems);
-  const groupIsCurrent = (group: NavGroup) => group.items.some(itemIsCurrent);
+  const itemIsCurrent = (item: NavItem) => isCurrentItem(item, section, hash, allItems, search);
+  const pinned = pins.flatMap((href) => allItems.find((i) => i.href === href) ?? []);
+  const here = allItems.find(itemIsCurrent);
+  const barGroup = NO_BAR.some((p) => pathname.startsWith(p)) ? undefined : groups.find((g) => g.bar && g.items.some(itemIsCurrent));
+  const showDock = !NO_DOCK.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
-  // Close an open dropdown on an outside click or Escape.
+  useEffect(() => { if (here) rememberPage(here.href); }, [here]);
+
+  // "/" or Ctrl+K opens the launcher from anywhere.
   useEffect(() => {
-    if (!openGroup) return;
-    const onPointer = (e: PointerEvent) => {
-      if (!groupsRef.current?.contains(e.target as Node)) setOpenGroup(null);
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // defaultPrevented: a widget already used the key (the daily calculator's / makes a fraction).
+      const typing = e.defaultPrevented || (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+      if ((e.key === '/' && !typing) || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) {
+        e.preventDefault();
+        setLauncher(true);
+      }
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenGroup(null); };
-    document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [openGroup]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
-  // Mouse users get the dropdown on hover; touch and keyboard open it by tapping the label.
-  const hoverOpen = (label: string) => (e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse') return;
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    if (openGroup !== label) openedByHover.current = label;
-    setOpenGroup(label);
-  };
-  const hoverClose = (e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse') return;
-    openedByHover.current = null;
-    hoverTimer.current = setTimeout(() => setOpenGroup(null), 180);
-  };
-  const toggleGroup = (label: string) => {
-    // A click right after hovering a menu open keeps it open instead of closing it.
-    if (openedByHover.current === label) {
-      openedByHover.current = null;
-      setOpenGroup(label);
-      return;
-    }
-    setOpenGroup((g) => (g === label ? null : label));
-  };
+  // On a phone the bar scrolls sideways: keep the current page in view.
+  useEffect(() => {
+    barRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [pathname, barGroup?.label]);
 
-  const follow = (item: NavItem) => (e: React.MouseEvent) => {
-    setOpenGroup(null);
-    setMenuOpen(false);
+  const follow = (href: string) => (e: React.MouseEvent) => {
+    setLauncher(false);
     // A link to another #hash of this page: change the hash so the page hears it.
-    const [path, itemHash] = item.href.split('#');
-    if (itemHash && path === pathname) {
+    const [path, itemHash] = href.split('#');
+    if (itemHash && path === window.location.pathname) {
       e.preventDefault();
       window.location.hash = itemHash;
     }
   };
 
-  const themeButton = (
-    <button
-      onClick={toggleTheme}
-      className="btn btn-secondary nav-icon-btn"
-      aria-label="Toggle theme"
-      title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-    >
-      {theme === 'dark' ? '☀️' : '🌙'}
-    </button>
-  );
+  const openButton = { onClick: () => setLauncher(true), onPointerEnter: () => { void loadLauncher(); } };
 
   return (
-    <nav className="glass-nav">
-      <Link href="/" style={{ fontWeight: 'bold', fontSize: '1.1rem', color: 'var(--foreground)', flexShrink: 0 }}>
-        🐾 Noah Stuf
-      </Link>
+    <>
+      <nav className="glass-nav" aria-label="Main">
+        <Link href="/" className="nav-logo">🐾 <span>Noah Stuf</span></Link>
 
-      {/* One search for desktop and mobile; the auto margin keeps it beside the links. */}
-      <div style={{ marginLeft: 'auto', marginRight: '0.5rem', display: 'flex' }}>
-        <SiteSearch />
-      </div>
-
-      {/* Desktop links: one link per section, or a dropdown for a group of them */}
-      <div className="nav-links" ref={groupsRef}>
-        {groups.map((group) => {
-          if (group.items.length === 1) {
-            const item = group.items[0];
-            return (
-              <Link key={group.label} href={item.href} onClick={follow(item)} className="nav-link"
-                aria-current={itemIsCurrent(item) ? 'page' : undefined}>
-                {item.label}
-              </Link>
-            );
-          }
-          const open = openGroup === group.label;
-          const menuId = `nav-menu-${group.label.toLowerCase()}`;
-          return (
-            <div key={group.label} className="nav-group" onPointerEnter={hoverOpen(group.label)} onPointerLeave={hoverClose}>
-              <button type="button" className="nav-link" onClick={() => toggleGroup(group.label)}
-                aria-expanded={open} aria-controls={menuId} data-current={groupIsCurrent(group) || undefined}>
-                {group.label}
-                <svg className="nav-caret" viewBox="0 0 10 6" aria-hidden><path d="M1 1l4 4 4-4" /></svg>
-              </button>
-              {open && (
-                <div className="nav-menu" id={menuId}>
-                  <div className="nav-menu-panel">
-                    {group.items.map((item) => (
-                      <Link key={item.href} href={item.href} onClick={follow(item)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
-                        <span aria-hidden>{item.icon}</span>{item.label}
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {themeButton}
-      </div>
-
-      <AccountMenu user={user} />
-
-      {/* Mobile Right: Workout shortcut + Hamburger (the theme toggle is in the menu) */}
-      <div className="nav-mobile-controls">
-        <Link href="/workout" className="btn btn-secondary nav-icon-btn nav-workout-btn" aria-label="Workout" title="Workout"
-          aria-current={section === '/workout' || section.startsWith('/workout/') ? 'page' : undefined}>
-          🏋️
-        </Link>
-        <button
-          className="hamburger"
-          onClick={() => setMenuOpen(!menuOpen)}
-          aria-label="Toggle navigation menu"
-          aria-expanded={menuOpen}
-        >
-          {menuOpen ? '✕' : '☰'}
-        </button>
-      </div>
-
-      {/* Mobile menu: groups fold away; the one you're in starts open */}
-      {menuOpen && (
-        <div className="mobile-menu">
-          {groups.map((group) => group.items.length === 1 ? (
-            <Link key={group.label} href={group.items[0].href} onClick={follow(group.items[0])} className="mobile-link"
-              aria-current={itemIsCurrent(group.items[0]) ? 'page' : undefined}>
-              {group.items[0].label}
+        <div className="nav-pins">
+          {pinned.slice(0, 6).map((item) => (
+            <Link key={item.href} href={item.href} onClick={follow(item.href)} className="nav-link" aria-current={itemIsCurrent(item) ? 'page' : undefined}>
+              {item.label}
             </Link>
-          ) : (
-            <details key={group.label} className="mobile-group" open={groupIsCurrent(group)}>
-              <summary data-current={groupIsCurrent(group) || undefined}>{group.label}</summary>
-              {group.items.map((item) => (
-                <Link key={item.href} href={item.href} onClick={follow(item)} className="mobile-link is-sub"
-                  aria-current={itemIsCurrent(item) ? 'page' : undefined}>
-                  <span aria-hidden>{item.icon}</span>{item.label}
-                </Link>
-              ))}
-            </details>
           ))}
-          <button type="button" className="mobile-link mobile-theme" onClick={toggleTheme}>
-            <span aria-hidden>{theme === 'dark' ? '☀️' : '🌙'}</span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          </button>
         </div>
+
+        <button type="button" className="nav-search" aria-label="Search or jump to a page (press /)" title="Search or jump to a page (/)" {...openButton}>
+          <span aria-hidden>🔍</span>
+          <span className="nav-search-text">Search or jump to…</span>
+          <kbd aria-hidden>/</kbd>
+        </button>
+        <button type="button" className="nav-all" aria-label="Everything on the site" title="Everything on the site" {...openButton}>
+          <GridIcon /><span>All</span>
+        </button>
+        {/* Both icons, with CSS picking one: the server can't know the theme a browser saved. */}
+        <button type="button" onClick={toggleTheme} className="nav-theme" aria-label="Switch between light and dark" title="Switch between light and dark">
+          <span className="nav-theme-sun" aria-hidden>☀️</span>
+          <span className="nav-theme-moon" aria-hidden>🌙</span>
+        </button>
+        <AccountMenu user={user} />
+      </nav>
+
+      {/* The pages next to this one, so moving around a section takes one tap. */}
+      {barGroup && (
+        <nav ref={barRef} className={`section-bar${barGroup.bar === 'wide' ? ' is-wide-only' : ''}`} aria-label={barGroup.label}>
+          {barGroup.items.map((item) => (
+            <Link key={item.href} href={item.href} onClick={follow(item.href)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
+              <span aria-hidden>{item.icon}</span>{item.label}
+            </Link>
+          ))}
+        </nav>
       )}
-    </nav>
+
+      {/* On a phone, your pins sit under your thumb. */}
+      {showDock && (
+        <nav className="site-dock" aria-label="Pinned pages">
+          {pinned.slice(0, DOCK_PINS).map((item) => (
+            <Link key={item.href} href={item.href} onClick={follow(item.href)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
+              <span aria-hidden>{item.icon}</span>
+              <span>{item.short ?? item.label}</span>
+            </Link>
+          ))}
+          <button type="button" onClick={() => setLauncher(true)}>
+            <GridIcon />
+            <span>All</span>
+          </button>
+        </nav>
+      )}
+
+      {launcher && (
+        <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} theme={theme}
+          onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} />
+      )}
+    </>
   );
 }

@@ -84,7 +84,7 @@
 
 /* Explore tiles */
 .home-explore { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
-@media (min-width: 1100px) { .home-explore { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .home-explore { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .home-explore-item {
   display: flex;
   align-items: center;
