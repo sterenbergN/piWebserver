@@ -1,6 +1,7 @@
 import { BASELINE_OVERRIDE, CONTROLLER_KINDS, defaultController, isAvailable, type ControllerConfig, type ControllerKind } from './controllers';
 import { cleanParams, measuredDisturbances, type Params, type ProcessDef } from './model';
 import { plantSummary } from './plant';
+import { balancePoint } from './processes/jacket';
 import { scorecard, type Scorecard, type TestScore } from './score';
 import { runAll } from './sim';
 import { autoTune, tuningCandidates } from './tuning';
@@ -19,8 +20,8 @@ const CALM_PEAK_LIMIT = 45;
 const WEAR_LIMIT = { times: 10, strokes: 50 };
 /** Above this peak sensitivity a loop still counts as stable, but only just. */
 export const FRAGILE_MS = 3;
-/** Their actuators are drives, not valves: movement isn't wear. */
-const DRIVES = new Set(['crane', 'servo', 'maglev']);
+/** What they drive is an electric drive or a temperature unit's setpoint, not a valve: movement isn't wear. */
+const NO_WEAR = new Set(['crane', 'servo', 'maglev', 'batch']);
 /** A tuning has to keep this peak sensitivity over the plant's spread, unless none of them can. */
 const MS_LIMIT = 2;
 /** "As good" means within this factor of the best. */
@@ -29,6 +30,8 @@ export const GOOD_ENOUGH = 1.25;
 /** One test's numbers. Null where it doesn't apply (no setpoint step in it) or it never happened (never settled). */
 export type TestNumbers = {
   iae: number; travel: number;
+  /** The sharpest valve move, % per minute. */
+  sharpest: number;
   overshoot: number | null; settling: number | null; peak: number | null; recovery: number | null;
   /** Everything in the test settled or recovered. */
   settled: boolean;
@@ -42,6 +45,8 @@ export type CompareRow = {
   rung: number;
   label: string;
   config: ControllerConfig;
+  /** A change to the plant that goes with it (the fix isn't always in the controller). */
+  plant?: Params;
   tests: TestNumbers[];
   iae: number; travel: number; worstPeak: number;
   overshoot: number; settling: number | null; recovery: number | null;
@@ -71,7 +76,7 @@ function testNumbers(t: TestScore): TestNumbers {
   const settledSteps = t.steps.every((s) => s.settling !== null);
   const recovered = t.upsets.every((u) => u.recovery !== null || u.limited);
   return {
-    iae: sig(t.iae), travel: sig(t.travel),
+    iae: sig(t.iae), travel: sig(t.travel), sharpest: sig(t.sharpest),
     overshoot: t.steps.length ? sig(Math.max(...t.steps.map((s) => s.overshoot))) : null,
     settling: t.steps.length && settledSteps ? sig(Math.max(...t.steps.map((s) => s.settling ?? 0))) : null,
     peak: t.upsets.length ? sig(Math.max(...t.upsets.map((u) => u.peak))) : null,
@@ -81,10 +86,21 @@ function testNumbers(t: TestScore): TestNumbers {
   };
 }
 
-/** What the tuning is judged on: lower is better. Error with a growing cost for wearing out the valve; or, for averaging, valve movement. */
-function tuningCost(goal: CompareGoal, s: Scorecard, ref: { iae: number; travel: number }) {
-  if (goal === 'calm') return (s.travel + 1e-6) * (s.worstPeak > CALM_PEAK_LIMIT ? 1000 * (s.worstPeak / CALM_PEAK_LIMIT) : 1);
-  return (s.iae / Math.max(ref.iae, 1e-9)) * (1 + 0.15 * Math.log2(1 + s.travel / Math.max(ref.travel, 1e-9)));
+/** The average of some ratios, each counting the same however big its test happens to be. */
+const geoMean = (xs: number[]) => Math.exp(xs.reduce((sum, x) => sum + Math.log(Math.max(x, 1e-12)), 0) / Math.max(xs.length, 1));
+
+/** What a tuning is compared with: PI on the same tests. */
+export type TuneRef = { iae: number[]; travel: number };
+const refOf = (s: Scorecard): TuneRef => ({ iae: s.tests.map((t) => t.iae), travel: s.travel });
+
+/**
+ * What the tuning is judged on: lower is better. Error relative to PI in each test, so one big test can't
+ * drown out the others, with a growing cost for wearing out the valve; or, for averaging, how sharply the outflow moves.
+ */
+function tuningCost(goal: CompareGoal, s: Scorecard, ref: TuneRef) {
+  if (goal === 'calm') return geoMean(s.tests.map((t) => t.sharpest + 1e-6)) * (s.worstPeak > CALM_PEAK_LIMIT ? 1000 * (s.worstPeak / CALM_PEAK_LIMIT) : 1);
+  const failed = s.tests.filter((t) => t.steps.some((x) => x.settling === null) || t.upsets.some((u) => u.recovery === null && !u.limited)).length;
+  return geoMean(s.tests.map((t, i) => t.iae / Math.max(ref.iae[i], 1e-9))) * (1 + 0.15 * Math.log2(1 + s.travel / Math.max(ref.travel, 1e-9))) * 1.25 ** failed;
 }
 
 export type TuneResult = { config: ControllerConfig; score: Scorecard; tried: number; note: string };
@@ -94,18 +110,17 @@ export type TuneResult = { config: ControllerConfig; score: Scorecard; tried: nu
  * runs through every test, and the best that stays stable and robust over the plant's spread wins.
  */
 export async function tuneOnTests(proc: ProcessDef, params: Params, config: ControllerConfig,
-  opts: { ref?: { iae: number; travel: number }; onStep?: () => void } = {}): Promise<TuneResult> {
+  opts: { ref?: TuneRef; onStep?: () => void } = {}): Promise<TuneResult> {
   const goal = goalOf(proc);
   const setup = (c: ControllerConfig) => ({ params, controller: c });
   let ref = opts.ref;
   if (!ref) {
     const pi = autoTune(proc, params, withoutD(defaultController('pid', proc)))?.config ?? defaultController('pid', proc);
-    const s = scorecard(proc, params, pi, runAll(proc, setup(pi)), false);
-    ref = { iae: s.iae, travel: s.travel };
+    ref = refOf(scorecard(proc, params, pi, runAll(proc, setup(pi)), false));
   }
   const tried = tuningCandidates(proc, params, config).map((c) => {
     const s = scorecard(proc, params, c, runAll(proc, setup(c)), false);
-    return { c, cost: tuningCost(goal, s, ref) };
+    return { c, cost: tuningCost(goal, s, ref!) };
   }).filter((x) => Number.isFinite(x.cost)).sort((a, b) => a.cost - b.cost);
   opts.onStep?.();
   await tick();
@@ -118,7 +133,8 @@ export async function tuneOnTests(proc: ProcessDef, params: Params, config: Cont
     const score = scorecard(proc, params, x.c, runAll(proc, setup(x.c)), true);
     first ??= { c: x.c, score };
     if (score.stableAll) stableOnly ??= { c: x.c, score };
-    if (score.stableAll && (!score.robust || !Number.isFinite(score.worstMs) || score.worstMs <= MS_LIMIT)) {
+    // A hair over the limit isn't a different kind of loop.
+    if (score.stableAll && (!score.robust || !Number.isFinite(score.worstMs) || score.worstMs <= MS_LIMIT * 1.02)) {
       return { config: x.c, score, tried: tried.length, note: `Tried ${tried.length} tunings on all ${proc.scenarios.length} tests; this one does best while staying robust (Ms ≤ ${MS_LIMIT}) over the plant’s spread.` };
     }
     await tick();
@@ -154,14 +170,18 @@ function whyNot(proc: ProcessDef, params: Params, kind: ControllerKind): string 
 }
 
 /** The variants compared for a process: every rung that applies, and the combinations people actually weigh up. */
-function variantsFor(proc: ProcessDef) {
-  const list: { id: string; label: string; kind: ControllerKind; make: () => ControllerConfig }[] = [];
+function variantsFor(proc: ProcessDef, params: Params) {
+  const list: { id: string; label: string; kind: ControllerKind; make: () => ControllerConfig; plant?: Params }[] = [];
   const allMeasured = () => measuredDisturbances(proc).map((d) => ({ from: d.key, gain: 0, lead: 0, lag: 0 }));
   for (const k of CONTROLLER_KINDS) {
     const base = () => defaultController(k.kind, proc);
     if (k.kind === 'pid') {
       list.push({ id: 'pi', label: 'PI', kind: 'pid', make: () => withoutD(base()) });
-      list.push({ id: 'pid', label: 'PID', kind: 'pid', make: () => { const c = base() as Extract<ControllerConfig, { kind: 'pid' }>; return { ...c, pid: { ...c.pid, Td: c.pid.Td || 1 } }; } });
+      // Split-range: the same PI with the two valves' ranges balanced, a change to the plant rather than the controller.
+      if (proc.split) list.push({ id: 'pi-balanced', label: 'PI, split balanced', kind: 'pid', make: () => withoutD(base()), plant: { split: Math.round(balancePoint(params)) } });
+      const withD = () => { const c = base() as Extract<ControllerConfig, { kind: 'pid' }>; return { ...c, pid: { ...c.pid, Td: c.pid.Td || 1 } }; };
+      list.push({ id: 'pid', label: 'PID', kind: 'pid', make: withD });
+      if (proc.split) list.push({ id: 'pid-balanced', label: 'PID, split balanced', kind: 'pid', make: withD, plant: { split: Math.round(balancePoint(params)) } });
     } else if (k.kind === 'feedforward') {
       list.push({ id: k.kind, label: k.short, kind: k.kind, make: () => ({ ...base(), ff: allMeasured() }) as ControllerConfig });
     } else if (k.kind === 'cascade') {
@@ -180,10 +200,10 @@ export async function compareProcess(proc: ProcessDef, rawParams: Params, onProg
   const params = cleanParams(proc, rawParams);
   const notApplicable: Comparison['notApplicable'] = [];
   const rows: CompareRow[] = [];
-  const variants = variantsFor(proc);
+  const variants = variantsFor(proc, params);
   const pi = autoTune(proc, params, withoutD(defaultController('pid', proc)))?.config ?? withoutD(defaultController('pid', proc));
   const refScore = scorecard(proc, params, pi, runAll(proc, { params, controller: pi }), false);
-  const ref = { iae: refScore.iae, travel: refScore.travel };
+  const ref = refOf(refScore);
   let done = 0;
   for (const v of variants) {
     const meta = CONTROLLER_KINDS.find((k) => k.kind === v.kind)!;
@@ -194,15 +214,15 @@ export async function compareProcess(proc: ProcessDef, rawParams: Params, onProg
       if (!notApplicable.some((n) => n.label === meta.short)) notApplicable.push({ label: meta.short, reason });
       continue;
     }
-    const { config, score } = await tuneOnTests(proc, params, v.make(), { ref });
+    const { config, score } = await tuneOnTests(proc, v.plant ? { ...params, ...v.plant } : params, v.make(), { ref });
     // A PID whose rule gives no derivative is the PI again, and a schedule of identical gains is one PI.
-    if (v.id === 'pid' && config.kind === 'pid' && config.pid.Td === 0) { notApplicable.push({ label: 'PID', reason: 'the plant is close to first order: derivative has nothing to act on' }); continue; }
+    if (v.id.startsWith('pid') && config.kind === 'pid' && config.pid.Td === 0) { notApplicable.push({ label: 'PID', reason: 'the plant is close to first order: derivative has nothing to act on' }); continue; }
     if (v.kind === 'schedule' && config.kind === 'schedule') {
       const kc = config.points.map((p) => p.Kc);
       if (Math.max(...kc) <= 1.1 * Math.min(...kc)) { notApplicable.push({ label: meta.short, reason: 'the gain hardly changes over the range' }); continue; }
     }
     rows.push({
-      id: v.id, kind: v.kind, rung: meta.rung, label: v.label, config,
+      id: v.id, kind: v.kind, rung: meta.rung, label: v.label, config, ...(v.plant ? { plant: v.plant } : {}),
       tests: score.tests.map(testNumbers),
       iae: sig(score.iae), travel: sig(score.travel), worstPeak: sig(score.worstPeak),
       overshoot: sig(score.worstOvershoot), settling: orNull(score.worstSettling), recovery: orNull(score.worstRecovery),
@@ -222,7 +242,7 @@ export function outOfTheRunning(c: Comparison, row: CompareRow) {
   if (row.kind === 'onoff') return 'cycles by design';
   if (!row.stable) return 'unstable over the plant’s spread';
   if (c.goal === 'calm' && row.worstPeak > CALM_PEAK_LIMIT) return 'level close to the limits of the tank';
-  if (!DRIVES.has(c.process) && row.travel > WEAR_LIMIT.strokes) {
+  if (!NO_WEAR.has(c.process) && row.travel > WEAR_LIMIT.strokes) {
     const others = c.rows.filter((r) => r.kind !== 'onoff').map((r) => r.travel).sort((a, b) => a - b);
     const typical = others[Math.floor(others.length / 2)];
     if (row.travel > WEAR_LIMIT.times * typical) return `wears the valve: ${Math.round(row.travel / typical)}× the usual travel`;
@@ -237,18 +257,35 @@ export const eligible = (c: Comparison, row: CompareRow) => outOfTheRunning(c, r
  */
 export const countsIn = (c: Comparison, row: CompareRow, i: number) => (c.tests[i].limit ? !row.tests[i].overLimit : c.goal === 'calm' || row.tests[i].settled);
 
-export const metricOf = (c: Comparison, row: CompareRow, test: number) => (c.goal === 'calm' ? row.tests[test].travel : row.tests[test].iae);
-export const overallOf = (c: Comparison, row: CompareRow) => (c.goal === 'calm' ? row.travel : row.iae);
+export const metricOf = (c: Comparison, row: CompareRow, test: number) => (c.goal === 'calm' ? row.tests[test].sharpest : row.tests[test].iae);
+
+/**
+ * How a controller does over all the tests: on average, how many times the best number in each test (1 is the best
+ * everywhere). Each test counts the same, however big its numbers. A test it failed (never settled, or broke the limit,
+ * where others managed) scores no better than the worst of those still in the running.
+ */
+export function overallOf(c: Comparison, row: CompareRow) {
+  const racing = c.rows.filter((r) => eligible(c, r));
+  const pool = racing.length ? racing : c.rows.filter((r) => r.kind !== 'onoff');
+  return geoMean(c.tests.map((_, i) => {
+    const values = pool.map((r) => metricOf(c, r, i));
+    const counted = pool.filter((r) => countsIn(c, r, i)).map((r) => metricOf(c, r, i));
+    const best = Math.max(Math.min(...(counted.length ? counted : values)), 1e-12);
+    const own = Math.max(1, metricOf(c, row, i) / best);
+    return counted.length && !countsIn(c, row, i) ? Math.max(own, Math.max(...values) / best) : own;
+  }));
+}
 
 export type Winner = { best: CompareRow; simplest: CompareRow };
 
-/** The lowest number among those fit, and the first rung up the ladder within reach of it. */
+/** The lowest number among those fit, and the least effort to commission and keep right within reach of it. */
 function pick(c: Comparison, value: (row: CompareRow) => number, allowed: (row: CompareRow) => boolean): Winner | null {
   let pool = c.rows.filter((r) => eligible(c, r) && allowed(r));
   if (!pool.length) pool = c.rows.filter((r) => eligible(c, r));
   if (!pool.length) return null;
   const best = pool.reduce((a, b) => (value(b) < value(a) ? b : a));
-  const simplest = pool.find((r) => value(r) <= value(best) * GOOD_ENOUGH + 1e-12) ?? best;
+  const effort = (r: CompareRow) => r.commissioning * 100 + r.tuningParams + r.rung / 100;
+  const simplest = pool.filter((r) => value(r) <= value(best) * GOOD_ENOUGH + 1e-12).sort((x, y) => effort(x) - effort(y))[0] ?? best;
   return { best, simplest };
 }
 

@@ -954,7 +954,16 @@ test('comparison: the verdicts agree with the engineering', () => {
   assert.equal(overall('mixing')[0], 'mpc', 'two interacting loops');
   assert.equal(overall('crane')[0], 'statefb', 'a swinging load');
   assert.equal(overall('maglev')[1], 'pid', 'unstable, but PID does it');
-  assert.equal(overall('drum')[1], 'feedforward', 'steam flow is the upset that matters');
+  assert.equal(overall('drum')[0], 'cascade-ff', 'three-element control');
+  assert.equal(overall('stirred')[0], 'pid', 'lags in series: derivative earns its keep');
+  assert.equal(overall('blend')[1], 'ratio', 'a proportion: hold the proportion');
+  assert.deepEqual(overall('jacket'), ['pid-balanced', 'pid-balanced'], 'the fix is in the valves');
+  assert.equal(overall('tank')[0], 'schedule', 'the gain changes with the level');
+  assert.equal(overall('tank')[1], 'pi', 'but a PI tuned for the top gets close');
+  assert.equal(overall('batch')[0], 'statefb');
+  assert.equal(overall('surge')[0], 'override', 'a slow PI that can run looser with the limit protected');
+  // Failing a test has a price: state feedback's rate changes don't make up for never correcting density upsets.
+  assert.equal(overall('feeder')[0], 'smith');
   // The steam allowance is a limit: only the override keeps to it.
   const hx = data.hx, limited = hx.tests.findIndex((t) => t.limit);
   assert.ok(limited >= 0);
@@ -962,7 +971,9 @@ test('comparison: the verdicts agree with the engineering', () => {
   assert.ok(hx.rows.find((r) => r.id === 'pi')!.tests[limited].overLimit, 'a plain PI takes more steam than it is allowed');
   // A surge tank is judged on calm, not error.
   assert.equal(data.surge.goal, 'calm');
-  assert.equal(metricOf(data.surge, data.surge.rows[1], 0), data.surge.rows[1].tests[0].travel);
+  assert.equal(metricOf(data.surge, data.surge.rows[1], 0), data.surge.rows[1].tests[0].sharpest);
+  const calm = (id: string) => overallOf(data.surge, data.surge.rows.find((r) => r.id === id)!);
+  assert.ok(calm('pi') < calm('statefb') / 2, 'a slow PI moves the outflow far more gently than a tight loop');
   // Nothing out of the running ever wins, and on-off never does.
   for (const c of Object.values(data)) {
     const winners = [overallWinner(c), ...c.tests.map((_, i) => testWinner(c, i))];

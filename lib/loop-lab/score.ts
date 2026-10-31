@@ -39,6 +39,8 @@ export type TestScore = {
   travel: number;
   /** Controller output movement, % per minute (noise passed to the valve). */
   cvActivity: number;
+  /** The sharpest the valve moved, % per minute, over a fortieth of the test (so noise doesn't count): what the next unit downstream feels. */
+  sharpest: number;
   /** Share of the time the output sat at a limit, %. */
   saturated: number;
   /** The test has a limit on the second measurement, and it was exceeded. */
@@ -75,7 +77,14 @@ type Channel = {
   name: string | null;
 };
 
-export function scoreRun(proc: ProcessDef, run: Run): TestScore {
+export function sharpestMove(valve: Float64Array, Ts: number, window: number) {
+  const k = Math.max(1, Math.round(window / Ts));
+  let most = 0;
+  for (let i = k; i < valve.length; i++) most = Math.max(most, Math.abs(valve[i] - valve[i - k]));
+  return most / (k * Ts / 60);
+}
+
+function scoreRun(proc: ProcessDef, run: Run): TestScore {
   const { trace, scenario, Ts } = run;
   const n = trace.t.length;
   let travel = 0, activity = 0, sat = 0, sat2 = 0;
@@ -118,6 +127,7 @@ export function scoreRun(proc: ProcessDef, run: Run): TestScore {
     steps, upsets,
     travel: travel / 100 / (duration / 3600),
     cvActivity: activity / (duration / 60),
+    sharpest: sharpestMove(trace.valve, Ts, duration / 40),
     saturated: (Math.max(sat, sat2) / n) * 100,
     // A little past the limit is a controller catching it; more is ignoring it.
     overLimit: scenario.limit ? Array.from(trace.pv2).some((v) => v > scenario.limit!.max * 1.05) : false,

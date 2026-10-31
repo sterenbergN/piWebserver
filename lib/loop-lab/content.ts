@@ -56,7 +56,7 @@ The gain changes a little across the range (the installed curve isn't perfectly 
       'Watch the valve for a while: a loop that is fine on the trend but strokes the valve constantly is tuned too hard for the noise.',
       'Set high/low flow alarms and a deviation alarm with a delay longer than one closed-loop response.',
     ],
-    verdict: String.raw`**PI, and leave it there.** A Lambda- or SIMC-tuned PI with a moderate gain controls this loop well over the whole range and through header upsets. Derivative improves the scorecard by a few percent and more than doubles the valve travel. On-off cycles the valve hundreds of times an hour. If the loop misbehaves, look at the valve (deadband, sizing) before the controller.`,
+    verdict: String.raw`**PI, and leave it there.** A Lambda- or SIMC-tuned PI with a moderate gain controls this loop well over the whole range and through header upsets. Derivative improves the scorecard by a few percent at best, and more than doubles the valve travel. On-off cycles the valve hundreds of times an hour. If the loop misbehaves, look at the valve (deadband, sizing) before the controller.`,
   },
   tank: {
     mechanical: String.raw`A point-down conical vessel, 2 m tall, 0.15 m radius at the bottom and 1 m at the top. It is filled through **LV-201** and drained by gravity through a hand valve.
@@ -104,7 +104,7 @@ With $K_c$ and $T_i$ fixed, damping falls with $\sqrt{k'}$. If you tune for $\ze
       'Tune at each level (or once in volume units), then test setpoint steps and an outflow upset at the bottom and the top.',
       'Set high-high / low-low alarms and interlocks on the raw level, independent of the controller.',
     ],
-    verdict: String.raw`**Characterize if you know the geometry; gain-schedule if you don't.** Controlling volume gives one PI tuning that is right from bottom to top, costs a single function block, and survives moderate geometry errors. Gain scheduling reaches the same result from bump tests at a few levels, without needing a formula, at the cost of more parameters to look after. A single PI is acceptable only if the level stays in a narrow band, or if slow control near the bottom (tuned for the top, detuned for noise) is good enough.`,
+    verdict: String.raw`**Characterize if you know the geometry; gain-schedule if you don't; or accept one PI tuned for the top.** Controlling volume gives one PI tuning that is right from bottom to top, costs a single function block, and survives moderate geometry errors. Gain scheduling reaches the same result from bump tests at a few levels, without needing a formula, at the cost of more parameters to look after. What both buy is margin more than error: they hold Ms at about 1.5 at every level. A single PI tuned fast enough for the top comes within about 10 % on error, but runs at Ms 1.8 near the bottom, with seven times the gain it needs there. The PI to avoid is the one tuned at the bottom: sluggish, then ringing, higher up.`,
   },
   stirred: {
     mechanical: String.raw`A 200 L jacketed vessel with an agitator. Cold feed runs through it continuously, and **TV-401** sets how much heat goes into the jacket (hot water or low-pressure steam).
@@ -218,7 +218,7 @@ In valve % (single loop), or in steam-flow setpoint (with cascade), that is the 
 - Feedforward cuts flow upsets from 13 °C to about 3 °C.
 - Together, every upset stays under about 2.5 °C and the IAE drops by two thirds.
 
-The price is three more transmitters' worth of trust, ten tuning numbers instead of two, and about 2.8× more valve activity. Each piece is worth adding only if its upset is big enough to matter in your plant.`,
+The price is three more transmitters' worth of trust, ten tuning numbers instead of two, and two to three times the valve travel. Each piece is worth adding only if its upset is big enough to matter in your plant.`,
   },
   surge: {
     mechanical: String.raw`A buffer vessel, **T-601**, between two plant sections. The upstream section sends whatever it produces. Pump **P-601** draws the outflow through **LV-601** to the downstream section, which would rather see a steady feed.
@@ -272,7 +272,7 @@ before it turns round. So pick the largest swing you can tolerate and solve for 
       'Watch a few days of upstream upsets: the outflow should drift, not jump, and the level should stay inside its limits.',
       'If the level hits a limit, slow down less (shorter λ) rather than adding derivative or tightening Ti.',
     ],
-    verdict: String.raw`**A slow P or PI, tuned from the room the tank has.** The scorecard's IAE will call it terrible, and that's the wrong measure here: the outflow moves about eight times more gently than with a tight tuning, and the downstream section never sees the upstream swings. Protect the limits with an override or a trip, not by tightening the loop.`,
+    verdict: String.raw`**A slow P or PI, tuned from the room the tank has.** The scorecard's IAE will call it terrible, and that's the wrong measure here: the outflow moves about eight times more gently than with a tight tuning, and the downstream section never sees the upstream swings. Protect the limits with an override or a trip, not by tightening the loop. With the override there the PI can run looser still: about three times calmer through normal surges, at the price of a sharp move when the override takes over on a big one.`,
   },
   feeder: {
     mechanical: String.raw`A screw feeder under a hopper discharges bulk solids (limestone, say) onto a belt conveyor. A weigh idler near the far end of the belt, **WT-701**, measures the feed rate. The screw's motor runs on a VFD, **SC-701**, which the controller sets.
@@ -325,7 +325,7 @@ If the model is right, the delayed model output cancels the real measurement's r
       'Then the Smith predictor: model from the bump test, PI tuned for the lag alone but no faster than about θ/2.',
       'Test with the belt slowed by 20 %: if the loop rings, make the PI inside the predictor slower, or tie the model dead time to the belt speed.',
     ],
-    verdict: String.raw`**A PI tuned with $\tau_c \approx \theta$ is the honest baseline. A Smith predictor roughly halves the IAE**, mostly on setpoint changes: it settles in about 55 s instead of 90 s. It does little for density upsets, which nothing can see until they reach the scale.
+    verdict: String.raw`**A PI tuned with $\tau_c \approx \theta$ is the honest baseline. A Smith predictor roughly halves the IAE**, mostly on setpoint changes: it settles in about 55 s instead of 90 s. It does little for density upsets, which nothing can see until they reach the scale. State feedback does better still on rate changes, but as tuned on these tests it never finishes correcting a density upset.
 
 It is worth it when rate changes are frequent and the dead time is known and stable. Tie the model's dead time to the belt speed if the belt can change speed. Tune the PI inside the predictor no faster than about half the dead time, or a slowed belt will make it ring.`,
   },
@@ -441,10 +441,11 @@ Heat losses are small, so it is nearly integrating, with about 22 s of effective
       'Tune one PI on the balanced split; test a step that crosses the split both ways.',
       'Run near the split for a while and watch for hunting between valves; if it does, look at the gap and the valves\' deadband before the tuning.',
     ],
-    verdict: String.raw`**Balance the split, then tune one PI.**
+    verdict: String.raw`**Balance the split, then tune one loop.**
 - Split at 50 %, a PI tuned on steam hunts between the valves once the reaction needs cooling (linearly unstable there). One tuned on cooling overshoots setpoint changes by about 23 %.
 - Move the split to about 76 % (or characterize the output) and one tuning gives 5–8 % overshoot on both sides, with the same margin everywhere.
 - Keep the gap small: 6 % of gap made the temperature wander four times more near the split.
+- With the split balanced, derivative halves the load swings again, for about seven times the valve travel. Nothing further up the ladder beats that overall.
 
 The fix is a valve setting, not a smarter controller.`,
   },
@@ -599,10 +600,10 @@ $$\frac{\omega_m}{T} = \frac{J_L s^2 + \ldots + k}{s\,(J_mJ_L s^2 + \ldots + k(J
       'Close the loop slowly (low ω_n), raise it while watching the twist and the torque ripple.',
       'Test with an empty and a full roll: the resonance moves with the inertia.',
     ],
-    verdict: String.raw`**It depends how fast the roll has to be.**
+    verdict: String.raw`**A cascade on the motor speed, what every drive does. State feedback where the torque has to stay smooth.**
 - A PI on the roll speed alone is stuck far below the resonance: a speed change takes over a second and a load step costs 10 % of span.
 - A **cascade on the motor speed**, what every drive does, settles in about a second with load dips under 1 %. With a notch filter, that is the standard answer and usually enough.
-- **State feedback with an observer** (active damping) settles in about 0.35 s, three times faster, with the same load rejection and more margin (Ms 1.5 against 2.7), and stays well damped with a roll twice as heavy. It needs a good model of the drive train: worth it on a machine whose speed changes are the product, such as a printing or converting line.`,
+- **State feedback with an observer** (active damping) settles in about 0.35 s with more margin (Ms 1.5 against 2.7) than a gently tuned cascade, and stays well damped with a roll twice as heavy. But tune the cascade as hard and it catches up: both settle in about 0.45 s at Ms 1.9, and the cascade then puts more than twice the encoder noise into the torque. So state feedback's edge is smoother torque rather than speed, and it needs a good model of the drive train: worth it on a machine that shows the ripple, such as a printing or converting line.`,
   },
   maglev: {
     mechanical: String.raw`A 2 kg steel armature hangs under an electromagnet, with nothing touching it: one axis of a magnetic bearing, the kind that carries turbomachinery rotors without friction or oil. A current amplifier, **ZY-801**, drives the coil (0–6 A); an inductive gap sensor, **ZT-801**, reads the air gap (0–30 mm).
@@ -652,7 +653,7 @@ an unstable pole at $+\sqrt{2g/x_0}$ and its mirror image. More current closes t
     ],
     verdict: String.raw`**PID works, once the setpoint weight is right.** PD plus a slow integral (Kc 4, Td 20 ms, Ti 150 ms) with b = 0.3 moves the gap in about 0.2 s without overshoot and holds half a kilogram of extra load to a 2 % dip. With b = 1 the same PID overshoots 130 % on a 3 mm step, and on the mismatch test drops the armature on the pad.
 
-**State feedback** with an observer settles about twice as fast (0.06–0.13 s) and has more margin (Ms 2.4 against 3.1), but overshoots more on gap changes (up to 9 %, and 26 % on the mismatch test). It is not a clear win. What this plant teaches is not "use state feedback" but what instability demands: a minimum speed, derivative action, fast hardware, and a gain that changes across the range.`,
+**State feedback** with an observer settles a little faster on most tests and has about 15 % less error. It has the same margin at the design point (Ms 2.4) and less close to the magnet (7.5 against 4.1 at 8 mm), and it overshoots more on gap changes (up to 9 %, and 26 % on the mismatch test). It is not a clear win. What this plant teaches is not "use state feedback" but what instability demands: a minimum speed, derivative action, fast hardware, and a gain that changes across the range.`,
   },
   mixing: {
     mechanical: String.raw`A tank blends hot water (70 °C, through **FV-901**) and cold mains water (15 °C, through **FV-902**) and supplies the mix by gravity to users downstream: a hot-water set for washing or CIP, a dilution tank, a feed tank. Both the **temperature** (TT-901) and the **level** (LT-902) have to be held.
@@ -703,7 +704,7 @@ Here λ₁₁ is 0.82 at 25 °C, 0.64 at 35 °C, 0.36 at 50 °C and 0.27 at 55 �
     ],
     verdict: String.raw`**Decouple it: a static decoupler from the bump-test gains, or better, control total flow and hot fraction.** Two loops tuned one at a time fight: a level change pulls the temperature by 6 °C, a demand change by 4 °C. With the decoupler, 0.1 °C and 0.03 °C.
 
-**MPC** does about as well on interaction and better on the hot-supply upset (0.7 °C instead of 1.6 °C). Where it earns its place is at the limits: when the hot valve runs out, its weights decide what gives, and it recovers without the overshoot that two plain loops show. On one tank that is rarely worth the model upkeep. On a unit with five interacting variables and a few limits that often bind, it is.
+**MPC** does about as well on interaction and better on the hot-supply upset (0.7 °C instead of 1.6 °C). Where it earns its place is at the limits: when the hot valve runs out, its weights decide what gives, and it recovers without the overshoot that two plain loops show. Tuned the same way it also has the lowest error overall: level and demand changes are about even, while setpoint changes and hot-supply upsets are two to six times better. On one tank the decoupler is still the cheaper answer if setpoint speed isn't what you are paid for: two numbers, against a model someone has to keep right. On a unit with five interacting variables and a few limits that often bind, it is.
 
 **Watch the operating point.** λ₁₁ runs from 0.82 to 0.27 across the recipes: the pairing and the decoupler that suit 35 °C don't suit 55 °C.`,
   },
@@ -760,13 +761,15 @@ And, honestly: a slower heat-up, or dosing, which shrinks the problem itself.`,
       'Run the first real batches with the heat-up ramp slowed down and the operator watching the jacket temperature: how much cooling is it using?',
       'Set and test the high-temperature trip and emergency cooling independently of the control loop.',
     ],
-    verdict: String.raw`**Tune for the start of the batch, and make the recipe safe; then a PI is enough.**
-- A PI commissioned on a quiet batch (Kc 0.88) has Ms 2.6 when a full charge is in, and a strong batch overshoots by 2.4 °C.
+    verdict: String.raw`**A PI struggles through a whole batch. Derivative or state feedback hold it, as long as the recipe leaves cooling to spare.**
+- A PI commissioned on a quiet batch (Kc 0.88) has Ms 2.6 when a full charge is in, and a strong batch overshoots by 2.4 °C; at the worst corner of the ±20 % spread, by up to 24 °C.
 - Tuned for the start of the batch (SIMC, Kc 0.47) it is robust there (Ms 1.3) but lags the 2 °C/min heat-up by 26 °C. Slow the ramp or add the ramp's feedforward.
 - The **self-tuning PI**, starting from the quiet-batch tuning, learns its way to Ms 1.4 at the start of the batch and no overshoot. But its estimate wanders when nothing moves: late in a quiet hold it detuned itself to Kc 0.25.
 - **ADRC** holds the start of the batch with Ms 1.6 and no model beyond b₀, but lags ramps.
+- **PID**, tuned hard on the tests (Kc 10.6, Td 84 s), follows the ramps and stays within about 3 °C at every corner of the spread: its derivative pays for the gain. It has no margin left at 95 °C, above where these batches run.
+- **State feedback** does the same with about 40 % less error and stays stable everywhere in the spread (Ms 2.4 at 80 °C, 4.5 at 95 °C). It needs a model of the reactor and jacket.
 
-**No controller holds a reactor whose cooling margin has gone.** Across a ±20 % spread of reaction heat and jacket fouling, every one of them meets reactors that run away. That is fixed in the recipe (dosing, slower heat-up, a cleaner jacket) and guarded by the safety system, not in the loop.`,
+**No controller can cool harder than the jacket can.** A fast enough loop can hold a reactor that would run away on its own, but it then depends entirely on that loop and on cooling to spare. Once the reaction makes more heat than full cooling removes, the temperature goes, whatever the loop does. That is fixed in the recipe (dosing, slower heat-up, a cleaner jacket) and guarded by the safety system, not in the loop.`,
   },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
@@ -1556,7 +1559,7 @@ export const CASES: CaseStudy[] = [
       },
       {
         title: 'Add derivative?',
-        body: String.raw`Derivative adds phase lead, but this process has very little lag to recover. Its filter-limited high-frequency gain multiplies the measurement noise: the scorecard improves by a few percent while valve travel more than doubles. On a flow loop D is almost always off.`,
+        body: String.raw`Derivative adds phase lead, but this process has very little lag to recover. Its filter-limited high-frequency gain multiplies the measurement noise: the scorecard improves by a few percent at best while valve travel more than doubles. On a flow loop D is almost always off.`,
         presets: [{ label: 'PI (Lambda)', controller: PI(0.45, 1.8) }, { label: 'PID', controller: PI(0.6, 1.8, { Td: 0.3 }) }],
         scenarios: ['sp-steps', 'header-upset'],
       },
@@ -1636,7 +1639,7 @@ export const CASES: CaseStudy[] = [
         body: String.raw`**Characterize when the nonlinearity has a formula; schedule when it doesn't.**
 - Volume control is the cheapest complete fix: one PI, one FC, robust to moderate geometry errors.
 - Gain scheduling gets the same result from plant data alone, at the price of more parameters to maintain.
-- A single PI is only acceptable over a narrow level band.
+- One PI is a fair option if it is tuned for the top: about 10 % more error in the **Compare controllers** table, but Ms 1.8 near the bottom against about 1.5 everywhere. One tuned at the bottom is only acceptable over a narrow level band.
 
 **Next on the ladder.** If this were a surge tank, the right answer would be the opposite of tight control: averaging level control (phase 3).`,
       },
@@ -1847,7 +1850,7 @@ Add a second, tight level controller with its setpoint at 2.4 m ($K_c = 6$, $T_i
         body: String.raw`**A slow PI or P-only, tuned from the room the tank has.**
 - Choose the arrest time from the allowed level swing, not from the loop's speed.
 - Judge the loop by how smooth the outflow is, and whether the level stays inside its limits.
-- Protect the limits with an override or a trip.
+- Protect the limits with an override or a trip. Then the PI can run looser still: about three times calmer through normal surges, with a sharp move when the override takes over on a big one.
 
 This is PID winning: nothing up the ladder does the job better, as long as the tuning matches what the tank is for.`,
       },
@@ -2127,11 +2130,11 @@ The characterization can jump the gap in software, but then a tiny change in out
       },
       {
         title: 'Verdict',
-        body: String.raw`**Balance the split, then tune one PI.**
+        body: String.raw`**Balance the split, then tune one loop.**
 - Put the split point where both ranges move the same heat per % (or characterize the output in the PLC), keep the gap small, and tune once.
 - If the cooling capacity changes a lot with the seasons, re-check the balance in summer and winter.
 
-The ladder's rung here is characterization, not anything fancier: the problem is a nonlinearity in the actuators, so straighten it.`,
+The ladder's rung here is characterization, not anything fancier: the problem is a nonlinearity in the actuators, so straighten it. After that, derivative is worth having if the valves can take it: it halves the load swings for about seven times the travel.`,
       },
     ],
   },
@@ -2305,16 +2308,16 @@ Its weak spot: the outer loop's margins are thin (Ms 2.7), because the roll stil
         title: 'State feedback: active damping',
         body: String.raw`Feed back both speeds and the shaft twist, estimated by a Kalman filter from the two encoders together with the load torque. Pole placement puts the dominant pole at 40 rad/s and moves the resonance pair to $\zeta = 0.7$ at its own frequency: the controller supplies the damping the steel doesn't have.
 
-Speed changes settle in 0.35 s, three times faster than the cascade, with the same load rejection (0.8 %) and better margins (Ms 1.5). With a roll twice as heavy, overshoot is under 4 %.`,
+Speed changes settle in 0.35 s, three times faster than this cascade, with the same load rejection (0.8 %) and better margins (Ms 1.5). With a roll twice as heavy, overshoot is under 4 %.`,
         presets: [{ label: 'Cascade on the motor speed', controller: { kind: 'cascade', inner: { ...DEFAULT_PID, Kc: 5, Ti: 0.05 }, outer: { ...DEFAULT_PID, Kc: 2, Ti: 0.2 }, ff: [] } }, { label: 'State feedback', controller: SF('servo') }],
         scenarios: ['speed-steps', 'load-torque', 'heavy-roll'],
       },
       {
         title: 'Verdict',
-        body: String.raw`**A cascade on the motor speed, plus a notch filter if it rings, for most machines. State feedback with an observer where speed changes are the product.**
+        body: String.raw`**A cascade on the motor speed, plus a notch filter if it rings, for most machines. State feedback with an observer where the torque has to stay smooth.**
 - The PI on the roll alone is hopeless: the resonance caps it at 1.5 rad/s.
 - The cascade is what every drive offers: robust, understood, tuned by technicians.
-- State feedback is three times faster with better margins, but it needs the drive train's model (both inertias, the stiffness) and someone who can maintain it. Drives that offer observer-based "active damping" have packaged exactly this.`,
+- State feedback is three times faster than the cascade above, but that cascade is gently tuned: tuned as hard, it settles just as fast (see **Compare controllers**) with more than twice the torque activity. State feedback's edge is smoother torque, and it needs the drive train's model (both inertias, the stiffness) and someone who can maintain it. Drives that offer observer-based "active damping" have packaged exactly this.`,
       },
     ],
   },
@@ -2349,7 +2352,7 @@ The peak sensitivity is 3.1, high by the usual standards. For an unstable plant 
         title: 'State feedback by pole placement',
         body: String.raw`The model is exactly what an unstable plant needs designed from anyway. Place the dominant pair at $\omega_n = 60$ rad/s, $\zeta = 0.8$; a Kalman filter estimates the falling speed (no differentiating of a noisy gap) and the extra load from the current it takes.
 
-It settles about twice as fast (0.06–0.13 s), with a little more margin (Ms 2.4), and overshoots more on gap changes: up to 9 %, and 26 % on the mismatch test, because the setpoint feedforward assumes the magnet is as strong as it was.`,
+It settles about twice as fast (0.06–0.13 s), with a little more margin (Ms 2.4), and overshoots more on gap changes: up to 9 %, and 26 % on the mismatch test, because the setpoint feedforward assumes the magnet is as strong as it was. Against a PID tuned as hard (see **Compare controllers**) the speed advantage shrinks to about 15 % less error, and close to the magnet it has less margin, not more.`,
         presets: [{ label: 'PID, b = 0.3', controller: PI(4, 0.15, { Td: 0.02, a: 0.2, b: 0.3, invert: true }) }, { label: 'State feedback', controller: SF('maglev') }],
         scenarios: ['gap-steps', 'added-mass', 'mismatch'],
       },
@@ -2425,7 +2428,7 @@ Only MPC lets you say which variable gives. A PID structure would need an overri
         title: 'Verdict',
         body: String.raw`**For one tank: decouple.** Check the relative gain, pair accordingly, and add a static decoupler, or better, restructure to total flow and hot fraction. Two numbers remove almost all the interaction.
 
-**MPC** matches it on interaction and wins on load upsets and at the limits, where its weights decide what gives. On a single tank that rarely pays for a model someone has to keep right. On a unit with many interacting variables and constraints that bind every day, it does, which is why refineries and chemical plants run it.
+**MPC** matches it on interaction and wins on setpoint changes, on load upsets and at the limits, where its weights decide what gives; it has the lowest error overall in the **Compare controllers** table. On a single tank that doesn't always pay for a model someone has to keep right. On a unit with many interacting variables and constraints that bind every day, it does, which is why refineries and chemical plants run it.
 
 **Either way, the operating point matters:** the relative gain runs from 0.82 at 25 °C to 0.27 at 55 °C, so a decoupler or a model taken at one recipe is off at another.`,
       },
@@ -2470,7 +2473,7 @@ Now look at the late-batch test: with little movement to learn from, its estimat
       },
       {
         title: 'Where controllers stop being the answer',
-        body: String.raw`The scorecard's robustness row checks each controller against a ±20 % spread of reaction heat, jacket fouling and jacket lag. **Every one of them meets reactors in that spread that run away.** Where the reaction heat grows faster with temperature than the jacket can remove it, the cooling margin is gone. A loop can hold that only if it is fast enough and has cooling to spare, and these don't.
+        body: String.raw`The scorecard's robustness row checks each controller against a ±20 % spread of reaction heat, jacket fouling and jacket lag. **Every controller in this case meets reactors in that spread that run away.** Where the reaction heat grows faster with temperature than the jacket can remove it, the cooling margin is gone. A loop can hold that only if it is fast enough and has cooling to spare, and these aren't. PID with strong derivative and state feedback are: the **Compare controllers** tab shows them within about 3 °C across the spread. That makes the reactor depend on the loop, though, so it doesn't replace the margin.
 
 The fix is the recipe: dose the reactant instead of charging it all, heat up more slowly, keep the jacket clean. Then an independent high-temperature trip and emergency cooling, outside the control system.`,
       },
@@ -2479,7 +2482,8 @@ The fix is the recipe: dose the reactant instead of charging it all, heat up mor
         body: String.raw`**A PI tuned for the hardest stage (the start of the hold, full charge), a heat-up ramp it can follow, and a recipe with a cooling margin.**
 - Adaptive control follows the batch, but needs guarding against learning from quiet data.
 - ADRC copes without a reaction model, at the price of lagging ramps and being one more unfamiliar block.
-- Neither replaces the margin: that is chemistry and plant design, and the safety system's job when it is lost.`,
+- If a PI can't keep up, PID with strong derivative or state feedback can (see **Compare controllers**).
+- None of them replaces the margin: that is chemistry and plant design, and the safety system's job when it is lost.`,
       },
     ],
   },

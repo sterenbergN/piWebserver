@@ -253,7 +253,7 @@ export default function Bench() {
             </div>
           )}
 
-          {shown === 'compare' && <ComparePanel proc={proc} params={exp.params} plantChanges={plantChanges} onUse={(controller) => { setExp({ ...exp, controller }); chooseTab('tests'); }} />}
+          {shown === 'compare' && <ComparePanel proc={proc} params={exp.params} plantChanges={plantChanges} onUse={(controller, plant) => { setExp({ ...exp, controller, params: { ...exp.params, ...plant } }); chooseTab('tests'); }} />}
           {shown === 'live' && <LivePanel proc={proc} exp={exp} />}
           {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} onParams={(params) => setExp({ ...exp, params })} />}
           {shown === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}

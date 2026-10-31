@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { benchLink } from '@/lib/loop-lab/catalog';
-import { compareProcess, countsIn, eligible, FRAGILE_MS, GOOD_ENOUGH, metricOf, outOfTheRunning, overallOf, overallWinner, testWinner, type Comparison, type CompareRow, type TestNumbers } from '@/lib/loop-lab/compare';
+import { compareProcess, countsIn, eligible, FRAGILE_MS, GOOD_ENOUGH, metricOf, outOfTheRunning, overallOf, overallWinner, testWinner, type Comparison, type CompareGoal, type CompareRow, type TestNumbers } from '@/lib/loop-lab/compare';
 import { describeController, type ControllerConfig } from '@/lib/loop-lab/controllers';
 import type { Params, ProcessDef } from '@/lib/loop-lab/model';
 import { fmt } from './Chart';
@@ -19,6 +19,8 @@ const METRICS: Metric[] = [
   { id: 'recovery', label: 'Recovery', unit: 'Time back to within 1 % of span after an upset, the slowest one.', test: (t) => t.recovery, all: (r) => r.recovery, format: seconds },
   { id: 'travel', label: 'Valve travel', unit: 'Full strokes per hour: what the loop costs the valve.', test: (t) => t.travel, all: (r) => r.travel },
 ];
+const SHARPEST: Metric = { id: 'sharpest', label: 'Outflow move', unit: 'The sharpest the outlet valve moves, % per minute: what the section downstream feels.', test: (t) => t.sharpest, all: (r) => Math.max(...r.tests.map((t) => t.sharpest)) };
+const metricsFor = (goal: CompareGoal) => (goal === 'calm' ? [SHARPEST, ...METRICS] : METRICS);
 
 const show = (m: Metric, v: number | null) => (v === null ? '—' : m.format ? m.format(v) : fmt(v, 3));
 const percentLess = (a: number, b: number) => Math.round((1 - a / b) * 100);
@@ -27,19 +29,19 @@ const percentLess = (a: number, b: number) => Math.round((1 - a / b) * 100);
 function verdict(c: Comparison) {
   const w = overallWinner(c);
   if (!w) return { text: 'Nothing here stays stable over the plant’s whole spread: this plant needs more than tuning.', tone: 'bad' };
-  const noun = c.goal === 'calm' ? 'valve movement' : 'error';
+  const noun = c.goal === 'calm' ? 'outflow movement' : 'error';
   const pi = c.rows.find((r) => r.id === 'pi');
-  const fragile = w.simplest.ms !== null && w.simplest.ms > FRAGILE_MS ? ` Its margins are thin, though (Ms ${fmt(w.simplest.ms, 3)}): none of these is robust here.` : '';
+  const fragile = w.simplest.ms !== null && w.simplest.ms > FRAGILE_MS ? ` Its margins are thin at the worst point, though (Ms ${fmt(w.simplest.ms, 3)}).` : '';
   if (w.simplest.id === 'pi' && w.best.id === 'pi') return { text: `PI is the best here, and the simplest.${fragile}`, tone: 'good' };
   if (w.simplest.id !== w.best.id) {
-    return { text: `${w.simplest.label} is enough: within ${Math.round((GOOD_ENOUGH - 1) * 100)} % of the lowest ${noun} (${w.best.label}), with less to go wrong.${fragile}`, tone: fragile ? 'warn' : 'good' };
+    return { text: `${w.simplest.label} is enough: within ${Math.round((GOOD_ENOUGH - 1) * 100)} % of the best over all the tests (${w.best.label}), with less to go wrong.${fragile}`, tone: fragile ? 'warn' : 'good' };
   }
-  const better = pi && eligible(c, pi) && overallOf(c, pi) > 0 ? `: ${percentLess(overallOf(c, w.best), overallOf(c, pi))} % less ${noun} than PI` : '';
+  const better = pi && eligible(c, pi) ? `: ${percentLess(overallOf(c, w.best), overallOf(c, pi))} % less ${noun} than PI, on average over the tests` : '';
   return { text: `${w.best.label} is the clear choice${better}.${fragile}`, tone: fragile ? 'warn' : 'good' };
 }
 
 export default function ComparePanel({ proc, params, plantChanges, onUse }: {
-  proc: ProcessDef; params: Params; plantChanges: number; onUse?: (c: ControllerConfig) => void;
+  proc: ProcessDef; params: Params; plantChanges: number; onUse?: (c: ControllerConfig, plant?: Params) => void;
 }) {
   const [stored, setStored] = useState<Comparison | null>(null);
   const [live, setLive] = useState<{ key: string; data: Comparison } | null>(null);
@@ -66,12 +68,16 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
   const c = live?.key === key ? live.data : stored;
   if (!c) return <div className="ll-empty">Loading the comparison…</div>;
   const usingStored = c === stored;
-  const defaultMetric = c.goal === 'calm' ? 'travel' : 'iae';
-  const metric = METRICS.find((m) => m.id === (metricId || defaultMetric))!;
+  const metrics = metricsFor(c.goal);
+  const metric = metrics.find((m) => m.id === metricId) ?? metrics[0];
   const v = verdict(c);
   const racing = c.rows.filter((r) => eligible(c, r));
   const name = c.goal === 'calm' ? 'Calmest outflow' : 'Lowest error';
-  const judged = c.goal === 'calm' ? 'valve travel, with the level staying in the tank' : 'error (IAE)';
+  const judged = c.goal === 'calm' ? 'how sharply the outflow moves (% per minute), with the level staying in the tank' : 'error (IAE)';
+  // Over all the tests: how many times the best, for the number that decides; otherwise the worst or the total.
+  const deciding = metric === metrics[0];
+  const totalOf = (r: CompareRow) => (deciding ? overallOf(c, r) : metric.all(r));
+  const showTotal = (v: number | null) => (v === null ? '—' : deciding ? `${fmt(v, 3)}×` : show(metric, v));
 
   /** The best number in a test or overall, for the metric on show. */
   const bestOf = (value: (r: CompareRow) => number | null, counts: (r: CompareRow) => boolean) => {
@@ -85,8 +91,8 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
     return val <= best * GOOD_ENOUGH ? 'is-near' : '';
   };
   const open = (row: CompareRow) => (onUse
-    ? <button className="ll-link ll-cmp-name" onClick={() => onUse(row.config)} title="Use this tuning on the bench">{row.label}</button>
-    : <Link className="ll-cmp-name" href={benchLink({ process: proc.id, params, controller: row.config })} title="Open this tuning on the bench">{row.label}</Link>);
+    ? <button className="ll-link ll-cmp-name" onClick={() => onUse(row.config, row.plant)} title="Use this tuning on the bench">{row.label}</button>
+    : <Link className="ll-cmp-name" href={benchLink({ process: proc.id, params: { ...params, ...row.plant }, controller: row.config })} title="Open this tuning on the bench">{row.label}</Link>);
 
   return (
     <div className="ll-cmp">
@@ -123,14 +129,14 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
             </tbody>
           </table>
         </div>
-        <p className="ll-note">Judged on {judged}. Lower is better. Controllers that never settled in a test or broke its limit don’t count there.</p>
+        <p className="ll-note">Judged on {judged}. Lower is better.{c.goal !== 'calm' && ' Controllers that never settled in a test or broke its limit don’t count there.'}</p>
       </section>
 
       <section className="ll-part">
         <div className="ll-part-head">
           <h3>All the numbers</h3>
           <div className="ll-seg is-small" role="group" aria-label="Which number">
-            {METRICS.map((m) => <button key={m.id} aria-pressed={metric.id === m.id} onClick={() => setMetricId(m.id)}>{m.label}</button>)}
+            {metrics.map((m) => <button key={m.id} aria-pressed={metric.id === m.id} onClick={() => setMetricId(m.id)}>{m.label}</button>)}
           </div>
         </div>
         <div className="ll-table-wrap ll-cmp-scroll">
@@ -139,7 +145,7 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
               <tr>
                 <th>Controller</th>
                 {c.tests.map((t) => <th key={t.id} title={t.name}>{t.name}</th>)}
-                <th className="is-total">All tests</th>
+                <th className="is-total" title={deciding ? 'On average, how many times the best number in each test. Every test counts the same.' : undefined}>{deciding ? 'Overall' : 'All tests'}</th>
                 <th title="Peak sensitivity, worst over the operating points and the plant's spread. Below 1.6 is robust, above 2 fragile.">Ms</th>
                 <th title="Numbers someone has to set and keep right">To tune</th>
               </tr>
@@ -151,7 +157,7 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
                   <tr key={row.id} className={out ? 'is-out-row' : ''}>
                       <th scope="row">
                         {open(row)}
-                        <span className="ll-cmp-how" title={describeController(proc, row.config)}>{out ?? describeController(proc, row.config)}</span>
+                        <span className="ll-cmp-how" title={describeController(proc, row.config)}>{out ?? (row.plant ? `Split at ${row.plant.split} %. ` : '') + describeController(proc, row.config)}</span>
                       </th>
                       {c.tests.map((t, i) => {
                         const val = metric.test(row.tests[i]);
@@ -160,11 +166,11 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
                         return (
                           <td key={t.id} className={cellClass(val, best, !out && counts)}>
                             {show(metric, val)}
-                            {row.tests[i].overLimit ? <sup title="Went over this test's limit">!</sup> : !t.limit && !row.tests[i].settled ? <sup title="Didn't settle or recover in this test">*</sup> : null}
+                            {row.tests[i].overLimit ? <sup title="Went over this test's limit">!</sup> : c.goal !== 'calm' && !t.limit && !row.tests[i].settled ? <sup title="Didn't settle or recover in this test">*</sup> : null}
                           </td>
                         );
                       })}
-                      <td className={`is-total ${cellClass(metric.all(row), bestOf(metric.all, () => true), !out)}`}>{show(metric, metric.all(row))}</td>
+                      <td className={`is-total ${cellClass(totalOf(row), bestOf(totalOf, () => true), !out)}`}>{showTotal(totalOf(row))}</td>
                       <td className={row.ms !== null && row.ms > 2 ? 'is-warn' : ''}>{row.ms === null ? '—' : fmt(row.ms, 3)}</td>
                       <td>{row.tuningParams}</td>
                   </tr>
@@ -174,16 +180,16 @@ export default function ComparePanel({ proc, params, plantChanges, onUse }: {
           </table>
         </div>
         <p className="ll-note">
-          {metric.unit} <span className="ll-cmp-key is-best">Best</span> <span className="ll-cmp-key is-near">within {Math.round((GOOD_ENOUGH - 1) * 100)} %</span>
-          {' '}<sup>*</sup> didn’t settle or recover in that test. <sup>!</sup> broke the test’s limit. {onUse ? 'Click a controller to put its tuning on the bench.' : 'Click a controller to open its tuning on the bench.'}
+          {metric.unit}{deciding && ' Overall: on average, how many times the best in each test, so every test counts the same.'} <span className="ll-cmp-key is-best">Best</span> <span className="ll-cmp-key is-near">within {Math.round((GOOD_ENOUGH - 1) * 100)} %</span>
+          {' '}{c.goal !== 'calm' && <><sup>*</sup> didn’t settle or recover in that test. <sup>!</sup> broke the test’s limit. </>}{onUse ? 'Click a controller to put its tuning on the bench.' : 'Click a controller to open its tuning on the bench.'}
         </p>
       </section>
 
       <details className="ll-more">
         <summary>How this was compared</summary>
         <div className="ll-prose ll-cmp-method">
-          <p><strong>Tuning.</strong> Every controller starts from the tuning rules, then a range of speeds runs through every test. The one kept has the lowest error, with a growing cost for valve movement, among those that stay stable and keep Ms at or below 2 over the plant’s spread. No controller gets hand-tuning the others don’t.</p>
-          <p><strong>Best.</strong> On-off can’t win (it cycles by design), nor anything unstable over the plant’s spread, nor (on valves) anything moving the valve more than 10× the usual and over 50 strokes an hour. “Simplest” is the first rung up the ladder within {Math.round((GOOD_ENOUGH - 1) * 100)} % of the best.</p>
+          <p><strong>Tuning.</strong> Every controller starts from the tuning rules, then a range of speeds runs through every test. The one kept has the lowest error relative to PI, test by test so that no one big test decides it, with a growing cost for valve movement, among those that stay stable and keep Ms at or below 2 over the plant’s spread. No controller gets hand-tuning the others don’t.</p>
+          <p><strong>Best.</strong> On-off can’t win (it cycles by design), nor anything unstable over the plant’s spread, nor (on valves) anything moving the valve more than 10× the usual and over 50 strokes an hour. Overall means how many times the best number in each test, on average, so every test counts the same; a test a controller failed (never settled, or broke the limit) counts as badly as the worst in that test. “Simplest” is the least effort to commission and keep right within {Math.round((GOOD_ENOUGH - 1) * 100)} % of the best.</p>
           <p><strong>Limits of the numbers.</strong> Ms is checked on the linear model, so MPC, which has none, shows a dash, and the self-tuner’s is for the PI it starts from. Error is not everything: look at valve travel, Ms and how much there is to tune before deciding.</p>
           {c.notApplicable.length > 0 && <p><strong>Left out here.</strong> {c.notApplicable.map((n) => `${n.label}: ${n.reason}`).join('. ')}.</p>}
         </div>

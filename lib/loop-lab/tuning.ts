@@ -568,7 +568,7 @@ function tuneAdaptive(proc: ProcessDef, params: Params, config: Extract<Controll
 }
 
 /** Closed-loop speeds tried, as multiples of what the rule asks for (bigger is slower). */
-const SPEEDS = [0.4, 0.6, 1, 1.5, 2.5, 4, 7, 12, 25];
+const SPEEDS = [0.1, 0.15, 0.25, 0.4, 0.6, 1, 1.5, 2.5, 4, 7, 12, 25];
 
 /**
  * Every tuning worth trying for a controller, starting from what the rules say. The rules see a model at
@@ -577,7 +577,8 @@ const SPEEDS = [0.4, 0.6, 1, 1.5, 2.5, 4, 7, 12, 25];
  */
 export function tuningCandidates(proc: ProcessDef, params: Params, config: ControllerConfig): ControllerConfig[] {
   const start = autoTune(proc, params, config)?.config ?? config;
-  const out: ControllerConfig[] = [];
+  // What it is set to now is a candidate too, so tuning on the tests never leaves it worse off.
+  const out: ControllerConfig[] = [config];
   const m = linearizePlant(proc, cleanParams(proc, params), proc.nominalPv);
   const scale = Math.max(1, ...m.poles.map((p) => Math.hypot(p.re, p.im)));
   const unstable = m.poles.some((p) => p.re > 1e-9 * scale);

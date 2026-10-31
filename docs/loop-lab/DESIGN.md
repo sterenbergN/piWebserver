@@ -624,15 +624,23 @@ Redone after the first version got crowded and hard to find your way around.
   the rules and tries a range of speeds (for state feedback also how much the observer trusts the sensor, for ADRC both
   orders, for two loops both pairings). All of them run through every test. The lowest error, with a growing cost for
   valve movement, wins among those stable with Ms ≤ 2 over the plant's spread. The rule-only `autoTune` stays as the start.
-- **Best** is the lowest error among those that count. On-off can't win (it cycles by design), nor anything unstable over
-  the spread, nor on valves anything over 10× the usual travel and 50 strokes/h. In one test it must also have settled.
-  **Simplest** is the first rung within 25 % of the best: the lab's question is usually "what is enough?".
-- **Exceptions the numbers needed:** a surge tank is judged on calm outflow with the level inside 45 % of span (`goalOf`),
-  not error. A test can carry a hard limit (`Scenario.limit`, the heat exchanger's steam allowance): breaking it means not
-  counting, whatever the error. Drives (crane, servo, maglev) have no valve to wear out.
+- **Best** in a test is the lowest error among those that count: on-off can't win (it cycles by design), nor anything
+  unstable over the spread, nor on valves anything over 10× the usual travel and 50 strokes/h; and it must have settled.
+  **Overall** is the average, as a ratio to the best in each test, so a big test can't drown out the rest (summed error let
+  the conical tank's saturated setpoint test decide it). A failed test scores as badly as the worst in that test.
+  **Simplest** is the least effort to commission and keep right within 25 % of the best.
+- **Exceptions the numbers needed:** a surge tank is judged on how sharply the outflow moves (total travel can't tell tight
+  from slow: both end up moving the same distance), with the level inside 45 % of span (`goalOf`). A test can carry a hard limit (`Scenario.limit`, the heat exchanger's steam allowance): breaking it means not
+  counting, whatever the error. Crane, servo, maglev and the batch reactor's temperature unit have no valve to wear out.
+  The reactor's rows include the balanced split, because its fix is in the valves, not the controller.
 - **Data:** `compare-data.json`, written by `npm run looplab:compare` (about 2 minutes) because the page should open
   at once. A test re-runs some of it and fails when it has gone stale. On a changed plant the bench can re-run it live.
-- **Verdicts that came out** (default plants): flow PI; stirred PID best, PI within reach; surge a loose PI with a level
-  override; maglev PID; conical tank PI, with state feedback or scheduling ahead on particular upsets; split-range reactor
-  self-tuning best, PID enough; heat exchanger cascade + feedforward; blending ratio; feeder Smith; drum feedforward,
-  cascade + feedforward best; batch state feedback but fragile (Ms 45); mixing MPC; crane state feedback; servo cascade.
+- **Verdicts that came out** (default plants), and the written verdicts now agree with them: flow PI; stirred PID; surge a
+  loose PI with a level override; maglev PID; conical tank scheduling or characterization, one PI tuned for the top within
+  about 10 %; split-range reactor PID on a balanced split; heat exchanger cascade + feedforward; blending ratio; feeder
+  Smith; drum cascade + feedforward; batch state feedback, PID close behind; mixing MPC, with the decoupler the cheaper
+  option; crane state feedback; servo cascade, state feedback for smoother torque.
+- **Written claims this corrected:** "state feedback is three times faster" on the drive only held against a gently tuned
+  cascade. "More margin" on maglev only held at one tuning; near the magnet it has less. "Every controller meets reactors
+  that run away" on the batch reactor was never tested on state feedback or a strong PID, and both hold every corner of
+  the spread within about 3 °C.
