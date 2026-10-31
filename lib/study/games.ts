@@ -5,6 +5,7 @@
 
 import type { DateKey } from '@/lib/habits/dates';
 import type { AnkiData } from './coverage';
+import { mathToPlain } from './math';
 import { isRight, recordGameMiss, moveMissAlong, type PanceSystem, type ProgressData, type StudyQuestion, type TestsData } from './study';
 
 export type GameQuestion = Pick<StudyQuestion, 'id' | 'stem' | 'choices' | 'correct' | 'explanation' | 'whyWrong' | 'quote' | 'topic' | 'system'> & {
@@ -126,11 +127,12 @@ export function triviaDeck(pool: GameQuestion[], random = Math.random): TriviaSt
     const wrong = shuffled(q.choices.map((_, i) => i).filter((i) => i !== q.correct[0]), random).slice(0, 3);
     const choiceMap = shuffled([q.correct[0], ...wrong], random);
     return {
-      question: q.stem,
-      choices: choiceMap.map((i) => q.choices[i]),
+      // Party screens show plain text, so math is flattened to something readable.
+      question: mathToPlain(q.stem),
+      choices: choiceMap.map((i) => mathToPlain(q.choices[i])),
       answer: choiceMap.indexOf(q.correct[0]),
       ...(q.topic && q.topic !== 'General' ? { category: q.topic } : {}),
-      ...(q.explanation ? { explanation: q.explanation } : {}),
+      ...(q.explanation ? { explanation: mathToPlain(q.explanation) } : {}),
       studyId: q.id,
       choiceMap,
     };

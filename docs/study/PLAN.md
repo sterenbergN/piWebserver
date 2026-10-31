@@ -43,6 +43,26 @@ card on Today, a linked habit, backups and data downloads.
 Still to check with real use: a reply from her own AI, an import into real Anki,
 and copying the prompt on her phone.
 
+### Test sets (added after phase 5)
+
+A set (`lib/study/sets.ts`) keeps several tests on one subject together at
+`/study/tests/sets/<id>`, and remembers how its prompt was made. Each new test's prompt
+lists what the set has already asked, with instructions not to repeat or reword it. Once
+tests have been taken, it adds scores, weakest and strongest topics, what she got wrong
+and what she picked, and what she marked "Not sure". The list of past questions is capped
+at the newest 120, each cut to a line, to keep the prompt a sensible length. A reply is
+also checked when it's pasted: exact and near-identical repeats within the set are
+dropped and listed, ignoring numbers, so a new age doesn't make a question new. Sets can't
+catch the same fact asked in very different words.
+
+A 5-level difficulty slider feeds the prompt and is kept with each test and set. After a
+score of 85% or more, or under 50%, the page suggests moving a level, and she decides.
+
+Math in choices is typeset now (`lib/study/math.ts`). The reply reader also repairs LaTeX
+with single backslashes, which JSON would otherwise turn into a form feed or tab, and
+already-saved tests are mended when read. Party screens can't typeset, so math there is
+flattened to text like PO₂.
+
 ## Phase 2: PA Today and a space of its own (built)
 
 The goal is that she can open the site and only see what's for her, without the

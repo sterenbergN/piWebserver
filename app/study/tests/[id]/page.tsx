@@ -8,12 +8,14 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import { MathText } from '@/components/daily/MathText';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { Choices, Explanation, MendQuestion } from '@/components/study/QuestionView';
+import { DIFFICULTIES } from '@/lib/study/prompt';
 import { choiceOrder, isRight, scoreAttempt, type Attempt, type AttemptMode, type StudyQuestion, type StudyTest } from '@/lib/study/study';
 
 // One test: its cover (take it, or look back at past tries), taking it, and the
 // results. Your place is saved as you go, so it can be picked up on another device.
 
 const SAVE_DELAY = 1500;
+const NEW_SET = 'new-set';
 const clock = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -22,7 +24,8 @@ const clock = (seconds: number) => {
 };
 const pct = (right: number, total: number) => (total ? Math.round((right / total) * 100) : 0);
 
-type Loaded = { test: StudyTest; attempts: Attempt[] };
+type SetOption = { id: string; title: string };
+type Loaded = { test: StudyTest; attempts: Attempt[]; sets: SetOption[] };
 
 export default function TestPage() {
   const { id } = useParams<{ id: string }>();
@@ -35,11 +38,13 @@ export default function TestPage() {
   const [taking, setTaking] = useState<Attempt | null>(null);
   /** The finished attempt on show. */
   const [viewing, setViewing] = useState<string | null>(null);
+  const [naming, setNaming] = useState(false);
+  const [setName, setSetName] = useState('');
 
   const load = useCallback(async () => {
     try {
       const body = await studyGet<Loaded>(`test=${encodeURIComponent(id)}`);
-      setData({ test: body.test, attempts: body.attempts });
+      setData({ test: body.test, attempts: body.attempts, sets: body.sets });
       setState('ready');
       return body;
     } catch (e) {
@@ -67,7 +72,8 @@ export default function TestPage() {
     return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that test.'}</span></div><Link className="sd-back" href="/study/tests">← Practice tests</Link></div>;
   }
 
-  const { test, attempts } = data;
+  const { test, attempts, sets } = data;
+  const inSet = sets.find((s) => s.id === test.setId);
   if (taking) {
     return (
       <Runner test={test} attempt={taking}
@@ -99,6 +105,22 @@ export default function TestPage() {
     await load();
   };
 
+  const moveToSet = async (setId: string, newTitle?: string) => {
+    setError('');
+    if (setId === NEW_SET && !newTitle) {
+      setNaming(true);
+      return;
+    }
+    try {
+      await studyPost('move-test', { testId: id, ...(newTitle ? { newSet: { title: newTitle, course: test.course, difficulty: test.difficulty } } : { setId }) });
+      setNaming(false);
+      setSetName('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t move it.');
+    }
+  };
+
   const fix = async (questionId: string, correct: number[], explanation: string) => {
     await studyPost('fix-question', { testId: id, questionId, correct, explanation });
     await load();
@@ -113,16 +135,24 @@ export default function TestPage() {
       {popup}
       <header className="sd-head">
         <div>
-          <Link className="sd-back" href="/study/tests">← Practice tests</Link>
+          <Link className="sd-back" href={inSet ? `/study/tests/sets/${inSet.id}` : '/study/tests'}>← {inSet ? inSet.title : 'Practice tests'}</Link>
           <h1>{test.title}</h1>
-          <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}</p>
+          <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`, test.difficulty ? DIFFICULTIES[test.difficulty - 1]?.label : ''].filter(Boolean).join(' · ')}</p>
         </div>
       </header>
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
 
       {shown ? (
-        <Results test={test} attempt={shown} onBack={() => setViewing(null)}
-          onRetake={(ids) => start('exam', { fresh: true, questionIds: ids })} onFix={fix} onRemove={removeQ} />
+        <>
+          {inSet && (
+            <div className="sd-nudge">
+              <span>Ready for more on {inSet.title}? The next test will know how this one went.</span>
+              <Link className="hb-small-btn" href={`/study/add?set=${inSet.id}`}>Make the next test</Link>
+            </div>
+          )}
+          <Results test={test} attempt={shown} onBack={() => setViewing(null)}
+            onRetake={(ids) => start('exam', { fresh: true, questionIds: ids })} onFix={fix} onRemove={removeQ} />
+        </>
       ) : (
         <>
           <section className="sd-card">
@@ -174,6 +204,20 @@ export default function TestPage() {
                 })}
               </ul>
             </section>
+          )}
+
+          <label className="sd-set-move">Set
+            <select value={naming ? NEW_SET : test.setId ?? ''} onChange={(e) => { setNaming(false); void moveToSet(e.target.value); }}>
+              <option value="">Not in a set</option>
+              {sets.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+              <option value={NEW_SET}>New set…</option>
+            </select>
+          </label>
+          {naming && (
+            <form className="sd-rename" onSubmit={(e) => { e.preventDefault(); if (setName.trim()) void moveToSet(NEW_SET, setName.trim()); }}>
+              <input value={setName} autoFocus maxLength={120} placeholder="Name it after its subject" aria-label="New set name" onChange={(e) => setSetName(e.target.value)} />
+              <button type="submit" className="hb-small-btn is-primary" disabled={!setName.trim()}>Create</button>
+            </form>
           )}
 
           <button type="button" className="hb-text-btn sd-danger-link" onClick={deleteTest}>Delete this test</button>

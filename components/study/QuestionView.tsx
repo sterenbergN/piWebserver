@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
+import { InlineMath } from './InlineMath';
 import { choiceLetter, choiceOrder, isRight, type StudyQuestion } from '@/lib/study/study';
 
 /** The choices, in this attempt's shuffled order. With `reveal` they show what was right and why. */
@@ -35,8 +36,8 @@ export function Choices({ question, seed, answer, onChange, reveal = false, hidd
             <button type="button" className="sd-choice-main" role={multi ? 'checkbox' : 'radio'} aria-checked={chosen} disabled={reveal} onClick={() => pick(original)}>
               <span className="sd-letter" aria-hidden>{reveal && right ? '✓' : reveal && chosen ? '✕' : choiceLetter(shown)}</span>
               <span className="sd-choice-text">
-                {question.choices[original]}
-                {reveal && !right && note && <small>{note}</small>}
+                <InlineMath>{question.choices[original]}</InlineMath>
+                {reveal && !right && note && <small><InlineMath>{note}</InlineMath></small>}
               </span>
             </button>
             {!reveal && (
@@ -59,7 +60,7 @@ export function Explanation({ question, answer }: { question: StudyQuestion; ans
     <div className={`sd-explain${right ? ' is-right' : ' is-wrong'}`}>
       <p className="sd-verdict">{right ? '✅ Right' : answer.length ? '❌ Not quite' : '⬜ Not answered'}</p>
       {question.explanation ? <MathText>{question.explanation}</MathText> : <p className="hb-hint">No explanation came with this question.</p>}
-      {question.quote && <blockquote className="sd-quote"><span>From your notes</span>{question.quote}</blockquote>}
+      {question.quote && <blockquote className="sd-quote"><span>From your notes</span><InlineMath>{question.quote}</InlineMath></blockquote>}
     </div>
   );
 }
@@ -96,7 +97,7 @@ export function MendQuestion({ question, onFix, onRemove }: {
       {question.choices.map((choice, i) => (
         <label key={i} className="sd-check">
           <input type="checkbox" checked={correct.includes(i)} onChange={() => setCorrect((list) => (list.includes(i) ? list.filter((x) => x !== i) : [...list, i].sort()))} />
-          {choice}
+          <InlineMath>{choice}</InlineMath>
         </label>
       ))}
       <label className="sd-mend-label">Explanation

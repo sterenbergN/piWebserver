@@ -1,0 +1,33 @@
+/* ─── Test sets ────────────────────────────────────────────────────────────── */
+
+.sd-set-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.sd-set-card { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.7rem 0.85rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.sd-set-card:hover { border-color: var(--accent-light); }
+.sd-set-link { display: flex; align-items: center; gap: 0.75rem; color: inherit; }
+.sd-set-link .sd-test-main { flex: 1; }
+.sd-set-next { align-self: flex-start; font-size: 0.85rem; padding: 0.25rem 0; }
+.sd-trend { flex: none; display: flex; align-items: flex-end; gap: 2px; width: 3.5rem; height: 1.8rem; }
+.sd-trend span { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; background: var(--accent-light); }
+.sd-filter { display: flex; justify-content: flex-end; }
+.sd-filter select { min-height: 2.4rem; padding: 0.35rem 0.6rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; }
+.sd-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; }
+.sd-rename input { flex: 1 1 14rem; min-height: 2.6rem; padding: 0.45rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 1.2rem; font-weight: 700; }
+
+/* Difficulty */
+.sd-fields label.sd-difficulty { gap: 0.2rem; }
+.sd-difficulty-head { display: flex; justify-content: space-between; gap: 0.75rem; }
+.sd-difficulty-head strong { color: var(--accent-light); }
+.sd-card .sd-difficulty input[type='range'] { width: 100%; min-height: 2rem; padding: 0; border: 0; background: none; accent-color: var(--accent-light); cursor: pointer; }
+.sd-difficulty-ends { display: flex; justify-content: space-between; font-size: 0.72rem; font-weight: 400; color: var(--muted); }
+.sd-difficulty .hb-hint { font-weight: 400; margin: 0.15rem 0 0; }
+.sd-nudge { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.75rem; padding: 0.5rem 0.7rem; border-radius: 10px; background: var(--input-bg); font-size: 0.88rem; }
+.sd-tailoring { padding: 0.65rem 0.8rem; border-radius: 12px; background: var(--input-bg); border-left: 3px solid var(--accent-light); }
+.sd-tailoring ul { margin: 0.25rem 0 0; padding-left: 1.15rem; font-size: 0.9rem; line-height: 1.5; color: var(--foreground); }
+.sd-tailoring .hb-hint { margin-top: 0.35rem; }
+
+.sd-set-move { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; font-size: 0.9rem; }
+.sd-set-move select { flex: 1 1 12rem; min-height: 2.4rem; padding: 0.35rem 0.6rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; }
+
+/* Math sitting inside a line of text */
+.sd-inline-math { overflow-wrap: anywhere; }
+.sd-inline-math .dq-tex { white-space: nowrap; }

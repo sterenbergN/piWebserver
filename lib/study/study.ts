@@ -5,6 +5,7 @@
 // so the server, the browser and the tests share it.
 
 import { addDays, type DateKey } from '@/lib/habits/dates';
+import { repairMathEscapes, repairStoredMath } from './math';
 
 /** The PANCE blueprint's organ systems. A question names one so the coverage map can count it. */
 export const PANCE_SYSTEMS = [
@@ -30,8 +31,24 @@ export type StudyQuestion = {
   system?: PanceSystem;
 };
 
-export type StudyTest = { id: string; title: string; course: string; createdAt: string; questions: StudyQuestion[] };
-export type TestsData = { tests: StudyTest[] };
+export type StudyTest = {
+  id: string;
+  title: string;
+  course: string;
+  createdAt: string;
+  questions: StudyQuestion[];
+  /** The set it belongs to, if any. */
+  setId?: string;
+  /** How hard it was asked to be, 1 to 5. */
+  difficulty?: number;
+};
+
+export type PromptStyle = 'vignette' | 'recall' | 'mixed';
+export const MAX_DIFFICULTY = 5;
+
+/** Tests on one subject, kept together, with how their prompt was made so the next one starts there. */
+export type StudySet = { id: string; title: string; course: string; focus: string; style: PromptStyle; count: number; difficulty: number; createdAt: string };
+export type TestsData = { tests: StudyTest[]; sets: StudySet[] };
 
 export type AttemptMode = 'exam' | 'tutor';
 export type Attempt = {
@@ -90,11 +107,24 @@ const UNSURE_BOX = 1;
 
 const LIMITS = { questions: 300, tests: 2000, stem: 6000, choice: 1500, explanation: 8000, quote: 2000, topic: 80, title: 120, course: 80, choices: 8 };
 
-export const emptyTests = (): TestsData => ({ tests: [] });
+export const emptyTests = (): TestsData => ({ tests: [], sets: [] });
 export const emptyProgress = (): ProgressData => ({ attempts: [], misses: {}, reviewDays: [], gameAnswers: {} });
 
+/** Tests saved before math was repaired on the way in may hold a form feed where `\\frac` should be. */
+const BROKEN_MATH = /[\b\f\n\r\t][a-zA-Z]/;
+function mendQuestion(q: StudyQuestion) {
+  const mend = (text: string) => (BROKEN_MATH.test(text) ? repairStoredMath(text) : text);
+  q.stem = mend(q.stem);
+  q.explanation = mend(q.explanation ?? '');
+  q.choices = q.choices.map(mend);
+  if (q.whyWrong) q.whyWrong = q.whyWrong.map(mend);
+  if (q.quote) q.quote = mend(q.quote);
+}
+
 export function normalizeTests(raw: Partial<TestsData> | null | undefined): TestsData {
-  return { tests: Array.isArray(raw?.tests) ? raw.tests : [] };
+  const tests = Array.isArray(raw?.tests) ? raw.tests : [];
+  for (const test of tests) if (Array.isArray(test?.questions)) test.questions.forEach(mendQuestion);
+  return { tests, sets: Array.isArray(raw?.sets) ? raw.sets : [] };
 }
 
 export function normalizeProgress(raw: Partial<ProgressData> | null | undefined): ProgressData {
@@ -138,7 +168,7 @@ function completeObjects(text: string) {
 
 /** The JSON in an AI's reply: code fences, chatter around it and trailing commas are all forgiven. */
 export function readReply(text: string): { value: unknown; cutOff: boolean } {
-  const unfenced = text.replace(/```[a-z]*\s*\n?/gi, '').replace(/```/g, '');
+  const unfenced = repairMathEscapes(text.replace(/```[a-z]*\s*\n?/gi, '').replace(/```/g, ''));
   const start = unfenced.search(/[{[]/);
   if (start < 0) throw new StudyInputError('I couldn’t find any JSON in that. Paste the whole reply, including the part in the code block.');
   const end = Math.max(unfenced.lastIndexOf('}'), unfenced.lastIndexOf(']'));
@@ -261,11 +291,19 @@ export function parseTestReply(text: string): ParsedPack {
   return { title: clip(root.title, LIMITS.title), course: clip(root.course, LIMITS.course), questions, problems, warnings };
 }
 
-export function addTest(data: TestsData, pack: ParsedPack, input: { title?: unknown; course?: unknown }, makeId: () => string, now: string) {
+export function addTest(data: TestsData, pack: ParsedPack, input: { title?: unknown; course?: unknown; setId?: unknown; difficulty?: unknown }, makeId: () => string, now: string) {
   if (data.tests.length >= LIMITS.tests) throw new StudyInputError('That’s as many tests as one account can keep. Delete some old ones first.');
-  const title = clip(input.title, LIMITS.title) || pack.title || `Test from ${now.slice(0, 10)}`;
-  const course = clip(input.course, LIMITS.course) || pack.course;
-  const test: StudyTest = { id: makeId(), title, course, createdAt: now, questions: pack.questions.map((q) => ({ ...q, id: makeId() })) };
+  const set = data.sets.find((s) => s.id === input.setId);
+  // Inside a set, tests are numbered in order, whatever the AI called this one.
+  const named = set ? `Test ${data.tests.filter((t) => t.setId === set.id).length + 1}` : pack.title || `Test from ${now.slice(0, 10)}`;
+  const title = clip(input.title, LIMITS.title) || named;
+  const course = clip(input.course, LIMITS.course) || set?.course || pack.course;
+  const difficulty = Math.round(Number(input.difficulty));
+  const test: StudyTest = {
+    id: makeId(), title, course, createdAt: now, questions: pack.questions.map((q) => ({ ...q, id: makeId() })),
+    ...(set ? { setId: set.id } : {}),
+    ...(difficulty >= 1 && difficulty <= MAX_DIFFICULTY ? { difficulty } : {}),
+  };
   data.tests.unshift(test);
   return test;
 }
@@ -525,6 +563,8 @@ export type TestSummary = {
   best: { right: number; total: number } | null;
   /** How far an unfinished attempt has got. */
   open: { answered: number; total: number } | null;
+  setId?: string;
+  difficulty?: number;
 };
 
 export type TopicStat = { topic: string; system?: PanceSystem; right: number; total: number };
@@ -579,6 +619,8 @@ export function studySummary(tests: TestsData, progress: ProgressData, today: Da
       last: scores.length ? scores[scores.length - 1] : null,
       best,
       open: open ? { answered: Object.keys(open.answers).length, total: open.questionIds.length } : null,
+      ...(test.setId ? { setId: test.setId } : {}),
+      ...(test.difficulty ? { difficulty: test.difficulty } : {}),
     };
   });
 

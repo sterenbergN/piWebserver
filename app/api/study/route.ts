@@ -8,6 +8,7 @@ import {
   addTest, answerReview, cleanAnswer, dueMisses, finishAttempt, fixQuestion, parseTestReply, removeQuestion, removeTest, renameTest,
   saveAttempt, startAttempt, StudyInputError, studyDays, studySummary, withQuestions,
 } from '@/lib/study/study';
+import { createSet, dropRepeats, editSet, moveTest, removeSet, setBrief, setSummaries, testsInSet } from '@/lib/study/sets';
 
 // The signed-in account's tests and miss bank. Every request reads or writes
 // only the caller's own folder; signed out there's nothing to see (401), and
@@ -29,14 +30,22 @@ export async function GET(request: Request) {
     if (testId !== null) {
       const test = tests.tests.find((t) => t.id === testId);
       if (!test) throw new ApiError(404, 'That test isn’t here any more.');
-      return NextResponse.json({ success: true, test, attempts: progress.attempts.filter((a) => a.testId === testId) }, { headers: PRIVATE });
+      return NextResponse.json({ success: true, test, attempts: progress.attempts.filter((a) => a.testId === testId), sets: tests.sets.map((s) => ({ id: s.id, title: s.title })) }, { headers: PRIVATE });
+    }
+    const setId = params.get('set');
+    if (setId !== null) {
+      const brief = setBrief(tests, progress, setId);
+      if (!brief) throw new ApiError(404, 'That set isn’t here any more.');
+      const summary = studySummary(tests, progress, today);
+      return NextResponse.json({ success: true, brief, tests: testsInSet(tests, setId).map((t) => summary.tests.find((row) => row.id === t.id)) }, { headers: PRIVATE });
     }
     if (params.get('review') !== null) {
       return NextResponse.json({ success: true, items: withQuestions(tests, dueMisses(progress, today)) }, { headers: PRIVATE });
     }
     const [user, plan] = await Promise.all([findWorkoutUser(userId), readPlan(userId)]);
     const days = [...new Set([...studyDays(progress), ...Object.keys(plan.eatenOn)])];
-    return NextResponse.json({ success: true, summary: studySummary(tests, progress, today), studyDays: days, home: user?.studyHome === true }, { headers: PRIVATE });
+    const summary = studySummary(tests, progress, today);
+    return NextResponse.json({ success: true, summary, sets: setSummaries(tests, summary.tests), studyDays: days, home: user?.studyHome === true }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load study failed');
   }
@@ -68,8 +77,31 @@ export async function POST(request: Request) {
       }
       case 'add-test': {
         const pack = parseTestReply(body.text);
-        const test = await updateTests(userId, (data) => addTest(data, pack, body, newId, now));
+        const test = await updateTests(userId, (data) => {
+          // A new set is made here, so a failed save doesn't leave an empty one behind.
+          const set = body.newSet ? createSet(data, body.newSet, newId, now) : data.sets.find((s) => s.id === body.setId);
+          if (!set) return addTest(data, pack, body, newId, now);
+          // This test's prompt settings are where the next one starts.
+          if (body.settings) editSet(data, set.id, { ...body.settings, title: undefined });
+          const fresh = dropRepeats(pack, testsInSet(data, set.id).flatMap((t) => t.questions.map((q) => q.stem)));
+          return addTest(data, fresh, { ...body, setId: set.id }, newId, now);
+        });
         return NextResponse.json({ success: true, id: test.id, count: test.questions.length }, { headers: PRIVATE });
+      }
+      case 'update-set': {
+        await updateTests(userId, (data) => editSet(data, body.setId, body));
+        return NextResponse.json({ success: true }, { headers: PRIVATE });
+      }
+      case 'delete-set': {
+        await updateTests(userId, (data) => removeSet(data, body.setId));
+        return NextResponse.json({ success: true }, { headers: PRIVATE });
+      }
+      case 'move-test': {
+        await updateTests(userId, (data) => {
+          const made = body.newSet ? createSet(data, body.newSet, newId, now) : null;
+          return moveTest(data, body.testId, made ? made.id : body.setId);
+        });
+        return NextResponse.json({ success: true }, { headers: PRIVATE });
       }
       case 'update-test': {
         await updateTests(userId, (data) => renameTest(testFrom(data.tests, body.testId), body));

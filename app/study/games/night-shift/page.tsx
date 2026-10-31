@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { MathText } from '@/components/daily/MathText';
+import { InlineMath } from '@/components/study/InlineMath';
 import { Choices, Explanation } from '@/components/study/QuestionView';
 import { localToday } from '@/lib/habits/dates';
 import { BLUEPRINT } from '@/lib/study/coverage';
@@ -326,7 +327,7 @@ export default function NightShiftPage() {
                 {run.missed.flatMap((id) => pool.filter((q) => q.id === id)).map((q) => (
                   <div key={q.id} className="ns-recap-item">
                     <MathText className="sd-stem">{q.stem}</MathText>
-                    <p className="ns-recap-answer">✓ {q.correct.map((i) => q.choices[i]).join(', ')}</p>
+                    <p className="ns-recap-answer">✓ <InlineMath>{q.correct.map((i) => q.choices[i]).join(', ')}</InlineMath></p>
                     {q.explanation && <MathText>{q.explanation}</MathText>}
                   </div>
                 ))}
