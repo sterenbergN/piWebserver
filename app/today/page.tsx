@@ -21,7 +21,7 @@ import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
-import { JournalCard, KitchenCard } from './DayCards';
+import { JournalCard, KitchenCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
 import './today.css';
@@ -196,6 +196,8 @@ export default function TodayPage() {
               </>
             )}
           </section>
+
+          {signedIn && <StudyCard today={today} />}
 
           <JournalCard today={today} onWritten={setJournalWritten} />
 

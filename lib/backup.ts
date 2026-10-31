@@ -145,6 +145,7 @@ const AREAS: [string, string[]][] = [
   ['Habits', ['.data/habits/']],
   ['Chores', ['.data/chores/']],
   ['Daily questions', ['.data/daily/']],
+  ['Study tests & miss banks', ['.data/study/']],
   ['Recipes, meal plans & grocery lists', ['.data/recipes/', 'public/uploads/recipes/']],
   ['Loop Lab notebooks', ['.data/loop-lab/']],
   ['Golf games & watched movies', ['.data/golf-saved-games', '.data/movies-watched']],

@@ -101,6 +101,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Habits', url: '/habits', subtitle: 'Habit tracker and garden', body: 'streak routine' },
   { kind: 'page', title: 'Chores', url: '/chores', subtitle: 'Household chores', body: 'cleaning household tasks' },
   { kind: 'page', title: 'Journal', url: '/journal', subtitle: 'Private daily entries and posts', body: 'diary mood writing' },
+  { kind: 'page', title: 'Study', url: '/study', subtitle: 'Practice tests from your notes, and the questions you keep missing', body: 'exam quiz school pa pance anki flashcards review' },
   { kind: 'page', title: 'Unit converter', url: '/tools#calculators', subtitle: 'Tools', body: 'calculator convert length weight temperature' },
   { kind: 'page', title: 'Movie picker', url: '/tools#movies', subtitle: 'Tools', body: 'film watch random' },
   { kind: 'page', title: 'Restaurant finder', url: '/tools#food', subtitle: 'Tools', body: 'food eat dinner' },

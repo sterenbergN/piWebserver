@@ -6,6 +6,7 @@ import { choresFile, findHousehold } from '@/lib/chores/households';
 import { readFeedback, readUserDaily } from '@/lib/daily/store';
 import { folder as privatePostsFolder } from '@/lib/journal/private-posts';
 import { householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
+import { studyFolder } from '@/lib/study/store';
 import { getWorkoutData } from '@/lib/workout/data';
 import { isPhotoId, photoPath } from '@/lib/workout/photos';
 import { SESSIONS_FILE, type SharedSession } from '@/lib/workout/shared-session';
@@ -112,6 +113,8 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'daily/answers.json', json: daily },
     ...(feedback.length ? [{ entry: 'daily/feedback.json', json: { entries: feedback } }] : []),
     { entry: 'loop-lab-notebook.json', file: perUserFile('loop-lab', userId) },
+    { entry: 'study/tests.json', file: path.join(studyFolder(userId), 'tests.json') },
+    { entry: 'study/progress.json', file: path.join(studyFolder(userId), 'progress.json') },
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },

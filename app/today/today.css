@@ -14,7 +14,7 @@
 @media (max-width: 820px) {
   .td-grid { grid-template-columns: minmax(0, 1fr); }
   .td-col { display: contents; }
-  .td-question { order: 1; }
+  .td-question, .td-study { order: 1; }
   .td-habits { order: 2; }
   .td-journal { order: 3; }
   .td-kitchen { order: 4; }

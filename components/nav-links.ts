@@ -96,6 +96,20 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       }],
     },
     {
+      // Practice tests and the questions you keep missing; each account sees only its own.
+      id: 'study',
+      label: 'Study',
+      icon: '🩺',
+      question: 'Got an exam coming?',
+      color: 'var(--habit-6)',
+      bar: true,
+      items: [
+        { href: '/study', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
+        { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition anki flashcards', account: true },
+        { href: '/study/add', label: 'Add a test', icon: '➕', short: 'Add', blurb: 'Copy a prompt, paste back what your AI writes', keywords: 'import paste notes ai prompt', account: true },
+      ],
+    },
+    {
       // Games come in two sizes, and a room full of people shouldn't have to hunt for theirs.
       id: 'play',
       label: 'Game night',
@@ -198,7 +212,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
 }
 
 /** Your own day first once signed in; a visitor starts with who this is and what's fun. */
-const ROOM_ORDER = { signedIn: ['day', 'play', 'gym', 'kitchen', 'night', 'workshop', 'noah'], visitor: ['noah', 'play', 'kitchen', 'night', 'workshop', 'day', 'gym'] };
+const ROOM_ORDER = { signedIn: ['day', 'study', 'play', 'gym', 'kitchen', 'night', 'workshop', 'noah'], visitor: ['noah', 'play', 'kitchen', 'night', 'workshop', 'day', 'study', 'gym'] };
 
 export function orderRooms(groups: NavGroup[], signedIn: boolean) {
   const order = signedIn ? ROOM_ORDER.signedIn : ROOM_ORDER.visitor;

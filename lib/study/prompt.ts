@@ -1,0 +1,77 @@
+// The prompt she copies into her AI, alongside her notes. No AI runs on the Pi:
+// the reply is pasted back and read by parseTestReply, so the format described
+// here and that parser have to agree (a test holds them together).
+
+import { PANCE_SYSTEMS } from './study';
+
+export type PromptStyle = 'vignette' | 'recall' | 'mixed';
+export type PromptSource = 'notes' | 'old-test';
+export type PromptOptions = {
+  source: PromptSource;
+  count: number;
+  style: PromptStyle;
+  course?: string;
+  focus?: string;
+  /** Topics she keeps missing: worth asking about again if her notes cover them. */
+  weakTopics?: string[];
+};
+
+const STYLES: Record<PromptStyle, string> = {
+  vignette: 'Write board-style clinical vignettes like the PANCE: a patient with age, presentation and relevant findings, then one question (most likely diagnosis, best next step, first-line treatment, mechanism or adverse effect). Don’t give away the answer in the wording.',
+  recall: 'Write short, direct questions that test recall of specific facts from the material.',
+  mixed: 'Write about two thirds as board-style clinical vignettes like the PANCE (a patient with age, presentation and relevant findings, then one question) and the rest as short, direct recall questions.',
+};
+
+const FORMAT = `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "title": "A short name for this test",
+  "course": "The class or module",
+  "questions": [
+    {
+      "stem": "The question text.",
+      "choices": ["First choice", "Second choice", "Third choice", "Fourth choice", "Fifth choice"],
+      "correct": "B",
+      "explanation": "Why the correct answer is right.",
+      "whyWrong": { "A": "Why this one is wrong.", "C": "Why this one is wrong.", "D": "Why this one is wrong.", "E": "Why this one is wrong." },
+      "quote": "The exact line from the material this question is based on.",
+      "topic": "A specific topic, like Heart failure",
+      "system": "Cardiovascular"
+    }
+  ]
+}
+\`\`\`
+
+Rules for the JSON:
+- "correct" is the letter of the right choice, counting A, B, C… through "choices". For a select-all question use a list like ["A", "C"], and say "Select all that apply" in the stem.
+- "system" is exactly one of: ${PANCE_SYSTEMS.join(', ')}. Leave it out if none fits.
+- The choices get shuffled when shown, so never refer to a choice by letter in "stem", "explanation" or "whyWrong", and don’t use "all of the above".
+- Don’t put a letter in front of each choice.
+- Plain text only. Only use $ signs around math.
+- Use one consistent "topic" name for questions on the same thing.`;
+
+export function buildTestPrompt(options: PromptOptions) {
+  const course = options.course?.trim();
+  const focus = options.focus?.trim();
+  const weak = (options.weakTopics ?? []).slice(0, 8);
+  const count = Math.max(1, Math.min(100, Math.round(options.count) || 20));
+
+  if (options.source === 'old-test') {
+    return [
+      `I’m attaching or pasting a practice test I already took${course ? ` for ${course}` : ''}. Convert it into the format below, keeping every question and its answer.`,
+      'Copy the questions and answers faithfully. Don’t rewrite them or add new ones. If a test doesn’t give an explanation, write a short one. If you think an answer key is wrong, keep it as written and start that question’s explanation with "CHECK THIS:" and your reason.',
+      'For "quote", use the source line if the test shows one; otherwise leave it out.',
+      FORMAT,
+    ].join('\n\n');
+  }
+
+  return [
+    `You are writing a practice exam for a physician assistant student${course ? ` in ${course}` : ''}. Use the notes I’ve attached or pasted as your only source.`,
+    `Write ${count} multiple-choice questions, each with 4 or 5 choices and a single best answer. ${STYLES[options.style] ?? STYLES.mixed}`,
+    focus ? `Focus on: ${focus}.` : 'Cover the material evenly, and spend more questions on what the notes spend more time on.',
+    weak.length ? `I’ve been missing these topics, so include them if the notes cover them: ${weak.join(', ')}.` : '',
+    'Accuracy matters more than anything else, because I’ll be learning from this. Every question must be supported by the notes, and "quote" must copy the exact line it comes from. If the notes don’t support a question, leave it out, even if that means fewer questions. Wrong choices should be believable but clearly wrong for a stated reason.',
+    FORMAT,
+  ].filter(Boolean).join('\n\n');
+}
