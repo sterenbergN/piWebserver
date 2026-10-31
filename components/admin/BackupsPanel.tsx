@@ -7,6 +7,7 @@ import ProgressBar from '@/components/ProgressBar';
 type Settings = { enabled: boolean; dir: string; keep: number; hour: number; includeMedia: boolean; requireSeparateDrive: boolean; lastAutoBackup?: string };
 type Drive = { ok: boolean; message: string; freeBytes?: number; totalBytes?: number };
 type Backup = { name: string; size: number; createdAt: string; label: string };
+type Area = { label: string; files: number; bytes: number; leftOutFiles: number; leftOutBytes: number };
 type Job = {
   kind: 'create' | 'restore' | 'nightly'; startedAt: string; finishedAt?: string; error?: string;
   done: number; total: number; bytes: number; result?: { restored?: number; safetyBackup?: string };
@@ -40,6 +41,7 @@ export default function BackupsPanel() {
   const [busy, setBusy] = useState('');
   const [loadError, setLoadError] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  const [areas, setAreas] = useState<Area[] | null>(null);
   /** The job this page started, so we can say how it went when it finishes. */
   const watching = useRef<string | null>(null);
 
@@ -114,6 +116,11 @@ export default function BackupsPanel() {
     );
   }
   const dirty = JSON.stringify(settings) !== JSON.stringify(draft);
+  const leftOut = areas?.reduce((n, a) => n + a.leftOutBytes, 0) ?? 0;
+  const loadCoverage = () => {
+    setAreas(null);
+    fetch('/api/backups?coverage=1').then((r) => r.json()).then((d) => { if (d.success) setAreas(d.areas); }).catch(() => setAreas([]));
+  };
   const locked = !!busy || jobRunning;
 
   return (
@@ -123,7 +130,7 @@ export default function BackupsPanel() {
         <div>
           <h2 id="backups-title">💾 Backups</h2>
           <p>
-            All account data (journals and private posts with their pictures, workouts, habits, chores, daily questions, recipes with dish photos, meal plans and grocery lists, Loop Lab notebooks) plus the home page, blog text, gallery lists and party prompts. Gallery, blog and library files are only included with “Include photos &amp; PDFs”. Anything kept only in a browser while signed out isn’t on the server, so it can’t be backed up.{' '}
+            Everything saved on the server for every account, plus the site’s own content.{' '}
             {settings.lastAutoBackup ? `Last nightly backup ${new Date(settings.lastAutoBackup).toLocaleString()}.` : 'No nightly backup yet.'}
           </p>
         </div>
@@ -152,6 +159,33 @@ export default function BackupsPanel() {
           {drive.freeBytes !== undefined && drive.totalBytes ? ` · ${sizeLabel(drive.freeBytes)} free of ${sizeLabel(drive.totalBytes)}` : ''}
         </div>
       )}
+
+      <details style={{ marginBottom: '1rem' }} onToggle={(e) => { if (e.currentTarget.open) loadCoverage(); }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.75rem' }}>
+          What’s in a backup{leftOut ? ` · ${sizeLabel(leftOut)} left out` : ''}
+        </summary>
+        {!areas ? <ProgressBar label="Counting files…" /> : (
+          <>
+            <div className="adm-list">
+              {areas.map((a) => (
+                <div key={a.label} className="adm-row">
+                  <div className="adm-row-main">
+                    <strong style={{ fontSize: '0.9rem' }}>{a.files ? '✅' : '⚠️'} {a.label}</strong>
+                    <div className="adm-row-sub">
+                      {a.files ? `${a.files} file${a.files === 1 ? '' : 's'}, ${sizeLabel(a.bytes)}` : 'Not included'}
+                      {a.leftOutFiles ? ` · ${a.leftOutFiles} photo or PDF file${a.leftOutFiles === 1 ? '' : 's'} left out (${sizeLabel(a.leftOutBytes)})` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="adm-muted" style={{ marginTop: '0.6rem' }}>
+              {leftOut ? 'Turn on “Include photos & PDFs” in the settings to keep the files left out above. ' : ''}
+              Anything someone keeps in their browser while signed out isn’t on the server, so it can’t be backed up.
+            </p>
+          </>
+        )}
+      </details>
 
       <details open={dirty || backups.length === 0} style={{ marginBottom: '1.25rem' }}>
         <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.75rem' }}>Settings</summary>

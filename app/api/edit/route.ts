@@ -89,19 +89,6 @@ export async function PATCH(request: Request) {
       const photo = post.photos.find((ph: any) => ph.src === src);
       if (photo) photo.description = description;
       await fs.writeFile(postsFile, JSON.stringify(posts, null, 2));
-
-      // Also sync caption to nested gallery album (inside Blog Post Images master)
-      try {
-        const albumsFile = path.join(base, 'gallery', 'albums.json');
-        const albums: any[] = JSON.parse(await fs.readFile(albumsFile, 'utf-8'));
-        const album = findAlbum(albums, slug); // recursive — finds nested album
-        if (album) {
-          const img = album.images.find((i: any) => i.src === src);
-          if (img) img.caption = description;
-          await fs.writeFile(albumsFile, JSON.stringify(albums, null, 2));
-        }
-      } catch { /* gallery sync optional */ }
-
       return NextResponse.json({ success: true });
     }
 

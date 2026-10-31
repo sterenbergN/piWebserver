@@ -61,6 +61,33 @@ test('create, list and restore a backup round trip', async () => {
   }
 });
 
+test('backups keep every account’s data, and say what photos they leave out', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-'));
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const kept = [
+      '.data/journal/u1.json', '.data/private-posts/u1/posts.json', '.data/private-posts/u1/images/a.webp',
+      '.data/habits/u1.json', '.data/chores/h1.json', '.data/daily/attempts/u1.json', '.data/recipes/recipes.json',
+      '.data/recipes/kitchen/abc.json', '.data/workouts/photos/p.webp', '.data/loop-lab/u1.json', '.data/golf-saved-games.json',
+      'public/uploads/recipes/dish.webp', 'public/uploads/blog/posts.json', 'public/content/profile.json',
+    ];
+    for (const file of [...kept, 'public/uploads/gallery/photo.jpg', 'public/uploads/library/book.pdf']) {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, 'data');
+    }
+    const { backupCoverage, collectBackupFiles } = await import('./backup');
+    assert.deepEqual((await collectBackupFiles(false)).sort(), [...kept].sort());
+    const areas = await backupCoverage(false);
+    assert.equal(areas.find((a) => a.label === 'Journals')?.files, 1);
+    assert.equal(areas.find((a) => a.label === 'Recipes, meal plans & grocery lists')?.files, 3);
+    assert.equal(areas.find((a) => a.label === 'Gallery')?.leftOutFiles, 1);
+    assert.ok((await backupCoverage(true)).every((a) => a.leftOutFiles === 0));
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 test('checkBackupDrive refuses a missing drive and a same-drive folder when a separate drive is required', async () => {
   const { checkBackupDrive, defaultSettings: d } = await import('./backup');
   const missing = await checkBackupDrive({ ...d(), dir: '/definitely/not/mounted/backups', requireSeparateDrive: false });

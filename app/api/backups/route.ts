@@ -6,7 +6,7 @@ import { pipeline } from 'stream/promises';
 import { NextResponse } from 'next/server';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import {
-  checkBackupDrive, createBackup, getBackupJob, getBackupSettings, importBackup, isBackupRunning, listBackups, normalizeSettings,
+  backupCoverage, checkBackupDrive, createBackup, getBackupJob, getBackupSettings, importBackup, isBackupRunning, listBackups, normalizeSettings,
   resolveBackup, restoreBackup, saveBackupSettings, startBackupJob, uploadTempPath,
 } from '@/lib/backup';
 
@@ -36,6 +36,10 @@ export async function GET(request: Request) {
     }
   }
   const settings = await getBackupSettings();
+  // Asked for on its own: it looks at every file, and the page polls the rest during a backup.
+  if (new URL(request.url).searchParams.has('coverage')) {
+    return NextResponse.json({ success: true, areas: await backupCoverage(settings.includeMedia) });
+  }
   return NextResponse.json({
     success: true, settings, drive: await checkBackupDrive(settings), backups: await listBackups(settings), job: getBackupJob(),
   });

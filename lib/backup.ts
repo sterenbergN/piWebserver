@@ -135,6 +135,44 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
   return [...data, ...content, ...uploads].filter((p) => !p.startsWith('..'));
 }
 
+// What a backup holds, by what it means to a person. First match wins; anything
+// else under .data still gets backed up and is counted as site settings.
+const AREAS: [string, string[]][] = [
+  ['Journals', ['.data/journal/']],
+  ['Private posts', ['.data/private-posts/']],
+  ['Workouts & health', ['.data/workouts/']],
+  ['Habits', ['.data/habits/']],
+  ['Chores', ['.data/chores/']],
+  ['Daily questions', ['.data/daily/']],
+  ['Recipes, meal plans & grocery lists', ['.data/recipes/', 'public/uploads/recipes/']],
+  ['Loop Lab notebooks', ['.data/loop-lab/']],
+  ['Golf games & watched movies', ['.data/golf-saved-games', '.data/movies-watched']],
+  ['Home page & resume', ['public/content/']],
+  ['Blog posts', ['public/uploads/blog/']],
+  ['Gallery', ['public/uploads/gallery/']],
+  ['Library', ['public/uploads/library/']],
+  ['CAD models', ['public/uploads/cad/']],
+  ['Arcade leaderboards', ['public/uploads/leaderboard/']],
+  ['Site settings & history', ['.data/']],
+  ['Other uploads', ['public/uploads/']],
+];
+
+export type BackupArea = { label: string; files: number; bytes: number; leftOutFiles: number; leftOutBytes: number };
+
+/** Every kind of data on the site right now: what a backup takes, and what today's settings leave out. */
+export async function backupCoverage(includeMedia: boolean): Promise<BackupArea[]> {
+  const included = new Set(await collectBackupFiles(includeMedia));
+  const rows = new Map(AREAS.map(([label]) => [label, { label, files: 0, bytes: 0, leftOutFiles: 0, leftOutBytes: 0 }]));
+  for (const file of await collectBackupFiles(true)) {
+    const area = AREAS.find(([, prefixes]) => prefixes.some((p) => file.startsWith(p)));
+    const row = area && rows.get(area[0]);
+    if (!row) continue;
+    const size = (await fs.stat(path.join(root(), file)).catch(() => null))?.size ?? 0;
+    if (included.has(file)) { row.files++; row.bytes += size; } else { row.leftOutFiles++; row.leftOutBytes += size; }
+  }
+  return [...rows.values()].filter((r) => r.files || r.leftOutFiles);
+}
+
 function stamp(date = new Date()) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
