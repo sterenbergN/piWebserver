@@ -125,6 +125,12 @@ export default function TodayPage() {
         )}
       </header>
 
+      <nav className="td-quick" aria-label="Quick links">
+        <Link href="/journal"><span aria-hidden>📓</span> Write in your journal</Link>
+        <Link href="/recipes?view=list"><span aria-hidden>🛒</span> Grocery list</Link>
+        <Link href="/recipes?view=week"><span aria-hidden>🍳</span> Meal plan</Link>
+      </nav>
+
       {showLevel && h.mode !== 'loading' && h.mode !== 'error' && (
         <LevelInfo sources={xpSources} weeks={question?.weeks} onClose={() => setShowLevel(false)} />
       )}

@@ -8,9 +8,6 @@ import { queueThumbnails, removeThumbnails } from '@/lib/media/thumbnails';
 
 const base = path.join(process.cwd(), 'public', 'uploads');
 
-const BLOG_MASTER_ID = 'blog-post-images';
-const BLOG_MASTER_NAME = 'Blog Post Images';
-
 type AlbumImage = { src: string; caption: string };
 type AlbumNode = { id: string; name: string; images: AlbumImage[]; albums: AlbumNode[] };
 type BlogPhoto = { src: string; description?: string };
@@ -60,28 +57,6 @@ function isAllowedMarkdownFile(file: File | null | undefined) {
 
 function isAllowedPdfFile(file: File | null | undefined) {
   return !!file && file.size > 0 && (file.type === 'application/pdf' || hasAllowedExtension(file.name, ['.pdf']));
-}
-
-function ensureBlogMaster(albums: AlbumNode[]): AlbumNode {
-  let master = albums.find((album) => album.id === BLOG_MASTER_ID);
-  if (!master) {
-    master = { id: BLOG_MASTER_ID, name: BLOG_MASTER_NAME, images: [], albums: [] };
-    albums.push(master);
-  }
-  if (!master.albums) master.albums = [];
-  return master;
-}
-
-function ensurePostAlbum(albums: AlbumNode[], slug: string, title: string): AlbumNode {
-  const master = ensureBlogMaster(albums);
-  let postAlbum = master.albums.find((album) => album.id === slug);
-  if (!postAlbum) {
-    postAlbum = { id: slug, name: title, images: [], albums: [] };
-    master.albums.push(postAlbum);
-  }
-  if (!postAlbum.images) postAlbum.images = [];
-  if (!postAlbum.albums) postAlbum.albums = [];
-  return postAlbum;
 }
 
 function findAndAddImage(albums: AlbumNode[], albumId: string, image: AlbumImage): boolean {
@@ -234,10 +209,6 @@ export async function POST(request: Request) {
         }
       }
 
-      const postAlbum = ensurePostAlbum(albums, slug, title);
-      const coverSrc = `/api/media/uploads/blog/${imageFilename}`;
-      postAlbum.images = postAlbum.images.filter((imageEntry) => toMediaSrc(imageEntry.src) !== coverSrc);
-      postAlbum.images.push({ src: coverSrc, caption: 'Cover' });
       await saveAlbums(albums);
 
       return NextResponse.json({ success: true, post: newPost });
@@ -305,24 +276,10 @@ export async function POST(request: Request) {
       if (previous) posts[index] = saved; else posts.unshift(saved);
       await writeFile(postsFile, JSON.stringify(posts, null, 2));
 
-      // Keep the post's gallery album (under Blog Post Images) in step: its name and cover.
-      let albums = await readAlbums();
       const oldCover = previous?.image ? toMediaSrc(previous.image) : null;
       if (coverPath && oldCover && oldCover !== toMediaSrc(coverPath)) {
         await removePhysicalFile(oldCover);
-        albums = removeImageFromTree(albums, oldCover);
-      }
-      // Only make an album once there's a picture for it (a text-only post shouldn't add an empty one).
-      const hasAlbum = albums.some((a) => a.id === BLOG_MASTER_ID && (a.albums || []).some((sub) => sub.id === slug));
-      if (coverPath || hasAlbum) {
-        const postAlbum = ensurePostAlbum(albums, slug, title);
-        postAlbum.name = title;
-        if (coverPath) {
-          const src = toMediaSrc(coverPath);
-          postAlbum.images = postAlbum.images.filter((img) => toMediaSrc(img.src) !== src);
-          postAlbum.images.push({ src, caption: 'Cover' });
-        }
-        await saveAlbums(albums);
+        await saveAlbums(removeImageFromTree(await readAlbums(), oldCover));
       }
 
       // The draft it came from is now published.
@@ -388,15 +345,9 @@ export async function POST(request: Request) {
           await removePhysicalFile(oldImageMediaSrc);
         }
 
-        let albums = await readAlbums();
         if (oldImageMediaSrc && oldImageMediaSrc !== newImageMediaSrc) {
-          albums = removeImageFromTree(albums, oldImageMediaSrc);
+          await saveAlbums(removeImageFromTree(await readAlbums(), oldImageMediaSrc));
         }
-
-        const postAlbum = ensurePostAlbum(albums, slug, posts[postIdx].title || slug);
-        postAlbum.images = postAlbum.images.filter((imageEntry) => toMediaSrc(imageEntry.src) !== newImageMediaSrc);
-        postAlbum.images.push({ src: newImageMediaSrc, caption: 'Cover' });
-        await saveAlbums(albums);
       }
 
       return NextResponse.json({ success: true, image: newImagePath });
@@ -428,11 +379,6 @@ export async function POST(request: Request) {
       if (!post.photos) post.photos = [];
       post.photos.push({ src: mediaSrc, description });
       await writeFile(postsFile, JSON.stringify(posts, null, 2));
-
-      const albums = await readAlbums();
-      const postAlbum = ensurePostAlbum(albums, slug, post.title || slug);
-      postAlbum.images.push({ src: mediaSrc, caption: description });
-      await saveAlbums(albums);
 
       return NextResponse.json({ success: true, src: mediaSrc });
     }

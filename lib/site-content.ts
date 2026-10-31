@@ -38,12 +38,18 @@ export async function getPost(slug: string): Promise<FullPost | null> {
 export type GalleryImage = { src: string; caption: string };
 export type GalleryAlbum = { id: string; name: string; images: GalleryImage[]; albums: GalleryAlbum[] };
 
+/**
+ * Older uploads copied every post's pictures into this album. They belong on
+ * their posts now, so it's hidden when reading; the file on disk is left as is.
+ */
+export const withoutBlogAlbums = <T extends { id: string }>(albums: T[]): T[] => albums.filter((a) => a.id !== 'blog-post-images');
+
 /** The photo album tree (read-only; the gallery API creates it on first use). */
 export async function getGalleryAlbums(): Promise<GalleryAlbum[]> {
   try {
     const raw = JSON.parse(await fs.readFile(path.join(process.cwd(), 'public', 'uploads', 'gallery', 'albums.json'), 'utf-8'));
     const normalise = (a: GalleryAlbum): GalleryAlbum => ({ ...a, images: a.images || [], albums: (a.albums || []).map(normalise) });
-    return Array.isArray(raw) ? raw.map(normalise) : [];
+    return Array.isArray(raw) ? withoutBlogAlbums(raw as GalleryAlbum[]).map(normalise) : [];
   } catch {
     return [];
   }

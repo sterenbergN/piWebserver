@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { NextResponse } from 'next/server';
 import { SITE_PAGES, searchDocs, type SearchDoc } from '@/lib/search';
-import { getPosts } from '@/lib/site-content';
+import { getPosts, withoutBlogAlbums } from '@/lib/site-content';
 import { getResume } from '@/lib/resume-store';
 import { isSafeBlogSlug } from '@/lib/security/paths';
 import { DEFAULT_RECIPES, extractIngredients, normalizeRecipesData, type RecipesData } from '@/lib/recipes/recipes';
@@ -36,7 +36,7 @@ async function buildIndex(): Promise<SearchDoc[]> {
     }
   };
   const albums = await readJson<Album[]>(path.join(uploads(), 'gallery', 'albums.json'), []);
-  walk(Array.isArray(albums) ? albums : [], []);
+  walk(Array.isArray(albums) ? withoutBlogAlbums(albums) : [], []);
 
   const library = await readJson<LibraryDoc[]>(path.join(uploads(), 'library', 'library.json'), []);
   for (const doc of Array.isArray(library) ? library : []) {

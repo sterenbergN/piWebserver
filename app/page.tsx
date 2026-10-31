@@ -25,6 +25,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const countPhotos = (albums: GalleryAlbum[]): number => albums.reduce((n, a) => n + a.images.length + countPhotos(a.albums), 0);
+const hasAlbum = (albums: GalleryAlbum[], id: string): boolean => albums.some((a) => a.id === id || hasAlbum(a.albums, id));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const formatDate = (date: string) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -151,6 +152,7 @@ export default async function Home() {
           <div className="home-projects">
             {projects.map(project => {
               const color = CATEGORY_COLORS[project.category] || CATEGORY_COLORS.Other;
+              const albumId = project.albumId && hasAlbum(albums, project.albumId) ? project.albumId : null;
               return (
                 <div key={project.id} className="premium-card home-project">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
@@ -158,10 +160,10 @@ export default async function Home() {
                     <span className="home-tag" style={{ color, borderColor: `${color}55`, background: `${color}18` }}>{project.category}</span>
                   </div>
                   <p>{project.description}</p>
-                  {(project.post || project.albumId) && (
+                  {(project.post || albumId) && (
                     <div className="home-project-links">
                       {project.post && <Link href={`/blog/${project.post.slug}`}>Read write-up <Arrow /></Link>}
-                      {project.albumId && <Link href={`/gallery?album=${encodeURIComponent(project.albumId)}`}>Photos <Arrow /></Link>}
+                      {albumId && <Link href={`/gallery?album=${encodeURIComponent(albumId)}`}>Photos <Arrow /></Link>}
                     </div>
                   )}
                 </div>

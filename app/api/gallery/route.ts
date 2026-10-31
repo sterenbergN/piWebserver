@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { withoutBlogAlbums } from '@/lib/site-content';
 
 const galleryDir = path.join(process.cwd(), 'public', 'uploads', 'gallery');
 const albumsFile = path.join(galleryDir, 'albums.json');
@@ -88,7 +89,7 @@ async function saveAlbums(albums: Album[]) {
 export async function GET() {
   try {
     const isAdmin = await isAdminAuthenticated();
-    const albums = await readAlbums();
+    const albums = withoutBlogAlbums(await readAlbums());
     return NextResponse.json({ success: true, albums, isAdmin });
   } catch (error) {
     console.error('Gallery Error:', error);

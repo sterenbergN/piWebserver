@@ -130,7 +130,8 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
   const content = (await walk(path.join(root(), 'public', 'content'))).map(rel);
   const uploads = (await walk(path.join(root(), 'public', 'uploads')))
     .map(rel)
-    .filter((p) => !p.includes('.tmp') && (includeMedia || DATA_EXTENSIONS.has(path.extname(p).toLowerCase())));
+    // Dish photos are part of the recipes (and small, being re-encoded), so they're always kept.
+    .filter((p) => !p.includes('.tmp') && (includeMedia || p.startsWith('public/uploads/recipes/') || DATA_EXTENSIONS.has(path.extname(p).toLowerCase())));
   return [...data, ...content, ...uploads].filter((p) => !p.startsWith('..'));
 }
 

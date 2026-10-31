@@ -123,7 +123,7 @@ export default function BackupsPanel() {
         <div>
           <h2 id="backups-title">💾 Backups</h2>
           <p>
-            Workouts, home page, blog, gallery lists and party prompts.{' '}
+            All account data (journals and private posts with their pictures, workouts, habits, chores, daily questions, recipes with dish photos, meal plans and grocery lists, Loop Lab notebooks) plus the home page, blog text, gallery lists and party prompts. Gallery, blog and library files are only included with “Include photos &amp; PDFs”. Anything kept only in a browser while signed out isn’t on the server, so it can’t be backed up.{' '}
             {settings.lastAutoBackup ? `Last nightly backup ${new Date(settings.lastAutoBackup).toLocaleString()}.` : 'No nightly backup yet.'}
           </p>
         </div>

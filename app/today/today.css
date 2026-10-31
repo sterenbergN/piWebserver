@@ -5,6 +5,10 @@
 .td-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
 .td-head p { margin: 0.3rem 0 0; color: var(--muted); }
 
+.td-quick { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+.td-quick a { padding: 0.45rem 0.85rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font-size: 0.9rem; font-weight: 600; }
+.td-quick a:hover { border-color: var(--accent-light); background: var(--surface-hover); }
+
 /* Two columns that each stack on their own (a long habit list leaves no gap
    beside it). On phones the columns dissolve and the cards take this order. */
 .td-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 1rem; align-items: start; }
