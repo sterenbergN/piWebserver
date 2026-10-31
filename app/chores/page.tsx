@@ -1,9 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import ChoreCard from '@/components/chores/ChoreCard';
 import ChoreEditor, { CHORE_TEMPLATES } from '@/components/chores/ChoreEditor';
+import HouseholdPanel from '@/components/chores/HouseholdPanel';
 import { useChores, type Member } from '@/components/chores/useChores';
 import Confetti from '@/components/habits/Confetti';
 import { Plant } from '@/components/habits/Garden';
@@ -319,80 +321,21 @@ type HouseholdProps = {
 };
 
 function HouseholdTab({ mode, data, today, members, me, invite, op, confirm, signIn, nameOf }: HouseholdProps) {
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const recent = recentEntries(data, today, 14);
   const byId = new Map(data.chores.map((x) => [x.id, x]));
-
-  const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
-  const join = () => run(async () => {
-    const mineCount = data.chores.length;
-    const ok = await confirm({
-      title: 'Join this household?',
-      message: members.length > 1
-        ? 'You’ll leave your current household; its chores stay with the others in it.'
-        : mineCount ? `Your ${mineCount} chore${mineCount === 1 ? '' : 's'} and their history move into the household you join.` : 'You’ll share one chore list with everyone in it.',
-      confirmLabel: 'Join',
-    });
-    if (ok && await op('join', code)) setCode('');
-  });
-  const leave = () => run(async () => {
-    const ok = await confirm({ title: 'Leave the household?', message: 'The chores stay with everyone else. You start a new, empty list of your own.', confirmLabel: 'Leave', danger: true });
-    if (ok) await op('leave');
-  });
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(invite ?? ''); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* select it by hand */ }
-  };
 
   return (
     <>
       {mode === 'device' ? (
         <section className="hb-panel">
-          <h3>Share chores with your household</h3>
-          <p className="hb-hint">Sign in, and everyone you invite sees the same list, ticks things off and earns their own XP.</p>
+          <h3>Share with your household</h3>
+          <p className="hb-hint">Sign in, and everyone you invite sees the same chores, meal plan and grocery list, ticks things off and earns their own XP.</p>
           <button type="button" className="btn btn-primary" onClick={signIn}>Sign in</button>
         </section>
       ) : (
         <>
-          <section className="hb-panel">
-            <h3>Who’s in</h3>
-            <ul className="ch-members">
-              {members.map((m) => (
-                <li key={m.id}><span className="nav-avatar" aria-hidden>{m.name.slice(0, 1).toUpperCase()}</span>{m.name}{m.id === me ? ' (you)' : ''}</li>
-              ))}
-            </ul>
-            {members.length > 1 && <button type="button" className="hb-text-btn ch-leave" disabled={busy} onClick={leave}>Leave this household</button>}
-          </section>
-
-          <section className="hb-panel">
-            <h3>Invite someone</h3>
-            {invite ? (
-              <>
-                <div className="ch-code" aria-label={`Invite code ${invite.split('').join(' ')}`}>{invite}</div>
-                <p className="hb-hint">They sign in with their own account, open <strong>Chores → Household</strong> and enter this code. It keeps working until you turn it off.</p>
-                <div className="ch-code-actions">
-                  <button type="button" className="hb-small-btn is-primary" onClick={copy}>{copied ? '✓ Copied' : 'Copy code'}</button>
-                  <button type="button" className="hb-small-btn" disabled={busy} onClick={() => run(() => op('invite'))}>New code</button>
-                  <button type="button" className="hb-small-btn" disabled={busy} onClick={() => run(() => op('invite-off'))}>Turn off</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="hb-hint">Make a code for someone with an account on this site (accounts are made by Noah).</p>
-                <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => run(() => op('invite'))}>Make an invite code</button>
-              </>
-            )}
-          </section>
-
-          <section className="hb-panel">
-            <h3>Join a household</h3>
-            <form className="ch-join" onSubmit={(e) => { e.preventDefault(); if (code.trim()) join(); }}>
-              <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={8} placeholder="Code" aria-label="Invite code"
-                autoCapitalize="characters" autoComplete="off" spellCheck={false} />
-              <button type="submit" className="btn btn-secondary" disabled={busy || code.replace(/\W/g, '').length < 6}>Join</button>
-            </form>
-          </section>
+          <p className="hb-hint ch-shares">Your household shares these chores, the <Link href="/recipes?view=week">meal plan</Link> and the <Link href="/recipes?view=list">grocery list</Link>.</p>
+          <HouseholdPanel members={members} me={me} invite={invite} op={op} confirm={confirm} />
         </>
       )}
 

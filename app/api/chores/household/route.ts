@@ -4,8 +4,8 @@ import { clientAddress, createLimiter } from '@/lib/security/rate-limit';
 import { HouseholdError, joinHousehold, leaveHousehold, setInvite } from '@/lib/chores/households';
 import { isDateKey } from '@/lib/habits/dates';
 
-// Sharing chores: make or turn off an invite code, join a household with one,
-// or leave. The chore list itself is /api/chores.
+// Sharing a household: make or turn off an invite code, join one, or leave. What
+// it shares is at /api/chores and /api/recipes/kitchen.
 
 // Wrong codes: 10 tries per account and address per 15 minutes.
 const wrongCodes = createLimiter({ max: 10, windowMs: 15 * 60_000 });

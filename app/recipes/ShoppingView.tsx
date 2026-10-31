@@ -34,8 +34,10 @@ export default function ShoppingView({
   onConfirm: (message: string) => Promise<boolean>;
   onFlash: (message: string) => void;
 }) {
-  const { state } = kitchen;
+  const { state, household } = kitchen;
   const [newItem, setNewItem] = useState('');
+  /** Who else put something on the list. */
+  const addedBy = (id?: string) => (id && id !== household?.me ? household?.members.find((m) => m.id === id)?.name : undefined);
   const list = useMemo(() => buildShoppingList(recipes, state, week), [recipes, state, week]);
 
   const got = useMemo(() => new Set(state.got), [state.got]);
@@ -172,12 +174,14 @@ export default function ShoppingView({
             <ul>
               {state.listItems.map((item) => {
                 const isGot = got.has(item.id);
+                const from = addedBy(item.by);
                 return (
                   <li key={item.id} className={`rc-shop-row${isGot ? ' is-done' : ''}`}>
                     <button type="button" className="rc-shop-main" aria-pressed={isGot} onClick={() => kitchen.toggleGot(item.id)}>
                       <span className="rc-check" aria-hidden="true">{isGot ? '✓' : ''}</span>
                       <span className="rc-shop-text">
                         <span>{item.text}</span>
+                        {from && <small>from {from}</small>}
                       </span>
                     </button>
                     <button type="button" className="rc-icon-btn" aria-label={`Remove ${item.text}`} onClick={() => kitchen.removeListItem(item.id)}>

@@ -1,6 +1,7 @@
-// What you keep at home, the weekly meal plan and the shopping list built from
+// What a home keeps in, its weekly meal plan and the shopping list built from
 // them. Pure functions and types, used on both sides: the browser keeps a copy
-// on the device, and signed-in accounts sync it through /api/recipes/kitchen.
+// on the device, and signed-in households sync it through /api/recipes/kitchen,
+// one small change at a time so two people editing at once both keep theirs.
 
 import { addDays, isDateKey, localToday, weekStart, type DateKey } from '../habits/dates';
 import {
@@ -31,8 +32,8 @@ export type KitchenState = {
   plans: Record<DateKey, PlanEntry[]>;
   /** Recipes on the shopping list outside the plan. */
   listRecipes: { recipeId: string; servings: number }[];
-  /** Things typed straight onto the list. */
-  listItems: { id: string; text: string }[];
+  /** Things typed straight onto the list, and which account added them. */
+  listItems: { id: string; text: string; by?: string }[];
   /** Ingredient keys and typed-item ids already in the basket. */
   got: string[];
 };
@@ -77,7 +78,10 @@ export function normalizeKitchen(raw: unknown, today = localToday()): KitchenSta
     .filter((r) => r.recipeId);
   const listItems = (Array.isArray(source.listItems) ? source.listItems : [])
     .slice(0, 200)
-    .map((i: Record<string, unknown>) => ({ id: shortString(i?.id, 40) || newKitchenId(), text: shortString(i?.text, 120) }))
+    .map((i: Record<string, unknown>) => {
+      const by = shortString(i?.by, 64);
+      return { id: shortString(i?.id, 40) || newKitchenId(), text: shortString(i?.text, 120), ...(by ? { by } : {}) };
+    })
     .filter((i) => i.text);
 
   return {
@@ -87,6 +91,93 @@ export function normalizeKitchen(raw: unknown, today = localToday()): KitchenSta
     listRecipes,
     listItems,
     got: strings(source.got, 100, 500),
+  };
+}
+
+// ─── Changes ──────────────────────────────────────────────────────────────────
+
+/**
+ * One change to the kitchen. The browser applies it straight away and sends it;
+ * the server applies it to whatever is stored by then. Saying the outcome
+ * ("ticked", not "toggled") and naming new things up front makes each one safe
+ * to send twice, which a lost reply on a bad connection will sometimes do.
+ */
+export type KitchenAction =
+  | { type: 'have' | 'got'; key: string; on: boolean }
+  | { type: 'plan-add'; week: DateKey; entry: PlanEntry }
+  | { type: 'plan-change'; week: DateKey; ids: string[]; patch: Partial<Pick<PlanEntry, 'servings' | 'day' | 'cooked'>> }
+  | { type: 'plan-remove'; week: DateKey; id: string }
+  | { type: 'plan-copy'; week: DateKey; entries: PlanEntry[] }
+  | { type: 'list-recipe'; recipeId: string; servings: number }
+  | { type: 'list-recipe-remove'; recipeId: string }
+  | { type: 'list-item'; id: string; text: string; by?: string }
+  | { type: 'list-item-remove'; id: string }
+  /** Starting over clears what this person could see, not what someone added a moment ago. */
+  | { type: 'list-clear'; items: string[]; recipes: string[]; got: string[] };
+
+const listOf = <T,>(v: unknown) => (Array.isArray(v) ? (v as T[]) : []);
+const switched = (list: string[], key: string, on: boolean) => (on ? (list.includes(key) ? list : [...list, key]) : list.filter((x) => x !== key));
+
+/** The kitchen after a change. Nonsense from a browser changes nothing; the server normalizes the rest. */
+export function applyKitchenAction(k: KitchenState, action: KitchenAction): KitchenState {
+  const setPlan = (week: DateKey, change: (entries: PlanEntry[]) => PlanEntry[]) =>
+    isDateKey(week) ? { ...k, plans: { ...k.plans, [week]: change(k.plans[week] || []) } } : k;
+  switch (action?.type) {
+    case 'have':
+      return { ...k, have: switched(k.have, action.key, action.on) };
+    case 'got':
+      return { ...k, got: switched(k.got, action.key, action.on) };
+    case 'plan-add':
+      return setPlan(action.week, (entries) => (entries.some((e) => e.id === action.entry?.id) ? entries : [...entries, action.entry]));
+    case 'plan-change': {
+      const ids = listOf<string>(action.ids);
+      const { servings, day, cooked } = action.patch ?? {};
+      const patch = { ...(servings !== undefined ? { servings } : {}), ...(day !== undefined ? { day } : {}), ...(cooked !== undefined ? { cooked } : {}) };
+      return setPlan(action.week, (entries) => entries.map((e) => (ids.includes(e.id) ? { ...e, ...patch } : e)));
+    }
+    case 'plan-remove':
+      return setPlan(action.week, (entries) => entries.filter((e) => e.id !== action.id));
+    case 'plan-copy':
+      return setPlan(action.week, () => listOf<PlanEntry>(action.entries));
+    case 'list-recipe':
+      return { ...k, listRecipes: [...k.listRecipes.filter((r) => r.recipeId !== action.recipeId), { recipeId: action.recipeId, servings: action.servings }] };
+    case 'list-recipe-remove':
+      return { ...k, listRecipes: k.listRecipes.filter((r) => r.recipeId !== action.recipeId) };
+    case 'list-item':
+      return typeof action.text === 'string' ? addListItem(k, action.text, action.id, action.by) : k;
+    case 'list-item-remove':
+      return { ...k, listItems: k.listItems.filter((i) => i.id !== action.id), got: k.got.filter((g) => g !== action.id) };
+    case 'list-clear': {
+      const [items, recipes, got] = [listOf<string>(action.items), listOf<string>(action.recipes), listOf<string>(action.got)];
+      return {
+        ...k,
+        listItems: k.listItems.filter((i) => !items.includes(i.id)),
+        listRecipes: k.listRecipes.filter((r) => !recipes.includes(r.recipeId)),
+        got: k.got.filter((g) => !got.includes(g)),
+      };
+    }
+    default:
+      return k;
+  }
+}
+
+/** Bring a second kitchen into this one, when people move in together. What's already here wins a tie. */
+export function mergeKitchens(into: KitchenState, from: KitchenState): KitchenState {
+  const plans = { ...into.plans };
+  for (const [week, entries] of Object.entries(from.plans)) {
+    const mine = plans[week] || [];
+    const isNew = (e: PlanEntry) => !mine.some((m) => m.id === e.id || (m.recipeId === e.recipeId && m.day === e.day));
+    plans[week] = [...mine, ...entries.filter(isNew)];
+  }
+  const openTexts = new Set(into.listItems.filter((i) => !into.got.includes(i.id)).map((i) => i.text.toLowerCase()));
+  const ids = new Set(into.listItems.map((i) => i.id));
+  return {
+    version: 1,
+    have: [...new Set([...into.have, ...from.have])],
+    plans,
+    listRecipes: [...into.listRecipes, ...from.listRecipes.filter((r) => !into.listRecipes.some((m) => m.recipeId === r.recipeId))],
+    listItems: [...into.listItems, ...from.listItems.filter((i) => !ids.has(i.id) && !openTexts.has(i.text.toLowerCase()))],
+    got: [...new Set([...into.got, ...from.got])],
   };
 }
 
@@ -205,11 +296,11 @@ export function groceriesLeft(recipes: Recipe[], kitchen: KitchenState, week: Da
 }
 
 /** Type something onto the list, unless it's already there and unticked. */
-export function addListItem(kitchen: KitchenState, text: string): KitchenState {
+export function addListItem(kitchen: KitchenState, text: string, id = newKitchenId(), by?: string): KitchenState {
   const clean = text.trim().slice(0, 120);
-  const open = kitchen.listItems.some((i) => i.text.toLowerCase() === clean.toLowerCase() && !kitchen.got.includes(i.id));
+  const open = kitchen.listItems.some((i) => i.id === id || (i.text.toLowerCase() === clean.toLowerCase() && !kitchen.got.includes(i.id)));
   if (!clean || open) return kitchen;
-  return { ...kitchen, listItems: [...kitchen.listItems, { id: newKitchenId(), text: clean }] };
+  return { ...kitchen, listItems: [...kitchen.listItems, { id, text: clean, ...(by ? { by } : {}) }] };
 }
 
 /** Today's meals from the plan: what's on for today, and the week's meal prep still in the fridge or to cook. */

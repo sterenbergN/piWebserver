@@ -1,11 +1,50 @@
 import { readPref, savePref } from '../workout/device-prefs';
-import { addListItem, emptyKitchen, normalizeKitchen, type KitchenState } from './kitchen';
+import { addListItem, emptyKitchen, newKitchenId, normalizeKitchen, type KitchenAction, type KitchenState } from './kitchen';
 
-// The grocery list from outside the recipes page (the launcher, the Today page).
-// The page's useKitchen hears KITCHEN_CHANGED and picks the change up.
+// The grocery list from outside the recipes page (the launcher, the Today page),
+// and the changes waiting to be sent. The page's useKitchen hears KITCHEN_CHANGED
+// and picks the change up.
 
 export const KITCHEN_PREF = 'recipes:kitchen';
 export const KITCHEN_CHANGED = 'kitchen:changed';
+
+const OUTBOX_PREF = 'recipes:kitchen:outbox';
+const OUTBOX_LIMIT = 500;
+
+export type QueuedChange = { id: string; action: KitchenAction };
+
+/** Used only when the browser won't store anything: then changes last until the page closes. */
+let outboxCopy: QueuedChange[] = [];
+
+/**
+ * Changes not yet confirmed by the server. They're kept in storage rather than
+ * memory so a list ticked off with no signal survives closing the page, and
+ * read fresh each time because another tab may be sending them too.
+ */
+export function readOutbox(): QueuedChange[] {
+  const saved = readPref(OUTBOX_PREF);
+  if (saved === null) return outboxCopy;
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOutbox(queue: QueuedChange[]) {
+  outboxCopy = queue;
+  savePref(OUTBOX_PREF, JSON.stringify(queue));
+}
+
+export function queueChange(action: KitchenAction) {
+  writeOutbox([...readOutbox(), { id: newKitchenId(), action }].slice(-OUTBOX_LIMIT));
+}
+
+export function clearSentChanges(sent: QueuedChange[]) {
+  const ids = new Set(sent.map((q) => q.id));
+  writeOutbox(readOutbox().filter((q) => !ids.has(q.id)));
+}
 
 export function readLocalKitchen(): KitchenState {
   try {
@@ -18,9 +57,9 @@ export function readLocalKitchen(): KitchenState {
 export const isEmptyKitchen = (k: KitchenState) => !k.have.length && !Object.keys(k.plans).length && !k.listRecipes.length && !k.listItems.length;
 
 /**
- * Put something on the list: in the account when signed in (the server adds it
- * to what's there, so another device's list isn't overwritten), else on this
- * device. Returns false if it couldn't be saved.
+ * Put something on the list: in the household's when signed in (the server adds
+ * it to what's there, so nobody else's list is overwritten), else on this device.
+ * Returns false if it couldn't be saved.
  */
 export async function addGroceryItem(text: string): Promise<boolean> {
   const local = readLocalKitchen();

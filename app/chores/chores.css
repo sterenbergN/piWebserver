@@ -33,13 +33,7 @@
 .ch-finished li { display: flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.7rem; border-radius: 12px; border: 1px solid var(--surface-border); border-left: 4px solid var(--hb-color); background: var(--surface-glass); }
 .ch-finished .ch-name { flex: 1; min-width: 0; font-size: 0.92rem; font-weight: 600; text-decoration: line-through; text-decoration-color: var(--muted); }
 
-.ch-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.ch-members li { display: flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.8rem 0.3rem 0.3rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); font-weight: 600; }
-.ch-leave { display: block; margin-top: 0.9rem; color: var(--danger); }
-.ch-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2rem; font-weight: 800; letter-spacing: 0.3em; padding: 0.4rem 0 0.2rem; }
-.ch-code-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.ch-join { display: flex; gap: 0.5rem; }
-.ch-join input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.2em; text-transform: uppercase; }
+.ch-shares a { color: var(--accent-light); }
 
 .ch-activity { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .ch-activity li { display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0; border-bottom: 1px solid var(--surface-border); font-size: 0.9rem; }
@@ -51,5 +45,4 @@
 
 @media (max-width: 520px) {
   .ch-activity-day { flex-basis: 4.8rem; }
-  .ch-code { font-size: 1.6rem; }
 }

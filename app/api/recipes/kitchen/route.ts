@@ -1,56 +1,84 @@
-import crypto from 'crypto';
 import { NextResponse } from 'next/server';
-import path from 'path';
-import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
+import { readJson, updateJson } from '@/lib/json-store';
+import { describeHousehold, householdFor } from '@/lib/chores/households';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
-import { addListItem, emptyKitchen, normalizeKitchen, type KitchenState } from '@/lib/recipes/kitchen';
+import { foldKitchen, householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
+import { applyKitchenAction, emptyKitchen, mergeKitchens, newKitchenId, normalizeKitchen, type KitchenAction, type KitchenState } from '@/lib/recipes/kitchen';
 
 export const dynamic = 'force-dynamic';
 
-// What each account has at home, its meal plans and its shopping list, so the
-// plan made on a laptop is there on the phone at the store. Signed-out visitors
-// keep theirs on the device only.
+// What a household has at home, its meal plans and its shopping list, so the
+// plan made on one laptop is there on everyone's phone at the store. Signed-out
+// visitors keep theirs on the device only.
 
-async function kitchenFile() {
+const MAX_ACTIONS = 200;
+
+async function openKitchen() {
   const [userId, admin] = await Promise.all([getAuthenticatedWorkoutUserId(), isAdminAuthenticated()]);
-  const owner = userId || (admin ? 'admin' : null);
-  if (!owner) throw new ApiError(401, 'Sign in to sync your kitchen.');
-  const name = crypto.createHash('sha256').update(owner).digest('hex').slice(0, 32);
-  return path.join(process.cwd(), '.data', 'recipes', 'kitchen', `${name}.json`);
+  if (userId) {
+    const household = await householdFor(userId);
+    const file = householdKitchenFile(household.id);
+    // A kitchen from before they were shared moves in the first time it's opened.
+    await foldKitchen(personalKitchenFile(userId), file);
+    return { file, userId, household };
+  }
+  if (admin) return { file: personalKitchenFile('admin'), userId: null, household: null };
+  throw new ApiError(401, 'Sign in to sync your kitchen.');
 }
 
 export async function GET() {
   try {
-    const stored = await readJson<KitchenState | null>(await kitchenFile(), null);
-    return NextResponse.json({ success: true, kitchen: stored ? normalizeKitchen(stored) : null });
+    const { file, userId, household } = await openKitchen();
+    const stored = await readJson<KitchenState | null>(file, null);
+    return NextResponse.json({
+      success: true,
+      kitchen: stored ? normalizeKitchen(stored) : null,
+      household: household && userId ? await describeHousehold(household, userId) : null,
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Load kitchen failed');
   }
 }
 
-/** Add one thing to the list (`{ add }`) on top of what's stored, whichever device last saved it. */
+/**
+ * Apply changes (`{ actions }`) on top of what's stored, whoever saved it last,
+ * and answer with the result. `{ add }` is the short way to put one thing on the list.
+ */
 export async function POST(request: Request) {
   try {
-    const file = await kitchenFile();
+    const { file, userId } = await openKitchen();
     const body = await readJsonObject(request);
     const text = typeof body.add === 'string' ? body.add.trim() : '';
-    if (!text) throw new ApiError(400, 'Nothing to add.');
+    const actions: KitchenAction[] = text ? [{ type: 'list-item', id: newKitchenId(), text }] : Array.isArray(body.actions) ? body.actions : [];
+    if (!actions.length) throw new ApiError(400, 'Nothing to change.');
+    if (actions.length > MAX_ACTIONS) throw new ApiError(400, 'Too many changes at once.');
+
     const created = (await readJson<KitchenState | null>(file, null)) === null;
-    await updateJson<KitchenState, void>(file, emptyKitchen(), (stored) => {
-      Object.assign(stored, addListItem(normalizeKitchen(stored), text));
+    const kitchen = await updateJson<KitchenState, KitchenState>(file, emptyKitchen(), (stored) => {
+      let next = normalizeKitchen(stored);
+      for (const action of actions) {
+        // Whoever is signed in added it, whatever the browser says.
+        next = normalizeKitchen(applyKitchenAction(next, action?.type === 'list-item' ? { ...action, by: userId ?? undefined } : action));
+      }
+      Object.assign(stored, next);
+      return next;
     });
-    return NextResponse.json({ success: true, created });
+    return NextResponse.json({ success: true, created, kitchen });
   } catch (error) {
-    return handleApiError(error, 'Add to list failed');
+    return handleApiError(error, 'Save kitchen failed');
   }
 }
 
+/** Bring what a device had before signing in into the kitchen, leaving what's there alone. */
 export async function PUT(request: Request) {
   try {
-    const file = await kitchenFile();
+    const { file } = await openKitchen();
     const body = await readJsonObject(request);
-    await writeJsonAtomic(file, normalizeKitchen(body.kitchen));
+    const incoming = normalizeKitchen(body.kitchen);
+    await updateJson<KitchenState, void>(file, emptyKitchen(), (stored) => {
+      Object.assign(stored, mergeKitchens(normalizeKitchen(stored), incoming));
+    });
     return NextResponse.json({ success: true });
   } catch (error) {
     return handleApiError(error, 'Save kitchen failed');

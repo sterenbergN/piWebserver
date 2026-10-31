@@ -7,6 +7,7 @@ import { currentWeek, groceriesLeft } from '@/lib/recipes/kitchen';
 import type { Recipe, UnitMode } from '@/lib/recipes/recipes';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import AddRecipeSheet from './AddRecipeSheet';
+import HouseholdSheet, { HouseholdBar } from './HouseholdSheet';
 import PlanSheet from './PlanSheet';
 import RecipeEditor, { emptyDraft, importedToDraft, recipeToDraft, type EditorDraft } from './RecipeEditor';
 import RecipeList from './RecipeList';
@@ -50,6 +51,7 @@ function Recipes() {
   const [week, setWeek] = useState(() => currentWeek());
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
+  const [showHousehold, setShowHousehold] = useState(false);
   const [planning, setPlanning] = useState<{ recipe: Recipe; servings?: number } | null>(null);
   const [openServings, setOpenServings] = useState<number | undefined>();
   const [unitMode, setUnitMode] = useState<UnitMode>('us');
@@ -288,6 +290,7 @@ function Recipes() {
         </nav>
 
         <div className="rc-divider-page">
+          {view !== 'recipes' && <HouseholdBar kitchen={kitchen} canEdit={canEdit} onOpen={() => setShowHousehold(true)} />}
           {view === 'recipes' && (
             <RecipeList
               recipes={recipes}
@@ -333,6 +336,8 @@ function Recipes() {
           </div>
         )}
       </div>
+
+      {showHousehold && <HouseholdSheet kitchen={kitchen} confirm={confirm} onClose={() => setShowHousehold(false)} />}
 
       {showAddSheet && (
         <AddRecipeSheet

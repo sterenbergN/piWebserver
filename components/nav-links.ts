@@ -55,8 +55,8 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       icon: '🍳',
       items: [
         { href: '/recipes', label: 'Recipes', icon: '🍳', blurb: 'Your recipe box and cook mode', keywords: 'cooking food' },
-        { href: '/recipes?view=week', label: 'Meal plan', icon: '🗓️', short: 'Plan', blurb: 'Plan the week and meal prep', keywords: 'dinner week planner prep' },
-        { href: '/recipes?view=list', label: 'Grocery list', icon: '🛒', short: 'Groceries', blurb: 'What to buy, by aisle', keywords: 'shopping groceries store buy' },
+        { href: '/recipes?view=week', label: 'Meal plan', icon: '🗓️', short: 'Plan', blurb: 'Plan the week and meal prep', keywords: 'dinner week planner prep household share' },
+        { href: '/recipes?view=list', label: 'Grocery list', icon: '🛒', short: 'Groceries', blurb: 'What to buy, by aisle', keywords: 'shopping groceries store buy household share' },
       ],
     },
     {

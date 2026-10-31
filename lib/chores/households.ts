@@ -1,14 +1,18 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { readJson, updateJson } from '@/lib/json-store';
+import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
+import { emptyKitchen } from '@/lib/recipes/kitchen';
+import { foldKitchen, householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
 import { generateId } from '@/lib/workout/data';
+import { loadUsersData } from '@/lib/workout/users';
 import { applyChoreAction, emptyChoresData, normalizeChoresData, type ChoresData } from './chores';
 
-// Chores belong to a household, so everyone in it sees and ticks off the same
-// list. .data/chores/households.json says who is in which household (and its
-// invite code); each household's chores live in .data/chores/<id>.json. Every
-// account gets a household of its own the first time it opens chores.
+// Chores, the meal plan and the grocery list belong to a household, so everyone
+// in it sees and ticks off the same things. .data/chores/households.json says
+// who is in which household (and its invite code); each household's chores live
+// in .data/chores/<id>.json and its kitchen in .data/recipes/kitchen/. Every
+// account gets a household of its own the first time it opens either.
 
 export type Household = { id: string; members: string[]; invite: string | null; createdOn: string };
 type HouseholdsFile = { households: Household[] };
@@ -48,6 +52,16 @@ export async function householdFor(userId: string): Promise<Household> {
   });
 }
 
+/** Who's in the household, by name, for "done by" and "shared with". */
+export async function describeHousehold(household: Household, me: string) {
+  const users = (await loadUsersData()).users;
+  return {
+    me,
+    invite: household.invite,
+    members: household.members.map((id) => ({ id, name: String(users.find((u) => u.id === id)?.username || 'Someone') })),
+  };
+}
+
 /** Turn the invite code on (or make a new one), or off with `on: false`. */
 export async function setInvite(userId: string, on: boolean) {
   const mine = await householdFor(userId);
@@ -68,8 +82,8 @@ export class HouseholdError extends Error {}
 
 /**
  * Join the household with this invite code. A household you were alone in is
- * folded into the new one, chores and history included; otherwise you just
- * leave the old one, and its chores stay with the people still in it.
+ * folded into the new one, chores, history and kitchen included; otherwise you
+ * just leave the old one, and all that stays with the people still in it.
  */
 export async function joinHousehold(userId: string, rawCode: string, today: string) {
   const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -96,11 +110,12 @@ export async function joinHousehold(userId: string, rawCode: string, today: stri
       });
     }
     await fs.rm(choresFile(result.mergeFrom), { force: true });
+    await foldKitchen(householdKitchenFile(result.mergeFrom), householdKitchenFile(result.target.id));
   }
   return result.target;
 }
 
-/** Leave your household for a fresh one of your own. The chores stay with whoever is left. */
+/** Leave your household for a fresh one of your own. Its chores and kitchen stay with whoever is left. */
 export async function leaveHousehold(userId: string) {
   const mine = await householdFor(userId);
   if (mine.members.length <= 1) throw new HouseholdError('You’re the only one in this household.');
@@ -108,5 +123,26 @@ export async function leaveHousehold(userId: string) {
     const household = data.households.find((h) => h.id === mine.id);
     if (household) household.members = household.members.filter((m) => m !== userId);
   });
-  return householdFor(userId);
+  const fresh = await householdFor(userId);
+  // Stored empty, not missing: a missing kitchen takes in whatever the device has, here the list just left.
+  await writeJsonAtomic(householdKitchenFile(fresh.id), emptyKitchen());
+  return fresh;
+}
+
+/** An account was deleted: it's no longer in anyone's household, and one it had to itself goes with it. */
+export async function removeFromHousehold(userId: string) {
+  const emptied = await updateJson<HouseholdsFile, string | null>(INDEX(), empty(), (data) => {
+    data.households ||= [];
+    const household = data.households.find((h) => h.members.includes(userId));
+    if (!household) return null;
+    household.members = household.members.filter((m) => m !== userId);
+    if (household.members.length) return null;
+    data.households = data.households.filter((h) => h !== household);
+    return household.id;
+  });
+  if (emptied) {
+    await fs.rm(choresFile(emptied), { force: true });
+    await fs.rm(householdKitchenFile(emptied), { force: true });
+  }
+  await fs.rm(personalKitchenFile(userId), { force: true });
 }

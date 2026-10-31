@@ -1721,3 +1721,30 @@ span.rc-source-chip { cursor: default; }
   .rc-snapshot-head img { width: 124px; height: 104px; }
   .rc-divider-page { padding: 1.1rem 1.1rem 1.4rem; }
 }
+
+/* ── Sharing with the household ── */
+.rc-household {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  margin-bottom: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface-glass);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.rc-household:hover { background: var(--surface-hover); color: var(--foreground); }
+.rc-household.is-shared { padding-left: 0.35rem; color: var(--foreground); }
+.rc-household-faces { display: inline-flex; flex-shrink: 0; }
+.rc-household-faces .nav-avatar { width: 1.4rem; height: 1.4rem; font-size: 0.72rem; box-shadow: 0 0 0 2px var(--card-bg); }
+.rc-household-faces .nav-avatar + .nav-avatar { margin-left: -0.35rem; }
+.rc-household-sheet .rc-meta { margin: 0.2rem 0 0.9rem; }
+.rc-household-sheet .hh-section:last-child { margin-bottom: 0; }
+.rc-household-sheet .hh-section { flex-shrink: 0; }

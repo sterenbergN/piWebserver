@@ -1,0 +1,20 @@
+/* The household panel, on the chores page and the recipes page's sharing sheet. */
+.hh-section { padding: 1rem; margin-bottom: 1rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+/* "section" outranks the margin resets of the pages this sits on. */
+section.hh-section h3 { font-size: 1rem; margin: 0 0 0.75rem; }
+.hh-section .hh-hint { color: var(--muted); font-size: 0.88rem; line-height: 1.5; margin: 0.4rem 0 0.8rem; }
+.hh-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.hh-members li { display: flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.8rem 0.3rem 0.3rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); font-weight: 600; }
+.hh-leave { display: block; margin-top: 0.9rem; padding: 0; background: none; border: none; color: var(--danger); font: inherit; font-size: 0.8rem; cursor: pointer; text-align: left; }
+.hh-leave:hover { text-decoration: underline; }
+.hh-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2rem; font-weight: 800; letter-spacing: 0.3em; padding: 0.4rem 0 0.2rem; }
+.hh-code-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.hh-btn { border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); border-radius: 999px; padding: 0.35rem 0.85rem; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.hh-btn:hover { background: var(--surface-hover); }
+.hh-btn.is-primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.hh-join { display: flex; gap: 0.5rem; }
+.hh-join input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.2em; text-transform: uppercase; }
+
+@media (max-width: 520px) {
+  .hh-code { font-size: 1.6rem; }
+}

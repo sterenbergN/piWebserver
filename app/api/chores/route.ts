@@ -2,10 +2,9 @@ import { NextResponse } from 'next/server';
 import { readJson, updateJson } from '@/lib/json-store';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { generateId } from '@/lib/workout/data';
-import { loadUsersData } from '@/lib/workout/users';
 import { addDays, isDateKey } from '@/lib/habits/dates';
 import { applyChoreAction, ChoreInputError, emptyChoresData, normalizeChoresData, type ChoreAction, type ChoresData } from '@/lib/chores/chores';
-import { choresFile, householdFor, type Household } from '@/lib/chores/households';
+import { choresFile, describeHousehold, householdFor } from '@/lib/chores/households';
 
 // Chores for the signed-in account's household (see lib/chores/households.ts).
 // Signed-out visitors get a 401 and keep their chores on the device.
@@ -15,23 +14,13 @@ function userToday(value: unknown) {
   return isDateKey(value) && value >= addDays(serverDay, -1) && value <= addDays(serverDay, 1) ? value : serverDay;
 }
 
-/** Who's in the household, by name, for "done by" and the scoreboard. */
-async function describe(household: Household, me: string) {
-  const users = (await loadUsersData()).users;
-  return {
-    me,
-    invite: household.invite,
-    members: household.members.map((id) => ({ id, name: String(users.find((u) => u.id === id)?.username || 'Someone') })),
-  };
-}
-
 export async function GET(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const today = userToday(new URL(request.url).searchParams.get('today'));
     const household = await householdFor(userId);
     const data = normalizeChoresData(await readJson(choresFile(household.id), emptyChoresData()), today);
-    return NextResponse.json({ success: true, data, household: await describe(household, userId) }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ success: true, data, household: await describeHousehold(household, userId) }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Load chores failed');
   }

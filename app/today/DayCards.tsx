@@ -168,7 +168,7 @@ export function KitchenCard({ today }: { today: DateKey }) {
       {prep.length > 0 && <p className="hb-hint">Meal prep to cook this week: {prep.map((p) => p.recipe.title).join(', ')}</p>}
 
       <form className="td-add" onSubmit={add}>
-        <input aria-label="Add to the grocery list" placeholder="Add to the grocery list…" maxLength={120} value={newItem} onChange={(e) => setNewItem(e.target.value)} enterKeyHint="done" />
+        <input aria-label="Add to the grocery list" placeholder={(kitchen.household?.members.length ?? 0) > 1 ? 'Add to the shared grocery list…' : 'Add to the grocery list…'} maxLength={120} value={newItem} onChange={(e) => setNewItem(e.target.value)} enterKeyHint="done" />
         <button type="submit" className="btn btn-secondary" disabled={!newItem.trim()}>Add</button>
       </form>
       <div className="td-links">
