@@ -6,12 +6,13 @@ import AccountMenu, { type NavUser } from './AccountMenu';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
-import { allPlaces, atPlace, isCurrentItem, navGroups, sectionOf, type NavItem } from './nav-links';
+import { allPlaces, atPlace, isCurrentItem, navGroups, placesFor, sectionOf, type NavItem } from './nav-links';
 import { markFound, rememberPage, useNavPins } from './useNavPins';
 
 // Loaded when first opened: it brings the recipe and habit code along for its counts.
 const loadLauncher = () => import('./Launcher');
 const Launcher = dynamic(loadLauncher, { ssr: false });
+const Confetti = dynamic(() => import('./habits/Confetti'), { ssr: false });
 
 // The URL's #hash, which picks the open tool on /tools.
 const subscribeHash = (onChange: () => void) => {
@@ -35,9 +36,11 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const { pins, togglePin } = useNavPins(!!user);
   const [launcher, setLauncher] = useState(false);
   const barRef = useRef<HTMLElement>(null);
+  const [discovery, setDiscovery] = useState<{ text: string; everywhere: boolean } | null>(null);
 
   const groups = navGroups(isAdmin);
   const section = sectionOf(pathname);
+  const signedIn = isAdmin || !!user;
   const allItems = groups.flatMap((g) => g.items);
   const places = allPlaces(groups);
   const itemIsCurrent = (item: NavItem) => (allItems.includes(item) ? isCurrentItem(item, section, hash, allItems, search) : atPlace(item, section, hash, search));
@@ -48,7 +51,21 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const showDock = !NO_DOCK.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   useEffect(() => { if (here) rememberPage(here.href); }, [here]);
-  useEffect(() => { if (foundHere) markFound(foundHere.split(' ')); }, [foundHere]);
+
+  // Reaching somewhere new gets a small nod, except on the first page anyone sees or in the middle of something.
+  useEffect(() => {
+    if (!foundHere) return;
+    const { fresh, all, firstVisit } = markFound(foundHere.split(' '));
+    if (!fresh.length || firstVisit || NO_BAR.some((p) => window.location.pathname.startsWith(p))) return;
+    const goals = placesFor(navGroups(isAdmin), signedIn);
+    const count = goals.filter((p) => all.includes(p.href)).length;
+    const newest = goals.find((p) => p.href === fresh[fresh.length - 1]);
+    if (!newest) return;
+    const everywhere = count === goals.length;
+    setDiscovery({ everywhere, text: everywhere ? '🏆 You’ve been everywhere on the site!' : `🧭 New place found: ${newest.label} · ${count} of ${goals.length}` });
+    const handle = window.setTimeout(() => setDiscovery(null), everywhere ? 6000 : 3200);
+    return () => window.clearTimeout(handle);
+  }, [foundHere, isAdmin, signedIn]);
 
   // "/" or Ctrl+K opens the panel from anywhere.
   useEffect(() => {
@@ -137,6 +154,9 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
           </button>
         </nav>
       )}
+
+      {discovery && <div className="nav-discovery" role="status">{discovery.text}</div>}
+      {discovery?.everywhere && <Confetti fire={1} />}
 
       {launcher && (
         <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} theme={theme}

@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { addGroceryItem } from '@/lib/recipes/grocery-client';
 import { allPlaces, matchNavItems, orderRooms, type NavGroup } from './nav-links';
-import { loadNavBadges, type NavBadges } from './nav-badges';
+import { loadNavInfo, type NavInfo } from './nav-badges';
 import { Door, ExploreMeter, RoomGrid, type RoomContext } from './Rooms';
 import { useFoundPlaces, useRecentPages } from './useNavPins';
 import './launcher.css';
@@ -41,7 +41,8 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
-  const [badges, setBadges] = useState<NavBadges>({});
+  const [info, setInfo] = useState<NavInfo | undefined>();
+  const [editing, setEditing] = useState(false);
   const [flash, setFlash] = useState<{ text: string; ok: boolean } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,7 +56,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
   const pinnedItems = signedIn ? pins.flatMap((href) => byHref(href) ?? []) : [];
   const recentItems = recent.flatMap((href) => (href !== current && !pinnedItems.some((p) => p.href === href) ? byHref(href) ?? [] : [])).slice(0, 4);
   const shortcuts = [...pinnedItems, ...recentItems];
-  const ctx: RoomContext = { signedIn, found, badges, pins, togglePin, current, onFollow, onLeave: onClose };
+  const ctx: RoomContext = { signedIn, found, info, pins, togglePin, editing, current, onFollow, onLeave: onClose };
   const pageHits = useMemo(() => matchNavItems(items, q), [items, q]);
   const pageUrls = new Set(pageHits.map((i) => i.href));
   const contentHits = hits.filter((h) => !pageUrls.has(h.url));
@@ -64,7 +65,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
 
   useEffect(() => {
     let cancelled = false;
-    loadNavBadges().then((b) => { if (!cancelled) setBadges(b); }).catch(() => { /* no counts, still works */ });
+    loadNavInfo().then((i) => { if (!cancelled) setInfo(i); }).catch(() => { /* no counts, still works */ });
     inputRef.current?.focus();
     const { overflow } = document.body.style;
     document.body.style.overflow = 'hidden';
@@ -91,9 +92,10 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
     inputRef.current?.focus();
   };
 
-  // Arrow keys walk the links in order; Tab stays inside the dialog.
+  // Left and right walk the icons in order, up and down go to the nearest one that
+  // way; Tab stays inside the dialog.
   const move = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key === 'Escape') { if (editing) setEditing(false); else onClose(); return; }
     const all = [...(panelRef.current?.querySelectorAll<HTMLElement>('[data-lc]') ?? [])];
     if (e.key === 'Tab') {
       const focusable = [...(panelRef.current?.querySelectorAll<HTMLElement>('a, button, input') ?? [])];
@@ -110,6 +112,19 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
     const forward = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     if (inInput) { if (forward) all[0]?.focus(); return; }
     const at = all.indexOf(document.activeElement as HTMLElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const from = all[at]?.getBoundingClientRect();
+      if (!from) return;
+      const dir = forward ? 1 : -1;
+      const ahead = all.flatMap((el) => {
+        const r = el.getBoundingClientRect();
+        const down = (r.top - from.top) * dir;
+        return down > 8 ? [{ el, score: down + Math.abs(r.left - from.left) * 2 }] : [];
+      }).sort((a, b) => a.score - b.score);
+      if (ahead[0]) ahead[0].el.focus();
+      else if (!forward) inputRef.current?.focus();
+      return;
+    }
     const next = at + (forward ? 1 : -1);
     if (next < 0) inputRef.current?.focus();
     else all[next]?.focus();
@@ -203,7 +218,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
                   {shortcuts.map((item) => (
                     <Link data-lc key={item.href} href={item.href} onClick={onFollow(item.href)}>
                       <span aria-hidden>{item.icon}</span>{item.label}
-                      {badges[item.href] && <span className="rm-badge">{badges[item.href]}</span>}
+                      {info?.badges[item.href] && <span className="rm-badge">{info.badges[item.href]}</span>}
                     </Link>
                   ))}
                 </section>
@@ -216,7 +231,8 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
         <footer className="lc-foot">
           <button type="button" onClick={onToggleTheme}>{theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}</button>
           {!signedIn && <button type="button" onClick={() => { onClose(); window.dispatchEvent(new Event('site:sign-in')); }}>👤 Sign in</button>}
-          <span className="lc-keys" aria-hidden><kbd>↑</kbd> <kbd>↓</kbd> to move · <kbd>Enter</kbd> to open · ☆ to pin</span>
+          <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
+          <span className="lc-keys" aria-hidden>{editing ? 'Tap a star to keep it in your header and dock' : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> to move · <kbd>Enter</kbd> to open</>}</span>
         </footer>
       </div>
     </div>,

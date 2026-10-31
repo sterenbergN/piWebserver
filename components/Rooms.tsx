@@ -2,22 +2,27 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { AttractId } from '@/lib/games/attract';
 import { navGroups, orderRooms, pickSurprise, placesFor, type NavGroup, type NavItem } from './nav-links';
-import type { NavBadges } from './nav-badges';
+import type { NavInfo } from './nav-badges';
 import { useFoundPlaces } from './useNavPins';
 import './rooms.css';
 
-// The site as a map of rooms, each named for what you'd be there to do, with every
-// page and corner in it on show. The Explore panel and the home page both draw it.
+// The site as a map of rooms, each named for what you'd be there to do and laid
+// out like folders on a phone: everything on show, one tap away, with its name
+// under it and more about it when you point at it. The Explore panel and the home
+// page both draw it.
 
 export type RoomContext = {
   signedIn: boolean;
   found: Set<string> | null;
-  badges?: NavBadges;
+  info?: NavInfo;
   /** Your pins, in the panel: the home page leaves pinning out. */
   pins?: string[];
   togglePin?: (href: string) => void;
+  /** Choosing shortcuts: tapping an icon pins it instead of opening it. */
+  editing?: boolean;
   current?: string;
   onFollow?: (href: string) => (e: React.MouseEvent) => void;
   /** Called when something in a room takes you to another page. */
@@ -26,8 +31,6 @@ export type RoomContext = {
   blurbs?: Record<string, string>;
 };
 
-const NewDot = () => <i className="rm-new" aria-hidden title="You haven’t been here yet" />;
-
 const PinStar = ({ on }: { on: boolean }) => (
   <svg viewBox="0 0 24 24" width="15" height="15" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden>
     <path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2-5.5-2.9-5.5 2.9 1-6.2L3 9.6l6.2-.9z" />
@@ -35,19 +38,19 @@ const PinStar = ({ on }: { on: boolean }) => (
 );
 
 const isLocked = (item: NavItem, ctx: RoomContext) => !!item.account && !ctx.signedIn;
-const isNew = (item: NavItem, ctx: RoomContext) => !!ctx.found && !isLocked(item, ctx) && !ctx.found.has(item.href);
+const blurbOf = (item: NavItem, ctx: RoomContext) => ctx.blurbs?.[item.href] ?? item.blurb;
 
-/** A page: its icon, name and line, what's waiting there, and a star to pin it. */
+/** A page as a row with its line of text, for search results. */
 export function Door({ item, ctx }: { item: NavItem; ctx: RoomContext }) {
   const pinned = !!ctx.pins?.includes(item.href);
-  const badge = ctx.badges?.[item.href];
+  const badge = ctx.info?.badges[item.href];
   return (
     <li className="rm-door">
       <Link data-lc href={item.href} onClick={ctx.onFollow?.(item.href)} aria-current={item.href === ctx.current ? 'page' : undefined}>
         <span className="rm-door-icon" aria-hidden>{item.icon}</span>
         <span className="rm-door-text">
-          <strong>{item.label}{isNew(item, ctx) && <NewDot />}</strong>
-          <small>{ctx.blurbs?.[item.href] ?? item.blurb}</small>
+          <strong>{item.label}</strong>
+          <small>{blurbOf(item, ctx)}</small>
         </span>
         {isLocked(item, ctx)
           ? <span className="rm-lock" title="Needs an account">🔒<span className="rm-sr"> Needs an account</span></span>
@@ -61,6 +64,95 @@ export function Door({ item, ctx }: { item: NavItem; ctx: RoomContext }) {
       )}
     </li>
   );
+}
+
+/** A place in a room: an icon with its name under it. */
+function Icon({ item, ctx, small, onPeek }: { item: NavItem; ctx: RoomContext; small?: boolean; onPeek: (item: NavItem | null) => void }) {
+  const locked = isLocked(item, ctx);
+  const pinned = !!ctx.pins?.includes(item.href);
+  const badge = ctx.info?.badges[item.href];
+  const face = (
+    <>
+      <span className="rm-tile" aria-hidden>
+        {item.icon}
+        {ctx.editing
+          ? <span className={`rm-tile-star${pinned ? ' is-on' : ''}`}><PinStar on={pinned} /></span>
+          : locked ? <span className="rm-tile-lock">🔒</span> : badge && <span className="rm-tile-badge">{badge}</span>}
+      </span>
+      <span className="rm-label">{item.label}</span>
+      <span className="rm-sr">{`${blurbOf(item, ctx) ?? ''}${locked ? '. Needs an account.' : ''}${badge ? `. ${badge}.` : ''}`}</span>
+    </>
+  );
+  const peek = { onPointerEnter: () => onPeek(item), onPointerLeave: () => onPeek(null), onFocus: () => onPeek(item), onBlur: () => onPeek(null) };
+  return (
+    <li className={`rm-icon${small ? ' is-small' : ''}${locked ? ' is-locked' : ''}`}>
+      {ctx.editing ? (
+        <button type="button" data-lc aria-pressed={pinned} onClick={() => ctx.togglePin?.(item.href)} {...peek}>{face}</button>
+      ) : (
+        <Link data-lc href={item.href} onClick={ctx.onFollow?.(item.href)} aria-current={item.href === ctx.current ? 'page' : undefined} {...peek}>{face}</Link>
+      )}
+    </li>
+  );
+}
+
+const DEMOS: AttractId[] = ['party', 'snake', 'breakout', 'flap', 'chain', 'blocks', 'merge', '2048', 'setpoint'];
+
+/** The game a place would show: its own, or the party for anything party. */
+function demoFor(item: NavItem | null): AttractId | null {
+  const game = item?.href.match(/^\/game\?game=([\w-]+)/)?.[1];
+  if (game) return game as AttractId;
+  return item?.href.startsWith('/party') ? 'party' : null;
+}
+
+/** The arcade's demos on a loop in the room, switching to whichever game you point at. */
+function GameStage({ peek }: { peek: NavItem | null }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [turn, setTurn] = useState(0);
+  const showing = demoFor(peek) ?? DEMOS[turn % DEMOS.length];
+  const shown = useRef(showing);
+  useEffect(() => { shown.current = showing; }, [showing]);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    let last = 0;
+    let visible = true;
+    let stopped = false;
+    let w = 0;
+    let h = 0;
+    const size = () => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      w = canvas.clientWidth;
+      h = canvas.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    const resize = new ResizeObserver(size);
+    resize.observe(canvas);
+    const seen = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; });
+    seen.observe(canvas);
+    const cycle = still ? 0 : window.setInterval(() => { if (visible && !document.hidden) setTurn((n) => n + 1); }, 4200);
+    // Loaded here so the games' drawing code only comes with the room that shows it.
+    void import('@/lib/games/attract').then(({ drawAttract }) => {
+      if (stopped) return;
+      size();
+      const tick = (now: number) => {
+        raf = requestAnimationFrame(tick);
+        if (!visible || document.hidden || now - last < 1000 / 24 || !w || !h) return;
+        last = now;
+        drawAttract(shown.current, ctx, now / 1000, w, h);
+      };
+      if (still) drawAttract(shown.current, ctx, 3.2, w, h);
+      else raf = requestAnimationFrame(tick);
+    });
+    return () => { stopped = true; cancelAnimationFrame(raf); clearInterval(cycle); resize.disconnect(); seen.disconnect(); };
+  }, []);
+
+  return <canvas ref={ref} className="rm-stage" aria-hidden />;
 }
 
 /** A room code gets you straight to choosing a nickname. */
@@ -102,52 +194,58 @@ function GroceryAdd() {
 }
 
 function Room({ room, ctx }: { room: NavGroup; ctx: RoomContext }) {
+  const [peek, setPeek] = useState<NavItem | null>(null);
   const corners = room.corners ?? [];
+  const places = [...room.items, ...corners.flatMap((c) => c.items)].filter((p) => !isLocked(p, ctx));
+  const found = places.filter((p) => ctx.found?.has(p.href)).length;
+  const status = ctx.info?.status[room.id];
+  const peekLine = peek ? blurbOf(peek, ctx) : null;
+
   return (
     <section data-room={room.id} className={`rm-room${room.wide ? ' is-wide' : ''}`} style={{ '--room': room.color } as React.CSSProperties} aria-label={room.label}>
       <header className="rm-head">
         <span className="rm-emoji" aria-hidden>{room.icon}</span>
-        <div>
+        <div className="rm-title">
           <h3>{room.label}</h3>
-          <p>{room.question}</p>
+          {/* What you're pointing at, or the question the room answers. */}
+          <p aria-hidden={!!peek}>{peek ? <><b>{peek.label}</b>{peekLine ? ` · ${peekLine}` : ''}</> : room.question}</p>
         </div>
+        {ctx.found && places.length > 0 && (
+          found === places.length
+            ? <span className="rm-stamp" title="You’ve been everywhere in this room">🏅</span>
+            : <span className="rm-count" title="Places you’ve found in this room">{found}/{places.length}</span>
+        )}
       </header>
+      {status && <p className="rm-status">{status}</p>}
       <div className="rm-body">
-        <div className="rm-main">
-          {room.action === 'party-join' && <PartyJoin onLeave={ctx.onLeave} />}
-          <ul className="rm-doors">{room.items.map((item) => <Door key={item.href} item={item} ctx={ctx} />)}</ul>
-          {room.action === 'grocery-add' && <GroceryAdd />}
-        </div>
-        {corners.length > 0 && (
-          <div className="rm-corners">
-            {corners.map((corner) => (
-              <div key={corner.label}>
-                <h4>{corner.label}</h4>
-                <ul>
-                  {corner.items.map((item) => (
-                    <li key={item.href}>
-                      <Link data-lc href={item.href} title={item.blurb} className={isLocked(item, ctx) ? 'is-locked' : ''} onClick={ctx.onFollow?.(item.href)}>
-                        <span aria-hidden>{item.icon}</span>{item.label}{isNew(item, ctx) && <NewDot />}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+        {room.action === 'party-join' && (
+          <div className="rm-side">
+            <GameStage peek={peek} />
+            <PartyJoin onLeave={ctx.onLeave} />
           </div>
         )}
+        <div className="rm-main">
+          <ul className="rm-icons">{room.items.map((item) => <Icon key={item.href} item={item} ctx={ctx} onPeek={setPeek} />)}</ul>
+          {corners.map((corner) => (
+            <div key={corner.label} className="rm-corner">
+              <h4>{corner.label}</h4>
+              <ul className="rm-icons is-small">{corner.items.map((item) => <Icon key={item.href} item={item} ctx={ctx} small onPeek={setPeek} />)}</ul>
+            </div>
+          ))}
+          {room.action === 'grocery-add' && <GroceryAdd />}
+        </div>
       </div>
     </section>
   );
 }
 
 /** The things no menu can show you. */
-function GettingAround({ signedIn }: { signedIn: boolean }) {
+function GettingAround({ ctx }: { ctx: RoomContext }) {
   return (
     <section className="rm-room rm-tips" aria-label="Getting around">
       <header className="rm-head">
         <span className="rm-emoji" aria-hidden>🗺️</span>
-        <div>
+        <div className="rm-title">
           <h3>Getting around</h3>
           <p>A few things worth knowing.</p>
         </div>
@@ -155,11 +253,11 @@ function GettingAround({ signedIn }: { signedIn: boolean }) {
       <ul>
         <li className="rm-tip-keys">Press <kbd>/</kbd> on any page to open this and search everything.</li>
         <li>Type <b>add milk</b> in the search to put it on the grocery list.</li>
-        <li>Hover or tap ☆ on a page to keep it in your header and dock.</li>
-        <li><i className="rm-new" aria-hidden /> marks somewhere you haven’t been yet.</li>
-        {!signedIn && (
+        {ctx.togglePin && <li><b>Choose shortcuts</b>, down below, puts your favourites in your header and dock.</li>}
+        <li>🧭 Every new place you find counts. Try to find them all.</li>
+        {!ctx.signedIn && (
           <li>
-            🔒 pages need an account, which keeps your streaks and lifts with you.{' '}
+            🔒 places need an account, which keeps your streaks and lifts with you.{' '}
             <button type="button" onClick={() => window.dispatchEvent(new Event('site:sign-in'))}>Sign in</button>
           </li>
         )}
@@ -170,9 +268,9 @@ function GettingAround({ signedIn }: { signedIn: boolean }) {
 
 export function RoomGrid({ groups, ctx }: { groups: NavGroup[]; ctx: RoomContext }) {
   return (
-    <div className="rm-grid">
+    <div className={`rm-grid${ctx.editing ? ' is-editing' : ''}`}>
       {orderRooms(groups, ctx.signedIn).map((room) => <Room key={room.id} room={room} ctx={ctx} />)}
-      <GettingAround signedIn={ctx.signedIn} />
+      <GettingAround ctx={ctx} />
     </div>
   );
 }
@@ -217,17 +315,17 @@ export function ExploreMeter({ groups, ctx }: { groups: NavGroup[]; ctx: RoomCon
 /** The rooms on the home page, where someone new to the site starts looking around. */
 export function HomeRooms({ isAdmin, signedIn, blurbs }: { isAdmin: boolean; signedIn: boolean; blurbs?: Record<string, string> }) {
   const found = useFoundPlaces();
-  const [badges, setBadges] = useState<NavBadges>({});
+  const [info, setInfo] = useState<NavInfo | undefined>();
   const groups = navGroups(isAdmin);
 
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
-    import('./nav-badges').then((m) => m.loadNavBadges()).then((b) => { if (!cancelled) setBadges(b); }).catch(() => { /* no counts, still works */ });
+    import('./nav-badges').then((m) => m.loadNavInfo()).then((i) => { if (!cancelled) setInfo(i); }).catch(() => { /* no counts, still works */ });
     return () => { cancelled = true; };
   }, [signedIn]);
 
-  const ctx: RoomContext = { signedIn, found, badges, blurbs };
+  const ctx: RoomContext = { signedIn, found, info, blurbs };
   return (
     <section id="explore" className="rm-home" aria-label="Explore the site">
       <div className="rm-home-head">

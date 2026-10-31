@@ -51,6 +51,7 @@
 .lc-foot { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.8rem; border-top: 1px solid var(--surface-border); font-size: 0.78rem; color: var(--muted); }
 .lc-foot button { padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font-size: 0.78rem; cursor: pointer; }
 .lc-foot button:hover { background: var(--surface-hover); }
+.lc-foot button.is-on { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); font-weight: 700; }
 .lc-keys { margin-left: auto; }
 .lc-keys kbd { padding: 0 0.3rem; border-radius: 4px; border: 1px solid var(--surface-border); font: inherit; font-size: 0.7rem; }
 

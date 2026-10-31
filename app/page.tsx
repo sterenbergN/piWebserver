@@ -40,6 +40,7 @@ export default async function Home() {
   ]);
   const latestPosts = [...posts].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   const photoCount = countPhotos(albums);
+  const signedIn = isAdmin || !!userId;
 
   // What's really there, in place of a general description.
   const blurbs = {
@@ -66,11 +67,10 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Daily and Fitness, the parts used every day */}
-      <HomeWidgets />
-
-      {/* Everything on the site, by what you'd come here for */}
-      <HomeRooms isAdmin={isAdmin} signedIn={isAdmin || !!userId} blurbs={blurbs} />
+      {/* Your day and workouts, then everything on the site by what you'd come here for. A visitor gets the map first. */}
+      {signedIn && <HomeWidgets />}
+      <HomeRooms isAdmin={isAdmin} signedIn={signedIn} blurbs={blurbs} />
+      {!signedIn && <HomeWidgets />}
 
       {/* Now: what I'm up to lately (edited in the resume editor) */}
       {profile.now?.length > 0 && (

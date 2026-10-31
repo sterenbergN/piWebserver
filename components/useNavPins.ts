@@ -58,11 +58,13 @@ export function useFoundPlaces(): Set<string> | null {
   return useMemo(() => (raw === null ? null : new Set(parse(raw) ?? [])), [raw]);
 }
 
-/** Tick places off as you reach them. */
+/** Tick places off as you reach them. Says which were new, and whether you'd found anything before. */
 export function markFound(hrefs: string[]) {
-  const current = parse(read(FOUND_KEY)) ?? parse(read(RECENT_KEY)) ?? [];
+  const saved = read(FOUND_KEY) ?? read(RECENT_KEY);
+  const current = parse(saved) ?? [];
   const fresh = hrefs.filter((h) => !current.includes(h));
   if (fresh.length) write(FOUND_KEY, [...current, ...fresh]);
+  return { fresh, all: [...current, ...fresh], firstVisit: current.length === 0 };
 }
 
 /** Note a page as just visited (newest first). */

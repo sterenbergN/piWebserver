@@ -5,11 +5,12 @@ import { dueStatus } from '@/lib/chores/stats';
 import { localToday } from '@/lib/habits/dates';
 import { isActive, normalizeHabitsData, type HabitsData } from '@/lib/habits/habits';
 import { isDueOn, isWeekly } from '@/lib/habits/stats';
-import { currentWeek, groceriesLeft } from '@/lib/recipes/kitchen';
+import { currentWeek, groceriesLeft, mealsToday } from '@/lib/recipes/kitchen';
 import { readLocalKitchen } from '@/lib/recipes/grocery-client';
+import { formatRelativeDay } from '@/lib/workout/session-insights';
 
-// What's waiting on each page, for the launcher: href → short label. Each count
-// is on its own, so one failing just leaves its page without a badge.
+// What's waiting on each page, and what's going on in each room, for the rooms.
+// Each is on its own, so one failing just leaves its place without a label.
 
 export type NavBadges = Record<string, string>;
 
@@ -46,28 +47,55 @@ async function journalOpen(today: string) {
   return Boolean(body?.success && !body.entry);
 }
 
-async function groceries(today: string) {
+async function kitchenNow(today: string) {
   const [recipes, synced] = await Promise.all([json('/api/recipes'), json('/api/recipes/kitchen')]);
-  if (!Array.isArray(recipes?.recipes)) return 0;
-  return groceriesLeft(recipes.recipes, synced?.kitchen ?? readLocalKitchen(), currentWeek(today));
+  if (!Array.isArray(recipes?.recipes)) return { left: 0, tonight: '' };
+  const kitchen = synced?.kitchen ?? readLocalKitchen();
+  const tonight = mealsToday(recipes.recipes, kitchen, today).tonight.find((m) => !m.entry.cooked);
+  return { left: groceriesLeft(recipes.recipes, kitchen, currentWeek(today)), tonight: tonight?.recipe.title ?? '' };
 }
 
-let cache: { at: number; badges: Promise<NavBadges> } | null = null;
+async function lastLift() {
+  const body = await json('/api/workout/history');
+  const history: { timestamp?: string }[] = Array.isArray(body?.history) ? body.history : [];
+  const last = [...history].sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))[0];
+  return last?.timestamp ? formatRelativeDay(last.timestamp) : '';
+}
 
-export function loadNavBadges(): Promise<NavBadges> {
-  if (cache && Date.now() - cache.at < 60_000) return cache.badges;
+async function piTemperature() {
+  const body = await json('/api/stats');
+  const temp = body?.data?.temp;
+  return typeof temp === 'string' && temp !== 'N/A' && temp !== 'Unknown' ? temp : '';
+}
+
+/** Counts by page, and a line on what's going on in each room right now. */
+export type NavInfo = { badges: NavBadges; status: Record<string, string> };
+
+let cache: { at: number; info: Promise<NavInfo> } | null = null;
+
+export function loadNavInfo(): Promise<NavInfo> {
+  if (cache && Date.now() - cache.at < 60_000) return cache.info;
   const today = localToday();
   const count = (n: number) => (n > 0 ? String(n) : '');
-  const badges = (async (): Promise<NavBadges> => {
-    const [habits, chores, question, journal, list] = await Promise.all([
+  const info = (async (): Promise<NavInfo> => {
+    const [habits, chores, question, journal, kitchen, lifted, temp] = await Promise.all([
       habitsLeft(today).catch(() => 0), choresDue(today).catch(() => 0), questionOpen(today).catch(() => false),
-      journalOpen(today).catch(() => false), groceries(today).catch(() => 0),
+      journalOpen(today).catch(() => false), kitchenNow(today).catch(() => ({ left: 0, tonight: '' })), lastLift().catch(() => ''), piTemperature().catch(() => ''),
     ]);
+    const toDo = habits + chores + (question ? 1 : 0) + (journal ? 1 : 0);
     return {
-      '/habits': count(habits), '/chores': count(chores), '/daily': question ? 'New' : '',
-      '/journal': journal ? 'Write' : '', '/recipes?view=list': count(list),
+      badges: {
+        '/habits': count(habits), '/chores': count(chores), '/daily': question ? 'New' : '',
+        '/journal': journal ? 'Write' : '', '/recipes?view=list': count(kitchen.left),
+      },
+      status: {
+        day: toDo ? `${toDo} thing${toDo === 1 ? '' : 's'} to do today` : '',
+        kitchen: kitchen.tonight ? `🍽️ Tonight: ${kitchen.tonight}` : kitchen.left ? `🛒 ${kitchen.left} to buy` : '',
+        gym: lifted ? `Last lift: ${lifted}` : '',
+        workshop: temp ? `🟢 The Pi is up, at ${temp}` : '',
+      },
     };
   })();
-  cache = { at: Date.now(), badges };
-  return badges;
+  cache = { at: Date.now(), info };
+  return info;
 }
