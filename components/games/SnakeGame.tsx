@@ -122,7 +122,7 @@ export default function SnakeGame() {
   return (
     <div className="animate-fade-in" style={{ padding: '1rem 0 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-         <h1 style={{ marginBottom: '0.5rem' }}>Terminal Protocol: Snake</h1>
+         <h1 style={{ marginBottom: '0.5rem' }}>🐍 Snake</h1>
          <p style={{ color: 'var(--accent-light)', fontSize: '1.25rem', margin: 0 }}>
            Score: {score} <span style={{ color: 'var(--muted)', fontSize: '0.95rem' }}>· Best: {Math.max(best, score)}</span>
          </p>

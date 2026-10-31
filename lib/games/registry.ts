@@ -17,19 +17,21 @@ export type GameInfo = {
   /** Classic arcade game, or one made for this site. */
   kind: 'classic' | 'original';
   blurb: string;
+  /** How you play, in a few words. */
+  controls: string;
   /** Whether `score` could come from a real game. */
   valid: (score: number) => boolean;
 };
 
 export const GAMES = [
-  { id: 'snake', emoji: '🐍', label: 'Snake', kind: 'classic', blurb: 'Eat, grow, don’t bite yourself.', valid: (s: number) => s <= SNAKE_MAX && s % POINTS_PER_FOOD === 0 },
-  { id: '2048', emoji: '🔢', label: '2048', kind: 'classic', blurb: 'Slide and merge tiles.', valid: (s: number) => s <= MAX_2048_SCORE && s % 2 === 0 },
-  { id: 'breakout', emoji: '🧱', label: 'Breakout', kind: 'classic', blurb: 'Bounce the ball, clear the wall.', valid: (s: number) => s <= MAX_BREAKOUT_SCORE && s % 10 === 0 },
-  { id: 'blocks', emoji: '🟪', label: 'Blocks', kind: 'classic', blurb: 'Falling blocks: fill lines to clear them.', valid: (s: number) => s <= MAX_BLOCKS_SCORE },
-  { id: 'flap', emoji: '🐤', label: 'Flap', kind: 'classic', blurb: 'Tap to flap through the gaps.', valid: (s: number) => s <= MAX_FLAP_SCORE },
-  { id: 'setpoint', emoji: '🎛️', label: 'Setpoint', kind: 'original', blurb: 'You’re the controller: hold the process in the band.', valid: (s: number) => s <= MAX_SETPOINT_SCORE },
-  { id: 'chain', emoji: '💥', label: 'Chain Reaction', kind: 'original', blurb: 'One tap. Set off the biggest chain you can.', valid: (s: number) => s <= MAX_CHAIN_SCORE && s % 10 === 0 },
-  { id: 'merge', emoji: '🔗', label: 'Merge Snake', kind: 'original', blurb: 'Snake meets 2048: eat numbers in the right order and your body merges.', valid: (s: number) => s <= MAX_MERGE_SCORE && s % 2 === 0 },
+  { id: 'snake', emoji: '🐍', label: 'Snake', kind: 'classic', blurb: 'Eat, grow, don’t bite yourself.', controls: 'Arrow keys or swipe', valid: (s: number) => s <= SNAKE_MAX && s % POINTS_PER_FOOD === 0 },
+  { id: '2048', emoji: '🔢', label: '2048', kind: 'classic', blurb: 'Slide and merge tiles.', controls: 'Arrow keys or swipe', valid: (s: number) => s <= MAX_2048_SCORE && s % 2 === 0 },
+  { id: 'breakout', emoji: '🧱', label: 'Breakout', kind: 'classic', blurb: 'Bounce the ball, clear the wall.', controls: 'Mouse or drag; tap to launch', valid: (s: number) => s <= MAX_BREAKOUT_SCORE && s % 10 === 0 },
+  { id: 'blocks', emoji: '🟪', label: 'Blocks', kind: 'classic', blurb: 'Falling blocks: fill lines to clear them.', controls: 'Arrow keys, or tap and drag', valid: (s: number) => s <= MAX_BLOCKS_SCORE },
+  { id: 'flap', emoji: '🐤', label: 'Flap', kind: 'classic', blurb: 'Tap to flap through the gaps.', controls: 'Tap or press Space', valid: (s: number) => s <= MAX_FLAP_SCORE },
+  { id: 'setpoint', emoji: '🎛️', label: 'Setpoint', kind: 'original', blurb: 'You’re the controller: hold the process in the band.', controls: 'Hold to drive up, let go to fall', valid: (s: number) => s <= MAX_SETPOINT_SCORE },
+  { id: 'chain', emoji: '💥', label: 'Chain Reaction', kind: 'original', blurb: 'One tap. Set off the biggest chain you can.', controls: 'One tap per level', valid: (s: number) => s <= MAX_CHAIN_SCORE && s % 10 === 0 },
+  { id: 'merge', emoji: '🔗', label: 'Merge Snake', kind: 'original', blurb: 'Snake meets 2048: eat numbers in the right order and your body merges.', controls: 'Arrow keys or the on-screen pad', valid: (s: number) => s <= MAX_MERGE_SCORE && s % 2 === 0 },
 ] as const satisfies readonly GameInfo[];
 
 export type GameId = (typeof GAMES)[number]['id'];

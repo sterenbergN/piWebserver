@@ -110,7 +110,7 @@ export default function Game2048() {
   return (
     <div className="animate-fade-in" style={{ padding: '1rem 0 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ marginBottom: '0.5rem' }}>2048</h1>
+        <h1 style={{ marginBottom: '0.5rem' }}>🔢 2048</h1>
         <p style={{ color: 'var(--accent-light)', fontSize: '1.25rem', margin: 0 }}>
           Score: {game.score} <span style={{ color: 'var(--muted)', fontSize: '0.95rem' }}>· Best: {Math.max(best, game.score)} · Top tile: {maxTile(game.board)}</span>
         </p>

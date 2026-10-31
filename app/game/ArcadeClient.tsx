@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useRef } from 'react';
+import ArcadeLobby from '@/components/games/ArcadeLobby';
 import SnakeGame from '@/components/games/SnakeGame';
 import Game2048 from '@/components/games/Game2048';
 import BreakoutGame from '@/components/games/BreakoutGame';
@@ -9,7 +11,7 @@ import FlapGame from '@/components/games/FlapGame';
 import SetpointGame from '@/components/games/SetpointGame';
 import ChainGame from '@/components/games/ChainGame';
 import MergeSnakeGame from '@/components/games/MergeSnakeGame';
-import { GAMES, gameInfo, isGameId, type GameId } from '@/lib/games/registry';
+import { GAMES, isGameId, type GameId } from '@/lib/games/registry';
 
 const COMPONENTS: Record<GameId, () => React.ReactElement> = {
   snake: SnakeGame,
@@ -22,79 +24,39 @@ const COMPONENTS: Record<GameId, () => React.ReactElement> = {
   merge: MergeSnakeGame,
 };
 
-const SHELVES = [
-  { kind: 'original', title: 'Made here', note: 'Games you won’t find anywhere else' },
-  { kind: 'classic', title: 'Classics', note: 'The old favourites' },
-] as const;
-
 /**
- * Arcade: the game being played, with a bar to switch to another. The game
- * comes from ?game=, or the last one played on this device.
+ * Arcade: ?game= is the game being played, with a strip to hop to another; no
+ * game is the lobby. Each is its own URL, so the back button returns to the lobby.
  */
 export default function ArcadeClient({ initialGame }: { initialGame?: string }) {
-  const fromUrl = isGameId(initialGame);
-  const [game, setGame] = useState<GameId>(fromUrl ? initialGame : 'snake');
+  if (!isGameId(initialGame)) return <ArcadeLobby />;
+  return <Playing game={initialGame} />;
+}
+
+function Playing({ game }: { game: GameId }) {
+  const strip = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (fromUrl) return;
-    let saved: string | null = null;
-    try { saved = localStorage.getItem('arcadeGame'); } catch { /* ignore */ }
-    if (isGameId(saved)) setGame(saved);
-  }, [fromUrl]);
-
-  // The game shelf, opened from the bar; Escape closes it.
-  const [picking, setPicking] = useState(false);
-  useEffect(() => {
-    if (!picking) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPicking(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [picking]);
-
-  const choose = (id: GameId) => {
-    setGame(id);
-    setPicking(false);
-    try { localStorage.setItem('arcadeGame', id); } catch { /* ignore */ }
-    const url = new URL(window.location.href);
-    url.searchParams.set('game', id);
-    window.history.replaceState(null, '', url);
-  };
+    try { localStorage.setItem('arcadeGame', game); } catch { /* ignore */ }
+    strip.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    // Game pads need the bottom of the phone screen, so the site's dock steps aside.
+    document.body.classList.add('arcade-playing');
+    return () => document.body.classList.remove('arcade-playing');
+  }, [game]);
 
   const Game = COMPONENTS[game];
-  const current = gameInfo(game);
   return (
     <div>
-      <div className="arcade-bar">
-        <span className="arcade-bar-emoji" aria-hidden>{current.emoji}</span>
-        <span className="arcade-bar-text">
-          <strong>{current.label}</strong>
-          <small>{current.blurb}</small>
-        </span>
-        <button type="button" className="btn btn-secondary arcade-bar-switch" aria-expanded={picking} aria-controls="arcade-shelf" onClick={() => setPicking((v) => !v)}>
-          {picking ? 'Close' : <>🎮 <span>All {GAMES.length} games</span></>}
-        </button>
-      </div>
-
-      {picking && (
-        <div id="arcade-shelf" className="arcade-shelf animate-fade-in">
-          {SHELVES.map((shelf) => (
-            <section key={shelf.kind} aria-label={shelf.title}>
-              <h2 className="arcade-shelf-title">{shelf.title} <small>{shelf.note}</small></h2>
-              <div className="arcade-cards">
-                {GAMES.filter((g) => g.kind === shelf.kind).map((g) => (
-                  <button key={g.id} type="button" className={`arcade-card${game === g.id ? ' is-active' : ''}`} aria-current={game === g.id} onClick={() => choose(g.id)}>
-                    <span className="arcade-card-emoji" aria-hidden>{g.emoji}</span>
-                    <strong>{g.label}</strong>
-                    <small>{g.blurb}</small>
-                    {game === g.id && <span className="arcade-card-tag">Playing</span>}
-                  </button>
-                ))}
-              </div>
-            </section>
+      <nav className="arc-playbar" aria-label="Arcade">
+        <Link href="/game" className="arc-playbar-back"><span aria-hidden>◀</span> Lobby</Link>
+        <div className="arc-playbar-strip" ref={strip}>
+          {GAMES.map((g) => (
+            <Link key={g.id} href={`/game?game=${g.id}`} aria-current={g.id === game ? 'page' : undefined} title={g.label}>
+              <span aria-hidden>{g.emoji}</span><span>{g.label}</span>
+            </Link>
           ))}
         </div>
-      )}
-
+      </nav>
       <Game key={game} />
     </div>
   );
