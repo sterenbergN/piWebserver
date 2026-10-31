@@ -12,6 +12,7 @@ import {
   extractIngredients,
   formatQuantity,
   parseStepKey,
+  recipeEmoji,
   type BomItem,
   type Recipe,
   type UnitMode,
@@ -280,11 +281,13 @@ export default function RecipeView({
               {recipe.private ? ' · Private' : ''}
             </p>
           </div>
-          {recipe.photo && (
-            <span className="rc-snapshot rc-snapshot-head">
+          <span className="rc-snapshot rc-snapshot-head" aria-hidden="true">
+            {recipe.photo ? (
               <img src={mediaSrc(recipe.photo, 400)} alt="" decoding="async" />
-            </span>
-          )}
+            ) : (
+              <span className="rc-snapshot-blank">{recipeEmoji(recipe)}</span>
+            )}
+          </span>
         </div>
         {recipe.summary && (
           <button

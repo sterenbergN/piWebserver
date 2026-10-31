@@ -8,6 +8,7 @@ import {
   RECIPE_CATEGORIES,
   buildSchedule,
   extractIngredients,
+  recipeEmoji,
   type Recipe,
   type RecipeCategory,
 } from '@/lib/recipes/recipes';
@@ -250,7 +251,7 @@ export default function RecipeList({
                 {recipe.photo ? (
                   <img src={mediaSrc(recipe.photo, 400)} alt="" loading="lazy" decoding="async" />
                 ) : (
-                  <span className="rc-snapshot-blank">{CATEGORY_LABELS[recipe.category]?.emoji}</span>
+                  <span className="rc-snapshot-blank">{recipeEmoji(recipe)}</span>
                 )}
               </span>
             </a>

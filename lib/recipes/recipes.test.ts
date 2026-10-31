@@ -4,6 +4,7 @@ import {
   DEFAULT_RECIPES,
   buildSchedule,
   canonicalIngredientKey,
+  cleanRecipeEmoji,
   cookOrder,
   extractIngredients,
   formatBomAmount,
@@ -15,6 +16,7 @@ import {
   normalizeRecipesData,
   parseQuantity,
   parseStepTokens,
+  recipeEmoji,
   smartAnnotateText,
   stepPlainText,
 } from './recipes';
@@ -221,6 +223,27 @@ test('normalizeRecipe maps readyBy onto kept steps and drops it when its step is
   assert.equal(recipe.sections.length, 3);
   assert.equal(recipe.sections[0].readyBy, '1:1');
   assert.equal(recipe.sections[2].readyBy, undefined);
+});
+
+test('a recipe keeps one chosen emoji, and falls back to its category', () => {
+  const base = { title: 'T', category: 'dessert', sections: [{ name: 'Main', steps: ['Cook [3 min].'] }] };
+  const chosen = normalizeRecipe({ ...base, emoji: '🍕' });
+  assert.equal(chosen.emoji, '🍕');
+  assert.equal(recipeEmoji(chosen), '🍕');
+
+  // Letters and scripts aren't emoji; a multi-part emoji stays whole; the newest one typed wins.
+  assert.equal(cleanRecipeEmoji('hi 123'), '');
+  assert.equal(cleanRecipeEmoji('<b>'), '');
+  assert.equal(cleanRecipeEmoji('🌶️'), '🌶️');
+  assert.equal(cleanRecipeEmoji('👩‍🍳'), '👩‍🍳');
+  assert.equal(cleanRecipeEmoji('🍕🍔'), '🍔');
+
+  // Left out keeps it (as when the stored file is reloaded); sent empty clears it.
+  assert.equal(normalizeRecipe(base, chosen).emoji, '🍕');
+  const cleared = normalizeRecipe({ ...base, emoji: '' }, chosen);
+  assert.equal(cleared.emoji, undefined);
+  assert.equal(recipeEmoji(cleared), '🍪');
+  assert.equal(normalizeRecipesData({ recipes: [chosen] }).recipes[0].emoji, '🍕');
 });
 
 test('normalizeRecipe only keeps uploaded photos, clears a null rating, and keeps the owner', () => {

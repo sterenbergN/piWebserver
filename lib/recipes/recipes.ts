@@ -57,6 +57,8 @@ export type Recipe = {
   equipment: string[];
   tags: string[];
   photo?: string;
+  /** Stands in for the photo when there isn't one. Unset: the category's emoji. */
+  emoji?: string;
   macros?: RecipeMacros;
   rating?: number;
   notes?: string;
@@ -971,6 +973,7 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
     Number(ratingInput) >= 1 && Number(ratingInput) <= 10 ? Math.round(Number(ratingInput) * 10) / 10 : undefined;
   const notes = typeof input?.notes === 'string' ? input.notes.trim().slice(0, 1000) : existing?.notes;
   const photo = isRecipePhotoSrc(input?.photo) ? input.photo : undefined;
+  const emoji = typeof input?.emoji === 'string' ? cleanRecipeEmoji(input.emoji) : existing?.emoji;
   const sourceUrl = typeof input?.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(input.sourceUrl.trim()) ? input.sourceUrl.trim().slice(0, 500) : undefined;
   const isPrivate = typeof input?.private === 'boolean' ? input.private : Boolean(existing?.private);
 
@@ -989,6 +992,7 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
     equipment,
     tags,
     ...(photo ? { photo } : {}),
+    ...(emoji ? { emoji } : {}),
     ...(Object.keys(macros).length ? { macros } : {}),
     ...(rating ? { rating } : {}),
     ...(notes ? { notes } : {}),
@@ -1009,6 +1013,17 @@ export const RECIPE_PHOTO_PREFIX = '/api/media/uploads/recipes/';
 /** Only photos uploaded through the recipe form are accepted on a recipe. */
 export function isRecipePhotoSrc(src: unknown): src is string {
   return typeof src === 'string' && src.startsWith(RECIPE_PHOTO_PREFIX) && /^[a-z0-9-]{8,64}\.webp$/.test(src.slice(RECIPE_PHOTO_PREFIX.length));
+}
+
+/** The one emoji in `input` (the last, so typing another replaces it), or '' if there isn't one. */
+export function cleanRecipeEmoji(input: string): string {
+  const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(input.slice(-64)), (g) => g.segment);
+  return graphemes.filter((g) => g.length <= 32 && /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(g)).pop() || '';
+}
+
+/** What to show for a recipe without a photo. */
+export function recipeEmoji(recipe: Pick<Recipe, 'emoji' | 'category'>): string {
+  return recipe.emoji || CATEGORY_LABELS[recipe.category]?.emoji || '🍽️';
 }
 
 /** A recipe as sent to the browser (without who created it). */

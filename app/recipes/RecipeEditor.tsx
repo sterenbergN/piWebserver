@@ -6,9 +6,11 @@ import {
   CATEGORY_LABELS,
   RECIPE_CATEGORIES,
   buildSchedule,
+  cleanRecipeEmoji,
   extractIngredients,
   formatBomAmount,
   parseStepKey,
+  recipeEmoji,
   smartAnnotateText,
   type Recipe,
   type RecipeCategory,
@@ -29,6 +31,7 @@ export type EditorDraft = {
   equipmentText: string;
   tagsText: string;
   photo: string;
+  emoji: string;
   calories: string;
   protein: string;
   carbs: string;
@@ -51,6 +54,7 @@ export function emptyDraft(): EditorDraft {
     equipmentText: '',
     tagsText: '',
     photo: '',
+    emoji: '',
     calories: '',
     protein: '',
     carbs: '',
@@ -98,6 +102,7 @@ export function recipeToDraft(r: Recipe): EditorDraft {
     equipmentText: r.equipment.join(', '),
     tagsText: r.tags.join(', '),
     photo: r.photo || '',
+    emoji: r.emoji || '',
     calories: r.macros?.calories !== undefined ? String(r.macros.calories) : '',
     protein: r.macros?.protein !== undefined ? String(r.macros.protein) : '',
     carbs: r.macros?.carbs !== undefined ? String(r.macros.carbs) : '',
@@ -129,6 +134,13 @@ function remapReadyBy(sections: RecipeSection[], removed: { section: number; ste
 
 const stepInputId = (sIdx: number, stIdx: number) => `rc-step-${sIdx}-${stIdx}`;
 
+const EMOJIS = [
+  '🍗', '🍖', '🥩', '🥓', '🍔', '🌭', '🍕', '🌮', '🌯', '🥙', '🥪', '🍝', '🍜', '🍲', '🍛', '🍚',
+  '🍣', '🍤', '🐟', '🥟', '🍱', '🍳', '🥞', '🧇', '🥯', '🥐', '🍞', '🥣', '🥗', '🥦', '🥕', '🌽',
+  '🍅', '🥑', '🍆', '🥔', '🍄', '🧄', '🧅', '🌶️', '🫘', '🧀', '🫙', '🍯', '🍎', '🍌', '🍓', '🍋',
+  '🍪', '🍰', '🧁', '🥧', '🍫', '🍩', '🍦', '🍮', '☕', '🍵', '🥤', '🍺', '🍷', '🍹',
+];
+
 const TOKENS = [
   { label: 'Ingredient', token: '[1 cup flour]' },
   { label: 'Timer', token: '[5 min]' },
@@ -152,6 +164,7 @@ export default function RecipeEditor({
   const [draft, setDraft] = useState<EditorDraft>(initial);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showEmojis, setShowEmojis] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState('');
 
@@ -191,6 +204,7 @@ export default function RecipeEditor({
             equipment: toList(draft.equipmentText),
             tags: toList(draft.tagsText),
             photo: draft.photo || undefined,
+            emoji: draft.emoji,
             macros: {
               calories: draft.calories ? Number(draft.calories) : undefined,
               protein: draft.protein !== '' ? Number(draft.protein) : undefined,
@@ -344,9 +358,13 @@ export default function RecipeEditor({
         </div>
 
         <div className="rc-field">
-          Photo
+          Photo or emoji
           <div className="rc-photo-row">
-            {draft.photo && <img src={mediaSrc(draft.photo, 400)} alt="" className="rc-row-photo" />}
+            {draft.photo ? (
+              <img src={mediaSrc(draft.photo, 400)} alt="" className="rc-row-photo" />
+            ) : (
+              <span className="rc-row-photo rc-row-emoji" aria-hidden="true">{recipeEmoji(draft)}</span>
+            )}
             <label className="rc-chip rc-file">
               {uploadingPhoto ? 'Uploading…' : draft.photo ? 'Replace' : 'Add a photo'}
               <input
@@ -360,12 +378,41 @@ export default function RecipeEditor({
                 }}
               />
             </label>
-            {draft.photo && (
+            {draft.photo ? (
               <button type="button" className="rc-text-btn" onClick={() => update('photo', '')}>
                 Remove
               </button>
+            ) : (
+              <button type="button" className={`rc-chip${showEmojis ? ' is-active' : ''}`} aria-expanded={showEmojis} onClick={() => setShowEmojis((v) => !v)}>
+                Pick an emoji
+              </button>
             )}
           </div>
+          {showEmojis && !draft.photo && (
+            <div className="rc-emoji-panel">
+              <div className="rc-emoji-grid" role="radiogroup" aria-label="Recipe emoji">
+                {EMOJIS.map((e) => (
+                  <button key={e} type="button" role="radio" aria-checked={draft.emoji === e} className="rc-emoji-pick" onClick={() => update('emoji', e)}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+              <div className="rc-emoji-more">
+                <input
+                  className="rc-input"
+                  aria-label="Or type any emoji"
+                  placeholder="Or type any emoji"
+                  value={draft.emoji}
+                  onChange={(e) => update('emoji', cleanRecipeEmoji(e.target.value))}
+                />
+                {draft.emoji && (
+                  <button type="button" className="rc-text-btn" onClick={() => update('emoji', '')}>
+                    Match the category
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rc-form-block">
