@@ -7,6 +7,7 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { fmtDay, pct } from '@/components/study/TestRow';
 import { addDays, localToday } from '@/lib/habits/dates';
+import type { MapResponse } from '@/components/study/MapTypes';
 import { todaySteps, type StudySummary, type TestSummary } from '@/lib/study/study';
 
 // PA Today: the front page of her own corner of the site. What's waiting today,
@@ -71,11 +72,38 @@ function HomeSetup({ home, onChange }: { home: boolean; onChange: (on: boolean) 
   );
 }
 
+/** Where the PANCE map stands, or the way in if there's nothing on it yet. */
+function MapCard({ map }: { map: MapResponse['coverage'] }) {
+  if (!map.hasAnyEvidence) {
+    return (
+      <section className="sd-card">
+        <h2>Catch up on what you’ve done</h2>
+        <p className="hb-hint">Tell the PANCE map about your classes so far. It takes about a minute, and shows which parts of the exam have the least behind them.</p>
+        <Link className="btn btn-secondary sd-self-start" href="/study/classes">Add your classes</Link>
+      </section>
+    );
+  }
+  const next = map.next[0];
+  return (
+    <section className="sd-card">
+      <h2>PANCE map</h2>
+      <dl className="sd-stats">
+        <div><dt>Covered</dt><dd>{map.totals.covered}%</dd></div>
+        <div><dt>Studied</dt><dd>{map.totals.studied}%</dd></div>
+        <div><dt>Proven</dt><dd>{map.totals.proven}%</dd></div>
+      </dl>
+      <p className="hb-hint"><strong>Worth a look: {next.label}.</strong> {next.note}</p>
+      <Link className="btn btn-secondary sd-self-start" href="/study/map">Open the map</Link>
+    </section>
+  );
+}
+
 export default function PaTodayPage() {
   const router = useRouter();
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
   const [summary, setSummary] = useState<StudySummary | null>(null);
   const [home, setHome] = useState(false);
+  const [map, setMap] = useState<MapResponse['coverage'] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +113,9 @@ export default function PaTodayPage() {
       setHome(body.home);
       setState('ready');
     }).catch((error) => { if (!cancelled) setState(error instanceof SignedOut ? 'signed-out' : 'error'); });
+    fetch('/api/study/map', { cache: 'no-store' }).then((r) => r.json()).then((body) => {
+      if (!cancelled && body.success) setMap(body.coverage);
+    }).catch(() => { /* the card just stays away */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -125,6 +156,8 @@ export default function PaTodayPage() {
               <li>Whatever you miss comes back tomorrow, then less and less often as you get it right.</li>
             </ol>
             <Link className="btn btn-primary" href="/study/add">Make your first test</Link>
+            {map && !map.hasAnyEvidence && <p className="hb-hint">Already 5 months in? <Link href="/study/classes">Add your classes</Link> and <Link href="/study/anki">import from Anki</Link> to fill in the <Link href="/study/map">PANCE map</Link>.</p>}
+            {map?.hasAnyEvidence && <Link className="sd-more" href="/study/map">See your PANCE map →</Link>}
           </section>
         ) : (
           <div className="sd-columns">
@@ -156,12 +189,15 @@ export default function PaTodayPage() {
               <nav className="sd-tiles" aria-label="Study">
                 <Link href="/study/tests"><span aria-hidden>📝</span><strong>Practice tests</strong><small>{total.tests} saved</small></Link>
                 <Link href="/study/review"><span aria-hidden>🔁</span><strong>Review misses</strong><small>{review.active} in the bank</small></Link>
-                <Link href="/study/anki"><span aria-hidden>🗂️</span><strong>Anki</strong><small>{review.forAnki ? `${review.forAnki} new to send` : 'Nothing new to send'}</small></Link>
+                <Link href="/study/map"><span aria-hidden>🗺️</span><strong>PANCE map</strong><small>What’s covered, studied and proven</small></Link>
+                <Link href="/study/classes"><span aria-hidden>🎓</span><strong>Classes</strong><small>What you’ve finished</small></Link>
+                <Link href="/study/anki"><span aria-hidden>🗂️</span><strong>Anki</strong><small>{review.forAnki ? `${review.forAnki} new to send` : 'Import decks, send misses'}</small></Link>
                 <Link href="/study/add"><span aria-hidden>➕</span><strong>Add a test</strong><small>From your notes</small></Link>
               </nav>
             </div>
 
             <aside className="sd-side">
+              {map && <MapCard map={map} />}
               <section className="sd-card">
                 <h2>So far</h2>
                 <dl className="sd-stats">

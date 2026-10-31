@@ -108,7 +108,9 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/study', label: 'PA Today', icon: '🩺', short: 'Today', blurb: 'What’s waiting today, and when you can stop', keywords: 'study school pa pance home', account: true },
         { href: '/study/tests', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
         { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition', account: true },
-        { href: '/study/anki', label: 'Anki', icon: '🗂️', blurb: 'Turn your misses into Anki cards', keywords: 'flashcards cards export import deck', account: true },
+        { href: '/study/map', label: 'PANCE map', icon: '🗺️', short: 'Map', blurb: 'Every organ system: covered, studied and proven', keywords: 'blueprint coverage boards organ systems exam', account: true },
+        { href: '/study/classes', label: 'Classes', icon: '🎓', blurb: 'What you’ve finished, and what it covers', keywords: 'modules courses checklist catch up', account: true },
+        { href: '/study/anki', label: 'Anki', icon: '🗂️', blurb: 'Import your decks, and send your misses', keywords: 'flashcards cards export import deck apkg', account: true },
         { href: '/study/add', label: 'Add a test', icon: '➕', short: 'Add', blurb: 'Copy a prompt, paste back what your AI writes', keywords: 'import paste notes ai prompt', account: true },
       ],
     },
@@ -254,7 +256,7 @@ export function atPlace(item: NavItem, path: string, hash: string, search = '') 
 
 /** Pinned until you choose your own: daily tools once signed in, the public site before that. */
 export const defaultPins = (signedIn: boolean, studyHome = false) =>
-  signedIn && studyHome ? ['/study', '/study/tests', '/study/review', '/study/anki', '/today'] :
+  signedIn && studyHome ? ['/study', '/study/tests', '/study/review', '/study/map', '/study/anki', '/today'] :
   signedIn
     ? ['/today', '/workout', '/recipes', '/recipes?view=list', '/journal']
     : ['/blog', '/gallery', '/recipes', '/game', '/tools#calculators'];

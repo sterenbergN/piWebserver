@@ -45,6 +45,9 @@ export default function AddTestPage() {
 
   useEffect(() => {
     studyGet<{ summary: StudySummary }>().then((body) => setSummary(body.summary)).catch((error) => { if (error instanceof SignedOut) setSignedOut(true); });
+    // The map sends you here to make a test on one organ system.
+    const wanted = new URLSearchParams(window.location.search).get('focus');
+    if (wanted) setFocus(wanted.slice(0, 200));
   }, []);
 
   const weakTopics = useMemo(() => summary?.weakTopics.map((t) => t.topic) ?? [], [summary]);

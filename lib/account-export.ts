@@ -115,6 +115,8 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'loop-lab-notebook.json', file: perUserFile('loop-lab', userId) },
     { entry: 'study/tests.json', file: path.join(studyFolder(userId), 'tests.json') },
     { entry: 'study/progress.json', file: path.join(studyFolder(userId), 'progress.json') },
+    { entry: 'study/map.json', file: path.join(studyFolder(userId), 'map.json') },
+    { entry: 'study/anki.json', file: path.join(studyFolder(userId), 'anki.json') },
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },

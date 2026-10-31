@@ -6,7 +6,7 @@ replace Anki or commercial question banks. It does what they don't: remembers
 what happened on those AI tests, plans the work around real deadlines, and makes
 studying a little more fun.
 
-Status (2026-10-31): phases 1 and 2 built. Everything after them is planned, not started.
+Status (2026-10-31): phases 1 to 3 built. Everything after them is planned, not started.
 
 ## Ground rules
 
@@ -24,7 +24,7 @@ Status (2026-10-31): phases 1 and 2 built. Everything after them is planned, not
 |---|---|---|
 | 1 | Test vault, miss bank, export to Anki | Built |
 | 2 | PA Today and a space of its own | Built |
-| 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Planned |
+| 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Built |
 | 4 | Study planner and pancakes | Planned |
 | 5 | Study games: Trivia Death with her questions, The Night Shift | Planned |
 | 6 | Quiz me, mock patient, comparison grids, Differential | Planned |
@@ -72,21 +72,43 @@ rest of the site stays one tap away in Explore.
 - **Anki page.** `/study/anki` replaced the collapsed section at the bottom of Review,
   which stayed hidden until something had been missed. Reading decks in comes in phase 3.
 
-## Phase 3: catch-up
+## Phase 3: catch-up (built)
 
-She's 5 months in, so the map has to start from what she's already done. It shows
+She's 5 months in, so the map starts from what she's already done. `/study/map` shows
 three separate levels, so nothing claims she knows a topic just because it was taught:
 
-- **Covered:** she ticks off finished classes, with exam scores if she wants.
-- **Studied:** from an Anki export with scheduling included, with each deck matched
-  to a PANCE area once. Includes the cards she keeps forgetting.
-- **Proven:** her results on tests and games here.
+- **Covered:** at `/study/classes` she lists classes, ticks off the finished ones, and
+  picks what each covers, with an exam average if she wants.
+- **Studied:** on `/study/anki` she imports an export. Only counts per deck and tag and
+  the most-forgotten cards are kept (`lib/study/anki-import.ts`), so her cards stay in
+  Anki. Decks with an obvious name are matched for her and she fixes the rest. A new
+  import replaces the last, and matches are kept by name.
+- **Proven:** her latest answer to each question here. It takes 10 answers to judge a
+  system, and 75% right counts as strong. Games count once phase 5 feeds them in.
 
-The map is by organ system first, then disorder, using NCCPA's 2025 blueprint.
-Percentages must come from NCCPA's PDF; so far only third-party figures have been seen.
+The map also suggests where to look next, by weight on the exam and how little
+evidence is behind it, and links to a test prompt focused on that system. It's a nudge
+and says so, not a score prediction.
 
-Needs a real export from her, with "Include Scheduling Information" and "Support
-older Anki versions" on and media off.
+**Weights** are from NCCPA's "PANCE at a Glance" slides, "% distribution of content by
+organ system", 2025. They add up to 94; the slides don't say where the rest goes. The
+slides also give task areas (diagnosis 18%, history and physical 16%, and so on), which
+aren't used yet.
+
+**Second level:** the plan was organ system, then disorder. NCCPA's disorder list wasn't
+in those slides and its blueprint page blocks automated reading, so for now the second
+level is her own topics from her tests. Adding the official list means getting it from
+NCCPA's site by hand and deciding whether it belongs in this public repo.
+
+Still to check:
+
+- **A real export.** The reader is tested against databases built to match Anki's two
+  layouts, not a file Anki wrote. She should export with "Include Scheduling
+  Information" and "Support older Anki versions" on and media off.
+- **Node on the Pi.** Reading exports needs Node 22.13 or newer, and 22.15 for a modern
+  export without the older-versions option. It says so plainly if the Pi's is too old.
+- **Heavy imports.** Reading runs on the server's main thread, so a very large collection
+  could briefly slow the site on a Pi.
 
 ## Phase 4: study planner and pancakes
 

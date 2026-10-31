@@ -7,7 +7,7 @@ import './study.css';
 
 export const metadata: Metadata = {
   title: { absolute: 'PA Study' },
-  description: 'Practice tests and the questions you keep missing, only readable by your account.',
+  description: 'Practice tests, missed questions and your PANCE map, only readable by your account.',
   robots: { index: false, follow: false },
   // Its own app on a home screen. Setting `icons` here replaces the site's file icons, for these pages only.
   applicationName: 'PA Study',

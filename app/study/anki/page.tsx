@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import AnkiImport from '@/components/study/AnkiImport';
 import { SignedOut, studyGet } from '@/components/study/api';
 import { localToday } from '@/lib/habits/dates';
 import { ANKI_DECK } from '@/lib/study/anki';
 import type { StudySummary } from '@/lib/study/study';
 
-// Anki stays her flashcard scheduler, so this page is the bridge to it. Missed
-// questions go out as a file for File → Import.
+// Anki stays her flashcard scheduler, so this page is the bridge to it. Her
+// review history comes in for the PANCE map, and missed questions go out as a
+// file for File → Import.
 
 export default function AnkiPage() {
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
@@ -68,12 +70,14 @@ export default function AnkiPage() {
       <header className="sd-head">
         <div>
           <h1>Anki</h1>
-          <p>Turn the questions you miss into Anki cards.</p>
+          <p>Show the PANCE map what you’ve studied, and turn the questions you miss into cards.</p>
         </div>
       </header>
 
       {state === 'loading' && <p className="hb-hint">Loading…</p>}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your missed questions.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
+
+      {state !== 'error' && <AnkiImport />}
 
       {review && (
         <>
