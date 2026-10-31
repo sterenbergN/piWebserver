@@ -41,6 +41,8 @@ export type TestScore = {
   cvActivity: number;
   /** Share of the time the output sat at a limit, %. */
   saturated: number;
+  /** The test has a limit on the second measurement, and it was exceeded. */
+  overLimit: boolean;
 };
 
 export type Scorecard = {
@@ -117,6 +119,8 @@ export function scoreRun(proc: ProcessDef, run: Run): TestScore {
     travel: travel / 100 / (duration / 3600),
     cvActivity: activity / (duration / 60),
     saturated: (Math.max(sat, sat2) / n) * 100,
+    // A little past the limit is a controller catching it; more is ignoring it.
+    overLimit: scenario.limit ? Array.from(trace.pv2).some((v) => v > scenario.limit!.max * 1.05) : false,
   };
 }
 

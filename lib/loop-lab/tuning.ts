@@ -307,7 +307,7 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
 
   if (config.kind === 'override') {
     // The normal controller as if it were alone; the override tight (SIMC) at its limit, acting the same way.
-    const normal = autoTune(proc, params, { kind: 'pid', pid: config.pid });
+    const normal = slow === 1 ? autoTune(proc, params, { kind: 'pid', pid: config.pid }) : autoTuneRules(proc, params, { kind: 'pid', pid: config.pid }, slow);
     const o = config.on === 'pv2' ? at(config, 'inner', typeOf(config.ovr)) : at(config, 'main', typeOf(config.ovr), config.limit);
     if (!normal || normal.config.kind !== 'pid' || !o) return null;
     const ovr = { ...config.ovr, ...o.t, invert: o.m.negative };
@@ -343,7 +343,7 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
     const withModel = { ...config, model };
     const type = typeOf(config.pid);
     const m = tuningModel(proc, params, withModel, pv);
-    const tc = smithSpeed(plain, m, noise);
+    const tc = smithSpeed(plain, m, noise) * slow;
     const t = rule.tune(m, type, tc);
     if (!t) return null;
     const pid = { ...config.pid, ...tidy(t), invert: plain.negative };
@@ -366,7 +366,7 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
     // Averaging level: arrest time chosen so a design upset uses the room the tank has (swing ≈ k′·Δ·λ/e).
     const m = tuningModel(proc, params, config, pv);
     const { swing, upset } = proc.averaging;
-    const lambda = (Math.E * swing) / (Math.abs(m.kPrime) * upset);
+    const lambda = ((Math.E * swing) / (Math.abs(m.kPrime) * upset)) * slow;
     const type: ControlType = config.pid.Ti > 0 ? 'PI' : 'P';
     const t = getRule('averaging').tune(m, type, lambda);
     if (!t) return null;
@@ -482,7 +482,7 @@ function tuneStateFb(proc: ProcessDef, params: Params, config: Extract<Controlle
  * way, with the relative gain for the chosen pairing in the note: near 1 the loops hardly notice each
  * other; towards 0.5 closing one changes the other's gain a lot; below 0.5 the pairing is the wrong way round.
  */
-function tuneMultiloop(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'multiloop' }>) {
+function tuneMultiloop(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'multiloop' }>, slow = 1) {
   const p = cleanParams(proc, params);
   const { m, B2 } = mimoModel(proc, p);
   const lam = rga11(steadyGains(m, B2));
@@ -490,7 +490,7 @@ function tuneMultiloop(proc: ProcessDef, params: Params, config: Extract<Control
   const pair = (col: number[], row: number[], theta: number, pid: PidParams) => {
     const f = approximate(pathModel({ ...m, B: col }, row, theta), p.Ts / 2);
     const tm: TuningModel = { ...f, K: Math.abs(f.K), kPrime: Math.abs(f.kPrime), slope: 1, reachable: true, valve: m.valve, negative: f.K < 0 };
-    const t = getRule('simc').tune(tm, pid.Td > 0 ? 'PID' : 'PI', autoSpeed(tm, p.txNoise));
+    const t = getRule('simc').tune(tm, pid.Td > 0 ? 'PID' : 'PI', autoSpeed(tm, p.txNoise) * slow);
     return t ? { ...pid, ...tidy(t), invert: tm.negative } : null;
   };
   const pid = pair(direct ? m.B : B2, m.C, m.theta, config.pid), pid2 = pair(direct ? B2 : m.B, m.C2!, 0, config.pid2);
@@ -532,7 +532,7 @@ function tuneAdrc(proc: ProcessDef, params: Params, config: Extract<ControllerCo
   // ADRC assumes the plant looks like b₀/sⁿ around its bandwidth: read b₀ off the frequency response there
   // (works for unstable and integrating plants too, where first-order fits don't).
   const b0At = (w: number) => {
-    const g = plantResponse(m, w);
+    const g = plantResponse({ ...m, theta: 0 }, w);
     return config.order === 1 ? -w * g.im : -w * w * g.re;
   };
   // b₀ is read a little above the loop's bandwidth (4×, where the slow poles are behind it) and the observer runs
@@ -565,4 +565,84 @@ function tuneAdaptive(proc: ProcessDef, params: Params, config: Extract<Controll
     config: { ...config, pid, theta, tc },
     note: `Starts from SIMC at ${round3(proc.nominalPv)} ${proc.pv.unit} (Kc ${pid.Kc}, Ti ${pid.Ti} s), assumes θ ${theta} s, aims for τc ${tc} s, and from then on retunes itself from what it measures (within 5× of the start).`,
   };
+}
+
+/** Closed-loop speeds tried, as multiples of what the rule asks for (bigger is slower). */
+const SPEEDS = [0.4, 0.6, 1, 1.5, 2.5, 4, 7, 12, 25];
+
+/**
+ * Every tuning worth trying for a controller, starting from what the rules say. The rules see a model at
+ * one operating point; which of these is really best is for the tests to decide (see compare.ts). Those
+ * that are unstable or very fragile at the design point are left out here, so they don't cost a simulation.
+ */
+export function tuningCandidates(proc: ProcessDef, params: Params, config: ControllerConfig): ControllerConfig[] {
+  const start = autoTune(proc, params, config)?.config ?? config;
+  const out: ControllerConfig[] = [];
+  const m = linearizePlant(proc, cleanParams(proc, params), proc.nominalPv);
+  const scale = Math.max(1, ...m.poles.map((p) => Math.hypot(p.re, p.im)));
+  const unstable = m.poles.some((p) => p.re > 1e-9 * scale);
+  if (start.kind === 'onoff') return [1, 2, 5].map((hyst) => ({ ...start, hyst }));
+  if (start.kind === 'custom') return [start];
+  if (start.kind === 'statefb') {
+    for (const qw of [1, 0.1, 0.01]) for (const k of [1, 0.7, 0.5, 0.35, 0.25, 0.15]) {
+      out.push(start.design === 'poles'
+        ? { ...start, wn: round3(start.wn * k), qw: round3(start.qw * qw) }
+        : { ...start, qy: round3(start.qy * k ** 2), qi: round3(start.qi * k ** 4), qw: round3(start.qw * qw) });
+    }
+  } else if (start.kind === 'mpc') {
+    for (const k of [0.03, 0.1, 0.3, 1, 3, 10, 30]) out.push({ ...start, r: round3(start.r * k) });
+  } else if (start.kind === 'adrc') {
+    for (const order of [1, 2] as const) {
+      const tuned = tuneAdrc(proc, params, { ...start, order }).config as typeof start;
+      for (const k of [1, 0.7, 0.5, 0.35, 0.25]) out.push({ ...tuned, wc: round3(tuned.wc * k), wo: round3(tuned.wo * k) });
+    }
+  } else if (start.kind === 'adaptive') {
+    for (const k of [0.6, 1, 1.5, 2.5, 4, 7]) {
+      const t = autoTuneAdaptiveAt(proc, params, start, k);
+      if (t) out.push(t);
+    }
+  } else if (start.kind === 'multiloop') {
+    for (const pairing of ['direct', 'crossed'] as const) for (const k of SPEEDS) {
+      const r = tuneMultiloop(proc, params, { ...start, pairing }, k);
+      if (r) out.push(r.config);
+    }
+  } else if (unstable) {
+    // No rule applies: the starting tuning, with its gain moved.
+    const gain = <T extends PidParams>(pid: T, k: number): T => ({ ...pid, Kc: round3(pid.Kc * k) });
+    for (const k of [0.5, 0.7, 1, 1.4, 2, 2.8]) {
+      if (start.kind === 'cascade' || start.kind === 'ratio') out.push({ ...start, outer: gain(start.outer, k) });
+      else if (start.kind === 'schedule') out.push({ ...start, points: start.points.map((pt) => ({ ...pt, Kc: round3(pt.Kc * k) })) });
+      else out.push({ ...start, pid: gain(start.pid, k) });
+    }
+  } else {
+    for (const k of SPEEDS) {
+      const r = autoTuneRules(proc, params, start, k);
+      if (r) out.push(r.config);
+    }
+  }
+  const seen = new Set<string>();
+  const distinct = out.filter((c) => {
+    const key = JSON.stringify(c);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const fit = distinct.filter((c) => {
+    try {
+      const chk = nominalCheck(proc, params, c);
+      return chk.stable && chk.ms <= 3;
+    } catch { return true; }
+  });
+  return fit.length ? fit : [start];
+}
+
+/** The self-tuning PI aiming for a closed loop k times slower than the rule's. */
+function autoTuneAdaptiveAt(proc: ProcessDef, params: Params, config: Extract<ControllerConfig, { kind: 'adaptive' }>, k: number) {
+  const p = cleanParams(proc, params);
+  const m = linearizePlant(proc, p, proc.nominalPv);
+  const f = approximate(pathModel(m, m.C, m.theta), p.Ts / 2);
+  const tc = round3(Math.max(3 * f.theta, 2 * p.Ts) * k);
+  const t = simcPi(f, tc);
+  if (!t) return null;
+  return { ...config, pid: { ...config.pid, Kc: round3(t.Kc), Ti: round3(t.Ti), invert: t.negative }, theta: round3(f.theta), tc };
 }

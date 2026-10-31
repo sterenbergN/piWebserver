@@ -614,3 +614,25 @@ Redone after the first version got crowded and hard to find your way around.
   ladder, and case studies link to the previous and next.
 - **Phone:** setup and views take turns under one tab row, menus are bottom sheets.
 - Emoji stay as the marks for processes only, and buttons are squared so they don't read as chips.
+
+## 20. Comparing every controller
+
+- **What it is:** for each process, every controller that applies, tuned the same way and run through the same tests:
+  one verdict sentence, the winner of each test, and a matrix of all the numbers. First tab on a process page, and
+  "Compare all" on the bench.
+- **Tuning** (`tuneOnTests` in `compare.ts`, also what the bench's Auto-tune button runs): `tuningCandidates` starts from
+  the rules and tries a range of speeds (for state feedback also how much the observer trusts the sensor, for ADRC both
+  orders, for two loops both pairings). All of them run through every test. The lowest error, with a growing cost for
+  valve movement, wins among those stable with Ms ≤ 2 over the plant's spread. The rule-only `autoTune` stays as the start.
+- **Best** is the lowest error among those that count. On-off can't win (it cycles by design), nor anything unstable over
+  the spread, nor on valves anything over 10× the usual travel and 50 strokes/h. In one test it must also have settled.
+  **Simplest** is the first rung within 25 % of the best: the lab's question is usually "what is enough?".
+- **Exceptions the numbers needed:** a surge tank is judged on calm outflow with the level inside 45 % of span (`goalOf`),
+  not error. A test can carry a hard limit (`Scenario.limit`, the heat exchanger's steam allowance): breaking it means not
+  counting, whatever the error. Drives (crane, servo, maglev) have no valve to wear out.
+- **Data:** `compare-data.json`, written by `npm run looplab:compare` (about 2 minutes) because the page should open
+  at once. A test re-runs some of it and fails when it has gone stale. On a changed plant the bench can re-run it live.
+- **Verdicts that came out** (default plants): flow PI; stirred PID best, PI within reach; surge a loose PI with a level
+  override; maglev PID; conical tank PI, with state feedback or scheduling ahead on particular upsets; split-range reactor
+  self-tuning best, PID enough; heat exchanger cascade + feedforward; blending ratio; feeder Smith; drum feedforward,
+  cascade + feedforward best; batch state feedback but fragile (Ms 45); mixing MPC; crane state feedback; servo cascade.

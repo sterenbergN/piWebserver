@@ -11,13 +11,14 @@ import { getProcess } from '@/lib/loop-lab/processes';
 import { defaultExperiment, type Experiment } from '@/lib/loop-lab/setup';
 import { TUNING_RULES } from '@/lib/loop-lab/tuning';
 import { useCurrentSection } from './CaseStudy';
+import ComparePanel from './Compare';
 import { BlockDiagram } from './Drawings';
 import { AutomationView, CodeTabs, ControlView, MechanicalView } from './Views';
 
 export function ProcessReference({ id }: { id: ProcessId }) {
   const proc = getProcess(id);
   const exp = useMemo(() => defaultExperiment(id), [id]);
-  const [tab, setTab] = useState<'mechanical' | 'control' | 'automation' | 'tests'>('mechanical');
+  const [tab, setTab] = useState<'compare' | 'mechanical' | 'control' | 'automation' | 'tests'>('compare');
   const cases = CASES.filter((c) => c.process === id);
   return (
     <div className="ll">
@@ -37,12 +38,14 @@ export function ProcessReference({ id }: { id: ProcessId }) {
       </div>
 
       <div className="ll-tabs" role="tablist" aria-label="Perspective" style={{ marginTop: '1.5rem' }}>
+        <button role="tab" aria-selected={tab === 'compare'} onClick={() => setTab('compare')}>Compare controllers</button>
         <button role="tab" aria-selected={tab === 'mechanical'} onClick={() => setTab('mechanical')}>Mechanical</button>
         <button role="tab" aria-selected={tab === 'control'} onClick={() => setTab('control')}>Control</button>
         <button role="tab" aria-selected={tab === 'automation'} onClick={() => setTab('automation')}>Automation</button>
         <button role="tab" aria-selected={tab === 'tests'} onClick={() => setTab('tests')}>Test scripts</button>
       </div>
       <div className="ll-view ll-flat">
+        {tab === 'compare' && <ComparePanel proc={proc} params={exp.params} plantChanges={0} />}
         {tab === 'mechanical' && <MechanicalView proc={proc} exp={exp} />}
         {tab === 'control' && <ControlView proc={proc} exp={exp} />}
         {tab === 'automation' && <AutomationView proc={proc} exp={exp} />}
@@ -57,7 +60,7 @@ export function ProcessReference({ id }: { id: ProcessId }) {
             ))}
           </div>
         )}
-        <p className="ll-note" style={{ marginTop: '1.5rem' }}>These views use the default PI tuning. Change the controller on the bench to see its own analysis and code.</p>
+        {tab !== 'compare' && <p className="ll-note" style={{ marginTop: '1.5rem' }}>These views use the default PI tuning. Change the controller on the bench to see its own analysis and code.</p>}
       </div>
     </div>
   );

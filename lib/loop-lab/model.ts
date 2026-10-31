@@ -75,6 +75,8 @@ export type ScenarioEvent =
   | { t: number; kind: 'freeze'; duration: number };
 
 export type Scenario = {
+  /** A limit the second measurement must stay under in this test: exceeding it isn't a better result, it is breaking the rule. */
+  limit?: { max: number; label: string };
   id: string;
   name: string;
   /** What the test is checking, in a sentence. */

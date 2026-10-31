@@ -1,8 +1,10 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { cexpj, cmul, cx, eig, expm, rng } from './linalg';
+import COMPARE_DATA from './compare-data.json';
+import { metricOf, outOfTheRunning, overallOf, overallWinner, testWinner, tuneOnTests, type Comparison } from './compare';
 import { defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
-import { getProcess } from './processes';
+import { PROCESSES, getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
 import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
 import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
@@ -915,4 +917,74 @@ test('your own controller: edges matter, bad code holds the valve, and it export
     assert.deepEqual(cleanController(JSON.parse(JSON.stringify(cfg)), getProcess('batch')), cfg);
     assert.ok(exportCode(getProcess('batch'), cfg, defaultParams(getProcess('batch')), 'scl').length > 500);
   }
+});
+
+// ─── Comparing every controller on a process ────────────────────────────────
+
+test('comparison: every process has one, and its tunings are real configs that still give these numbers', () => {
+  const data = COMPARE_DATA as unknown as Record<string, Comparison>;
+  for (const proc of PROCESSES) {
+    const c = data[proc.id];
+    assert.ok(c, `${proc.id} is in the data: run npm run looplab:compare`);
+    assert.deepEqual(c.tests.map((t) => t.id), proc.scenarios.map((s) => s.id), `${proc.id}: tests changed, run npm run looplab:compare`);
+    assert.ok(c.rows.length >= 4, proc.id);
+    for (const r of c.rows) {
+      assert.equal(r.tests.length, proc.scenarios.length);
+      assert.ok(isAvailable(proc, r.kind), `${proc.id}/${r.id}`);
+      assert.equal(cleanController(JSON.parse(JSON.stringify(r.config)), proc)?.kind, r.kind, `${proc.id}/${r.id} round-trips`);
+    }
+  }
+  // Stale data would mislead quietly: these still come out the same.
+  for (const id of ['flow', 'hx', 'mixing']) {
+    const proc = getProcess(id as never);
+    const params = defaultParams(proc);
+    for (const r of data[id].rows) {
+      const s = scorecard(proc, params, r.config, runAll(proc, { params, controller: r.config }), false);
+      close(s.iae, r.iae, 0.002 * r.iae + 1e-3, `${id}/${r.id} IAE: run npm run looplab:compare if the plant or controller changed`);
+    }
+  }
+});
+
+test('comparison: the verdicts agree with the engineering', () => {
+  const data = COMPARE_DATA as unknown as Record<string, Comparison>;
+  const overall = (id: string) => { const w = overallWinner(data[id])!; return [w.best.id, w.simplest.id]; };
+  assert.equal(overall('flow')[1], 'pi', 'a flow loop needs nothing more than PI');
+  assert.equal(overall('hx')[0], 'cascade-ff', 'three upsets on three paths');
+  assert.equal(overall('feeder')[0], 'smith', 'dead time');
+  assert.equal(overall('mixing')[0], 'mpc', 'two interacting loops');
+  assert.equal(overall('crane')[0], 'statefb', 'a swinging load');
+  assert.equal(overall('maglev')[1], 'pid', 'unstable, but PID does it');
+  assert.equal(overall('drum')[1], 'feedforward', 'steam flow is the upset that matters');
+  // The steam allowance is a limit: only the override keeps to it.
+  const hx = data.hx, limited = hx.tests.findIndex((t) => t.limit);
+  assert.ok(limited >= 0);
+  assert.equal(testWinner(hx, limited)!.best.id, 'override');
+  assert.ok(hx.rows.find((r) => r.id === 'pi')!.tests[limited].overLimit, 'a plain PI takes more steam than it is allowed');
+  // A surge tank is judged on calm, not error.
+  assert.equal(data.surge.goal, 'calm');
+  assert.equal(metricOf(data.surge, data.surge.rows[1], 0), data.surge.rows[1].tests[0].travel);
+  // Nothing out of the running ever wins, and on-off never does.
+  for (const c of Object.values(data)) {
+    const winners = [overallWinner(c), ...c.tests.map((_, i) => testWinner(c, i))];
+    for (const w of winners) {
+      assert.ok(w, `${c.process} has a winner`);
+      for (const r of [w.best, w.simplest]) {
+        assert.equal(outOfTheRunning(c, r), null, `${c.process}: ${r.id}`);
+        assert.notEqual(r.kind, 'onoff');
+      }
+      assert.ok(overallOf(c, w.simplest) >= 0);
+    }
+  }
+});
+
+test('auto-tune on the tests: stable on a dead-time plant, no chatter on a noisy one, keeps the form you chose', async () => {
+  const feeder = getProcess('feeder'), flow = getProcess('flow');
+  const adrc = await tuneOnTests(feeder, defaultParams(feeder), defaultController('adrc', feeder));
+  assert.ok(adrc.score.stableAll, 'ADRC on the belt feeder stays stable');
+  const sf = await tuneOnTests(flow, defaultParams(flow), defaultController('statefb', flow));
+  assert.ok(sf.score.cvActivity < 2000, `state feedback doesn't chatter: ${sf.score.cvActivity} %/min`);
+  assert.ok(sf.score.stableAll);
+  const pid = await tuneOnTests(getProcess('stirred'), defaultParams(getProcess('stirred')), { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1, Ti: 100, Td: 5 } });
+  assert.ok(pid.config.kind === 'pid' && pid.config.pid.Td > 0, 'a PID stays a PID');
+  assert.ok(pid.tried > 1);
 });

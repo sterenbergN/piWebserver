@@ -10,7 +10,8 @@ import { designMpc, mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multiva
 import { designStateFb } from '@/lib/loop-lab/statespace';
 import { StError, StRunner } from '@/lib/loop-lab/st';
 import { CONTROLLER_GROUPS, KIND_HINT, PROCESS_GROUPS, metaOf } from '@/lib/loop-lab/catalog';
-import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
+import { tuneOnTests } from '@/lib/loop-lab/compare';
+import { TUNING_RULES, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
 import Picker from './Picker';
 
@@ -622,17 +623,21 @@ const gainUnit = (u: string) => `%/${u.includes('/') ? `(${u})` : u}`;
 function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
   // The explanation belongs to the tuning it produced: once anything changes, it goes.
   const [tuned, setTuned] = useState<{ key: string; note: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const note = tuned && tuned.key === JSON.stringify([proc.id, params, config]) ? tuned.note : '';
-  const what = config.kind === 'mpc' ? 'A horizon from the plant’s slowest response, to start from. MPC has no tuning rule: then the weights.' : config.kind === 'multiloop' ? 'SIMC on each pair with the other loop open, and the relative gain for the pairing.' : config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point.' : 'A robust starting point (SIMC) from the process model.';
+  const what = 'Starts from the tuning rules, tries a range of speeds on every test, and keeps the best that stays robust over the plant’s spread.';
   return (
     <div className="ll-autotune">
-      <button className="ll-btn is-primary" title={what} onClick={() => {
-        const r = autoTune(proc, params, config);
-        if (r) {
+      <button className="ll-btn is-primary" title={what} disabled={busy} onClick={async () => {
+        setBusy(true);
+        try {
+          // Let the button show it is working before the first run.
+          await new Promise((r) => setTimeout(r, 30));
+          const r = await tuneOnTests(proc, params, config);
           onChange(r.config);
           setTuned({ key: JSON.stringify([proc.id, params, r.config]), note: r.note });
-        }
-      }}>Auto-tune</button>
+        } finally { setBusy(false); }
+      }}>{busy ? 'Tuning on the tests…' : 'Auto-tune'}</button>
       {note && <p className="ll-note" role="status">{note}</p>}
     </div>
   );

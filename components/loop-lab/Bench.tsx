@@ -11,6 +11,7 @@ import { NotebookPanel, newEntryId, useNotebook } from './Notebook';
 import { PALETTE, ResultSummary, ScorecardTable, TestDetail, TestTabs, TrendPanel } from './Results';
 import { ControllerEditor, ControllerPicker, ProcessPicker } from './Setup';
 import { fmt } from './Chart';
+import ComparePanel from './Compare';
 import { plantSummary } from '@/lib/loop-lab/plant';
 import { defaultParams } from '@/lib/loop-lab/model';
 import { useRunsMany } from './useRuns';
@@ -19,6 +20,7 @@ import { AutomationView, ControlView, MechanicalView } from './Views';
 /** The views: what it does, then the three perspectives on why. Import only belongs to the identified plant. */
 const TABS = [
   { id: 'tests', label: 'Results' },
+  { id: 'compare', label: 'Compare all' },
   { id: 'live', label: 'Run live' },
   { id: 'mechanical', label: 'Mechanical' },
   { id: 'control', label: 'Control' },
@@ -251,6 +253,7 @@ export default function Bench() {
             </div>
           )}
 
+          {shown === 'compare' && <ComparePanel proc={proc} params={exp.params} plantChanges={plantChanges} onUse={(controller) => { setExp({ ...exp, controller }); chooseTab('tests'); }} />}
           {shown === 'live' && <LivePanel proc={proc} exp={exp} />}
           {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} onParams={(params) => setExp({ ...exp, params })} />}
           {shown === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}

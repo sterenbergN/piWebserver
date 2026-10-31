@@ -87,7 +87,7 @@ export const HX: ProcessDef = {
       events: [{ t: 20, kind: 'dist', key: 'F', value: 13 }, { t: 200, kind: 'dist', key: 'F', value: 7 }, { t: 380, kind: 'dist', key: 'F', value: 10 }],
     },
     {
-      id: 'steam-limit', name: 'More duty than the steam allowance', duration: 600, initialSp: 60,
+      id: 'steam-limit', name: 'More duty than the steam allowance', duration: 600, initialSp: 60, limit: { max: 1000, label: 'the 1000 kg/h steam allowance' },
       purpose: 'Production pushes the flow up 40 %: holding 60 °C would need about 1100 kg/h of steam, more than the 1000 kg/h the boiler can spare (if a limit is set). Then the flow drops back below normal.',
       events: [{ t: 20, kind: 'dist', key: 'F', value: 14 }, { t: 260, kind: 'dist', key: 'F', value: 8 }, { t: 440, kind: 'dist', key: 'F', value: 10 }],
     },
