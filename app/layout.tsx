@@ -35,7 +35,7 @@ async function signedInUser() {
   try {
     const userId = await getAuthenticatedWorkoutUserId();
     const user = userId ? await findWorkoutUser(userId) : null;
-    return user && typeof user.username === "string" ? { username: user.username } : null;
+    return user && typeof user.username === "string" ? { username: user.username, studyHome: user.studyHome === true } : null;
   } catch {
     return null;
   }

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clearWorkoutCache } from '@/lib/workout/offline-cache';
 
-export type NavUser = { username: string } | null;
+export type NavUser = { username: string; /** Starts on PA Today, not the main site. */ studyHome?: boolean } | null;
 
 /**
  * Sign-in chip for the navbar. Accounts are the workout accounts (created by the
@@ -72,6 +72,7 @@ export default function AccountMenu({ user }: { user: NavUser }) {
         <div className="nav-menu is-right" id="nav-account-menu">
           <div className="nav-menu-panel">
             <p className="nav-menu-note">Signed in as <strong>{user.username}</strong></p>
+            {user.studyHome && <Link href="/study" onClick={() => setMenuOpen(false)}><span aria-hidden>🩺</span>PA Today</Link>}
             <Link href="/today" onClick={() => setMenuOpen(false)}><span aria-hidden>☀️</span>Today</Link>
             <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
             <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
@@ -115,6 +116,11 @@ function SignInDialog({ onClose }: { onClose: () => void }) {
       });
       const data = await res.json().catch(() => ({}));
       if (data.success) {
+        // Signing in on the home page takes you to your own; anywhere else, you stay where you were going.
+        if (data.user?.studyHome && window.location.pathname === '/') {
+          window.location.assign('/study');
+          return;
+        }
         // A full reload so every page (and the navbar) picks up the new account.
         window.location.reload();
         return;

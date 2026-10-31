@@ -35,7 +35,7 @@ export async function POST(request: Request) {
         maxAge: 60 * 60 * 24 * 30 // 30 days
       });
 
-      return NextResponse.json({ success: true, user: { id: user.id, username: user.username } });
+      return NextResponse.json({ success: true, user: { id: user.id, username: user.username, studyHome: user.studyHome === true } });
     }
 
     await recordLoginFailure(request, 'workout');

@@ -33,7 +33,7 @@ export function StudyCard({ today }: { today: DateKey }) {
       <p className="hb-hint">
         {review.due > 0 ? `${review.due} missed question${review.due === 1 ? ' is' : 's are'} back for another look.` : review.doneToday ? 'Your reviews are done for today.' : 'No reviews due today.'}
       </p>
-      <Link className={`btn ${review.due > 0 ? 'btn-primary' : 'btn-secondary'}`} href={review.due > 0 ? '/study/review' : '/study'}>{review.due > 0 ? 'Review now' : 'Open Study'}</Link>
+      <Link className={`btn ${review.due > 0 ? 'btn-primary' : 'btn-secondary'}`} href={review.due > 0 ? '/study/review' : '/study'}>{review.due > 0 ? 'Review now' : 'Open PA Today'}</Link>
     </section>
   );
 }

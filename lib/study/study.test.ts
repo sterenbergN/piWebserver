@@ -5,7 +5,7 @@ import { buildTestPrompt } from './prompt';
 import {
   addTest, answerReview, choiceOrder, cleanAnswer, dueMisses, emptyProgress, emptyTests, finishAttempt, fixQuestion, parseTestReply,
   PANCE_SYSTEMS, readSystem, removeQuestion, removeTest, REVIEW_DAYS, saveAttempt, scoreAttempt, startAttempt, studyDays, studySummary,
-  StudyInputError, type ProgressData, type StudyTest,
+  StudyInputError, todaySteps, type ProgressData, type StudyTest,
 } from './study';
 import { addDays } from '../habits/dates';
 
@@ -308,6 +308,37 @@ test('the overview adds it all up', () => {
   assert.equal(summary.review.forAnki, 2);
   assert.equal(summary.review.nextOn, addDays(TODAY, 1));
   assert.equal(studySummary(data, progress, addDays(TODAY, 1)).review.due, 2);
+});
+
+test('PA Today asks for reviews and unfinished tests, and says when she can stop', () => {
+  const data = emptyTests();
+  const untaken = addTest(data, parseTestReply(reply([question()])), { title: 'Untaken' }, makeId, NOW);
+  const taken = addTest(data, parseTestReply(reply([question()])), { title: 'Taken' }, makeId, NOW);
+  const progress = emptyProgress();
+
+  // Only a test she hasn't taken: a suggestion, and she's still clear.
+  let steps = todaySteps(studySummary(data, progress, TODAY));
+  assert.equal(steps.clear, true);
+  assert.equal(steps.next?.id, taken.id, 'the newest one she hasn’t taken');
+
+  // A miss comes due, and a test is left part way.
+  takeAndFinish(progress, taken, { [taken.questions[0].id]: [1] });
+  startAttempt(progress, untaken, {}, makeId, 1, NOW);
+  steps = todaySteps(studySummary(data, progress, addDays(TODAY, 1)));
+  assert.equal(steps.clear, false);
+  assert.equal(steps.review, 1);
+  assert.deepEqual(steps.open.map((t) => t.id), [untaken.id]);
+  assert.equal(steps.next, null, 'neither is waiting to be started');
+
+  // Nothing due until tomorrow, once the open one is gone.
+  progress.attempts = progress.attempts.filter((a) => a.finishedAt);
+  assert.equal(todaySteps(studySummary(data, progress, TODAY)).clear, true);
+});
+
+test('the prompt can ask for long tests, up to a limit', () => {
+  assert.match(buildTestPrompt({ source: 'notes', count: 200, style: 'mixed' }), /200 multiple-choice/);
+  assert.match(buildTestPrompt({ source: 'notes', count: 5000, style: 'mixed' }), /200 multiple-choice/);
+  assert.match(buildTestPrompt({ source: 'notes', count: 5, style: 'mixed' }), /5 multiple-choice/);
 });
 
 test('the Anki file has one safe row per question', () => {

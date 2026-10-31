@@ -27,12 +27,13 @@ const greeting = () => {
  * it with the Explore button, "/" or Ctrl+K. Empty, it's a map of rooms by what
  * you came to do; type, and it's pages, then content, then "add to the list".
  */
-export default function Launcher({ groups, pins, togglePin, current, signedIn, theme, onToggleTheme, onFollow, onClose }: {
+export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose }: {
   groups: NavGroup[];
   pins: string[];
   togglePin: (href: string) => void;
   current?: string;
   signedIn: boolean;
+  studyFirst?: boolean;
   theme: string;
   onToggleTheme: () => void;
   onFollow: (href: string) => (e: React.MouseEvent) => void;
@@ -56,7 +57,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
   const pinnedItems = signedIn ? pins.flatMap((href) => byHref(href) ?? []) : [];
   const recentItems = recent.flatMap((href) => (href !== current && !pinnedItems.some((p) => p.href === href) ? byHref(href) ?? [] : [])).slice(0, 4);
   const shortcuts = [...pinnedItems, ...recentItems];
-  const ctx: RoomContext = { signedIn, found, info, pins, togglePin, editing, current, onFollow, onLeave: onClose };
+  const ctx: RoomContext = { signedIn, studyFirst, found, info, pins, togglePin, editing, current, onFollow, onLeave: onClose };
   const pageHits = useMemo(() => matchNavItems(items, q), [items, q]);
   const pageUrls = new Set(pageHits.map((i) => i.href));
   const contentHits = hits.filter((h) => !pageUrls.has(h.url));
@@ -207,7 +208,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, t
               </div>
               {/* On a phone the rooms run long: one tap to the one you want. */}
               <nav className="lc-jump" aria-label="Jump to a room">
-                {orderRooms(groups, signedIn).map((room) => (
+                {orderRooms(groups, signedIn, studyFirst).map((room) => (
                   <button key={room.id} type="button" style={{ '--room': room.color } as React.CSSProperties} onClick={() => jumpTo(room.id)}>
                     <span aria-hidden>{room.icon}</span>{room.label}
                   </button>

@@ -5,7 +5,16 @@ import '../habits/habits.css';
 import '../journal/journal.css';
 import './study.css';
 
-export const metadata: Metadata = { title: 'Study', description: 'Practice tests and the questions you keep missing, only readable by your account.', robots: { index: false, follow: false } };
+export const metadata: Metadata = {
+  title: { absolute: 'PA Study' },
+  description: 'Practice tests and the questions you keep missing, only readable by your account.',
+  robots: { index: false, follow: false },
+  // Its own app on a home screen. Setting `icons` here replaces the site's file icons, for these pages only.
+  applicationName: 'PA Study',
+  manifest: '/study/manifest.webmanifest',
+  appleWebApp: { capable: true, title: 'PA Study', statusBarStyle: 'black-translucent' },
+  icons: { icon: '/icons/study-192.png', apple: '/icons/study-apple-touch-icon.png' },
+};
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;

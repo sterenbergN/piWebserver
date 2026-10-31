@@ -55,7 +55,7 @@ export function buildTestPrompt(options: PromptOptions) {
   const course = options.course?.trim();
   const focus = options.focus?.trim();
   const weak = (options.weakTopics ?? []).slice(0, 8);
-  const count = Math.max(1, Math.min(100, Math.round(options.count) || 20));
+  const count = Math.max(1, Math.min(200, Math.round(options.count) || 20));
 
   if (options.source === 'old-test') {
     return [

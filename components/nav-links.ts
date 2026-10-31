@@ -96,16 +96,19 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       }],
     },
     {
-      // Practice tests and the questions you keep missing; each account sees only its own.
+      // A space of its own: practice tests and the questions you keep missing, each
+      // account seeing only its own. On phones these pages are the dock, so no bar.
       id: 'study',
       label: 'Study',
       icon: '🩺',
       question: 'Got an exam coming?',
       color: 'var(--habit-6)',
-      bar: true,
+      bar: 'wide',
       items: [
-        { href: '/study', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
-        { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition anki flashcards', account: true },
+        { href: '/study', label: 'PA Today', icon: '🩺', short: 'Today', blurb: 'What’s waiting today, and when you can stop', keywords: 'study school pa pance home', account: true },
+        { href: '/study/tests', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
+        { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition', account: true },
+        { href: '/study/anki', label: 'Anki', icon: '🗂️', blurb: 'Turn your misses into Anki cards', keywords: 'flashcards cards export import deck', account: true },
         { href: '/study/add', label: 'Add a test', icon: '➕', short: 'Add', blurb: 'Copy a prompt, paste back what your AI writes', keywords: 'import paste notes ai prompt', account: true },
       ],
     },
@@ -212,12 +215,16 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
 }
 
 /** Your own day first once signed in; a visitor starts with who this is and what's fun. */
-const ROOM_ORDER = { signedIn: ['day', 'study', 'play', 'gym', 'kitchen', 'night', 'workshop', 'noah'], visitor: ['noah', 'play', 'kitchen', 'night', 'workshop', 'day', 'study', 'gym'] };
+const ROOM_ORDER = { signedIn: ['day', 'play', 'gym', 'kitchen', 'night', 'workshop', 'study', 'noah'], visitor: ['noah', 'play', 'kitchen', 'night', 'workshop', 'day', 'study', 'gym'] };
 
-export function orderRooms(groups: NavGroup[], signedIn: boolean) {
+export function orderRooms(groups: NavGroup[], signedIn: boolean, studyFirst = false) {
   const order = signedIn ? ROOM_ORDER.signedIn : ROOM_ORDER.visitor;
-  return [...groups].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const rank = (id: string) => (studyFirst && id === 'study' ? -1 : order.indexOf(id));
+  return [...groups].sort((a, b) => rank(a.id) - rank(b.id));
 }
+
+/** Whether a path is inside Study, which has its own navigation. */
+export const isStudyPath = (path: string) => path === '/study' || path.startsWith('/study/');
 
 /** Every page and corner, once each. */
 export function allPlaces(groups: NavGroup[]) {
@@ -246,7 +253,8 @@ export function atPlace(item: NavItem, path: string, hash: string, search = '') 
 }
 
 /** Pinned until you choose your own: daily tools once signed in, the public site before that. */
-export const defaultPins = (signedIn: boolean) =>
+export const defaultPins = (signedIn: boolean, studyHome = false) =>
+  signedIn && studyHome ? ['/study', '/study/tests', '/study/review', '/study/anki', '/today'] :
   signedIn
     ? ['/today', '/workout', '/recipes', '/recipes?view=list', '/journal']
     : ['/blog', '/gallery', '/recipes', '/game', '/tools#calculators'];

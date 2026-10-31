@@ -6,7 +6,7 @@ import AccountMenu, { type NavUser } from './AccountMenu';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
-import { allPlaces, atPlace, isCurrentItem, navGroups, placesFor, sectionOf, type NavItem } from './nav-links';
+import { allPlaces, atPlace, isCurrentItem, isStudyPath, navGroups, placesFor, sectionOf, type NavItem } from './nav-links';
 import { markFound, rememberPage, useNavPins } from './useNavPins';
 
 // Loaded when first opened: it brings the recipe and habit code along for its counts.
@@ -33,7 +33,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const search = useSearchParams().toString();
   const hash = useSyncExternalStore(subscribeHash, readHash, () => '');
   const { theme, toggleTheme } = useTheme();
-  const { pins, togglePin } = useNavPins(!!user);
+  const studyHome = !!user?.studyHome;
+  const { pins, togglePin } = useNavPins(!!user, studyHome);
   const [launcher, setLauncher] = useState(false);
   const barRef = useRef<HTMLElement>(null);
   const [discovery, setDiscovery] = useState<{ text: string; everywhere: boolean } | null>(null);
@@ -49,6 +50,11 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const foundHere = places.filter(itemIsCurrent).map((p) => p.href).join(' ');
   const barGroup = NO_BAR.some((p) => pathname.startsWith(p)) ? undefined : groups.find((g) => g.bar && g.items.some(itemIsCurrent));
   const showDock = !NO_DOCK.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  // Study is its own space: its pages replace your pins while you're in it, and Explore is the way out.
+  const inStudy = isStudyPath(pathname);
+  const headerPins = inStudy ? [] : pinned.slice(0, 6);
+  const dockItems = inStudy ? groups.find((g) => g.id === 'study')!.items.slice(0, DOCK_PINS) : pinned.slice(0, DOCK_PINS);
+  const studyLogo = inStudy || studyHome;
 
   useEffect(() => { if (here) rememberPage(here.href); }, [here]);
 
@@ -56,7 +62,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   useEffect(() => {
     if (!foundHere) return;
     const { fresh, all, firstVisit } = markFound(foundHere.split(' '));
-    if (!fresh.length || firstVisit || NO_BAR.some((p) => window.location.pathname.startsWith(p))) return;
+    if (!fresh.length || firstVisit || isStudyPath(window.location.pathname) || NO_BAR.some((p) => window.location.pathname.startsWith(p))) return;
     const goals = placesFor(navGroups(isAdmin), signedIn);
     const count = goals.filter((p) => all.includes(p.href)).length;
     const newest = goals.find((p) => p.href === fresh[fresh.length - 1]);
@@ -102,10 +108,10 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   return (
     <>
       <nav className="glass-nav" aria-label="Main">
-        <Link href="/" className="nav-logo">🐾 <span>Noah Stuf</span></Link>
+        <Link href={studyLogo ? '/study' : '/'} className="nav-logo">{studyLogo ? '🩺' : '🐾'} <span>{studyLogo ? 'PA Study' : 'Noah Stuf'}</span></Link>
 
         <div className="nav-pins">
-          {pinned.slice(0, 6).map((item) => (
+          {headerPins.map((item) => (
             <Link key={item.href} href={item.href} onClick={follow(item.href)} className="nav-link" aria-current={itemIsCurrent(item) ? 'page' : undefined}>
               {item.label}
             </Link>
@@ -141,8 +147,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
 
       {/* On a phone, your pins sit under your thumb. */}
       {showDock && (
-        <nav className="site-dock" aria-label="Pinned pages">
-          {pinned.slice(0, DOCK_PINS).map((item) => (
+        <nav className="site-dock" aria-label={inStudy ? 'Study' : 'Pinned pages'}>
+          {dockItems.map((item) => (
             <Link key={item.href} href={item.href} onClick={follow(item.href)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
               <span aria-hidden>{item.icon}</span>
               <span>{item.short ?? item.label}</span>
@@ -159,7 +165,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
       {discovery?.everywhere && <Confetti fire={1} />}
 
       {launcher && (
-        <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} theme={theme}
+        <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} studyFirst={studyHome} theme={theme}
           onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} />
       )}
     </>

@@ -21,10 +21,30 @@
 /* The front door */
 .sd-welcome ol { margin: 0; padding-left: 1.3rem; line-height: 1.6; }
 .sd-welcome .btn { align-self: flex-start; }
-.sd-due { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-.sd-due > div { flex: 1 1 16rem; }
-.sd-due .hb-hint { margin-top: 0.25rem; }
-.sd-due.has-due { border-top: 4px solid var(--habit-6); }
+.sd-self-start { align-self: flex-start; }
+.sd-more { color: var(--accent-light); font-size: 0.92rem; }
+.sd-today { border-top: 4px solid var(--habit-6); }
+.sd-today.is-clear { border-top-color: var(--success); }
+.sd-today-extra { display: flex; flex-direction: column; gap: 0.3rem; }
+.sd-step-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sd-step-list li + li { border-top: 1px solid var(--surface-border); }
+.sd-step-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.7rem; padding: 0.55rem 0; }
+.sd-step-row .sd-test-main { flex: 1 1 12rem; }
+.sd-step-icon { flex: none; font-size: 1.25rem; line-height: 1; }
+.sd-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.sd-tiles a { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.85rem 1rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: inherit; }
+.sd-tiles a:hover { border-color: var(--accent-light); }
+.sd-tiles a > span { font-size: 1.25rem; line-height: 1.2; }
+.sd-tiles small { color: var(--muted); font-size: 0.8rem; }
+.sd-setup summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+.sd-setup summary::before { content: '▸'; color: var(--muted); }
+.sd-setup[open] summary::before { content: '▾'; }
+.sd-setup summary::-webkit-details-marker { display: none; }
+.sd-setup[open] > * + * { margin-top: 0.75rem; }
+.sd-setup .sd-check span { display: flex; flex-direction: column; gap: 0.15rem; }
+.sd-setup .sd-check small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+.sd-setup-title { margin: 0; font-size: 0.85rem; font-weight: 700; color: var(--muted); }
+.sd-setup-list { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 0.9rem; line-height: 1.5; }
 .sd-columns { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 .sd-side { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
 @media (max-width: 820px) { .sd-columns { grid-template-columns: minmax(0, 1fr); } }
@@ -139,10 +159,3 @@
 
 /* The miss bank */
 .sd-done { align-items: flex-start; }
-.sd-anki summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; list-style-position: inside; }
-.sd-anki summary::before { content: '▸'; color: var(--muted); }
-.sd-anki[open] summary::before { content: '▾'; }
-.sd-anki summary::-webkit-details-marker { display: none; }
-.sd-anki[open] { gap: 0.75rem; }
-.sd-anki[open] > * + * { margin-top: 0.75rem; }
-.sd-anki .btn { align-self: flex-start; }

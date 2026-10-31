@@ -64,7 +64,7 @@ export default function TestPage() {
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to see this test">Your tests are only shown to your account.</SignInPrompt></div>;
   if (state === 'loading') return <div className="sd"><p className="hb-hint">Loading…</p></div>;
   if (state === 'error' || !data) {
-    return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that test.'}</span></div><Link className="sd-back" href="/study">← Study</Link></div>;
+    return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that test.'}</span></div><Link className="sd-back" href="/study/tests">← Practice tests</Link></div>;
   }
 
   const { test, attempts } = data;
@@ -85,7 +85,7 @@ export default function TestPage() {
     if (!ok) return;
     try {
       await studyPost('delete-test', { testId: id });
-      router.push('/study');
+      router.push('/study/tests');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t delete it.');
     }
@@ -113,7 +113,7 @@ export default function TestPage() {
       {popup}
       <header className="sd-head">
         <div>
-          <Link className="sd-back" href="/study">← Study</Link>
+          <Link className="sd-back" href="/study/tests">← Practice tests</Link>
           <h1>{test.title}</h1>
           <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}</p>
         </div>

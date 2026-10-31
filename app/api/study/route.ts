@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
 import { readProgress, readTests, updateProgress, updateTests } from '@/lib/study/store';
+import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
 import {
   addTest, answerReview, cleanAnswer, dueMisses, finishAttempt, fixQuestion, parseTestReply, removeQuestion, removeTest, renameTest,
   saveAttempt, startAttempt, StudyInputError, studyDays, studySummary, withQuestions,
@@ -33,7 +34,8 @@ export async function GET(request: Request) {
     if (params.get('review') !== null) {
       return NextResponse.json({ success: true, items: withQuestions(tests, dueMisses(progress, today)) }, { headers: PRIVATE });
     }
-    return NextResponse.json({ success: true, summary: studySummary(tests, progress, today), studyDays: studyDays(progress) }, { headers: PRIVATE });
+    const user = await findWorkoutUser(userId);
+    return NextResponse.json({ success: true, summary: studySummary(tests, progress, today), studyDays: studyDays(progress), home: user?.studyHome === true }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load study failed');
   }
@@ -54,6 +56,15 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
 
     switch (body.action) {
+      case 'set-home': {
+        await updateUsersData((data) => {
+          const user = data.users.find((u) => u.id === userId);
+          if (!user) throw new ApiError(404, 'Account not found');
+          if (body.on === true) user.studyHome = true;
+          else delete user.studyHome;
+        });
+        return NextResponse.json({ success: true }, { headers: PRIVATE });
+      }
       case 'add-test': {
         const pack = parseTestReply(body.text);
         const test = await updateTests(userId, (data) => addTest(data, pack, body, newId, now));

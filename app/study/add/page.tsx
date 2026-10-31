@@ -12,6 +12,10 @@ import { parseTestReply, StudyInputError, type ParsedPack, type StudySummary } f
 // notes, then paste what it wrote back here. The reply is checked as you paste,
 // so a problem shows before anything is saved.
 
+const QUESTION_COUNTS = [5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200];
+/** Past this, a reply is likely to get cut off. Whole questions are still kept. */
+const LONG_TEST = 100;
+
 function readPack(text: string): { pack?: ParsedPack; error?: string } {
   if (!text.trim()) return {};
   try {
@@ -66,7 +70,7 @@ export default function AddTestPage() {
     setSaveError('');
     try {
       const body = await studyPost<{ id: string }>('add-test', { text: reply, title: title || pack.title, course: testCourse || pack.course || course });
-      router.push(`/study/test/${body.id}`);
+      router.push(`/study/tests/${body.id}`);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Couldn’t save the test.');
       setSaving(false);
@@ -81,7 +85,7 @@ export default function AddTestPage() {
     <div className="sd sd-narrow animate-fade-in">
       <header className="sd-head">
         <div>
-          <Link className="sd-back" href="/study">← Study</Link>
+          <Link className="sd-back" href="/study/tests">← Practice tests</Link>
           <h1>Add a test</h1>
         </div>
       </header>
@@ -101,7 +105,7 @@ export default function AddTestPage() {
             <>
               <label>Questions
                 <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-                  {[10, 25, 50, 75, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                  {QUESTION_COUNTS.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </label>
               <label>Style
@@ -123,6 +127,9 @@ export default function AddTestPage() {
             </>
           )}
         </div>
+        {source === 'notes' && count > LONG_TEST && (
+          <p className="hb-hint">An AI may stop partway through a test this long. Every whole question still gets saved, or you can make two shorter tests.</p>
+        )}
         <textarea ref={promptBox} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
         <div className="sd-actions">
           <button type="button" className="btn btn-primary" onClick={copy}>{copied === 'copied' ? '✓ Copied' : 'Copy prompt'}</button>

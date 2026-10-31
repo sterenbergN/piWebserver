@@ -584,6 +584,21 @@ export function studySummary(tests: TestsData, progress: ProgressData, today: Da
   };
 }
 
+/**
+ * What PA Today asks of her: reviews due and tests left part way. Clear when
+ * neither is waiting, which is the "you can stop here." A test she hasn't taken
+ * is only ever a suggestion, so it never stands in the way of being clear.
+ */
+export function todaySteps(summary: Pick<StudySummary, 'tests' | 'review'>) {
+  const open = summary.tests.filter((t) => t.open);
+  return {
+    review: summary.review.due,
+    open,
+    next: summary.tests.find((t) => !t.open && t.taken === 0) ?? null,
+    clear: summary.review.due === 0 && open.length === 0,
+  };
+}
+
 /** The question behind each miss, for the review page and the Anki file. A miss whose question has gone is left out. */
 export function withQuestions(tests: TestsData, misses: Miss[]) {
   const tests_ = new Map(tests.tests.map((t) => [t.id, t]));

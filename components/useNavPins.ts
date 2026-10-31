@@ -37,13 +37,13 @@ const write = (key: string, list: string[]) => {
   listeners.forEach((fn) => fn());
 };
 
-export function useNavPins(signedIn: boolean) {
+export function useNavPins(signedIn: boolean, studyHome = false) {
   const raw = useSyncExternalStore(subscribe, () => read(PINS_KEY), () => null);
-  const pins = parse(raw) ?? defaultPins(signedIn);
+  const pins = parse(raw) ?? defaultPins(signedIn, studyHome);
   const togglePin = useCallback((href: string) => {
-    const current = parse(read(PINS_KEY)) ?? defaultPins(signedIn);
+    const current = parse(read(PINS_KEY)) ?? defaultPins(signedIn, studyHome);
     write(PINS_KEY, current.includes(href) ? current.filter((p) => p !== href) : [...current, href]);
-  }, [signedIn]);
+  }, [signedIn, studyHome]);
   return { pins, togglePin };
 }
 

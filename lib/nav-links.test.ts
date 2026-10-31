@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { allPlaces, atPlace, isCurrentItem, matchNavItems, navGroups, orderRooms, pickSurprise, placesFor } from '../components/nav-links';
+import { allPlaces, atPlace, defaultPins, isCurrentItem, isStudyPath, matchNavItems, navGroups, orderRooms, pickSurprise, placesFor } from '../components/nav-links';
 import { GAMES } from './games/registry';
 import { GAME_CATALOG } from './party/catalog';
 import { addListItem, emptyKitchen, groceriesLeft, mealsToday } from './recipes/kitchen';
@@ -61,6 +61,28 @@ test('your day comes first once signed in; a visitor starts with who this is', (
   assert.equal(orderRooms(groups, false)[0].id, 'noah');
   assert.equal(orderRooms(groups, true).length, groups.length);
   assert.ok(orderRooms(groups, false).findIndex((r) => r.id === 'play') <= 1, 'party games stay near the top for a visitor');
+});
+
+test('Study is a space of its own for the account that lives there', () => {
+  assert.ok(current('/study', '/study'));
+  assert.ok(current('/study/tests', '/study/tests/abc'));
+  assert.ok(!current('/study', '/study/tests/abc'), 'a test belongs to Practice tests, not PA Today');
+  assert.ok(current('/study/anki', '/study/anki'));
+  assert.ok(isStudyPath('/study/review'));
+  assert.ok(!isStudyPath('/study-notes'));
+  assert.ok(!isStudyPath('/today'));
+
+  const groups = navGroups(false);
+  assert.equal(orderRooms(groups, true, true)[0].id, 'study');
+  assert.equal(orderRooms(groups, true, true)[1].id, 'day');
+  assert.equal(orderRooms(groups, true)[0].id, 'day');
+  assert.equal(orderRooms(groups, true, true).length, groups.length);
+
+  const places = allPlaces(groups).map((p) => p.href);
+  for (const pin of defaultPins(true, true)) assert.ok(places.includes(pin), pin);
+  assert.equal(defaultPins(true, true)[0], '/study');
+  assert.equal(defaultPins(true)[0], '/today');
+  assert.equal(defaultPins(false, true)[0], '/blog', 'the setting means nothing signed out');
 });
 
 test('a surprise is somewhere new, and never where you are', () => {

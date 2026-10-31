@@ -16,6 +16,8 @@ import './rooms.css';
 
 export type RoomContext = {
   signedIn: boolean;
+  /** This account starts on PA Today, so its room leads. */
+  studyFirst?: boolean;
   found: Set<string> | null;
   info?: NavInfo;
   /** Your pins, in the panel: the home page leaves pinning out. */
@@ -269,7 +271,7 @@ function GettingAround({ ctx }: { ctx: RoomContext }) {
 export function RoomGrid({ groups, ctx }: { groups: NavGroup[]; ctx: RoomContext }) {
   return (
     <div className={`rm-grid${ctx.editing ? ' is-editing' : ''}`}>
-      {orderRooms(groups, ctx.signedIn).map((room) => <Room key={room.id} room={room} ctx={ctx} />)}
+      {orderRooms(groups, ctx.signedIn, ctx.studyFirst).map((room) => <Room key={room.id} room={room} ctx={ctx} />)}
       <GettingAround ctx={ctx} />
     </div>
   );

@@ -6,7 +6,7 @@ replace Anki or commercial question banks. It does what they don't: remembers
 what happened on those AI tests, plans the work around real deadlines, and makes
 studying a little more fun.
 
-Status (2026-10-31): phase 1 built. Everything after it is planned, not started.
+Status (2026-10-31): phases 1 and 2 built. Everything after them is planned, not started.
 
 ## Ground rules
 
@@ -23,7 +23,7 @@ Status (2026-10-31): phase 1 built. Everything after it is planned, not started.
 | Phase | What | Status |
 |---|---|---|
 | 1 | Test vault, miss bank, export to Anki | Built |
-| 2 | PA Today and a space of its own | Planned |
+| 2 | PA Today and a space of its own | Built |
 | 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Planned |
 | 4 | Study planner and pancakes | Planned |
 | 5 | Study games: Trivia Death with her questions, The Night Shift | Planned |
@@ -43,26 +43,34 @@ card on Today, a linked habit, backups and data downloads.
 Still to check with real use: a reply from her own AI, an import into real Anki,
 and copying the prompt on her phone.
 
-## Phase 2: PA Today and a space of its own
+## Phase 2: PA Today and a space of its own (built)
 
 The goal is that she can open the site and only see what's for her, without the
 workout, kart and PLC parts weighing it down. Nothing is deleted or locked: the
 rest of the site stays one tap away in Explore.
 
-- **PA Today** becomes the front page of Study at `/study`. It shows, in order: the
-  next exams with days left, today's plate of pancakes (phase 4), reviews due, and
-  a way into tests, the map and games. Until phase 4 it shows what already exists.
-  The current test list moves to `/study/tests`.
-- **Its own navigation.** While in Study, the section bar and phone dock show only
-  Study's pages (PA Today, Plan, Tests, Review, Map, Games). The dock is currently
-  drawn from the account's pins everywhere, so this is a new rule for this section.
-- **A home for her account.** A per-account setting, "Start on PA Today", sends
-  her there after sign-in and from the logo, and puts the Study room first in
-  Explore. Pins are already per account, so hers can be set to Study's pages.
-- **Its own home-screen icon.** The site's app manifest starts at `/workout`. Study
-  gets its own manifest named "PA Study" that starts at `/study`, so she can install
-  it as its own app. Needs testing on her actual phone, since iOS and Android treat
-  this differently.
+- **PA Today** is the front page of Study at `/study`: reviews due and tests left
+  part way, a clear "you can stop here" when neither is waiting, a test she hasn't
+  taken as a suggestion only, and links to everything else. Later phases add the next
+  exams with days left, today's pancakes, and the map and games. Tests moved to
+  `/study/tests`.
+- **Its own navigation.** Inside Study the header's logo becomes "PA Study", her pins
+  leave the header, and the section bar (wide screens) and phone dock show Study's
+  pages. New pages get added to the Study group in `components/nav-links.ts`. The
+  "new place found" toast stays quiet here.
+- **A home for her account.** "Start on PA Today" is kept on her account
+  (`studyHome`). It makes the logo go to PA Today everywhere, puts the Study room
+  first in Explore, adds PA Today to the account menu, and sets default pins to
+  Study's pages. Signing in from the home page lands on PA Today, but signing in from
+  any other page stays there, since that's where she was going. Pins are saved per
+  device, so any she's already chosen on a device stay as they are.
+- **Its own home-screen icon.** `/study/manifest.webmanifest` makes it an app called
+  "PA Study" that starts at `/study`, with its own icon. Its scope is `/study`, so on
+  Android leaving for the rest of the site may show a browser bar. Not yet tried on a
+  real phone, and iOS and Android treat this differently. On iPhone, the home-screen
+  app keeps its own sign-in.
+- **Anki page.** `/study/anki` replaced the collapsed section at the bottom of Review,
+  which stayed hidden until something had been missed. Reading decks in comes in phase 3.
 
 ## Phase 3: catch-up
 
