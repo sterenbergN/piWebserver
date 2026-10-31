@@ -5,6 +5,7 @@ import '../habits/habits.css';
 import '../journal/journal.css';
 import './study.css';
 import './plan.css';
+import './games.css';
 
 export const metadata: Metadata = {
   title: { absolute: 'PA Study' },

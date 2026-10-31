@@ -1,0 +1,86 @@
+/* ─── Games ────────────────────────────────────────────────────────────────── */
+
+.ns-card-head { display: flex; align-items: flex-start; gap: 0.75rem; }
+.ns-card-icon { flex: none; font-size: 2rem; line-height: 1; }
+.ns-card-head .hb-hint { margin-top: 0.25rem; }
+
+/* ─── The Night Shift: always night, whatever the site's theme ─────────────── */
+
+.ns-stage {
+  --foreground: #e8edf5; --muted: #9aa8c0; --surface-border: #33405a; --surface-hover: #26304a; --input-bg: #1a2236; --surface-glass: #1f2940;
+  --accent: #5e81ac; --accent-rgb: 94, 129, 172; --accent-light: #88c0d0; --success: #a3be8c; --success-rgb: 163, 190, 140; --danger: #e0707a; --danger-rgb: 224, 112, 122; --warning: #d08770;
+  --primary-bg: #88c0d0; --primary-bg-hover: #9fcfdc; --primary-fg: #1d2a33; --background: #141a2b;
+  display: flex; flex-direction: column; gap: 0.85rem; padding: 1rem; border-radius: 20px; color: var(--foreground);
+  background: radial-gradient(120% 70% at 50% 0%, #26304f 0%, #141a2b 70%); border: 1px solid var(--surface-border);
+}
+.ns-stage h1, .ns-stage h2 { color: var(--foreground); }
+.ns-stage .hb-small-btn { background: var(--input-bg); color: var(--foreground); border-color: var(--surface-border); }
+.ns-stage .hb-small-btn:disabled { opacity: 0.45; cursor: default; }
+.ns-top { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.ns-top h1 { font-size: 1.15rem; }
+.ns-leave { font-size: 0.85rem; color: var(--muted); }
+
+.ns-status { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.35rem 0.85rem; }
+.ns-clock { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ns-coffee { display: flex; flex-wrap: wrap; gap: 0.1rem; font-size: 1.1rem; }
+.ns-coffee .is-gone { filter: grayscale(1); opacity: 0.25; }
+.ns-score { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.ns-score strong { font-size: 1.15rem; }
+.ns-score small { color: var(--warning); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+.ns-hours { grid-column: 1 / -1; display: flex; gap: 0.2rem; }
+.ns-hours span { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-border); }
+.ns-hours .is-done { background: var(--accent-light); }
+.ns-hours .is-now { background: var(--warning); }
+
+.ns-quip { margin: 0; text-align: center; font-style: italic; color: var(--muted); }
+.ns-note { margin: 0; text-align: center; font-weight: 600; color: var(--foreground); }
+.ns-doors-wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+.ns-doors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+.ns-door { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; min-height: 11.5rem; padding: 1rem 0.65rem; border-radius: 14px 14px 6px 6px; border: 2px solid var(--surface-border); background: linear-gradient(180deg, #2a3553, #1a2236); color: var(--foreground); font: inherit; text-align: center; cursor: pointer; transition: transform 0.12s, border-color 0.12s; }
+.ns-door:hover, .ns-door:focus-visible { transform: translateY(-3px); border-color: var(--accent-light); }
+.ns-door small { color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
+.ns-door-icon { font-size: 2.3rem; line-height: 1.2; }
+.ns-door-points { margin-top: auto; font-size: 0.75rem; font-weight: 700; color: var(--accent-light); }
+.ns-door.is-er { border-color: rgba(var(--danger-rgb), 0.6); }
+.ns-door.is-break, .ns-door.is-supply { border-color: rgba(var(--success-rgb), 0.55); }
+.ns-items { margin: 0; text-align: center; font-size: 0.8rem; color: var(--muted); }
+
+.ns-panel { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; border-radius: 14px; background: var(--surface-glass); border: 1px solid var(--surface-border); min-width: 0; }
+.ns-center { align-items: center; text-align: center; }
+.ns-center p { margin: 0; color: var(--foreground); }
+.ns-big-icon { font-size: 3rem; line-height: 1.1; }
+.ns-room-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.3rem 0.75rem; }
+.ns-room-title { font-weight: 700; font-size: 0.92rem; }
+.ns-quick { font-size: 0.75rem; font-weight: 700; color: var(--warning); font-variant-numeric: tabular-nums; }
+.ns-second { margin: 0; font-style: italic; color: var(--warning); }
+.ns-actions { margin-top: 0.1rem; }
+.ns-verdict { margin: 0; font-size: 1.25rem; font-weight: 800; }
+.ns-verdict span { display: block; font-size: 0.85rem; font-weight: 400; font-style: italic; color: var(--muted); }
+.ns-verdict.is-right { color: var(--success); }
+.ns-verdict.is-wrong { color: var(--danger); }
+.ns-stage .sd-explain { background: var(--input-bg); }
+
+.ns-code { border-color: var(--danger); animation: ns-alarm 1.4s ease-in-out infinite; }
+@keyframes ns-alarm { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--danger-rgb), 0.15); } 50% { box-shadow: 0 0 22px 2px rgba(var(--danger-rgb), 0.4); } }
+.ns-code h2 { color: var(--danger); }
+.ns-code p { margin: 0; color: var(--foreground); }
+.ns-defib { position: relative; height: 3rem; border-radius: 10px; background: #0d1220; border: 1px solid var(--surface-border); overflow: hidden; }
+.ns-defib-zone { position: absolute; top: 0; bottom: 0; background: rgba(var(--success-rgb), 0.55); }
+.ns-defib-marker { position: absolute; top: 0; bottom: 0; width: 4px; margin-left: -2px; background: #fff; box-shadow: 0 0 8px #fff; }
+.ns-shock { min-height: 3.4rem; font-size: 1.15rem; }
+.ns-result { font-weight: 700; }
+.ns-boss { border-color: var(--warning); }
+
+.ns-over { align-items: stretch; text-align: center; }
+.ns-over h2 { font-size: 1.15rem; line-height: 1.35; }
+.ns-final { margin: 0; font-size: 2.6rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--foreground); }
+.ns-over .sd-actions { justify-content: center; }
+.ns-over .sd-stats { text-align: left; }
+.ns-recap { text-align: left; }
+.ns-recap summary { cursor: pointer; font-weight: 600; font-size: 0.92rem; }
+.ns-recap-item { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0; border-top: 1px solid var(--surface-border); margin-top: 0.5rem; }
+.ns-recap-answer { margin: 0; font-weight: 700; color: var(--success); }
+.ns-recap .dq-md > :first-child { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) { .ns-code { animation: none; } .ns-door { transition: none; } }
+@media (max-width: 480px) { .ns-stage { padding: 0.75rem; } .ns-door { min-height: 10rem; } }

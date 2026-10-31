@@ -8,6 +8,14 @@ const TOTAL_ROUNDS = 7;
 const QUESTION_TIME = 15;
 const KILLING_FLOOR_TIME = 10;
 const ESCAPE_QUESTIONS = 4;
+const ESCAPE_TIME = 12;
+/** Long enough to read an explanation on the TV. */
+const EXPLAINED_RESULTS_TIME = 15;
+const RESULTS_TIME = 6;
+
+/** A host's study questions are patient scenarios, so they get the time the host picked. */
+const questionTime = (state: GameState) => state.settings?.study?.seconds ?? QUESTION_TIME;
+const escapeTime = (state: GameState) => state.settings?.study?.seconds ?? ESCAPE_TIME;
 
 type PlayerStatus = 'alive' | 'ghost' | 'escaped';
 type MiniGame = 'spin' | 'math' | 'password' | 'memory' | 'hotpotato' | 'scramble' | 'reaction' | 'auction';
@@ -105,7 +113,9 @@ export const triviaDeathLogic = {
   onStart: async (state: GameState) => {
     if (state.playerOrder.length < 3) return;
 
-    const questions = await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20, state.settings?.packs);
+    const questions = state.studyDeck?.length
+      ? (state.studyDeck as unknown as TriviaQuestion[])
+      : await getRandomTriviaQuestions(TOTAL_ROUNDS + ESCAPE_QUESTIONS + 20, state.settings?.packs);
 
     const baseScores: Record<string, number> = {};
     for (const pid of state.playerOrder) {
@@ -341,8 +351,8 @@ async function startTriviaRound(state: GameState) {
     ghostStreaks: state.gameData.ghostStreaks,
     flavor: randomFlavor('QUESTION'),
     timerStart: Date.now(),
-    timerDuration: QUESTION_TIME,
-    autoAdvanceAt: Date.now() + QUESTION_TIME * 1000,
+    timerDuration: questionTime(state),
+    autoAdvanceAt: Date.now() + questionTime(state) * 1000,
     autoAdvanceAction: 'FORCE_TRIVIA_REVEAL',
   };
   // The audience plays along for their own leaderboard.
@@ -368,7 +378,7 @@ async function startTriviaRound(state: GameState) {
         totalRounds: state.gameData.totalRounds,
         money: state.gameData.money[pid],
         timerStart: Date.now(),
-        timerDuration: QUESTION_TIME,
+        timerDuration: questionTime(state),
         flavor: status === 'ghost'
           ? '👻 Answer correctly 3 times in a row to resurrect!'
           : '💀 Answer wrong and you go to the Killing Floor...',
@@ -381,6 +391,7 @@ function revealTriviaAnswers(state: GameState) {
   state.phase = 'QUESTION_RESULTS';
   const q = state.gameData.questions[state.gameData.round - 1] as TriviaQuestion;
   const correctIdx = q.answer;
+  const resultsTime = q.explanation ? EXPLAINED_RESULTS_TIME : RESULTS_TIME;
 
   const roundRecord = { round: state.gameData.round, killingFloor: false };
 
@@ -436,9 +447,10 @@ function revealTriviaAnswers(state: GameState) {
     playerStatuses: state.gameData.playerStatuses,
     playerMoney: state.gameData.money,
     ghostStreaks: state.gameData.ghostStreaks,
+    ...(q.explanation ? { explanation: q.explanation } : {}),
     timerStart: Date.now(),
-    timerDuration: 6,
-    autoAdvanceAt: Date.now() + 6_000,
+    timerDuration: resultsTime,
+    autoAdvanceAt: Date.now() + resultsTime * 1000,
     autoAdvanceAction: 'PROCEED_TO_KILLING_FLOOR',
   };
 
@@ -456,6 +468,9 @@ function revealTriviaAnswers(state: GameState) {
       status,
       ghostStreak: state.gameData.ghostStreaks[pid] || 0,
       money: state.gameData.money[pid],
+      ...(q.explanation ? { explanation: q.explanation } : {}),
+      // Each phone sends this to its own account, which saves it only if the question is theirs.
+      ...(q.studyId ? { study: { questionId: q.studyId, round: state.gameData.round, answer: Number.isInteger(answered) && q.choiceMap?.[answered] !== undefined ? [q.choiceMap[answered]] : [] } } : {}),
       message: correct
         ? (status === 'ghost' ? `👻 Streak: ${state.gameData.ghostStreaks[pid]}/3 to resurrect` : '✅ Correct! +$500')
         : (state.gameData.killingFloorPlayers.includes(pid) ? '💀 To the Killing Floor!' : '❌ Wrong'),
@@ -840,8 +855,8 @@ async function startFinalEscape(state: GameState) {
     playerMoney: state.gameData.money,
     escapeStepsNeeded: ESCAPE_QUESTIONS,
     timerStart: Date.now(),
-    timerDuration: 12,
-    autoAdvanceAt: Date.now() + 12_000,
+    timerDuration: escapeTime(state),
+    autoAdvanceAt: Date.now() + escapeTime(state) * 1000,
     autoAdvanceAction: 'FORCE_ESCAPE_ADVANCE',
   };
 
@@ -857,7 +872,7 @@ async function startFinalEscape(state: GameState) {
       escapeStepsNeeded: ESCAPE_QUESTIONS,
       money: state.gameData.money[pid],
       timerStart: Date.now(),
-      timerDuration: 12,
+      timerDuration: escapeTime(state),
       flavor: '🚪 Answer correctly to escape the Murder Hotel!',
       allowDoubleDown: !isLeader
     };
@@ -889,8 +904,8 @@ function advanceEscapeQuestion(state: GameState) {
     playerMoney: state.gameData.money,
     escapeStepsNeeded: ESCAPE_QUESTIONS,
     timerStart: Date.now(),
-    timerDuration: 12,
-    autoAdvanceAt: Date.now() + 12_000,
+    timerDuration: escapeTime(state),
+    autoAdvanceAt: Date.now() + escapeTime(state) * 1000,
     autoAdvanceAction: 'FORCE_ESCAPE_ADVANCE',
   };
 
@@ -909,7 +924,7 @@ function advanceEscapeQuestion(state: GameState) {
       escapeStepsNeeded: ESCAPE_QUESTIONS,
       money: state.gameData.money[pid],
       timerStart: Date.now(),
-      timerDuration: 12,
+      timerDuration: escapeTime(state),
       allowDoubleDown: !isLeader
     };
   }

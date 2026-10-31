@@ -621,7 +621,15 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               );
             })()}
 
-            {packs.length > 1 && PACK_LIST_KEY[state.gameType] && (
+            {state.settings?.study && state.gameType === 'trivia-death' && (
+              <div style={{ textAlign: 'center', margin: '1rem auto', padding: '0.75rem 1rem', maxWidth: '560px', border: '2px solid var(--party-green)', borderRadius: '14px' }}>
+                <div style={{ fontWeight: 900 }}>🩺 Study edition: {state.settings.study.count} of your own questions, {state.settings.study.seconds} seconds each</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--party-text-muted)', marginTop: '0.25rem' }}>If you’re signed in on your phone when you play, your answers go in your miss bank.</div>
+                <button onClick={() => sendAction({ type: 'CLEAR_STUDY_DECK' })} style={{ marginTop: '0.5rem', background: 'transparent', color: 'var(--party-text-muted)', border: 'none', textDecoration: 'underline', cursor: 'pointer' }}>Use the regular questions instead</button>
+              </div>
+            )}
+
+            {!(state.settings?.study && state.gameType === 'trivia-death') && packs.length > 1 && PACK_LIST_KEY[state.gameType] && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center', alignItems: 'center', margin: '1rem 0' }}>
                 <span style={{ fontWeight: 'bold' }}>Prompt packs:</span>
                 {packs.map(p => {
@@ -820,7 +828,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             </div>
             <div className="host-trivia-category-badge">☠️ Round {state.hostData.round} of {state.hostData.totalRounds}</div>
             {state.hostData.category && <div className="host-trivia-category">{state.hostData.category}</div>}
-            <div className="host-trivia-qtext">{state.hostData.question}</div>
+            <div className="host-trivia-qtext" style={state.hostData.question?.length > 140 ? { fontSize: 'clamp(1.1rem, 2.6vh, 1.6rem)', lineHeight: 1.35 } : undefined}>{state.hostData.question}</div>
             <div className="host-trivia-choices" style={{ maxWidth: '800px', width: '100%', marginBottom: '1.5rem' }}>
               {state.hostData.choices?.map((c: string, idx: number) => (
                 <div key={idx} className="host-trivia-choice dimmed">
@@ -855,7 +863,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         )}
         {state.phase === 'QUESTION_RESULTS' && state.gameType === 'trivia-death' && (
           <div className="host-trivia-question phase-enter center-stack" style={{ maxWidth: '820px' }}>
-            <div className="host-trivia-qtext" style={{ fontSize: 'clamp(1.5rem,3vw,2.5rem)', marginBottom: '1.5rem', opacity: 0.85 }}>{state.hostData.question}</div>
+            <div className="host-trivia-qtext" style={{ fontSize: state.hostData.question?.length > 140 ? 'clamp(1rem, 2.2vh, 1.35rem)' : 'clamp(1.5rem,3vw,2.5rem)', marginBottom: '1.5rem', opacity: 0.85 }}>{state.hostData.question}</div>
             <div className="host-trivia-choices" style={{ maxWidth: '800px', width: '100%' }}>
               {state.hostData.choices?.map((c: string, idx: number) => (
                 <div key={idx} className={`host-trivia-choice ${idx === state.hostData.correctAnswer ? 'correct' : 'incorrect'}`}>
@@ -864,6 +872,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                 </div>
               ))}
             </div>
+            {state.hostData.explanation && (
+              <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', borderRadius: '14px', background: 'rgba(255,255,255,0.06)', fontSize: 'clamp(1rem, 2.2vh, 1.3rem)', lineHeight: 1.4, textAlign: 'left' }}>{state.hostData.explanation}</div>
+            )}
             {state.hostData.killingFloorPlayers?.length > 0 && (
               <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
                 <div style={{ color: 'var(--party-red)', fontWeight: 900, fontSize: '1.1rem', width: '100%', textAlign: 'center' }}>💀 Heading to the Killing Floor:</div>

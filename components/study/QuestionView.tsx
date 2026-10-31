@@ -5,12 +5,14 @@ import { MathText } from '@/components/daily/MathText';
 import { choiceLetter, choiceOrder, isRight, type StudyQuestion } from '@/lib/study/study';
 
 /** The choices, in this attempt's shuffled order. With `reveal` they show what was right and why. */
-export function Choices({ question, seed, answer, onChange, reveal = false }: {
+export function Choices({ question, seed, answer, onChange, reveal = false, hidden = [] }: {
   question: StudyQuestion;
   seed: number;
   answer: number[];
   onChange?: (answer: number[]) => void;
   reveal?: boolean;
+  /** Choices taken away, as original indexes. */
+  hidden?: number[];
 }) {
   const [crossed, setCrossed] = useState<number[]>([]);
   const multi = question.correct.length > 1;
@@ -22,7 +24,7 @@ export function Choices({ question, seed, answer, onChange, reveal = false }: {
   return (
     <div className="sd-choices" role={multi ? 'group' : 'radiogroup'} aria-label="Choices">
       {multi && !reveal && <p className="sd-multi">Select all that apply</p>}
-      {choiceOrder(question, seed).map((original, shown) => {
+      {choiceOrder(question, seed).filter((i) => reveal || !hidden.includes(i)).map((original, shown) => {
         const chosen = answer.includes(original);
         const right = question.correct.includes(original);
         const isCrossed = crossed.includes(original) && !reveal;

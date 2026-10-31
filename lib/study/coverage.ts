@@ -3,7 +3,7 @@
 // finished), studied (from her Anki export) and proven (results on tests here).
 // Pure, so the server, the browser and the tests share it.
 
-import { PANCE_SYSTEMS, scoreAttempt, type PanceSystem, type ProgressData, type TestsData } from './study';
+import { isRight, PANCE_SYSTEMS, scoreAttempt, type PanceSystem, type ProgressData, type TestsData } from './study';
 
 /**
  * NCCPA's 2025 blueprint, "% distribution of content by organ system" (from
@@ -257,12 +257,21 @@ export function coverageMap(tests: TestsData, progress: ProgressData, map: MapDa
   const finished = progress.attempts.filter((a) => a.finishedAt).sort((a, b) => String(a.finishedAt).localeCompare(String(b.finishedAt)));
   const byId = new Map(tests.tests.map((t) => [t.id, t]));
   const latest = new Map<string, { system?: PanceSystem; topic: string; right: boolean }>();
+  const answeredAt = new Map<string, string>();
   for (const attempt of finished) {
     const test = byId.get(attempt.testId);
     if (!test) continue;
     for (const { question, right } of scoreAttempt(attempt, test).results) {
       latest.set(question.id, { system: question.system ?? classSystem.get(test.course.toLowerCase()), topic: question.topic, right });
+      answeredAt.set(question.id, String(attempt.finishedAt));
     }
+  }
+  // Answers in games count too, whichever came last.
+  for (const [id, game] of Object.entries(progress.gameAnswers)) {
+    const test = byId.get(game.testId);
+    const question = test?.questions.find((q) => q.id === id);
+    if (!test || !question || (answeredAt.get(id) ?? '') > game.at) continue;
+    latest.set(id, { system: question.system ?? classSystem.get(test.course.toLowerCase()), topic: question.topic, right: isRight(question, game.answer) });
   }
 
   const studied = new Map<PanceSystem, SystemCoverage['studied'] & { passed: number; graded: number }>();

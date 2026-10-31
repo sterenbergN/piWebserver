@@ -72,6 +72,10 @@ export type ProgressData = {
   misses: Record<string, Miss>;
   /** The days you answered reviews. */
   reviewDays: DateKey[];
+  /** Her latest answer to each question in a game, for the map. */
+  gameAnswers: Record<string, { testId: string; answer: number[]; at: string }>;
+  /** The Night Shift's running totals. */
+  games?: { runs: number; survived: number; best: number; bestHours: number; lastOn?: DateKey };
 };
 
 export type StudyErrorKind = 'input' | 'missing';
@@ -87,7 +91,7 @@ const UNSURE_BOX = 1;
 const LIMITS = { questions: 300, tests: 2000, stem: 6000, choice: 1500, explanation: 8000, quote: 2000, topic: 80, title: 120, course: 80, choices: 8 };
 
 export const emptyTests = (): TestsData => ({ tests: [] });
-export const emptyProgress = (): ProgressData => ({ attempts: [], misses: {}, reviewDays: [] });
+export const emptyProgress = (): ProgressData => ({ attempts: [], misses: {}, reviewDays: [], gameAnswers: {} });
 
 export function normalizeTests(raw: Partial<TestsData> | null | undefined): TestsData {
   return { tests: Array.isArray(raw?.tests) ? raw.tests : [] };
@@ -98,6 +102,8 @@ export function normalizeProgress(raw: Partial<ProgressData> | null | undefined)
     attempts: Array.isArray(raw?.attempts) ? raw.attempts : [],
     misses: raw?.misses && typeof raw.misses === 'object' ? raw.misses : {},
     reviewDays: Array.isArray(raw?.reviewDays) ? raw.reviewDays : [],
+    gameAnswers: raw?.gameAnswers && typeof raw.gameAnswers === 'object' ? raw.gameAnswers : {},
+    ...(raw?.games ? { games: raw.games } : {}),
   };
 }
 
@@ -425,6 +431,19 @@ export function studyDays(progress: ProgressData) {
 }
 
 // ── The miss bank ────────────────────────────────────────────────────────────
+
+/** A wrong answer in a game: into the bank, same as missing it on a test. */
+export function recordGameMiss(progress: ProgressData, testId: string, questionId: string, today: DateKey) {
+  recordMiss(progress, testId, questionId, today);
+}
+
+/** A right answer in a game: only a miss that's due moves along, same as a review. */
+export function moveMissAlong(progress: ProgressData, questionId: string, today: DateKey) {
+  const miss = progress.misses[questionId];
+  if (miss?.state !== 'active' || miss.dueOn > today) return;
+  moveAlong(miss, today);
+  noteReviewDay(progress, today);
+}
 
 /** What's due today, longest-waiting first, then whatever's been missed most. */
 export function dueMisses(progress: ProgressData, today: DateKey) {

@@ -2,8 +2,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
-import { eatTest, noteClean } from '@/lib/study/plan';
-import { readPlan, readProgress, readTests, updatePlan, updateProgress, updateTests } from '@/lib/study/store';
+import { afterStudying, readPlan, readProgress, readTests, updateProgress, updateTests } from '@/lib/study/store';
 import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
 import {
   addTest, answerReview, cleanAnswer, dueMisses, finishAttempt, fixQuestion, parseTestReply, removeQuestion, removeTest, renameTest,
@@ -48,15 +47,6 @@ function testFrom<T extends { id: string }>(list: T[], id: unknown) {
   const test = isId(id) ? list.find((t) => t.id === id) : undefined;
   if (!test) throw new ApiError(404, 'That test isn’t here any more.');
   return test;
-}
-
-/** Work done here counts by itself: a handed-in test eats its pancakes, and clearing reviews can clean the plate. */
-async function afterStudying(userId: string, today: string, testId?: string) {
-  const progress = await readProgress(userId);
-  await updatePlan(userId, (plan) => {
-    if (testId) eatTest(plan, testId, today);
-    noteClean(plan, today, dueMisses(progress, today).length, progress.reviewDays.includes(today));
-  });
 }
 
 export async function POST(request: Request) {

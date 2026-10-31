@@ -1,3 +1,5 @@
+import type { TriviaStudyQuestion } from '../study/games';
+
 export type GameType =
   | 'quip-clash'
   | 'the-faker'
@@ -63,7 +65,14 @@ export interface GameState {
   /** Recent reactions for the TV to animate (newest last, capped). */
   reactions?: Reaction[];
   /** Host choices that survive between games in the room. */
-  settings?: { packs?: string[]; phonesOnly?: boolean };
+  settings?: {
+    packs?: string[];
+    phonesOnly?: boolean;
+    /** A host's own study questions are in play: what the room may know about them. */
+    study?: { count: number; seconds: number };
+  };
+  /** The questions behind `settings.study`. Answers are in here, so it never leaves the server. */
+  studyDeck?: TriviaStudyQuestion[];
   // Game-specific data for the host
   hostData: any;
   // Game-specific data tailored for players (playerId -> data)

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, use, useRef, useCallback } from 'react';
+import { localToday } from '@/lib/habits/dates';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
@@ -91,6 +92,22 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useImmersive('party-phone');
+
+  // A host's own study questions: send each answer to this phone's account. It's
+  // only saved if the question is theirs, so everyone else's phone changes nothing.
+  const studySent = useRef('');
+  const studyAnswer = state?.data?.study as { questionId: string; answer: number[]; round: number } | undefined;
+  useEffect(() => {
+    if (!studyAnswer) return;
+    const key = `${studyAnswer.round}:${studyAnswer.questionId}`;
+    if (studySent.current === key) return;
+    studySent.current = key;
+    fetch('/api/study/games', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'answer', questionId: studyAnswer.questionId, answer: studyAnswer.answer, today: localToday() }),
+    }).catch(() => { /* the game goes on either way */ });
+  }, [studyAnswer]);
 
   // Detect VIP host token from URL or localStorage
   useEffect(() => {
@@ -1033,6 +1050,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 ))}
               </div>
             )}
+            {pd.explanation && <div style={{ padding: '0.65rem 0.9rem', borderRadius: '12px', background: 'rgba(255,255,255,0.06)', fontSize: '0.95rem', lineHeight: 1.4 }}>{pd.explanation}</div>}
             {hd.killingFloorPlayers?.length > 0 && (
               <div style={{ textAlign: 'center', color: 'var(--party-red)', fontWeight: 800, fontSize: '0.9rem', marginTop: '0.25rem' }}>
                 💀 On the Killing Floor: {hd.killingFloorPlayers.map((pid: string) => state.players[pid]?.name).join(', ')}

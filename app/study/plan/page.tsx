@@ -8,7 +8,7 @@ import { ExamHelpView, useExamHelp } from '@/components/study/ExamHelpBanner';
 import { usePlan } from '@/components/study/usePlan';
 import { addDays, weekStart, type DateKey } from '@/lib/habits/dates';
 import {
-  calendarInbox, DEADLINE_KINDS, dayPlan, KIND_ICON, KIND_LABEL, MAX_PANCAKES, openTasks, upcoming,
+  calendarInbox, DEADLINE_KINDS, dayPlan, GAME_TASK, KIND_ICON, KIND_LABEL, MAX_PANCAKES, openTasks, upcoming,
   type Deadline, type DeadlineKind, type DeadlineView, type PlanTask,
 } from '@/lib/study/plan';
 
@@ -43,7 +43,8 @@ function WorkForm({ planner, deadlineId, onDone }: { planner: Planner; deadlineI
     setError('');
     try {
       const test = tests.find((t) => t.id === testId);
-      await planner.post('add-task', { title: title.trim() || (test ? `Take ${test.title}` : ''), pancakes: size, deadlineId, testId });
+      const named = testId === GAME_TASK ? 'Play The Night Shift' : test ? `Take ${test.title}` : '';
+      await planner.post('add-task', { title: title.trim() || named, pancakes: size, deadlineId, testId });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That didn’t save.');
@@ -59,17 +60,16 @@ function WorkForm({ planner, deadlineId, onDone }: { planner: Planner; deadlineI
       </div>
       <p className="sd-setup-title">Rough size</p>
       <SizePicker value={size} onChange={setSize} />
-      {tests.length > 0 && (
-        <div className="sd-fields">
-          <label className="sd-wide">Taking a test? (optional)
-            <select value={testId} onChange={(e) => setTestId(e.target.value)}>
-              <option value="">No test</option>
-              {tests.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
-            </select>
-          </label>
-        </div>
-      )}
-      {testId && <p className="hb-hint">Handing in that test eats these pancakes by itself.</p>}
+      <div className="sd-fields">
+        <label className="sd-wide">Taking a test or playing? (optional)
+          <select value={testId} onChange={(e) => setTestId(e.target.value)}>
+            <option value="">Neither</option>
+            <option value={GAME_TASK}>🌙 Play The Night Shift</option>
+            {tests.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+          </select>
+        </label>
+      </div>
+      {testId && <p className="hb-hint">{testId === GAME_TASK ? 'Each shift you finish eats one of these by itself.' : 'Handing in that test eats these pancakes by itself.'}</p>}
       {error && <p className="sd-warning" role="alert">{error}</p>}
       <div className="sd-actions">
         <button type="submit" className="btn btn-primary" disabled={busy}>Add to the plan</button>
@@ -141,7 +141,7 @@ function TaskLine({ task, planner, today }: { task: PlanTask; planner: Planner; 
       {popup}
       <span className="sd-test-main">
         <strong className={left ? '' : 'is-done'}>{left ? '' : '✓ '}{task.title}</strong>
-        <small>{task.eaten} of {task.pancakes} eaten{left && nextDay ? ` · next ${nextDay === today ? 'today' : fmt(nextDay)}` : ''}{task.testId ? ' · tied to a test' : ''}</small>
+        <small>{task.eaten} of {task.pancakes} eaten{left && nextDay ? ` · next ${nextDay === today ? 'today' : fmt(nextDay)}` : ''}{task.testId ? (task.testId === GAME_TASK ? ' · tied to The Night Shift' : ' · tied to a test') : ''}</small>
         {error && <small className="sd-warning" role="alert">{error}</small>}
       </span>
       <span className="sd-actions">

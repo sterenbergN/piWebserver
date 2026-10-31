@@ -194,6 +194,7 @@ export default function PaTodayPage() {
                 <Link href="/study/plan"><span aria-hidden>🥞</span><strong>Plan</strong><small>Dates and the work toward them</small></Link>
                 <Link href="/study/tests"><span aria-hidden>📝</span><strong>Practice tests</strong><small>{total.tests} saved</small></Link>
                 <Link href="/study/review"><span aria-hidden>🔁</span><strong>Review misses</strong><small>{review.active} in the bank</small></Link>
+                <Link href="/study/games"><span aria-hidden>🌙</span><strong>Games</strong><small>Study that doesn’t feel like it</small></Link>
                 <Link href="/study/map"><span aria-hidden>🗺️</span><strong>PANCE map</strong><small>What’s covered, studied and proven</small></Link>
                 <Link href="/study/classes"><span aria-hidden>🎓</span><strong>Classes</strong><small>What you’ve finished</small></Link>
                 <Link href="/study/anki"><span aria-hidden>🗂️</span><strong>Anki</strong><small>{review.forAnki ? `${review.forAnki} new to send` : 'Import decks, send misses'}</small></Link>

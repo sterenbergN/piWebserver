@@ -17,6 +17,10 @@ export interface TriviaQuestion {
   choices: [string, string, string, string]; // exactly 4
   answer: number; // 0-indexed correct choice
   category?: string;
+  /** Only on a host's own study questions (see lib/study/games.ts). */
+  explanation?: string;
+  studyId?: string;
+  choiceMap?: number[];
 }
 
 export interface SpyfallLocation {

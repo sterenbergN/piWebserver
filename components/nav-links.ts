@@ -109,6 +109,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/study/plan', label: 'Plan', icon: '🥞', blurb: 'What’s coming up, and the pancakes before it', keywords: 'planner calendar exams due dates countdown schedule syllabus', account: true },
         { href: '/study/tests', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
         { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition', account: true },
+        { href: '/study/games', label: 'Games', icon: '🌙', blurb: 'The Night Shift, and Trivia Death with your questions', keywords: 'play fun trivia party solo night shift', account: true },
         { href: '/study/map', label: 'PANCE map', icon: '🗺️', short: 'Map', blurb: 'Every organ system: covered, studied and proven', keywords: 'blueprint coverage boards organ systems exam', account: true },
         { href: '/study/classes', label: 'Classes', icon: '🎓', blurb: 'What you’ve finished, and what it covers', keywords: 'modules courses checklist catch up', account: true },
         { href: '/study/anki', label: 'Anki', icon: '🗂️', blurb: 'Import your decks, and send your misses', keywords: 'flashcards cards export import deck apkg', account: true },

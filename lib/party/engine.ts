@@ -349,7 +349,7 @@ export function resolvePlayerKey(state: GameState, key: string | null | undefine
 
 /** State as sent to the host screen: everything except credentials and who voted for what. */
 export function hostView(state: GameState) {
-  const { playerKeys: _keys, audienceKeys: _audienceKeys, audienceVote: _poll, audience, ...rest } = state;
+  const { playerKeys: _keys, audienceKeys: _audienceKeys, audienceVote: _poll, audience, studyDeck: _deck, ...rest } = state;
   const poll = activeAudienceVote(state);
   return {
     ...rest,
@@ -358,6 +358,15 @@ export function hostView(state: GameState) {
     audienceLeaders: Object.values(audience || {}).filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 3),
     awards: state.phase === 'FINAL_RESULTS' ? computeAwards(state) : null,
   };
+}
+
+/** Put a host's own study questions in a new room. */
+export async function setStudyDeck(roomCode: string, deck: NonNullable<GameState['studyDeck']>, study: { count: number; seconds: number }) {
+  const state = await getGameState(roomCode);
+  if (!state) throw new Error('Room not found');
+  state.studyDeck = deck;
+  state.settings = { ...(state.settings || {}), study };
+  await saveGameState(state);
 }
 
 /** Mark a player's live connection state (called by the player stream). */
@@ -630,6 +639,11 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         const packs = Array.isArray(action.packs) ? [...new Set(action.packs.filter((id: unknown) => typeof id === 'string' && known.has(id)))] as string[] : [];
         if (packs.length === 0) return { success: false, error: 'Pick at least one pack' };
         state.settings = { ...(state.settings || {}), packs };
+        break;
+      }
+      case 'CLEAR_STUDY_DECK': {
+        delete state.studyDeck;
+        if (state.settings) delete state.settings.study;
         break;
       }
       case 'KICK_PLAYER': {

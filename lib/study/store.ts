@@ -2,8 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
 import { emptyMap, normalizeMap, type AnkiData, type MapData } from './coverage';
-import { emptyPlan, normalizePlan, type PlanData } from './plan';
-import { emptyProgress, emptyTests, normalizeProgress, normalizeTests, type ProgressData, type TestsData } from './study';
+import { eatTest, emptyPlan, normalizePlan, noteClean, type PlanData } from './plan';
+import { dueMisses, emptyProgress, emptyTests, normalizeProgress, normalizeTests, type ProgressData, type TestsData } from './study';
 
 // One folder per account in .data/study (kept by backups). The tests themselves
 // change rarely and can get large, so saving your place in a test only rewrites
@@ -62,4 +62,13 @@ export async function updatePlan<R>(userId: string, mutate: (data: PlanData) => 
     return { result: mutate(stored) };
   });
   return result;
+}
+
+/** Work done here counts by itself: a handed-in test eats its pancakes, and clearing reviews or playing can clean the plate. */
+export async function afterStudying(userId: string, today: string, testId?: string) {
+  const progress = await readProgress(userId);
+  await updatePlan(userId, (plan) => {
+    if (testId) eatTest(plan, testId, today);
+    noteClean(plan, today, dueMisses(progress, today).length, progress.reviewDays.includes(today));
+  });
 }

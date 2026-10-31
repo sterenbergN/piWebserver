@@ -6,7 +6,7 @@ replace Anki or commercial question banks. It does what they don't: remembers
 what happened on those AI tests, plans the work around real deadlines, and makes
 studying a little more fun.
 
-Status (2026-10-31): phases 1 to 4 built. Everything after them is planned, not started.
+Status (2026-10-31): phases 1 to 5 built. Phase 6 is planned, not started.
 
 ## Ground rules
 
@@ -26,7 +26,7 @@ Status (2026-10-31): phases 1 to 4 built. Everything after them is planned, not 
 | 2 | PA Today and a space of its own | Built |
 | 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Built |
 | 4 | Study planner and pancakes | Built |
-| 5 | Study games: Trivia Death with her questions, The Night Shift | Planned |
+| 5 | Study games: Trivia Death with her questions, The Night Shift | Built |
 | 6 | Quiz me, mock patient, comparison grids, Differential | Planned |
 
 PA Today comes first because it's small and everything after it lands there. The
@@ -83,8 +83,8 @@ three separate levels, so nothing claims she knows a topic just because it was t
   the most-forgotten cards are kept (`lib/study/anki-import.ts`), so her cards stay in
   Anki. Decks with an obvious name are matched for her and she fixes the rest. A new
   import replaces the last, and matches are kept by name.
-- **Proven:** her latest answer to each question here. It takes 10 answers to judge a
-  system, and 75% right counts as strong. Games count once phase 5 feeds them in.
+- **Proven:** her latest answer to each question here, on a test or in a game. It takes
+  10 answers to judge a system, and 75% right counts as strong.
 
 The map also suggests where to look next, by weight on the exam and how little
 evidence is behind it, and links to a test prompt focused on that system. It's a nudge
@@ -192,19 +192,39 @@ Still to check with real use: her own calendar (only a public Google calendar ha
 read so far), a syllabus through her own AI, and whether the suggested event words fit
 how her program names things.
 
-## Phase 5: study games
+## Phase 5: study games (built)
 
-Both use her vault and miss bank, and a wrong answer always shows the explanation
-and adds the question to the miss bank. Anki cards have no wrong choices, so those
-get borrowed from similar cards in the deck, or improved through her AI.
+Both draw from her tests through `lib/study/games.ts`, at `/study/games`, and lean on
+what she's been missing. An answer counts like a review: a wrong one goes in the miss
+bank, a right one moves a due miss along, and the latest answer counts toward Proven
+on the map.
 
-- **Trivia Death, her edition.** Needs a longer timer option for patient scenarios,
-  an explanation on the answer reveal, and picking her questions when hosting, since
-  packs are currently site-wide and edited by the admin.
-- **The Night Shift (solo).** The solo Trivia Death: a run of question rooms where
-  wrong answers cost a life or send her to a mini-game, with items like 50/50 and a
-  boss built from her weakest organ system. Lives in Study, not the public arcade.
-- A finished run or game can eat pancakes planned for it.
+- **The Night Shift (solo).** `lib/study/night-shift.ts`, a seeded set of rules with no
+  page in it. Twelve hours, 7 pm to 7 am, picking a door each hour: Clinic, the ER (long
+  cases, double points), Chart review (a past miss), or a rest room for coffee or an item.
+  A wrong answer always stops for the explanation, then calls a code to fight for her
+  coffee: 2 of 3 quick questions, or a defibrillator timing game. Out of coffee ends the
+  shift. Items are Consult (removes wrong choices) and Second Opinion (one retry, with
+  the first answer still the one saved). At 6 am the Attending quizzes her on her weakest
+  system. There's a speed bonus but never a time limit, so she can still read a long
+  case. Each answer is saved as she goes. The run itself isn't saved, so leaving ends it.
+- **Trivia Death, study edition.** Opened from Games, she picks a class or system, 30 to
+  90 seconds a question, and TV or phones. The explanation shows on the TV and phones
+  after each round, which stays up for 15 seconds. It needs 11 questions with one right
+  answer; select-all questions are left out, and five-choice ones drop to four. Only
+  regular rounds are saved, not the final escape or Killing Floor mini-games.
+- **Whose answers count.** Each phone sends its answer to its own account, and the server
+  only saves it if that account owns the question. So she has to be signed in on the phone
+  she plays on. Classmates' answers are never saved anywhere.
+- **Keeping answers private in a room.** The deck is in a server-only field (`studyDeck`),
+  never sent to the TV or phones; each round's question reaches them only as it's asked.
+  It does sit in the room's file in `.data/party` until the room is cleaned up.
+- **Anki cards.** The import only keeps the cards she keeps forgetting, so those are what
+  the Night Shift can add, as a checkbox. Their wrong answers are borrowed from her other
+  cards, the same deck first, and can be weak. They aren't test questions, so answers on
+  them aren't saved. Using whole decks would mean keeping far more of her Anki data.
+- **Pancakes.** A task can be tied to The Night Shift, and each shift she finishes eats
+  one. A shift also counts as a study day for a linked habit.
 
 ## Phase 6: extras
 

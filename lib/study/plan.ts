@@ -319,6 +319,14 @@ export function eatTest(plan: PlanData, testId: string, today: DateKey) {
   return eaten;
 }
 
+/** A task tied to this eats a pancake for each run of The Night Shift. */
+export const GAME_TASK = 'game:night-shift';
+
+export function eatGame(plan: PlanData, today: DateKey) {
+  const task = plan.tasks.find((t) => t.testId === GAME_TASK && isLive(plan, t, today));
+  return task ? eat(plan, task.id, today) : 0;
+}
+
 /** Reviews due today cost a pancake per this many. They're counted, not stored: the miss bank already keeps them. */
 const REVIEWS_PER_PANCAKE = 20;
 export const reviewPancakes = (due: number) => (due > 0 ? Math.ceil(due / REVIEWS_PER_PANCAKE) : 0);
