@@ -88,25 +88,30 @@ older Anki versions" on and media off.
   class, due date and days-left countdown.
 - **Work toward them:** lectures to review, readings, tests to take and so on, each
   sized in pancakes and usually tied to something with a date.
-- **Getting it in quickly:** she pastes a syllabus into her AI using a copied prompt
+- **Dates from Google Calendar:** her dates already live there, so this is the main
+  way in. See "Google Calendar" below.
+- **Dates from a syllabus:** she pastes a syllabus into her AI using a copied prompt
   and pastes the reply back, the same pattern as tests. Entering things by hand also
-  works. A calendar file import can come later if her program offers one.
-- **Her week:** which days she studies and how many pancakes a day is realistic.
+  works.
+- **Her week:** which days she studies and roughly how many pancakes a day she can
+  manage. The site can suggest a number from what she actually eats.
 - **Calendar view:** month and week, showing due dates and each day's pancakes.
 
 ### Pancakes
 
 Every piece of work costs pancakes, and each day she has a plate to eat.
 
-- **Size:** one pancake is about 30 minutes of work by default, and she can change
-  that. New work gets a suggested size that she can adjust.
+- **Size:** a rough size she picks for each task, not a fixed amount of time. A quick
+  reading might be 1 pancake and a big lecture block 4. Picking should take one tap.
 - **The plate:** pancakes are spread across her study days before the due date,
   ending a day or two early so the last days before an exam stay clear.
 - **Eating:** she taps to eat one. Work done on the site counts by itself: handing
   in a test or clearing reviews eats the pancakes planned for it. Anki stays a tap,
   since there's no live link to it.
 - **Piling up:** what she doesn't eat stays and joins tomorrow's plate. The stack
-  visibly grows, gets wobbly and goes cold the longer it sits.
+  visibly grows, gets wobbly and goes cold the longer it sits. It never spreads out
+  by itself; that's her choice, with the button below.
+- **Where it shows:** on both PA Today and the site's main Today page.
 - **A clean plate** is the "done for today" moment: butter melts, syrup pours, and
   there's a garden-style streak and XP.
 
@@ -124,18 +129,39 @@ studying constantly, this matters as much as the mechanic.
 - **Pace check:** "At this pace you'll finish Cardio 2 days late" is the planner's
   most useful number, and shows next to the countdown.
 
+### Google Calendar
+
+One way only: the site reads her calendar and never changes it.
+
+- **How it connects:** she pastes her calendar's "Secret address in iCal format" from
+  Google Calendar's settings, once. The Pi fetches it every so often, with no Google
+  sign-in or API setup. If her account doesn't offer that address, as some school
+  accounts don't, she can upload an exported `.ics` file instead.
+- **What comes in:** the site suggests exams, quizzes and due dates from words in the
+  event titles, and she confirms them once. Ordinary class events stay out, and an
+  event she turned down isn't suggested again.
+- **When things change:** a moved exam moves its countdown and re-spreads its upcoming
+  pancakes. A cancelled exam asks first rather than deleting her work.
+- **Handle the address like a password:** anyone with it can read that calendar. It's
+  kept in her account only, never shown again in full, left out of "Download my data",
+  and she can disconnect it. The Pi fetches only from Google's calendar address, never
+  a URL it's merely been given.
+
+Still to check: whether her account offers the secret address, and how recurring
+events in her calendar look, since they decide how much of the iCal format we need.
+
 ### Household link
 
 Near exams, chores can shift to the other person in the household and the meal plan
 can lean on easy or prepped meals. Only with her say-so, and visible to both of them.
 
-### Questions to settle with her first
+### Settled with her (2026-10-31)
 
-1. Is a pancake a fixed amount of time, or just a rough size she picks per task?
-2. Should leftovers pile onto tomorrow as described, or spread out automatically?
-3. How fast can she realistically get dates in from her syllabus? Does her program
-   have a calendar feed?
-4. Should the pile show on the main Today page too, or stay inside Study?
+1. A pancake is a rough size picked per task, not a fixed amount of time.
+2. The rules above stand: leftovers pile up, she spreads them with a button, and the
+   limits on the pile all stay.
+3. Dates come from both Google Calendar and syllabus documents.
+4. The pile shows on both PA Today and the main Today page.
 
 ## Phase 5: study games
 
