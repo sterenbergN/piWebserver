@@ -8,7 +8,8 @@ import SkillsCard from '@/components/home/SkillsCard';
 import CadSection from '@/components/home/CadSection';
 import PiBadge from '@/components/home/PiBadge';
 import HomeWidgets from '@/components/home/HomeWidgets';
-import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { HomeRooms } from '@/components/Rooms';
+import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { onshapeConfigured } from '@/lib/cad/onshape-export';
 import './home.css';
 
@@ -34,22 +35,18 @@ const Arrow = () => (
 );
 
 export default async function Home() {
-  const [{ profile, experience, skills, projects }, posts, cadProjects, albums, documents, isAdmin] = await Promise.all([
-    getResume(), getPosts(), getCadProjects(), getGalleryAlbums(), getLibraryDocuments(), isAdminAuthenticated(),
+  const [{ profile, experience, skills, projects }, posts, cadProjects, albums, documents, isAdmin, userId] = await Promise.all([
+    getResume(), getPosts(), getCadProjects(), getGalleryAlbums(), getLibraryDocuments(), isAdminAuthenticated(), getAuthenticatedWorkoutUserId(),
   ]);
   const latestPosts = [...posts].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 3);
   const photoCount = countPhotos(albums);
 
-  const explore = [
-    { href: '/today', icon: '☀️', title: 'Today', text: 'Your day at a glance' },
-    { href: '/recipes', icon: '🍳', title: 'Kitchen', text: 'Recipes, meal plan, groceries' },
-    { href: '/gallery', icon: '📷', title: 'Gallery', text: photoCount ? plural(photoCount, 'photo') : 'Photo albums' },
-    { href: '/blog', icon: '✍️', title: 'Posts', text: posts.length ? plural(posts.length, 'write-up') : 'Write-ups' },
-    { href: '/library', icon: '📚', title: 'Library', text: documents.length ? plural(documents.length, 'document') : 'Books & manuals' },
-    { href: '/game', icon: '🎮', title: 'Play', text: 'Arcade games' },
-    { href: '/party', icon: '🎉', title: 'Party', text: 'Games for a group' },
-    { href: '/tools', icon: '🧰', title: 'Tools', text: 'Handy calculators' },
-  ];
+  // What's really there, in place of a general description.
+  const blurbs = {
+    ...(photoCount ? { '/gallery': plural(photoCount, 'photo') } : {}),
+    ...(posts.length ? { '/blog': plural(posts.length, 'write-up') } : {}),
+    ...(documents.length ? { '/library': plural(documents.length, 'document') } : {}),
+  };
 
   return (
     <div className="home">
@@ -62,8 +59,8 @@ export default async function Home() {
           <p className="home-headline">{profile.headline}</p>
           {profile.location && <p className="home-location">📍 {profile.location}</p>}
           <div className="home-ctas">
-            <Link href="/gallery" className="btn btn-primary home-cta">View gallery</Link>
-            <Link href="/blog" className="btn btn-secondary home-cta">Read the blog</Link>
+            <a href="#explore" className="btn btn-primary home-cta">🧭 Look around</a>
+            <Link href="/party" className="btn btn-secondary home-cta">🎉 Party games</Link>
           </div>
           <ContactLinks links={profile.links} email={profile.email} />
         </div>
@@ -72,20 +69,8 @@ export default async function Home() {
       {/* Daily and Fitness, the parts used every day */}
       <HomeWidgets />
 
-      {/* Explore the site */}
-      <section aria-label="Explore">
-        <div className="home-explore">
-          {explore.map(item => (
-            <Link key={item.href} href={item.href} className="home-explore-item">
-              <span className="home-explore-icon" aria-hidden>{item.icon}</span>
-              <span>
-                <strong>{item.title}</strong>
-                <span>{item.text}</span>
-              </span>
-            </Link>
-          ))}
-        </div>
-      </section>
+      {/* Everything on the site, by what you'd come here for */}
+      <HomeRooms isAdmin={isAdmin} signedIn={isAdmin || !!userId} blurbs={blurbs} />
 
       {/* Now: what I'm up to lately (edited in the resume editor) */}
       {profile.now?.length > 0 && (

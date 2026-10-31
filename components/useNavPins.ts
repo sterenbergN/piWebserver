@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { defaultPins } from './nav-links';
 
 // The pages you've pinned (on this device), shown in the header and the phone
-// dock, and the ones you've been to lately, shown in the launcher.
+// dock, the ones you've been to lately, and every place you've found so far,
+// shown in the Explore panel.
 
 const PINS_KEY = 'nav:pins';
 const RECENT_KEY = 'nav:recent';
+const FOUND_KEY = 'nav:found';
 const RECENT_KEPT = 6;
 
 const listeners = new Set<() => void>();
@@ -48,6 +50,19 @@ export function useNavPins(signedIn: boolean) {
 export function useRecentPages() {
   const raw = useSyncExternalStore(subscribe, () => read(RECENT_KEY), () => null);
   return parse(raw) ?? [];
+}
+
+/** Everywhere you've been, or null until the page has loaded in the browser. */
+export function useFoundPlaces(): Set<string> | null {
+  const raw = useSyncExternalStore(subscribe, () => read(FOUND_KEY) ?? read(RECENT_KEY) ?? '[]', () => null);
+  return useMemo(() => (raw === null ? null : new Set(parse(raw) ?? [])), [raw]);
+}
+
+/** Tick places off as you reach them. */
+export function markFound(hrefs: string[]) {
+  const current = parse(read(FOUND_KEY)) ?? parse(read(RECENT_KEY)) ?? [];
+  const fresh = hrefs.filter((h) => !current.includes(h));
+  if (fresh.length) write(FOUND_KEY, [...current, ...fresh]);
 }
 
 /** Note a page as just visited (newest first). */

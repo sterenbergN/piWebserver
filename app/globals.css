@@ -380,9 +380,8 @@ main { min-height: calc(100vh - 120px); }
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.12rem; min-width: 0; height: 2.9rem; padding: 0.1rem;
     border: none; border-radius: 11px; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; cursor: pointer;
   }
-  .site-dock a > span:first-child { font-size: 1.15rem; line-height: 1; filter: grayscale(0.6); opacity: 0.85; }
+  .site-dock a > span:first-child, .site-dock button > span:first-child { font-size: 1.15rem; line-height: 1; filter: grayscale(0.6); opacity: 0.85; }
   .site-dock a > span:last-child, .site-dock button > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .site-dock svg { width: 17px; height: 17px; }
   .site-dock a[aria-current="page"] { color: var(--foreground); background: rgba(var(--accent-rgb), 0.16); }
   .site-dock a[aria-current="page"] > span:first-child { filter: none; opacity: 1; }
 

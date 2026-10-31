@@ -21,6 +21,7 @@ export default function manifest(): MetadataRoute.Manifest {
       { name: 'Start workout', url: '/workout', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
       { name: 'Grocery list', url: '/recipes?view=list', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
       { name: 'Journal', url: '/journal', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
+      { name: 'Party games', url: '/party', icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }] },
     ],
   };
 }

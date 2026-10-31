@@ -1,6 +1,8 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { isCurrentItem, matchNavItems, navGroups } from '../components/nav-links';
+import { allPlaces, atPlace, isCurrentItem, matchNavItems, navGroups, orderRooms, pickSurprise, placesFor } from '../components/nav-links';
+import { GAMES } from './games/registry';
+import { GAME_CATALOG } from './party/catalog';
 import { addListItem, emptyKitchen, groceriesLeft, mealsToday } from './recipes/kitchen';
 import { withoutBlogAlbums } from './site-content';
 
@@ -34,6 +36,56 @@ test('every page is listed once, and the buried ones can be found by name', () =
   assert.equal(matchNavItems(items, 'diary')[0].href, '/journal');
   assert.deepEqual(matchNavItems(items, '   '), []);
   assert.ok(!navGroups(false).flatMap((g) => g.items).some((i) => i.href === '/admin'));
+});
+
+test('every place is on the map once, and every game has its own way in', () => {
+  const groups = navGroups(true);
+  const hrefs = allPlaces(groups).map((p) => p.href);
+  assert.equal(new Set(hrefs).size, hrefs.length);
+  for (const game of GAMES) assert.ok(hrefs.includes(`/game?game=${game.id}`), `${game.id} is in the arcade`);
+  assert.equal(hrefs.filter((h) => h.startsWith('/game?')).length, GAMES.length);
+  for (const game of GAME_CATALOG) assert.ok(hrefs.includes(`/party?tab=host&guide=${game.id}`), `${game.id} is at the party`);
+  assert.equal(hrefs.filter((h) => h.includes('guide=')).length, GAME_CATALOG.length);
+});
+
+test('a game can be found by name, and the party is easy to find', () => {
+  const places = allPlaces(navGroups(false));
+  assert.equal(matchNavItems(places, 'snake')[0].href, '/game?game=snake');
+  assert.equal(matchNavItems(places, 'party')[0].href, '/party');
+  assert.equal(matchNavItems(places, 'wavelength')[0].href, '/party?tab=host&guide=wavelength');
+});
+
+test('your day comes first once signed in; a visitor starts with who this is', () => {
+  const groups = navGroups(false);
+  assert.equal(orderRooms(groups, true)[0].id, 'day');
+  assert.equal(orderRooms(groups, false)[0].id, 'noah');
+  assert.equal(orderRooms(groups, true).length, groups.length);
+  assert.ok(orderRooms(groups, false).findIndex((r) => r.id === 'play') <= 1, 'party games stay near the top for a visitor');
+});
+
+test('a surprise is somewhere new, and never where you are', () => {
+  const places = allPlaces(navGroups(false)).slice(0, 3);
+  const [a, b, c] = places.map((p) => p.href);
+  assert.equal(pickSurprise(places, [a, b], undefined, () => 0).href, c);
+  assert.equal(pickSurprise(places, [a, b, c], a, () => 0).href, b, 'seen it all: anywhere but here');
+  assert.equal(pickSurprise(places, [], c, () => 0.99).href, b);
+});
+
+test('account-only places stay on the map but aren\'t a goal for a visitor', () => {
+  const groups = navGroups(false);
+  const visitor = placesFor(groups, false).map((p) => p.href);
+  assert.ok(allPlaces(groups).some((p) => p.href === '/journal'));
+  assert.ok(!visitor.includes('/journal'));
+  assert.ok(placesFor(groups, true).some((p) => p.href === '/journal'));
+});
+
+test('a corner is only reached by its exact link', () => {
+  const places = allPlaces(navGroups(false));
+  const at = (href: string) => places.find((p) => p.href === href)!;
+  assert.ok(atPlace(at('/habits#garden'), '/habits', 'garden'));
+  assert.ok(!atPlace(at('/habits#garden'), '/habits', 'stats'));
+  assert.ok(atPlace(at('/game?game=snake'), '/game', '', 'game=snake'));
+  assert.ok(!atPlace(at('/game?game=snake'), '/game', '', 'game=flap'));
 });
 
 test('adding to the list skips what is already waiting there', () => {

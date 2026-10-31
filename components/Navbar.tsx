@@ -6,8 +6,8 @@ import AccountMenu, { type NavUser } from './AccountMenu';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
-import { isCurrentItem, navGroups, sectionOf, type NavItem } from './nav-links';
-import { rememberPage, useNavPins } from './useNavPins';
+import { allPlaces, atPlace, isCurrentItem, navGroups, sectionOf, type NavItem } from './nav-links';
+import { markFound, rememberPage, useNavPins } from './useNavPins';
 
 // Loaded when first opened: it brings the recipe and habit code along for its counts.
 const loadLauncher = () => import('./Launcher');
@@ -27,13 +27,6 @@ const NO_DOCK = ['/workout', '/party'];
 /** Full-screen, printable or shared-by-link pages, where a row of other pages is only in the way. */
 const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report'];
 
-const GridIcon = () => (
-  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden>
-    <rect x="1" y="1" width="6" height="6" rx="1.5" /><rect x="9" y="1" width="6" height="6" rx="1.5" />
-    <rect x="1" y="9" width="6" height="6" rx="1.5" /><rect x="9" y="9" width="6" height="6" rx="1.5" />
-  </svg>
-);
-
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
   const pathname = usePathname();
   const search = useSearchParams().toString();
@@ -46,15 +39,18 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const groups = navGroups(isAdmin);
   const section = sectionOf(pathname);
   const allItems = groups.flatMap((g) => g.items);
-  const itemIsCurrent = (item: NavItem) => isCurrentItem(item, section, hash, allItems, search);
-  const pinned = pins.flatMap((href) => allItems.find((i) => i.href === href) ?? []);
+  const places = allPlaces(groups);
+  const itemIsCurrent = (item: NavItem) => (allItems.includes(item) ? isCurrentItem(item, section, hash, allItems, search) : atPlace(item, section, hash, search));
+  const pinned = pins.flatMap((href) => places.find((i) => i.href === href) ?? []);
   const here = allItems.find(itemIsCurrent);
+  const foundHere = places.filter(itemIsCurrent).map((p) => p.href).join(' ');
   const barGroup = NO_BAR.some((p) => pathname.startsWith(p)) ? undefined : groups.find((g) => g.bar && g.items.some(itemIsCurrent));
   const showDock = !NO_DOCK.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   useEffect(() => { if (here) rememberPage(here.href); }, [here]);
+  useEffect(() => { if (foundHere) markFound(foundHere.split(' ')); }, [foundHere]);
 
-  // "/" or Ctrl+K opens the launcher from anywhere.
+  // "/" or Ctrl+K opens the panel from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -104,8 +100,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
           <span className="nav-search-text">Search or jump to…</span>
           <kbd aria-hidden>/</kbd>
         </button>
-        <button type="button" className="nav-all" aria-label="Everything on the site" title="Everything on the site" {...openButton}>
-          <GridIcon /><span>All</span>
+        <button type="button" className="nav-all" aria-label="Explore everything on the site" title="Explore everything on the site" {...openButton}>
+          <span aria-hidden>🧭</span><span>Explore</span>
         </button>
         {/* Both icons, with CSS picking one: the server can't know the theme a browser saved. */}
         <button type="button" onClick={toggleTheme} className="nav-theme" aria-label="Switch between light and dark" title="Switch between light and dark">
@@ -136,8 +132,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
             </Link>
           ))}
           <button type="button" onClick={() => setLauncher(true)}>
-            <GridIcon />
-            <span>All</span>
+            <span aria-hidden>🧭</span>
+            <span>Explore</span>
           </button>
         </nav>
       )}

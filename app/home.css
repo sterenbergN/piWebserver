@@ -82,26 +82,6 @@
 .home-pi-part::before { content: '·'; margin-right: 0.55rem; opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) { .home-pi-dot { animation: none; } }
 
-/* Explore tiles */
-.home-explore { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
-@media (min-width: 900px) { .home-explore { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-.home-explore-item {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  padding: 0.9rem 1rem;
-  border-radius: 16px;
-  border: 1px solid var(--surface-border);
-  background: var(--card-bg);
-  color: var(--foreground);
-  text-decoration: none;
-  transition: transform 0.2s, border-color 0.2s;
-}
-.home-explore-item:hover { background: var(--surface-hover); border-color: rgba(var(--accent-rgb), 0.55); }
-.home-explore-icon { width: 42px; height: 42px; flex-shrink: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; background: rgba(var(--accent-rgb), 0.14); }
-.home-explore-item strong { display: block; font-size: 0.98rem; }
-.home-explore-item span span { display: block; color: var(--muted); font-size: 0.8rem; line-height: 1.3; }
-
 /* Daily and Fitness widgets */
 .home-widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .is-daily { --w-color: var(--habit-4); }
@@ -318,9 +298,6 @@ a.premium-card:hover { background: var(--surface-hover); border-color: rgba(var(
 @media (max-width: 600px) {
   .home { padding-top: 1rem; }
   .home-hero { border-radius: 20px; }
-  .home-explore { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
-  .home-explore-item { padding: 0.75rem; gap: 0.6rem; }
-  .home-explore-icon { width: 36px; height: 36px; font-size: 1.1rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .hero-gradient, .home-hero, .vtl-node, .vtl-node.is-current .vtl-dot { animation: none; opacity: 1; transform: none; }

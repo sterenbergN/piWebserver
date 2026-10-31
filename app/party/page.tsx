@@ -1,14 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { GameType } from '@/lib/party/types';
 import { AVATARS } from '@/lib/party/avatars';
+import { GAME_INFO } from '@/lib/party/catalog';
 import { HowToPlayModal } from '@/components/party/PhoneExtras';
 import GamePicker, { rememberHostedGame } from '@/components/party/GamePicker';
 
-export default function PartyLobby() {
+export default function PartyPage() {
+  return <Suspense fallback={null}><PartyLobby /></Suspense>;
+}
+
+function PartyLobby() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<'join' | 'host'>('join');
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
@@ -33,9 +39,7 @@ export default function PartyLobby() {
 
   useEffect(() => {
     fetch('/api/party/admin-check').then(r => r.json()).then(d => setIsAdmin(d.isAdmin)).catch(() => {});
-    // Prefill from a scanned QR code (?code=ABCD) and remember the last nickname.
-    const code = new URLSearchParams(window.location.search).get('code');
-    if (code) setRoomCode(code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4));
+    // Remember the last nickname.
     try {
       const savedName = localStorage.getItem('partyNickname');
       if (savedName) setPlayerName(savedName);
@@ -68,6 +72,15 @@ export default function PartyLobby() {
       }
     } catch { /* storage unavailable */ }
   }, []);
+
+  // Follow the link: a scanned QR code (?code=ABCD) prefills, ?tab=host opens hosting and ?guide= a game's rules.
+  useEffect(() => {
+    const code = searchParams.get('code');
+    if (code) { setRoomCode(code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4)); setTab('join'); }
+    if (searchParams.get('tab') === 'host') setTab('host');
+    const guide = searchParams.get('guide');
+    if (guide && guide in GAME_INFO) setGuideGame(guide as GameType);
+  }, [searchParams]);
 
   const seatPath = (seat: { roomCode: string; playerId: string; audience?: boolean; hostId?: string }) => {
     if (seat.audience) return `/party/audience/${seat.roomCode}/${seat.playerId}`;

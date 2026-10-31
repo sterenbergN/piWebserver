@@ -1,0 +1,103 @@
+/* The rooms: the site by what you came to do, in the Explore panel and on the home page. */
+.rm-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.8rem; grid-auto-flow: dense; }
+@media (min-width: 680px) { .rm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rm-room.is-wide { grid-column: span 2; } }
+@media (min-width: 1000px) { .rm-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.rm-room {
+  --room: var(--accent);
+  display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; padding: 0.85rem 0.75rem 0.8rem; border-radius: 18px; scroll-margin-top: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--room) 32%, var(--surface-border));
+  background: linear-gradient(155deg, color-mix(in srgb, var(--room) 17%, transparent), transparent 58%), var(--surface-glass);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.rm-room:hover { border-color: color-mix(in srgb, var(--room) 65%, var(--surface-border)); box-shadow: 0 8px 26px -14px var(--room); }
+
+.rm-head { display: flex; align-items: center; gap: 0.7rem; padding: 0 0.25rem; }
+.rm-emoji { flex-shrink: 0; display: grid; place-items: center; width: 2.7rem; height: 2.7rem; font-size: 1.55rem; border-radius: 14px; background: color-mix(in srgb, var(--room) 24%, transparent); }
+.rm-room:hover .rm-emoji { animation: rmWiggle 0.55s ease-in-out; }
+@keyframes rmWiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-9deg) scale(1.08); } 60% { transform: rotate(7deg) scale(1.08); } }
+.rm-head h3 { margin: 0; font-size: 1.05rem; font-weight: 750; line-height: 1.2; color: var(--foreground); }
+.rm-head p { margin: 0.1rem 0 0; font-size: 0.8rem; line-height: 1.3; color: var(--muted); }
+
+.rm-body { display: flex; flex-direction: column; gap: 0.6rem; flex: 1; min-width: 0; }
+.rm-main { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+@media (min-width: 680px) { .rm-room.is-wide .rm-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 0.9rem; } }
+
+/* minmax(0, …): a long line gets cut with "…" instead of pushing the row into its neighbour. */
+.rm-doors { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.1rem; }
+.rm-door { position: relative; min-width: 0; }
+.rm-door > a {
+  display: flex; align-items: center; gap: 0.55rem; min-width: 0; padding: 0.38rem 1.9rem 0.38rem 0.35rem; border-radius: 11px; border: 1px solid transparent;
+  color: var(--foreground); text-decoration: none; transition: background 0.12s;
+}
+.rm-door > a:hover, .rm-door > a:focus-visible { background: color-mix(in srgb, var(--room, var(--accent)) 15%, transparent); border-color: color-mix(in srgb, var(--room, var(--accent)) 50%, transparent); color: var(--foreground); outline: none; }
+.rm-door > a[aria-current="page"] strong { color: var(--accent-light); }
+.rm-door-icon { flex-shrink: 0; width: 1.85rem; height: 1.85rem; display: grid; place-items: center; font-size: 1.02rem; border-radius: 9px; background: var(--surface-glass); border: 1px solid var(--surface-border); transition: transform 0.15s; }
+.rm-door > a:hover .rm-door-icon { transform: scale(1.12) rotate(-4deg); }
+.rm-door-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rm-door-text strong { display: flex; align-items: center; gap: 0.35rem; font-size: 0.92rem; font-weight: 600; line-height: 1.25; }
+.rm-door-text small { font-size: 0.74rem; line-height: 1.3; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-badge { flex-shrink: 0; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--primary-bg); color: var(--primary-fg); font-size: 0.68rem; font-weight: 800; }
+.rm-lock { flex-shrink: 0; font-size: 0.72rem; opacity: 0.7; }
+.rm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.rm-new { flex-shrink: 0; display: inline-block; width: 0.42rem; height: 0.42rem; border-radius: 50%; background: var(--room, var(--accent-light)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--room, var(--accent-light)) 30%, transparent); }
+
+.rm-pin { position: absolute; top: 50%; right: 0.25rem; transform: translateY(-50%); display: grid; place-items: center; width: 1.5rem; height: 1.5rem; padding: 0; border: none; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
+.rm-door:hover .rm-pin, .rm-pin:focus-visible, .rm-pin.is-on { opacity: 1; }
+.rm-pin.is-on { color: var(--warning); }
+.rm-pin:hover { color: var(--foreground); background: var(--surface-border); }
+@media (hover: none) { .rm-pin { opacity: 0.55; } }
+
+/* The smaller places inside a room's pages. */
+.rm-corners { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; padding: 0 0.25rem; }
+.rm-corners h4 { margin: 0 0 0.3rem; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: color-mix(in srgb, var(--room) 55%, var(--muted)); }
+.rm-corners ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.28rem; }
+.rm-corners li a {
+  display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.18rem 0.5rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass);
+  color: var(--foreground); font-size: 0.75rem; font-weight: 500; text-decoration: none; white-space: nowrap; transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.rm-corners li a:hover, .rm-corners li a:focus-visible { background: color-mix(in srgb, var(--room) 16%, transparent); border-color: var(--room); color: var(--foreground); outline: none; transform: translateY(-1px); }
+.rm-corners li a.is-locked { color: var(--muted); }
+
+/* Things you can do right from the room. */
+.rm-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0 0.25rem; }
+.rm-form input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { flex: 1; min-width: 0; width: auto; padding: 0.42rem 0.65rem; font-size: 0.86rem; border-radius: 10px; }
+.rm-form input.rm-code:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; letter-spacing: 0.14em; text-align: center; }
+.rm-form .btn { padding: 0.42rem 0.9rem; font-size: 0.85rem; }
+.rm-note { flex-basis: 100%; margin: 0; font-size: 0.78rem; color: var(--success); }
+
+.rm-tips ul { list-style: none; margin: 0; padding: 0 0.25rem; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.82rem; line-height: 1.4; color: var(--muted); }
+.rm-tips b { color: var(--foreground); font-weight: 600; }
+.rm-tips kbd { padding: 0 0.35rem; border-radius: 5px; border: 1px solid var(--surface-border); font: inherit; font-weight: 600; color: var(--foreground); }
+.rm-tips button { padding: 0; border: none; background: none; color: var(--accent-light); font: inherit; font-weight: 600; cursor: pointer; }
+.rm-tips button:hover { text-decoration: underline; }
+/* Nothing to press on a phone. */
+@media (hover: none) { .rm-tip-keys { display: none; } }
+
+/* How much you've found, and the dice. */
+.rm-meter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.rm-progress { min-width: 10.5rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: var(--muted); }
+.rm-progress b { color: var(--foreground); }
+.rm-bar { height: 5px; border-radius: 999px; background: var(--surface-border); overflow: hidden; }
+.rm-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--habit-3), var(--habit-1), var(--habit-7)); transition: width 0.4s ease-out; }
+.rm-dice {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.42rem 0.85rem; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--habit-7) 50%, var(--surface-border));
+  background: color-mix(in srgb, var(--habit-7) 15%, transparent); color: var(--foreground); font: inherit; font-size: 0.85rem; font-weight: 650; cursor: pointer; white-space: nowrap;
+}
+.rm-dice:hover { background: color-mix(in srgb, var(--habit-7) 26%, transparent); }
+.rm-dice span { display: inline-block; font-size: 1.05rem; }
+.rm-dice:hover span { transform: rotate(-14deg); }
+.rm-dice.is-rolling span { animation: rmRoll 0.65s cubic-bezier(0.3, 0.7, 0.3, 1); }
+@keyframes rmRoll { from { transform: rotate(0) scale(1); } 50% { transform: rotate(380deg) scale(1.35); } to { transform: rotate(720deg) scale(1); } }
+
+/* On the home page. */
+.rm-home { scroll-margin-top: 5rem; }
+.rm-home-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0.75rem 1.5rem; margin-bottom: 1rem; }
+.rm-home-head h2 { margin: 0; font-size: 1.6rem; }
+.rm-home-head p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.95rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rm-room:hover .rm-emoji, .rm-dice.is-rolling span { animation: none; }
+  .rm-room, .rm-door-icon, .rm-corners li a, .rm-bar i { transition: none; }
+}
