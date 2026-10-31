@@ -5,10 +5,12 @@ import OverviewPanel from '@/components/admin/OverviewPanel';
 import UpdatesPanel from '@/components/admin/UpdatesPanel';
 import BackupsPanel from '@/components/admin/BackupsPanel';
 import DailyPanel from '@/components/admin/DailyPanel';
+import AccountsPanel from '@/components/admin/AccountsPanel';
 import './admin.css';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: '🖥️' },
+  { id: 'accounts', label: 'Accounts', icon: '👥' },
   { id: 'updates', label: 'Updates', icon: '🚀' },
   { id: 'backups', label: 'Backups', icon: '💾' },
   { id: 'daily', label: 'Daily', icon: '🧠' },
@@ -21,8 +23,13 @@ export default function AdminDashboard() {
 
   // The open tab lives in the URL (#updates) so a refresh or link lands on it.
   useEffect(() => {
-    const fromHash = window.location.hash.slice(1);
-    if (TABS.some(t => t.id === fromHash)) setTab(fromHash as TabId);
+    const follow = () => {
+      const fromHash = window.location.hash.slice(1);
+      if (TABS.some(t => t.id === fromHash)) setTab(fromHash as TabId);
+    };
+    follow();
+    window.addEventListener('hashchange', follow);
+    return () => window.removeEventListener('hashchange', follow);
   }, []);
   // On a phone the tab row scrolls sideways; keep the chosen tab in view.
   useEffect(() => {
@@ -58,6 +65,7 @@ export default function AdminDashboard() {
       {TABS.map(t => (
         <div key={t.id} role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} hidden={tab !== t.id}>
           {t.id === 'overview' && <OverviewPanel />}
+          {t.id === 'accounts' && <AccountsPanel />}
           {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
           {t.id === 'backups' && <BackupsPanel />}
           {t.id === 'daily' && <DailyPanel />}

@@ -901,8 +901,8 @@ export default function WorkoutDashboard() {
         ))}
       </nav>
       {isSiteAdmin && (
-        <a href="/workout/users" className="workout-text-btn" style={{ display: 'block', textAlign: 'center', margin: '0.6rem 0 0' }}>
-          👥 Manage workout users (admin)
+        <a href="/admin#accounts" className="workout-text-btn" style={{ display: 'block', textAlign: 'center', margin: '0.6rem 0 0' }}>
+          👥 Manage accounts (admin)
         </a>
       )}
 

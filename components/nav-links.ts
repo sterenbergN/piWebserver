@@ -163,6 +163,9 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/stats', label: 'Pi stats', icon: '📊', short: 'Stats', blurb: 'The Raspberry Pi running all this, live', keywords: 'server raspberry cpu memory' },
         ...(isAdmin ? [{ href: '/admin', label: 'Admin', icon: '🔧', blurb: 'Backups, updates and content', keywords: 'settings backup' }] : []),
       ],
+      ...(isAdmin ? { corners: [{ label: 'Admin only', items: [
+        { href: '/admin#accounts', label: 'Accounts', icon: '👥', blurb: 'Who can sign in', keywords: 'users add people login' },
+      ] }] } : {}),
     },
     {
       id: 'night',
