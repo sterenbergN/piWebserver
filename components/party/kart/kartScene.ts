@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { DRIFT_TIER_COLORS } from '@/lib/party/kart-shared';
+import { DRIFT_TIER_COLORS, ITEM_META, KartItemType } from '@/lib/party/kart-shared';
 import { KartTrack, projectOntoTrack, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 
@@ -946,6 +946,8 @@ interface KartVisual {
   flameMat: THREE.MeshBasicMaterial;
   aura: THREE.Sprite;
   auraMat: THREE.SpriteMaterial;
+  itemSprite: THREE.Sprite;
+  shownItem: KartItemType | null;
   disposables: { dispose: () => void }[];
   x: number;
   y: number;
@@ -1152,6 +1154,7 @@ export class KartScene {
   private clearColor: THREE.Color;
   private dummy = new THREE.Object3D();
   private rampSpans: { start: number; end: number; height: number }[] = [];
+  private itemTextures = new Map<KartItemType, THREE.Texture>();
   private onEvent?: (e: KartEvent) => void;
   private rng = mulberry32(12345);
   private confettiUntil = 0;
@@ -1775,6 +1778,13 @@ export class KartScene {
     aura.visible = false;
     root.add(aura);
 
+    // What you're carrying rides behind you, so rivals can see the shell coming
+    const itemSprite = new THREE.Sprite(keep(new THREE.SpriteMaterial({ transparent: true, toneMapped: false, depthWrite: false })));
+    itemSprite.position.set(0, 2.5, -2.6);
+    itemSprite.scale.setScalar(1.55);
+    itemSprite.visible = false;
+    root.add(itemSprite);
+
     if (k.kartStyle === 'cyber') {
       const glowTex = keep(makeBlobTexture('rgba(255,255,255,0.8)', 'rgba(255,255,255,0)'));
       const g = keep(new THREE.PlaneGeometry(5, 6));
@@ -1800,6 +1810,8 @@ export class KartScene {
       flameMat,
       aura,
       auraMat,
+      itemSprite,
+      shownItem: null,
       disposables,
       x: k.x,
       y: 0,
@@ -2212,6 +2224,15 @@ export class KartScene {
         }
       }
 
+      if (k.heldItem !== v.shownItem) {
+        v.shownItem = k.heldItem;
+        v.itemSprite.visible = Boolean(k.heldItem);
+        if (k.heldItem) {
+          (v.itemSprite.material as THREE.SpriteMaterial).map = this.itemTexture(k.heldItem);
+          (v.itemSprite.material as THREE.SpriteMaterial).needsUpdate = true;
+        }
+      }
+
       // Flames
       const boosting = k.boostTimer > 0 || k.starTimer > 0;
       v.flame.visible = boosting;
@@ -2354,6 +2375,15 @@ export class KartScene {
   }
 
   // ─── Cameras ───────────────────────────────────────────────────────────────
+
+  private itemTexture(item: KartItemType) {
+    let tex = this.itemTextures.get(item);
+    if (!tex) {
+      tex = this.track2(makeEmojiTexture(ITEM_META[item].emoji));
+      this.itemTextures.set(item, tex);
+    }
+    return tex;
+  }
 
   private rig(key: string): CameraRig {
     let rig = this.rigs.get(key);

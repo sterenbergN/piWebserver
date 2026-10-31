@@ -6,6 +6,9 @@ import { shareResultsCard } from '@/components/party/resultsCard';
 import { GAME_TITLES, ReactionLayer, ScoreTicker, SoundBar, TitleCard, VoterFaces, useImmersive, useShowDirector } from '@/components/party/HostShow';
 import { HowToPlayModal, ShareInviteButton } from '@/components/party/PhoneExtras';
 import KartClashHostView from '@/components/party/KartClashHostView';
+import { GameSwitcher } from '@/components/party/GamePicker';
+import { GAME_CATALOG, gameLabel } from '@/lib/party/catalog';
+import { BOT_LEVELS } from '@/lib/party/kart-shared';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
@@ -123,25 +126,13 @@ function QuitDialog({
   );
 }
 
-function PostGameOptions({ gameType, onPlayAgain, onSwitch, onCloseRoom, onResetScores, hasScores }: {
-  gameType: string; onPlayAgain: () => void; onSwitch: (g: string) => void; onCloseRoom: () => void; onResetScores?: () => void; hasScores?: boolean;
+function PostGameOptions({ gameType, playerCount, onPlayAgain, onSwitch, onCloseRoom, onResetScores, hasScores }: {
+  gameType: string; playerCount: number; onPlayAgain: () => void; onSwitch: (g: string) => void; onCloseRoom: () => void; onResetScores?: () => void; hasScores?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '480px', padding: '0.5rem 0' }}>
       <button onClick={onPlayAgain} className="party-btn party-btn-primary" style={{ fontSize: '1.3rem', padding: '1.2rem' }}>🔁 Play Again</button>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center' }}>
-        {gameType !== 'kart-clash' && <button onClick={() => onSwitch('kart-clash')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏎️ Kart Clash</button>}
-        {gameType !== 'quip-clash' && <button onClick={() => onSwitch('quip-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>⚡ Quip Clash</button>}
-        {gameType !== 'the-faker' && <button onClick={() => onSwitch('the-faker')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️ The Faker</button>}
-        {gameType !== 'trivia-death' && <button onClick={() => onSwitch('trivia-death')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>💀 Trivia Death</button>}
-        {gameType !== 'bracket-battles' && <button onClick={() => onSwitch('bracket-battles')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏆 Bracket Battles</button>}
-        {gameType !== 'ready-set-bet' && <button onClick={() => onSwitch('ready-set-bet')} className="party-btn party-btn-green party-btn-inline" style={{ fontSize: '0.9rem' }}>🐎 Ready Set Bet</button>}
-        {gameType !== 'spyfall' && <button onClick={() => onSwitch('spyfall')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️‍♀️ Spyfall</button>}
-        {gameType !== 'herd-mentality' && <button onClick={() => onSwitch('herd-mentality')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>🐄 Herd Mentality</button>}
-        {gameType !== 'wavelength' && <button onClick={() => onSwitch('wavelength')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>📡 Wavelength</button>}
-        {gameType !== 'bluff-clash' && <button onClick={() => onSwitch('bluff-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>🤥 Bluff Clash</button>}
-        {gameType !== 'emoji-telephone' && <button onClick={() => onSwitch('emoji-telephone')} className="party-btn party-btn-green party-btn-inline" style={{ fontSize: '0.9rem' }}>🔗 Emoji Telephone</button>}
-      </div>
+      <GameSwitcher current={gameType} playerCount={playerCount} onPick={onSwitch} />
       {hasScores && onResetScores && (
         <button onClick={onResetScores} className="party-btn party-btn-outline" style={{ fontSize: '0.95rem', borderColor: 'rgba(250,204,21,0.45)', color: 'var(--party-yellow)' }}>
           🔄 Reset Session Scores
@@ -152,19 +143,9 @@ function PostGameOptions({ gameType, onPlayAgain, onSwitch, onCloseRoom, onReset
   );
 }
 
-const HOST_GAME_META: Record<string, { name: string; color: string; minPlayers: number }> = {
-  'kart-clash': { name: '🏎️ Kart Clash', color: 'cyan', minPlayers: 1 },
-  'quip-clash': { name: '⚡ Quip Clash', color: 'yellow', minPlayers: 3 },
-  'the-faker': { name: '🕵️ The Faker', color: 'red', minPlayers: 3 },
-  'trivia-death': { name: '💀 Trivia Death', color: 'purple-lt', minPlayers: 3 },
-  'bracket-battles': { name: '🏆 Bracket Battles', color: 'cyan', minPlayers: 3 },
-  'ready-set-bet': { name: '🐎 Ready Set Bet', color: 'green', minPlayers: 1 },
-  'spyfall': { name: '🕵️‍♀️ Spyfall', color: 'red', minPlayers: 3 },
-  'herd-mentality': { name: '🐄 Herd Mentality', color: 'yellow', minPlayers: 3 },
-  'wavelength': { name: '📡 Wavelength', color: 'cyan', minPlayers: 2 },
-  'bluff-clash': { name: '🤥 Bluff Clash', color: 'yellow', minPlayers: 3 },
-  'emoji-telephone': { name: '🔗 Emoji Telephone', color: 'green', minPlayers: 3 },
-};
+const HOST_GAME_META = Object.fromEntries(
+  GAME_CATALOG.map((g) => [g.id, { name: gameLabel(g), color: g.color, minPlayers: g.minPlayers }]),
+) as Record<string, { name: string; color: string; minPlayers: number }>;
 
 export default function HostPage({ params }: { params: Promise<{ roomCode: string }> }) {
   const { roomCode } = use(params);
@@ -464,6 +445,8 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               const aiBots = state.gameData?.aiBots !== false;
               const speedClass = state.gameData?.speedClass || '150cc';
               const itemsMode = state.gameData?.itemsMode || 'normal';
+              const laps = state.gameData?.laps || 3;
+              const botLevel = state.gameData?.botLevel || 'normal';
 
               return (
                 <div className="party-card" style={{ maxWidth: 'min(820px, 100%)', boxSizing: 'border-box', margin: '1.5rem auto 0', padding: '1.1rem clamp(0.7rem, 3vw, 1.4rem)', display: 'flex', flexDirection: 'column', gap: '0.95rem' }}>
@@ -617,6 +600,23 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                       🤖 AI Bots Fill: {aiBots ? 'ON' : 'OFF'}
                     </button>
                   </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>🏁 Laps:</span>
+                      {[2, 3, 5].map((n) => (
+                        <button key={n} type="button" className="party-chip" aria-pressed={laps === n} onClick={() => sendAction({ type: 'SET_KART_CONFIG', laps: n })}>{n}</button>
+                      ))}
+                    </div>
+                    {aiBots && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>🤖 Bots:</span>
+                        {Object.entries(BOT_LEVELS).map(([id, lvl]) => (
+                          <button key={id} type="button" className="party-chip" aria-pressed={botLevel === id} onClick={() => sendAction({ type: 'SET_KART_CONFIG', botLevel: id })}>{lvl.label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })()}
@@ -646,19 +646,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
 
             <div style={{ marginTop: '3rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '2rem' }}>
               <div style={{ fontSize: '0.9rem', color: 'var(--party-text-muted)', marginBottom: '1rem' }}>Change Game:</div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                {state.gameType !== 'kart-clash' && <button onClick={() => handleSwitch('kart-clash')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏎️ Kart Clash</button>}
-                {state.gameType !== 'quip-clash' && <button onClick={() => handleSwitch('quip-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>⚡ Quip Clash</button>}
-                {state.gameType !== 'the-faker' && <button onClick={() => handleSwitch('the-faker')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️ The Faker</button>}
-                {state.gameType !== 'trivia-death' && <button onClick={() => handleSwitch('trivia-death')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>💀 Trivia Death</button>}
-                {state.gameType !== 'bracket-battles' && <button onClick={() => handleSwitch('bracket-battles')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🏆 Bracket Battles</button>}
-                {state.gameType !== 'ready-set-bet' && <button onClick={() => handleSwitch('ready-set-bet')} className="party-btn party-btn-green party-btn-inline" style={{ fontSize: '0.9rem' }}>🐎 Ready Set Bet</button>}
-                {state.gameType !== 'spyfall' && <button onClick={() => handleSwitch('spyfall')} className="party-btn party-btn-cyan party-btn-inline" style={{ fontSize: '0.9rem' }}>🕵️‍♀️ Spyfall</button>}
-                {state.gameType !== 'herd-mentality' && <button onClick={() => handleSwitch('herd-mentality')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>🐄 Herd Mentality</button>}
-                {state.gameType !== 'wavelength' && <button onClick={() => handleSwitch('wavelength')} className="party-btn party-btn-purple party-btn-inline" style={{ fontSize: '0.9rem' }}>📡 Wavelength</button>}
-                {state.gameType !== 'bluff-clash' && <button onClick={() => handleSwitch('bluff-clash')} className="party-btn party-btn-yellow party-btn-inline" style={{ fontSize: '0.9rem' }}>🤥 Bluff Clash</button>}
-                {state.gameType !== 'emoji-telephone' && <button onClick={() => handleSwitch('emoji-telephone')} className="party-btn party-btn-green party-btn-inline" style={{ fontSize: '0.9rem' }}>🔗 Emoji Telephone</button>}
-              </div>
+              <GameSwitcher current={state.gameType} playerCount={seated.length} onPick={handleSwitch} />
             </div>
           </div>
         )}
@@ -903,7 +891,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               {state.hostData.killingFloorPlayers?.map((pid: string) => (
                 <div key={pid} className="host-kf-player">
                   <div className="host-kf-avatar" style={{ borderColor: state.players[pid]?.avatarColor, color: state.players[pid]?.avatarColor }}>
-                    {state.players[pid]?.name.charAt(0)}
+                    {state.players[pid]?.avatar || state.players[pid]?.name.charAt(0)}
                   </div>
                   <div>{state.players[pid]?.name}</div>
                 </div>
@@ -1115,16 +1103,15 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                  {state.hostData.message}
                </div>
                {state.phase === 'RACING' && state.hostData.lastRoll !== undefined && (
-                 <div style={{ position: 'absolute', top: '150px', right: '5%', fontSize: '6rem', fontWeight: 900, color: 'var(--party-yellow)', textShadow: '0 0 40px var(--party-yellow)', zIndex: 100 }}>
+                 <div style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '1rem', fontSize: 'clamp(2.2rem, 7vh, 4.5rem)', lineHeight: 1, fontWeight: 900, color: 'var(--party-yellow)', textShadow: '0 0 40px var(--party-yellow)' }}>
                    🎲 {state.hostData.lastRoll}
                  </div>
                )}
                {state.phase === 'RACING' && state.hostData.commentary && (
-                 <div style={{ background: 'rgba(0,0,0,0.6)', border: '2px solid var(--party-green)', padding: '0.5rem 1rem', borderRadius: '12px', fontSize: '1.25rem', color: '#fff', fontStyle: 'italic', maxWidth: '600px', margin: '0 auto 1rem', display: 'inline-block' }}>
+                 <div style={{ background: 'rgba(0,0,0,0.6)', border: '2px solid var(--party-green)', padding: '0.5rem 1rem', borderRadius: '12px', fontSize: '1.25rem', color: '#fff', fontStyle: 'italic', maxWidth: '600px', margin: '0 auto 0.25rem', display: 'inline-block', verticalAlign: 'middle' }}>
                    🎤 {state.hostData.commentary}
                  </div>
                )}
-               <div className="text-muted" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Track Length: {state.hostData.trackLength}</div>
                {state.phase === 'RACING' && state.hostData.bettingClosed && (
                  <div className="text-red font-black" style={{ fontSize: '2rem', animation: 'pulseRed 1s infinite' }}>BETTING CLOSED!</div>
                )}
@@ -1155,9 +1142,9 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
 
                   return (
                     <div key={horse} className="host-track-lane">
-                       <span style={{position:'absolute', left: '-120px', color: 'rgba(255,255,255,0.4)', width: '110px', textAlign: 'right', fontSize: '1rem', fontWeight: 900, top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap'}}>{HORSE_NAMES[horse]}</span>
+                       <span style={{position:'absolute', left: '-138px', color: 'rgba(255,255,255,0.75)', width: '110px', textAlign: 'right', fontSize: '1rem', fontWeight: 900, top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap'}}>{HORSE_NAMES[horse]}</span>
                        <div className={`host-track-horse ${hClass}`} style={{ 
-                         left: `calc(10px + ${pct}% - 40px)`, 
+                         left: `calc(4px + (100% - 88px) * ${pct / 100})`, 
                          boxShadow: justRolled ? '0 0 20px #fff' : 'none',
                          transform: justRolled ? 'scale(1.2)' : 'none',
                          zIndex: justRolled ? 20 : 10
@@ -1177,7 +1164,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
                      return (
                        <div key={pid} style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', borderRadius: '12px', textAlign: 'center', border: `2px solid ${r.net > 0 ? 'var(--party-green)' : r.net < 0 ? 'var(--party-red)' : 'var(--party-border)'}` }}>
                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                           <div className="host-player-avatar" style={{ width: '30px', height: '30px', background: p.avatarColor, fontSize: '1rem', border: 'none' }}>{p.name[0]}</div>
+                           <div className="host-player-avatar" style={{ width: '30px', height: '30px', background: p.avatar ? 'transparent' : p.avatarColor, fontSize: '1rem', border: 'none' }}>{p.avatar || p.name[0]}</div>
                            <div style={{ fontWeight: 800 }}>{p.name}</div>
                          </div>
                          <div style={{ fontSize: '1.5rem', fontWeight: 900, color: r.net > 0 ? 'var(--party-green)' : r.net < 0 ? 'var(--party-red)' : '#fff' }}>
@@ -1691,6 +1678,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               );
             })()}
             <PostGameOptions
+              playerCount={seated.length}
               gameType={state.gameType}
               onPlayAgain={handlePlayAgain}
               onSwitch={handleSwitch}

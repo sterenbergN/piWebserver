@@ -9,6 +9,7 @@ import {
   KartRaceSim,
   KartSpeedClass,
   KartItemsMode,
+  KartBotLevel,
   buildKartRacers,
   createKartSimulation,
   forceStartCountdown,
@@ -33,6 +34,7 @@ export interface KartHeatStandingsRow {
   points: number;
   timeMs: number | null;
   dnf?: boolean;
+  bestLapMs?: number | null;
 }
 
 export interface KartHeat {
@@ -89,7 +91,9 @@ function getKartConfig(state: GameState) {
   const itemsMode: KartItemsMode = gd.itemsMode === 'frantic' || gd.itemsMode === 'shells-only' || gd.itemsMode === 'pure'
     ? gd.itemsMode
     : 'normal';
-  return { format, totalRaces, heatSize, aiBots, speedClass, itemsMode };
+  const laps = gd.laps === 2 || gd.laps === 5 ? gd.laps : 3;
+  const botLevel: KartBotLevel = gd.botLevel === 'chill' || gd.botLevel === 'mean' ? gd.botLevel : 'normal';
+  return { format, totalRaces, heatSize, aiBots, speedClass, itemsMode, laps, botLevel };
 }
 
 function createBalancedHeats(playerIds: string[], heatSize: 2 | 4 | 8, shuffle = false): KartHeat[] {
@@ -289,9 +293,10 @@ function launchRace(state: GameState, trackId: TrackId) {
     raceId,
     trackId: track.id,
     racers,
-    totalLaps: 3,
+    totalLaps: cfg.laps,
     speedClass: cfg.speedClass,
     itemsMode: cfg.itemsMode,
+    botLevel: cfg.botLevel,
     requireOrientation: humanPlayers.length > 0,
     onFinish: () => {
       // Automatically transition room state to RACE_RESULTS when physics loop completes
@@ -377,6 +382,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       points: !k.isBot ? (RANK_POINTS[idx] || 100) : 0,
       timeMs: k.finishTimeMs,
       dnf: k.dnf || !k.finished,
+      bestLapMs: k.bestLapTimeMs,
     }));
 
     // Merge simulation stats into game award counters
@@ -584,6 +590,12 @@ export const kartClashLogic = {
         }
         if (action.speedClass === '50cc' || action.speedClass === '100cc' || action.speedClass === '150cc' || action.speedClass === '200cc') {
           gd.speedClass = action.speedClass;
+        }
+        if (action.laps === 2 || action.laps === 3 || action.laps === 5) {
+          gd.laps = action.laps;
+        }
+        if (action.botLevel === 'chill' || action.botLevel === 'normal' || action.botLevel === 'mean') {
+          gd.botLevel = action.botLevel;
         }
         if (action.itemsMode === 'normal' || action.itemsMode === 'frantic' || action.itemsMode === 'shells-only' || action.itemsMode === 'pure') {
           gd.itemsMode = action.itemsMode;

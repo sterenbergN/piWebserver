@@ -52,6 +52,18 @@ export const KART_STYLES: Record<KartStyle, {
   bruiser: { label: 'Bruiser', emoji: '🛡️', blurb: 'Heavy, shoves everyone aside', topSpeed: 1.005, accel: 0.94, turn: 0.95, driftCharge: 0.95, mass: 1.6 },
 };
 
+export type KartBotLevel = 'chill' | 'normal' | 'mean';
+
+/**
+ * `skill` scales bot top speed, `ease` how much they slow down when ahead of the humans,
+ * `catchUp` how hard they chase when behind, `itemDelay` how long they sit on an item.
+ */
+export const BOT_LEVELS: Record<KartBotLevel, { label: string; skill: number; ease: number; catchUp: number; itemDelay: number }> = {
+  chill: { label: 'Chill', skill: 0.93, ease: 1.25, catchUp: 0.6, itemDelay: 1.7 },
+  normal: { label: 'Normal', skill: 1, ease: 1, catchUp: 1, itemDelay: 1 },
+  mean: { label: 'Mean', skill: 1.035, ease: 0.5, catchUp: 1.3, itemDelay: 0.65 },
+};
+
 export const DRIFT_TIER_COLORS = ['#94a3b8', '#38bdf8', '#f97316', '#d946ef'] as const;
 export const RANK_COLORS = ['#facc15', '#e2e8f0', '#fb923c', '#38bdf8', '#a855f7', '#94a3b8', '#94a3b8', '#94a3b8'] as const;
 

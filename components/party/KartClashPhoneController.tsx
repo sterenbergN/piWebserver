@@ -17,7 +17,11 @@ interface Props {
 }
 
 const TILT_DEADZONE_DEG = 2.5;
-const TILT_FULL_LOCK_DEG = 30;
+const TILT_SENSITIVITY = [
+  { label: 'Low', fullLockDeg: 42 },
+  { label: 'Med', fullLockDeg: 30 },
+  { label: 'High', fullLockDeg: 20 },
+];
 const INPUT_INTERVAL_MS = 40;
 const INPUT_KEEPALIVE_MS = 250;
 const PIT_EMOJIS = REACTIONS.slice(0, 6);
@@ -90,6 +94,7 @@ export default function KartClashPhoneController({
   const [gyroStatus, setGyroStatus] = useState<'unknown' | 'granted' | 'denied' | 'unsupported'>('unknown');
   const [tiltLive, setTiltLive] = useState(false);
   const [noSensor, setNoSensor] = useState(false);
+  const [sensitivity, setSensitivity] = useState(1);
   const [preferTouch, setPreferTouch] = useState(false);
   const [hasFinePointer, setHasFinePointer] = useState(false);
   const [isIosSafari, setIsIosSafari] = useState(false);
@@ -124,6 +129,7 @@ export default function KartClashPhoneController({
   const lastSentRef = useRef({ steer: 99, drift: false, brake: false, horizontal: false, at: 0 });
   const horizontalRef = useRef(false);
   const tiltLiveRef = useRef(false);
+  const fullLockRef = useRef(TILT_SENSITIVITY[1].fullLockDeg);
   const cockpitGaugeRef = useRef<HTMLDivElement | null>(null);
   const steerBarRef = useRef<HTMLDivElement | null>(null);
   const gaugeRef = useRef<HTMLDivElement | null>(null);
@@ -150,6 +156,11 @@ export default function KartClashPhoneController({
     setScreenShortSide(Math.min(window.screen?.width || 0, window.screen?.height || 0));
     try {
       setBarsHintDismissed(localStorage.getItem('kartBarsHintDismissed') === '1');
+      const savedSens = Number(localStorage.getItem('kartTiltSensitivity'));
+      if (TILT_SENSITIVITY[savedSens]) {
+        setSensitivity(savedSens);
+        fullLockRef.current = TILT_SENSITIVITY[savedSens].fullLockDeg;
+      }
     } catch {
       // Storage unavailable: the hint just shows again
     }
@@ -381,7 +392,7 @@ export default function KartClashPhoneController({
       const calibrated = (tiltDeg - neutralRef.current) * invertRef.current;
       let target = 0;
       if (Math.abs(calibrated) > TILT_DEADZONE_DEG) {
-        const linear = Math.min(1, (Math.abs(calibrated) - TILT_DEADZONE_DEG) / (TILT_FULL_LOCK_DEG - TILT_DEADZONE_DEG));
+        const linear = Math.min(1, (Math.abs(calibrated) - TILT_DEADZONE_DEG) / (fullLockRef.current - TILT_DEADZONE_DEG));
         target = Math.sign(calibrated) * Math.pow(linear, 1.2);
       }
       smoothed += (target - smoothed) * 0.45;
@@ -422,6 +433,20 @@ export default function KartClashPhoneController({
     tiltSteerRef.current = 0;
     buzz(20);
   }, [tryLockLandscape]);
+
+  const cycleSensitivity = useCallback(() => {
+    setSensitivity((prev) => {
+      const next = (prev + 1) % TILT_SENSITIVITY.length;
+      fullLockRef.current = TILT_SENSITIVITY[next].fullLockDeg;
+      try {
+        localStorage.setItem('kartTiltSensitivity', String(next));
+      } catch {
+        // Storage unavailable: it just won't be remembered
+      }
+      return next;
+    });
+    buzz(20);
+  }, []);
 
   const flipTilt = useCallback(() => {
     invertRef.current = -invertRef.current;
@@ -1286,6 +1311,12 @@ export default function KartClashPhoneController({
             </div>
           </div>
 
+          {snapshot?.trackId && (
+            <div style={{ background: 'rgba(15,23,42,0.85)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', padding: '0.5rem', display: 'flex', justifyContent: 'center' }}>
+              <TrackMinimap trackId={snapshot.trackId} karts={snapshot.karts} size={230} />
+            </div>
+          )}
+
           {/* Live Race Standings Feed */}
           {sortedKarts.length > 0 && (
             <div
@@ -1703,9 +1734,10 @@ export default function KartClashPhoneController({
           <div style={{ flexShrink: 0, display: 'flex', gap: '0.25rem', justifyContent: 'center', alignItems: 'center', minHeight: 'clamp(24px, 9vmin, 32px)' }}>
             {useTilt ? (
               <>
-                <button type="button" onClick={recenterGyro} style={{ ...smallBtn, border: '1px solid rgba(56,189,248,0.45)', background: 'rgba(56,189,248,0.14)', color: '#7dd3fc' }}>🎯 Center</button>
-                <button type="button" onClick={flipTilt} style={smallBtn}>⇄ Invert</button>
-                <button type="button" onClick={() => setPreferTouch(true)} style={smallBtn}>👆 Touch</button>
+                <button type="button" aria-label="Center steering" onClick={recenterGyro} style={{ ...smallBtn, border: '1px solid rgba(56,189,248,0.45)', background: 'rgba(56,189,248,0.14)', color: '#7dd3fc' }}>🎯</button>
+                <button type="button" aria-label="Invert tilt" onClick={flipTilt} style={smallBtn}>⇄</button>
+                <button type="button" aria-label="Tilt sensitivity" onClick={cycleSensitivity} style={{ ...smallBtn, flex: 1.6 }}>🎚️ {TILT_SENSITIVITY[sensitivity].label}</button>
+                <button type="button" aria-label="Use the touch pad" onClick={() => setPreferTouch(true)} style={smallBtn}>👆</button>
               </>
             ) : showTiltPrompt ? (
               <button type="button" onClick={() => setPreferTouch(true)} style={smallBtn}>👆 Use the touch pad instead</button>

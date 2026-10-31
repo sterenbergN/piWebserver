@@ -8,37 +8,14 @@ import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
 import KartClashPhoneController from '@/components/party/KartClashPhoneController';
 import { KART_STYLES } from '@/lib/party/kart-shared';
-import { TV_ONLY_GAMES } from '@/lib/party/guides';
+import { GameSwitcher } from '@/components/party/GamePicker';
+import { GAME_CATALOG, GAME_INFO, gameLabel } from '@/lib/party/catalog';
 import { GAME_GUIDES } from '@/lib/party/guides';
 import { GameType } from '@/lib/party/types';
 
-const GAME_NAMES: Record<string, string> = {
-  'kart-clash': 'Kart Clash',
-  'quip-clash': 'Quip Clash',
-  'the-faker': 'The Faker',
-  'trivia-death': 'Trivia Death',
-  'bracket-battles': 'Bracket Battles',
-  'ready-set-bet': 'Ready Set Bet',
-  'spyfall': 'Spyfall',
-  'herd-mentality': 'Herd Mentality',
-  'wavelength': 'Wavelength',
-  'bluff-clash': 'Bluff Clash',
-  'emoji-telephone': 'Emoji Telephone',
-};
+const GAME_NAMES = Object.fromEntries(GAME_CATALOG.map((g) => [g.id, g.name])) as Record<string, string>;
 
-const ALL_GAMES: { id: string; label: string; minPlayers: number }[] = [
-  { id: 'kart-clash', label: '🏎️ Kart Clash', minPlayers: 1 },
-  { id: 'quip-clash', label: '⚡ Quip Clash', minPlayers: 3 },
-  { id: 'the-faker', label: '🕵️ The Faker', minPlayers: 3 },
-  { id: 'trivia-death', label: '💀 Trivia Death', minPlayers: 3 },
-  { id: 'bracket-battles', label: '🏆 Bracket Battles', minPlayers: 3 },
-  { id: 'ready-set-bet', label: '🐎 Ready Set Bet', minPlayers: 1 },
-  { id: 'spyfall', label: '🕵️‍♀️ Spyfall', minPlayers: 3 },
-  { id: 'herd-mentality', label: '🐄 Herd Mentality', minPlayers: 3 },
-  { id: 'wavelength', label: '📡 Wavelength', minPlayers: 2 },
-  { id: 'bluff-clash', label: '🤥 Bluff Clash', minPlayers: 3 },
-  { id: 'emoji-telephone', label: '🔗 Emoji Telephone', minPlayers: 3 },
-];
+const ALL_GAMES = GAME_CATALOG.map((g) => ({ id: g.id as string, label: gameLabel(g), minPlayers: g.minPlayers }));
 
 const QUICK_EMOJIS = [
   '😂','😭','😱','😡','🥳','🤯','🤠','🤡','👻','💀','👽','🤖','🎃','👀','🧠','👑',
@@ -97,6 +74,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const [hostId, setHostId] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showLobbySteps, setShowLobbySteps] = useState(false);
   const [state, setState] = useState<any>(null);
   const [error, setError] = useState('');
   const [answers, setAnswers] = useState(['', '']);
@@ -312,8 +290,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     >
       {/* Top Player Header (hidden during active Kart Clash racing to maximize landscape viewport on iOS Safari) */}
       {!isKartRacing && (
-      <div className="player-header party-content" style={{ borderBottomColor: me.avatarColor, gap: '0.5rem', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flex: '1 1 110px', minWidth: 0, overflow: 'hidden' }}>
+      <div className="player-header party-content" style={{ borderBottomColor: me.avatarColor, gap: '0.5rem', flexWrap: 'nowrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
           {me.avatar && <span style={{ fontSize: '1.65rem', flexShrink: 0 }}>{me.avatar}</span>}
           <div className="player-header-name" style={{ color: me.avatarColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {me.name} {pd?.status === 'ghost' ? '👻' : ''}
@@ -332,6 +310,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             currentAvatar={me.avatar}
             takenAvatars={takenAvatars}
             gameType={state.gameType}
+            phonesOnly={Boolean(state.settings?.phonesOnly)}
           />
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div className="player-header-score-label">{pd?.money !== undefined ? 'Money' : 'Score'}</div>
@@ -512,11 +491,17 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#fff', marginBottom: '0.4rem' }}>
                     🎯 {guide.goal}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>
-                    {guide.steps.map((s, idx) => (
-                      <div key={idx}><strong>{idx + 1}.</strong> {s}</div>
-                    ))}
-                  </div>
+                  {showLobbySteps ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>
+                      {guide.steps.map((s, idx) => (
+                        <div key={idx}><strong>{idx + 1}.</strong> {s}</div>
+                      ))}
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setShowLobbySteps(true)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--party-cyan)', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer' }}>
+                      Show the steps ▾
+                    </button>
+                  )}
                 </div>
               );
             })()}
@@ -821,30 +806,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   <div style={{ fontSize: '0.75rem', color: 'var(--party-text-muted)', fontWeight: 800, textAlign: 'center', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                     Switch Game
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
-                    {ALL_GAMES.filter((g) => !TV_ONLY_GAMES.includes(g.id) || g.id === state.gameType).map((g) => {
-                      const active = g.id === state.gameType;
-                      return (
-                        <button
-                          key={g.id}
-                          type="button"
-                          onClick={() => !active && sendHostAction({ type: 'SWITCH_GAME', gameType: g.id })}
-                          style={{
-                            background: active ? 'var(--party-cyan)' : 'rgba(255,255,255,0.06)',
-                            color: active ? '#0b0b12' : 'var(--party-text)',
-                            border: `1.5px solid ${active ? 'var(--party-cyan)' : 'var(--party-border)'}`,
-                            borderRadius: '999px',
-                            padding: '0.3rem 0.7rem',
-                            fontSize: '0.78rem',
-                            fontWeight: 800,
-                            cursor: active ? 'default' : 'pointer',
-                          }}
-                        >
-                          {g.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <GameSwitcher
+                    current={state.gameType}
+                    playerCount={activePlayers.length}
+                    phonesOnly={Boolean(state.settings?.phonesOnly)}
+                    onPick={(g) => sendHostAction({ type: 'SWITCH_GAME', gameType: g })}
+                  />
                 </div>
               </div>
             ) : (
@@ -2140,18 +2107,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 >
                   🔁 Play Again
                 </button>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
-                  {ALL_GAMES.filter((g) => g.id !== state.gameType && !TV_ONLY_GAMES.includes(g.id)).map((g) => (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => sendHostAction({ type: 'SWITCH_GAME', gameType: g.id })}
-                      style={{ background: 'rgba(255,255,255,0.06)', border: '1.5px solid var(--party-border)', borderRadius: '999px', padding: '0.3rem 0.7rem', color: '#fff', fontSize: '0.78rem', fontWeight: 800, cursor: 'pointer' }}
-                    >
-                      {g.label}
-                    </button>
-                  ))}
-                </div>
+                <GameSwitcher
+                  current={state.gameType}
+                  playerCount={activePlayers.length}
+                  phonesOnly={Boolean(state.settings?.phonesOnly)}
+                  onPick={(g) => sendHostAction({ type: 'SWITCH_GAME', gameType: g })}
+                />
                 {standings.some((p) => p.score > 0) && (
                   <button
                     type="button"
@@ -2182,7 +2143,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         <HowToPlayModal
           initialGameType={state.gameType}
           onClose={() => setShowRulesModal(false)}
-          onAction={hostId ? (g) => { if (g !== state.gameType && !TV_ONLY_GAMES.includes(g)) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
+          onAction={hostId ? (g) => { if (g !== state.gameType && !(state.settings?.phonesOnly && GAME_INFO[g].tvOnly)) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
+          phonesOnly={Boolean(state.settings?.phonesOnly)}
           actionLabel={hostId ? 'Switch to This Game 🎮' : undefined}
         />
       )}

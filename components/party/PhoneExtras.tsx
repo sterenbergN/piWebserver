@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { AVATARS, REACTIONS } from '@/lib/party/avatars';
-import { GAME_GUIDES, GUIDE_ORDER } from '@/lib/party/guides';
+import { GAME_GUIDES } from '@/lib/party/guides';
+import { gamesForRoom } from '@/lib/party/catalog';
 import { GameType } from '@/lib/party/types';
 
 /** Emoji bar at the bottom of a phone: tap to throw a reaction onto the TV. */
@@ -73,11 +74,13 @@ export function HowToPlayModal({
   onClose,
   onAction,
   actionLabel,
+  phonesOnly = false,
 }: {
   initialGameType?: string;
   onClose: () => void;
   onAction?: (gameType: GameType) => void;
   actionLabel?: string;
+  phonesOnly?: boolean;
 }) {
   const validInitial = (initialGameType in GAME_GUIDES ? initialGameType : 'quip-clash') as GameType;
   const [selected, setSelected] = useState<GameType>(validInitial);
@@ -129,7 +132,7 @@ export function HowToPlayModal({
         {/* Game Switcher Pills. flexShrink 0: as a scrolling flex item it would otherwise
             be squashed to nothing when a long guide overflows the modal. */}
         <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', flexShrink: 0, paddingBottom: '0.35rem', scrollbarWidth: 'thin' }}>
-          {GUIDE_ORDER.map((gid) => {
+          {gamesForRoom(phonesOnly).map(({ id: gid }) => {
             const g = GAME_GUIDES[gid];
             const active = gid === selected;
             return (
@@ -258,6 +261,7 @@ export function PhoneSessionControls({
   takenAvatars = [],
   isAudience = false,
   gameType = 'quip-clash',
+  phonesOnly = false,
 }: {
   roomCode: string;
   actorKey: string;
@@ -265,6 +269,7 @@ export function PhoneSessionControls({
   currentAvatar?: string;
   takenAvatars?: string[];
   isAudience?: boolean;
+  phonesOnly?: boolean;
   gameType?: string;
 }) {
   const router = useRouter();
@@ -427,15 +432,15 @@ export function PhoneSessionControls({
             border: '1px solid rgba(6, 182, 212, 0.45)',
             color: 'var(--party-cyan)',
             borderRadius: '8px',
-            padding: '0.3rem 0.48rem',
-            fontSize: '0.74rem',
+            padding: '0.3rem 0.5rem',
+            fontSize: '0.95rem',
             fontWeight: 800,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
             flexShrink: 0,
           }}
         >
-          ❓ Rules
+          ❓
         </button>
         <button
           type="button"
@@ -447,15 +452,15 @@ export function PhoneSessionControls({
             border: '1px solid var(--party-border)',
             color: 'var(--party-text)',
             borderRadius: '8px',
-            padding: '0.3rem 0.48rem',
-            fontSize: '0.74rem',
+            padding: '0.3rem 0.5rem',
+            fontSize: '0.95rem',
             fontWeight: 700,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
             flexShrink: 0,
           }}
         >
-          ✏️ Edit
+          ✏️
         </button>
         <button
           type="button"
@@ -467,20 +472,20 @@ export function PhoneSessionControls({
             border: '1px solid rgba(239,68,68,0.4)',
             color: 'var(--party-red)',
             borderRadius: '8px',
-            padding: '0.3rem 0.48rem',
-            fontSize: '0.74rem',
+            padding: '0.3rem 0.5rem',
+            fontSize: '0.95rem',
             fontWeight: 800,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
             flexShrink: 0,
           }}
         >
-          🚪 Leave
+          🚪
         </button>
       </div>
       {typeof document !== 'undefined' && editModal ? createPortal(editModal, document.body) : null}
       {typeof document !== 'undefined' && leaveModal ? createPortal(leaveModal, document.body) : null}
-      {modal === 'rules' && <HowToPlayModal initialGameType={gameType} onClose={() => setModal(null)} />}
+      {modal === 'rules' && <HowToPlayModal initialGameType={gameType} phonesOnly={phonesOnly} onClose={() => setModal(null)} />}
     </>
   );
 }

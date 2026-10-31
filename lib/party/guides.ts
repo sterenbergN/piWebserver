@@ -1,4 +1,5 @@
 import { GameType } from './types';
+import { GAME_CATALOG } from './catalog';
 
 export interface GameGuide {
   id: GameType;
@@ -233,19 +234,4 @@ export const GAME_GUIDES: Record<GameType, GameGuide> = {
   },
 };
 
-/** Games drawn on one shared screen, so a room with only phones can't play them. */
-export const TV_ONLY_GAMES: readonly string[] = ['kart-clash'];
-
-export const GUIDE_ORDER: GameType[] = [
-  'kart-clash',
-  'quip-clash',
-  'the-faker',
-  'trivia-death',
-  'bracket-battles',
-  'ready-set-bet',
-  'spyfall',
-  'herd-mentality',
-  'wavelength',
-  'bluff-clash',
-  'emoji-telephone',
-];
+export const GUIDE_ORDER: GameType[] = GAME_CATALOG.map((g) => g.id);

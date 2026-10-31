@@ -15,6 +15,7 @@ import { bluffClashLogic } from './games/bluff-clash';
 import { emojiTelephoneLogic } from './games/emoji-telephone';
 import { kartClashLogic } from './games/kart-clash';
 import { stopKartSimulation } from './kart-physics';
+import { GAME_CATALOG, GAME_INFO } from './catalog';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
 import { AVATARS, isAvatar, isReaction } from './avatars';
@@ -63,19 +64,7 @@ const LOGIC: Record<GameType, GameLogic> = {
 };
 
 /** Minimum players needed to start each game. */
-export const MIN_PLAYERS: Record<GameType, number> = {
-  'quip-clash': 3,
-  'the-faker': 3,
-  'trivia-death': 3,
-  'bracket-battles': 3,
-  'ready-set-bet': 1,
-  'spyfall': 3,
-  'herd-mentality': 3,
-  'wavelength': 2,
-  'bluff-clash': 3,
-  'emoji-telephone': 3,
-  'kart-clash': 1,
-};
+export const MIN_PLAYERS = Object.fromEntries(GAME_CATALOG.map((g) => [g.id, g.minPlayers])) as Record<GameType, number>;
 
 export function normalizeRoomCode(roomCode: unknown): string | null {
   const code = typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
@@ -184,8 +173,9 @@ function generateRoomCode(): string {
   return Array.from({ length: 4 }, () => chars[crypto.randomInt(chars.length)]).join('');
 }
 
-export async function createRoom(gameType: GameType): Promise<{ roomCode: string; hostId: string }> {
+export async function createRoom(gameType: GameType, options?: { phonesOnly?: boolean }): Promise<{ roomCode: string; hostId: string }> {
   if (!GAME_TYPES.includes(gameType)) throw new Error('Unknown game type');
+  if (options?.phonesOnly && GAME_INFO[gameType].tvOnly) throw new Error(`${GAME_INFO[gameType].name} needs a TV`);
   await pruneStaleRooms();
 
   let roomCode = generateRoomCode();
@@ -201,6 +191,7 @@ export async function createRoom(gameType: GameType): Promise<{ roomCode: string
     hostId,
     hostData: {},
     playerData: {},
+    settings: options?.phonesOnly ? { phonesOnly: true } : undefined,
     updatedAt: Date.now(),
   };
 
@@ -514,6 +505,8 @@ function resetToLobby(state: GameState) {
     aiBots: state.gameData?.aiBots,
     speedClass: state.gameData?.speedClass,
     itemsMode: state.gameData?.itemsMode,
+    laps: state.gameData?.laps,
+    botLevel: state.gameData?.botLevel,
     customizations: state.gameData?.customizations,
   };
   state.audienceVote = null;
@@ -621,6 +614,7 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         break;
       case 'SWITCH_GAME': {
         if (!GAME_TYPES.includes(action.gameType)) return { success: false, error: 'Unknown game' };
+        if (state.settings?.phonesOnly && GAME_INFO[action.gameType as GameType].tvOnly) return { success: false, error: 'That game needs a TV' };
         state.gameType = action.gameType;
         resetToLobby(state);
         break;

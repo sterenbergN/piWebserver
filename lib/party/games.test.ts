@@ -1333,8 +1333,63 @@ test('Kart Clash: pit crew chaos waits for the race to get going, then fires onc
   stopKartSimulation(roomCode);
 });
 
-test('Kart Clash: only the games a phones-only room can actually play are offered to it', async () => {
-  const { TV_ONLY_GAMES } = await import('./guides');
-  assert.ok(TV_ONLY_GAMES.includes('kart-clash'), 'the race needs a shared screen');
-  assert.ok(!TV_ONLY_GAMES.includes('quip-clash'), 'everything else still works on phones alone');
+test('Game catalog: covers every game, agrees with the guides, and filters sensibly', async () => {
+  const { GAME_CATALOG, GAME_INFO, fitsBucket, gamesForRoom } = await import('./catalog');
+  const { GAME_GUIDES } = await import('./guides');
+  assert.deepEqual([...GAME_CATALOG.map((g) => g.id)].sort(), [...engine.GAME_TYPES].sort(), 'every game is in the catalog exactly once');
+  for (const g of GAME_CATALOG) {
+    assert.ok(GAME_GUIDES[g.id].players.startsWith(`${g.minPlayers}–${g.maxPlayers}`), `${g.id}: guide and catalog agree on player count`);
+    assert.equal(GAME_GUIDES[g.id].name, g.name, `${g.id}: guide and catalog agree on the name`);
+    assert.ok(fitsBucket(g, 'any'), `${g.id}: shows under Any`);
+  }
+  assert.ok(gamesForRoom(false).some((g) => g.id === 'kart-clash'), 'TV rooms offer Kart Clash');
+  assert.ok(!gamesForRoom(true).some((g) => g.tvOnly), 'phones-only rooms never list a TV-only game');
+  assert.equal(fitsBucket(GAME_INFO['quip-clash'], '1-2'), false, 'a 3+ game is hidden for 1-2 players');
+  assert.equal(fitsBucket(GAME_INFO['the-faker'], '9+'), false, 'an 8-player game is hidden for 9+');
+  assert.equal(fitsBucket(GAME_INFO['wavelength'], '1-2'), true, 'a 2-player game shows for 1-2 players');
+});
+
+test('Phones-only rooms: cannot create or switch to a TV-only game, but TV rooms can', async () => {
+  await assert.rejects(() => engine.createRoom('kart-clash', { phonesOnly: true }), /needs a TV/);
+  const { POST } = await import('../../app/api/party/create/route');
+  const res = await POST(new Request('http://localhost/api/party/create', { method: 'POST', body: JSON.stringify({ gameType: 'kart-clash', mode: 'phones' }) }));
+  assert.equal(res.status, 400, 'the API refuses it too');
+
+  const phones = await engine.createRoom('quip-clash', { phonesOnly: true });
+  const refused = await engine.processAction(phones.roomCode, phones.hostId, { type: 'SWITCH_GAME', gameType: 'kart-clash' });
+  assert.equal(refused.success, false, 'switching a phones-only room to Kart Clash is refused');
+  assert.equal((await engine.processAction(phones.roomCode, phones.hostId, { type: 'SWITCH_GAME', gameType: 'spyfall' })).success, true, 'other games still switch');
+  assert.equal((await engine.getGameState(phones.roomCode))!.settings?.phonesOnly, true, 'the room stays phones-only after switching');
+
+  const tv = await engine.createRoom('quip-clash');
+  assert.equal((await engine.processAction(tv.roomCode, tv.hostId, { type: 'SWITCH_GAME', gameType: 'kart-clash' })).success, true, 'a TV room can switch to Kart Clash');
+});
+
+test('Kart Clash: laps and bot difficulty reach the race and survive a return to the lobby', async () => {
+  const { getKartSimulation, stopKartSimulation, stepKartSimulation, createKartSimulation, buildKartRacers } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  await engine.joinRoom(roomCode, 'Racer');
+  await engine.processAction(roomCode, hostId, { type: 'SET_KART_CONFIG', laps: 5, botLevel: 'mean' });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  const sim = getKartSimulation(roomCode)!;
+  assert.equal(sim.totalLaps, 5);
+  assert.equal(sim.botLevel, 'mean');
+  await engine.processAction(roomCode, hostId, { type: 'QUIT_GAME' });
+  const state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.gameData.laps, 5);
+  assert.equal(state.gameData.botLevel, 'mean');
+  stopKartSimulation(roomCode);
+
+  // Bots alone on a course: Mean should beat Chill round the same track by a clear margin
+  const raceTime = (level: 'chill' | 'mean') => {
+    const racers = buildKartRacers([], true, 6);
+    const race = createKartSimulation({ roomCode: `LVL_${level}`, raceId: 'r', trackId: 'sunny-circuit', racers, botLevel: level, itemsMode: 'pure', totalLaps: 2 });
+    race.countdownMs = 0;
+    for (let i = 0; i < 30 * 200 && !race.completed; i++) stepKartSimulation(race, 1 / 30);
+    const winner = Object.values(race.karts).find((k) => k.finishRank === 1)!;
+    stopKartSimulation(`LVL_${level}`);
+    return winner.finishTimeMs!;
+  };
+  assert.ok(raceTime('mean') < raceTime('chill'), 'Mean bots are faster than Chill bots');
 });

@@ -63,7 +63,7 @@ export interface GameState {
   /** Recent reactions for the TV to animate (newest last, capped). */
   reactions?: Reaction[];
   /** Host choices that survive between games in the room. */
-  settings?: { packs?: string[] };
+  settings?: { packs?: string[]; phonesOnly?: boolean };
   // Game-specific data for the host
   hostData: any;
   // Game-specific data tailored for players (playerId -> data)

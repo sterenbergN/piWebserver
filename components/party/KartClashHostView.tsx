@@ -12,6 +12,18 @@ import TrackMinimap from '@/components/party/kart/TrackMinimap';
 
 type SnapKart = KartTelemetrySnapshot['karts'][number];
 
+const RECORDS_KEY = 'kartLapRecords';
+type LapRecord = { timeMs: number; name: string; avatar: string };
+
+/** Lap records live on this TV, per track and engine class. */
+function loadLapRecords(): Record<string, LapRecord> {
+  try {
+    return JSON.parse(localStorage.getItem(RECORDS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
 const HUD_INTERVAL_MS = 90; // The 3D view runs at full rate from a ref; React only redraws the HUD
 
 const CAMERA_OPTIONS: { id: CameraMode; label: string }[] = [
@@ -462,6 +474,36 @@ export default function KartClashHostView({
 }) {
   const hd = state.hostData || {};
   const [selectedPlayerForSwap, setSelectedPlayerForSwap] = useState<string | null>(null);
+  const [lapRecords, setLapRecords] = useState<Record<string, LapRecord>>({});
+  const [newRecord, setNewRecord] = useState<LapRecord | null>(null);
+
+  useEffect(() => {
+    setLapRecords(loadLapRecords());
+  }, []);
+
+  // When results land, see whether a human beat this TV's lap record
+  const resultsKey = state.phase === 'RACE_RESULTS' ? `${hd.trackId}:${hd.speedClass}:${hd.raceNumber}:${hd.heatId}` : null;
+  useEffect(() => {
+    if (!resultsKey) {
+      setNewRecord(null);
+      return;
+    }
+    const key = `${hd.trackId}:${hd.speedClass}`;
+    const records = loadLapRecords();
+    const best = (hd.standings || [])
+      .filter((r: any) => !r.isBot && r.bestLapMs)
+      .sort((a: any, b: any) => a.bestLapMs - b.bestLapMs)[0];
+    if (!best || (records[key] && records[key].timeMs <= best.bestLapMs)) return;
+    const record = { timeMs: best.bestLapMs, name: best.name, avatar: best.avatar };
+    const next = { ...records, [key]: record };
+    try {
+      localStorage.setItem(RECORDS_KEY, JSON.stringify(next));
+    } catch {
+      // Storage unavailable: the record just won't persist
+    }
+    setLapRecords(next);
+    setNewRecord(record);
+  }, [resultsKey]);
 
   // ─── Phase 1: HEAT_SETUP (Host-Controlled Tournament Heat Board) ─────────────
   if (state.phase === 'HEAT_SETUP') {
@@ -789,7 +831,7 @@ export default function KartClashHostView({
           {hd.speedClass ? ` · ${hd.speedClass}` : ''}
           {hd.itemsMode && hd.itemsMode !== 'normal' ? ` · ${hd.itemsMode} items` : ''}
         </div>
-        <div className="host-phase-title" style={{ marginBottom: '0.25rem' }}>
+        <div className="host-phase-title" style={{ marginBottom: '0.25rem', fontSize: 'clamp(1.5rem, 6vh, 3.4rem)' }}>
           <span className="host-emoji">🗳️</span> Vote for the Next Track!
         </div>
 
@@ -813,7 +855,7 @@ export default function KartClashHostView({
                 key={t.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '156px minmax(0, 1fr)',
+                  gridTemplateColumns: 'clamp(90px, 17vh, 156px) minmax(0, 1fr)',
                   gap: '0.85rem',
                   alignItems: 'center',
                   padding: '0.75rem',
@@ -825,15 +867,20 @@ export default function KartClashHostView({
                   transition: 'box-shadow 200ms, border-color 200ms',
                 }}
               >
-                <div style={{ background: 'rgba(5,8,18,0.6)', borderRadius: '14px', padding: '0.3rem' }}>
+                <div style={{ background: 'rgba(5,8,18,0.6)', borderRadius: '14px', padding: '0.3rem', height: 'clamp(90px, 17vh, 156px)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <TrackMinimap trackId={t.id} size={144} />
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
-                    <span style={{ fontWeight: 900, fontSize: '1.2rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.emoji} {t.name}</span>
+                    <span style={{ fontWeight: 900, fontSize: '1.15rem', lineHeight: 1.15 }}>{t.emoji} {t.name}</span>
                     <span className="badge" style={{ fontSize: '0.7rem', flexShrink: 0 }}>{t.difficulty}</span>
                   </div>
-                  <div style={{ fontSize: '0.85rem', color: '#d7deea', lineHeight: 1.3, margin: '0.2rem 0 0.4rem' }}>{t.tagline}</div>
+                  <div style={{ fontSize: '0.85rem', color: '#d7deea', lineHeight: 1.3, margin: '0.2rem 0 0.25rem' }}>{t.tagline}</div>
+                  {lapRecords[`${t.id}:${hd.speedClass}`] && (
+                    <div style={{ fontSize: '0.76rem', fontWeight: 800, color: '#f0abfc', marginBottom: '0.3rem' }}>
+                      ⏱ Lap record {formatRaceTime(lapRecords[`${t.id}:${hd.speedClass}`].timeMs)} · {lapRecords[`${t.id}:${hd.speedClass}`].avatar} {lapRecords[`${t.id}:${hd.speedClass}`].name}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', minHeight: '26px' }}>
                     {voters.map((pid) => (
                       <span
@@ -929,7 +976,7 @@ export default function KartClashHostView({
           {hd.heatName}
           {hd.trackId && KART_TRACKS[hd.trackId as TrackId] ? ` · ${KART_TRACKS[hd.trackId as TrackId].emoji} ${KART_TRACKS[hd.trackId as TrackId].name}` : ''}
         </div>
-        <div className="host-phase-title" style={{ marginBottom: '0.5rem' }}>
+        <div className="host-phase-title" style={{ marginBottom: '0.5rem', fontSize: 'clamp(1.5rem, 6vh, 3.4rem)' }}>
           <span className="host-emoji">🏁</span> Race Results
         </div>
 
@@ -944,7 +991,7 @@ export default function KartClashHostView({
                   <div
                     style={{
                       width: '100%',
-                      height: `${height}px`,
+                      height: `min(${height}px, ${(height / 10.8).toFixed(1)}vh)`,
                       background: `linear-gradient(180deg, ${color}, ${color}55)`,
                       border: `2px solid ${color}`,
                       borderRadius: '14px 14px 0 0',
@@ -963,6 +1010,12 @@ export default function KartClashHostView({
                 </div>
               ) : <div key={i} style={{ flex: 1 }} />)}
             </div>
+
+            {newRecord && (
+              <div style={{ textAlign: 'center', background: 'linear-gradient(90deg, #d946ef, #f59e0b)', color: '#10060f', borderRadius: '12px', padding: '0.5rem 0.9rem', fontWeight: 900, fontSize: '1.05rem' }}>
+                🏆 NEW LAP RECORD! {newRecord.avatar} {newRecord.name} · {formatRaceTime(newRecord.timeMs)}
+              </div>
+            )}
 
             {fastestLap && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', background: 'rgba(217,70,239,0.16)', border: '1.5px solid #d946ef', borderRadius: '12px', padding: '0.5rem 0.9rem' }}>
@@ -1022,7 +1075,7 @@ export default function KartClashHostView({
                       {row.name}
                     </span>
                     {row.isBot && <span style={{ fontSize: '0.68rem', color: 'var(--party-text-muted)', fontWeight: 800 }}>BOT</span>}
-                    {hd.format === 'tournament' && isQual && !hd.isFinalHeat && (
+                    {hd.format === 'tournament' && isQual && !hd.isFinalHeat && (hd.heats?.length || 0) > 1 && (
                       <span className="badge" style={{ borderColor: 'var(--party-green)', color: 'var(--party-green)', fontWeight: 900, fontSize: '0.68rem' }}>
                         ✅ Finals
                       </span>

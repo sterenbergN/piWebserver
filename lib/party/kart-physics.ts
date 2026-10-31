@@ -1,8 +1,8 @@
 import { partyEmitter } from './emitter';
-import { KART_STYLES, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
+import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
 import { KART_TRACKS, KartTrack, TrackId, projectOntoTrack, sampleTrackAtProgress } from './kart-tracks';
 
-export type { KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
+export type { KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
 
 /**
  * Engine classes. `assist` scales how strongly the road pulls a kart back onto its line, so
@@ -163,6 +163,7 @@ export interface KartRaceSim {
   totalLaps: number;
   speedClass: KartSpeedClass;
   itemsMode: KartItemsMode;
+  botLevel: KartBotLevel;
   startedAt: number;
   elapsedMs: number;
   raceTimeMs: number; // clock from the green light, the only time shown to players
@@ -453,6 +454,7 @@ export function createKartSimulation(opts: {
   totalLaps?: number;
   speedClass?: KartSpeedClass;
   itemsMode?: KartItemsMode;
+  botLevel?: KartBotLevel;
   requireOrientation?: boolean;
   onFinish?: (sim: KartRaceSim) => void;
 }): KartRaceSim {
@@ -570,6 +572,7 @@ export function createKartSimulation(opts: {
     totalLaps,
     speedClass,
     itemsMode,
+    botLevel: opts.botLevel || 'normal',
     startedAt: Date.now(),
     elapsedMs: 0,
     raceTimeMs: 0,
@@ -1097,7 +1100,7 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   let useItem = false;
   if (!k.finished && k.heldItem && botWantsItem(sim, k, curvAhead)) {
     useItem = true;
-    k.aiUseItemDelay = 0.8 + Math.random() * 1.4;
+    k.aiUseItemDelay = (0.8 + Math.random() * 1.4) * BOT_LEVELS[sim.botLevel].itemDelay;
   }
 
   return {
@@ -1312,14 +1315,15 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     // ── Speed
     let top = cls.maxSpeed * style.topSpeed;
     if (k.isBot) {
-      top *= k.aiSkill;
+      const level = BOT_LEVELS[sim.botLevel];
+      top *= k.aiSkill * level.skill;
       // Lift for corners too tight to take flat out
       top = Math.min(top, BOT_CORNER_YAW / Math.max(0.001, Math.abs(k.aiCurvAhead)));
       if (bestHumanProgress !== null) {
         // Keep the pack around the humans, a close race beats a fair one
         const gap = k.totalProgress - bestHumanProgress;
-        if (gap > 0.08) top *= 1 - Math.min(0.2, (gap - 0.08) * 0.9);
-        else if (gap < -0.1) top *= 1 + Math.min(0.12, (-gap - 0.1) * 0.5);
+        if (gap > 0.08) top *= 1 - Math.min(0.2, (gap - 0.08) * 0.9 * level.ease);
+        else if (gap < -0.1) top *= 1 + Math.min(0.12, (-gap - 0.1) * 0.5 * level.catchUp);
       }
     } else {
       const rankRatio = (k.rank - 1) / Math.max(1, allKarts.length - 1);
