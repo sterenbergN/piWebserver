@@ -2,12 +2,13 @@ import fs from 'fs/promises';
 import path from 'path';
 import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
 import { emptyMap, normalizeMap, type AnkiData, type MapData } from './coverage';
+import { emptyPlan, normalizePlan, type PlanData } from './plan';
 import { emptyProgress, emptyTests, normalizeProgress, normalizeTests, type ProgressData, type TestsData } from './study';
 
 // One folder per account in .data/study (kept by backups). The tests themselves
 // change rarely and can get large, so saving your place in a test only rewrites
 // the small progress file. Classes and deck matches are in map.json, and the
-// numbers from the last Anki import in anki.json.
+// numbers from the last Anki import in anki.json. The planner is in plan.json.
 
 export function studyFolder(userId: string) {
   if (!/^[\w-]{1,64}$/.test(userId)) throw new Error('Invalid account');
@@ -49,3 +50,16 @@ export function updateMap<R>(userId: string, mutate: (data: MapData) => R) {
 export const readAnki = (userId: string) => readJson<AnkiData | null>(ankiFile(userId), null);
 export const writeAnki = (userId: string, data: AnkiData) => writeJsonAtomic(ankiFile(userId), data);
 export const removeAnki = (userId: string) => fs.rm(ankiFile(userId), { force: true });
+
+const planFile = (userId: string) => path.join(studyFolder(userId), 'plan.json');
+
+export const readPlan = async (userId: string) => normalizePlan(await readJson<Partial<PlanData>>(planFile(userId), emptyPlan()));
+
+/** Wrapped, since a mutator answering `false` (not a clean plate today) would otherwise tell updateJson to skip the write. */
+export async function updatePlan<R>(userId: string, mutate: (data: PlanData) => R): Promise<R> {
+  const { result } = await updateJson<PlanData, { result: R }>(planFile(userId), emptyPlan(), (stored) => {
+    Object.assign(stored, normalizePlan(stored));
+    return { result: mutate(stored) };
+  });
+  return result;
+}

@@ -106,6 +106,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       bar: 'wide',
       items: [
         { href: '/study', label: 'PA Today', icon: '🩺', short: 'Today', blurb: 'What’s waiting today, and when you can stop', keywords: 'study school pa pance home', account: true },
+        { href: '/study/plan', label: 'Plan', icon: '🥞', blurb: 'What’s coming up, and the pancakes before it', keywords: 'planner calendar exams due dates countdown schedule syllabus', account: true },
         { href: '/study/tests', label: 'Practice tests', icon: '📝', short: 'Tests', blurb: 'Take the tests your AI writes from your notes', keywords: 'study exam quiz school pa pance', account: true },
         { href: '/study/review', label: 'Review misses', icon: '🔁', short: 'Review', blurb: 'What you missed comes back until you know it', keywords: 'miss bank spaced repetition', account: true },
         { href: '/study/map', label: 'PANCE map', icon: '🗺️', short: 'Map', blurb: 'Every organ system: covered, studied and proven', keywords: 'blueprint coverage boards organ systems exam', account: true },
@@ -256,7 +257,7 @@ export function atPlace(item: NavItem, path: string, hash: string, search = '') 
 
 /** Pinned until you choose your own: daily tools once signed in, the public site before that. */
 export const defaultPins = (signedIn: boolean, studyHome = false) =>
-  signedIn && studyHome ? ['/study', '/study/tests', '/study/review', '/study/map', '/study/anki', '/today'] :
+  signedIn && studyHome ? ['/study', '/study/plan', '/study/tests', '/study/review', '/study/map', '/today'] :
   signedIn
     ? ['/today', '/workout', '/recipes', '/recipes?view=list', '/journal']
     : ['/blog', '/gallery', '/recipes', '/game', '/tools#calculators'];

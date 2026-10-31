@@ -75,3 +75,31 @@ export function buildTestPrompt(options: PromptOptions) {
     FORMAT,
   ].filter(Boolean).join('\n\n');
 }
+
+/** For a syllabus or schedule: its dates, and the work toward them with a rough size. */
+export function buildSyllabusPrompt(options: { course?: string; today: string }) {
+  const course = options.course?.trim();
+  return [
+    `I’m attaching or pasting a syllabus or course schedule${course ? ` for ${course}` : ''}. Today is ${options.today}. List its exams, quizzes, practicals and due dates, and the work I’d need to do for each.`,
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "course": "The class or module",
+  "deadlines": [
+    { "title": "Cardiology exam", "kind": "exam", "dueOn": "2030-11-05" }
+  ],
+  "tasks": [
+    { "title": "Heart failure lectures", "pancakes": 3, "for": "Cardiology exam" }
+  ]
+}
+\`\`\``,
+    `Rules for the JSON:
+- "kind" is one of: exam, quiz, practical, assignment, other.
+- "dueOn" is the real date as YYYY-MM-DD. Work out the year from today’s date. If the syllabus doesn’t give a date, leave that item out rather than guessing.
+- Leave out anything already past, and ordinary class meetings.
+- Each task is one piece of work, like a block of lectures or a reading, and "for" is the exact title of its deadline.
+- "pancakes" is a rough size for how much work it is, from 1 for something quick to 5 for something big. Use whole numbers.
+- Copy dates faithfully. I’ll be planning my study time around them.`,
+  ].join('\n\n');
+}

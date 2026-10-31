@@ -131,7 +131,7 @@ function completeObjects(text: string) {
 }
 
 /** The JSON in an AI's reply: code fences, chatter around it and trailing commas are all forgiven. */
-function readReply(text: string): { value: unknown; cutOff: boolean } {
+export function readReply(text: string): { value: unknown; cutOff: boolean } {
   const unfenced = text.replace(/```[a-z]*\s*\n?/gi, '').replace(/```/g, '');
   const start = unfenced.search(/[{[]/);
   if (start < 0) throw new StudyInputError('I couldn’t find any JSON in that. Paste the whole reply, including the part in the code block.');

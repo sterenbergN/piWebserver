@@ -1,0 +1,80 @@
+/* ─── The plate ────────────────────────────────────────────────────────────── */
+
+.sd-plate-top { display: flex; align-items: flex-end; gap: 1rem; }
+.sd-stack { flex: none; width: 7.5rem; height: auto; max-height: 12rem; }
+.sd-plate.is-compact .sd-stack { width: 5.5rem; max-height: 8rem; }
+.sd-stack-more { fill: var(--muted); font-size: 11px; font-weight: 700; }
+.sd-stack.is-cold-2 .sd-stack-cakes, .sd-stack.is-cold-3 .sd-stack-cakes { animation: sd-wobble 3.2s ease-in-out infinite; transform-origin: 50% 100%; }
+.sd-stack.is-cold-3 .sd-stack-cakes { animation-duration: 2.2s; }
+@keyframes sd-wobble { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg); } }
+.sd-butter { animation: sd-melt 1.6s ease-out forwards; transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes sd-melt { from { transform: scaleY(1.4); } to { transform: scale(1.15, 0.55); } }
+.sd-syrup { animation: sd-pour 1.3s ease-out both; transform-box: fill-box; transform-origin: 50% 0; }
+@keyframes sd-pour { from { opacity: 0; transform: scaleY(0.1); } to { opacity: 0.85; transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .sd-stack-cakes, .sd-butter, .sd-syrup { animation: none !important; } }
+.sd-plate-text { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.sd-streak { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--foreground); }
+.sd-pile { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; padding: 0.55rem 0.75rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); font-size: 0.9rem; }
+.sd-pile.is-cold-2 { border-color: var(--warning); }
+.sd-pile.is-cold-3 { border-color: var(--danger); }
+.sd-plate-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sd-plate-list li + li { border-top: 1px solid var(--surface-border); }
+.sd-plate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; padding: 0.55rem 0; }
+.sd-plate-row .sd-test-main { flex: 1 1 11rem; }
+.sd-eat { min-height: 2.5rem; padding: 0.4rem 0.9rem; font-size: 0.92rem; }
+.sd-undo { margin: 0; font-size: 0.88rem; color: var(--foreground); }
+.sd-plate-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; }
+
+/* ─── The plan ─────────────────────────────────────────────────────────────── */
+
+.sd-deadlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.sd-deadline.is-soon { border-color: var(--warning); }
+.sd-deadline-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.85rem; }
+.sd-deadline-head .sd-test-main { flex: 1 1 12rem; }
+.sd-countdown { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 3.6rem; min-height: 3.2rem; padding: 0.25rem 0.5rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); line-height: 1.1; }
+.sd-countdown strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.sd-countdown small { color: var(--muted); font-size: 0.72rem; }
+.sd-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sd-task { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.3rem 0.75rem; padding: 0.45rem 0; }
+.sd-task + .sd-task { border-top: 1px solid var(--surface-border); }
+.sd-task .sd-test-main { flex: 1 1 12rem; }
+.sd-task strong.is-done { color: var(--muted); }
+.sd-inline-form { display: flex; flex-direction: column; gap: 0.6rem; }
+.sd-sizes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.sd-sizes button { min-height: 2.4rem; padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.sd-sizes button[aria-checked='true'] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sd-card .sd-sizes input { width: 4.2rem; }
+.sd-asks .sd-ask { margin: 0; font-size: 0.92rem; color: var(--foreground); }
+.sd-ask-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.75rem; padding: 0.4rem 0; font-size: 0.92rem; }
+.sd-ask-row + .sd-ask-row { border-top: 1px solid var(--surface-border); }
+.sd-ask-row > span:first-child { flex: 1 1 13rem; min-width: 0; overflow-wrap: anywhere; }
+.sd-asks a, .sd-welcome li a { color: var(--accent-light); }
+.sd-perday { min-width: 3.5rem; text-align: center; font-variant-numeric: tabular-nums; }
+.sd-more-info summary { cursor: pointer; font-size: 0.9rem; color: var(--accent-light); }
+.sd-more-info[open] > * + * { margin-top: 0.5rem; }
+.sd-next-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.sd-next-list li { display: flex; align-items: center; gap: 0.6rem; }
+
+/* ─── The calendar ─────────────────────────────────────────────────────────── */
+
+.sd-card-head .sd-segments { flex: none; }
+.sd-cal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.sd-week { display: flex; flex-direction: column; }
+.sd-day { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.6rem 0.2rem; font-size: 0.92rem; align-items: flex-start; }
+.sd-week .sd-day + .sd-day { border-top: 1px solid var(--surface-border); }
+.sd-day.is-today { padding-left: 0.6rem; border-left: 3px solid var(--accent-light); }
+.sd-day.is-off strong { color: var(--muted); }
+.sd-day-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.3rem 0.75rem; align-self: stretch; }
+.sd-day-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.sd-day-due { margin: 0; font-weight: 600; color: var(--foreground); }
+.sd-day ul { margin: 0; padding-left: 1.1rem; color: var(--foreground); }
+.sd-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.2rem; }
+.sd-month-name { font-size: 0.7rem; font-weight: 700; text-align: center; color: var(--muted); }
+.sd-month button { display: flex; flex-direction: column; align-items: flex-start; gap: 0.05rem; min-height: 3.6rem; padding: 0.25rem 0.3rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.72rem; line-height: 1.2; cursor: pointer; overflow: hidden; }
+.sd-month button.is-other { opacity: 0.45; }
+.sd-month button.is-today { border-color: var(--accent-light); }
+.sd-month button.is-off { background: none; }
+.sd-month button[aria-pressed='true'] { box-shadow: inset 0 0 0 2px var(--accent-light); }
+.sd-month-day { font-weight: 700; }
+.sd-month-count { white-space: nowrap; }
+.sd-actions .sd-danger-link { align-self: center; }

@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
+import Plate from '@/components/study/Plate';
 import { fmtDay, pct } from '@/components/study/TestRow';
+import { usePlan } from '@/components/study/usePlan';
 import { addDays, localToday } from '@/lib/habits/dates';
+import { KIND_ICON, plateView, upcoming } from '@/lib/study/plan';
 import type { MapResponse } from '@/components/study/MapTypes';
 import { todaySteps, type StudySummary, type TestSummary } from '@/lib/study/study';
 
@@ -104,6 +107,7 @@ export default function PaTodayPage() {
   const [summary, setSummary] = useState<StudySummary | null>(null);
   const [home, setHome] = useState(false);
   const [map, setMap] = useState<MapResponse['coverage'] | null>(null);
+  const planner = usePlan();
 
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +136,11 @@ export default function PaTodayPage() {
   const review = summary?.review;
   const total = summary?.totals;
   const today = summary ? todaySteps(summary) : null;
+  const plan = planner.data?.plan;
+  const next = plan ? upcoming(plan, planner.today).slice(0, 3) : [];
+  const hasPlan = !!plan && (plan.tasks.length > 0 || plan.deadlines.length > 0);
+  // The plate holds the reviews and what's planned; a test left part way is the only thing besides.
+  const plateClear = !!planner.data && plateView(planner.data.plan, planner.today, planner.data.reviewsDue).total === 0;
   const dateText = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   return (
     <div className="sd animate-fade-in">
@@ -147,7 +156,7 @@ export default function PaTodayPage() {
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your day.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
 
       {summary && review && total && today && (
-        total.tests === 0 ? (
+        total.tests === 0 && !hasPlan ? (
           <section className="sd-card sd-welcome">
             <h2>Start with one test</h2>
             <ol>
@@ -162,31 +171,27 @@ export default function PaTodayPage() {
         ) : (
           <div className="sd-columns">
             <div className="sd-side">
-              <section className={`sd-card sd-today${today.clear ? ' is-clear' : ''}`}>
-                <h2>{today.clear ? '✨ You’re clear for today' : 'Today'}</h2>
-                {today.clear && (
-                  <p className="hb-hint">
-                    {review.doneToday ? 'Your reviews are done. You can stop here.' : 'Nothing’s waiting. You can stop here.'}
-                    {review.active > 0 && ` ${nextReview(review.nextOn)}`}
-                  </p>
-                )}
-                {(today.review > 0 || today.open.length > 0) && (
-                  <ul className="sd-step-list">
-                    {today.review > 0 && <Step icon="🔁" title={`${today.review} question${today.review === 1 ? '' : 's'} to review`} note="A few minutes on what you’ve missed before." href="/study/review" action="Review now" primary />}
-                    {today.open.map((test) => <Step key={test.id} icon="📝" title={test.title} note={`Part way through: ${test.open?.answered} of ${test.open?.total} answered`} href={`/study/tests/${test.id}`} action="Continue" primary={today.review === 0} />)}
-                  </ul>
-                )}
-                {today.next && (
-                  <div className="sd-today-extra">
-                    <p className="sd-setup-title">{today.clear ? 'If you feel like more' : 'Not taken yet'}</p>
+              {planner.data && <Plate planner={planner} />}
+
+              {(today.open.length > 0 || today.next) && (
+                <section className={`sd-card sd-today${plateClear && !today.open.length ? ' is-clear' : ''}`}>
+                  <h2>{today.open.length ? 'Pick up where you left off' : plateClear ? 'If you feel like more' : 'Not taken yet'}</h2>
+                  {plateClear && !today.open.length && review.active > 0 && <p className="hb-hint">{nextReview(review.nextOn)}</p>}
+                  {today.open.length > 0 && (
+                    <ul className="sd-step-list">
+                      {today.open.map((test) => <Step key={test.id} icon="📝" title={test.title} note={`Part way through: ${test.open?.answered} of ${test.open?.total} answered`} href={`/study/tests/${test.id}`} action="Continue" primary />)}
+                    </ul>
+                  )}
+                  {today.next && (
                     <ul className="sd-step-list">
                       <Step icon="🆕" title={today.next.title} note={testNote(today.next)} href={`/study/tests/${today.next.id}`} action="Open" />
                     </ul>
-                  </div>
-                )}
-              </section>
+                  )}
+                </section>
+              )}
 
               <nav className="sd-tiles" aria-label="Study">
+                <Link href="/study/plan"><span aria-hidden>🥞</span><strong>Plan</strong><small>Dates and the work toward them</small></Link>
                 <Link href="/study/tests"><span aria-hidden>📝</span><strong>Practice tests</strong><small>{total.tests} saved</small></Link>
                 <Link href="/study/review"><span aria-hidden>🔁</span><strong>Review misses</strong><small>{review.active} in the bank</small></Link>
                 <Link href="/study/map"><span aria-hidden>🗺️</span><strong>PANCE map</strong><small>What’s covered, studied and proven</small></Link>
@@ -197,6 +202,20 @@ export default function PaTodayPage() {
             </div>
 
             <aside className="sd-side">
+              <section className="sd-card">
+                <h2>Coming up</h2>
+                {next.length ? (
+                  <ul className="sd-next-list">
+                    {next.map(({ deadline, daysLeft, left }) => (
+                      <li key={deadline.id}>
+                        <span className="sd-countdown"><strong>{daysLeft > 1 ? daysLeft : daysLeft === 1 ? 'Tmrw' : 'Today'}</strong>{daysLeft > 1 && <small>days</small>}</span>
+                        <span className="sd-test-main"><strong>{KIND_ICON[deadline.kind]} {deadline.title}</strong><small>{left ? `${left} 🥞 left` : fmtDay(deadline.dueOn)}</small></span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="hb-hint">No dates yet. Add your exams and due dates, and your Google Calendar can fill them in.</p>}
+                <Link className="sd-more" href="/study/plan">Open your plan →</Link>
+              </section>
               {map && <MapCard map={map} />}
               <section className="sd-card">
                 <h2>So far</h2>

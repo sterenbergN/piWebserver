@@ -2,40 +2,22 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import Plate from '@/components/study/Plate';
+import { usePlan } from '@/components/study/usePlan';
 import { useKitchen } from '../recipes/useKitchen';
 import type { DateKey } from '@/lib/habits/dates';
 import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
 import { groceriesLeft, haveSet, mealsToday, missingIngredients } from '@/lib/recipes/kitchen';
 import type { Recipe } from '@/lib/recipes/recipes';
-import type { StudySummary } from '@/lib/study/study';
 
 const MOOD_NAMES = ['Rough', 'Meh', 'Okay', 'Good', 'Great'];
 
-/** What's due in the miss bank. Stays out of the way for anyone who hasn't added a test. */
-export function StudyCard({ today }: { today: DateKey }) {
-  const [review, setReview] = useState<StudySummary['review'] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/study?today=${today}`, { cache: 'no-store' }).then((r) => r.json()).then((body) => {
-      if (!cancelled && body.success && body.summary.totals.tests > 0) setReview(body.summary.review);
-    }).catch(() => { /* the card just stays away */ });
-    return () => { cancelled = true; };
-  }, [today]);
-
-  if (!review) return null;
-  return (
-    <section className="td-card td-study">
-      <div className="td-card-head">
-        <h2><span aria-hidden>🩺</span> Study</h2>
-        {review.due > 0 ? <span className="td-chip">{review.due} due</span> : review.doneToday && <span className="td-chip is-done">Done</span>}
-      </div>
-      <p className="hb-hint">
-        {review.due > 0 ? `${review.due} missed question${review.due === 1 ? ' is' : 's are'} back for another look.` : review.doneToday ? 'Your reviews are done for today.' : 'No reviews due today.'}
-      </p>
-      <Link className={`btn ${review.due > 0 ? 'btn-primary' : 'btn-secondary'}`} href={review.due > 0 ? '/study/review' : '/study'}>{review.due > 0 ? 'Review now' : 'Open PA Today'}</Link>
-    </section>
-  );
+/** Today's plate, from Study. Stays out of the way for anyone not using it. */
+export function StudyCard() {
+  const planner = usePlan();
+  const data = planner.data;
+  if (!data || (!data.tests.length && !data.plan.tasks.length && !data.plan.deadlines.length)) return null;
+  return <div className="td-study"><Plate planner={planner} compact /></div>;
 }
 
 /** Today's journal entry: tap a mood right here, or open the page to write. */

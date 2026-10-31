@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
-import { readProgress, readTests, updateProgress, updateTests } from '@/lib/study/store';
+import { eatTest, noteClean } from '@/lib/study/plan';
+import { readPlan, readProgress, readTests, updatePlan, updateProgress, updateTests } from '@/lib/study/store';
 import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
 import {
   addTest, answerReview, cleanAnswer, dueMisses, finishAttempt, fixQuestion, parseTestReply, removeQuestion, removeTest, renameTest,
@@ -34,8 +35,9 @@ export async function GET(request: Request) {
     if (params.get('review') !== null) {
       return NextResponse.json({ success: true, items: withQuestions(tests, dueMisses(progress, today)) }, { headers: PRIVATE });
     }
-    const user = await findWorkoutUser(userId);
-    return NextResponse.json({ success: true, summary: studySummary(tests, progress, today), studyDays: studyDays(progress), home: user?.studyHome === true }, { headers: PRIVATE });
+    const [user, plan] = await Promise.all([findWorkoutUser(userId), readPlan(userId)]);
+    const days = [...new Set([...studyDays(progress), ...Object.keys(plan.eatenOn)])];
+    return NextResponse.json({ success: true, summary: studySummary(tests, progress, today), studyDays: days, home: user?.studyHome === true }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load study failed');
   }
@@ -46,6 +48,15 @@ function testFrom<T extends { id: string }>(list: T[], id: unknown) {
   const test = isId(id) ? list.find((t) => t.id === id) : undefined;
   if (!test) throw new ApiError(404, 'That test isn’t here any more.');
   return test;
+}
+
+/** Work done here counts by itself: a handed-in test eats its pancakes, and clearing reviews can clean the plate. */
+async function afterStudying(userId: string, today: string, testId?: string) {
+  const progress = await readProgress(userId);
+  await updatePlan(userId, (plan) => {
+    if (testId) eatTest(plan, testId, today);
+    noteClean(plan, today, dueMisses(progress, today).length, progress.reviewDays.includes(today));
+  });
 }
 
 export async function POST(request: Request) {
@@ -95,6 +106,7 @@ export async function POST(request: Request) {
           if (body.action === 'finish') finishAttempt(progress, found, test, today, now);
           return found;
         });
+        if (body.action === 'finish') await afterStudying(userId, today, attempt.testId);
         return NextResponse.json({ success: true, attempt }, { headers: PRIVATE });
       }
       case 'discard': {
@@ -111,6 +123,7 @@ export async function POST(request: Request) {
           if (!found) throw new ApiError(404, 'That question isn’t waiting for review.');
           return answerReview(progress, found.question, cleanAnswer(found.question, body.answer), today);
         });
+        await afterStudying(userId, today);
         return NextResponse.json({ success: true, right: result.right, miss: result.miss }, { headers: PRIVATE });
       }
       case 'fix-question': {

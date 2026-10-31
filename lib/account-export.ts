@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { walk } from '@/lib/backup';
-import { choresFile, findHousehold } from '@/lib/chores/households';
+import { choresFile, examHelpFile, findHousehold } from '@/lib/chores/households';
 import { readFeedback, readUserDaily } from '@/lib/daily/store';
 import { folder as privatePostsFolder } from '@/lib/journal/private-posts';
 import { householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
@@ -117,10 +117,13 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'study/progress.json', file: path.join(studyFolder(userId), 'progress.json') },
     { entry: 'study/map.json', file: path.join(studyFolder(userId), 'map.json') },
     { entry: 'study/anki.json', file: path.join(studyFolder(userId), 'anki.json') },
+    // Not calendar-secret.json: that address works like a password.
+    { entry: 'study/plan.json', file: path.join(studyFolder(userId), 'plan.json') },
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },
       { entry: 'chores.json', file: choresFile(household.id) },
+      { entry: 'chores-exam-help.json', file: examHelpFile(household.id) },
     ] : []),
     ...(await workoutItems(userId)),
   ];

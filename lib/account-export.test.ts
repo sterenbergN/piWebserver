@@ -37,6 +37,8 @@ async function seed() {
     await write(data('study', id, 'progress.json'), { attempts: [{ id: `${marker}-attempt` }] });
     await write(data('study', id, 'map.json'), { classes: [{ name: `${marker}-class` }] });
     await write(data('study', id, 'anki.json'), { decks: [`${marker}-deck`] });
+    await write(data('study', id, 'plan.json'), { tasks: [{ title: `${marker}-plan` }] });
+    await write(data('study', id, 'calendar-secret.json'), { url: `${marker}-SECRET-address` });
     await write(data('daily', 'attempts', `${id}.json`), { attempts: [{ note: `${marker}-answer` }] });
     await write(data('private-posts', id, 'posts.json'), [{ id: 'post-one', markdown: `${marker}-post` }]);
     await write(data('private-posts', id, 'images', 'picture-1.webp'), `${marker}-picture`);
@@ -198,6 +200,7 @@ test('every store of a user lands in their export', async () => {
     'private-posts/posts.json',
     'study/anki.json',
     'study/map.json',
+    'study/plan.json',
     'study/progress.json',
     'study/tests.json',
     'workouts/bodyweight.json',
@@ -215,10 +218,11 @@ test('every store of a user lands in their export', async () => {
     'workouts/workout_types.json',
   ]);
   for (const marker of [
-    'ALICE-journal', 'ALICE-habit', 'ALICE-notebook', 'ALICE-test', 'ALICE-attempt', 'ALICE-class', 'ALICE-deck', 'ALICE-answer', 'ALICE-feedback', 'ALICE-post', 'ALICE-picture', 'ALICE-old-kitchen',
+    'ALICE-journal', 'ALICE-habit', 'ALICE-notebook', 'ALICE-test', 'ALICE-attempt', 'ALICE-class', 'ALICE-deck', 'ALICE-plan', 'ALICE-answer', 'ALICE-feedback', 'ALICE-post', 'ALICE-picture', 'ALICE-old-kitchen',
     'HOUSEHOLD-chore', 'HOUSEHOLD-kitchen', 'ALICE-username', 'ALICE-workout', 'ALICE-weight', 'ALICE-calibration', 'ALICE-gym', 'ALICE-type',
     'ALICE-program', 'ALICE-goal', 'ALICE-share', 'ALICE-health', 'ALICE-kind', 'ALICE-lift', 'ALICE-machine-photo',
   ]) assert.ok(everything.includes(marker), `missing ${marker}`);
+  assert.ok(!everything.includes('SECRET-address'), 'the calendar address stays out');
 });
 
 test('one account never gets another account\'s data, in either direction', async () => {

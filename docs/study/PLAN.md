@@ -6,7 +6,7 @@ replace Anki or commercial question banks. It does what they don't: remembers
 what happened on those AI tests, plans the work around real deadlines, and makes
 studying a little more fun.
 
-Status (2026-10-31): phases 1 to 3 built. Everything after them is planned, not started.
+Status (2026-10-31): phases 1 to 4 built. Everything after them is planned, not started.
 
 ## Ground rules
 
@@ -25,7 +25,7 @@ Status (2026-10-31): phases 1 to 3 built. Everything after them is planned, not 
 | 1 | Test vault, miss bank, export to Anki | Built |
 | 2 | PA Today and a space of its own | Built |
 | 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Built |
-| 4 | Study planner and pancakes | Planned |
+| 4 | Study planner and pancakes | Built |
 | 5 | Study games: Trivia Death with her questions, The Night Shift | Planned |
 | 6 | Quiz me, mock patient, comparison grids, Differential | Planned |
 
@@ -110,80 +110,75 @@ Still to check:
 - **Heavy imports.** Reading runs on the server's main thread, so a very large collection
   could briefly slow the site on a Pi.
 
-## Phase 4: study planner and pancakes
+## Phase 4: study planner and pancakes (built)
+
+Pure logic is in `lib/study/plan.ts`, and the data in `plan.json`. The idea that does
+most of the work: every uneaten pancake sits on the day it's planned for, so anything
+dated before today is the pile. Eating takes the oldest first, and nothing has to run
+overnight.
 
 ### The planner
 
-- **Things with dates:** exams, quizzes, assignments and practicals, each with a
-  class, due date and days-left countdown.
-- **Work toward them:** lectures to review, readings, tests to take and so on, each
-  sized in pancakes and usually tied to something with a date.
-- **Dates from Google Calendar:** her dates already live there, so this is the main
-  way in. See "Google Calendar" below.
-- **Dates from a syllabus:** she pastes a syllabus into her AI using a copied prompt
-  and pastes the reply back, the same pattern as tests. Entering things by hand also
-  works.
+- **Dates:** exams, quizzes, practicals and due dates at `/study/plan`, each with a
+  countdown. Work toward them is sized in pancakes, or stands alone with no date.
+- **From Google Calendar or a syllabus**, set up at `/study/plan/setup`, or by hand.
 - **Her week:** which days she studies and roughly how many pancakes a day she can
-  manage. The site can suggest a number from what she actually eats.
-- **Calendar view:** month and week, showing due dates and each day's pancakes.
+  manage. The site offers her real pace once there's enough history.
+- **Calendar:** week and month views of due dates and each day's pancakes.
 
 ### Pancakes
 
-Every piece of work costs pancakes, and each day she has a plate to eat.
-
-- **Size:** a rough size she picks for each task, not a fixed amount of time. A quick
-  reading might be 1 pancake and a big lecture block 4. Picking should take one tap.
-- **The plate:** pancakes are spread across her study days before the due date,
-  ending a day or two early so the last days before an exam stay clear.
-- **Eating:** she taps to eat one. Work done on the site counts by itself: handing
-  in a test or clearing reviews eats the pancakes planned for it. Anki stays a tap,
-  since there's no live link to it.
-- **Piling up:** what she doesn't eat stays and joins tomorrow's plate. The stack
-  visibly grows, gets wobbly and goes cold the longer it sits. It never spreads out
-  by itself; that's her choice, with the button below.
-- **Where it shows:** on both PA Today and the site's main Today page.
-- **A clean plate** is the "done for today" moment: butter melts, syrup pours, and
-  there's a garden-style streak and XP.
+- **Size:** a rough size she picks for each task, not a fixed amount of time.
+- **The plate:** pancakes are spaced across her study days before the date, leveling
+  against what's already planned. Exams and practicals keep 2 clear days, quizzes and
+  due dates 1. If time has run out, the clear days give way so nothing is lost.
+- **Eating:** a tap. Handing in a test tied to a task eats that task. Due reviews add a
+  pancake per 20 and aren't stored, since the miss bank already keeps them; clearing them
+  eats those. Anki stays a tap, since there's no live link.
+- **Piling up:** leftovers stay on the plate and never spread by themselves. The stack
+  leans further and goes colder at 3 and 5 days old.
+- **Where it shows:** on both PA Today and the main Today page.
+- **A clean plate** says she can stop, with melting butter, syrup and confetti, and adds
+  to a streak. Study XP is still in phase 6.
 
 ### Keeping the pile from becoming a punishment
 
-The pile should push, not make her dread opening the page. For someone already
-studying constantly, this matters as much as the mechanic.
-
 - **Spread the pile:** one tap re-plans leftovers over the coming days.
-- **Days off and sick days** are planned, and don't pile anything up.
-- **Passed deadlines clear:** once an exam is over, its leftovers leave the stack,
-  so there's no debt that outlives the thing it was for.
-- **Early warning:** if the plan can't fit, it says so ("Cardio needs 4 a day and you
-  planned 3") while there's still time to change it.
-- **Pace check:** "At this pace you'll finish Cardio 2 days late" is the planner's
-  most useful number, and shows next to the countdown.
+- **Days off and sick days** move that day's pancakes along, including a day already past.
+- **Passed deadlines clear:** once a date is past, its leftovers leave the stack.
+- **Early warning:** says when a date needs more per day than she planned, counting
+  everything due before it.
+- **Pace check:** "At your recent pace you'd finish 2 days late", once there are 3 days
+  of history in the last fortnight.
+- **The streak** only breaks on a day still holding pancakes. Days off and empty days
+  don't, and spreading a pile forgives it, so catching up is always worth doing.
 
 ### Google Calendar
 
-One way only: the site reads her calendar and never changes it.
+One way only: the site reads her calendar and never changes it (`lib/study/ical.ts`,
+`lib/study/calendar.ts`).
 
-- **How it connects:** she pastes her calendar's "Secret address in iCal format" from
-  Google Calendar's settings, once. The Pi fetches it every so often, with no Google
-  sign-in or API setup. If her account doesn't offer that address, as some school
-  accounts don't, she can upload an exported `.ics` file instead.
-- **What comes in:** the site suggests exams, quizzes and due dates from words in the
-  event titles, and she confirms them once. Ordinary class events stay out, and an
-  event she turned down isn't suggested again.
+- **How it connects:** she pastes her calendar's secret iCal address once. The page asks
+  for a fresh copy when it's over 6 hours old, so it stays current whenever she visits.
+  If her account doesn't offer the address, she can upload an `.ics` file, which doesn't
+  update by itself.
+- **What comes in:** words in event titles suggest exams, quizzes and due dates, and she
+  confirms each. The rest stay behind a link, and recurring events stay out altogether.
 - **When things change:** a moved exam moves its countdown and re-spreads its upcoming
-  pancakes. A cancelled exam asks first rather than deleting her work.
-- **Handle the address like a password:** anyone with it can read that calendar. It's
-  kept in her account only, never shown again in full, left out of "Download my data",
-  and she can disconnect it. The Pi fetches only from Google's calendar address, never
-  a URL it's merely been given.
-
-Still to check: whether her account offers the secret address, and how recurring
-events in her calendar look, since they decide how much of the iCal format we need.
+  pancakes, and says so. One that's gone from the calendar only asks; it's never deleted.
+- **The address works like a password.** It's in its own file (`calendar-secret.json`),
+  never sent back to the browser, left out of "Download my data", and deleted on
+  disconnect. It is in the Pi's backups, like everything in `.data`. Only Google's
+  calendar host is ever fetched, with redirects refused.
 
 ### Household link
 
-Near exams, chores can shift to the other person in the household and the meal plan
-can lean on easy or prepped meals. Only with her say-so, and visible to both of them.
+For an exam or practical within two weeks, she can ask the household for help
+(`lib/chores/exam-help.ts`). Her chores due by then move to the other member, or to
+"anyone" if there are several, and a banner on Today, Chores and the meal plan says so,
+with the quickest recipes on the meal plan. Anyone can end it, it ends itself after the
+exam, and chores go back unless someone has reassigned them. It suggests meals rather
+than changing the meal plan.
 
 ### Settled with her (2026-10-31)
 
@@ -192,6 +187,10 @@ can lean on easy or prepped meals. Only with her say-so, and visible to both of 
    limits on the pile all stay.
 3. Dates come from both Google Calendar and syllabus documents.
 4. The pile shows on both PA Today and the main Today page.
+
+Still to check with real use: her own calendar (only a public Google calendar has been
+read so far), a syllabus through her own AI, and whether the suggested event words fit
+how her program names things.
 
 ## Phase 5: study games
 

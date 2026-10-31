@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import { useWakeLock } from '@/components/useWakeLock';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { buildPrepSession, buildShoppingList, currentWeek, dayInfo, haveSet, missingIngredients, weekLabel, type PlanEntry } from '@/lib/recipes/kitchen';
@@ -88,6 +89,13 @@ export default function WeekView({
   onShowList: () => void;
 }) {
   const [pickerDay, setPickerDay] = useState<number | null | 'closed'>('closed');
+  // For an exam week: the fastest meals in the box.
+  const quickMeals = useMemo(() => recipes
+    .map((recipe) => ({ title: recipe.title, total: buildSchedule(recipe).totalMinutes }))
+    .filter((meal) => meal.total > 0)
+    .sort((a, b) => a.total - b.total)
+    .slice(0, 3)
+    .map((meal) => ({ title: meal.title, minutes: formatMinutes(meal.total) })), [recipes]);
   const [pickerQuery, setPickerQuery] = useState('');
   const [sessionStep, setSessionStep] = useState<number | null>(null);
 
@@ -144,6 +152,7 @@ export default function WeekView({
 
   return (
     <>
+      <ExamHelpBanner quickMeals={quickMeals} />
       <div className="rc-week-nav rc-week-head">
         <button type="button" className="rc-icon-btn" aria-label="Previous week" onClick={() => onWeek(addDays(week, -7))}>
           ‹

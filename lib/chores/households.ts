@@ -28,6 +28,9 @@ export function choresFile(householdId: string) {
   return path.join(DIR(), `${householdId}.json`);
 }
 
+/** Exam-week help, shared by the household (see exam-help.ts). */
+export const examHelpFile = (householdId: string) => choresFile(householdId).replace(/\.json$/, '.exam-help.json');
+
 function newCode() {
   const bytes = crypto.randomBytes(6);
   return Array.from(bytes, (b) => CODE_CHARS[b % CODE_CHARS.length]).join('');

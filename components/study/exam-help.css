@@ -1,0 +1,5 @@
+/* Exam-week help, on pages that don't load Study's styles. */
+.exam-help { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.7rem 0.9rem; margin-bottom: 0.75rem; border-radius: 12px; border: 1px solid var(--habit-6); background: var(--surface-glass); font-size: 0.9rem; line-height: 1.45; }
+.exam-help > span { flex: 1 1 14rem; min-width: 0; }
+.exam-help button { border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); border-radius: 999px; padding: 0.35rem 0.85rem; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.exam-help button:hover { background: var(--surface-hover); }

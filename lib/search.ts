@@ -102,6 +102,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Chores', url: '/chores', subtitle: 'Household chores', body: 'cleaning household tasks' },
   { kind: 'page', title: 'Journal', url: '/journal', subtitle: 'Private daily entries and posts', body: 'diary mood writing' },
   { kind: 'page', title: 'PA Today', url: '/study', subtitle: 'Study: what’s waiting today, practice tests and missed questions', body: 'study exam quiz school pa pance review' },
+  { kind: 'page', title: 'Plan', url: '/study/plan', subtitle: 'Study: what’s coming up, and the pancakes before it', body: 'planner calendar exams due dates countdown schedule syllabus' },
   { kind: 'page', title: 'Anki', url: '/study/anki', subtitle: 'Study: import your decks, and turn missed questions into cards', body: 'flashcards cards deck export import apkg' },
   { kind: 'page', title: 'PANCE map', url: '/study/map', subtitle: 'Study: every organ system, covered, studied and proven', body: 'blueprint coverage boards exam' },
   { kind: 'page', title: 'Classes', url: '/study/classes', subtitle: 'Study: what you’ve finished, and what it covers', body: 'modules courses checklist catch up' },

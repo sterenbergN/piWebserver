@@ -16,6 +16,7 @@ import { applyChoreAction, isOpen, type Chore, type ChoreInput, type ChoresData 
 import { byUrgency, choreXp, chorePlant, dueStatus, entryXp, recentEntries, weekBoard, type DueStatus } from '@/lib/chores/stats';
 import { levelFromXp } from '@/lib/progress/levels';
 import LevelInfo from '@/components/progress/LevelInfo';
+import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import '../habits/habits.css';
 import './chores.css';
 
@@ -154,6 +155,8 @@ export default function ChoresPage() {
       </header>
 
       {showLevel && ready && <LevelInfo sources={xpSources} onClose={() => setShowLevel(false)} />}
+
+      {c.mode === 'account' && <ExamHelpBanner />}
 
       {c.mode === 'device' && (
         <div className="hb-banner">

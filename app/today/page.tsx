@@ -16,6 +16,7 @@ import type { Habit, HabitLog } from '@/lib/habits/habits';
 import type { Chore, ChoresData } from '@/lib/chores/chores';
 import { levelFromXp } from '@/lib/progress/levels';
 import LevelInfo from '@/components/progress/LevelInfo';
+import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import { isOpen as choreOpen } from '@/lib/chores/chores';
 import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
@@ -24,6 +25,8 @@ import { TRACK_LABEL } from '@/lib/daily/types';
 import { JournalCard, KitchenCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
+import '../study/study.css';
+import '../study/plan.css';
 import './today.css';
 
 type QuestionState = { day: PublicDay | null; status: QuestionStatus | null; streak: number; doneToday: boolean; xp: number; weeks?: { week: string; xp: number }[] };
@@ -152,6 +155,8 @@ export default function TodayPage() {
         <LevelInfo sources={xpSources} weeks={question?.weeks} onClose={() => setShowLevel(false)} />
       )}
 
+      {signedIn && <ExamHelpBanner />}
+
       {h.mode === 'device' && (
         <div className="hb-banner">
           <span>Habits and answers are kept on this device only.</span>
@@ -197,7 +202,7 @@ export default function TodayPage() {
             )}
           </section>
 
-          {signedIn && <StudyCard today={today} />}
+          {signedIn && <StudyCard />}
 
           <JournalCard today={today} onWritten={setJournalWritten} />
 
