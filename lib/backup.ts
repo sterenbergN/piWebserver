@@ -109,7 +109,8 @@ export async function saveBackupSettings(settings: BackupSettings) {
   await fs.writeFile(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
 }
 
-async function walk(dir: string): Promise<string[]> {
+/** Every regular file under `dir` (symlinks aren't followed). */
+export async function walk(dir: string): Promise<string[]> {
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
   const files: string[] = [];
   for (const entry of entries) {

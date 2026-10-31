@@ -79,6 +79,7 @@ export default function AccountMenu({ user }: { user: NavUser }) {
             <Link href="/journal" onClick={() => setMenuOpen(false)}><span aria-hidden>📓</span>Journal</Link>
             <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
             <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
+            <a href="/api/account/export" download onClick={() => setMenuOpen(false)}><span aria-hidden>📦</span>Download my data</a>
             <button type="button" onClick={signOut}><span aria-hidden>🚪</span>Sign out</button>
           </div>
         </div>

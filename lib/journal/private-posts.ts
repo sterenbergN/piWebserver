@@ -32,7 +32,7 @@ const isOwnImageSrc = (src: unknown): src is string => typeof src === 'string' &
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
 const words = (md: string) => md.replace(/[#*_`>\[\]()!-]/g, ' ').split(/\s+/).filter(Boolean).length;
 
-function folder(userId: string) {
+export function folder(userId: string) {
   if (!/^[\w-]{1,64}$/.test(userId)) throw new Error('Invalid account');
   return path.join(process.cwd(), '.data', 'private-posts', userId);
 }
