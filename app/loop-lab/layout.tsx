@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import 'katex/dist/katex.min.css';
 import './loop-lab.css';
+import LabNav from '@/components/loop-lab/LabNav';
 
 export const metadata: Metadata = {
   title: 'Loop Lab',
@@ -8,5 +9,10 @@ export const metadata: Metadata = {
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  return children;
+  return (
+    <>
+      <LabNav />
+      {children}
+    </>
+  );
 }

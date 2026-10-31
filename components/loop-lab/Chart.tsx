@@ -18,7 +18,7 @@ export type Series = {
   quiet?: boolean;
 };
 
-export type Axis = { label?: string; log?: boolean; min?: number; max?: number; unit?: string };
+export type Axis = { label?: string; hideLabel?: boolean; log?: boolean; min?: number; max?: number; unit?: string };
 export type Guide = { at: number; label?: string; color?: string; dash?: string };
 export type Marker = { x: number; y: number; color: string; shape?: 'x' | 'o' | 'dot'; label?: string };
 
@@ -87,15 +87,19 @@ function makeScale(left: number, top: number, w: number, h: number, xmin: number
 }
 
 export default function Chart({
-  series, x, y, height = 200, hGuides = [], vGuides = [], markers = [], legend = true, label, yPad = 0.06,
+  series, x, y, height = 200, hGuides = [], vGuides = [], markers = [], legend = true, label, yPad = 0.06, sync,
 }: {
   series: Series[]; x: Axis; y: Axis; height?: number; hGuides?: Guide[]; vGuides?: Guide[]; markers?: Marker[];
   legend?: boolean; label: string; yPad?: number;
+  /** Charts sharing an x axis share their hover position. */
+  sync?: { value: number | null; set: (v: number | null) => void };
 }) {
   const [ref, width] = useWidth();
   const clip = `ll-clip${useId().replace(/[^\w-]/g, '')}`;
-  const [hover, setHover] = useState<number | null>(null);
-  const m = { l: 52, r: 12, t: 10, b: x.label ? 34 : 22 };
+  const [ownHover, setOwnHover] = useState<number | null>(null);
+  const hover = sync ? sync.value : ownHover;
+  const setHover = sync ? sync.set : setOwnHover;
+  const m = { l: 52, r: 12, t: 10, b: x.label && !x.hideLabel ? 34 : 22 };
   const w = Math.max(60, width - m.l - m.r);
   const h = height - m.t - m.b;
 
@@ -183,7 +187,7 @@ export default function Chart({
         <g className="ll-ticks">
           {xTicks.map((t) => <text key={`x${t}`} x={px(t)} y={m.t + h + 14} textAnchor="middle">{fmt(t, 3)}</text>)}
           {yTicks.map((t) => <text key={`y${t}`} x={m.l - 6} y={py(t) + 4} textAnchor="end">{fmt(t, 3)}</text>)}
-          {x.label && <text className="ll-axis" x={m.l + w / 2} y={height - 4} textAnchor="middle">{x.label}</text>}
+          {x.label && !x.hideLabel && <text className="ll-axis" x={m.l + w / 2} y={height - 4} textAnchor="middle">{x.label}</text>}
           {y.label && <text className="ll-axis" transform={`translate(12 ${m.t + h / 2}) rotate(-90)`} textAnchor="middle">{y.label}</text>}
         </g>
         <g clipPath={`url(#${clip})`}>

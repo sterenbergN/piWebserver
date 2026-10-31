@@ -31,6 +31,9 @@ export type TrendEntry = { label: string; color: string; run: Run };
 export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }: { proc: ProcessDef; entries: TrendEntry[]; showMeasured?: boolean; height?: number }) {
   const first = entries[0]?.run;
   const { t, unit, scale } = useTime(first);
+  // The charts share a time axis: hover one and all of them read out the same moment. Only the bottom one labels it.
+  const [hover, setHover] = useState<number | null>(null);
+  const sync = { value: hover, set: setHover };
   if (!first) return <div className="ll-empty">No run yet.</div>;
   const times = entries.map((e) => (e.run === first ? t : e.run.trace.t.map((v) => v * scale)));
   const single = entries.length === 1;
@@ -64,18 +67,18 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
   const events = first.scenario.events.filter((ev) => (ev.kind === 'dist' || ev.kind === 'freeze')).map((ev) => ({ at: ev.t * scale, label: ev.kind === 'dist' ? `${proc.disturbances.find((d) => d.key === ev.key)?.label ?? ev.key} → ${ev.value}` : 'sensor freeze' }));
   return (
     <div>
-      <Chart label={`${proc.pv.label} during ${first.scenario.name}`} series={pv} x={{ label: `Time (${unit})` }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} vGuides={events} height={height} />
+      <Chart sync={sync} label={`${proc.pv.label} during ${first.scenario.name}`} series={pv} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} vGuides={events} height={height} />
       {inner && (
-        <Chart label={`${sec.label} during the test`} height={Math.round(height * 0.7)} x={{ label: `Time (${unit})` }} y={{ label: `${sec.label} (${sec.unit})` }}
+        <Chart sync={sync} label={`${sec.label} during the test`} height={Math.round(height * 0.62)} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${sec.label} (${sec.unit})` }}
           series={[
             { label: `${sec.loopTag} setpoint`, color: 'var(--ll-sp)', x: t, y: first.trace.sp2, dash: '5 4', width: 1.3 },
             { label: `${sec.label} (measured)`, color: 'var(--habit-7)', x: t, y: first.trace.pv2, width: 1.5 },
           ]} />
       )}
       {second && sec && (
-        <Chart label={`${sec.label} during ${first.scenario.name}`} height={Math.round(height * 0.8)} x={{ label: `Time (${unit})` }} y={{ label: `${sec.label} (${sec.unit})` }} series={second} />
+        <Chart sync={sync} label={`${sec.label} during ${first.scenario.name}`} height={Math.round(height * 0.7)} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${sec.label} (${sec.unit})` }} series={second} />
       )}
-      <Chart label="Valve during the test" series={cv} x={{ label: `Time (${unit})` }} y={{ label: single ? 'Output (%)' : 'Valve stem (%)', min: -2, max: 102 }} height={Math.round(height * 0.7)} legend />
+      <Chart sync={sync} label="Valve during the test" series={cv} x={{ label: `Time (${unit})` }} y={{ label: single ? 'Output (%)' : 'Valve stem (%)', min: -2, max: 102 }} height={Math.round(height * 0.62)} legend />
     </div>
   );
 }
@@ -191,14 +194,14 @@ export function ScorecardTable({ entries, compact = false, proc }: { entries: Sc
       <table className="ll-table ll-scorecard">
         <thead>
           <tr>
-            <th>Measure <span className="ll-row-note">tap one to see what it means</span></th>
+            <th>Measure</th>
             {entries.map((e, i) => <th key={i}><span className="ll-swatch" style={{ background: e.color }} />{e.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
             <Fragment key={g.group}>
-              <tr><th colSpan={entries.length + 1} style={{ textAlign: 'left', paddingTop: '0.7rem' }}>{g.group}</th></tr>
+              {groups.length > 1 && <tr className="ll-score-group"><th colSpan={entries.length + 1}>{g.group}</th></tr>}
               {g.rows.map((row) => {
                 const vals = row.rank ? entries.map((e) => row.rank!.get(e.score)) : [];
                 const isOpen = open === row.key;
@@ -207,8 +210,7 @@ export function ScorecardTable({ entries, compact = false, proc }: { entries: Sc
                     <tr className={isOpen ? 'is-open' : ''}>
                       <td>
                         <button className="ll-measure" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : row.key)}>
-                          <span className="ll-measure-label">{row.label} <span aria-hidden className="ll-measure-icon">{isOpen ? '−' : 'ⓘ'}</span></span>
-                          {row.note && <span className="ll-row-note">{row.note}</span>}
+                          <span className="ll-measure-label">{row.label}<svg className={`ll-measure-caret${isOpen ? ' is-open' : ''}`} width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M2 3.5 5 6.5l3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
                         </button>
                       </td>
                       {entries.map((e, i) => (
@@ -217,7 +219,7 @@ export function ScorecardTable({ entries, compact = false, proc }: { entries: Sc
                     </tr>
                     {isOpen && (
                       <tr className="ll-measure-row">
-                        <td colSpan={entries.length + 1}><MeasureExplain id={row.key} proc={proc} /></td>
+                        <td colSpan={entries.length + 1}>{row.note && <p className="ll-measure-note">{row.note}</p>}<MeasureExplain id={row.key} proc={proc} /></td>
                       </tr>
                     )}
                   </Fragment>
@@ -274,8 +276,32 @@ function Stat({ title, value, sub, tone }: { title: string; value: string; sub: 
   );
 }
 
+/** How one test went, for its tab. */
+function testTone(t: TestScore): Tone {
+  if (t.steps.some((s) => s.settling === null) || t.upsets.some((u) => u.recovery === null && !u.limited)) return 'bad';
+  if (t.steps.some((s) => s.overshoot > 15)) return 'warn';
+  return 'good';
+}
+
+/** The tests, each with a mark for how it went: where to look is the first thing to know. */
+export function TestTabs({ tests, runs, value, onChange }: { tests: TestScore[]; runs: Run[]; value: number; onChange: (i: number) => void }) {
+  const said: Record<Tone, string> = { good: 'settled and recovered', warn: 'large overshoot', bad: 'did not settle or recover', '': '' };
+  return (
+    <div className="ll-tests" role="tablist" aria-label="Test">
+      {runs.map((r, i) => {
+        const tone = tests[i] ? testTone(tests[i]) : '';
+        return (
+          <button key={r.scenario.id} role="tab" aria-selected={value === i} onClick={() => onChange(i)} title={said[tone]}>
+            <span className={`ll-dot is-${tone}`} aria-hidden />{r.scenario.name}<span className="sr-only">: {said[tone]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The scorecard in four numbers and a sentence. */
-export function ResultSummary({ proc, score }: { proc: ProcessDef; score: Scorecard }) {
+export function ResultSummary({ proc, score, busy }: { proc: ProcessDef; score: Scorecard; busy?: boolean }) {
   const span = proc.pv.hi - proc.pv.lo;
   const inUnits = (pct: number) => `${fmt((pct / 100) * span, 2)} ${proc.pv.unit}`;
   // Judge performance on the normal tests; the deliberately-wrong-plant test belongs to robustness.
@@ -305,22 +331,25 @@ export function ResultSummary({ proc, score }: { proc: ProcessDef; score: Scorec
   const good = verdict[0].startsWith('Solid') || verdict[0].startsWith('It settles');
 
   return (
-    <div>
+    <div className="ll-summary">
+      <p className={`ll-verdict-line is-${!good && (score.robust && (!score.stableAll || ms > 2) || neverSettles || neverRecovers) ? 'bad' : good ? 'good' : 'warn'}`} aria-live="polite">
+        <span className="ll-dot" aria-hidden />{verdict.join(' ')}
+        {busy && <span className="ll-busy">Running…</span>}
+      </p>
       <div className="ll-stats">
         {hasSteps && (
           <Stat title="Setpoint changes" tone={neverSettles ? 'bad' : overshoot > 15 ? 'warn' : 'good'}
-            value={`${fmt(overshoot, 2)} % overshoot`} sub={neverSettles ? 'some never settle' : `settles within ${dur(settling)}`} />
+            value={`${fmt(overshoot, 2)} %`} sub={neverSettles ? 'overshoot; some never settle' : `overshoot; settles in ${dur(settling)}`} />
         )}
         {hasUpsets && (
           <Stat title="Upsets" tone={neverRecovers ? 'bad' : ''}
-            value={`${inUnits(peak)} worst`} sub={neverRecovers ? 'some never recover' : `back on setpoint within ${dur(recovery)}`} />
+            value={inUnits(peak)} sub={neverRecovers ? 'worst; some never recover' : `worst; back in ${dur(recovery)}`} />
         )}
-        <Stat title="Valve" tone="" value={`${fmt(score.travel, 2)} strokes/h`} sub={`output moves ${fmt(score.cvActivity, 2)} %/min`} />
+        <Stat title="Valve" tone="" value={`${fmt(score.travel, 2)} strokes/h`} sub={`moves ${fmt(score.cvActivity, 2)} %/min`} />
         <Stat title="Robustness" tone={robustTone}
           value={score.robust ? `Ms ${fmt(ms, 3)}` : 'n/a'}
-          sub={`${!score.robust ? 'on-off has no linear model' : !score.stableAll ? 'unstable over the spread' : ms > 2 ? 'fragile (aim below 1.6)' : ms > 1.6 ? 'acceptable' : 'robust'}${Number.isFinite(mismatchOs) ? ` · wrong-plant test: ${fmt(mismatchOs, 2)} % overshoot` : ''}`} />
+          sub={`${!score.robust ? 'on-off has no linear model' : !score.stableAll ? 'unstable over the spread' : ms > 2 ? 'fragile (aim below 1.6)' : ms > 1.6 ? 'acceptable' : 'robust'}${Number.isFinite(mismatchOs) ? `; wrong plant ${fmt(mismatchOs, 2)} %` : ''}`} />
       </div>
-      <p className={`ll-verdict-line${good ? ' is-good' : ''}`}>{verdict.join(' ')}</p>
     </div>
   );
 }

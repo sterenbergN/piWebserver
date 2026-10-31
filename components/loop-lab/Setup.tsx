@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CONTROLLER_KINDS, compileCustom, defaultController, defaultCustomCode, defaultInnerFeedforward, isAvailable,
+  compileCustom, defaultController, defaultCustomCode, defaultInnerFeedforward, isAvailable,
   type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
 } from '@/lib/loop-lab/controllers';
 import { cleanParams, defaultParams, measuredDisturbances, type ParamGroup, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { designMpc, mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { designStateFb } from '@/lib/loop-lab/statespace';
 import { StError, StRunner } from '@/lib/loop-lab/st';
-import { PROCESSES } from '@/lib/loop-lab/processes';
+import { CONTROLLER_GROUPS, KIND_HINT, PROCESS_GROUPS, metaOf } from '@/lib/loop-lab/catalog';
 import { TUNING_RULES, autoTune, feedforwardDesign, getRule, tuningModel, type ControlType, type TuningLoop, type TuningRuleId } from '@/lib/loop-lab/tuning';
 import { fmt } from './Chart';
+import Picker from './Picker';
 
 /** A number input that lets you type freely and reports only valid numbers. */
 export function NumField({ value, onChange, min, max, step, label, unit, title }: {
@@ -38,40 +39,31 @@ export function NumField({ value, onChange, min, max, step, label, unit, title }
 
 /** The process, as one menu grouped by what it teaches. */
 export function ProcessPicker({ value, onChange }: { value: ProcessDef['id']; onChange: (id: ProcessDef['id']) => void }) {
-  const groups = [
-    { label: 'Where PID is the answer', list: PROCESSES.filter((p) => p.family === 'pid-wins') },
-    { label: 'Where PID falls short', list: PROCESSES.filter((p) => p.family === 'escalation' && p.id !== 'custom') },
-    { label: 'Your own data', list: PROCESSES.filter((p) => p.id === 'custom') },
-  ];
-  return (
-    <select className="ll-big-select" value={value} onChange={(e) => onChange(e.target.value as ProcessDef['id'])} aria-label="Process">
-      {groups.map((g) => (
-        <optgroup key={g.label} label={g.label}>
-          {g.list.map((p) => <option key={p.id} value={p.id}>{p.icon} {p.name}</option>)}
-        </optgroup>
-      ))}
-    </select>
-  );
+  const groups = PROCESS_GROUPS.map((g) => ({
+    label: g.label,
+    items: g.list.map((p) => ({ id: p.id, title: p.name, mark: p.icon, hint: p.summary.split(/(?<=[.!?:])\s/)[0] })),
+  }));
+  return <Picker label="Process" value={value} groups={groups} onChange={(id) => onChange(id as ProcessDef['id'])} />;
 }
 
-/** What each controller does, in a line. */
-const KIND_HINT: Record<ControllerKind, string> = {
-  onoff: 'Fully on below the setpoint, off above it.',
-  pid: 'Proportional, integral and derivative action: the default.',
-  schedule: 'A PID whose gains change with the operating point.',
-  characterized: 'A PID on a straightened-out measurement or output.',
-  feedforward: 'A PID plus action on measured disturbances, before they arrive.',
-  cascade: 'A fast inner loop inside the main one.',
-  smith: 'A PID that sees a prediction of the measurement, with the dead time taken out.',
-  override: 'A normal controller and a limit controller on one valve; the higher (or lower) output wins.',
-  ratio: 'The controlled flow follows the wild flow at a set ratio, trimmed by the main measurement.',
-  statefb: 'Every state of the plant, estimated by an observer from the measurements, fed back with its own gain.',
-  multiloop: 'A PID on each variable, each with its own valve, and optionally a decoupler between them.',
-  mpc: 'Plans both valves a few moves ahead from a model, within their limits, and re-plans every cycle.',
-  adaptive: 'A PI that keeps fitting a model to what it measures and retunes itself from it.',
-  adrc: 'An observer estimates everything acting on the PV besides the output, and the law cancels it.',
-  custom: 'Write the controller yourself, in Structured Text, and run it on the bench.',
-};
+/** The ladder, as one menu: only the rungs this process has what it takes for. */
+export function ControllerPicker({ proc, config, onChange }: { proc: ProcessDef; config: ControllerConfig; onChange: (c: ControllerConfig) => void }) {
+  const switchKind = (kind: ControllerKind) => {
+    if (kind === config.kind || !isAvailable(proc, kind)) return;
+    const next = defaultController(kind, proc);
+    // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
+    // Smith predictor's PID for a process without dead time, so those keep their own).
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'custom' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc' && next.kind !== 'adrc' && next.kind !== 'custom') next.pid = { ...prev };
+    if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
+    onChange(next);
+  };
+  const groups = CONTROLLER_GROUPS.map((g) => ({
+    label: g.label,
+    items: g.kinds.filter((k) => isAvailable(proc, k)).map((k) => ({ id: k, title: metaOf(k).name, hint: KIND_HINT[k] })),
+  }));
+  return <Picker label="Controller" value={config.kind} groups={groups} onChange={(id) => switchKind(id as ControllerKind)} />;
+}
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
   const set = (k: keyof PidParams) => (v: number) => onChange({ ...pid, [k]: v });
@@ -84,8 +76,8 @@ function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: 
           <NumField label="Td" unit="s" value={pid.Td} min={0} onChange={set('Td')} title="Derivative time (0 = off)" />
         </div>
       )}
-      <details style={{ marginTop: '0.5rem' }}>
-        <summary className="ll-small" style={{ cursor: 'pointer' }}>Weights, filter, limits, anti-windup</summary>
+      <details className="ll-more">
+        <summary>Weights, filter, limits, anti-windup</summary>
         <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
           <NumField label="b" value={pid.b} min={0} max={1} step={0.1} onChange={set('b')} title="Setpoint weight on P (PWeighting)" />
           <NumField label="c" value={pid.c} min={0} max={1} step={0.1} onChange={set('c')} title="Setpoint weight on D (DWeighting)" />
@@ -142,28 +134,10 @@ function ScheduleTable({ proc, points, onChange }: { proc: ProcessDef; points: S
 export function ControllerEditor({ proc, params, config, onChange }: {
   proc: ProcessDef; params: Params; config: ControllerConfig; onChange: (c: ControllerConfig) => void;
 }) {
-  const switchKind = (kind: ControllerKind) => {
-    if (kind === config.kind || !isAvailable(proc, kind)) return;
-    const next = defaultController(kind, proc);
-    // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
-    // Smith predictor's PID for a process without dead time, so those keep their own).
-    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'custom' ? null : config.pid;
-    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc' && next.kind !== 'adrc' && next.kind !== 'custom') next.pid = { ...prev };
-    if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
-    onChange(next);
-  };
   return (
-    <div>
-      <div className="ll-seg" role="tablist" aria-label="Controller">
-        {CONTROLLER_KINDS.filter((k) => isAvailable(proc, k.kind)).map((k) => (
-          <button key={k.kind} role="tab" aria-selected={config.kind === k.kind} onClick={() => switchKind(k.kind)} title={k.name}>
-            {k.short}
-          </button>
-        ))}
-      </div>
-      <p className="ll-note" style={{ marginTop: '0.4rem' }}>{KIND_HINT[config.kind]}</p>
+    <div className="ll-editor">
       {config.kind !== 'onoff' && config.kind !== 'custom' && <AutoTune proc={proc} params={params} config={config} onChange={onChange} />}
-      <div style={{ marginTop: '0.7rem' }}>
+      <div className="ll-editor-fields">
         {config.kind === 'onoff' && (
           <div className="ll-fields is-3">
             <NumField label="Band" unit="% span" value={config.hyst} min={0} onChange={(v) => onChange({ ...config, hyst: v })} />
@@ -277,7 +251,7 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
             </div>
             <div className="ll-ff-head">
               <span className="ll-small">measured by {d?.measured}</span>
-              <button className="ll-link" onClick={() => design(i)}>✨ Design from model</button>
+              <button className="ll-link" onClick={() => design(i)}>Design from model</button>
             </div>
             <div className="ll-fields is-3">
               <NumField label="Gain" unit={gainUnit(d?.unit ?? '')} value={t.gain} onChange={(v) => set(i, { gain: v })}
@@ -634,7 +608,7 @@ function SmithModelEditor({ proc, params, model, pid, onChange }: {
       </div>
       <div className="ll-ff-head" style={{ marginTop: '0.3rem' }}>
         <span className="ll-small">K·e<sup>−θs</sup>/(τs + 1), from output to measurement.</span>
-        <button className="ll-link" onClick={fill}>✨ Fill from the plant</button>
+        <button className="ll-link" onClick={fill}>Fill from the plant</button>
       </div>
       {note && <p className="ll-note" style={{ marginTop: '0.3rem' }}>{note}</p>}
     </div>
@@ -649,16 +623,17 @@ function AutoTune({ proc, params, config, onChange }: { proc: ProcessDef; params
   // The explanation belongs to the tuning it produced: once anything changes, it goes.
   const [tuned, setTuned] = useState<{ key: string; note: string } | null>(null);
   const note = tuned && tuned.key === JSON.stringify([proc.id, params, config]) ? tuned.note : '';
+  const what = config.kind === 'mpc' ? 'A horizon from the plant’s slowest response, to start from. MPC has no tuning rule: then the weights.' : config.kind === 'multiloop' ? 'SIMC on each pair with the other loop open, and the relative gain for the pairing.' : config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point.' : 'A robust starting point (SIMC) from the process model.';
   return (
     <div className="ll-autotune">
-      <button className="ll-btn is-primary" onClick={() => {
+      <button className="ll-btn is-primary" title={what} onClick={() => {
         const r = autoTune(proc, params, config);
         if (r) {
           onChange(r.config);
           setTuned({ key: JSON.stringify([proc.id, params, r.config]), note: r.note });
         }
-      }}>✨ Auto-tune</button>
-      <span className="ll-small">{note || (config.kind === 'mpc' ? 'A horizon from the plant’s slowest response, to start from. MPC has no tuning rule: then the weights.' : config.kind === 'multiloop' ? 'SIMC on each pair with the other loop open, and the relative gain for the pairing.' : config.kind === 'statefb' ? 'The fastest design that keeps the loop robust (Ms ≤ 1.6) at the design point. Then adjust by hand and compare.' : 'A robust starting point (SIMC) from the process model. Then adjust by hand and compare.')}</span>
+      }}>Auto-tune</button>
+      {note && <p className="ll-note" role="status">{note}</p>}
     </div>
   );
 }
@@ -700,8 +675,8 @@ function TuningHelper({ proc, params, config, onChange }: { proc: ProcessDef; pa
   };
 
   return (
-    <details className="ll-tuner" style={{ marginTop: '0.8rem' }}>
-      <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>Tune by hand: rule, operating point, speed</summary>
+    <details className="ll-more">
+      <summary>Tune by hand: rule, operating point, speed</summary>
       {(config.kind === 'cascade' || config.kind === 'ratio') && (
         <div className="ll-seg" role="group" aria-label="Which loop" style={{ marginTop: '0.6rem' }}>
           <button aria-pressed={loop === 'inner'} onClick={() => setLoopSel('inner')}>Slave (inner) first</button>

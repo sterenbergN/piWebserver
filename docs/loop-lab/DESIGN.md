@@ -598,3 +598,19 @@ Lab stays self-contained and doesn't connect to PLCSIM or TIA Portal.
   Your own controller: the PI without its edges starts every test with a bump (IAE ten times worse).
 - **Case studies:** `batch-adaptive`, `write-your-own`.
 - **Not in 4c:** MRAC, gain scheduling on batch time or conversion, nonlinear ADRC, arrays and CASE in the ST subset.
+
+## 19. Interface (2026-10-31)
+
+Redone after the first version got crowded and hard to find your way around.
+
+- **Sections:** a Loop Lab nav on every page (Bench, Case studies, Processes, Controllers). `/loop-lab` is a short
+  home page; the bench moved to `/loop-lab/bench`, and old `/loop-lab?setup=` links redirect there. Index pages list
+  the cases, processes and the ladder, grouped by `lib/loop-lab/catalog.ts`.
+- **Bench:** the setup panel stays beside the view and scrolls on its own, so a change and its effect are on screen
+  together. Process and controller are menus with a line of explanation (`Picker`), not a 15-button grid. Results lead
+  with the verdict, four numbers and a test strip marked by how each test went; stacked charts share their hover.
+  The bench views read as one document, divided by lines rather than boxed one by one (`.ll-flat`).
+- **Reading pages:** a side rail follows your place in a case study or a controller's page; the rail lists the whole
+  ladder, and case studies link to the previous and next.
+- **Phone:** setup and views take turns under one tab row, menus are bottom sheets.
+- Emoji stay as the marks for processes only, and buttons are squared so they don't read as chips.
