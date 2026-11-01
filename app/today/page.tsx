@@ -15,6 +15,7 @@ import type { DateKey } from '@/lib/habits/dates';
 import type { Habit, HabitLog } from '@/lib/habits/habits';
 import type { Chore, ChoresData } from '@/lib/chores/chores';
 import { levelFromXp } from '@/lib/progress/levels';
+import { studyXpElsewhere } from '@/components/progress/otherXp';
 import LevelInfo from '@/components/progress/LevelInfo';
 import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import { isOpen as choreOpen } from '@/lib/chores/chores';
@@ -92,9 +93,12 @@ export default function TodayPage() {
     return () => { cancelled = true; };
   }, [signedIn]);
 
+  const [studyXp, setStudyXp] = useState(0);
+  useEffect(() => { if (signedIn) studyXpElsewhere().then(setStudyXp); }, [signedIn]);
+
   const frozen = useMemo(() => freezeState(data, today).frozen, [data, today]);
-  const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me) };
-  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores);
+  const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me), study: studyXp };
+  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study);
   // Chores due in the next week, overdue first (yours or anyone's).
   const openChores = ch.data.chores.filter(choreOpen);
   const dueChores = byUrgency(openChores.filter((x) => ['overdue', 'today', 'soon'].includes(dueStatus(x, today).status) && (!x.assignee || x.assignee === me)));

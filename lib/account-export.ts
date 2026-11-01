@@ -119,6 +119,7 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'study/anki.json', file: path.join(studyFolder(userId), 'anki.json') },
     // Not calendar-secret.json: that address works like a password.
     { entry: 'study/plan.json', file: path.join(studyFolder(userId), 'plan.json') },
+    { entry: 'study/practice.json', file: path.join(studyFolder(userId), 'practice.json') },
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },

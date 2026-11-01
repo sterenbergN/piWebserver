@@ -9,7 +9,7 @@ import Calculator from '@/components/daily/Calculator';
 import LevelInfo from '@/components/progress/LevelInfo';
 import { useDaily } from '@/components/daily/useDaily';
 import Confetti from '@/components/habits/Confetti';
-import { choresXpElsewhere, habitsXpElsewhere } from '@/components/progress/otherXp';
+import { choresXpElsewhere, habitsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { levelFromXp } from '@/lib/progress/levels';
 import { TRACKS, TRACK_LABEL, type Track } from '@/lib/daily/types';
@@ -36,7 +36,7 @@ export default function DailyPage() {
   const d = useDaily();
   const [tab, setTab] = useState<TabId>('today');
   /** XP from habits and chores; null until it has loaded. */
-  const [otherXp, setOtherXp] = useState<{ habits: number; chores: number } | null>(null);
+  const [otherXp, setOtherXp] = useState<{ habits: number; chores: number; study: number } | null>(null);
   const [confetti, setConfetti] = useState(0);
   const [toast, setToast] = useState('');
   /** ?focus=track|topic (from the report's "Practice this") opens Practice filtered to it. */
@@ -56,10 +56,10 @@ export default function DailyPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts habits and chores.
-  useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere()]).then(([a, b]) => setOtherXp({ habits: a, chores: b })); }, [d.state, d.signedIn]);
+  useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere(), studyXpElsewhere()]).then(([a, b, c]) => setOtherXp({ habits: a, chores: b, study: c })); }, [d.state, d.signedIn]);
 
   const questionXp = d.progress?.stats.total.xp ?? 0;
-  const level = levelFromXp(questionXp + (otherXp ? otherXp.habits + otherXp.chores : 0));
+  const level = levelFromXp(questionXp + (otherXp ? otherXp.habits + otherXp.chores + otherXp.study : 0));
   const streak = d.progress?.stats.streak;
 
   // Celebrate a level up (not what was already true when the page opened).
@@ -252,7 +252,7 @@ export default function DailyPage() {
             </a>
           )}
           {tab === 'stats' && (
-            <LevelInfo sources={{ questions: questionXp, habits: otherXp?.habits ?? 0, chores: otherXp?.chores ?? 0 }} weeks={d.progress?.stats.weeks} />
+            <LevelInfo sources={{ questions: questionXp, habits: otherXp?.habits ?? 0, chores: otherXp?.chores ?? 0, study: otherXp?.study ?? 0 }} weeks={d.progress?.stats.weeks} />
           )}
           {tab === 'stats' && <DailyStats progress={d.progress} today={d.today} signedIn={d.signedIn} onOpen={openDay} onLeaderboard={d.setLeaderboard} />}
         </>

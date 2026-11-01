@@ -1,0 +1,93 @@
+/* ─── Practice: lists, grids, the private link and what the helper sees ───── */
+
+.pr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pr-list li + li { border-top: 1px solid var(--surface-border); }
+.pr-list a, .pr-runs li { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.6rem 0; color: inherit; text-decoration: none; }
+.pr-list a:hover strong { color: var(--accent-light); }
+.pr-list small { color: var(--muted); font-size: 0.84rem; overflow-wrap: anywhere; }
+
+/* A grid. The first column stays put while the rest slide on a phone. */
+.pr-grid-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.pr-grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; font-size: 0.9rem; }
+.pr-grid th, .pr-grid td { padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--surface-border); border-right: 1px solid var(--surface-border); text-align: left; vertical-align: top; max-width: 15rem; min-width: 8rem; white-space: normal; overflow-wrap: anywhere; }
+.pr-grid thead th { font-size: 0.8rem; color: var(--muted); }
+.pr-grid tr > :first-child { position: sticky; left: 0; z-index: 1; min-width: 6.5rem; max-width: 9rem; background: var(--background); font-weight: 700; }
+.pr-grid tbody tr:last-child > * { border-bottom: 0; }
+.pr-grid tr > :last-child { border-right: 0; }
+.pr-grid td.is-hidden { padding: 0.3rem; }
+.pr-grid td.is-hidden button { width: 100%; min-height: 2.6rem; border: 1px dashed var(--surface-border); border-radius: 8px; background: var(--input-bg); color: var(--accent-light); font: inherit; font-weight: 700; cursor: pointer; }
+.pr-grid td.is-open { background: rgba(var(--accent-rgb), 0.1); }
+.pr-grid td.is-knew { background: rgba(var(--success-rgb), 0.16); }
+.pr-grid td.is-missed { background: rgba(var(--danger-rgb), 0.16); }
+.pr-cell-marks { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.4rem; }
+.pr-cell-marks .hb-small-btn { padding: 0.2rem 0.45rem; font-size: 0.76rem; }
+.pr-grid-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.pr-peek summary { cursor: pointer; font-weight: 600; }
+.pr-peek[open] summary { margin-bottom: 0.75rem; }
+.pr-missed { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.92rem; text-align: left; color: var(--foreground); }
+.pr-missed p { margin: 0; }
+
+/* The private link */
+.pr-link-body { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
+.pr-link-body img { flex: none; border-radius: 10px; background: #fff; }
+.pr-link-text { flex: 1 1 14rem; display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.pr-link-text input { font-size: 0.8rem; }
+.pr-live { text-align: center; align-items: center; }
+.pr-live-big { margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--foreground); }
+.pr-door-line { margin: 0; color: var(--foreground); }
+
+/* The helper's phone */
+.pr-answers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.pr-answers li { display: flex; gap: 0.55rem; padding: 0.5rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); min-width: 0; overflow-wrap: anywhere; }
+.pr-answers li > span:first-child { flex: none; width: 1.2rem; font-weight: 700; color: var(--muted); }
+.pr-answers li.is-right { border-color: var(--success); background: rgba(var(--success-rgb), 0.16); font-weight: 700; }
+.pr-answers li.is-right > span:first-child { color: var(--success); }
+.pr-why summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.pr-marks { position: sticky; bottom: 0.5rem; z-index: 2; display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 0.6rem; }
+.pr-marks .btn { min-height: 3.2rem; font-size: 1.05rem; font-weight: 700; }
+.btn.pr-right { background: var(--success); border-color: var(--success); color: #10210f; }
+.btn.pr-wrong { background: var(--danger); border-color: var(--danger); color: #fff; }
+.pr-say { margin: 0; font-size: 1.05rem; color: var(--foreground); }
+.pr-script { display: flex; flex-direction: column; margin: 0; }
+.pr-script > div { padding: 0.5rem 0; }
+.pr-script > div + div { border-top: 1px solid var(--surface-border); }
+.pr-script dt { font-size: 0.82rem; font-weight: 700; color: var(--muted); }
+.pr-script dd { margin: 0.1rem 0 0; color: var(--foreground); }
+.pr-checklist { display: flex; flex-direction: column; gap: 0.5rem; }
+.pr-checklist .sd-check { align-items: flex-start; }
+.pr-timer { position: sticky; top: 0.5rem; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.85rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); font-size: 0.85rem; }
+.pr-timer strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+
+/* Differential */
+.pr-clue-head { display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.pr-clues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.pr-clues li { padding-left: 0.75rem; border-left: 3px solid var(--accent); min-width: 0; }
+.pr-clues p { margin: 0.1rem 0 0; color: var(--foreground); }
+.pr-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem; }
+.pr-option { min-height: 3rem; padding: 0.5rem 0.75rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.pr-option:hover:not(:disabled) { border-color: var(--accent-light); }
+.pr-option:disabled { opacity: 0.45; text-decoration: line-through; cursor: default; }
+.pr-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; margin: 0; text-align: center; }
+.pr-stats > div { padding: 0.5rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.pr-stats dt { font-size: 0.75rem; color: var(--muted); }
+.pr-stats dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Study Snake */
+.pr-snake-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; min-height: 1.6rem; }
+.pr-snake-head > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; }
+.pr-snake-head h1 { font-size: 1.15rem; }
+.pr-snake-question:not(.is-full) { max-height: 30dvh; overflow-y: auto; padding: 0.7rem 0.9rem; gap: 0.4rem; }
+.pr-snake-question .sd-stem { font-size: 0.95rem; }
+.pr-snake-question .sd-stem p { margin: 0; }
+.pr-snake-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.pr-snake-legend li { display: flex; align-items: flex-start; gap: 0.55rem; font-size: 0.92rem; padding: 0.15rem 0.3rem; border-radius: 8px; min-width: 0; overflow-wrap: anywhere; }
+.pr-snake-legend li.is-right { background: rgba(var(--success-rgb), 0.18); font-weight: 700; }
+.pr-snake-legend li.is-wrong { background: rgba(var(--danger-rgb), 0.18); }
+.pr-food { flex: none; display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem; border-radius: 6px; background: var(--warning); color: #201405; font-size: 0.8rem; font-weight: 800; }
+.pr-board { display: grid; width: min(100%, 26rem, 36dvh); aspect-ratio: 1; align-self: center; padding: 3px; gap: 1px; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); touch-action: none; user-select: none; }
+.pr-board > span { display: grid; place-items: center; border-radius: 3px; font-size: 0.72rem; font-weight: 800; line-height: 1; }
+.pr-board .is-body { background: var(--accent); }
+.pr-board .is-head { background: var(--accent-light); }
+.pr-board .is-food { background: var(--warning); color: #201405; }
+.pr-pad { display: grid; grid-template-areas: 'left up down right'; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 2.6rem; gap: 0.35rem; width: min(100%, 26rem); align-self: center; }
+.pr-pad .hb-small-btn { min-height: 0; font-size: 1.1rem; }

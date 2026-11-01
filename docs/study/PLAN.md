@@ -6,7 +6,7 @@ replace Anki or commercial question banks. It does what they don't: remembers
 what happened on those AI tests, plans the work around real deadlines, and makes
 studying a little more fun.
 
-Status (2026-10-31): phases 1 to 5 built. Phase 6 is planned, not started.
+Status (2026-10-31): phases 1 to 6 built. Nothing has been used for real yet.
 
 ## Ground rules
 
@@ -27,7 +27,7 @@ Status (2026-10-31): phases 1 to 5 built. Phase 6 is planned, not started.
 | 3 | Catch-up: class checklist, Anki import, PANCE coverage map | Built |
 | 4 | Study planner and pancakes | Built |
 | 5 | Study games: Trivia Death with her questions, The Night Shift | Built |
-| 6 | Quiz me, mock patient, comparison grids, Differential | Planned |
+| 6 | Quiz me, mock patient, comparison grids, Differential, Study Snake, Study XP | Built |
 
 PA Today comes first because it's small and everything after it lands there. The
 planner comes before games because it's what she'd open every day. The planner
@@ -159,7 +159,7 @@ overnight.
   leans further and goes colder at 3 and 5 days old.
 - **Where it shows:** on both PA Today and the main Today page.
 - **A clean plate** says she can stop, with melting butter, syrup and confetti, and adds
-  to a streak. Study XP is still in phase 6.
+  to a streak. Study also counts toward site levels (phase 6).
 
 ### Keeping the pile from becoming a punishment
 
@@ -246,17 +246,43 @@ on the map.
 - **Pancakes.** A task can be tied to The Night Shift, and each shift she finishes eats
   one. A shift also counts as a study day for a linked habit.
 
-## Phase 6: extras
+## Phase 6: extras (built)
 
-- **Quiz me:** the other person's phone shows the question and answer. She answers
-  out loud and they mark it.
-- **Mock patient:** the other person gets a patient script that only reveals details
-  if asked, plus a checklist to score her history-taking. For OSCE practice.
-- **Comparison grids:** rows of conditions or drugs, columns of presentation, test
-  and first-line treatment. She fills in hidden cells from memory.
-- **Differential:** a daily clue-reveal puzzle, where fewer clues means more points.
-- **Pharm Snake:** the existing Snake, eating the drug that matches. Optional.
-- **Study XP:** Study counting toward site levels. Touches about six pages.
+Grids, Quiz me and the mock patient are on a Practice page at `/study/practice`.
+Differential and Study Snake joined the Games page. Grids, patient cases and
+Differential cases are written by her AI from a copied prompt, like tests, and live
+in `practice.json`, which "Download my data" includes.
+
+- **Comparison grids:** rows of things she mixes up against columns of what tells
+  them apart. Some, most or all cells are hidden. She says each to herself, taps to
+  check, and says whether she knew it. What she misses is hidden first next time.
+- **Quiz me:** the other person's phone shows one question at a time with its answer.
+  She answers out loud and they mark it. Results count like a review, through the
+  same path as the games, and her screen shows only the score as it happens.
+- **Mock patient:** the other person gets the opening line, what to say only if
+  asked, exam findings, and a checklist to tick. Finishing scores it and shows both
+  people the diagnosis, what was missed, and the teaching points. Until she's played
+  a case, the server sends her only what's on the door. Patients are made up, and
+  the prompt says so.
+- **Differential:** one case a day, one clue at a time. A wrong guess or asking for a
+  clue reveals the next one, and fewer clues score more. There's a streak, a result to
+  copy that doesn't spoil the case, and "done for today" with another if she wants it.
+- **Study Snake:** took the place of Pharm Snake. Drug names don't fit on a grid
+  cell, so food is lettered and the question and its answers sit above the board.
+  This way it works with any of her questions, not just drugs. The snake waits while
+  she reads, and walls cost a heart but don't count as a wrong answer.
+- **Study XP:** Study is a fourth source for the site level, shown only to accounts
+  that have some. Each question counts once, so retaking a test can't farm it. Rates
+  are in `lib/study/xp.ts`.
+
+### Private links
+
+Quiz me and the mock patient use a link with a long random token, so the other
+person needs no account. Sessions live in `.data/study-sessions`, outside backups,
+and hold question ids rather than questions. A link shows only that one sitting and
+never whose it is. It stops showing content when the sitting finishes, and stops
+working when she ends it, opens another, or after 24 hours. One account has one open
+link at a time. Her screen warns that anyone with the link can see that sitting.
 
 ## Dropped
 

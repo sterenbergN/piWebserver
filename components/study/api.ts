@@ -27,3 +27,17 @@ export async function studyPost<T = Record<string, unknown>>(action: string, pay
     body: JSON.stringify({ action, today: localToday(), ...payload }),
   }));
 }
+
+export async function practiceGet<T>(query = ''): Promise<T> {
+  const params = new URLSearchParams(query);
+  params.set('today', localToday());
+  return read<T>(await fetch(`/api/study/practice?${params}`, { cache: 'no-store' }));
+}
+
+export async function practicePost<T = Record<string, unknown>>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  return read<T>(await fetch('/api/study/practice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, today: localToday(), ...payload }),
+  }));
+}

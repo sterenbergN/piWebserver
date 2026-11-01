@@ -149,3 +149,96 @@ export function buildSyllabusPrompt(options: { course?: string; today: string })
 - Copy dates faithfully. I’ll be planning my study time around them.`,
   ].join('\n\n');
 }
+
+const SOURCE_RULES = 'Use the notes I’ve attached or pasted as your only source. Accuracy matters more than anything else, because I’ll be learning from this. If the notes don’t cover something, leave it out rather than guessing.';
+const JSON_RULES = 'Write formulas and subscripts in LaTeX between dollar signs, like $P_{O_2}$, always with a closing $, and double every backslash inside the JSON. Otherwise plain text, with no markdown.';
+
+/** A comparison grid: things that are easy to mix up, side by side. */
+export function buildGridPrompt(options: { subject: string; course?: string; rows: number }) {
+  const course = options.course?.trim();
+  return [
+    `Make a comparison grid for a physician assistant student${course ? ` in ${course}` : ''}, on: ${options.subject.trim() || 'the conditions or drugs my notes cover that are easiest to confuse'}. ${SOURCE_RULES}`,
+    `Use about ${options.rows} rows of conditions or drugs that are easy to mix up, and 3 to 6 columns of what tells them apart, like presentation, key finding, gold-standard test, first-line treatment, mechanism or adverse effects. Keep each cell to a few words, since I’ll be filling them in from memory.`,
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "title": "A short name for this grid",
+  "course": "The class or module",
+  "columns": ["Timing", "Location"],
+  "rows": [
+    { "name": "Aortic stenosis", "cells": ["Systolic", "Right upper sternal border"] },
+    { "name": "Mitral regurgitation", "cells": ["Holosystolic", "Apex"] }
+  ]
+}
+\`\`\``,
+    `Rules for the JSON:\n- Every row has exactly one cell per column, in the same order.\n- ${JSON_RULES}`,
+  ].join('\n\n');
+}
+
+/** Mock patients for OSCE practice, with a script for whoever plays the patient. */
+export function buildCasePrompt(options: { subject?: string; course?: string; count: number }) {
+  const course = options.course?.trim();
+  const subject = options.subject?.trim();
+  return [
+    `Write ${options.count} mock patient case${options.count === 1 ? '' : 's'} for a physician assistant student practicing for an OSCE${course ? ` in ${course}` : ''}${subject ? `, on: ${subject}` : ''}. ${SOURCE_RULES} Every patient is made up, with no details from anyone real.`,
+    'Someone with no medical training will play the patient by reading your script. Write what the patient says in everyday words, not medical terms. They will only share something if I ask about it, so cover what a good history would ask: onset, character, severity, what makes it better or worse, associated symptoms, past history, medications, allergies, family and social history. Include answers that are normal or negative too, so they know what to say.',
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "cases": [
+    {
+      "course": "The class or module",
+      "door": { "age": 58, "sex": "man", "complaint": "chest pain", "vitals": "BP 150/90, HR 100, RR 18, T 98.6, SpO2 97%" },
+      "opening": "What the patient says first, in their own words. Doctor, my chest has been hurting.",
+      "script": [
+        { "ask": "When it started", "say": "About an hour ago, while I was shoveling." },
+        { "ask": "Where it spreads", "say": "Down my left arm." },
+        { "ask": "Smoking", "say": "A pack a day for 30 years." }
+      ],
+      "exam": [
+        { "maneuver": "Listening to the heart", "finding": "Regular rhythm, no murmur." }
+      ],
+      "checklist": ["Asks about onset", "Asks about radiation", "Asks about risk factors", "Says the likely diagnosis"],
+      "diagnosis": "The most likely diagnosis",
+      "teaching": "A few sentences on what mattered in this case and what shouldn't be missed."
+    }
+  ]
+}
+\`\`\``,
+    `Rules for the JSON:\n- "checklist" is what a good student should do, one observable action per item, 8 to 15 items, including a respectful introduction and naming the diagnosis.\n- Never put the diagnosis in "door" or "opening".\n- ${JSON_RULES}`,
+  ].join('\n\n');
+}
+
+/** Cases for Differential: clues that start vague and get more specific. */
+export function buildDifferentialPrompt(options: { subject?: string; count: number; used: string[] }) {
+  const subject = options.subject?.trim();
+  return [
+    `Write ${options.count} cases for a clue-by-clue diagnosis puzzle for a physician assistant student${subject ? `, on: ${subject}` : ', using what’s in my notes'}. ${SOURCE_RULES} Every patient is made up, with no details from anyone real.`,
+    'Each case has 4 or 5 clues that start vague and get more specific: the complaint first, then history, vitals, exam, and labs or imaging last. The first clue should fit several diagnoses, and the last should make it clear. Give several believable other diagnoses to choose from, the ones the case could really be confused with.',
+    options.used.length ? `Don’t use these as answers, since I’ve already had them: ${options.used.slice(-80).join(', ')}.` : '',
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "cases": [
+    {
+      "answer": "Pulmonary embolism",
+      "clues": [
+        { "label": "Complaint", "text": "A 34-year-old has sudden shortness of breath." },
+        { "label": "History", "text": "She flew home from overseas yesterday and takes birth control pills." },
+        { "label": "Vitals", "text": "HR 118, RR 26, SpO2 90% on room air." },
+        { "label": "Tests", "text": "Clear lungs on chest X-ray, and an elevated D-dimer." }
+      ],
+      "options": ["Pneumonia", "Asthma exacerbation", "Pneumothorax", "Panic attack", "Acute coronary syndrome"],
+      "explanation": "Why the clues point here, and what ruled out the others.",
+      "topic": "Dyspnea",
+      "system": "Pulmonary"
+    }
+  ]
+}
+\`\`\``,
+    `Rules for the JSON:\n- "options" holds only the wrong diagnoses, 4 to 7 of them. The answer gets added by itself.\n- Never name the answer in a clue.\n- "system" is exactly one of: ${PANCE_SYSTEMS.join(', ')}.\n- ${JSON_RULES}`,
+  ].filter(Boolean).join('\n\n');
+}

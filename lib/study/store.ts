@@ -2,13 +2,17 @@ import fs from 'fs/promises';
 import path from 'path';
 import { readJson, updateJson, writeJsonAtomic } from '@/lib/json-store';
 import { emptyMap, normalizeMap, type AnkiData, type MapData } from './coverage';
+import { isExpired, isToken, type PartnerSession } from './partner';
 import { eatTest, emptyPlan, normalizePlan, noteClean, type PlanData } from './plan';
+import { emptyPractice, normalizePractice, type PracticeData } from './practice';
+import { studyXp } from './xp';
 import { dueMisses, emptyProgress, emptyTests, normalizeProgress, normalizeTests, type ProgressData, type TestsData } from './study';
 
 // One folder per account in .data/study (kept by backups). The tests themselves
 // change rarely and can get large, so saving your place in a test only rewrites
 // the small progress file. Classes and deck matches are in map.json, and the
-// numbers from the last Anki import in anki.json. The planner is in plan.json.
+// numbers from the last Anki import in anki.json. The planner is in plan.json,
+// and grids, patient cases and Differential are in practice.json.
 
 export function studyFolder(userId: string) {
   if (!/^[\w-]{1,64}$/.test(userId)) throw new Error('Invalid account');
@@ -71,4 +75,72 @@ export async function afterStudying(userId: string, today: string, testId?: stri
     if (testId) eatTest(plan, testId, today);
     noteClean(plan, today, dueMisses(progress, today).length, progress.reviewDays.includes(today));
   });
+}
+
+const practiceFile = (userId: string) => path.join(studyFolder(userId), 'practice.json');
+
+export const readPractice = async (userId: string) => normalizePractice(await readJson<Partial<PracticeData>>(practiceFile(userId), emptyPractice()));
+
+export async function updatePractice<R>(userId: string, mutate: (data: PracticeData) => R): Promise<R> {
+  const { result } = await updateJson<PracticeData, { result: R }>(practiceFile(userId), emptyPractice(), (stored) => {
+    Object.assign(stored, normalizePractice(stored));
+    return { result: mutate(stored) };
+  });
+  return result;
+}
+
+/** A drill or a sitting counts as studying today, which is part of what cleans the plate. */
+export async function noteStudied(userId: string, today: string) {
+  await updateProgress(userId, (progress) => {
+    if (!progress.reviewDays.includes(today)) progress.reviewDays.push(today);
+  });
+  await afterStudying(userId, today);
+}
+
+export async function readStudyXp(userId: string) {
+  const [tests, progress, plan, practice] = await Promise.all([readTests(userId), readProgress(userId), readPlan(userId), readPractice(userId)]);
+  return studyXp(tests, progress, plan, practice);
+}
+
+// Private links live outside the account folders, and outside backups: they only
+// last a day. Each one's whole name is its random token.
+
+const sessionsFolder = () => path.join(process.cwd(), '.data', 'study-sessions');
+const sessionFile = (token: string) => {
+  if (!isToken(token)) throw new Error('Invalid link');
+  return path.join(sessionsFolder(), `${token}.json`);
+};
+
+/** The session for this link, unless it's run out. */
+export async function readSession(token: string) {
+  const session = await readJson<PartnerSession | null>(sessionFile(token), null);
+  return session && !isExpired(session, new Date()) ? session : null;
+}
+
+export const writeNewSession = (session: PartnerSession) => writeJsonAtomic(sessionFile(session.token), session);
+
+export async function updateSession<R>(token: string, mutate: (session: PartnerSession) => R): Promise<R | null> {
+  // A link ended while this was on its way has nothing to update, and mustn't come back as an empty file.
+  const out = await updateJson<PartnerSession, { result: R } | false>(sessionFile(token), {} as PartnerSession, (stored) => (stored.token ? { result: mutate(stored) } : false));
+  return out ? out.result : null;
+}
+
+async function allSessions() {
+  const names = await fs.readdir(sessionsFolder()).catch(() => [] as string[]);
+  const tokens = names.flatMap((name) => (name.endsWith('.json') && isToken(name.slice(0, -5)) ? [name.slice(0, -5)] : []));
+  return Promise.all(tokens.map(async (token) => ({ token, session: await readJson<PartnerSession | null>(sessionFile(token), null) })));
+}
+
+/** One link per account at a time: opening a new one, or ending it, closes the old. Run-out ones anyone left behind get cleaned up too. */
+export async function endSessionsOf(userId: string, now: Date) {
+  for (const { token, session } of await allSessions()) {
+    if (!session || session.ownerId === userId || isExpired(session, now)) await fs.rm(sessionFile(token), { force: true });
+  }
+}
+
+/** Her open link, if any, so she can come back to it. */
+export async function liveSessionOf(userId: string) {
+  const now = new Date();
+  const found = (await allSessions()).find(({ session }) => session?.ownerId === userId && !isExpired(session, now));
+  return found?.session ?? null;
 }

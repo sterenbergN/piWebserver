@@ -4,11 +4,12 @@ import { LEVEL_TITLES, levelFromXp, nextTitle, xpForLevel } from '@/lib/progress
 import { XP_RULES } from '@/lib/daily/progress';
 import { XP as HABIT_XP } from '@/lib/habits/stats';
 import { CHORE_XP } from '@/lib/chores/stats';
+import { STUDY_XP } from '@/lib/study/xp';
 import './level-info.css';
 
 type Props = {
   /** XP by where it came from. */
-  sources: { questions: number; habits: number; chores: number };
+  sources: { questions: number; habits: number; chores: number; study?: number };
   /** Question XP per week, oldest first (the last is this week). */
   weeks?: { week: string; xp: number }[];
   /** Shows a close button (when the panel was opened from a level badge). */
@@ -19,6 +20,7 @@ const SOURCES = [
   { key: 'questions', icon: '🧠', label: 'Daily questions', href: '/daily' },
   { key: 'habits', icon: '✅', label: 'Habits', href: '/habits' },
   { key: 'chores', icon: '🧹', label: 'Chores', href: '/chores' },
+  { key: 'study', icon: '🩺', label: 'Study', href: '/study' },
 ] as const;
 
 /**
@@ -27,7 +29,8 @@ const SOURCES = [
  * earns XP.
  */
 export default function LevelInfo({ sources, weeks, onClose }: Props) {
-  const total = sources.questions + sources.habits + sources.chores;
+  const study = sources.study ?? 0;
+  const total = sources.questions + sources.habits + sources.chores + study;
   const level = levelFromXp(total);
   const title = nextTitle(level.level);
   // Question pace over the last four full weeks (this week isn't over).
@@ -61,8 +64,8 @@ export default function LevelInfo({ sources, weeks, onClose }: Props) {
 
       <h4 className="lv-sub">Where your XP comes from</h4>
       <ul className="lv-sources">
-        {SOURCES.map((s) => {
-          const xp = sources[s.key];
+        {SOURCES.filter((s) => s.key !== 'study' || study > 0).map((s) => {
+          const xp = sources[s.key] ?? 0;
           return (
             <li key={s.key}>
               <a href={s.href}><span aria-hidden>{s.icon}</span> {s.label}</a>
@@ -107,6 +110,15 @@ export default function LevelInfo({ sources, weeks, onClose }: Props) {
             {CHORE_XP.effort.slice(1).join(' / ')} for quick / medium / big chores, +{CHORE_XP.onTime} when done by the due date.
             On-time streaks: {CHORE_XP.milestones.map(([len, bonus]) => `${len} in a row → +${bonus}`).join(', ')}.
           </dd>
+          {study > 0 && (
+            <>
+              <dt>🩺 Study</dt>
+              <dd>
+                {STUDY_XP.answered} for each question answered, {STUDY_XP.right} more when you get it right (retakes don’t count twice), {STUDY_XP.reviewRight} for a review you get right, {STUDY_XP.cleared} for clearing a miss.
+                {' '}{STUDY_XP.pancake} per pancake, {STUDY_XP.cleanPlate} for a clean plate. {STUDY_XP.nightShift} for a Night Shift, {STUDY_XP.nightShiftSurvived} more for finishing it. {STUDY_XP.gridSession} for a grid, {STUDY_XP.patientRun} for a mock patient, {STUDY_XP.puzzleSolved} for a Differential you solve.
+              </dd>
+            </>
+          )}
         </dl>
       </details>
     </section>

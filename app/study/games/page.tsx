@@ -6,35 +6,46 @@ import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { localToday } from '@/lib/habits/dates';
 import type { GameStats } from '@/lib/study/games';
-import { BLUEPRINT } from '@/lib/study/coverage';
+import { Scope } from '@/components/study/Scope';
 
 // The study games. Both draw from her own tests and lean on what she's been
 // missing, and every answer counts toward her miss bank and PANCE map.
 
 type Options = { total: number; misses: number; courses: string[]; systems: string[]; ankiCards: number; stats: GameStats; rank: string };
-const labelOf = (system: string) => BLUEPRINT.find((b) => b.system === system)?.label ?? system;
 
-/** What to play with: everything, or a class, an organ system, or just what she's missed. */
-function Scope({ options, course, system, setCourse, setSystem }: { options: Options; course: string; system: string; setCourse: (v: string) => void; setSystem: (v: string) => void }) {
+function DifferentialCard() {
   return (
-    <div className="sd-fields">
-      {options.courses.length > 0 && (
-        <label>Class
-          <select value={course} onChange={(e) => setCourse(e.target.value)}>
-            <option value="">All classes</option>
-            {options.courses.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-      )}
-      {options.systems.length > 0 && (
-        <label>Organ system
-          <select value={system} onChange={(e) => setSystem(e.target.value)}>
-            <option value="">All systems</option>
-            {options.systems.map((s) => <option key={s} value={s}>{labelOf(s)}</option>)}
-          </select>
-        </label>
-      )}
-    </div>
+    <section className="sd-card ns-card">
+      <div className="ns-card-head">
+        <span className="ns-card-icon" aria-hidden>🔍</span>
+        <div>
+          <h2>Differential</h2>
+          <p className="hb-hint">One case a day, one clue at a time. Name the diagnosis on fewer clues for more points.</p>
+        </div>
+      </div>
+      <Link className="btn btn-primary sd-self-start" href="/study/games/differential">Today’s case</Link>
+    </section>
+  );
+}
+
+function SnakeCard({ options }: { options: Options }) {
+  const [course, setCourse] = useState('');
+  const [system, setSystem] = useState('');
+  const params = new URLSearchParams();
+  if (course) params.set('course', course);
+  if (system) params.set('system', system);
+  return (
+    <section className="sd-card ns-card">
+      <div className="ns-card-head">
+        <span className="ns-card-icon" aria-hidden>🐍</span>
+        <div>
+          <h2>Study Snake</h2>
+          <p className="hb-hint">Snake, but the food is lettered answers. Eat the right one to grow. The snake waits while you read, and your answers count.</p>
+        </div>
+      </div>
+      <Scope options={options} course={course} system={system} setCourse={setCourse} setSystem={setSystem} />
+      <Link className="btn btn-primary sd-self-start" href={`/study/games/snake?${params}`}>Play</Link>
+    </section>
   );
 }
 
@@ -168,15 +179,17 @@ export default function GamesPage() {
       </header>
       {state === 'loading' && <p className="hb-hint">Loading…</p>}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your games.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
+      {options && <DifferentialCard />}
       {options && (options.total === 0 && options.ankiCards === 0 ? (
         <section className="sd-card sd-done">
-          <h2>Nothing to play with yet</h2>
-          <p className="hb-hint">These games use your own questions, so add a test first. A few dozen questions makes for a good game.</p>
+          <h2>Nothing else to play with yet</h2>
+          <p className="hb-hint">The other games use your own questions, so add a test first. A few dozen questions makes for a good game.</p>
           <Link className="btn btn-primary" href="/study/add">Add a test</Link>
         </section>
       ) : (
         <>
           <NightShiftCard options={options} />
+          {options.total > 0 && <SnakeCard options={options} />}
           <TriviaCard options={options} />
         </>
       ))}

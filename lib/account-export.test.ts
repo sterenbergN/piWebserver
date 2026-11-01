@@ -38,6 +38,7 @@ async function seed() {
     await write(data('study', id, 'map.json'), { classes: [{ name: `${marker}-class` }] });
     await write(data('study', id, 'anki.json'), { decks: [`${marker}-deck`] });
     await write(data('study', id, 'plan.json'), { tasks: [{ title: `${marker}-plan` }] });
+    await write(data('study', id, 'practice.json'), { grids: [{ title: `${marker}-grid` }] });
     await write(data('study', id, 'calendar-secret.json'), { url: `${marker}-SECRET-address` });
     await write(data('daily', 'attempts', `${id}.json`), { attempts: [{ note: `${marker}-answer` }] });
     await write(data('private-posts', id, 'posts.json'), [{ id: 'post-one', markdown: `${marker}-post` }]);
@@ -201,6 +202,7 @@ test('every store of a user lands in their export', async () => {
     'study/anki.json',
     'study/map.json',
     'study/plan.json',
+    'study/practice.json',
     'study/progress.json',
     'study/tests.json',
     'workouts/bodyweight.json',

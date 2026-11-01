@@ -24,9 +24,9 @@ const readHash = () => window.location.hash.slice(1);
 /** How many pins fit along the bottom of a phone, beside the All button. */
 const DOCK_PINS = 4;
 /** These have their own bottom bar. */
-const NO_DOCK = ['/workout', '/party'];
+const NO_DOCK = ['/workout', '/party', '/study/partner', '/study/games/snake'];
 /** Full-screen, printable or shared-by-link pages, where a row of other pages is only in the way. */
-const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report'];
+const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report', '/study/partner'];
 
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
   const pathname = usePathname();
