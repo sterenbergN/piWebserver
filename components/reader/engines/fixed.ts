@@ -173,6 +173,10 @@ export class FixedEngine implements Engine {
     return this.source.pageCount > 1 ? this.index / (this.source.pageCount - 1) : 1;
   }
 
+  atEnd() {
+    return this.index === this.source.pageCount - 1;
+  }
+
   async layout(settings: ReaderSettings) {
     this.settings = settings;
     this.applyTheme();

@@ -16,7 +16,13 @@ export type BookMeta = {
   size: number;
   addedAt: string;
   hasCover: boolean;
+  /** The folder it's in, if any. A book is in one place, like a book on a shelf. */
+  folder?: string;
+  /** The public Library entry it was copied from. The copy is independent from then on. */
+  source?: string;
 };
+
+export type Folder = { id: string; name: string };
 
 /**
  * A place in a book. `page` is what people see, and it's the same on every device.
@@ -59,7 +65,91 @@ export type ReaderItem = {
 export type NotesFile = { seq: number; items: Record<string, ReaderItem> };
 export const emptyNotes = (): NotesFile => ({ seq: 0, items: {} });
 
-export type Progress = { anchor: Anchor; pct: number; at: number };
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+export type Progress = {
+  anchor: Anchor;
+  pct: number;
+  /** When this was last read. */
+  at: number;
+  /** Pages in the book, as this device counted them. */
+  total?: number;
+  startedAt?: number;
+  finishedAt?: number;
+};
+
+export type ReadingState = 'new' | 'reading' | 'finished';
+
+export function readingState(progress: Progress | undefined): ReadingState {
+  if (!progress) return 'new';
+  if (progress.finishedAt) return 'finished';
+  return progress.startedAt || progress.pct > 0 ? 'reading' : 'new';
+}
+
+/** How far through a book you are, in words. */
+export function progressText(progress: Progress | undefined) {
+  const state = readingState(progress);
+  if (state === 'new' || !progress) return 'Not started';
+  if (state === 'finished') return `Finished ${new Date(progress.finishedAt!).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const percent = Math.round(progress.pct * 100);
+  if (!percent) return 'Just started';
+  return progress.total ? `${percent}% · p. ${progress.anchor.page} of ${progress.total}` : `${percent}%`;
+}
+
+/** The books you're partway through, latest first. */
+export function booksInProgress<T extends { id: string }>(books: T[], progress: Record<string, Progress | undefined>) {
+  return books
+    .filter((book) => readingState(progress[book.id]) === 'reading')
+    .sort((a, b) => (progress[b.id]?.at ?? 0) - (progress[a.id]?.at ?? 0));
+}
+
+/** How near the end you have to have been already for reaching it to count as finishing, not a look ahead. */
+const FINISHING_FROM = 0.7;
+
+/** Where you are now, on top of what's known about this book. */
+export function nextProgress(previous: Progress | undefined, place: { anchor: Anchor; pct: number; total: number; atEnd: boolean }, now: number): Progress {
+  const reachedEnd = place.atEnd && place.total > 2 && (previous?.pct ?? 0) >= FINISHING_FROM;
+  const finishedAt = previous?.finishedAt ?? (reachedEnd ? now : undefined);
+  return {
+    anchor: place.anchor, pct: place.pct, at: now, total: place.total,
+    startedAt: previous?.startedAt ?? now,
+    ...(finishedAt ? { finishedAt } : {}),
+  };
+}
+
+/** Say by hand that a book is finished, or that it isn't. */
+export function withFinished(previous: Progress | undefined, finished: boolean, now: number): Progress {
+  const { finishedAt: _old, ...rest } = previous ?? { anchor: { page: 1 }, pct: 0, at: now } as Progress;
+  return { ...rest, at: now, ...(finished ? { finishedAt: now } : {}) };
+}
+
+/** A reading position from a device, checked. */
+export function cleanProgress(raw: { anchor?: unknown; pct?: unknown; at?: unknown; total?: unknown; startedAt?: unknown; finishedAt?: unknown }, now: number): Progress | null {
+  const anchor = cleanAnchor(raw.anchor);
+  if (!anchor || !finite(raw.pct) || !finite(raw.at)) return null;
+  const when = (value: unknown) => (finite(value) && value > 0 ? Math.min(value, now) : undefined);
+  const startedAt = when(raw.startedAt);
+  const finishedAt = when(raw.finishedAt);
+  return {
+    anchor,
+    pct: Math.max(0, Math.min(1, raw.pct)),
+    at: Math.min(raw.at, now),
+    ...(finite(raw.total) && raw.total > 0 ? { total: Math.floor(raw.total) } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(finishedAt ? { finishedAt } : {}),
+  };
+}
+
+export const MAX_FOLDERS = 200;
+export const cleanFolderName = (value: unknown) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 80) : '');
+
+/** The public Library's address for a file, turned into just its file name, or null if it isn't one. */
+export function publicLibraryFile(url: unknown) {
+  if (typeof url !== 'string') return null;
+  const match = /^\/api\/media\/uploads\/library\/([^/\\]+)$/.exec(url);
+  if (!match || match[1] === '..' || match[1] === '.' || match[1] === 'library.json') return null;
+  return match[1];
+}
 
 export const MAX_BOOK_BYTES = 1024 * 1024 * 1024;
 /** Cloudflare turns away requests over 100 MB, so big books go up in pieces. */
@@ -93,8 +183,6 @@ export function titleFromName(name: string) {
 }
 
 export const cleanTitle = (value: unknown, fallback: string) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : fallback);
-
-const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 export function cleanAnchor(raw: unknown): Anchor | null {
   if (!raw || typeof raw !== 'object') return null;

@@ -1,6 +1,6 @@
 'use client';
 
-import type { BookMeta, Progress, ReaderItem } from '@/lib/reader/items';
+import type { BookMeta, Folder, Progress, ReaderItem } from '@/lib/reader/items';
 
 // What's kept on this device, for reading with no connection: the shelf, the books you
 // chose to keep, reading positions, and your notes and pen marks. Each account gets its
@@ -95,6 +95,9 @@ export async function getFile(id: string) {
 export const getKv = <T>(key: string) => run<T | undefined>('kv', 'readonly', (s) => s.get(key));
 export const putKv = (key: string, value: unknown) => run('kv', 'readwrite', (s) => { s.put(value, key); });
 export const deleteKv = (key: string) => run('kv', 'readwrite', (s) => { s.delete(key); });
+
+export const getFolders = async () => (await getKv<Folder[]>('folders')) ?? [];
+export const putFolders = (folders: Folder[]) => putKv('folders', folders);
 
 export const getProgress = (book: string) => getKv<StoredProgress>(`progress:${book}`);
 export const putProgress = (book: string, progress: StoredProgress) => putKv(`progress:${book}`, progress);

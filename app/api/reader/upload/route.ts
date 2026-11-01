@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, requireWorkoutUserId } from '@/lib/workout/api';
 import { cleanTitle, formatFromName, isId, matchesFormat, titleFromName, UPLOAD_CHUNK_BYTES, type BookMeta } from '@/lib/reader/items';
-import { addBook, appendUpload, discardUpload, readUploadHead, UploadRefused } from '@/lib/reader/store';
+import { addBook, appendUpload, coverFrom, discardUpload, readUploadHead, UploadRefused } from '@/lib/reader/store';
 
 // Adding a book, in two steps. The file's pieces arrive as raw bytes at
 // ?upload=<id>&offset=<n>, then a JSON request with no ?offset names it and files it.
@@ -10,14 +10,6 @@ import { addBook, appendUpload, discardUpload, readUploadHead, UploadRefused } f
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
 /** A little over one piece, so a client can't keep a single request open forever writing. */
 const MAX_PIECE_BYTES = UPLOAD_CHUNK_BYTES + 1024 * 1024;
-
-const MAX_COVER_BASE64 = 700_000;
-
-function coverFrom(value: unknown) {
-  if (typeof value !== 'string' || !value.startsWith('data:image/jpeg;base64,') || value.length > MAX_COVER_BASE64) return null;
-  const bytes = Buffer.from(value.slice(value.indexOf(',') + 1), 'base64');
-  return bytes[0] === 0xff && bytes[1] === 0xd8 ? bytes : null;
-}
 
 export async function POST(request: Request) {
   try {
@@ -55,6 +47,7 @@ export async function POST(request: Request) {
       size: upload.size,
       addedAt: new Date().toISOString(),
       hasCover: !!cover,
+      ...(isId(body?.folder) ? { folder: body.folder } : {}),
     };
     await addBook(userId, uploadId, book, cover);
     return NextResponse.json({ success: true, book }, { headers: PRIVATE });

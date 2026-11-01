@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
-import type { Anchor, BookMeta } from '@/lib/reader/items';
+import type { Anchor, BookMeta, Folder } from '@/lib/reader/items';
 import BookView from './BookView';
-import { listBooks, selectAccount } from './db';
+import { getFolders, listBooks, selectAccount } from './db';
 import Library from './Library';
 import { prepareOffline } from './offline';
 import type { ReaderSettings } from './source';
@@ -41,6 +41,7 @@ const bookInUrl = () => new URLSearchParams(window.location.search).get('book');
 export default function ReaderApp() {
   const [phase, setPhase] = useState<Phase>('starting');
   const [books, setBooks] = useState<BookMeta[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [online, setOnline] = useState(true);
   const [signedOut, setSignedOut] = useState(false);
   const [settings, setSettings] = useState<ReaderSettings | null>(null);
@@ -52,6 +53,7 @@ export default function ReaderApp() {
     const list = await listBooks();
     booksRef.current = list;
     setBooks(list);
+    setFolders(await getFolders());
   }, []);
 
   /** Ask the server for the shelf, and settle what state the page should be in. */
@@ -164,7 +166,7 @@ export default function ReaderApp() {
         openedBook ? (
           <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} onSettings={changeSettings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
         ) : (
-          <Library books={books} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} />
+          <Library books={books} folders={folders} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} />
         )
       )}
     </div>

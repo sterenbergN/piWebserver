@@ -343,6 +343,11 @@ export class FlowEngine implements Engine {
     return Math.min(1, (this.starts[frame.section] + this.firstOn(frame, this.page)) / this.total);
   }
 
+  atEnd() {
+    const frame = this.cur;
+    return !!frame && frame.section === this.source.sections.length - 1 && this.page === frame.pages - 1;
+  }
+
   async layout(settings: ReaderSettings) {
     const at = this.here();
     this.holding = at;

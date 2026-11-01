@@ -26,6 +26,15 @@ const TAP_PIXELS = 10;
 const TAP_MS = 350;
 const SIDE_ZONE = 0.28;
 const ERASER_PIXELS = 11;
+/** How close to the right edge a swipe has to start to pull out the notes. */
+const EDGE_PIXELS = 34;
+const QUICK_SWIPE_PIXELS = 70;
+const QUICK_TAP_MOVE_PIXELS = 18;
+/** Fingers touching just after the pencil lifts are a palm settling, not a gesture. */
+const PEN_QUIET_MS = 400;
+const GESTURE_HINT_KEY = 'reader-gesture-hint';
+/** How much two fingers have to spread or close, as a share of their distance, to count as a pinch. */
+const PINCH_START = 0.14;
 
 const isStandalone = () => window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || (navigator as { standalone?: boolean }).standalone === true;
 
@@ -63,6 +72,16 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
   const [isFull, setIsFull] = useState(false);
   const [canFull, setCanFull] = useState(false);
   const [dragFraction, setDragFraction] = useState<number | null>(null);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((text: string, ms = 1400) => {
+    setToast(text);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), ms);
+  }, []);
+  /** Which tool the eraser gives way to. */
+  const lastInk = useRef<'pen' | 'marker'>('pen');
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   useWakeLock(phase === 'ready');
 
@@ -146,7 +165,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
         const anchor = engine.here();
         if (placeKey(anchor) === lastPlace) return;
         lastPlace = placeKey(anchor);
-        void saveProgressHere(book.id, { anchor, pct: engine.fraction(), at: Date.now() });
+        void saveProgressHere(book.id, { anchor, pct: engine.fraction(), total: engine.totalPages, atEnd: engine.atEnd() });
       }, 600);
     };
 
@@ -178,7 +197,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       if (progressTimer) clearTimeout(progressTimer);
       const engine = engineRef.current;
       if (engine) {
-        void saveProgressHere(book.id, { anchor: engine.here(), pct: engine.fraction(), at: Date.now() }).then(flushNow);
+        void saveProgressHere(book.id, { anchor: engine.here(), pct: engine.fraction(), total: engine.totalPages, atEnd: engine.atEnd() }).then(flushNow);
         engine.destroy();
       }
       engineRef.current = null;
@@ -218,7 +237,18 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
   const drawRef = useRef({ drawMode, tool, penColor, markerColor, panel, chrome });
   useLayoutEffect(() => {
     drawRef.current = { drawMode, tool, penColor, markerColor, panel, chrome };
+    if (tool !== 'eraser') lastInk.current = tool;
   });
+
+  // The gestures aren't visible anywhere, so say what they are once, on devices that can do them.
+  useEffect(() => {
+    if (phase !== 'ready' || navigator.maxTouchPoints < 2) return;
+    try {
+      if (localStorage.getItem(GESTURE_HINT_KEY)) return;
+      localStorage.setItem(GESTURE_HINT_KEY, 'seen');
+    } catch { return; }
+    say('Two fingers: tap to switch pen and eraser, swipe left for notes.', 5000);
+  }, [phase, say]);
 
   useEffect(() => {
     const layer = layerRef.current;
@@ -230,8 +260,43 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
     let penSeen = false;
     let stroke: { pointer: number; points: number[]; tool: 'pen' | 'marker'; color: InkColor; width: number; fromPen: boolean } | null = null;
     let erasing: number | null = null;
-    let pinch: { distance: number } | null = null;
+    /** Two fingers down: a pinch once they've spread or closed enough, otherwise maybe a tap or swipe. */
+    let pinch: { first: number; distance: number; zooming: boolean; at: number } | null = null;
+    let pinchFrame = 0;
     let liveFrame = 0;
+    let lastPenAt = 0;
+
+    // Measured once per frame: each finger's move arrives on its own, and between the
+    // two, a swipe would look like the fingers spreading apart.
+    const applyPinch = () => {
+      pinchFrame = 0;
+      if (!pinch || touches.size !== 2) return;
+      const [a, b] = [...touches.values()];
+      const distance = Math.hypot(a.x - b.x, a.y - b.y);
+      // Two fingers swiping never hold quite the same distance, so that alone isn't a pinch.
+      if (!pinch.zooming && Math.abs(distance / Math.max(1, pinch.first) - 1) > PINCH_START) pinch.zooming = true;
+      if (pinch.zooming) engineRef.current?.zoomBy(distance / Math.max(1, pinch.distance), (a.x + b.x) / 2, (a.y + b.y) / 2);
+      pinch.distance = distance;
+    };
+
+    /** Two-finger tap: into draw mode for a finger, then between the pen and the eraser. */
+    const switchTool = () => {
+      const state = drawRef.current;
+      if (!state.drawMode && !penSeen) {
+        setDrawMode(true);
+        setChrome(false);
+        if (state.tool === 'eraser') setTool(lastInk.current);
+        say('Drawing. Two-finger tap for the eraser.');
+        return;
+      }
+      if (state.tool === 'eraser') {
+        setTool(lastInk.current);
+        say(lastInk.current === 'marker' ? 'Highlighter' : 'Pen');
+      } else {
+        setTool('eraser');
+        say('Eraser');
+      }
+    };
 
     const position = (e: PointerEvent) => {
       const rect = stage.getBoundingClientRect();
@@ -325,6 +390,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       if (e.pointerType === 'pen') {
         // The pencil always writes, and a palm that landed first stops counting.
         penSeen = true;
+        lastPenAt = Date.now();
         touches.clear();
         pinch = null;
         startMark(e);
@@ -343,7 +409,8 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
         erasing = null;
         clearLive();
         const [a, b] = [...touches.values()];
-        pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) };
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        pinch = { first: distance, distance, zooming: false, at: Date.now() };
       }
     };
 
@@ -359,16 +426,32 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       touch.y = y;
       const engine = engineRef.current;
       if (pinch && touches.size === 2) {
-        const [a, b] = [...touches.values()];
-        const distance = Math.hypot(a.x - b.x, a.y - b.y);
-        engine?.zoomBy(distance / Math.max(1, pinch.distance), (a.x + b.x) / 2, (a.y + b.y) / 2);
-        pinch.distance = distance;
+        if (!pinchFrame) pinchFrame = requestAnimationFrame(applyPinch);
       } else if (engine?.zoomed()) {
         engine.panBy(dx, dy);
       }
     };
 
+    /** The first of two fingers has lifted: what did the pair of them just do? */
+    const finishTwoFingers = (one: Touch, other: Touch | undefined, gesture: NonNullable<typeof pinch>) => {
+      if (!other || Date.now() - lastPenAt < PEN_QUIET_MS || engineRef.current?.zoomed()) return;
+      const dxOne = one.x - one.startX;
+      const dyOne = one.y - one.startY;
+      const dxOther = other.x - other.startX;
+      const dyOther = other.y - other.startY;
+      if (Math.max(Math.hypot(dxOne, dyOne), Math.hypot(dxOther, dyOther)) < QUICK_TAP_MOVE_PIXELS) {
+        if (Date.now() - gesture.at < TAP_MS) switchTool();
+        return;
+      }
+      const dx = (dxOne + dxOther) / 2;
+      const dy = (dyOne + dyOther) / 2;
+      if (Math.abs(dx) < QUICK_SWIPE_PIXELS || Math.abs(dx) < Math.abs(dy) * 1.4 || Math.sign(dxOne) !== Math.sign(dxOther)) return;
+      setChrome(false);
+      setPanel(dx < 0 ? 'notes' : 'contents');
+    };
+
     const onUp = (e: PointerEvent) => {
+      if (e.pointerType === 'pen') lastPenAt = Date.now();
       if (stroke?.pointer === e.pointerId) {
         // A quick touch of the pencil outside draw mode is a tap, not a dot.
         const tapped = stroke.fromPen && !drawRef.current.drawMode && stroke.points.length <= 12;
@@ -386,13 +469,23 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       if (erasing === e.pointerId) { erasing = null; touches.delete(e.pointerId); return; }
       const touch = touches.get(e.pointerId);
       if (!touch) return;
+      // Whatever the fingers did in this last frame still counts.
+      if (pinchFrame) {
+        cancelAnimationFrame(pinchFrame);
+        applyPinch();
+      }
       touches.delete(e.pointerId);
       const engine = engineRef.current;
       if (pinch) {
-        if (touches.size < 2) pinch = null;
-        engine?.settle();
+        const gesture = pinch;
+        const other = [...touches.values()][0];
+        pinch = null;
         // The other finger lifting too shouldn't count as a tap or swipe.
         touches.clear();
+        if (gesture.zooming) engine?.settle();
+        // Judged by where the fingers ended up, in case one slow frame looked like a pinch.
+        const heldApart = Math.abs(gesture.distance / Math.max(1, gesture.first) - 1) <= PINCH_START;
+        if (heldApart && e.type !== 'pointercancel') finishTwoFingers(touch, other, gesture);
         return;
       }
       if (e.type === 'pointercancel') return;
@@ -404,7 +497,11 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       const moved = Math.hypot(dx, dy);
       const quick = Date.now() - touch.at < TAP_MS;
       if (moved < TAP_PIXELS && quick) handleTap(touch.x, touch.y);
-      else if (drawRef.current.drawMode) return;
+      else if (touch.startX > stage.clientWidth - EDGE_PIXELS && dx < -SWIPE_PIXELS && Math.abs(dx) > Math.abs(dy)) {
+        // Pulled in from the right edge: the notes, in draw mode or out of it.
+        setChrome(false);
+        setPanel('notes');
+      } else if (drawRef.current.drawMode) return;
       else if (!engine?.zoomed() && Math.abs(dx) > SWIPE_PIXELS && Math.abs(dx) > Math.abs(dy) * 1.4) {
         void (dx < 0 ? engine?.next() : engine?.prev());
         setChrome(false);
@@ -452,6 +549,9 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
         return;
       }
       if (!engine || drawRef.current.panel) return;
+      if (e.key === 'n') { setChrome(false); setPanel('notes'); return; }
+      if (e.key === 'e') { setTool('eraser'); say('Eraser'); return; }
+      if (e.key === 'p') { setTool(lastInk.current); say(lastInk.current === 'marker' ? 'Highlighter' : 'Pen'); return; }
       if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); void engine.next(); }
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); void engine.prev(); }
     };
@@ -477,6 +577,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       layer.removeEventListener('touchmove', stopScroll);
       window.removeEventListener('keydown', onKey);
       if (liveFrame) cancelAnimationFrame(liveFrame);
+      if (pinchFrame) cancelAnimationFrame(pinchFrame);
     };
   }, [addInk, remove]);
 
@@ -543,6 +644,12 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
         </button>
       )}
 
+      {ready && tool === 'eraser' && !drawMode && !panel && (
+        <button type="button" className="rd-tool-pill" onClick={() => setTool(lastInk.current)}><Icon name="eraser" /> Eraser on. Back to pen</button>
+      )}
+
+      {toast && <div className="rd-toast" role="status">{toast}</div>}
+
       {chrome && !drawMode && (
         <header className="rd-bar rd-top">
           <button type="button" className="rd-icon-btn" onClick={onExit} aria-label="Back to your books"><Icon name="left" /></button>
@@ -589,13 +696,27 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
           })}
           <span className="rd-tools-gap" />
           <button type="button" className="rd-icon-btn" aria-label="Undo" disabled={!undoCount} onClick={undo}><Icon name="undo" /></button>
-          <button type="button" className="rd-btn is-primary" onClick={() => setDrawMode(false)}>Done</button>
+          <button type="button" className="rd-btn is-primary" onClick={() => { setDrawMode(false); if (tool === 'eraser') setTool(lastInk.current); }}>Done</button>
         </div>
       )}
 
       {panel && ready && here && (
         <div className="rd-sheet-wrap" onClick={() => setPanel(null)}>
-          <aside className="rd-sheet" onClick={(e) => e.stopPropagation()} aria-label={panel === 'contents' ? 'Contents' : panel === 'look' ? 'How the page looks' : 'Notes'}>
+          <aside
+            className="rd-sheet"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={panel === 'contents' ? 'Contents' : panel === 'look' ? 'How the page looks' : 'Notes'}
+            onPointerDown={(e) => {
+              // Not from anything that uses a drag for itself: the handwriting card, a text box, the sliders.
+              const own = (e.target as Element).closest('canvas, textarea, input');
+              swipeStart.current = e.pointerType !== 'mouse' && !own ? { x: e.clientX, y: e.clientY } : null;
+            }}
+            onPointerUp={(e) => {
+              const start = swipeStart.current;
+              swipeStart.current = null;
+              if (start && e.clientX - start.x > QUICK_SWIPE_PIXELS && Math.abs(e.clientY - start.y) < QUICK_SWIPE_PIXELS / 2) setPanel(null);
+            }}
+          >
             <div className="rd-sheet-head">
               <div className="rd-tabs">
                 <button type="button" className={panel === 'contents' ? 'is-on' : ''} onClick={() => setPanel('contents')}>Contents</button>
@@ -668,6 +789,13 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
                   ) : (
                     <p className="rd-hint">Pinch to zoom in, and drag to move around the page.</p>
                   )}
+                  <div className="rd-label">Quick gestures</div>
+                  <ul className="rd-gestures">
+                    <li><strong>Apple Pencil</strong><span>Just write. You don’t need to open anything first.</span></li>
+                    <li><strong>Two-finger tap</strong><span>Switches between the pen and the eraser. Without a pencil, the first one starts drawing.</span></li>
+                    <li><strong>Swipe left with two fingers, or in from the right edge</strong><span>Opens your notes. Swipe right on them to close.</span></li>
+                    <li><strong>Swipe right with two fingers</strong><span>Opens the contents.</span></li>
+                  </ul>
                 </div>
               )}
             </div>

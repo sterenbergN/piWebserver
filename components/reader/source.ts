@@ -53,6 +53,8 @@ export interface Engine {
   /** Where you are now, which notes and reading progress are saved against. */
   here(): Anchor;
   fraction(): number;
+  /** On the very last screen of the book. */
+  atEnd(): boolean;
   /** Fit to a new screen size or new settings. */
   layout(settings: ReaderSettings): Promise<void>;
   onScreen(anchor: Anchor): boolean;

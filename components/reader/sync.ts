@@ -1,8 +1,8 @@
 'use client';
 
-import { MAX_CHANGES, UPLOAD_CHUNK_BYTES, type BookMeta, type Progress, type ReaderItem } from '@/lib/reader/items';
+import { MAX_CHANGES, nextProgress, UPLOAD_CHUNK_BYTES, withFinished, type Anchor, type BookMeta, type Folder, type Progress, type ReaderItem } from '@/lib/reader/items';
 import {
-  dirtyProgress, forgetBook, getCover, getItems, getKv, getProgress, listBooks, putBooks, putCover, putFile, putItems, putKv, putProgress, type StoredItem,
+  dirtyProgress, forgetBook, getCover, getItems, getKv, getProgress, listBooks, putBooks, putCover, putFile, putFolders, putItems, putKv, putProgress, type StoredItem,
 } from './db';
 
 // Keeping this device and the server in step. Everything is saved here first and sent
@@ -13,7 +13,7 @@ export const USER_KEY = 'reader-user';
 
 export class ReaderSignedOut extends Error {}
 
-export type Shelf = { userId: string; books: BookMeta[]; seqs: Record<string, number>; progress: Record<string, Progress> };
+export type Shelf = { userId: string; books: BookMeta[]; folders: Folder[]; seqs: Record<string, number>; progress: Record<string, Progress> };
 
 async function readJson<T>(res: Response): Promise<T> {
   if (res.status === 401) throw new ReaderSignedOut();
@@ -48,6 +48,7 @@ export async function applyShelf(shelf: Shelf) {
     if (!known.has(book.id)) await forgetBook(book.id);
   }
   await putBooks(shelf.books);
+  await putFolders(shelf.folders);
   for (const book of shelf.books) {
     const remote = shelf.progress[book.id];
     const local = await getProgress(book.id);
@@ -66,7 +67,7 @@ export async function flushProgress() {
   try {
     const dirty = await dirtyProgress();
     if (!dirty.length) return;
-    await postAction({ action: 'progress', entries: dirty.slice(0, 500).map(({ book, progress }) => ({ book, anchor: progress.anchor, pct: progress.pct, at: progress.at })) });
+    await postAction({ action: 'progress', entries: dirty.slice(0, 500).map(({ book, progress: { dirty: _dirty, ...rest } }) => ({ book, ...rest })) });
     for (const { book, progress } of dirty.slice(0, 500)) {
       const current = await getProgress(book);
       if (current && current.at === progress.at) await putProgress(book, { ...current, dirty: false });
@@ -76,8 +77,15 @@ export async function flushProgress() {
   }
 }
 
-export async function saveProgressHere(book: string, progress: Progress) {
-  await putProgress(book, { ...progress, dirty: true });
+/** You're here now. It also works out whether that means you've started or finished the book. */
+export async function saveProgressHere(book: string, place: { anchor: Anchor; pct: number; total: number; atEnd: boolean }) {
+  await putProgress(book, { ...nextProgress(await getProgress(book), place, Date.now()), dirty: true });
+  scheduleFlush();
+}
+
+/** Say a book is finished, or isn't. Works offline, like everything about your own reading. */
+export async function markFinished(book: string, finished: boolean) {
+  await putProgress(book, { ...withFinished(await getProgress(book), finished, Date.now()), dirty: true });
   scheduleFlush();
 }
 
@@ -190,7 +198,7 @@ export async function downloadBook(book: BookMeta, onProgress?: (fraction: numbe
 const newUploadId = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 /** Send a file up in pieces, each one retried if the connection blips. */
-export async function uploadBook(file: File, details: { title: string; author: string; cover: string | null }, onProgress: (fraction: number) => void) {
+export async function uploadBook(file: File, details: { title: string; author: string; cover: string | null; folder?: string }, onProgress: (fraction: number) => void) {
   const upload = newUploadId();
   let offset = 0;
   do {
@@ -218,6 +226,22 @@ export async function uploadBook(file: File, details: { title: string; author: s
   await putFile(body.book.id, file.slice(0, file.size, file.type));
   if (details.cover) await putCover(body.book.id, await (await fetch(details.cover)).blob());
   return body.book;
+}
+
+export const createFolder = async (name: string) => (await postAction({ action: 'folder-add', name })).folder as Folder;
+export const renameFolderEverywhere = (folder: string, name: string) => postAction({ action: 'folder-rename', folder, name });
+export const deleteFolderEverywhere = (folder: string) => postAction({ action: 'folder-delete', folder });
+export const moveBooksEverywhere = (books: string[], folder: string | null) => postAction({ action: 'move', books, folder });
+
+/** Copy a book from the public Library to this account. `already` says it was there before. */
+export async function importBook(url: string, folder?: string) {
+  const body = await postAction({ action: 'import', url, ...(folder ? { folder } : {}) });
+  await putBooks([body.book as BookMeta]);
+  return { book: body.book as BookMeta, already: body.already === true };
+}
+
+export async function saveBookDetails(book: string, cover: string | null, author: string) {
+  await postAction({ action: 'details', book, cover, author });
 }
 
 export async function renameBookEverywhere(book: BookMeta, title: string, author: string) {

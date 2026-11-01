@@ -1,8 +1,8 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
-  cleanItem, emptyNotes, flowPage, formatFromName, itemsSince, markedPages, markupLength, matchesFormat, mergeChanges, notesByChapter, resolveZipPath,
-  splitParagraphs, strokeTouches, textToParagraphs, titleFromName, type ReaderItem,
+  cleanFolderName, cleanItem, cleanProgress, emptyNotes, flowPage, formatFromName, itemsSince, markedPages, markupLength, matchesFormat, mergeChanges, nextProgress, notesByChapter, publicLibraryFile,
+  booksInProgress, progressText, readingState, resolveZipPath, splitParagraphs, strokeTouches, textToParagraphs, titleFromName, withFinished, type ReaderItem,
 } from './items';
 
 const NOW = 1_800_000_000_000;
@@ -139,6 +139,105 @@ test('long text is split into sections without breaking paragraphs', () => {
 
 test('plain text becomes paragraphs, safely', () => {
   assert.deepEqual(textToParagraphs('One\nline two\r\n\r\n<b>Two</b>\n\n\n'), ['<p>One<br>line two</p>', '<p>&lt;b&gt;Two&lt;/b&gt;</p>']);
+});
+
+const place = (pct: number, atEnd = false, total = 100) => ({ anchor: { page: Math.ceil(pct * total) || 1 }, pct, total, atEnd });
+
+test('opening a book starts it, and the start date stays put', () => {
+  const first = nextProgress(undefined, place(0), 100);
+  assert.equal(first.startedAt, 100);
+  assert.equal(readingState(first), 'reading');
+  assert.equal(readingState(undefined), 'new');
+  const later = nextProgress(first, place(0.4), 200);
+  assert.equal(later.startedAt, 100);
+  assert.equal(later.at, 200);
+  assert.equal(later.pct, 0.4);
+  assert.equal(later.total, 100);
+});
+
+test('reading to the last page finishes a book, and looking ahead with the slider does not', () => {
+  const nearly = nextProgress(undefined, place(0.95), 100);
+  const done = nextProgress(nearly, place(1, true), 200);
+  assert.equal(done.finishedAt, 200);
+  assert.equal(readingState(done), 'finished');
+  const early = nextProgress(undefined, place(0.1), 100);
+  assert.equal(nextProgress(early, place(1, true), 200).finishedAt, undefined);
+});
+
+test('a one-page file does not finish itself by being opened', () => {
+  const opened = nextProgress(undefined, place(1, true, 1), 100);
+  assert.equal(nextProgress(opened, place(1, true, 1), 200).finishedAt, undefined);
+});
+
+test('a finished book stays finished when you flip back through it', () => {
+  const done = withFinished(undefined, true, 100);
+  assert.equal(nextProgress(done, place(0.2), 200).finishedAt, 100);
+});
+
+test('marking by hand works before a book is opened, and can be undone', () => {
+  const done = withFinished(undefined, true, 100);
+  assert.equal(done.finishedAt, 100);
+  assert.equal(done.anchor.page, 1);
+  const undone = withFinished({ ...done, pct: 0.5 }, false, 200);
+  assert.equal(undone.finishedAt, undefined);
+  assert.equal(undone.pct, 0.5);
+  assert.equal(undone.at, 200);
+  assert.equal(readingState(undone), 'reading');
+});
+
+test('undoing finished on a book never opened puts it back to not started', () => {
+  const undone = withFinished(withFinished(undefined, true, 100), false, 200);
+  assert.equal(readingState(undone), 'new');
+  assert.equal(progressText(undone), 'Not started');
+  assert.equal(readingState(nextProgress(undone, place(0), 300)), 'reading');
+});
+
+test('positions saved before start dates existed still count as reading', () => {
+  assert.equal(readingState({ anchor: { page: 9 }, pct: 0.2, at: 1 }), 'reading');
+});
+
+test('progress reads as words', () => {
+  assert.equal(progressText(undefined), 'Not started');
+  assert.equal(progressText(nextProgress(undefined, place(0), 1)), 'Just started');
+  assert.equal(progressText({ anchor: { page: 120 }, pct: 0.42, at: 1, total: 300, startedAt: 1 }), '42% · p. 120 of 300');
+  assert.equal(progressText({ anchor: { page: 1 }, pct: 0.42, at: 1 }), '42%');
+  assert.match(progressText(withFinished(undefined, true, Date.UTC(2026, 5, 15))), /^Finished /);
+});
+
+test('what to pick up next is what you read last, leaving out new and finished books', () => {
+  const books = [{ id: 'new' }, { id: 'old' }, { id: 'done' }, { id: 'latest' }];
+  const progress = {
+    old: { anchor: { page: 2 }, pct: 0.1, at: 100, startedAt: 1 },
+    latest: { anchor: { page: 2 }, pct: 0.1, at: 200, startedAt: 1 },
+    done: withFinished(undefined, true, 300),
+  };
+  assert.deepEqual(booksInProgress(books, progress).map((b) => b.id), ['latest', 'old']);
+});
+
+test('progress from a device is checked', () => {
+  assert.equal(cleanProgress({ anchor: { page: 0 }, pct: 0.5, at: 1 }, NOW), null);
+  assert.equal(cleanProgress({ anchor: { page: 1 }, pct: 'lots', at: 1 }, NOW), null);
+  const clean = cleanProgress({ anchor: { page: 3 }, pct: 7, at: NOW + 500, total: -1, finishedAt: NOW + 900, startedAt: 'never' }, NOW)!;
+  assert.equal(clean.pct, 1);
+  assert.equal(clean.at, NOW);
+  assert.equal(clean.finishedAt, NOW);
+  assert.equal('total' in clean, false);
+  assert.equal('startedAt' in clean, false);
+});
+
+test('folder names are tidied', () => {
+  assert.equal(cleanFolderName('  Sci   fi '), 'Sci fi');
+  assert.equal(cleanFolderName(42), '');
+  assert.equal(cleanFolderName('x'.repeat(200)).length, 80);
+});
+
+test('only real Library file addresses count as Library files', () => {
+  assert.equal(publicLibraryFile('/api/media/uploads/library/123-book.pdf'), '123-book.pdf');
+  assert.equal(publicLibraryFile('/api/media/uploads/library/../../../.data/users.json'), null);
+  assert.equal(publicLibraryFile('/api/media/uploads/library/..'), null);
+  assert.equal(publicLibraryFile('/api/media/uploads/library/library.json'), null);
+  assert.equal(publicLibraryFile('/api/media/uploads/gallery/photo.jpg'), null);
+  assert.equal(publicLibraryFile(null), null);
 });
 
 test('the eraser touches strokes along their length, not just at their points', () => {
