@@ -76,9 +76,14 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
     if (!newest) return;
     const everywhere = count === goals.length;
     setDiscovery({ everywhere, text: everywhere ? '🏆 You’ve been everywhere on the site!' : `🧭 New place found: ${newest.label} · ${count} of ${goals.length}` });
-    const handle = window.setTimeout(() => setDiscovery(null), everywhere ? 6000 : 3200);
-    return () => window.clearTimeout(handle);
   }, [foundHere, isAdmin, signedIn]);
+
+  // Timed from the nod itself, so moving on to another page can't leave it up.
+  useEffect(() => {
+    if (!discovery) return;
+    const handle = window.setTimeout(() => setDiscovery(null), discovery.everywhere ? 6000 : 3200);
+    return () => window.clearTimeout(handle);
+  }, [discovery]);
 
   // "/" or Ctrl+K opens the panel from anywhere.
   useEffect(() => {
@@ -168,7 +173,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
         </nav>
       )}
 
-      {discovery && <div className="nav-discovery" role="status">{discovery.text}</div>}
+      {discovery && !launcher && <div className="nav-discovery" role="status">{discovery.text}</div>}
       {discovery?.everywhere && <Confetti fire={1} />}
 
       {launcher && (
