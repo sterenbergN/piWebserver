@@ -1112,12 +1112,12 @@ button.rc-pill-label { cursor: pointer; }
 .rc-new-btn { flex: none; padding: 0 0.9rem; }
 
 /* ══ The recipe box ══
-   Built like one, with a lid, a label holder, divider tabs and cards filed in a
-   stack, but out of the site's own theme colours, so it follows light and dark. */
+   Built like one, with a lid, a label holder and divider tabs, but out of the
+   site's own theme colours, so it follows light and dark. */
 .rc-box {
   --rc-metal: linear-gradient(color-mix(in srgb, var(--accent-light) 45%, white), var(--accent-light) 50%, color-mix(in srgb, var(--accent-light) 75%, black));
   --rc-inside: color-mix(in srgb, var(--rc-tray) 88%, black);
-  max-width: 44rem;
+  max-width: 64rem;
   margin: 0 auto;
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.22));
 }
@@ -1223,44 +1223,41 @@ button.rc-pill-label { cursor: pointer; }
 .rc-box .rc-empty,
 .rc-box .rc-notice { padding: 1.5rem 0.5rem 2.75rem; text-align: center; }
 
-/* The stack: each card covers the bottom of the one behind it. */
+/* Each card on its own, whole, with room around it. */
 .rc-cards {
-  --rc-card-height: 11.6rem;
-  --rc-card-shows: 6.75rem;
   list-style: none;
-  padding-top: 0.4rem;
-  background: linear-gradient(var(--rc-paper), var(--rc-paper)) top / 100% 1.4rem no-repeat;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 0.9rem 1rem;
+  padding: 0.7rem 0.15rem 1rem;
+  background: linear-gradient(var(--rc-paper), var(--rc-paper)) top / 100% 0.35rem no-repeat;
   border-radius: 2px;
 }
 .rc-card {
   position: relative;
   isolation: isolate;
-  height: var(--rc-card-height);
   transform: rotate(var(--rc-tilt, 0deg));
   transition: transform 0.14s ease;
 }
-.rc-card + .rc-card { margin-top: calc(var(--rc-card-shows) - var(--rc-card-height)); }
-/* Touching a card lifts it out of the stack, so the whole of it shows. */
 .rc-card:hover,
-.rc-card:focus-within,
-.rc-card:active {
-  z-index: 3;
-  transform: rotate(0deg) translateY(-0.35rem);
-}
+.rc-card:focus-within { transform: rotate(0deg) translateY(-2px); }
 
 .rc-card-link {
   display: block;
   height: 100%;
-  padding: 0.3rem 0.9rem 0;
+  min-height: 9.9rem;
+  padding: 0.3rem 0.9rem 0.2rem;
   background-color: var(--rc-paper);
   background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rc-line) - 1px), var(--rc-rule) calc(var(--rc-line) - 1px), var(--rc-rule) var(--rc-line));
   background-position: 0 1.9rem;
   border: 1px solid var(--surface-border);
-  border-radius: 4px 4px 0 0;
-  box-shadow: var(--rc-highlight), 0 -2px 5px rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  box-shadow: var(--rc-highlight), var(--rc-lift);
   color: var(--foreground);
   text-decoration: none;
+  transition: box-shadow 0.14s ease;
 }
+.rc-card:hover .rc-card-link { box-shadow: var(--rc-highlight), var(--rc-lift-high); }
 
 .rc-card-head {
   display: flex;
@@ -1283,9 +1280,8 @@ button.rc-pill-label { cursor: pointer; }
 .rc-card-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  height: calc(var(--rc-line) * 2);
   padding-right: 5.4rem;
   font-size: 1.02rem;
   font-weight: 650;
@@ -1305,11 +1301,9 @@ button.rc-pill-label { cursor: pointer; }
 .rc-card-line.is-ready { color: var(--success); font-weight: 600; }
 .rc-card-foot { padding-right: 0.25rem; min-height: var(--rc-line); font-size: 0.78rem; }
 
-/* The front of the box, with the cards dropping down behind it. */
+/* The front of the box. */
 .rc-box-front {
   position: relative;
-  z-index: 4;
-  margin-top: -1.5rem;
   padding: 0.55rem 0.7rem 0.75rem;
   background: linear-gradient(var(--surface-hover), var(--rc-paper));
   border: 1px solid var(--surface-border);
@@ -1372,7 +1366,6 @@ button.rc-pill-label { cursor: pointer; }
   font-size: 1.6rem;
 }
 
-/* On the card's top line, the part that shows while it's filed in the stack. */
 .rc-card-add {
   position: absolute;
   top: 0.1rem;

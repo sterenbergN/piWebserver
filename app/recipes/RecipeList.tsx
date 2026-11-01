@@ -258,7 +258,6 @@ export default function RecipeList({
                 {recipe.rating ? <span className="rc-card-rating">★ {recipe.rating.toFixed(1)}</span> : null}
               </span>
               <span className="rc-card-title">{recipe.title}</span>
-              {/* Filed in the stack, only the top of a card shows, so this line says what matters most. */}
               <span className={`rc-card-line${tracksHave && missing.length === 0 ? ' is-ready' : ''}`}>
                 {formatMinutes(schedule.totalMinutes)} ·{' '}
                 {tracksHave ? (missing.length === 0 ? '✓ have it all' : `need ${missing.length}`) : `serves ${recipe.servings}`}
