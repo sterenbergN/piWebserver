@@ -99,12 +99,12 @@ export default function SetPage() {
       </section>
 
       <section className="sd-card">
-        <h2>What the next test will do</h2>
-        <p className="hb-hint">Your AI gets the {brief.stems.length} questions so far and is told not to repeat them{hasResults ? ', along with how you did' : ''}. It’s set to {level?.label ?? 'Board level'}, and you can change that when you make it.</p>
+        <h2>What the next test can use</h2>
+        <p className="hb-hint">Your AI gets the {brief.stems.length} questions so far and is told not to repeat them. It’s set to {level?.label ?? 'Board level'}.{hasResults ? ' You choose which of your results go in when you make it.' : ' You can change that when you make it.'}</p>
         {!hasResults && tests.length > 0 && <p className="hb-hint">Take these tests first, and the next one can aim at what you missed.</p>}
         {brief.weak.length > 0 && (
           <div>
-            <p className="sd-setup-title">Aiming at your weakest topics</p>
+            <p className="sd-setup-title">Your trouble areas</p>
             <ul className="sd-topics">
               {brief.weak.slice(0, 8).map((t) => (
                 <li key={t.topic}>
@@ -115,9 +115,9 @@ export default function SetPage() {
             </ul>
           </div>
         )}
-        {brief.missed.length > 0 && <p className="hb-hint">It will come back at the ideas behind {brief.missed.length} question{brief.missed.length === 1 ? '' : 's'} you got wrong, in new ways.</p>}
-        {brief.unsure.length > 0 && <p className="hb-hint">It will also retest {brief.unsure.length} you marked “Not sure”.</p>}
-        {brief.strong.length > 0 && <p className="hb-hint">It will go easy on {brief.strong.slice(0, 4).map((t) => t.topic).join(', ')}, where you’re solid.</p>}
+        {brief.missed.length > 0 && <p className="hb-hint">It can come back at the ideas behind {brief.missed.length} question{brief.missed.length === 1 ? '' : 's'} you got wrong, in new ways.</p>}
+        {brief.unsure.length > 0 && <p className="hb-hint">It can retest {brief.unsure.length} you marked “Not sure”.</p>}
+        {brief.strong.length > 0 && <p className="hb-hint">It can go easy on {brief.strong.slice(0, 4).map((t) => t.topic).join(', ')}, where you’re solid.</p>}
       </section>
 
       <div className="sd-actions">

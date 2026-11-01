@@ -49,7 +49,9 @@ A set (`lib/study/sets.ts`) keeps several tests on one subject together at
 `/study/tests/sets/<id>`, and remembers how its prompt was made. Each new test's prompt
 lists what the set has already asked, with instructions not to repeat or reword it. Once
 tests have been taken, it adds scores, weakest and strongest topics, what she got wrong
-and what she picked, and what she marked "Not sure". The list of past questions is capped
+and what she picked, and what she marked "Not sure". She can untick her misses, trouble
+areas, "Not sure" retests or going easy on strong topics for any test; only the rule
+against repeats is fixed. The list of past questions is capped
 at the newest 120, each cut to a line, to keep the prompt a sensible length. A reply is
 also checked when it's pasted: exact and near-identical repeats within the set are
 dropped and listed, ignoring numbers, so a new age doesn't make a question new. Sets can't

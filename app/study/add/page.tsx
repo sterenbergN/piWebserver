@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { CopyPrompt, PasteReply } from '@/components/study/PromptSteps';
-import { buildTestPrompt, DIFFICULTIES, type PromptSource, type PromptStyle } from '@/lib/study/prompt';
+import { ALL_RESULTS, buildTestPrompt, DIFFICULTIES, type PromptSource, type PromptStyle, type ResultChoices } from '@/lib/study/prompt';
 import { dropRepeats, suggestDifficulty, type SetBrief, type SetSummary } from '@/lib/study/sets';
 import { parseTestReply, StudyInputError, type ParsedPack, type StudySummary } from '@/lib/study/study';
 
@@ -30,20 +30,31 @@ function readPack(text: string, earlier: string[]): { pack?: ParsedPack; error?:
   }
 }
 
-/** What the set has told this prompt to do differently. */
-function Tailoring({ brief }: { brief: SetBrief }) {
-  const lines = [
-    `Not to repeat the ${brief.stems.length} question${brief.stems.length === 1 ? '' : 's'} so far`,
-    brief.weak.length ? `To spend about half the test on ${brief.weak.slice(0, 3).map((t) => t.topic).join(', ')}${brief.weak.length > 3 ? ` and ${brief.weak.length - 3} more` : ''}` : '',
-    brief.missed.length ? `To come back at the ideas behind ${brief.missed.length} you got wrong, in new ways` : '',
-    brief.unsure.length ? `To retest ${brief.unsure.length} you weren’t sure of` : '',
-    brief.strong.length ? `To go easy on ${brief.strong.slice(0, 3).map((t) => t.topic).join(', ')}, where you’re solid` : '',
-  ].filter(Boolean);
+const someTopics = (topics: { topic: string }[]) => `${topics.slice(0, 3).map((t) => t.topic).join(', ')}${topics.length > 3 ? ` and ${topics.length - 3} more` : ''}`;
+
+/** Her results in this set, each hers to use or leave out. Only not repeating is fixed. */
+function Tailoring({ brief, use, onChange }: { brief: SetBrief; use: ResultChoices; onChange: (use: ResultChoices) => void }) {
+  const options = [
+    { key: 'missed', show: brief.missed.length, label: 'Go back over what I missed', detail: `The ideas behind ${brief.missed.length} you got wrong, asked in new ways.` },
+    { key: 'weak', show: brief.weak.length, label: 'Work on my trouble areas', detail: `About half the test on ${someTopics(brief.weak)}.` },
+    { key: 'unsure', show: brief.unsure.length, label: 'Retest what I wasn’t sure of', detail: `${brief.unsure.length} you got right but marked “Not sure”.` },
+    { key: 'strong', show: brief.strong.length, label: 'Go easy on what I’m solid on', detail: `Fewer questions on ${someTopics(brief.strong)}, and only harder ones.` },
+  ] as const;
+  const shown = options.filter((o) => o.show);
   return (
     <div className="sd-tailoring">
-      <p className="sd-setup-title">This prompt tells your AI:</p>
-      <ul>{lines.map((line) => <li key={line}>{line}</li>)}</ul>
-      {!brief.answered && <p className="hb-hint">Take the tests already in this set first, and it can use your results too.</p>}
+      {shown.length > 0 && (
+        <fieldset className="sd-results">
+          <legend className="sd-setup-title">Use my results from this set</legend>
+          {shown.map((o) => (
+            <label key={o.key} className="sd-check">
+              <input type="checkbox" checked={use[o.key]} onChange={(e) => onChange({ ...use, [o.key]: e.target.checked })} />
+              <span><strong>{o.label}</strong><small>{o.detail}</small></span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <p className="hb-hint">It won’t repeat the {brief.stems.length} question{brief.stems.length === 1 ? '' : 's'} so far.{brief.answered ? '' : ' Take the tests already in this set first, and it can use your results too.'}</p>
     </div>
   );
 }
@@ -63,6 +74,7 @@ export default function AddTestPage() {
   const [style, setStyle] = useState<PromptStyle>('vignette');
   const [difficulty, setDifficulty] = useState(3);
   const [useWeak, setUseWeak] = useState(true);
+  const [use, setUse] = useState(ALL_RESULTS);
   const [reply, setReply] = useState('');
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -102,11 +114,13 @@ export default function AddTestPage() {
   }, [target]);
 
   const weakTopics = useMemo(() => summary?.weakTopics.map((t) => t.topic) ?? [], [summary]);
+  // A set's own trouble areas come first. Until it has some, she can still use her overall ones.
+  const offerOverall = !brief?.weak.length && weakTopics.length > 0;
   const prompt = useMemo(() => buildTestPrompt({
-    source, course, focus, count, style, difficulty,
-    weakTopics: useWeak && !brief ? weakTopics : [],
+    source, course, focus, count, style, difficulty, use,
+    weakTopics: useWeak && offerOverall ? weakTopics : [],
     ...(brief ? { brief } : {}),
-  }), [source, course, focus, count, style, difficulty, useWeak, weakTopics, brief]);
+  }), [source, course, focus, count, style, difficulty, use, useWeak, offerOverall, weakTopics, brief]);
   const { pack, error } = useMemo(() => readPack(reply, brief?.stems ?? []), [reply, brief]);
   const nudge = brief ? suggestDifficulty(brief, difficulty) : null;
   const level = DIFFICULTIES[difficulty - 1] ?? DIFFICULTIES[2];
@@ -154,7 +168,7 @@ export default function AddTestPage() {
         </div>
         <div className="sd-fields">
           <label className="sd-wide">Set
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+            <select value={target} onChange={(e) => { setTarget(e.target.value); setUse(ALL_RESULTS); }}>
               <option value={NEW_SET}>New set</option>
               {sets.map((s) => <option key={s.id} value={s.id}>{s.title} ({s.tests} test{s.tests === 1 ? '' : 's'})</option>)}
               <option value={NO_SET}>Not in a set</option>
@@ -199,7 +213,7 @@ export default function AddTestPage() {
                   <button type="button" className="hb-small-btn" onClick={() => setDifficulty(nudge.level)}>Use level {nudge.level}</button>
                 </div>
               )}
-              {!brief && weakTopics.length > 0 && (
+              {offerOverall && (
                 <label className="sd-check sd-wide">
                   <input type="checkbox" checked={useWeak} onChange={(e) => setUseWeak(e.target.checked)} />
                   Ask about my weakest topics too ({weakTopics.slice(0, 3).join(', ')}{weakTopics.length > 3 ? '…' : ''})
@@ -211,7 +225,7 @@ export default function AddTestPage() {
         {source === 'notes' && count > LONG_TEST && (
           <p className="hb-hint">An AI may stop partway through a test this long. Every whole question still gets saved, or you can make two shorter tests.</p>
         )}
-        {source === 'notes' && brief && brief.testCount > 0 && <Tailoring brief={brief} />}
+        {source === 'notes' && brief && brief.testCount > 0 && <Tailoring brief={brief} use={use} onChange={setUse} />}
       </CopyPrompt>
 
       <PasteReply value={reply} onChange={(text) => { setReply(text); setSaveError(''); }}>

@@ -2,7 +2,7 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { triviaDeck, gamePool, recordGameAnswer } from './games';
 import { mathToPlain, repairMathEscapes, repairStoredMath, splitMath } from './math';
-import { buildTestPrompt, DIFFICULTIES } from './prompt';
+import { ALL_RESULTS, buildTestPrompt, DIFFICULTIES, type ResultChoices } from './prompt';
 import { createSet, dropRepeats, editSet, isRepeat, moveTest, nextTestTitle, readDifficulty, removeSet, setBrief, setSummaries, suggestDifficulty, testsInSet } from './sets';
 import {
   addTest, emptyProgress, emptyTests, finishAttempt, normalizeTests, parseTestReply, saveAttempt, startAttempt, studySummary, type ProgressData, type StudyTest,
@@ -291,6 +291,54 @@ test('the next prompt in a set steers away from repeats and toward what’s need
   assert.match(prompt, /fewer questions/, 'better to come up short than repeat');
   // Still a reply the parser reads.
   assert.equal(parseTestReply(prompt.match(/```json\n([\s\S]+?)```/)![1]).questions.length, 1);
+});
+
+test('she chooses which results the next prompt uses', () => {
+  const { data, set, first, second } = setWithTests();
+  const progress = emptyProgress();
+  take(progress, first, [1, 0, 1]);
+  take(progress, second, [0, -1], [0]);
+  const brief = setBrief(data, progress, set.id)!;
+  const withUse = (use: Partial<ResultChoices>) => buildTestPrompt({ ...baseOptions, brief, use });
+  const MISSED = /I got these wrong/;
+  const WEAK = /where I’m weakest/;
+  const UNSURE = /wasn’t sure/;
+
+  assert.equal(withUse({}), buildTestPrompt({ ...baseOptions, brief }), 'everything is on unless she says otherwise');
+  assert.equal(withUse(ALL_RESULTS), buildTestPrompt({ ...baseOptions, brief }));
+
+  const noMisses = withUse({ missed: false });
+  assert.doesNotMatch(noMisses, MISSED);
+  assert.match(noMisses, WEAK);
+  assert.match(noMisses, UNSURE);
+
+  const noWeak = withUse({ weak: false });
+  assert.doesNotMatch(noWeak, WEAK);
+  assert.match(noWeak, MISSED);
+
+  const noUnsure = withUse({ unsure: false });
+  assert.doesNotMatch(noUnsure, UNSURE);
+  assert.match(noUnsure, MISSED);
+
+  const none = withUse({ missed: false, weak: false, unsure: false });
+  for (const gone of [MISSED, WEAK, UNSURE, /How I’ve done/]) assert.doesNotMatch(none, gone);
+  assert.match(none, /Do not repeat/, 'repeats are never allowed');
+  assert.ok(none.includes(first.questions[1].stem.slice(0, 40)), 'so it still sees what’s been asked');
+  assert.match(none, /Cover the material evenly/);
+  assert.doesNotMatch(noMisses, /Cover the material evenly/);
+});
+
+test('going easy on a strong topic can be turned off', () => {
+  const data = emptyTests();
+  const set = createSet(data, { title: 'X' }, makeId, NOW);
+  const t = addTest(data, pack(...['one', 'two', 'three'].map((n) => q(`Question ${n} about the same strong topic for this test?`, 'Strong'))), { setId: set.id }, makeId, NOW);
+  const progress = emptyProgress();
+  take(progress, t, [0, 0, 0]);
+  const brief = setBrief(data, progress, set.id)!;
+  assert.match(buildTestPrompt({ ...baseOptions, brief }), /I’m solid on these/);
+  const off = buildTestPrompt({ ...baseOptions, brief, use: { strong: false } });
+  assert.doesNotMatch(off, /I’m solid on these/);
+  assert.doesNotMatch(off, /How I’ve done/);
 });
 
 test('a set with nothing taken yet still avoids repeats, and doesn’t invent feedback', () => {

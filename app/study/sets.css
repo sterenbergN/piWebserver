@@ -22,8 +22,12 @@
 .sd-difficulty .hb-hint { font-weight: 400; margin: 0.15rem 0 0; }
 .sd-nudge { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.75rem; padding: 0.5rem 0.7rem; border-radius: 10px; background: var(--input-bg); font-size: 0.88rem; }
 .sd-tailoring { padding: 0.65rem 0.8rem; border-radius: 12px; background: var(--input-bg); border-left: 3px solid var(--accent-light); }
-.sd-tailoring ul { margin: 0.25rem 0 0; padding-left: 1.15rem; font-size: 0.9rem; line-height: 1.5; color: var(--foreground); }
-.sd-tailoring .hb-hint { margin-top: 0.35rem; }
+.sd-tailoring .hb-hint { margin: 0; }
+.sd-results { display: flex; flex-direction: column; gap: 0.55rem; min-width: 0; margin: 0 0 0.6rem; padding: 0; border: 0; }
+.sd-results legend { margin-bottom: 0.5rem; padding: 0; }
+.sd-results .sd-check span { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; color: var(--foreground); }
+.sd-results .sd-check strong { font-weight: 600; }
+.sd-results .sd-check small { color: var(--muted); font-size: 0.84rem; line-height: 1.4; }
 
 .sd-set-move { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; font-size: 0.9rem; }
 .sd-set-move select { flex: 1 1 12rem; min-height: 2.4rem; padding: 0.35rem 0.6rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; }

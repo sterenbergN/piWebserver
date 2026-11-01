@@ -19,7 +19,11 @@ export type PromptOptions = {
   difficulty?: number;
   /** For another test in a set: what's been asked, and how it went. */
   brief?: SetBrief;
+  /** Which of her results in that set to use. All of them unless she unticks some. */
+  use?: Partial<ResultChoices>;
 };
+export type ResultChoices = { missed: boolean; weak: boolean; unsure: boolean; strong: boolean };
+export const ALL_RESULTS: ResultChoices = { missed: true, weak: true, unsure: true, strong: true };
 
 export const DIFFICULTIES = [
   { level: 1, label: 'Foundations', blurb: 'Direct questions on the key facts.', prompt: 'Difficulty: foundations. Test the key facts directly and clearly, with one obviously best answer once you know the fact. Keep any patient scenario short and typical.' },
@@ -82,20 +86,33 @@ export function buildTestPrompt(options: PromptOptions) {
   }
 
   const level = DIFFICULTIES.find((d) => d.level === options.difficulty) ?? DIFFICULTIES[2];
-  const series = options.brief?.testCount ? seriesSections(options.brief) : [];
+  const brief = options.brief?.testCount ? chosenResults(options.brief, options.use) : null;
   return [
     `You are writing a practice exam for a physician assistant student${course ? ` in ${course}` : ''}. Use the notes I’ve attached or pasted as your only source.`,
     `Write ${count} multiple-choice questions, each with 4 or 5 choices and a single best answer. ${STYLES[options.style] ?? STYLES.mixed}`,
     level.prompt,
-    focus ? `Focus on: ${focus}.` : series.length ? '' : 'Cover the material evenly, and spend more questions on what the notes spend more time on.',
+    focus ? `Focus on: ${focus}.` : brief && usesResults(brief) ? '' : 'Cover the material evenly, and spend more questions on what the notes spend more time on.',
     weak.length ? `I’ve been missing these topics, so include them if the notes cover them: ${weak.join(', ')}.` : '',
-    ...series,
+    ...(brief ? seriesSections(brief) : []),
     'Accuracy matters more than anything else, because I’ll be learning from this. Every question must be supported by the notes, and "quote" must copy the exact line it comes from. If the notes don’t support a question, leave it out, even if that means fewer questions. Wrong choices should be believable but clearly wrong for a stated reason.',
     FORMAT,
   ].filter(Boolean).join('\n\n');
 }
 
 const list = (lines: string[]) => lines.join('\n');
+const usesResults = (brief: SetBrief) => brief.weak.length + brief.missed.length + brief.unsure.length + brief.strong.length > 0;
+
+/** Leaves out whatever she's unticked. Untick it all, and her scores have nothing left to steer. */
+function chosenResults(brief: SetBrief, use: Partial<ResultChoices> = {}): SetBrief {
+  const chosen = {
+    ...brief,
+    weak: use.weak === false ? [] : brief.weak,
+    missed: use.missed === false ? [] : brief.missed,
+    unsure: use.unsure === false ? [] : brief.unsure,
+    strong: use.strong === false ? [] : brief.strong,
+  };
+  return usesResults(brief) && !usesResults(chosen) ? { ...chosen, scores: [] } : chosen;
+}
 
 /** What makes the next test in a set different: no repeats, and aimed at what she needs. */
 function seriesSections(brief: SetBrief) {
