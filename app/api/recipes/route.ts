@@ -7,6 +7,7 @@ import { removeRecipePhoto } from '@/lib/recipes/photos';
 import {
   DEFAULT_RECIPES,
   RecipeInputError,
+  detachSubRecipe,
   normalizeRecipe,
   normalizeRecipesData,
   publicRecipe,
@@ -109,7 +110,8 @@ export async function POST(request: Request) {
         if (!recipe) throw new ApiError(404, 'Recipe not found.');
         if (!canDelete(viewer, recipe)) throw new ApiError(403, 'Only whoever added this recipe can delete it.');
         stored.version = 1;
-        stored.recipes = data.recipes.filter((r) => r.id !== id);
+        // Recipes that use it as a part keep a copy of its steps, so deleting it breaks nothing.
+        stored.recipes = data.recipes.filter((r) => r.id !== id).map((r) => detachSubRecipe(r, recipe));
         return unusedPhoto(stored.recipes, recipe.photo);
       });
       await removeRecipePhoto(unused);

@@ -171,6 +171,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/recipes', label: 'Recipes', icon: '🍳', blurb: 'The recipe box and cook mode', keywords: 'cooking food' },
         { href: '/recipes?view=week', label: 'Meal plan', icon: '🗓️', short: 'Plan', blurb: 'Plan the week and meal prep', keywords: 'dinner week planner prep household share' },
         { href: '/recipes?view=list', label: 'Grocery list', icon: '🛒', short: 'Groceries', blurb: 'What to buy, by aisle', keywords: 'shopping groceries store buy household share' },
+        { href: '/recipes?view=pantry', label: 'Pantry', icon: '🥫', blurb: 'What you have at home, and what to use up', keywords: 'kitchen stock ran out have ingredients shelf leftovers' },
       ],
     },
     {

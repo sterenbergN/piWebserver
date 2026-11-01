@@ -1,9 +1,42 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { parseStepTokens, stepPlainText, type BomItem, type GanttBlock, type Recipe, type TimerToken, type UnitMode } from '@/lib/recipes/recipes';
+import { madeKey, parseStepTokens, stepPlainText, type BomItem, type GanttBlock, type Recipe, type TimerToken, type UnitMode } from '@/lib/recipes/recipes';
 import { IngredientRows, PAUSE, PLAY, StepText, TimerPills, formatClock, timerIdFor, timerLabel } from './shared';
+import type { Kitchen } from './useKitchen';
 import { isRunning, secondsLeft, type RecipeTimers } from './useRecipeTimers';
+
+/** The moment you know best what's left: one tap for low, another for gone, a third to take it back. */
+function RanOutChips({ bom, kitchen }: { bom: BomItem[]; kitchen: Kitchen }) {
+  const items = bom.filter((item) => kitchen.state.have.includes(item.key) || kitchen.state.pantry[item.key]?.out).slice(0, 12);
+  if (!items.length) return null;
+  return (
+    <div className="rc-ranout">
+      <span className="rc-meta">Anything run out? Tap once if it’s low, twice if it’s gone.</span>
+      <div className="rc-have-chips">
+        {items.map((item) => {
+          const detail = kitchen.state.pantry[item.key];
+          const state = detail?.out ? 'out' : detail?.low ? 'low' : 'ok';
+          return (
+            <button
+              key={item.key}
+              type="button"
+              className={`rc-chip${state !== 'ok' ? ' is-active' : ''}`}
+              onClick={() => {
+                if (state === 'ok') kitchen.setPantry(item.key, item.name, { low: true });
+                else if (state === 'low') kitchen.ranOut(item.key, item.name);
+                else kitchen.setPantry(item.key, item.name, { low: false });
+              }}
+            >
+              {item.name}
+              {state !== 'ok' ? ` · ${state}` : ''}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 /** A big timer under the step: tap to start, pause or resume; fills up as it runs. */
 function BigTimer({ id, seg, label, recipeSlug, timers }: { id: string; seg: TimerToken; label: string; recipeSlug: string; timers: RecipeTimers }) {
@@ -66,6 +99,8 @@ export default function CookMode({
   onStep,
   onClose,
   onLogCook,
+  kitchen,
+  keepsBatch,
 }: {
   recipe: Recipe;
   order: GanttBlock[];
@@ -84,6 +119,9 @@ export default function CookMode({
   onStep: (step: number) => void;
   onClose: () => void;
   onLogCook: (undo?: boolean) => void;
+  kitchen?: Kitchen;
+  /** Other recipes use this one as a part, so a batch of it is worth keeping track of. */
+  keepsBatch?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [showIngredients, setShowIngredients] = useState(false);
@@ -200,6 +238,12 @@ export default function CookMode({
                 Log this cook
               </button>
             ))}
+          {kitchen && keepsBatch && (
+            <button type="button" className="rc-paper-btn" onClick={() => kitchen.setMade(recipe, !kitchen.state.have.includes(madeKey(recipe.id)))}>
+              {kitchen.state.have.includes(madeKey(recipe.id)) ? '✓ The rest is in the pantry' : 'Keep the rest for other recipes'}
+            </button>
+          )}
+          {kitchen && <RanOutChips bom={bom} kitchen={kitchen} />}
           {onRate && (
             <div className="rc-rate" role="group" aria-label="Rate this recipe">
               <span className="rc-meta">How was it?</span>

@@ -7,6 +7,7 @@ import {
   formatIngredientAmount,
   formatTemp,
   parseStepTokens,
+  type Amount,
   type BomItem,
   type TimerToken,
   type UnitMode,
@@ -169,6 +170,12 @@ export function TimerPills({
   );
 }
 
+/** "~1 ½ cups": how much is on the shelf, with a ~ when that's worked out rather than told. */
+export function stockLabel(amount: Amount | undefined, unitMode: UnitMode, estimated?: boolean) {
+  if (!amount) return '';
+  return `${estimated ? '~' : ''}${formatIngredientAmount(amount, 1, unitMode)}`;
+}
+
 /** Ingredient rows. With `onToggle` they're tap-to-check; without, just a list. */
 export function IngredientRows({
   items,
@@ -177,6 +184,7 @@ export function IngredientRows({
   isChecked,
   isStruck,
   onToggle,
+  renderAside,
 }: {
   items: BomItem[];
   scale: number;
@@ -185,6 +193,8 @@ export function IngredientRows({
   /** Crossed out, e.g. already used in this cook. */
   isStruck?: (item: BomItem) => boolean;
   onToggle?: (item: BomItem) => void;
+  /** Something beside the row, such as how much is at home. */
+  renderAside?: (item: BomItem) => React.ReactNode;
 }) {
   return (
     <ul className="rc-ingredients">
@@ -207,6 +217,7 @@ export function IngredientRows({
             ) : (
               <div className={className}>{content}</div>
             )}
+            {renderAside?.(item)}
           </li>
         );
       })}

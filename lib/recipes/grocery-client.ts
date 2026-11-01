@@ -54,7 +54,7 @@ export function readLocalKitchen(): KitchenState {
   }
 }
 
-export const isEmptyKitchen = (k: KitchenState) => !k.have.length && !Object.keys(k.plans).length && !k.listRecipes.length && !k.listItems.length;
+export const isEmptyKitchen = (k: KitchenState) => !k.have.length && !Object.keys(k.pantry).length && !Object.keys(k.plans).length && !k.listRecipes.length && !k.listItems.length;
 
 /**
  * Put something on the list: in the household's when signed in (the server adds

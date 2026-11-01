@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import { useWakeLock } from '@/components/useWakeLock';
 import { addDays, type DateKey } from '@/lib/habits/dates';
-import { buildPrepSession, buildShoppingList, currentWeek, dayInfo, haveSet, missingIngredients, weekLabel, type PlanEntry } from '@/lib/recipes/kitchen';
+import { buildPrepSession, buildShoppingList, currentWeek, dayInfo, missingIngredients, weekLabel, type PlanEntry } from '@/lib/recipes/kitchen';
 import { buildSchedule, cookOrder, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import CookMode from './CookMode';
@@ -45,7 +45,10 @@ function PlanRow({
         className="rc-check-btn"
         aria-pressed={Boolean(entry.cooked)}
         aria-label={entry.cooked ? `${recipe.title}: not cooked yet` : `${recipe.title}: cooked`}
-        onClick={() => kitchen.updateEntry(week, entry.id, { cooked: !entry.cooked })}
+        onClick={() => {
+          if (entry.cooked) kitchen.uncookEntry(week, entry);
+          else kitchen.cook(recipe, entry.servings, { week, entry });
+        }}
       >
         <span className="rc-check" aria-hidden="true">{entry.cooked ? '✓' : ''}</span>
       </button>
@@ -78,6 +81,7 @@ export default function WeekView({
   onWeek,
   onOpenRecipe,
   onShowList,
+  onPlanWithAi,
 }: {
   recipes: Recipe[];
   kitchen: Kitchen;
@@ -87,6 +91,8 @@ export default function WeekView({
   onWeek: (week: DateKey) => void;
   onOpenRecipe: (slug: string, servings: number) => void;
   onShowList: () => void;
+  /** Signed in only: AI-written recipes have to be saved. */
+  onPlanWithAi?: () => void;
 }) {
   const [pickerDay, setPickerDay] = useState<number | null | 'closed'>('closed');
   // For an exam week: the fastest meals in the box.
@@ -106,7 +112,6 @@ export default function WeekView({
   const canCopyLast = !entries.length && (kitchen.state.plans[previous] || []).length > 0;
 
   const list = useMemo(() => buildShoppingList(recipes, kitchen.state, week), [recipes, kitchen.state, week]);
-  const have = useMemo(() => haveSet(kitchen.state), [kitchen.state]);
 
   const servingsTotal = entries.reduce((sum, e) => sum + e.servings, 0);
 
@@ -136,8 +141,8 @@ export default function WeekView({
     const q = pickerQuery.trim().toLowerCase();
     return recipes
       .filter((r) => !q || r.title.toLowerCase().includes(q) || r.tags.some((t) => t.toLowerCase().includes(q)))
-      .sort((a, b) => missingIngredients(a, have).length - missingIngredients(b, have).length || (b.rating || 0) - (a.rating || 0));
-  }, [recipes, pickerQuery, have]);
+      .sort((a, b) => missingIngredients(a, kitchen.state).length - missingIngredients(b, kitchen.state).length || (b.rating || 0) - (a.rating || 0));
+  }, [recipes, pickerQuery, kitchen.state]);
 
   const dayCalories = (dayEntries: PlanEntry[]) => {
     const known = dayEntries.flatMap((e) => {
@@ -185,10 +190,19 @@ export default function WeekView({
         </strong>
       </button>
 
-      {canCopyLast && (
-        <button type="button" className="rc-chip rc-copy-week" onClick={() => kitchen.copyWeek(previous, week)}>
-          Copy last week’s plan
-        </button>
+      {(canCopyLast || onPlanWithAi) && (
+        <div className="rc-week-tools">
+          {canCopyLast && (
+            <button type="button" className="rc-chip rc-copy-week" onClick={() => kitchen.copyWeek(previous, week)}>
+              Copy last week’s plan
+            </button>
+          )}
+          {onPlanWithAi && (
+            <button type="button" className="rc-chip rc-copy-week" onClick={onPlanWithAi}>
+              Plan it with your AI
+            </button>
+          )}
+        </div>
       )}
 
       <section className="rc-prep-card" aria-label="Meal prep">
@@ -214,6 +228,9 @@ export default function WeekView({
               {session.recipeCount > 1 ? `All ${session.recipeCount} merged into one order: ` : ''}
               {formatMinutes(session.schedule.totalMinutes)}, {formatMinutes(session.schedule.activeMinutes)} hands-on
             </p>
+            {session.ovenClash.length > 0 && (
+              <p className="rc-meta">One oven, different temperatures: {session.ovenClash.map((t) => `${t}°F`).join(' and ')}. Plan which goes in first.</p>
+            )}
             <button type="button" className="btn btn-primary" onClick={() => setSessionStep(0)}>
               Start prep session
             </button>
@@ -269,7 +286,7 @@ export default function WeekView({
             />
             <ul className="rc-picker">
               {pickerRecipes.map((recipe) => {
-                const missing = missingIngredients(recipe, have).length;
+                const missing = missingIngredients(recipe, kitchen.state).length;
                 return (
                   <li key={recipe.id}>
                     <button
@@ -309,10 +326,16 @@ export default function WeekView({
           cookLogged={false}
           onStep={(next) => setSessionStep(Math.max(0, Math.min(next, sessionOrder.length)))}
           onClose={() => {
-            if (sessionStep >= sessionOrder.length) kitchen.markCooked(week, prepToCook.map((e) => e.id));
+            if (sessionStep >= sessionOrder.length) {
+              for (const entry of prepToCook) {
+                const recipe = byId.get(entry.recipeId);
+                if (recipe) kitchen.cook(recipe, entry.servings, { week, entry });
+              }
+            }
             closeSession();
           }}
           onLogCook={() => {}}
+          kitchen={kitchen}
         />
       )}
     </>

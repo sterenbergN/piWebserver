@@ -4,14 +4,20 @@ import { useMemo, useRef, useState } from 'react';
 import { mediaSrc } from '@/lib/media-url';
 import {
   CATEGORY_LABELS,
+  EQUIPMENT_OPTIONS,
   RECIPE_CATEGORIES,
   buildSchedule,
+  canonicalEquipment,
   cleanRecipeEmoji,
+  detachSubRecipe,
   extractIngredients,
   formatBomAmount,
   parseStepKey,
   recipeEmoji,
+  resolveRecipe,
   smartAnnotateText,
+  suggestEquipment,
+  usesRecipe,
   type Recipe,
   type RecipeCategory,
   type RecipeSection,
@@ -28,7 +34,7 @@ export type EditorDraft = {
   servings: number;
   prepMinutes: string;
   cookMinutes: string;
-  equipmentText: string;
+  equipment: string[];
   tagsText: string;
   photo: string;
   emoji: string;
@@ -51,7 +57,7 @@ export function emptyDraft(): EditorDraft {
     servings: 4,
     prepMinutes: '',
     cookMinutes: '',
-    equipmentText: '',
+    equipment: [],
     tagsText: '',
     photo: '',
     emoji: '',
@@ -77,7 +83,7 @@ export function importedToDraft(recipe: ImportedRecipe & { photo?: string }): Ed
     servings: recipe.servings,
     prepMinutes: recipe.prepMinutes ? String(recipe.prepMinutes) : '',
     cookMinutes: recipe.cookMinutes ? String(recipe.cookMinutes) : '',
-    equipmentText: recipe.equipment.join(', '),
+    equipment: recipe.equipment.map(canonicalEquipment),
     tagsText: recipe.tags.join(', '),
     photo: recipe.photo || '',
     calories: recipe.macros?.calories !== undefined ? String(recipe.macros.calories) : '',
@@ -99,7 +105,7 @@ export function recipeToDraft(r: Recipe): EditorDraft {
     servings: r.servings,
     prepMinutes: r.prepMinutes ? String(r.prepMinutes) : '',
     cookMinutes: r.cookMinutes ? String(r.cookMinutes) : '',
-    equipmentText: r.equipment.join(', '),
+    equipment: r.equipment,
     tagsText: r.tags.join(', '),
     photo: r.photo || '',
     emoji: r.emoji || '',
@@ -150,18 +156,29 @@ const TOKENS = [
 
 export default function RecipeEditor({
   initial,
+  recipes,
   timers,
   onCancel,
   onSaved,
+  onCreatedPart,
   showAlert,
 }: {
   initial: EditorDraft;
+  /** Every recipe as stored, to use as parts. */
+  recipes: Recipe[];
   timers: RecipeTimers;
   onCancel: () => void;
   onSaved: (recipe: Recipe, canDelete: boolean) => void;
+  /** A part was split off into a recipe of its own, without leaving this one. */
+  onCreatedPart: (recipe: Recipe, canDelete: boolean) => void;
   showAlert: (message: string) => Promise<void> | void;
 }) {
   const [draft, setDraft] = useState<EditorDraft>(initial);
+  const [linking, setLinking] = useState(false);
+  const [linkQuery, setLinkQuery] = useState('');
+  const [splitting, setSplitting] = useState<number | null>(null);
+  const [showAllGear, setShowAllGear] = useState(false);
+  const [newGear, setNewGear] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showEmojis, setShowEmojis] = useState(false);
@@ -171,16 +188,100 @@ export default function RecipeEditor({
   // The last focused step and caret, so the token buttons insert at the cursor.
   const focusedStepRef = useRef<{ sIdx: number; stIdx: number; caret: number } | null>(null);
 
-  const previewBom = useMemo(() => extractIngredients({ sections: draft.sections }), [draft.sections]);
+  const byId = useMemo(() => new Map(recipes.map((r) => [r.id, r])), [recipes]);
+  // The preview counts what linked recipes bring with them.
+  const resolved = useMemo(() => resolveRecipe({ id: draft.id ?? '', sections: draft.sections, equipment: [] }, byId), [draft.id, draft.sections, byId]);
+  const previewBom = useMemo(() => extractIngredients(resolved), [resolved]);
   const previewSchedule = useMemo(
     () =>
       buildSchedule({
-        sections: draft.sections,
+        sections: resolved.sections,
         prepMinutes: Number(draft.prepMinutes) || undefined,
         cookMinutes: Number(draft.cookMinutes) || undefined,
       }),
-    [draft.sections, draft.prepMinutes, draft.cookMinutes],
+    [resolved, draft.prepMinutes, draft.cookMinutes],
   );
+
+  // With nothing picked, the equipment is whatever the steps call for: picking takes over from there.
+  const suggested = useMemo(() => suggestEquipment(draft.sections), [draft.sections]);
+  const gear = draft.equipment.length ? draft.equipment : suggested;
+  const gearShown = showAllGear ? [...new Set([...EQUIPMENT_OPTIONS, ...gear])] : gear;
+  const toggleGear = (item: string) => update('equipment', gear.includes(item) ? gear.filter((g) => g !== item) : [...gear, item]);
+  const addGear = () => {
+    const clean = canonicalEquipment(newGear);
+    if (clean && !gear.includes(clean)) update('equipment', [...gear, clean]);
+    setNewGear('');
+  };
+
+  // A recipe that uses this one can't also be a part of it.
+  const linkable = useMemo(() => {
+    const q = linkQuery.trim().toLowerCase();
+    return recipes
+      .filter((r) => !draft.id || !usesRecipe(r, draft.id, byId))
+      .filter((r) => !draft.sections.some((s) => s.sub?.recipeId === r.id))
+      .filter((r) => !q || r.title.toLowerCase().includes(q))
+      .sort((a, b) => Number(b.category === 'sauce') - Number(a.category === 'sauce') || a.title.localeCompare(b.title));
+  }, [recipes, draft.id, draft.sections, linkQuery, byId]);
+
+  const addLink = (recipe: Recipe) => {
+    // A recipe that's only an empty "Main" so far has nothing worth keeping.
+    const keep = draft.sections.filter((s) => s.sub || s.name !== 'Main' || s.steps.some((step) => step.trim()));
+    update('sections', [...keep, { name: '', steps: [], sub: { recipeId: recipe.id, servings: draft.servings } }]);
+    setLinking(false);
+    setLinkQuery('');
+    focusedStepRef.current = null;
+  };
+
+  // Lift a part out into a recipe of its own, and leave a link where it was.
+  const splitPart = async (sIdx: number) => {
+    const sec = draft.sections[sIdx];
+    if (!sec.name.trim()) {
+      await showAlert('Give this part a name first, like Tzatziki. That becomes the new recipe’s name.');
+      return;
+    }
+    setSplitting(sIdx);
+    try {
+      const res = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'save',
+          recipe: {
+            title: sec.name,
+            category: 'sauce',
+            servings: draft.servings,
+            private: draft.isPrivate,
+            sections: [{ name: 'Main', steps: sec.steps }],
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.recipe) {
+        await showAlert(data?.message || 'Could not make that into a recipe.');
+        return;
+      }
+      onCreatedPart(data.recipe, Boolean(data.canDelete));
+      focusedStepRef.current = null;
+      setDraft((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s, i) => {
+          if (i === sIdx) return { name: '', steps: [], sub: { recipeId: data.recipe.id, servings: prev.servings }, ...(s.readyBy ? { readyBy: s.readyBy } : {}) };
+          // Its steps have moved, so nothing here can be timed against them any more.
+          return parseStepKey(s.readyBy)?.section === sIdx ? { name: s.name, steps: s.steps } : s;
+        }),
+      }));
+    } catch {
+      await showAlert('Network error. Try again.');
+    } finally {
+      setSplitting(null);
+    }
+  };
+
+  // Keep this recipe's own copy of the steps, cut off from the original.
+  const detachPart = (recipeId: string) => {
+    const child = byId.get(recipeId);
+    if (child) update('sections', detachSubRecipe({ id: draft.id ?? '', sections: draft.sections }, child).sections);
+  };
 
   const update = <K extends keyof EditorDraft>(key: K, value: EditorDraft[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
 
@@ -201,7 +302,7 @@ export default function RecipeEditor({
             servings: draft.servings,
             prepMinutes: draft.prepMinutes ? Number(draft.prepMinutes) : undefined,
             cookMinutes: draft.cookMinutes ? Number(draft.cookMinutes) : undefined,
-            equipment: toList(draft.equipmentText),
+            equipment: draft.equipment,
             tags: toList(draft.tagsText),
             photo: draft.photo || undefined,
             emoji: draft.emoji,
@@ -254,7 +355,8 @@ export default function RecipeEditor({
   // Insert at the caret of the last focused step (the last step if that one
   // was removed), then select what's inside the brackets to type over it.
   const insertToken = (token: string) => {
-    const lastSec = draft.sections.length - 1;
+    const lastSec = draft.sections.reduce((last, s, i) => (s.sub ? last : i), -1);
+    if (lastSec < 0) return; // nothing but linked recipes, whose steps live elsewhere
     const focused = focusedStepRef.current;
     const target =
       focused && draft.sections[focused.sIdx]?.steps[focused.stIdx] !== undefined
@@ -290,8 +392,9 @@ export default function RecipeEditor({
       .filter(Boolean)
       .map((line) => smartAnnotateText(line));
     if (!lines.length) return;
-    const sections = [...draft.sections];
-    sections[0] = { ...sections[0], steps: [...sections[0].steps.filter(Boolean), ...lines] };
+    const target = Math.max(0, draft.sections.findIndex((s) => !s.sub));
+    const sections = draft.sections.some((s) => !s.sub) ? [...draft.sections] : [{ name: 'Main', steps: [] }, ...draft.sections];
+    sections[target] = { ...sections[target], steps: [...sections[target].steps.filter(Boolean), ...lines] };
     setDraft({ ...draft, sections });
     setPasteText('');
     setShowPaste(false);
@@ -444,7 +547,46 @@ export default function RecipeEditor({
             </div>
           )}
 
-          {draft.sections.map((sec, sIdx) => (
+          {draft.sections.map((sec, sIdx) => sec.sub ? (
+            <div key={sIdx} className="rc-edit-part rc-edit-link">
+              <div className="rc-edit-part-head">
+                <strong className="rc-edit-link-name">
+                  <span aria-hidden="true">↗</span> {byId.get(sec.sub.recipeId)?.title || 'A recipe that’s gone'}
+                </strong>
+                <button
+                  type="button"
+                  className="rc-icon-btn"
+                  aria-label={`Remove ${byId.get(sec.sub.recipeId)?.title || 'this part'}`}
+                  onClick={() => {
+                    focusedStepRef.current = null;
+                    const left = remapReadyBy(draft.sections.filter((_, i) => i !== sIdx), { section: sIdx });
+                    update('sections', left.length ? left : [{ name: 'Main', steps: [''] }]);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="rc-edit-link-row">
+                <div className="rc-stepper" role="group" aria-label="Servings of it that go in">
+                  <button type="button" aria-label="Fewer servings" disabled={sec.sub.servings <= 1} onClick={() => setSection(sIdx, { ...sec, sub: { ...sec.sub!, servings: sec.sub!.servings - 1 } })}>
+                    −
+                  </button>
+                  <span>
+                    {sec.sub.servings} {sec.sub.servings === 1 ? 'serving' : 'servings'} of it
+                  </span>
+                  <button type="button" aria-label="More servings" onClick={() => setSection(sIdx, { ...sec, sub: { ...sec.sub!, servings: Math.min(48, sec.sub!.servings + 1) } })}>
+                    +
+                  </button>
+                </div>
+                {byId.has(sec.sub.recipeId) && (
+                  <button type="button" className="rc-text-btn" onClick={() => detachPart(sec.sub!.recipeId)}>
+                    Copy the steps in instead
+                  </button>
+                )}
+              </div>
+              <p className="rc-meta">Its steps and ingredients come from that recipe, so a change there shows up here too.</p>
+            </div>
+          ) : (
             <div key={sIdx} className="rc-edit-part">
               {draft.sections.length > 1 && (
                 <>
@@ -529,9 +671,16 @@ export default function RecipeEditor({
                 </div>
               ))}
 
-              <button type="button" className="rc-text-btn" onClick={() => setSection(sIdx, { ...sec, steps: [...sec.steps, ''] })}>
-                + Add step
-              </button>
+              <div className="rc-edit-part-foot">
+                <button type="button" className="rc-text-btn" onClick={() => setSection(sIdx, { ...sec, steps: [...sec.steps, ''] })}>
+                  + Add step
+                </button>
+                {draft.sections.length > 1 && sec.steps.some((s) => s.trim()) && (
+                  <button type="button" className="rc-text-btn rc-muted-btn" disabled={splitting !== null} onClick={() => splitPart(sIdx)}>
+                    {splitting === sIdx ? 'Making it…' : 'Make this its own recipe'}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
 
@@ -542,6 +691,11 @@ export default function RecipeEditor({
           >
             + Add a part that cooks at the same time
           </button>
+          {recipes.length > 0 && (
+            <button type="button" className="rc-text-btn" onClick={() => setLinking(true)}>
+              + Use another recipe as a part
+            </button>
+          )}
 
           <div className="rc-token-bar" role="group" aria-label="Insert into the step">
             <span className="rc-meta">Insert</span>
@@ -558,6 +712,43 @@ export default function RecipeEditor({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="rc-field">
+          Equipment
+          {!draft.equipment.length && suggested.length > 0 && <span className="rc-meta">Worked out from your steps. Tap to change.</span>}
+          <div className="rc-chips rc-chips-wrap">
+            {gearShown.map((item) => (
+              <button key={item} type="button" className={`rc-chip${gear.includes(item) ? ' is-active' : ''}`} aria-pressed={gear.includes(item)} onClick={() => toggleGear(item)}>
+                {item}
+              </button>
+            ))}
+            <button type="button" className="rc-chip rc-chip-more" aria-expanded={showAllGear} onClick={() => setShowAllGear((v) => !v)}>
+              {showAllGear ? 'Fewer' : gearShown.length ? 'More' : 'Choose'}
+            </button>
+          </div>
+          {showAllGear && (
+            <div className="rc-gear-add">
+              <input
+                className="rc-input"
+                placeholder="Something else, like Smoker"
+                aria-label="Add other equipment"
+                value={newGear}
+                onChange={(e) => setNewGear(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addGear();
+                  }
+                }}
+              />
+              {newGear.trim() && (
+                <button type="button" className="rc-text-btn" onClick={addGear}>
+                  Add
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <label className="rc-toggle">
@@ -599,10 +790,6 @@ export default function RecipeEditor({
               </label>
             </div>
             <label className="rc-field">
-              Equipment (comma-separated)
-              <input className="rc-input" value={draft.equipmentText} onChange={(e) => update('equipmentText', e.target.value)} placeholder="Cast iron, Saucepan" />
-            </label>
-            <label className="rc-field">
               Tags (comma-separated)
               <input className="rc-input" value={draft.tagsText} onChange={(e) => update('tagsText', e.target.value)} placeholder="Weeknight, High protein" />
             </label>
@@ -643,6 +830,33 @@ export default function RecipeEditor({
       {timers.hasTimers && (
         <div className="rc-dock">
           <TimerPills timers={timers} />
+        </div>
+      )}
+
+      {linking && (
+        <div className="rc-sheet-backdrop" onClick={() => setLinking(false)}>
+          <div className="rc-sheet" role="dialog" aria-modal="true" aria-label="Choose a recipe to use" onClick={(e) => e.stopPropagation()}>
+            <div className="rc-sheet-head">
+              <h2>Use a recipe as a part</h2>
+              <button type="button" className="rc-icon-btn" onClick={() => setLinking(false)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <input type="search" className="rc-input" placeholder="Search your recipes" aria-label="Search your recipes" value={linkQuery} onChange={(e) => setLinkQuery(e.target.value)} />
+            <ul className="rc-picker">
+              {linkable.map((recipe) => (
+                <li key={recipe.id}>
+                  <button type="button" onClick={() => addLink(recipe)}>
+                    <span className="rc-row-title">{recipe.title}</span>
+                    <span className="rc-meta">
+                      {CATEGORY_LABELS[recipe.category]?.label} · serves {recipe.servings}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {linkable.length === 0 && <li className="rc-empty">No recipes to use here.</li>}
+            </ul>
+          </div>
         </div>
       )}
     </div>

@@ -8,10 +8,12 @@ export default function AddRecipeSheet({
   onClose,
   onImported,
   onBlank,
+  onAi,
 }: {
   onClose: () => void;
   onImported: (recipe: ImportedRecipe & { photo?: string }) => void;
   onBlank: () => void;
+  onAi: () => void;
 }) {
   const [url, setUrl] = useState('');
   const [text, setText] = useState('');
@@ -112,6 +114,9 @@ export default function AddRecipeSheet({
           </form>
         )}
 
+        <button type="button" className="rc-text-btn rc-write-own" onClick={onAi}>
+          Have your AI write one
+        </button>
         <button type="button" className="rc-text-btn rc-write-own" onClick={onBlank}>
           Or write one from scratch
         </button>

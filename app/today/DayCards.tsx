@@ -7,7 +7,7 @@ import { usePlan } from '@/components/study/usePlan';
 import { useKitchen } from '../recipes/useKitchen';
 import type { DateKey } from '@/lib/habits/dates';
 import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
-import { groceriesLeft, haveSet, mealsToday, missingIngredients } from '@/lib/recipes/kitchen';
+import { groceriesLeft, mealsToday, missingIngredients, recipesFor } from '@/lib/recipes/kitchen';
 import type { Recipe } from '@/lib/recipes/recipes';
 
 const MOOD_NAMES = ['Rough', 'Meh', 'Okay', 'Good', 'Great'];
@@ -136,16 +136,16 @@ export function KitchenCard({ today }: { today: DateKey }) {
     return () => { cancelled = true; };
   }, []);
 
-  const { week, tonight, prep } = useMemo(() => mealsToday(recipes, kitchen.state, today), [recipes, kitchen.state, today]);
-  const toBuy = useMemo(() => groceriesLeft(recipes, kitchen.state, week), [recipes, kitchen.state, week]);
+  const cookable = useMemo(() => recipesFor(recipes, kitchen.state), [recipes, kitchen.state]);
+  const { week, tonight, prep } = useMemo(() => mealsToday(cookable, kitchen.state, today), [cookable, kitchen.state, today]);
+  const toBuy = useMemo(() => groceriesLeft(cookable, kitchen.state, week), [cookable, kitchen.state, week]);
   // Nothing planned: the recipe you're closest to having everything for.
   const idea = useMemo(() => {
-    if (tonight.length || !recipes.length) return null;
-    const have = haveSet(kitchen.state);
-    const score = (r: Recipe) => missingIngredients(r, have).length - (r.rating ?? 0) / 10;
-    return recipes.reduce((best, r) => (score(r) < score(best) ? r : best));
-  }, [tonight.length, recipes, kitchen.state]);
-  const ideaMissing = idea ? missingIngredients(idea, haveSet(kitchen.state)).length : 0;
+    if (tonight.length || !cookable.length) return null;
+    const score = (r: Recipe) => missingIngredients(r, kitchen.state).length - (r.rating ?? 0) / 10;
+    return cookable.reduce((best, r) => (score(r) < score(best) ? r : best));
+  }, [tonight.length, cookable, kitchen.state]);
+  const ideaMissing = idea ? missingIngredients(idea, kitchen.state).length : 0;
 
   const add = (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,7 +166,7 @@ export function KitchenCard({ today }: { today: DateKey }) {
           {tonight.map(({ entry, recipe }) => (
             <li key={entry.id} className={entry.cooked ? 'is-done' : ''}>
               <button type="button" className="td-meal-check" aria-pressed={!!entry.cooked} aria-label={entry.cooked ? `${recipe.title}: not cooked yet` : `${recipe.title}: cooked`}
-                onClick={() => kitchen.updateEntry(week, entry.id, { cooked: !entry.cooked })}>{entry.cooked ? '✓' : ''}</button>
+                onClick={() => { if (entry.cooked) kitchen.uncookEntry(week, entry); else kitchen.cook(recipe, entry.servings, { week, entry }); }}>{entry.cooked ? '✓' : ''}</button>
               <Link href={`/recipes?recipe=${encodeURIComponent(recipe.slug)}`}>{recipe.title}</Link>
               <small>serves {entry.servings}</small>
             </li>
@@ -183,6 +183,7 @@ export function KitchenCard({ today }: { today: DateKey }) {
       </form>
       <div className="td-links">
         <Link href="/recipes?view=list">🛒 Grocery list{toBuy ? ` (${toBuy})` : ''}</Link>
+        <Link href="/recipes?view=pantry">🥫 Pantry</Link>
         <Link href="/recipes?view=week">🗓️ Meal plan</Link>
         <Link href="/recipes">🍳 Recipes</Link>
       </div>

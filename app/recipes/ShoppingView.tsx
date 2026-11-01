@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { addDays, type DateKey } from '@/lib/habits/dates';
-import { buildShoppingList, currentWeek, weekLabel, type ShoppingItem } from '@/lib/recipes/kitchen';
-import { formatBomAmount, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
+import { buildShoppingList, currentWeek, restockKey, weekLabel, type PutAwayItem, type ShoppingItem } from '@/lib/recipes/kitchen';
+import { canonicalIngredientKey, formatBomAmount, parseIngredientLine, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
+import { stockLabel } from './shared';
 import type { Kitchen } from './useKitchen';
 
 /** Plan items are checked off per week, so buying beef this week doesn't tick next week's. */
@@ -22,6 +23,7 @@ export default function ShoppingView({
   unitMode,
   onWeek,
   onShowWeek,
+  onShowPantry,
   onConfirm,
   onFlash,
 }: {
@@ -31,6 +33,7 @@ export default function ShoppingView({
   unitMode: UnitMode;
   onWeek: (week: DateKey) => void;
   onShowWeek: () => void;
+  onShowPantry: () => void;
   onConfirm: (message: string) => Promise<boolean>;
   onFlash: (message: string) => void;
 }) {
@@ -47,9 +50,28 @@ export default function ShoppingView({
     return recipe ? [{ recipe, servings: r.servings }] : [];
   });
 
-  const total = list.need.length + state.listItems.length;
-  const done = list.need.filter((i) => got.has(gotKey(week, i.key))).length + state.listItems.filter((i) => got.has(i.id)).length;
-  const otherHave = state.have.filter((key) => !list.have.some((i) => i.key === key));
+  const total = list.need.length + list.restock.length + state.listItems.length;
+  const done =
+    list.need.filter((i) => got.has(gotKey(week, i.key))).length +
+    list.restock.filter((i) => got.has(restockKey(i.key))).length +
+    state.listItems.filter((i) => got.has(i.id)).length;
+
+  // Home from the store: everything ticked goes on the shelf and comes off the list.
+  const putAway = () => {
+    const bought = list.need.filter((i) => got.has(gotKey(week, i.key)));
+    const restocked = list.restock.filter((i) => got.has(restockKey(i.key)));
+    const typed = state.listItems.filter((i) => got.has(i.id));
+    const items: PutAwayItem[] = [
+      ...bought.map(({ key, name, usQty, usUnit, metricQty, metricUnit }) => ({ key, name, amount: { usQty, usUnit, metricQty, metricUnit } })),
+      ...restocked.map(({ key, name }) => ({ key, name })),
+      ...typed.flatMap((i) => {
+        const { key, name, amount } = parseIngredientLine(i.text);
+        return key ? [{ key, name, amount }] : [];
+      }),
+    ];
+    kitchen.putAway(items, [...bought.map((i) => gotKey(week, i.key)), ...restocked.map((i) => restockKey(i.key))], typed.map((i) => i.id));
+    onFlash(`Put away ${items.length} ${items.length === 1 ? 'thing' : 'things'}`);
+  };
 
   const listText = () => {
     const lines: string[] = [`Shopping list (${weekLabel(week)})`];
@@ -61,6 +83,11 @@ export default function ShoppingView({
         const amount = formatBomAmount(item, 1, unitMode);
         lines.push(`- [ ] ${amount ? `${amount} ` : ''}${item.name}`);
       }
+    }
+    const restock = list.restock.filter((i) => !got.has(restockKey(i.key)));
+    if (restock.length) {
+      lines.push('', 'Restock');
+      for (const item of restock) lines.push(`- [ ] ${item.name}`);
     }
     const extras = state.listItems.filter((i) => !got.has(i.id));
     if (extras.length) {
@@ -155,10 +182,18 @@ export default function ShoppingView({
                         <span>
                           <strong className="rc-amt">{formatBomAmount(item, 1, unitMode)}</strong> {item.name}
                         </span>
-                        <small>{sharedAcross(item)}</small>
+                        <small>
+                          {sharedAcross(item)}
+                          {item.inStock ? ` · on top of ${stockLabel(item.inStock, unitMode, state.pantry[item.key]?.estimated)} at home` : ''}
+                        </small>
                       </span>
                     </button>
-                    <button type="button" className="rc-have-btn" onClick={() => kitchen.toggleHave(item.key)} title="Already at home: take it off the list">
+                    <button
+                      type="button"
+                      className="rc-have-btn"
+                      onClick={() => kitchen.setPantry(item.key, item.name, { amount: null, low: false })}
+                      title="There's enough at home: take it off the list"
+                    >
                       Have it
                     </button>
                   </li>
@@ -168,6 +203,38 @@ export default function ShoppingView({
           </section>
         ))}
 
+        {list.restock.length > 0 && (
+          <section className="rc-aisle">
+            <h3>Restock</h3>
+            <ul>
+              {list.restock.map((item) => {
+                const key = restockKey(item.key);
+                const isGot = got.has(key);
+                return (
+                  <li key={item.key} className={`rc-shop-row${isGot ? ' is-done' : ''}`}>
+                    <button type="button" className="rc-shop-main" aria-pressed={isGot} onClick={() => kitchen.toggleGot(key)}>
+                      <span className="rc-check" aria-hidden="true">{isGot ? '✓' : ''}</span>
+                      <span className="rc-shop-text">
+                        <span>{item.name}</span>
+                        <small>{item.low ? 'Running low' : 'Ran out'}</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-icon-btn"
+                      aria-label={item.low ? `${item.name} can wait` : `Don’t need ${item.name}`}
+                      title={item.low ? 'It can wait' : 'Don’t need it'}
+                      onClick={() => (item.low ? kitchen.setPantry(item.key, item.name, { low: false }) : kitchen.forgetPantry(item.key))}
+                    >
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         {state.listItems.length > 0 && (
           <section className="rc-aisle">
             <h3>Also</h3>
@@ -175,13 +242,14 @@ export default function ShoppingView({
               {state.listItems.map((item) => {
                 const isGot = got.has(item.id);
                 const from = addedBy(item.by);
+                const atHome = state.have.includes(canonicalIngredientKey(item.text));
                 return (
                   <li key={item.id} className={`rc-shop-row${isGot ? ' is-done' : ''}`}>
                     <button type="button" className="rc-shop-main" aria-pressed={isGot} onClick={() => kitchen.toggleGot(item.id)}>
                       <span className="rc-check" aria-hidden="true">{isGot ? '✓' : ''}</span>
                       <span className="rc-shop-text">
                         <span>{item.text}</span>
-                        {from && <small>from {from}</small>}
+                        {(from || atHome) && <small>{[from && `from ${from}`, atHome && 'the pantry says there’s some at home'].filter(Boolean).join(' · ')}</small>}
                       </span>
                     </button>
                     <button type="button" className="rc-icon-btn" aria-label={`Remove ${item.text}`} onClick={() => kitchen.removeListItem(item.id)}>
@@ -221,32 +289,39 @@ export default function ShoppingView({
           >
             Start over
           </button>
-          <button type="button" className="btn btn-primary" onClick={shareOrCopy}>
-            Share list
-          </button>
+          <div className="rc-shop-main-actions">
+            <button type="button" className={`btn ${done ? 'btn-secondary' : 'btn-primary'}`} onClick={shareOrCopy}>
+              Share list
+            </button>
+            {done > 0 && (
+              <button type="button" className="btn btn-primary" onClick={putAway}>
+                Put away {done}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      {(list.have.length > 0 || otherHave.length > 0) && (
-        <details className="rc-details rc-have-box" open={list.have.length > 0 && list.have.length <= 6}>
-          <summary>
-            Already at home ({list.have.length + otherHave.length})
-          </summary>
+      {list.have.length > 0 && (
+        <details className="rc-details rc-have-box" open={list.have.length <= 6}>
+          <summary>Already at home ({list.have.length})</summary>
           <p className="rc-meta">Tap one to put it back on the list.</p>
           <div className="rc-have-chips">
             {list.have.map((item) => (
-              <button key={item.key} type="button" className="rc-chip" onClick={() => kitchen.toggleHave(item.key)}>
+              <button key={item.key} type="button" className="rc-chip" onClick={() => kitchen.toggleHave(item.key, item.name)}>
                 {item.name} ×
-              </button>
-            ))}
-            {otherHave.map((key) => (
-              <button key={key} type="button" className="rc-chip" onClick={() => kitchen.toggleHave(key)}>
-                {key} ×
               </button>
             ))}
           </div>
         </details>
       )}
+
+      <button type="button" className="rc-week-summary rc-to-pantry" onClick={onShowPantry}>
+        <span>Pantry</span>
+        <strong>
+          {state.have.length} at home <span aria-hidden="true">›</span>
+        </strong>
+      </button>
     </>
   );
 }

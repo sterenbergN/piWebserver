@@ -43,6 +43,31 @@ export type RecipeSection = {
    * the section finishes with the dish.
    */
   readyBy?: string;
+  /**
+   * This part is another recipe: its steps stay with that recipe, so a fix to
+   * the tzatziki reaches every bowl it goes in. Stored with no steps of its own;
+   * `resolveRecipes` fills them in for reading.
+   */
+  sub?: SubRecipeLink;
+  /** On a resolved section: the recipe it came from. Never stored. */
+  from?: SectionSource;
+};
+
+export type SubRecipeLink = {
+  recipeId: string;
+  /** How many servings of that recipe go into this one, as this one is written. */
+  servings: number;
+};
+
+export type SectionSource = {
+  recipeId: string;
+  slug?: string;
+  title?: string;
+  servings: number;
+  /** A batch is already made, so this part is skipped. */
+  made?: boolean;
+  /** Deleted, or private and you're signed out. */
+  unavailable?: boolean;
 };
 
 export type Recipe = {
@@ -623,7 +648,7 @@ function addMetricQuantities(q1: number, u1: string, q2: number, u2: string): Su
  * Add two amounts, or null when either the US or the metric side can't be
  * added: both sides are summed or neither, so they never disagree.
  */
-function addAmounts(a: Amount, b: Amount): Amount | null {
+export function addAmounts(a: Amount, b: Amount): Amount | null {
   const empty = (x: Amount) => x.usQty === null && x.metricQty === null;
   if (empty(b)) return a;
   if (empty(a)) return b;
@@ -636,6 +661,69 @@ function addAmounts(a: Amount, b: Amount): Amount | null {
   const metric = side(a.metricQty, a.metricUnit, b.metricQty, b.metricUnit, addMetricQuantities);
   if (!us || !metric) return null;
   return { usQty: us.qty, usUnit: us.unit, metricQty: metric.qty, metricUnit: metric.unit };
+}
+
+export const scaleAmount = (a: Amount, factor: number): Amount => ({
+  usQty: a.usQty === null ? null : a.usQty * factor,
+  usUnit: a.usUnit,
+  metricQty: a.metricQty === null ? null : a.metricQty * factor,
+  metricUnit: a.metricUnit,
+});
+
+const UNIT_BASE: Record<string, [dimension: string, factor: number]> = {
+  cup: ['ml', 240],
+  tbsp: ['ml', 15],
+  tsp: ['ml', 5],
+  'fl oz': ['ml', 30],
+  ml: ['ml', 1],
+  L: ['ml', 1000],
+  lb: ['g', 453.592],
+  oz: ['g', 28.3495],
+  g: ['g', 1],
+  kg: ['g', 1000],
+};
+
+/**
+ * How many of `stock` it takes to make `need` (2 = you need twice what you have),
+ * or null when they can't be compared, such as cups against "1 bag". The US side
+ * is tried first, then the metric one, which is how cups meet grams of flour.
+ */
+export function amountRatio(need: Amount, stock: Amount): number | null {
+  const sides: [number | null, string, number | null, string][] = [
+    [need.usQty, need.usUnit, stock.usQty, stock.usUnit],
+    [need.metricQty, need.metricUnit, stock.metricQty, stock.metricUnit],
+  ];
+  for (const [needQty, needUnit, stockQty, stockUnit] of sides) {
+    if (needQty === null || stockQty === null) continue;
+    const [needDim, needFactor] = UNIT_BASE[needUnit] ?? [needUnit, 1];
+    const [stockDim, stockFactor] = UNIT_BASE[stockUnit] ?? [stockUnit, 1];
+    if (needDim !== stockDim) continue;
+    const base = stockQty * stockFactor;
+    return base > 0 ? (needQty * needFactor) / base : Infinity;
+  }
+  return null;
+}
+
+/** "2 cups" for an ingredient, or null when it doesn't start with a number. A word that isn't a unit ("2 bags") is kept as one. */
+export function parseAmountText(text: string, name: string): Amount | null {
+  const { qty, unit, rest } = parseQtyAndUnit(text);
+  if (qty === null) return null;
+  if (!unit && rest) {
+    const word = rest.trim().slice(0, 16);
+    return { usQty: qty, usUnit: word, metricQty: qty, metricUnit: word };
+  }
+  return convertUnits(qty, unit, name);
+}
+
+/** A line someone typed, like "2 cups rice" or "paper towels". */
+export function parseIngredientLine(text: string): { key: string; name: string; amount: Amount | null } {
+  const token = parseBracketToken(text);
+  if (token.kind !== 'ingredient') {
+    const clean = text.trim();
+    return { key: canonicalIngredientKey(clean), name: cleanBaseName(clean), amount: null };
+  }
+  const { usQty, usUnit, metricQty, metricUnit } = token;
+  return { key: token.key, name: token.baseName, amount: usQty === null && metricQty === null ? null : { usQty, usUnit, metricQty, metricUnit } };
 }
 
 /**
@@ -915,30 +1003,37 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
   const rawSections: any[] = Array.isArray(input?.sections) ? input.sections.slice(0, 20) : [];
   const sectionIndex = new Map<number, number>();
   const stepIndex = new Map<string, number>();
-  const kept: { name: string; steps: string[]; readyBy: unknown }[] = [];
+  const kept: { name: string; steps: string[]; readyBy: unknown; sub?: SubRecipeLink }[] = [];
   rawSections.forEach((sec, i) => {
+    const sub = cleanSubLink(sec?.sub);
     const steps: string[] = [];
-    (Array.isArray(sec?.steps) ? sec.steps.slice(0, 60) : []).forEach((s: unknown, j: number) => {
-      const text = typeof s === 'string' ? s.trim().slice(0, 1200) : '';
-      if (!text) return;
-      stepIndex.set(`${i}:${j}`, steps.length);
-      steps.push(text);
-    });
-    if (!steps.length) return;
+    if (!sub) {
+      (Array.isArray(sec?.steps) ? sec.steps.slice(0, 60) : []).forEach((s: unknown, j: number) => {
+        const text = typeof s === 'string' ? s.trim().slice(0, 1200) : '';
+        if (!text) return;
+        stepIndex.set(`${i}:${j}`, steps.length);
+        steps.push(text);
+      });
+      if (!steps.length) return;
+    }
     sectionIndex.set(i, kept.length);
     kept.push({
       name: typeof sec?.name === 'string' ? sec.name.trim().slice(0, 50) : 'Main',
       steps,
       readyBy: sec?.readyBy,
+      ...(sub ? { sub } : {}),
     });
   });
-  const sections: RecipeSection[] = kept.map(({ name, steps, readyBy }, i) => {
+  const sections: RecipeSection[] = kept.map(({ name, steps, readyBy, sub }, i) => {
     const target = parseStepKey(readyBy);
     const section = target ? sectionIndex.get(target.section) : undefined;
     const step = target ? stepIndex.get(`${target.section}:${target.step}`) : undefined;
-    return section !== undefined && step !== undefined && section !== i
-      ? { name, steps, readyBy: `${section}:${step}` }
-      : { name, steps };
+    return {
+      name,
+      steps,
+      ...(section !== undefined && step !== undefined && section !== i ? { readyBy: `${section}:${step}` } : {}),
+      ...(sub ? { sub } : {}),
+    };
   });
 
   if (sections.length === 0) {
@@ -946,7 +1041,7 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
   }
 
   const equipment = Array.isArray(input?.equipment)
-    ? [...new Set<string>(input.equipment.map((e: any) => String(e || '').trim().slice(0, 32)).filter(Boolean))].slice(0, 12)
+    ? [...new Set<string>(input.equipment.map((e: any) => canonicalEquipment(String(e || ''))).filter(Boolean))].slice(0, 12)
     : [];
   const tags = Array.isArray(input?.tags)
     ? [...new Set<string>(input.tags.map((t: any) => String(t || '').trim().slice(0, 32)).filter(Boolean))].slice(0, 12)
@@ -1013,6 +1108,212 @@ export const RECIPE_PHOTO_PREFIX = '/api/media/uploads/recipes/';
 /** Only photos uploaded through the recipe form are accepted on a recipe. */
 export function isRecipePhotoSrc(src: unknown): src is string {
   return typeof src === 'string' && src.startsWith(RECIPE_PHOTO_PREFIX) && /^[a-z0-9-]{8,64}\.webp$/.test(src.slice(RECIPE_PHOTO_PREFIX.length));
+}
+
+const cleanSubLink = (raw: any): SubRecipeLink | undefined =>
+  typeof raw?.recipeId === 'string' && /^[\w-]{1,60}$/.test(raw.recipeId)
+    ? { recipeId: raw.recipeId, servings: Math.min(48, Math.max(1, Math.round(Number(raw.servings)) || 1)) }
+    : undefined;
+
+// ─── Sub-recipes ──────────────────────────────────────────────────────────────
+
+const MAX_SUB_DEPTH = 4;
+
+/** Where a made batch of a recipe sits in the pantry. */
+export const madeKey = (recipeId: string) => `made:${recipeId}`;
+
+const trimQty = (n: number) => Math.round(n * 1000) / 1000;
+
+/** A step with its ingredient amounts multiplied, written out so everything downstream reads it as usual. */
+export function scaleStep(step: string, factor: number): string {
+  if (factor === 1 || !(factor > 0)) return step;
+  return step.replace(/\[([^\[\]]+)\]/g, (whole, inner: string) => {
+    const token = parseBracketToken(inner);
+    if (token.kind !== 'ingredient' || (token.usQty === null && token.metricQty === null)) return whole;
+    const side = (qty: number | null, unit: string) => (qty === null ? '' : `${trimQty(qty * factor)}${unit ? ` ${unit}` : ''}`);
+    return `[${side(token.usQty, token.usUnit)} | ${side(token.metricQty, token.metricUnit)} ${token.name}]`;
+  });
+}
+
+type ExpandOptions = {
+  byId: Map<string, Recipe>;
+  /** Recipes with a batch already made. */
+  made?: Set<string>;
+  /** Only copy in links to this recipe, and leave no trace of where they came from. */
+  only?: string;
+  /** Every recipe that got pulled in, for its equipment. */
+  used?: Set<string>;
+};
+
+function expandSections(recipe: Pick<Recipe, 'id' | 'sections'>, options: ExpandOptions, visiting: string[]): RecipeSection[] {
+  const { byId, made, only, used } = options;
+  const parts: RecipeSection[][] = recipe.sections.map((sec) => {
+    const link = sec.sub;
+    if (!link || (only && link.recipeId !== only)) return [sec];
+    const child = byId.get(link.recipeId);
+    const source: SectionSource = { recipeId: link.recipeId, servings: link.servings, ...(child ? { slug: child.slug, title: child.title } : {}) };
+    const blank = (extra: Partial<SectionSource>): RecipeSection[] => [{ name: child?.title || sec.name || 'A recipe', steps: [], from: { ...source, ...extra } }];
+    if (!child || visiting.includes(child.id) || visiting.length >= MAX_SUB_DEPTH) return blank({ unavailable: true });
+    if (made?.has(child.id)) return blank({ made: true });
+    used?.add(child.id);
+    const factor = link.servings / child.servings;
+    const inner = expandSections(child, options, [...visiting, child.id]);
+    return inner.map((part) => ({
+      name: inner.length > 1 ? `${child.title} · ${part.name || 'Main'}` : child.title,
+      steps: part.steps.map((step) => scaleStep(step, factor)),
+      ...(part.readyBy ? { readyBy: part.readyBy } : {}),
+      ...(part.sub ? { sub: { ...part.sub, servings: Math.max(1, Math.round(part.sub.servings * factor)) } } : {}),
+      ...(only ? {} : { from: part.from?.made || part.from?.unavailable ? part.from : source }),
+    }));
+  });
+
+  // Links change how many sections there are, so `readyBy` moves with them.
+  const offsets: number[] = [];
+  let count = 0;
+  for (const part of parts) {
+    offsets.push(count);
+    count += part.length;
+  }
+  const moved = (key: string | undefined, base: number | null) => {
+    const target = parseStepKey(key);
+    if (!target) return undefined;
+    if (base !== null) return `${target.section + base}:${target.step}`;
+    return parts[target.section]?.length === 1 && !recipe.sections[target.section]?.sub ? `${offsets[target.section]}:${target.step}` : undefined;
+  };
+  return parts.flatMap((part, i) => {
+    const sec = recipe.sections[i];
+    const isOwn = part.length === 1 && part[0] === sec;
+    return part.map((p) => {
+      // A part from another recipe keeps its own timing, and its last pieces are ready when this recipe wants them.
+      const readyBy = isOwn ? moved(p.readyBy, null) : moved(p.readyBy, offsets[i]) ?? moved(sec.readyBy, null);
+      const { readyBy: _old, ...rest } = p;
+      return readyBy ? { ...rest, readyBy } : rest;
+    });
+  });
+}
+
+/**
+ * A recipe ready to read and cook: its linked parts filled in at the right
+ * amounts, those with a batch made skipped, and its equipment worked out.
+ * Everything downstream (ingredients, timeline, shopping list) just sees steps.
+ * Safe to run on a recipe that's already been through it.
+ */
+export function resolveRecipe<T extends Pick<Recipe, 'id' | 'sections' | 'equipment'>>(recipe: T, byId: Map<string, Recipe>, made?: Set<string>): T {
+  const used = new Set<string>();
+  const sections = recipe.sections.some((s) => s.sub) ? expandSections(recipe, { byId, made, used }, [recipe.id]) : recipe.sections;
+  const gear = [recipe, ...[...used].flatMap((id) => byId.get(id) ?? [])].flatMap((r) => (r.equipment.length ? r.equipment : suggestEquipment(r.sections)));
+  return { ...recipe, sections, equipment: [...new Set(gear)] };
+}
+
+export function resolveRecipes(recipes: Recipe[], made?: Set<string>): Recipe[] {
+  const byId = new Map(recipes.map((r) => [r.id, r]));
+  return recipes.map((recipe) => resolveRecipe(recipe, byId, made));
+}
+
+/** A recipe with its links to `child` replaced by a copy of the steps, for when `child` is being deleted. */
+export function detachSubRecipe<T extends Pick<Recipe, 'id' | 'sections'>>(recipe: T, child: Recipe): T {
+  if (!recipe.sections.some((s) => s.sub?.recipeId === child.id)) return recipe;
+  return { ...recipe, sections: expandSections(recipe, { byId: new Map([[child.id, child]]), only: child.id }, [recipe.id]) };
+}
+
+/** Recipes that use this one as a part, directly. */
+export const recipesUsing = (recipeId: string, recipes: Recipe[]) => recipes.filter((r) => r.sections.some((s) => s.sub?.recipeId === recipeId));
+
+/** Whether `recipe` uses `target` as a part, however deep: linking `target` to it would go round in a circle. */
+export function usesRecipe(recipe: Recipe, targetId: string, byId: Map<string, Recipe>, seen = new Set<string>()): boolean {
+  if (recipe.id === targetId) return true;
+  if (seen.has(recipe.id)) return false;
+  seen.add(recipe.id);
+  return recipe.sections.some((s) => {
+    const child = s.sub ? byId.get(s.sub.recipeId) : undefined;
+    return s.sub?.recipeId === targetId || (child ? usesRecipe(child, targetId, byId, seen) : false);
+  });
+}
+
+// ─── Equipment ────────────────────────────────────────────────────────────────
+
+export const EQUIPMENT_OPTIONS = [
+  'Oven',
+  'Stovetop',
+  'Grill',
+  'Pan',
+  'Pot',
+  'Saucepan',
+  'Sheet pan',
+  'Cast iron',
+  'Dutch oven',
+  'Wok',
+  'Air fryer',
+  'Slow cooker',
+  'Pressure cooker',
+  'Microwave',
+  'Blender',
+  'Food processor',
+  'Mixer',
+  'Toaster',
+];
+
+const EQUIPMENT_ALIASES: Record<string, string> = {
+  skillet: 'Pan',
+  'frying pan': 'Pan',
+  'fry pan': 'Pan',
+  'baking sheet': 'Sheet pan',
+  'instant pot': 'Pressure cooker',
+  crockpot: 'Slow cooker',
+  'crock pot': 'Slow cooker',
+  'stand mixer': 'Mixer',
+  'hand mixer': 'Mixer',
+  stove: 'Stovetop',
+  barbecue: 'Grill',
+  bbq: 'Grill',
+};
+
+/** One spelling for the same thing, so filtering by it finds them all. Anything else stays as typed. */
+export function canonicalEquipment(name: string): string {
+  const clean = name.trim().replace(/\s+/g, ' ').slice(0, 32);
+  const lower = clean.toLowerCase();
+  return EQUIPMENT_OPTIONS.find((option) => option.toLowerCase() === lower) ?? EQUIPMENT_ALIASES[lower] ?? clean;
+}
+
+// Roasting temperatures only: a step saying the chicken reaches 165°F needs a thermometer, not an oven.
+const OVEN_MIN_F = 225;
+
+const EQUIPMENT_RULES: [string, RegExp][] = [
+  ['Oven', /\b(oven|bake[ds]?|baking(?! (?:sheet|powder|soda|dish))|roast(?:ed|ing)?|broil(?:ed|er)?)\b/],
+  ['Grill', /\b(grill(?:ed|ing)?|barbecue|bbq)\b/],
+  ['Sheet pan', /\b(sheet pan|baking sheet|sheet tray)\b/],
+  ['Cast iron', /\bcast[- ]iron\b/],
+  ['Dutch oven', /\bdutch oven\b/],
+  ['Saucepan', /\bsauce ?pan\b/],
+  ['Wok', /\bwok\b/],
+  ['Air fryer', /\bair[- ]fr(?:y|ier|yer)\b/],
+  ['Slow cooker', /\b(slow cooker|crock ?pot)\b/],
+  ['Pressure cooker', /\b(pressure cooker|instant pot)\b/],
+  ['Microwave', /\bmicrowave\b/],
+  ['Blender', /\bblender\b/],
+  ['Food processor', /\bfood processor\b/],
+  ['Mixer', /\b(stand mixer|hand mixer|mixer)\b/],
+  ['Toaster', /\btoaster\b/],
+  ['Stovetop', /\b(stovetop|simmer|boil|sear|saut[eé]|fry|fried|reduce)\b/],
+];
+
+/** What a recipe seems to need, from what its steps say. */
+export function suggestEquipment(sections: RecipeSection[]): string[] {
+  const steps = sections.flatMap((s) => s.steps);
+  const text = steps.map(stepPlainText).join(' ').toLowerCase();
+  const found = new Set(EQUIPMENT_RULES.filter(([, rule]) => rule.test(text)).map(([name]) => name));
+  // A plain "pan" or "pot", once the kinds with their own tag are out of the way.
+  const plain = text.replace(/\b(?:sheet|sauce) ?pan\b|\b(?:instant|crock) ?pot\b/g, ' ');
+  if (/\b(?:skillet|pan)\b/.test(plain)) found.add('Pan');
+  if (/\bpot\b/.test(plain)) found.add('Pot');
+  if (ovenTemps(sections).length) found.add('Oven');
+  return EQUIPMENT_OPTIONS.filter((option) => found.has(option));
+}
+
+/** The oven temperatures a set of steps calls for. */
+export function ovenTemps(sections: RecipeSection[]): number[] {
+  const temps = sections.flatMap((s) => s.steps.flatMap((step) => parseStepTokens(step).flatMap((seg) => (seg.kind === 'temp' && seg.fahrenheit >= OVEN_MIN_F ? [seg.fahrenheit] : []))));
+  return [...new Set(temps)];
 }
 
 /** The one emoji in `input` (the last, so typing another replaces it), or '' if there isn't one. */

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { haveSet, missingIngredients } from '@/lib/recipes/kitchen';
+import { missingIngredients } from '@/lib/recipes/kitchen';
 import { mediaSrc } from '@/lib/media-url';
 import {
   CATEGORY_LABELS,
@@ -54,12 +54,13 @@ export default function RecipeList({
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<RecipeCategory | 'all'>('all');
   const [quickFilter, setQuickFilter] = useState<string | null>(null);
+  const [gearFilter, setGearFilter] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('rating');
   const [showFilters, setShowFilters] = useState(false);
   const [savedCook] = useState(readSavedCook);
 
-  const have = useMemo(() => haveSet(kitchen.state), [kitchen.state]);
   const tracksHave = kitchen.state.have.length > 0;
+  const gearInUse = useMemo(() => [...new Set(recipes.flatMap((r) => r.equipment))].sort(), [recipes]);
 
   const enriched = useMemo(
     () =>
@@ -70,11 +71,11 @@ export default function RecipeList({
           recipe,
           bom: extractIngredients(recipe),
           schedule: buildSchedule(recipe),
-          missing: missingIngredients(recipe, have),
+          missing: missingIngredients(recipe, kitchen.state),
           proteinEfficiency,
         };
       }),
-    [recipes, have],
+    [recipes, kitchen.state],
   );
 
   const filtered = useMemo(() => {
@@ -87,6 +88,7 @@ export default function RecipeList({
       if (quickFilter === 'one-pan' && !recipe.equipment.some((e) => /one-pan|one-pot|sheet pan/i.test(e))) return false;
       if (quickFilter === 'high-protein' && (recipe.macros?.protein || 0) < 30) return false;
       if (quickFilter === 'untried' && recipe.timesCooked > 0) return false;
+      if (gearFilter && !recipe.equipment.includes(gearFilter)) return false;
       if (!q) return true;
       const hay = [recipe.title, recipe.summary, recipe.category, ...recipe.equipment, ...recipe.tags, ...bom.map((b) => b.name)]
         .join(' ')
@@ -101,12 +103,12 @@ export default function RecipeList({
       if (sortMode === 'newest') return b.recipe.createdAt.localeCompare(a.recipe.createdAt);
       return (b.recipe.rating || 0) - (a.recipe.rating || 0);
     });
-  }, [enriched, searchQuery, categoryFilter, quickFilter, sortMode]);
+  }, [enriched, searchQuery, categoryFilter, quickFilter, gearFilter, sortMode]);
 
   // Only categories that have something in them are worth a chip.
   const categories = RECIPE_CATEGORIES.filter((c) => recipes.some((r) => r.category === c));
   const resumable = savedCook && savedCook.step > 0 && recipes.some((r) => r.slug === savedCook.slug) ? savedCook : null;
-  const activeFilterCount = (quickFilter ? 1 : 0) + (sortMode !== 'rating' ? 1 : 0);
+  const activeFilterCount = (quickFilter ? 1 : 0) + (gearFilter ? 1 : 0) + (sortMode !== 'rating' ? 1 : 0);
 
   return (
     <>
@@ -169,6 +171,24 @@ export default function RecipeList({
             ))}
           </div>
           {!tracksHave && <p className="rc-meta">Mark what you already have on any recipe, and “Have it all” finds what you can make right now.</p>}
+          {gearInUse.length > 0 && (
+            <div className="rc-field">
+              Cooks with
+              <div className="rc-chips rc-chips-wrap">
+                {gearInUse.map((gear) => (
+                  <button
+                    key={gear}
+                    type="button"
+                    className={`rc-chip${gearFilter === gear ? ' is-active' : ''}`}
+                    aria-pressed={gearFilter === gear}
+                    onClick={() => setGearFilter(gearFilter === gear ? null : gear)}
+                  >
+                    {gear}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="rc-field">
             Sort by
             <select className="rc-input" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>

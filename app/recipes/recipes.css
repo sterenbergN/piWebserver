@@ -1706,6 +1706,197 @@ span.rc-source-chip { cursor: default; }
 .rc-have-box .rc-meta { padding-bottom: 0.4rem; }
 .rc-have-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; padding-bottom: 0.5rem; }
 
+/* ── How much is at home, beside an ingredient ── */
+.rc-ingredients li { position: relative; }
+.rc-ingredients li:has(> .rc-ing-stock) .rc-ing-row { padding-right: 4.75rem; }
+.rc-ing-stock {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  max-width: 4.5rem;
+  min-height: 32px;
+  padding: 0 0.3rem;
+  overflow: hidden;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  text-align: right;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.rc-ing-stock.is-short { color: var(--warning); font-weight: 600; }
+
+/* ── Equipment ── */
+.rc-gear {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+  list-style: none;
+}
+.rc-gear li {
+  padding: 0.05rem 0.45rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.rc-chip-more { border-style: dashed; }
+.rc-gear-add { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.4rem; }
+.rc-gear-add .rc-input { flex: 1; min-width: 0; }
+
+/* ── A part that's another recipe ── */
+.rc-part-link {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent-light);
+  font: inherit;
+  cursor: pointer;
+}
+.rc-edit-link {
+  padding: 0.6rem 0.7rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+}
+.rc-edit-link-name { flex: 1; min-width: 0; font-weight: 600; }
+.rc-edit-link-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.3rem 0; }
+.rc-edit-part-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.25rem 0.75rem; }
+
+/* ── The pantry: labelled jars on shelves ── */
+.rc-add-pantry { display: flex; gap: 0.5rem; }
+.rc-add-pantry .rc-input { flex: 1; min-width: 0; }
+.rc-add-pantry .btn { flex: none; }
+.rc-pantry-search { margin-top: 0.75rem; }
+
+.rc-ask-card {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--rc-paper);
+  border-top: 3px solid var(--accent-light);
+  border-radius: 4px;
+  box-shadow: var(--rc-highlight), var(--rc-lift);
+}
+.rc-ask-card p { margin: 0; color: var(--foreground); }
+.rc-ask-card small { display: block; color: var(--muted); font-size: 0.8rem; }
+.rc-ask-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0.4rem; padding-top: 0.55rem; }
+.rc-ask-card > .rc-text-btn { margin-top: 0.15rem; }
+
+.rc-pantry-note { margin-top: 0.9rem; }
+.rc-pantry-note h3,
+.rc-shelf h3 {
+  padding-bottom: 0.3rem;
+  color: var(--accent-light);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.rc-pantry-note ul { list-style: none; }
+.rc-pantry-note li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 0.75rem;
+  padding: 0.2rem 0;
+  font-size: 0.92rem;
+}
+.rc-pantry-note small { color: var(--muted); font-size: 0.78rem; }
+
+.rc-shelf { margin-top: 0.9rem; }
+.rc-shelf-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.35rem;
+  padding: 0 0.4rem 0.45rem;
+  border-bottom: 5px solid color-mix(in srgb, var(--accent-light) 30%, var(--surface-border));
+  border-radius: 0 0 3px 3px;
+  box-shadow: 0 6px 7px -5px rgba(0, 0, 0, 0.4);
+}
+.rc-jar {
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 100%;
+  padding: 0.25rem 0.6rem;
+  background-color: var(--rc-paper);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.06));
+  border: 1px solid var(--surface-border);
+  border-radius: 7px 7px 3px 3px;
+  box-shadow: var(--rc-highlight), 0 1px 2px rgba(0, 0, 0, 0.22);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+.rc-jar small { color: var(--muted); font-size: 0.72rem; }
+.rc-jar.is-low { border-color: var(--warning); }
+.rc-jar.is-low small { color: var(--warning); }
+.rc-jar.is-gone { border-style: dashed; opacity: 0.75; }
+.rc-jar:active { box-shadow: var(--rc-well); transform: translateY(1px); }
+
+.rc-pantry-foot { display: flex; justify-content: center; margin-top: 1rem; }
+.rc-pantry-foot .rc-paper-btn { padding: 0 1.1rem; }
+.rc-pantry-sheet { gap: 0.6rem; }
+.rc-pantry-forget { align-self: center; }
+.rc-recent-cooks { list-style: none; padding-bottom: 0.4rem; }
+.rc-recent-cooks li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.9rem; }
+.rc-recent-cooks small { color: var(--muted); font-size: 0.78rem; }
+.rc-to-pantry { margin-top: 0.75rem; }
+.rc-shop-main-actions { display: flex; gap: 0.5rem; }
+
+/* Cook mode's last screen. */
+.rc-ranout { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; width: 100%; }
+.rc-ranout .rc-have-chips { justify-content: center; padding-bottom: 0; }
+
+/* ── Your AI ── */
+.rc-week-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.rc-week-tools .rc-copy-week { margin: 0; }
+.rc-ai-sheet { min-height: 0; }
+.rc-ai-body { display: flex; flex-direction: column; flex: 1; gap: 0.6rem; min-height: 0; overflow-y: auto; padding: 0.1rem 0.1rem 0.4rem; }
+.rc-ai-steppers { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.rc-ai-step { padding-top: 0.6rem; border-top: 1px solid var(--surface-border); }
+.rc-ai-step h3 { display: flex; align-items: center; gap: 0.45rem; padding-bottom: 0.4rem; font-size: 0.95rem; font-weight: 650; }
+.rc-ai-num {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-light);
+  border-radius: 50%;
+  color: var(--background);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.rc-ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.rc-ai-prompt { margin-top: 0.5rem; font-size: 0.78rem; }
+.rc-ai-head { color: var(--accent-light); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.rc-ai-week { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.rc-ai-list,
+.rc-ai-plan { display: flex; flex-direction: column; gap: 0.3rem; list-style: none; }
+.rc-ai-plan li { font-size: 0.92rem; }
+.rc-ai-plan strong { display: inline-block; min-width: 4.75rem; font-weight: 650; }
+.rc-ai-plan small { color: var(--muted); }
+.rc-ai-notes {
+  padding: 0.5rem 0.7rem 0.5rem 1.4rem;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 /* ── Add a recipe ── */
 .rc-seg-wide { display: flex; margin: 0.15rem 0 0.6rem; }
 .rc-seg-wide button { flex: 1; }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWakeLock } from '@/components/useWakeLock';
-import { haveSet } from '@/lib/recipes/kitchen';
+import { missingIngredients, stockFor } from '@/lib/recipes/kitchen';
 import { mediaSrc } from '@/lib/media-url';
 import { savePref } from '@/lib/workout/device-prefs';
 import {
@@ -11,6 +11,7 @@ import {
   cookOrder,
   extractIngredients,
   formatQuantity,
+  madeKey,
   parseStepKey,
   recipeEmoji,
   type BomItem,
@@ -18,6 +19,7 @@ import {
   type UnitMode,
 } from '@/lib/recipes/recipes';
 import CookMode from './CookMode';
+import PantrySheet from './PantrySheet';
 import {
   COOK_PREF,
   IngredientRows,
@@ -27,6 +29,7 @@ import {
   copyShoppingList,
   formatMinutes,
   readSavedCook,
+  stockLabel,
   timerIdFor,
   timerLabel,
   useCookHistory,
@@ -50,6 +53,7 @@ export default function RecipeView({
   canEdit,
   canDelete,
   kitchen,
+  usedBy,
   unitMode,
   timers,
   cookLogged,
@@ -70,6 +74,8 @@ export default function RecipeView({
   canEdit: boolean;
   canDelete: boolean;
   kitchen: Kitchen;
+  /** Recipes this one goes into as a part. */
+  usedBy: Recipe[];
   unitMode: UnitMode;
   timers: RecipeTimers;
   cookLogged: boolean;
@@ -80,7 +86,7 @@ export default function RecipeView({
   onPlan: (servings: number) => void;
   onEdit: () => void;
   onDelete: () => void;
-  onLogCook: (undo?: boolean) => void;
+  onLogCook: (undo: boolean, servings: number) => void;
   onRate: (rating: number) => void;
   onFlash: (message: string) => void;
   showAlert: (message: string) => Promise<void> | void;
@@ -104,6 +110,7 @@ export default function RecipeView({
   const [showFullSummary, setShowFullSummary] = useState(false);
   const [constraintKey, setConstraintKey] = useState('');
   const [constraintVal, setConstraintVal] = useState('');
+  const [pantryItem, setPantryItem] = useState<BomItem | null>(null);
 
   const cooking = cookStep !== null;
   useWakeLock(keepAwake || cooking);
@@ -144,9 +151,33 @@ export default function RecipeView({
   const startOver = () => setCompleted({});
 
   // What you have is yours across recipes; what's been used is only this cook.
-  const have = useMemo(() => haveSet(kitchen.state), [kitchen.state]);
   const isUsed = (item: BomItem) => item.stepKeys.length > 0 && item.stepKeys.every((key) => completed[key]);
-  const missing = bom.filter((item) => !have.has(item.key));
+  const missing = useMemo(() => missingIngredients(recipe, kitchen.state, scale), [recipe, kitchen.state, scale]);
+
+  // Tapping says "I have this". On something that's marked but counted short, it asks how much instead.
+  const tapIngredient = (item: BomItem) => {
+    const stock = stockFor(item, kitchen.state, scale);
+    if (stock.status === 'short') setPantryItem(item);
+    else if (stock.status === 'missing' && kitchen.state.have.includes(item.key)) kitchen.confirmPantry(item.key);
+    else kitchen.toggleHave(item.key, item.name);
+  };
+  const stockAside = (item: BomItem) => {
+    if (!kitchen.state.have.includes(item.key)) return null;
+    const stock = stockFor(item, kitchen.state, scale);
+    const detail = kitchen.state.pantry[item.key];
+    const label = stockLabel(detail?.amount, unitMode, detail?.estimated);
+    return (
+      <button
+        type="button"
+        className={`rc-ing-stock${stock.status !== 'have' ? ' is-short' : ''}`}
+        aria-label={`How much ${item.name} is at home`}
+        onClick={() => setPantryItem(item)}
+      >
+        {stock.status === 'short' ? `have ${label}` : stock.status === 'missing' ? 'used up?' : label || '⋯'}
+      </button>
+    );
+  };
+  const batchMade = kitchen.state.have.includes(madeKey(recipe.id));
 
   const scaledServings = Math.round(recipe.servings * scale * 10) / 10;
   const setServings = (next: number) => {
@@ -249,8 +280,13 @@ export default function RecipeView({
                   </button>
                 )}
                 {canEdit && (
-                  <button type="button" role="menuitem" onClick={() => onLogCook()}>
+                  <button type="button" role="menuitem" onClick={() => onLogCook(false, servingsNow)}>
                     Log a cook
+                  </button>
+                )}
+                {usedBy.length > 0 && (
+                  <button type="button" role="menuitem" onClick={() => kitchen.setMade(recipe, !batchMade)}>
+                    {batchMade ? '✓ A batch is made' : 'I have a batch made'}
                   </button>
                 )}
                 {canEdit && (
@@ -298,6 +334,13 @@ export default function RecipeView({
           >
             {recipe.summary}
           </button>
+        )}
+        {recipe.equipment.length > 0 && (
+          <ul className="rc-gear" aria-label="Equipment">
+            {recipe.equipment.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         )}
       </header>
 
@@ -350,15 +393,16 @@ export default function RecipeView({
         <section className={`rc-panel rc-panel-ingredients${tab === 'ingredients' ? ' is-active' : ''}`} aria-label="Ingredients">
           <h2 className="rc-panel-title">Ingredients</h2>
           <p className="rc-have-hint">
-            {missing.length === 0 ? '✓ You have everything for this.' : 'Tap what you already have.'}
+            {missing.length === 0 ? '✓ You have everything for this.' : 'Tap what you already have. It stays in your pantry until you say it’s gone.'}
           </p>
           <IngredientRows
             items={bom}
             scale={scale}
             unitMode={unitMode}
-            isChecked={(item) => have.has(item.key)}
+            isChecked={(item) => stockFor(item, kitchen.state, scale).status === 'have'}
             isStruck={isUsed}
-            onToggle={(item) => kitchen.toggleHave(item.key)}
+            onToggle={tapIngredient}
+            renderAside={stockAside}
           />
 
           <div className="rc-recipe-actions">
@@ -415,9 +459,21 @@ export default function RecipeView({
             )}
           </details>
 
-          {(recipe.equipment.length > 0 || macroParts.length > 0 || recipe.sourceUrl) && (
+          {(usedBy.length > 0 || macroParts.length > 0 || recipe.sourceUrl) && (
             <div className="rc-facts">
-              {recipe.equipment.length > 0 && <p>You’ll need: {recipe.equipment.join(', ')}</p>}
+              {usedBy.length > 0 && (
+                <p>
+                  Goes in:{' '}
+                  {usedBy.map((parent, i) => (
+                    <span key={parent.id}>
+                      {i > 0 && ', '}
+                      <button type="button" className="rc-link-small" onClick={() => onOpenRecipe(parent.slug)}>
+                        {parent.title}
+                      </button>
+                    </span>
+                  ))}
+                </p>
+              )}
               {macroParts.length > 0 && <p>Per serving: {macroParts.join(' · ')}</p>}
               {recipe.sourceUrl && (
                 <p>
@@ -437,16 +493,36 @@ export default function RecipeView({
           {recipe.sections.map((sec, sIdx) => {
             const readyFor = parseStepKey(sec.readyBy);
             const readyForName = readyFor ? recipe.sections[readyFor.section]?.name : undefined;
+            const from = sec.from;
             return (
               <div key={sIdx} className="rc-part">
-                {recipe.sections.length > 1 && (
+                {(recipe.sections.length > 1 || from) && (
                   <div className="rc-part-head">
-                    <h3>{sec.name || `Part ${sIdx + 1}`}</h3>
+                    <h3>
+                      {from?.slug ? (
+                        <button type="button" className="rc-part-link" onClick={() => onOpenRecipe(from.slug!)}>
+                          {sec.name} <span aria-hidden="true">›</span>
+                        </button>
+                      ) : (
+                        sec.name || `Part ${sIdx + 1}`
+                      )}
+                    </h3>
                     {readyFor && readyForName !== undefined && (
                       <span className="rc-meta">For {readyForName || 'the main part'}, step {readyFor.step + 1}</span>
                     )}
+                    {from && !from.unavailable && (
+                      <button
+                        type="button"
+                        className="rc-link-small"
+                        onClick={() => kitchen.setMade({ id: from.recipeId, title: from.title || sec.name }, !from.made)}
+                      >
+                        {from.made ? 'Make it fresh' : 'Already made'}
+                      </button>
+                    )}
                   </div>
                 )}
+                {from?.made && <p className="rc-meta">✓ You have a batch made, so this part is skipped.</p>}
+                {from?.unavailable && <p className="rc-meta">This part comes from a recipe you can’t see right now.</p>}
                 <ol className="rc-steps">
                   {sec.steps.map((stepText, stIdx) => {
                     const stepKey = `${sIdx}:${stIdx}`;
@@ -499,7 +575,7 @@ export default function RecipeView({
             {formatMinutes(schedule.activeMinutes)} hands-on · {formatMinutes(schedule.passiveMinutes)} waiting
           </p>
           <div className="rc-tl">
-            {schedule.tracks.map((track) => (
+            {schedule.tracks.filter((track) => track.blocks.length).map((track) => (
               <div key={track.sectionIndex} className="rc-tl-row">
                 <div className="rc-tl-label">
                   <span>{track.sectionName}</span>
@@ -529,7 +605,7 @@ export default function RecipeView({
         {cookLogged && !cooking && (
           <div className="rc-toast" role="status">
             Cook logged
-            <button type="button" className="rc-text-btn" onClick={() => onLogCook(true)}>
+            <button type="button" className="rc-text-btn" onClick={() => onLogCook(true, servingsNow)}>
               Undo
             </button>
           </div>
@@ -554,8 +630,14 @@ export default function RecipeView({
           onRate={canEdit ? onRate : undefined}
           onStep={goToStep}
           onClose={closeCook}
-          onLogCook={onLogCook}
+          onLogCook={(undo) => onLogCook(Boolean(undo), servingsNow)}
+          kitchen={kitchen}
+          keepsBatch={usedBy.length > 0}
         />
+      )}
+
+      {pantryItem && (
+        <PantrySheet itemKey={pantryItem.key} name={pantryItem.name} kitchen={kitchen} unitMode={unitMode} onClose={() => setPantryItem(null)} onFlash={onFlash} />
       )}
     </div>
   );

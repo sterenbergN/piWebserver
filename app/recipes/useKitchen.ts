@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { savePref } from '@/lib/workout/device-prefs';
-import { applyKitchenAction, emptyKitchen, newKitchenId, normalizeKitchen, type KitchenAction, type KitchenState, type PlanEntry } from '@/lib/recipes/kitchen';
+import { applyKitchenAction, emptyKitchen, madeItem, newKitchenId, normalizeKitchen, usedIn, type KitchenAction, type KitchenState, type PlanEntry, type PutAwayItem } from '@/lib/recipes/kitchen';
+import type { Amount, Recipe } from '@/lib/recipes/recipes';
 import { clearSentChanges, isEmptyKitchen as isEmpty, KITCHEN_CHANGED, KITCHEN_PREF, queueChange, readLocalKitchen as readLocal, readOutbox } from '@/lib/recipes/grocery-client';
 import type { HouseholdInfo } from '@/components/chores/useChores';
 import type { DateKey } from '@/lib/habits/dates';
@@ -164,12 +165,43 @@ export function useKitchen(signedIn: boolean) {
   }, [send, pull]);
 
   const actions = useMemo(() => ({
-    toggleHave: (key: string) => dispatch({ type: 'have', key, on: !current.current.have.includes(key) }),
+    toggleHave: (key: string, name?: string) => dispatch({ type: 'have', key, name, on: !current.current.have.includes(key) }),
+    /** Say how much there is, and whether it's low. Leaving a part out leaves it as it was. */
+    setPantry: (key: string, name: string | undefined, change: { amount?: Amount | null; low?: boolean }) => dispatch({ type: 'pantry-set', key, name, ...change }),
+    /** Yes, it's still there. */
+    confirmPantry: (key: string) => dispatch({ type: 'pantry-set', key, low: false }),
+    ranOut: (key: string, name?: string) => dispatch({ type: 'pantry-out', key, name }),
+    forgetPantry: (key: string) => dispatch({ type: 'pantry-forget', key }),
+    putAway: (items: PutAwayItem[], got: string[], listItems: string[]) => dispatch({ type: 'put-away', id: newKitchenId(), items, got, listItems }),
+    /** A batch of this is made and in the fridge, so other recipes can skip making it. */
+    setMade: (recipe: Pick<Recipe, 'id' | 'title'>, on: boolean) => {
+      const { key, name } = madeItem(recipe);
+      dispatch(on ? { type: 'pantry-set', key, name, low: false } : { type: 'pantry-forget', key });
+    },
+    /** Cooked it: takes what it used off the shelf. Pass a resolved recipe. Returns the id to undo it with. */
+    cook: (recipe: Recipe, servings: number, plan?: { week: DateKey; entry: PlanEntry }) => {
+      const id = plan ? `plan:${plan.entry.id}` : newKitchenId();
+      dispatch({
+        type: 'cook',
+        id,
+        recipeId: recipe.id,
+        title: recipe.title,
+        servings,
+        used: usedIn(recipe, servings),
+        ...(plan ? { entry: { week: plan.week, id: plan.entry.id } } : {}),
+      });
+      return id;
+    },
+    undoCook: (id: string) => dispatch({ type: 'cook-undo', id }),
+    /** Take back a tick on the plan, including one from before ticks took things off the shelf. */
+    uncookEntry: (week: DateKey, entry: PlanEntry) => {
+      dispatch({ type: 'cook-undo', id: `plan:${entry.id}` });
+      dispatch({ type: 'plan-change', week, ids: [entry.id], patch: { cooked: false } });
+    },
     addToPlan: (week: DateKey, recipeId: string, servings: number, day: number | null) =>
       dispatch({ type: 'plan-add', week, entry: { id: newKitchenId(), recipeId, servings, day } }),
     updateEntry: (week: DateKey, id: string, patch: Partial<PlanEntry>) => dispatch({ type: 'plan-change', week, ids: [id], patch }),
     removeEntry: (week: DateKey, id: string) => dispatch({ type: 'plan-remove', week, id }),
-    markCooked: (week: DateKey, ids: string[]) => dispatch({ type: 'plan-change', week, ids, patch: { cooked: true } }),
     copyWeek: (from: DateKey, to: DateKey) =>
       dispatch({
         type: 'plan-copy',

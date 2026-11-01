@@ -95,6 +95,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Write your own controller', url: '/loop-lab/cases/write-your-own', subtitle: 'Loop Lab: Structured Text on the bench', body: 'structured text st iec 61131 scl custom controller code plc pi anti-windup bumpless' },
   { kind: 'page', title: 'Recipes', url: '/recipes', subtitle: 'Step-by-step cook mode, scaling, timers and grocery lists', body: 'cooking food meal prep kitchen ingredients' },
   { kind: 'page', title: 'Grocery list', url: '/recipes?view=list', subtitle: 'Recipes: what to buy, by aisle', body: 'shopping groceries store buy list' },
+  { kind: 'page', title: 'Pantry', url: '/recipes?view=pantry', subtitle: 'Recipes: what you have at home', body: 'kitchen stock ran out have ingredients shelf leftovers' },
   { kind: 'page', title: 'Meal plan', url: '/recipes?view=week', subtitle: 'Recipes: plan the week and meal prep', body: 'dinner week planner prep' },
   { kind: 'page', title: 'Today', url: '/today', subtitle: 'Your day: question, habits, chores, workout', body: 'daily dashboard' },
   { kind: 'page', title: 'Daily questions', url: '/daily', subtitle: 'Engineering question of the day', body: 'quiz practice streak' },

@@ -5,7 +5,7 @@ import { SITE_PAGES, searchDocs, type SearchDoc } from '@/lib/search';
 import { getPosts, withoutBlogAlbums } from '@/lib/site-content';
 import { getResume } from '@/lib/resume-store';
 import { isSafeBlogSlug } from '@/lib/security/paths';
-import { DEFAULT_RECIPES, extractIngredients, normalizeRecipesData, type RecipesData } from '@/lib/recipes/recipes';
+import { DEFAULT_RECIPES, extractIngredients, normalizeRecipesData, resolveRecipes, type RecipesData } from '@/lib/recipes/recipes';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +49,7 @@ async function buildIndex(): Promise<SearchDoc[]> {
     path.join(process.cwd(), '.data', 'recipes', 'recipes.json'),
     { version: 1, recipes: DEFAULT_RECIPES },
   );
-  for (const recipe of normalizeRecipesData(recipesRaw).recipes.filter((r) => !r.private)) {
+  for (const recipe of resolveRecipes(normalizeRecipesData(recipesRaw).recipes.filter((r) => !r.private))) {
     const bom = extractIngredients(recipe).map((b) => b.name).join(' ');
     docs.push({
       kind: 'page',

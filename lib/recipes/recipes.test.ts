@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFAULT_RECIPES,
+  amountRatio,
   buildSchedule,
+  canonicalEquipment,
   canonicalIngredientKey,
   cleanRecipeEmoji,
   cookOrder,
+  detachSubRecipe,
   extractIngredients,
   formatBomAmount,
   formatIngredientAmount,
@@ -14,11 +17,18 @@ import {
   isRecipePhotoSrc,
   normalizeRecipe,
   normalizeRecipesData,
+  parseAmountText,
+  parseIngredientLine,
   parseQuantity,
   parseStepTokens,
   recipeEmoji,
+  recipesUsing,
+  resolveRecipes,
+  scaleStep,
   smartAnnotateText,
   stepPlainText,
+  suggestEquipment,
+  usesRecipe,
 } from './recipes';
 
 test('parseQuantity handles integers, decimals, fractions, and mixed numbers', () => {
@@ -223,6 +233,126 @@ test('normalizeRecipe maps readyBy onto kept steps and drops it when its step is
   assert.equal(recipe.sections.length, 3);
   assert.equal(recipe.sections[0].readyBy, '1:1');
   assert.equal(recipe.sections[2].readyBy, undefined);
+});
+
+const sauce = normalizeRecipe({ id: 'tzatziki', title: 'Tzatziki', category: 'sauce', servings: 8, sections: [{ name: 'Main', steps: ['Stir [2 cups | 480 g Greek yogurt] with [2 cloves garlic, minced] for [2 min].'] }] });
+const bowl = normalizeRecipe({
+  id: 'bowl',
+  title: 'Greek bowl',
+  servings: 4,
+  sections: [
+    { name: 'Beef', steps: ['Brown [1 lb | 450 g beef] for [8 min].', 'Spoon on the sauce.'] },
+    { name: '', steps: [], sub: { recipeId: 'tzatziki', servings: 4 }, readyBy: '0:1' },
+  ],
+});
+
+test('a linked part is stored as a link and read as steps, at the amount that goes in', () => {
+  assert.deepEqual(bowl.sections[1].sub, { recipeId: 'tzatziki', servings: 4 });
+  assert.deepEqual(bowl.sections[1].steps, []);
+  assert.deepEqual(normalizeRecipe(bowl, bowl).sections, bowl.sections);
+
+  const [, resolved] = resolveRecipes([sauce, bowl]);
+  const part = resolved.sections[1];
+  assert.equal(part.name, 'Tzatziki');
+  assert.equal(part.from?.slug, 'tzatziki');
+  assert.equal(part.sub, undefined);
+  const bom = extractIngredients(resolved);
+  const yogurt = bom.find((i) => i.key === 'greek yogurt');
+  assert.equal(yogurt?.usQty, 1); // half the batch
+  assert.equal(yogurt?.metricQty, 240);
+  assert.equal(bom.find((i) => i.key === 'garlic clove' || i.key === 'garlic')?.usQty, 1);
+  // It starts in time for the step it was ready for.
+  const schedule = buildSchedule(resolved);
+  assert.equal(schedule.tracks[1].blocks[0].endMin, schedule.tracks[0].blocks[1].startMin);
+  // Running it again changes nothing.
+  assert.deepEqual(resolveRecipes([sauce, resolved])[1].sections, resolved.sections);
+});
+
+test('scaling a step only touches ingredient amounts', () => {
+  assert.equal(scaleStep('Cook [1 cup | 240 ml milk] at [400°F] for [8 min].', 2), 'Cook [2 cup | 480 ml milk] at [400°F] for [8 min].');
+  assert.equal(scaleStep('Add [salt] and [3 cloves garlic].', 0.5), 'Add [salt] and [1.5 cloves | 1.5 cloves garlic].');
+  assert.equal(scaleStep('Same [1 egg].', 1), 'Same [1 egg].');
+  const [token] = parseStepTokens(scaleStep('[2 eggs]', 3)).filter((s) => s.kind === 'ingredient');
+  assert.equal(token.kind === 'ingredient' && token.usQty, 6);
+  assert.equal(token.kind === 'ingredient' && token.key, 'egg');
+});
+
+test('links going round in a circle, or to a missing recipe, stop instead of hanging', () => {
+  const a = normalizeRecipe({ id: 'a', title: 'A', sections: [{ steps: ['Cook [1 egg].'], name: 'Main' }, { name: '', steps: [], sub: { recipeId: 'b', servings: 4 } }] });
+  const b = normalizeRecipe({ id: 'b', title: 'B', sections: [{ name: '', steps: [], sub: { recipeId: 'a', servings: 4 } }] });
+  const resolved = resolveRecipes([a, b])[0];
+  assert.equal(extractIngredients(resolved).length, 1);
+  assert.equal(resolved.sections.at(-1)?.from?.unavailable, true);
+  assert.ok(usesRecipe(b, 'a', new Map([['a', a], ['b', b]])));
+  assert.ok(!usesRecipe(sauce, 'bowl', new Map([['bowl', bowl], ['tzatziki', sauce]])));
+  const lost = resolveRecipes([bowl])[0];
+  assert.equal(lost.sections[1].from?.unavailable, true);
+  assert.deepEqual(lost.sections[1].steps, []);
+});
+
+test('deleting a part leaves its users with their own copy of the steps', () => {
+  const detached = detachSubRecipe(bowl, sauce);
+  assert.equal(detached.sections[1].sub, undefined);
+  assert.equal(detached.sections[1].from, undefined);
+  assert.equal(detached.sections[1].name, 'Tzatziki');
+  assert.equal(detached.sections[1].readyBy, '0:1');
+  assert.equal(extractIngredients(detached).find((i) => i.key === 'greek yogurt')?.usQty, 1);
+  assert.deepEqual(recipesUsing('tzatziki', [sauce, bowl]).map((r) => r.id), ['bowl']);
+});
+
+test('a part made of several parts keeps its own timing when it moves', () => {
+  const dressing = normalizeRecipe({
+    id: 'dressing',
+    title: 'Dressing',
+    servings: 2,
+    sections: [
+      { name: 'Oil', steps: ['Warm [1 tbsp oil] for [1 min].'], readyBy: '1:0' },
+      { name: 'Mix', steps: ['Whisk [1 tsp mustard] in.'] },
+    ],
+  });
+  const salad = normalizeRecipe({
+    id: 'salad',
+    title: 'Salad',
+    sections: [
+      { name: '', steps: [], sub: { recipeId: 'dressing', servings: 2 } },
+      { name: 'Greens', steps: ['Wash [1 head lettuce].'] },
+    ],
+  });
+  const { sections } = resolveRecipes([dressing, salad])[1];
+  assert.deepEqual(sections.map((s) => s.name), ['Dressing · Oil', 'Dressing · Mix', 'Greens']);
+  assert.equal(sections[0].readyBy, '1:0');
+});
+
+test('equipment has one spelling, and comes from the steps when nobody said', () => {
+  assert.equal(canonicalEquipment('cast iron'), 'Cast iron');
+  assert.equal(canonicalEquipment(' Skillet '), 'Pan');
+  assert.equal(canonicalEquipment('Smoker'), 'Smoker');
+  assert.deepEqual(normalizeRecipe({ title: 'T', equipment: ['oven', 'OVEN', 'baking sheet'], sections: [{ name: 'M', steps: ['Go.'] }] }).equipment, ['Oven', 'Sheet pan']);
+
+  const steps = (...list: string[]) => [{ name: 'Main', steps: list }];
+  assert.deepEqual(suggestEquipment(steps('Roast at [425°F] on a sheet pan.')), ['Oven', 'Sheet pan']);
+  assert.deepEqual(suggestEquipment(steps('Cook in a skillet until it reads [165°F].')), ['Pan']);
+  assert.deepEqual(suggestEquipment(steps('Fire up the grill.')), ['Grill']);
+  assert.deepEqual(suggestEquipment(steps('Simmer in a saucepan.')), ['Stovetop', 'Saucepan']);
+  assert.deepEqual(suggestEquipment(steps('Toss with baking powder.')), []);
+
+  // What you said wins; a part brings its own.
+  const [, resolved] = resolveRecipes([{ ...sauce, equipment: ['Blender'] }, { ...bowl, equipment: ['Pan'] }]);
+  assert.deepEqual(resolved.equipment, ['Pan', 'Blender']);
+});
+
+test('amounts compare across units, and say so when they can’t', () => {
+  const amount = (text: string, name = 'flour') => parseAmountText(text, name)!;
+  assert.equal(amountRatio(amount('2 cups'), amount('1 cup')), 2);
+  assert.equal(amountRatio(amount('1 tbsp'), amount('1 cup')), 15 / 240);
+  assert.equal(amountRatio(amount('2 cups'), amount('480 g')), 0.5);
+  assert.equal(amountRatio(amount('1 lb'), amount('8 oz')), 2);
+  assert.equal(amountRatio(amount('2 cups'), amount('1 bag')), null);
+  assert.equal(amountRatio(amount('2 eggs', 'eggs'), amount('1 eggs', 'eggs')), 2);
+  assert.equal(parseAmountText('some', 'flour'), null);
+  assert.deepEqual(parseIngredientLine('2 cups rice').amount?.usQty, 2);
+  assert.equal(parseIngredientLine('2 cups rice').key, 'rice');
+  assert.deepEqual(parseIngredientLine('paper towels'), { key: 'paper towel', name: 'Paper towels', amount: null });
 });
 
 test('a recipe keeps one chosen emoji, and falls back to its category', () => {
