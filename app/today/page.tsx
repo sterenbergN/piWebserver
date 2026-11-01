@@ -23,6 +23,7 @@ import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
+import { readTodayHidden, type TodayCard } from '@/lib/today-prefs';
 import { JournalCard, KitchenCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
@@ -53,6 +54,33 @@ export default function TodayPage() {
   const [showLevel, setShowLevel] = useState(false);
   const [journalWritten, setJournalWritten] = useState(false);
   useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
+
+  // What this account has taken off the page. Held back until known, so a hidden card never flashes up.
+  const [savedHidden, setSavedHidden] = useState<TodayCard[] | null>(null);
+  const [hiddenError, setHiddenError] = useState('');
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    fetch('/api/today', { cache: 'no-store' }).then((r) => r.json())
+      .then((body) => { if (!cancelled) setSavedHidden(readTodayHidden(body.hidden)); })
+      .catch(() => { if (!cancelled) setSavedHidden([]); });
+    return () => { cancelled = true; };
+  }, [signedIn]);
+  const hidden = signedIn ? savedHidden : h.mode === 'loading' ? null : [];
+  const showQuestion = !!hidden && !hidden.includes('question');
+  const showStudy = signedIn && !!hidden && !hidden.includes('study');
+
+  const setCardShown = async (card: TodayCard, shown: boolean) => {
+    const before = savedHidden ?? [];
+    const next = shown ? before.filter((c) => c !== card) : [...before, card];
+    setSavedHidden(next);
+    setHiddenError('');
+    const res = await fetch('/api/today', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: next }) }).catch(() => null);
+    if (!res?.ok) {
+      setSavedHidden(before);
+      setHiddenError('That didn’t save. Try again.');
+    }
+  };
 
   // Today's question, and how the question streak stands.
   useEffect(() => {
@@ -109,7 +137,8 @@ export default function TodayPage() {
   const doneDaily = daily.filter((x) => (data.log[today]?.[x.id] ?? 0) >= x.target).length;
   const dateText = new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 
-  const core = question?.day?.core;
+  // A hidden question doesn't count toward the day. Its XP still counts toward her level.
+  const core = showQuestion ? question?.day?.core : undefined;
 
   // The day at a glance: the question, each daily habit, chores due today, and the journal once signed in.
   const dueToday = dueChores.filter((x) => ['overdue', 'today'].includes(dueStatus(x, today).status)).length;
@@ -175,38 +204,40 @@ export default function TodayPage() {
       <div className="td-grid">
         <div className="td-col">
           {/* Today's question */}
-          <section className={`td-card td-question${core ? ` is-${core.track}` : ''}`}>
-            <div className="td-card-head">
-              <h2><span aria-hidden>🧠</span> Today’s question</h2>
-              {question && <span className="td-chip">🔥 {question.streak} day{question.streak === 1 ? '' : 's'}</span>}
-            </div>
-            {!question ? <p className="hb-hint">Loading…</p> : !core ? (
-              <>
-                <p className="hb-hint">No question today yet.</p>
-                <Link className="btn btn-secondary" href="/daily#archive">Try one from the archive</Link>
-              </>
-            ) : (
-              <>
-                <p className="td-eyebrow">
-                  {question.day?.boss ? '👹 Boss problem · ' : ''}{TRACK_LABEL[core.track]} · {core.topic} · difficulty {core.difficulty}
-                </p>
-                <h3 className="td-question-title">{core.title}</h3>
-                {question.status ? (
-                  <>
-                    <p className="td-status">{STATUS[question.status]}{question.doneToday ? ' · streak kept' : ''}</p>
-                    <Link className="btn btn-secondary" href="/daily">See the solution{question.day && question.day.bonus.length ? ` and ${question.day.bonus.length} bonus` : ''}</Link>
-                  </>
-                ) : (
-                  <>
-                    <p className="hb-hint">{question.streak ? `Answer it to make it ${question.streak + 1} days in a row.` : 'Answer it to start a streak.'}</p>
-                    <Link className="btn btn-primary" href="/daily">Answer it</Link>
-                  </>
-                )}
-              </>
-            )}
-          </section>
+          {showQuestion && (
+            <section className={`td-card td-question${core ? ` is-${core.track}` : ''}`}>
+              <div className="td-card-head">
+                <h2><span aria-hidden>🧠</span> Today’s question</h2>
+                {question && <span className="td-chip">🔥 {question.streak} day{question.streak === 1 ? '' : 's'}</span>}
+              </div>
+              {!question ? <p className="hb-hint">Loading…</p> : !core ? (
+                <>
+                  <p className="hb-hint">No question today yet.</p>
+                  <Link className="btn btn-secondary" href="/daily#archive">Try one from the archive</Link>
+                </>
+              ) : (
+                <>
+                  <p className="td-eyebrow">
+                    {question.day?.boss ? '👹 Boss problem · ' : ''}{TRACK_LABEL[core.track]} · {core.topic} · difficulty {core.difficulty}
+                  </p>
+                  <h3 className="td-question-title">{core.title}</h3>
+                  {question.status ? (
+                    <>
+                      <p className="td-status">{STATUS[question.status]}{question.doneToday ? ' · streak kept' : ''}</p>
+                      <Link className="btn btn-secondary" href="/daily">See the solution{question.day && question.day.bonus.length ? ` and ${question.day.bonus.length} bonus` : ''}</Link>
+                    </>
+                  ) : (
+                    <>
+                      <p className="hb-hint">{question.streak ? `Answer it to make it ${question.streak + 1} days in a row.` : 'Answer it to start a streak.'}</p>
+                      <Link className="btn btn-primary" href="/daily">Answer it</Link>
+                    </>
+                  )}
+                </>
+              )}
+            </section>
+          )}
 
-          {signedIn && <StudyCard />}
+          {showStudy && <StudyCard />}
 
           <JournalCard today={today} onWritten={setJournalWritten} />
 
@@ -297,6 +328,27 @@ export default function TodayPage() {
 
       {(h.mode === 'account' || h.mode === 'device') && (
         <TodayGarden habits={data.habits} log={data.log} chores={openChores.filter((x) => x.repeat)} choresData={ch.data} today={today} frozen={frozen} />
+      )}
+
+      {signedIn && savedHidden && (
+        <details className="td-card td-options">
+          <summary>Choose what’s on this page</summary>
+          <label className="sd-check">
+            <input type="checkbox" checked={showQuestion} onChange={(e) => setCardShown('question', e.target.checked)} />
+            <span>
+              <strong>Today’s question</strong>
+              <small>The daily engineering question. Hidden, it stops counting toward your day and showing as new. Questions stays in Explore.</small>
+            </span>
+          </label>
+          <label className="sd-check">
+            <input type="checkbox" checked={showStudy} onChange={(e) => setCardShown('study', e.target.checked)} />
+            <span>
+              <strong>PA Today</strong>
+              <small>What’s waiting in Study, when there’s anything in it. PA Today stays in Explore.</small>
+            </span>
+          </label>
+          {hiddenError && <p className="sd-warning" role="alert">{hiddenError}</p>}
+        </details>
       )}
     </div>
   );

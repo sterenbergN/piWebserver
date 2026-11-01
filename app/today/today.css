@@ -33,6 +33,13 @@
 .td-card .hb-hint { margin: 0; }
 .td-card .btn { margin-top: 0.2rem; }
 
+.td-options { margin-top: 1rem; }
+.td-options summary { align-self: stretch; color: var(--muted); font-weight: 600; cursor: pointer; }
+.td-options .sd-check { margin-top: 0.3rem; }
+.td-options .sd-check span { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.td-options .sd-check small { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+.td-options .sd-warning { margin: 0; }
+
 .td-question { border-top: 4px solid var(--td-track, var(--accent)); }
 .td-question.is-mechanical { --td-track: var(--habit-1); }
 .td-question.is-controls { --td-track: var(--habit-2); }

@@ -7,6 +7,7 @@ import { isActive, normalizeHabitsData, type HabitsData } from '@/lib/habits/hab
 import { isDueOn, isWeekly } from '@/lib/habits/stats';
 import { currentWeek, groceriesLeft, mealsToday } from '@/lib/recipes/kitchen';
 import { readLocalKitchen } from '@/lib/recipes/grocery-client';
+import { readTodayHidden } from '@/lib/today-prefs';
 import { formatRelativeDay } from '@/lib/workout/session-insights';
 
 // What's waiting on each page, and what's going on in each room, for the rooms.
@@ -34,9 +35,9 @@ async function choresDue(today: string) {
 }
 
 async function questionOpen(today: string) {
-  const body = await json(`/api/daily?today=${today}`);
+  const [body, settings] = await Promise.all([json(`/api/daily?today=${today}`), json('/api/today')]);
   const id = body?.day?.core?.id;
-  if (!id) return false;
+  if (!id || readTodayHidden(settings?.hidden).includes('question')) return false;
   if (body.signedIn) return !body.answered?.[id];
   deviceProgress(today);
   return !readDeviceAttempts().some((a) => a.questionId === id);

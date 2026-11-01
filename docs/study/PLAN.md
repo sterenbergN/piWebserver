@@ -159,7 +159,9 @@ overnight.
   eats those. Anki stays a tap, since there's no live link.
 - **Piling up:** leftovers stay on the plate and never spread by themselves. The stack
   leans further and goes colder at 3 and 5 days old.
-- **Where it shows:** on both PA Today and the main Today page.
+- **Where it shows:** on both PA Today and the main Today page, unless an account has
+  taken it off Today ("Choose what's on this page", which also covers the engineering
+  question).
 - **A clean plate** says she can stop, with melting butter, syrup and confetti, and adds
   to a streak. Study also counts toward site levels (phase 6).
 
