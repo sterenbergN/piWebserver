@@ -1109,66 +1109,261 @@ button.rc-pill-label { cursor: pointer; }
   border-radius: 12px;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.12);
 }
-.rc-divider-page > .rc-chips { margin: 0 -0.7rem 0.9rem; padding: 0 0.7rem; }
-
 .rc-new-btn { flex: none; padding: 0 0.9rem; }
 
-/* ── Index cards ── */
-.rc-cards {
-  list-style: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 1.1rem 1rem;
-  padding: 0.15rem 0.1rem 0.3rem;
+/* ══ Grandma's recipe box ══
+   A real object, so it looks the same in light and dark: a wooden box with a brass
+   label holder, manila dividers, and cream cards written in ballpoint. The cards
+   stand filed in a stack with only their tops showing, and rise when you touch them. */
+.rc-box {
+  --rc-wood: #7a4b28;
+  --rc-wood-dark: #4d2e17;
+  --rc-wood-light: #9a6336;
+  --rc-inside: #24150a;
+  --rc-brass: linear-gradient(#f0d891, #c9a24b 48%, #a98434 52%, #d5b566);
+  --rc-card-paper: #f6ecd2;
+  --rc-ink: #2a3b6b;
+  --rc-ink-soft: #62583f;
+  --rc-card-rule: rgba(70, 110, 160, 0.3);
+  --rc-card-red: #c2574f;
+  --rc-manila: #e3c98f;
+  --rc-hand: 'Segoe Print', 'Bradley Hand', 'Noteworthy', 'Snell Roundhand', 'Ink Free', cursive;
+  --rc-typed: 'American Typewriter', 'Courier Prime', 'Courier New', ui-monospace, monospace;
+  --rc-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .28' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .14 0 0 0 0 .07 0 0 0 0 .03 1.5 0 0 0 -.45'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --rc-fibre: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .35 0 0 0 0 .18 .35 0 0 0 -.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+  max-width: 44rem;
+  margin: 0 auto;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.4));
 }
 
+/* The open lid, standing up behind the cards. */
+.rc-box-lid {
+  position: relative;
+  padding: 0.7rem 0.7rem 0.85rem;
+  background: var(--rc-grain), linear-gradient(var(--rc-wood-light), var(--rc-wood));
+  border: 1px solid var(--rc-wood-dark);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -10px 12px -8px rgba(0, 0, 0, 0.5);
+}
+/* Brass hinges along the back edge. */
+.rc-box-lid::before,
+.rc-box-lid::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  z-index: 2;
+  width: 40px;
+  height: 11px;
+  background: var(--rc-brass);
+  border: 1px solid #7c5f22;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.rc-box-lid::before { left: 12%; }
+.rc-box-lid::after { right: 12%; }
+
+/* A brass frame holding a paper label. */
+.rc-box-plate,
+.rc-box-label {
+  display: block;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 0.12rem 1.1rem;
+  background: var(--rc-fibre), var(--rc-card-paper);
+  border: 3px solid transparent;
+  border-image: var(--rc-brass) 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  color: var(--rc-ink);
+  font-family: var(--rc-hand);
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* The nameplate and buttons along the top, the look-up slip across the whole lid below them. */
+.rc-box .rc-box-plate { position: absolute; top: 0.7rem; left: 0.7rem; margin: 0; }
+.rc-box .rc-search {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  margin: 0;
+}
+/* The look-up slip: a paper strip tucked in a brass holder. */
+.rc-box .rc-search input.rc-input.rc-input { /* doubled to outrank the site's input rule */
+  grid-row: 2;
+  grid-column: 1 / -1;
+  min-width: 0;
+  background: var(--rc-fibre), var(--rc-card-paper);
+  border: 2px solid #b8963f;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 3px rgba(70, 45, 15, 0.45), 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: var(--rc-ink);
+  font-family: var(--rc-hand);
+}
+.rc-box .rc-search .rc-input::placeholder { color: #80754f; opacity: 1; }
+.rc-box .rc-filter-btn { grid-column: 2; }
+.rc-box .rc-new-btn { grid-column: 3; }
+.rc-box .rc-filter-btn,
+.rc-box .rc-new-btn {
+  min-height: 44px;
+  background: var(--rc-brass);
+  border: 1px solid #7c5f22;
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.5);
+  color: #3a2a0b;
+  font-family: var(--rc-typed);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.rc-box .rc-filter-btn:active,
+.rc-box .rc-new-btn:active { box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4); transform: translateY(1px); }
+.rc-box .rc-filter-btn.is-active { outline: 2px solid var(--rc-card-paper); outline-offset: 1px; color: #3a2a0b; }
+
+/* A sticky note on the lid. */
+.rc-box .rc-resume {
+  margin: 0.65rem 0 0;
+  background: #f4e27e;
+  border: none;
+  border-radius: 2px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+  color: #3f3510;
+  transform: rotate(-0.6deg);
+}
+.rc-box .rc-resume .rc-meta { color: #6b5c1d; }
+.rc-box .rc-resume .rc-row-title { font-family: var(--rc-hand); }
+
+/* A card paper-clipped to the lid: the same controls, on paper. */
+.rc-box .rc-filters {
+  --foreground: var(--rc-ink);
+  --muted: var(--rc-ink-soft);
+  --surface-border: rgba(90, 70, 30, 0.4);
+  --surface-hover: rgba(90, 70, 30, 0.1);
+  --input-bg: rgba(255, 255, 255, 0.5);
+  --primary-bg: var(--rc-ink);
+  --primary-fg: var(--rc-card-paper);
+  margin: 0.65rem 0 0;
+  background: var(--rc-fibre), var(--rc-card-paper);
+  border: none;
+  border-top: 3px solid var(--rc-card-red);
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  color: var(--rc-ink);
+}
+.rc-box .rc-filters .rc-chip { color: var(--rc-ink); }
+.rc-box .rc-filters .rc-chip.is-active { color: var(--rc-card-paper); }
+.rc-box .rc-filters .rc-meta { color: var(--rc-ink-soft); }
+
+/* Inside the box. */
+.rc-box-well {
+  position: relative;
+  padding: 0.6rem 0.55rem 0;
+  background: linear-gradient(var(--rc-inside), #362010 70%);
+  border-inline: 9px solid var(--rc-wood);
+  box-shadow: inset 0 10px 14px -6px rgba(0, 0, 0, 0.85), inset 3px 0 6px -2px rgba(0, 0, 0, 0.7), inset -3px 0 6px -2px rgba(0, 0, 0, 0.7);
+}
+
+/* Manila dividers, their tabs standing above the cards. */
+.rc-index-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin-bottom: -1px;
+  padding: 0.15rem 0.3rem 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rc-index-tabs::-webkit-scrollbar { display: none; }
+.rc-index-tab {
+  flex: none;
+  min-height: 34px;
+  padding: 0.15rem 0.7rem 0.1rem;
+  background: var(--rc-fibre), #c9ae72;
+  border: 1px solid rgba(70, 45, 15, 0.6);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #4a3814;
+  font-family: var(--rc-typed);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rc-index-tab.is-active {
+  min-height: 39px;
+  background: var(--rc-fibre), var(--rc-manila);
+  color: #2e2206;
+}
+.rc-index-tab:focus-visible { outline: 2px solid var(--rc-card-paper); outline-offset: -3px; }
+
+.rc-box .rc-empty,
+.rc-box .rc-notice { padding: 1.5rem 0.5rem 2.5rem; color: var(--rc-card-paper); font-family: var(--rc-hand); text-align: center; }
+
+/* The stack: each card covers the bottom of the one behind it. */
+.rc-cards {
+  --rc-card-height: 11.6rem;
+  --rc-card-shows: 6.75rem;
+  list-style: none;
+  padding-top: 0.4rem;
+  background: linear-gradient(var(--rc-manila), var(--rc-manila)) top / 100% 1.4rem no-repeat;
+  border-radius: 2px;
+}
 .rc-card {
   position: relative;
   isolation: isolate;
+  height: var(--rc-card-height);
   transform: rotate(var(--rc-tilt, 0deg));
-  transition: transform 0.15s ease;
+  transition: transform 0.14s ease;
 }
-.rc-card:hover, .rc-card:focus-within { transform: rotate(0deg) translateY(-2px); }
-
-/* The card filed behind it. */
-.rc-card::before {
-  content: '';
-  position: absolute;
-  inset: 3px 2px -3px;
-  z-index: -1;
-  background: var(--rc-paper);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  opacity: 0.55;
-  transform: rotate(-1.1deg);
+.rc-card + .rc-card { margin-top: calc(var(--rc-card-shows) - var(--rc-card-height)); }
+/* Touching a card lifts it out of the stack, so the whole of it shows. */
+.rc-card:hover,
+.rc-card:focus-within,
+.rc-card:active {
+  z-index: 3;
+  transform: rotate(0deg) translateY(-0.35rem);
 }
 
 .rc-card-link {
   display: block;
   height: 100%;
-  min-height: 9.6rem;
-  padding: 0.4rem 0.9rem 0.3rem;
-  background-color: var(--rc-paper);
-  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rc-line) - 1px), var(--rc-rule) calc(var(--rc-line) - 1px), var(--rc-rule) var(--rc-line));
-  background-position: 0 1.95rem;
-  background-repeat: no-repeat, repeat;
-  border-radius: 4px;
-  box-shadow: var(--rc-highlight), var(--rc-lift);
-  color: var(--foreground);
+  padding: 0.3rem 0.9rem 0;
+  background-color: var(--rc-card-paper);
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(150, 105, 40, 0.14), transparent 22%),
+    linear-gradient(to right, transparent 0, rgba(120, 85, 30, 0.1) 100%),
+    var(--rc-fibre),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rc-line) - 1px), var(--rc-card-rule) calc(var(--rc-line) - 1px), var(--rc-card-rule) var(--rc-line));
+  background-position: 0 0, 0 0, 0 0, 0 1.9rem;
+  border: 1px solid rgba(110, 80, 30, 0.45);
+  border-radius: 3px 3px 0 0;
+  box-shadow: 0 -2px 5px rgba(40, 22, 6, 0.5);
+  color: var(--rc-ink);
   text-decoration: none;
-  transition: box-shadow 0.15s ease;
 }
-.rc-card:hover .rc-card-link { box-shadow: var(--rc-highlight), var(--rc-lift-high); }
+/* Well used: a coffee ring here, a butter thumbprint there. */
+.rc-card:nth-child(5n + 2) .rc-card-link {
+  background-image:
+    radial-gradient(circle at 70% 58%, transparent 15%, rgba(120, 70, 25, 0.16) 16%, rgba(120, 70, 25, 0.04) 18%, transparent 19%),
+    linear-gradient(to right, transparent 0, rgba(120, 85, 30, 0.1) 100%),
+    var(--rc-fibre),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rc-line) - 1px), var(--rc-card-rule) calc(var(--rc-line) - 1px), var(--rc-card-rule) var(--rc-line));
+}
+.rc-card:nth-child(7n + 4) .rc-card-link {
+  background-image:
+    radial-gradient(ellipse 34px 26px at 12% 72%, rgba(190, 150, 60, 0.26), transparent 100%),
+    linear-gradient(to right, transparent 0, rgba(120, 85, 30, 0.1) 100%),
+    var(--rc-fibre),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--rc-line) - 1px), var(--rc-card-rule) calc(var(--rc-line) - 1px), var(--rc-card-rule) var(--rc-line));
+}
 
 .rc-card-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  height: 1.55rem;
+  gap: 0.6rem;
+  height: 1.6rem;
   margin: 0 -0.9rem;
-  padding: 0 0.9rem;
-  border-bottom: 1.5px solid var(--rc-margin);
+  padding: 0 2.6rem 0 0.9rem;
+  border-bottom: 1.5px solid var(--rc-card-red);
 }
 .rc-card-category {
   color: var(--accent-light);
@@ -1177,37 +1372,70 @@ button.rc-pill-label { cursor: pointer; }
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.rc-card-rating { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+.rc-card-head .rc-card-category { color: var(--rc-card-red); font-family: var(--rc-typed); letter-spacing: 0.04em; }
+.rc-card-rating { color: var(--rc-ink-soft); font-family: var(--rc-typed); font-size: 0.78rem; font-weight: 700; }
 
 .rc-card-title {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  padding-right: 5.6rem;
-  font-size: 1.02rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  height: calc(var(--rc-line) * 2);
+  padding-right: 5.4rem;
+  color: var(--rc-ink);
+  font-family: var(--rc-hand);
+  font-size: 1.04rem;
+  font-weight: 600;
   line-height: var(--rc-line);
 }
 .rc-card-line {
   display: block;
   overflow: hidden;
-  padding-right: 5.6rem;
-  color: var(--muted);
-  font-size: 0.84rem;
+  padding-right: 5.4rem;
+  color: var(--rc-ink-soft);
+  font-family: var(--rc-typed);
+  font-size: 0.8rem;
   line-height: var(--rc-line);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rc-card-line.is-ready { color: var(--success); font-weight: 600; }
-.rc-card-foot { padding-right: 3rem; min-height: var(--rc-line); font-size: 0.78rem; }
+.rc-card-line.is-ready { color: #2f6b3a; font-weight: 700; }
+.rc-card-foot { padding-right: 0.25rem; min-height: var(--rc-line); font-size: 0.75rem; }
+
+/* The front of the box, with the cards dropping down behind it. */
+.rc-box-front {
+  position: relative;
+  z-index: 4;
+  margin-top: -1.5rem;
+  padding: 0.55rem 0.7rem 0.75rem;
+  background: var(--rc-grain), linear-gradient(var(--rc-wood-light), var(--rc-wood) 40%, var(--rc-wood-dark));
+  border: 1px solid var(--rc-wood-dark);
+  border-radius: 3px 3px 12px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 -3px 6px rgba(0, 0, 0, 0.45);
+}
+.rc-box-label { font-size: 0.92rem; }
+
+/* Off the box: a quiet way to put it on the home screen. */
+.rc-home-note {
+  display: block;
+  margin: 0.85rem auto 0;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.rc-home-note:hover { color: var(--foreground); }
+.rc-home-steps { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.25rem 0 0.75rem; padding-left: 1.35rem; font-size: 0.95rem; line-height: 1.45; }
 
 /* A snapshot taped to the card. */
 .rc-snapshot {
   position: absolute;
-  top: 2.35rem;
-  right: 0.8rem;
+  top: 2.5rem;
+  right: 0.7rem;
   display: block;
   width: 76px;
   padding: 4px 4px 12px;
@@ -1241,23 +1469,23 @@ button.rc-pill-label { cursor: pointer; }
   font-size: 1.6rem;
 }
 
+/* On the card's top line, the part that shows while it's filed in the stack. */
 .rc-card-add {
   position: absolute;
-  right: 0.6rem;
-  bottom: 0.4rem;
-  width: 38px;
-  height: 38px;
-  background-color: var(--rc-paper);
-  background-image: linear-gradient(rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.1));
-  border: 1px solid var(--surface-border);
-  border-radius: 50%;
-  box-shadow: var(--rc-highlight), 0 1px 3px rgba(0, 0, 0, 0.3);
-  color: var(--accent-light);
-  font-size: 1.3rem;
+  top: 0.1rem;
+  right: 0.3rem;
+  width: 34px;
+  height: 34px;
+  background: none;
+  border: none;
+  color: var(--rc-ink);
+  font-family: var(--rc-hand);
+  font-size: 1.45rem;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
-.rc-card-add:active { box-shadow: var(--rc-well); transform: translateY(1px); }
+.rc-card-add:active { transform: translateY(1px); }
 
 /* ── A recipe, on paper ── */
 .rc-recipe-card {

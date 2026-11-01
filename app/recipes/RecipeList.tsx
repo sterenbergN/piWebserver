@@ -12,6 +12,7 @@ import {
   type Recipe,
   type RecipeCategory,
 } from '@/lib/recipes/recipes';
+import HomeScreenNote from './HomeScreenNote';
 import { formatMinutes, readSavedCook } from './shared';
 import type { Kitchen } from './useKitchen';
 
@@ -121,21 +122,15 @@ export default function RecipeList({
         </div>
       )}
 
-      {resumable && (
-        <button type="button" className="rc-resume" onClick={() => onOpen(resumable.slug)}>
-          <span>
-            <span className="rc-meta">Continue cooking · step {resumable.step + 1}</span>
-            <span className="rc-row-title">{resumable.title}</span>
-          </span>
-          <span aria-hidden="true">›</span>
-        </button>
-      )}
+      <section className="rc-box" aria-label="Recipe box">
+      <div className="rc-box-lid">
+      <h2 className="rc-box-plate">Recipes</h2>
 
       <div className="rc-search">
         <input
           type="search"
           className="rc-input"
-          placeholder="Search recipes"
+          placeholder="Look up a recipe…"
           aria-label="Search recipes or ingredients"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -154,6 +149,16 @@ export default function RecipeList({
           </button>
         )}
       </div>
+
+      {resumable && (
+        <button type="button" className="rc-resume" onClick={() => onOpen(resumable.slug)}>
+          <span>
+            <span className="rc-meta">Continue cooking · step {resumable.step + 1}</span>
+            <span className="rc-row-title">{resumable.title}</span>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      )}
 
       {showFilters && (
         <div className="rc-filters">
@@ -202,12 +207,14 @@ export default function RecipeList({
           </label>
         </div>
       )}
+      </div>
 
+      <div className="rc-box-well">
       {categories.length > 1 && (
-        <div className="rc-chips">
+        <div className="rc-index-tabs" role="group" aria-label="Dividers">
           <button
             type="button"
-            className={`rc-chip${categoryFilter === 'all' ? ' is-active' : ''}`}
+            className={`rc-index-tab${categoryFilter === 'all' ? ' is-active' : ''}`}
             aria-pressed={categoryFilter === 'all'}
             onClick={() => setCategoryFilter('all')}
           >
@@ -217,7 +224,7 @@ export default function RecipeList({
             <button
               key={cat}
               type="button"
-              className={`rc-chip${categoryFilter === cat ? ' is-active' : ''}`}
+              className={`rc-index-tab${categoryFilter === cat ? ' is-active' : ''}`}
               aria-pressed={categoryFilter === cat}
               onClick={() => setCategoryFilter(categoryFilter === cat ? 'all' : cat)}
             >
@@ -230,7 +237,7 @@ export default function RecipeList({
       {loadState === 'error' && <div className="rc-notice">Couldn’t load the recipes. Try refreshing the page.</div>}
       {loadState === 'ready' && filtered.length === 0 && (
         <p className="rc-empty">
-          {recipes.length === 0 ? (canEdit ? 'No recipes yet. Add the first one with + Add.' : 'No recipes yet.') : 'No recipes match that.'}
+          {recipes.length === 0 ? (canEdit ? 'An empty box. Add the first card with + Add.' : 'An empty box, for now.') : 'No card in the box for that.'}
         </p>
       )}
 
@@ -251,15 +258,14 @@ export default function RecipeList({
                 {recipe.rating ? <span className="rc-card-rating">★ {recipe.rating.toFixed(1)}</span> : null}
               </span>
               <span className="rc-card-title">{recipe.title}</span>
-              <span className="rc-card-line">
-                {formatMinutes(schedule.totalMinutes)} · serves {recipe.servings}
-              </span>
+              {/* Filed in the stack, only the top of a card shows, so this line says what matters most. */}
               <span className={`rc-card-line${tracksHave && missing.length === 0 ? ' is-ready' : ''}`}>
-                {tracksHave
-                  ? missing.length === 0
-                    ? '✓ You have everything'
-                    : `Need ${missing.length} of ${bom.length} ingredients`
-                  : `${bom.length} ingredients`}
+                {formatMinutes(schedule.totalMinutes)} ·{' '}
+                {tracksHave ? (missing.length === 0 ? '✓ have it all' : `need ${missing.length}`) : `serves ${recipe.servings}`}
+              </span>
+              <span className="rc-card-line">
+                {tracksHave ? `Serves ${recipe.servings} · ` : ''}
+                {bom.length} ingredients
               </span>
               <span className="rc-card-line rc-card-foot">
                 {recipe.macros?.protein !== undefined ? `${recipe.macros.protein} g protein` : ''}
@@ -287,6 +293,16 @@ export default function RecipeList({
           </li>
         ))}
       </ul>
+      </div>
+
+      <div className="rc-box-front">
+        <span className="rc-box-label">
+          {filtered.length} {filtered.length === 1 ? 'card' : 'cards'}
+        </span>
+      </div>
+      </section>
+
+      <HomeScreenNote />
     </>
   );
 }

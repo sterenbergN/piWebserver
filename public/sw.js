@@ -119,7 +119,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.ok && url.pathname.startsWith('/workout')) {
+          // Kept fresh so the recipe box still opens with no signal at the store.
+          if (response.ok && (url.pathname.startsWith('/workout') || url.pathname === '/recipes')) {
             const copy = response.clone();
             caches.open(PAGE_CACHE).then((cache) => cache.put(url.pathname, copy));
           }
