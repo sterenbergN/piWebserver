@@ -132,12 +132,27 @@ function DateForm({ planner, deadline, onDone }: { planner: Planner; deadline?: 
 function TaskLine({ task, planner, today }: { task: PlanTask; planner: Planner; today: DateKey }) {
   const { confirm, popup } = useSitePopup();
   const [error, setError] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(task.title);
   const left = task.pancakes - task.eaten;
   const nextDay = Object.keys(task.plate).filter((d) => d >= today).sort()[0];
   const resize = (by: number) => planner.post('edit-task', { id: task.id, pancakes: task.pancakes + by }).catch((e) => setError(e.message));
   const remove = async () => {
     if (await confirm({ title: 'Remove this work?', message: `“${task.title}” comes off your plan.`, confirmLabel: 'Remove', danger: true })) planner.post('remove-task', { id: task.id }).catch((e) => setError(e.message));
   };
+  const rename = () => planner.post('edit-task', { id: task.id, title: name }).then(() => setRenaming(false)).catch((e) => setError(e.message));
+  if (renaming) {
+    return (
+      <li className="sd-task">
+        <form className="sd-task-edit" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
+          <input value={name} autoFocus maxLength={160} aria-label="The work" onChange={(e) => setName(e.target.value)} />
+          <button type="submit" className="hb-small-btn is-primary" disabled={!name.trim()}>Save</button>
+          <button type="button" className="hb-text-btn" onClick={() => { setRenaming(false); setName(task.title); }}>Cancel</button>
+          {error && <small className="sd-warning" role="alert">{error}</small>}
+        </form>
+      </li>
+    );
+  }
   return (
     <li className="sd-task">
       {popup}
@@ -150,6 +165,7 @@ function TaskLine({ task, planner, today }: { task: PlanTask; planner: Planner; 
       <span className="sd-actions">
         <button type="button" className="hb-small-btn" aria-label={`One fewer pancake for ${task.title}`} disabled={task.pancakes <= Math.max(1, task.eaten)} onClick={() => resize(-1)}>−</button>
         <button type="button" className="hb-small-btn" aria-label={`One more pancake for ${task.title}`} disabled={task.pancakes >= MAX_PANCAKES} onClick={() => resize(1)}>+</button>
+        <button type="button" className="hb-small-btn" aria-label={`Rename ${task.title}`} onClick={() => setRenaming(true)}><Icon name="pencil" /></button>
         <button type="button" className="hb-text-btn sd-danger-link" onClick={remove}>Remove</button>
       </span>
     </li>

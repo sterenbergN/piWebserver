@@ -5,7 +5,7 @@ import { clampToday } from '@/lib/daily/store';
 import { afterStudying, readPlan, readProgress, readTests, updateProgress, updateTests } from '@/lib/study/store';
 import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
 import {
-  addTest, answerReview, cleanAnswer, dueMisses, finishAttempt, fixQuestion, parseTestReply, removeQuestion, removeTest, renameTest,
+  addQuestion, addTest, answerReview, cleanAnswer, dueMisses, editQuestion, finishAttempt, parseTestReply, removeQuestion, removeTest, renameTest,
   saveAttempt, startAttempt, StudyInputError, studyDays, studySummary, withQuestions,
 } from '@/lib/study/study';
 import { createSet, dropRepeats, editSet, moveTest, removeSet, setBrief, setSummaries, testsInSet } from '@/lib/study/sets';
@@ -148,8 +148,12 @@ export async function POST(request: Request) {
         await afterStudying(userId, today);
         return NextResponse.json({ success: true, right: result.right, miss: result.miss }, { headers: PRIVATE });
       }
-      case 'fix-question': {
-        const question = await updateTests(userId, (data) => updateProgress(userId, (progress) => fixQuestion(testFrom(data.tests, body.testId), progress, String(body.questionId), body, today)));
+      case 'edit-question': {
+        const question = await updateTests(userId, (data) => updateProgress(userId, (progress) => editQuestion(testFrom(data.tests, body.testId), progress, String(body.questionId), body, today)));
+        return NextResponse.json({ success: true, question }, { headers: PRIVATE });
+      }
+      case 'add-question': {
+        const question = await updateTests(userId, (data) => addQuestion(testFrom(data.tests, body.testId), body, newId));
         return NextResponse.json({ success: true, question }, { headers: PRIVATE });
       }
       case 'remove-question': {

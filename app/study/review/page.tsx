@@ -6,6 +6,7 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import { MathText } from '@/components/daily/MathText';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { Icon } from '@/components/study/Icon';
+import { QuestionEditor } from '@/components/study/QuestionEditor';
 import { Choices, Explanation } from '@/components/study/QuestionView';
 import { EmptyState, Loading } from '@/components/study/Ui';
 import { choiceOrder, REVIEW_DAYS, type Miss, type StudyQuestion, type StudySummary } from '@/lib/study/study';
@@ -34,6 +35,7 @@ export default function ReviewPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [seed] = useState(() => Math.floor(Math.random() * 2 ** 31));
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,12 +70,13 @@ export default function ReviewPage() {
     setIndex((i) => i + 1);
     setAnswer([]);
     setResult(null);
+    setEditing(false);
     window.scrollTo({ top: 0 });
   }, []);
 
   // The same keys as a test: a letter or number picks, Enter checks and moves on.
   useEffect(() => {
-    if (!item) return;
+    if (!item || editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
       if (e.key === 'Enter') {
@@ -90,7 +93,7 @@ export default function ReviewPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [item, result, answer, seed, next, check]);
+  }, [item, editing, result, answer, seed, next, check]);
 
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to review">Your missed questions are only shown to your account.</SignInPrompt></div>;
 
@@ -120,18 +123,27 @@ export default function ReviewPage() {
             <span className="sd-count">{[item.question.topic !== 'General' ? item.question.topic : '', item.testTitle].filter(Boolean).join(' · ')}</span>
             {item.miss.misses > 1 && <span className="td-chip">Missed {item.miss.misses} times</span>}
           </div>
-          <div className="sd-question-body" key={item.question.id}>
-            <MathText className="sd-stem">{item.question.stem}</MathText>
-            <Choices question={item.question} seed={seed} answer={answer} reveal={!!result} onChange={result ? undefined : setAnswer} />
-            {result && <Explanation question={item.question} answer={answer} />}
-            {result && <p className="sd-outcome"><Icon name="clock" /> {outcome(result.miss, result.right)}</p>}
-          </div>
+          {editing ? (
+            <QuestionEditor question={item.question} onCancel={() => setEditing(false)} onSave={async (input) => {
+              const body = await studyPost<{ question: StudyQuestion }>('edit-question', { testId: item.miss.testId, questionId: item.question.id, ...input });
+              setItems((list) => list.map((x) => (x.question.id === item.question.id ? { ...x, question: body.question } : x)));
+              setEditing(false);
+            }} />
+          ) : (
+            <div className="sd-question-body" key={item.question.id}>
+              <MathText className="sd-stem">{item.question.stem}</MathText>
+              <Choices question={item.question} seed={seed} answer={answer} reveal={!!result} onChange={result ? undefined : setAnswer} />
+              {result && <Explanation question={item.question} answer={answer} />}
+              {result && <p className="sd-outcome"><Icon name="clock" /> {outcome(result.miss, result.right)}</p>}
+              {result && <button type="button" className="hb-text-btn sd-with-icon sd-self-start" onClick={() => setEditing(true)}><Icon name="pencil" /> Something wrong? Edit this question</button>}
+            </div>
+          )}
           {error && <p className="sd-warning" role="alert">{error}</p>}
-          <div className="sd-actions sd-question-nav">
+          {!editing && <div className="sd-actions sd-question-nav">
             {result
               ? <button type="button" className="btn btn-primary" onClick={next}>{index + 1 < items.length ? 'Next' : 'Finish'}</button>
               : <button type="button" className="btn btn-primary" disabled={busy || !answer.length} onClick={check}>Check answer</button>}
-          </div>
+          </div>}
         </section>
       )}
 

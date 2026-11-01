@@ -170,6 +170,24 @@ export function addCards(deck: CardDeck, drafts: DraftCard[]) {
   return { added, repeats };
 }
 
+/** Change a deck's details. Cards already in Anki stay in the deck they were imported to. */
+export function editDeck(deck: CardDeck, input: { title?: unknown; deck?: unknown; course?: unknown }) {
+  const title = clip(input.title, LIMITS.title);
+  if (!title) throw new StudyInputError('Give the deck a name.');
+  Object.assign(deck, { title, deck: cleanDeckName(input.deck, title), course: clip(input.course, 80) });
+}
+
+/** A card she's written herself. */
+export function addCard(deck: CardDeck, input: { front?: unknown; back?: unknown; topic?: unknown }) {
+  const front = clip(input.front, LIMITS.front);
+  const back = clip(input.back, LIMITS.back);
+  const kind: CardKind = isCloze(front) ? 'cloze' : 'basic';
+  const problem = checkCard(kind, front, back);
+  if (problem) throw new StudyInputError(`That card won’t work: ${problem}.`);
+  const { added } = addCards(deck, [{ kind, front, back, topic: clip(input.topic, LIMITS.topic) || 'General' }]);
+  if (!added) throw new StudyInputError('This deck already has that card.');
+}
+
 export function editCard(card: AnkiCard, input: { front?: unknown; back?: unknown }) {
   const front = clip(input.front, LIMITS.front);
   const back = clip(input.back, LIMITS.back);

@@ -84,8 +84,10 @@ export default function DeckPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
-  const [renaming, setRenaming] = useState(false);
-  const [name, setName] = useState('');
+  const [details, setDetails] = useState<{ title: string; deck: string; course: string } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [newFront, setNewFront] = useState('');
+  const [newBack, setNewBack] = useState('');
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/study/anki/cards?deck=${encodeURIComponent(id)}`, { cache: 'no-store' });
@@ -148,14 +150,27 @@ export default function DeckPage() {
       setError(e instanceof Error ? e.message : 'Couldn’t delete it.');
     }
   };
-  const rename = async () => {
+  const saveDetails = async () => {
+    if (!details) return;
     setError('');
     try {
-      await post('rename-deck', { deckId: id, deck: name });
-      setRenaming(false);
+      await post('edit-deck', { deckId: id, ...details });
+      setDetails(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Couldn’t rename it.');
+      setError(e instanceof Error ? e.message : 'Couldn’t save that.');
+    }
+  };
+  const addCard = async () => {
+    setError('');
+    try {
+      await post('add-card', { deckId: id, front: newFront, back: newBack });
+      setNewFront('');
+      setNewBack('');
+      setAdding(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t add that.');
     }
   };
 
@@ -189,19 +204,49 @@ export default function DeckPage() {
           <li>Check it shows note type and deck <strong>from the file</strong>, then click <strong>Import</strong>.</li>
         </ol>
         <p className="hb-hint">Sending a card you edited here? Set <strong>Existing notes</strong> to <strong>Update</strong> in Anki’s import window, which also replaces any changes you made to it there.</p>
-        {renaming ? (
-          <form className="sd-rename" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
-            <input value={name} autoFocus maxLength={120} aria-label="Deck name in Anki" onChange={(e) => setName(e.target.value)} />
-            <button type="submit" className="hb-small-btn is-primary" disabled={!name.trim()}>Save</button>
-            <button type="button" className="hb-text-btn" onClick={() => setRenaming(false)}>Cancel</button>
+        {details ? (
+          <form className="ed-deck-form" onSubmit={(e) => { e.preventDefault(); void saveDetails(); }}>
+            <div className="sd-fields">
+              <label>Name here
+                <input value={details.title} autoFocus maxLength={120} onChange={(e) => setDetails({ ...details, title: e.target.value })} />
+              </label>
+              <label>Class or module
+                <input value={details.course} maxLength={80} onChange={(e) => setDetails({ ...details, course: e.target.value })} />
+              </label>
+              <label className="sd-wide">Deck in Anki
+                <input value={details.deck} maxLength={120} onChange={(e) => setDetails({ ...details, deck: e.target.value })} />
+                <small className="hb-hint">Cards already imported stay where they are. Move them in Anki if you want them to follow.</small>
+              </label>
+            </div>
+            <div className="sd-actions">
+              <button type="submit" className="btn btn-primary" disabled={!details.title.trim()}>Save</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setDetails(null)}>Cancel</button>
+            </div>
           </form>
         ) : (
-          <p className="hb-hint">Goes into “{deck.deck}”. <button type="button" className="hb-text-btn" onClick={() => { setName(deck.deck); setRenaming(true); }}>Change</button></p>
+          <p className="hb-hint">Goes into “{deck.deck}”. <button type="button" className="hb-text-btn" onClick={() => setDetails({ title: deck.title, deck: deck.deck, course: deck.course })}>Edit the deck’s details</button></p>
         )}
       </section>
 
       <section className="sd-card">
-        <h2>The cards</h2>
+        <div className="sd-card-head">
+          <h2>The cards</h2>
+          {!adding && <button type="button" className="hb-small-btn" onClick={() => setAdding(true)}><Icon name="plus" /> Add a card</button>}
+        </div>
+        {adding && (
+          <div className="ed-question">
+            <label className="sd-mend-label">Question, or text with a {'{{c1::blank}}'}
+              <textarea rows={3} value={newFront} autoFocus onChange={(e) => setNewFront(e.target.value)} />
+            </label>
+            <label className="sd-mend-label">Answer (optional for a blank)
+              <textarea rows={2} value={newBack} onChange={(e) => setNewBack(e.target.value)} />
+            </label>
+            <div className="sd-actions">
+              <button type="button" className="btn btn-primary" disabled={!newFront.trim()} onClick={addCard}>Add the card</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setAdding(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
         {deck.cards.length ? (
           <ul className="cd-list">{deck.cards.map((card) => <CardRow key={card.id} card={card} deckId={deck.id} onChanged={load} />)}</ul>
         ) : <p className="hb-hint">No cards left in this deck.</p>}

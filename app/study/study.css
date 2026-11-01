@@ -105,7 +105,7 @@
 .sd-flag { min-height: 2.2rem; padding: 0.25rem 0.7rem; border-radius: 999px; border: 1px solid var(--surface-border); background: none; color: var(--muted); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
 .sd-flag.is-on { border-color: var(--warning); color: var(--warning); background: rgba(var(--accent-rgb), 0.08); }
 .sd-flag.is-static { display: inline-flex; align-items: center; min-height: 0; cursor: default; }
-.sd .dq-md p, .sd .dq-md li, .sd-verdict, .sd-outcome, .sd-found, .sd-mend-title { color: var(--foreground); }
+.sd .dq-md p, .sd .dq-md li, .sd-verdict, .sd-outcome, .sd-found { color: var(--foreground); }
 .sd-stem { font-size: 1.04rem; }
 .sd-stem.dq-md > :first-child { margin-top: 0; }
 .sd-stem p:last-child { margin-bottom: 0; }
@@ -152,9 +152,6 @@
 .sd-big-score { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.2rem 0.6rem; }
 .sd-big-score strong { font-size: 2.4rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .sd-big-score span { color: var(--muted); }
-.sd-mend-open { align-self: flex-start; font-size: 0.85rem; }
-.sd-mend { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem 0.9rem; border-radius: 12px; border: 1px dashed var(--surface-border); }
-.sd-mend-title { margin: 0; font-weight: 600; font-size: 0.9rem; }
 .sd-mend-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; font-weight: 600; }
 
 /* The miss bank */

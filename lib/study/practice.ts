@@ -178,35 +178,82 @@ export function recordGrid(grid: CompareGrid, results: unknown, today: DateKey) 
   return { knew, total };
 }
 
+/**
+ * Change a grid. Each row and column says where it came from, so what she's missed
+ * stays with the right cell when things move. Anything new starts with a clean record.
+ */
+export function editGrid(grid: CompareGrid, input: { title?: unknown; course?: unknown; columns?: unknown; rows?: unknown }) {
+  const title = clip(input.title, 120);
+  if (!title) throw new StudyInputError('Give the grid a name.');
+  const from = (row: Record<string, unknown>) => (Number.isInteger(row.from) ? (row.from as number) : -1);
+  const columnRows = listOf(input.columns).map((c) => (isRecord(c) ? c : {}));
+  const columns = columnRows.map((c) => clip(c.name, 80));
+  if (columns.some((c) => !c)) throw new StudyInputError('Every column needs a heading.');
+  if (columns.length < 2 || columns.length > LIMITS.columns) throw new StudyInputError(`A grid needs 2 to ${LIMITS.columns} columns.`);
+  const rowRows = listOf(input.rows).map((r) => (isRecord(r) ? r : {}));
+  const rows = rowRows.map((r) => ({ name: clip(r.name, 120), cells: listOf(r.cells).map((c) => clip(c, LIMITS.cell)) }));
+  if (rows.some((r) => !r.name)) throw new StudyInputError('Every row needs a name.');
+  if (rows.length < 2 || rows.length > LIMITS.rows) throw new StudyInputError(`A grid needs 2 to ${LIMITS.rows} rows.`);
+  if (new Set(rows.map((r) => r.name.toLowerCase())).size < rows.length) throw new StudyInputError('Two rows have the same name.');
+  if (new Set(columns.map((c) => c.toLowerCase())).size < columns.length) throw new StudyInputError('Two columns have the same heading.');
+  if (rows.some((r) => r.cells.length !== columns.length || r.cells.some((c) => !c))) throw new StudyInputError('Fill in every cell. If there’s nothing to say, write “None”.');
+
+  const stats: CompareGrid['stats'] = {};
+  rowRows.forEach((row, r) => columnRows.forEach((column, c) => {
+    const old = grid.stats[cellKey(from(row), from(column))];
+    if (old) stats[cellKey(r, c)] = old;
+  }));
+  Object.assign(grid, { title, course: clip(input.course, 80), columns, rows, stats });
+  return grid;
+}
+
 // ── Mock patient ─────────────────────────────────────────────────────────────
 
 export type DraftCase = Omit<PatientCase, 'id' | 'createdAt' | 'runs'>;
 
-export function parseCaseReply(text: unknown): Parsed<DraftCase> {
-  const problems: string[] = [];
-  const items = itemsIn(text, 'cases').flatMap((raw, i): DraftCase[] => {
-    if (!isRecord(raw)) { problems.push(`Case ${i + 1}: not a case.`); return []; }
-    const door = isRecord(raw.door) ? raw.door : {};
-    const complaint = clip(door.complaint, 200);
-    const age = clip(typeof door.age === 'number' ? String(door.age) : door.age, 20);
-    const sex = clip(door.sex, 30);
-    const diagnosis = clip(raw.diagnosis, 200);
-    const script = listOf(raw.script).flatMap((s) => (isRecord(s) && clip(s.ask, 200) && clip(s.say, 600) ? [{ ask: clip(s.ask, 200), say: clip(s.say, 600) }] : [])).slice(0, 40);
-    const exam = listOf(raw.exam).flatMap((s) => (isRecord(s) && clip(s.maneuver, 200) && clip(s.finding, 400) ? [{ maneuver: clip(s.maneuver, 200), finding: clip(s.finding, 400) }] : [])).slice(0, 30);
-    const checklist = listOf(raw.checklist).map((c) => clip(c, 200)).filter(Boolean).slice(0, 40);
-    const missing = [!complaint && 'a chief complaint', !diagnosis && 'a diagnosis', script.length < 3 && 'at least 3 history answers', checklist.length < 3 && 'at least 3 checklist items'].filter(Boolean);
-    if (missing.length) { problems.push(`Case ${i + 1}: it needs ${missing.join(', ')}.`); return []; }
-    return [{
+/** A case from the AI or the editor. Fields it needs and doesn't have come back as `missing`. */
+function readCase(raw: Record<string, unknown>): { draft: DraftCase; missing: string[] } {
+  const door = isRecord(raw.door) ? raw.door : {};
+  const complaint = clip(door.complaint, 200);
+  const age = clip(typeof door.age === 'number' ? String(door.age) : door.age, 20);
+  const sex = clip(door.sex, 30);
+  const diagnosis = clip(raw.diagnosis, 200);
+  const script = listOf(raw.script).flatMap((s) => (isRecord(s) && clip(s.ask, 200) && clip(s.say, 600) ? [{ ask: clip(s.ask, 200), say: clip(s.say, 600) }] : [])).slice(0, 40);
+  const exam = listOf(raw.exam).flatMap((s) => (isRecord(s) && clip(s.maneuver, 200) && clip(s.finding, 400) ? [{ maneuver: clip(s.maneuver, 200), finding: clip(s.finding, 400) }] : [])).slice(0, 30);
+  const checklist = listOf(raw.checklist).map((c) => clip(c, 200)).filter(Boolean).slice(0, 40);
+  const missing = [!complaint && 'a chief complaint', !diagnosis && 'a diagnosis', script.length < 3 && 'at least 3 history answers', checklist.length < 3 && 'at least 3 checklist items'].filter((m): m is string => !!m);
+  return {
+    missing,
+    draft: {
       title: `${[age && `${age}-year-old`, sex].filter(Boolean).join(' ')}${age || sex ? ': ' : ''}${complaint}`,
       course: clip(raw.course, 80),
       door: { age, sex, complaint, vitals: clip(door.vitals, 300) },
       opening: clip(raw.opening, 400) || complaint,
       script, exam, checklist, diagnosis,
       teaching: clip(raw.teaching, 2000),
-    }];
+    },
+  };
+}
+
+export function parseCaseReply(text: unknown): Parsed<DraftCase> {
+  const problems: string[] = [];
+  const items = itemsIn(text, 'cases').flatMap((raw, i): DraftCase[] => {
+    if (!isRecord(raw)) { problems.push(`Case ${i + 1}: not a case.`); return []; }
+    const { draft, missing } = readCase(raw);
+    if (missing.length) { problems.push(`Case ${i + 1}: it needs ${missing.join(', ')}.`); return []; }
+    return [draft];
   });
   if (!items.length) throw new StudyInputError(`No cases could be used. ${problems.slice(0, 3).join(' ')}`);
   return { items, problems };
+}
+
+/** Change a case. Past runs stay as they were, so what they missed reads as it did then. */
+export function editCase(item: PatientCase, input: unknown) {
+  if (!isRecord(input)) throw new StudyInputError('Nothing to save.');
+  const { draft, missing } = readCase(input);
+  if (missing.length) throw new StudyInputError(`This case needs ${missing.join(', ')}.`);
+  Object.assign(item, draft);
+  return item;
 }
 
 export function addCases(data: PracticeData, drafts: DraftCase[], makeId: () => string, now: string) {
@@ -242,25 +289,43 @@ const MIN_CLUES = 3;
 const MAX_CLUES = 6;
 export const MAX_DIFF_SCORE = 500;
 
+/** A case from the AI or the editor, or what's wrong with it. */
+function readPuzzle(raw: Record<string, unknown>, label: string): DraftPuzzle | string {
+  const answer = clip(raw.answer, 120);
+  const clues = listOf(raw.clues).flatMap((c) => (isRecord(c) && clip(c.text, 400) ? [{ label: clip(c.label, 40) || 'Clue', text: clip(c.text, 400) }] : [])).slice(0, MAX_CLUES);
+  if (!answer) return `${label}: it has no answer.`;
+  if (clues.length < MIN_CLUES) return `${label}: it has ${clues.length} clues (needs at least ${MIN_CLUES}).`;
+  const options = [...new Set(listOf(raw.options).map((o) => clip(o, 120)).filter((o) => o && o.toLowerCase() !== answer.toLowerCase()))].slice(0, 7);
+  if (options.length < 3) return `${answer}: it needs at least 3 other diagnoses to choose from.`;
+  const system = readSystem(raw.system);
+  return { clues, answer, options: [...options, answer], explanation: clip(raw.explanation, 2000), topic: clip(raw.topic, 80) || answer, ...(system ? { system } : {}) };
+}
+
 export function parseDiffReply(text: unknown): Parsed<DraftPuzzle> {
   const problems: string[] = [];
   const seen = new Set<string>();
   const items = itemsIn(text, 'cases').flatMap((raw, i): DraftPuzzle[] => {
     if (!isRecord(raw)) { problems.push(`Case ${i + 1}: not a case.`); return []; }
-    const answer = clip(raw.answer, 120);
-    const clues = listOf(raw.clues).flatMap((c) => (isRecord(c) && clip(c.text, 400) ? [{ label: clip(c.label, 40) || 'Clue', text: clip(c.text, 400) }] : [])).slice(0, MAX_CLUES);
-    if (!answer) { problems.push(`Case ${i + 1}: it has no answer.`); return []; }
-    if (clues.length < MIN_CLUES) { problems.push(`Case ${i + 1}: it has ${clues.length} clues (needs at least ${MIN_CLUES}).`); return []; }
-    const options = [...new Set([...listOf(raw.options).map((o) => clip(o, 120)).filter(Boolean)].filter((o) => o.toLowerCase() !== answer.toLowerCase()))].slice(0, 7);
-    if (options.length < 3) { problems.push(`${answer}: it needs at least 3 other diagnoses to choose from.`); return []; }
-    const key = `${answer}|${clues[0].text}`.toLowerCase();
-    if (seen.has(key)) { problems.push(`${answer}: it’s in there twice.`); return []; }
+    const puzzle = readPuzzle(raw, `Case ${i + 1}`);
+    if (typeof puzzle === 'string') { problems.push(puzzle); return []; }
+    const key = `${puzzle.answer}|${puzzle.clues[0].text}`.toLowerCase();
+    if (seen.has(key)) { problems.push(`${puzzle.answer}: it’s in there twice.`); return []; }
     seen.add(key);
-    const system = readSystem(raw.system);
-    return [{ clues, answer, options: [...options, answer], explanation: clip(raw.explanation, 2000), topic: clip(raw.topic, 80) || answer, ...(system ? { system } : {}) }];
+    return [puzzle];
   });
   if (!items.length) throw new StudyInputError(`No cases could be used. ${problems.slice(0, 3).join(' ')}`);
   return { items, problems };
+}
+
+/** Change a case. If she's already played it, how that went stays on the record. */
+export function editPuzzle(data: PracticeData, id: unknown, input: unknown) {
+  const puzzle = data.puzzles.find((p) => p.id === id);
+  if (!puzzle) throw new StudyInputError('That case isn’t here any more.', 'missing');
+  const read = isRecord(input) ? readPuzzle(input, 'This case') : 'Nothing to save.';
+  if (typeof read === 'string') throw new StudyInputError(read);
+  delete puzzle.system;
+  Object.assign(puzzle, read);
+  return puzzle;
 }
 
 export function addPuzzles(data: PracticeData, drafts: DraftPuzzle[], makeId: () => string, now: string) {

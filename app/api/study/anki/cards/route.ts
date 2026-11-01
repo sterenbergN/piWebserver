@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
-import { addCards, cardFile, cardFileName, cardKey, cleanDeckName, deckSummary, editCard, MAX_DECKS, newDeck, parseCardReply, unsentCards } from '@/lib/study/cards';
+import { addCard, addCards, cardFile, cardFileName, cardKey, deckSummary, editCard, editDeck, MAX_DECKS, newDeck, parseCardReply, unsentCards } from '@/lib/study/cards';
 import { readAnki, readPractice, updatePractice } from '@/lib/study/store';
 import { StudyInputError } from '@/lib/study/study';
 
@@ -72,11 +72,13 @@ export async function POST(request: Request) {
           editCard(card, body);
         });
         return json({});
-      case 'rename-deck':
+      case 'edit-deck':
+      case 'add-card':
         await updatePractice(userId, (data) => {
           const deck = data.cardDecks.find((d) => d.id === body.deckId);
           if (!deck) throw new ApiError(404, MISSING);
-          deck.deck = cleanDeckName(body.deck, deck.title);
+          if (body.action === 'edit-deck') editDeck(deck, body);
+          else addCard(deck, body);
         });
         return json({});
       case 'delete-deck':

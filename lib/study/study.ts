@@ -511,18 +511,95 @@ function lastAnswer(progress: ProgressData, questionId: string) {
   return done.length ? done[0].answers[questionId] ?? [] : null;
 }
 
-/** Fix a question's key. Past attempts regrade on their own; this brings the miss bank into line with them. */
-export function fixQuestion(test: StudyTest, progress: ProgressData, questionId: string, input: { correct?: unknown; explanation?: unknown }, today: DateKey) {
+/** What the editor sends for one question. `from` is a choice's old position, or nothing if it's new. */
+export type QuestionInput = {
+  stem?: unknown;
+  choices?: unknown;
+  /** Positions in `choices` as sent. */
+  correct?: unknown;
+  explanation?: unknown;
+  topic?: unknown;
+  system?: unknown;
+  quote?: unknown;
+};
+
+function readQuestionInput(input: QuestionInput) {
+  const stem = clip(input.stem, LIMITS.stem);
+  if (!stem) throw new StudyInputError('Write the question.');
+  const rows = (Array.isArray(input.choices) ? input.choices : []).map((row) => (isRecord(row) ? row : {}));
+  const choices = rows.map((row) => clip(row.text, LIMITS.choice));
+  if (choices.some((c) => !c)) throw new StudyInputError('Fill in or remove the empty choice.');
+  if (choices.length < 2) throw new StudyInputError('A question needs at least two choices.');
+  if (choices.length > LIMITS.choices) throw new StudyInputError(`A question can have up to ${LIMITS.choices} choices.`);
+  if (new Set(choices.map((c) => c.toLowerCase())).size < choices.length) throw new StudyInputError('Two of the choices say the same thing.');
+  const correct = cleanAnswer({ choices }, input.correct);
+  if (!correct.length) throw new StudyInputError('Mark at least one correct answer.');
+  const notes = rows.map((row) => clip(row.why, LIMITS.explanation));
+  const system = readSystem(input.system);
+  const quote = clip(input.quote, LIMITS.quote);
+  return {
+    fields: { stem, choices, correct, explanation: clip(input.explanation, LIMITS.explanation), topic: clip(input.topic, LIMITS.topic) || 'General' },
+    whyWrong: notes.some(Boolean) ? notes : undefined,
+    system,
+    quote: quote || undefined,
+    from: rows.map((row) => (Number.isInteger(row.from) ? (row.from as number) : -1)),
+  };
+}
+
+const setOptional = <K extends 'whyWrong' | 'system' | 'quote'>(question: StudyQuestion, key: K, value: StudyQuestion[K]) => {
+  if (value === undefined) delete question[key];
+  else question[key] = value;
+};
+
+/**
+ * Change anything about a question. Answers are stored by a choice's position, so
+ * every past answer moves along with its choice, and one whose choice is gone counts
+ * as blank. Fixing a typo leaves the miss bank alone. Only changing what's right
+ * regrades her last answer, and brings the miss bank into line with it.
+ */
+export function editQuestion(test: StudyTest, progress: ProgressData, questionId: string, input: QuestionInput, today: DateKey) {
   const question = test.questions.find((q) => q.id === questionId);
   if (!question) throw new StudyInputError('That question isn’t in this test any more.', 'missing');
-  const correct = cleanAnswer(question, input.correct);
-  if (!correct.length) throw new StudyInputError('Pick at least one correct answer.');
-  question.correct = correct;
-  if (typeof input.explanation === 'string') question.explanation = clip(input.explanation, LIMITS.explanation);
-  const last = lastAnswer(progress, questionId);
-  if (last === null) return question;
-  if (isRight(question, last)) delete progress.misses[questionId];
-  else if (!progress.misses[questionId]) recordMiss(progress, test.id, questionId, today);
+  const { fields, whyWrong, system, quote, from } = readQuestionInput(input);
+
+  const moved = new Map<number, number>();
+  from.forEach((old, now) => { if (old >= 0 && old < question.choices.length && !moved.has(old)) moved.set(old, now); });
+  const move = (answer: number[]) => answer.flatMap((old) => (moved.has(old) ? [moved.get(old)!] : [])).sort((a, b) => a - b);
+  const keyChanged = move(question.correct).join() !== fields.correct.join();
+
+  for (const attempt of progress.attempts) {
+    if (!attempt.answers[questionId]) continue;
+    const answer = move(attempt.answers[questionId]);
+    if (answer.length || attempt.finishedAt) attempt.answers[questionId] = answer;
+    else delete attempt.answers[questionId];
+  }
+  const game = progress.gameAnswers[questionId];
+  if (game) game.answer = move(game.answer);
+
+  Object.assign(question, fields);
+  setOptional(question, 'whyWrong', whyWrong);
+  setOptional(question, 'system', system);
+  setOptional(question, 'quote', quote);
+
+  if (keyChanged) {
+    const last = lastAnswer(progress, questionId);
+    if (last !== null) {
+      if (isRight(question, last)) delete progress.misses[questionId];
+      else if (!progress.misses[questionId]) recordMiss(progress, test.id, questionId, today);
+    }
+  }
+  return question;
+}
+
+/** A question she's written herself. Tries already started keep the questions they began with. */
+export function addQuestion(test: StudyTest, input: QuestionInput, makeId: () => string) {
+  if (test.questions.length >= LIMITS.questions) throw new StudyInputError(`A test can have up to ${LIMITS.questions} questions. Start another.`);
+  const { fields, whyWrong, system, quote } = readQuestionInput(input);
+  const question: StudyQuestion = { id: makeId(), ...fields };
+  setOptional(question, 'whyWrong', whyWrong);
+  setOptional(question, 'system', system);
+  setOptional(question, 'quote', quote);
+  test.questions.push(question);
   return question;
 }
 

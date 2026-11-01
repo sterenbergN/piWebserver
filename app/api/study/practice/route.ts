@@ -5,7 +5,7 @@ import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '
 import { gamePool } from '@/lib/study/games';
 import { newSession, ownerView, quizPick, QUIZ_SIZES, type PartnerSession } from '@/lib/study/partner';
 import {
-  addCases, addGrids, addPuzzles, caseForHer, diffOptions, diffStats, finishPuzzle, gridSummary, nextPuzzle, parseCaseReply, parseDiffReply, parseGridReply, recordGrid, todaysPuzzle, type DiffCase, type PracticeData,
+  addCases, addGrids, addPuzzles, caseForHer, diffOptions, diffStats, editCase, editGrid, editPuzzle, finishPuzzle, gridSummary, nextPuzzle, parseCaseReply, parseDiffReply, parseGridReply, recordGrid, todaysPuzzle, type DiffCase, type PracticeData,
 } from '@/lib/study/practice';
 import { endSessionsOf, liveSessionOf, noteStudied, readPractice, readProgress, readTests, updatePractice, writeNewSession } from '@/lib/study/store';
 import { StudyInputError } from '@/lib/study/study';
@@ -63,8 +63,10 @@ export async function GET(request: Request) {
     if (params.get('case')) {
       const item = data.cases.find((c) => c.id === params.get('case'));
       if (!item) throw new ApiError(404, 'That case isn’t here any more.');
-      return json({ case: caseForHer(item) });
+      // The whole case, answers and all, only when she's asked to edit it.
+      return json({ case: params.get('full') === '1' ? item : caseForHer(item) });
     }
+    if (params.get('puzzles') !== null) return json({ puzzles: data.puzzles, plays: data.plays });
     if (params.get('differential') !== null) return json(differential(data, today, params.get('another') === '1'));
     return json({
       grids: data.grids.map(gridSummary),
@@ -105,6 +107,29 @@ export async function POST(request: Request) {
         return json({});
       case 'delete-case':
         await updatePractice(userId, (data) => { data.cases = data.cases.filter((c) => c.id !== body.id); });
+        return json({});
+      case 'edit-grid':
+        await updatePractice(userId, (data) => {
+          const grid = data.grids.find((g) => g.id === body.id);
+          if (!grid) throw new ApiError(404, 'That grid isn’t here any more.');
+          editGrid(grid, body);
+        });
+        return json({});
+      case 'edit-case': {
+        const live = await liveSessionOf(userId);
+        if (live && live.caseId === body.id && !live.finishedAt) throw new ApiError(400, 'Someone’s using this case right now. End that sitting first.');
+        await updatePractice(userId, (data) => {
+          const item = data.cases.find((c) => c.id === body.id);
+          if (!item) throw new ApiError(404, 'That case isn’t here any more.');
+          editCase(item, body);
+        });
+        return json({});
+      }
+      case 'edit-puzzle':
+        await updatePractice(userId, (data) => { editPuzzle(data, body.id, body); });
+        return json({});
+      case 'delete-puzzle':
+        await updatePractice(userId, (data) => { data.puzzles = data.puzzles.filter((p) => p.id !== body.id); });
         return json({});
       case 'grid-result': {
         const result = await updatePractice(userId, (data) => {

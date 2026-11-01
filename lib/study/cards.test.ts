@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { addCards, cardFile, cardFileName, cardId, cardKey, clozeParts, cleanDeckName, deckSummary, editCard, isCloze, newDeck, parseCardReply, unsentCards } from './cards';
+import { addCard, addCards, cardFile, cardFileName, cardId, cardKey, clozeParts, cleanDeckName, deckSummary, editCard, editDeck, isCloze, newDeck, parseCardReply, unsentCards } from './cards';
 import { ankiField } from './anki';
 import { buildCardPrompt } from './prompt';
 import { StudyInputError } from './study';
@@ -138,6 +138,18 @@ test('the summary counts what hasn’t gone to Anki yet', () => {
   const summary = deckSummary(deck);
   assert.deepEqual([summary.count, summary.unsent, summary.cloze], [2, 1, 1]);
   assert.ok(!JSON.stringify(summary).includes('ARNI'), 'no cards in the list');
+});
+
+test('a deck’s details can change, and she can write her own cards', () => {
+  const deck = newDeck({ title: 'T' }, 'd1', NOW);
+  editDeck(deck, { title: 'New name', deck: 'Boards::Heart', course: 'Clin Med' });
+  assert.deepEqual([deck.title, deck.deck, deck.course], ['New name', 'Boards::Heart', 'Clin Med']);
+  assert.throws(() => editDeck(deck, { title: ' ' }), /Give the deck a name/);
+  addCard(deck, { front: 'Mine?', back: 'Yes' });
+  addCard(deck, { front: 'A {{c1::blank}}', back: '' });
+  assert.deepEqual(deck.cards.map((c) => [c.kind, c.topic]), [['basic', 'General'], ['cloze', 'General']]);
+  assert.throws(() => addCard(deck, { front: 'mine', back: 'Again' }), /already has/);
+  assert.throws(() => addCard(deck, { front: 'No answer', back: '' }), /no answer/);
 });
 
 const exampleOf = (prompt: string) => prompt.match(/```json\n([\s\S]+?)```/)![1];

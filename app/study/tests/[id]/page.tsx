@@ -8,10 +8,11 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import { MathText } from '@/components/daily/MathText';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { Icon } from '@/components/study/Icon';
-import { Choices, Explanation, MendQuestion } from '@/components/study/QuestionView';
+import { QuestionEditor } from '@/components/study/QuestionEditor';
+import { Choices, Explanation } from '@/components/study/QuestionView';
 import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
 import { DIFFICULTIES } from '@/lib/study/prompt';
-import { choiceOrder, isRight, scoreAttempt, type Attempt, type AttemptMode, type StudyQuestion, type StudyTest } from '@/lib/study/study';
+import { choiceOrder, isRight, scoreAttempt, type Attempt, type AttemptMode, type QuestionInput, type StudyQuestion, type StudyTest } from '@/lib/study/study';
 
 // One test: its cover (take it, or look back at past tries), taking it, and the
 // results. Your place is saved as you go, so it can be picked up on another device.
@@ -124,8 +125,8 @@ export default function TestPage() {
     }
   };
 
-  const fix = async (questionId: string, correct: number[], explanation: string) => {
-    await studyPost('fix-question', { testId: id, questionId, correct, explanation });
+  const fix = async (questionId: string, input: QuestionInput) => {
+    await studyPost('edit-question', { testId: id, questionId, ...input });
     await load();
   };
   const removeQ = async (questionId: string) => {
@@ -142,6 +143,7 @@ export default function TestPage() {
           <h1>{test.title}</h1>
           <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`, test.difficulty ? DIFFICULTIES[test.difficulty - 1]?.label : ''].filter(Boolean).join(' · ')}</p>
         </div>
+        {!shown && <Link className="btn btn-secondary" href={`/study/tests/${id}/edit`}><Icon name="pencil" /> Edit</Link>}
       </header>
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
 
@@ -438,7 +440,7 @@ function Results({ test, attempt, previous, onBack, onRetake, onFix, onRemove }:
   previous?: Attempt;
   onBack: () => void;
   onRetake: (questionIds: string[]) => void;
-  onFix: (questionId: string, correct: number[], explanation: string) => Promise<void>;
+  onFix: (questionId: string, input: QuestionInput) => Promise<void>;
   onRemove: (questionId: string) => Promise<void>;
 }) {
   const score = useMemo(() => scoreAttempt(attempt, test), [attempt, test]);
@@ -448,6 +450,7 @@ function Results({ test, attempt, previous, onBack, onRetake, onFix, onRemove }:
   const shown = filter === 'missed' ? missed : filter === 'unsure' ? unsure : score.results;
   const number = (id: string) => score.results.findIndex((r) => r.question.id === id) + 1;
   const percent = pct(score.right, score.total);
+  const [editing, setEditing] = useState<string | null>(null);
   const earlier = previous ? scoreAttempt(previous, test) : null;
   const change = earlier && earlier.total ? percent - pct(earlier.right, earlier.total) : null;
 
@@ -495,12 +498,18 @@ function Results({ test, attempt, previous, onBack, onRetake, onFix, onRemove }:
             <span className="sd-count">Question {number(question.id)}{question.topic !== 'General' ? ` · ${question.topic}` : ''}</span>
             {flagged && <span className="sd-flag is-on is-static"><Icon name="flag" /> Not sure</span>}
           </div>
-          <MathText className="sd-stem">{question.stem}</MathText>
-          <Choices question={question} seed={attempt.seed} answer={answer} reveal />
-          <Explanation question={question} answer={answer} />
-          <MendQuestion key={`${question.id}:${question.correct.join()}`} question={question}
-            onFix={(correct, explanation) => onFix(question.id, correct, explanation)}
-            onRemove={() => onRemove(question.id)} />
+          {editing === question.id ? (
+            <QuestionEditor question={question} onCancel={() => setEditing(null)}
+              onSave={async (input) => { await onFix(question.id, input); setEditing(null); }}
+              onRemove={async () => { await onRemove(question.id); setEditing(null); }} />
+          ) : (
+            <>
+              <MathText className="sd-stem">{question.stem}</MathText>
+              <Choices question={question} seed={attempt.seed} answer={answer} reveal />
+              <Explanation question={question} answer={answer} />
+              <button type="button" className="hb-text-btn sd-with-icon sd-self-start" onClick={() => setEditing(question.id)}><Icon name="pencil" /> Something wrong? Edit this question</button>
+            </>
+          )}
         </section>
       ))}
       {!shown.length && <p className="hb-hint">Nothing in this group.</p>}

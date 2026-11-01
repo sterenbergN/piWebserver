@@ -165,7 +165,12 @@ export default function DifferentialPage() {
       {loaded?.puzzle && (loaded.play && stats
         ? <Result key={loaded.puzzle.id} puzzle={loaded.puzzle} play={loaded.play} stats={stats} another={() => load('differential=1&another=1')} />
         : <Case key={loaded.puzzle.id} puzzle={loaded.puzzle} onFinish={finish} busy={busy} />)}
-      {loaded?.puzzle && <Link className="hb-text-btn sd-self-start" href="/study/practice/add?kind=puzzle">Add more cases</Link>}
+      {loaded && (
+        <div className="sd-actions">
+          {loaded.puzzle && <Link className="hb-text-btn" href="/study/practice/add?kind=puzzle">Add more cases</Link>}
+          {(stats?.played || stats?.left) ? <Link className="hb-text-btn" href="/study/games/differential/cases">Edit your cases</Link> : null}
+        </div>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { addDays } from '../habits/dates';
 import type { GameQuestion } from './games';
 import { emptyPlan } from './plan';
 import {
-  addCases, addGrids, addPuzzles, caseForHer, cellKey, diffScore, diffShareText, diffStats, emptyPractice, finishPuzzle, GRID_LEVELS, normalizePractice, parseCaseReply, parseDiffReply, parseGridReply,
+  addCases, addGrids, addPuzzles, caseForHer, cellKey, editCase, editGrid, editPuzzle, diffScore, diffShareText, diffStats, emptyPractice, finishPuzzle, GRID_LEVELS, normalizePractice, parseCaseReply, parseDiffReply, parseGridReply,
   pickHidden, recordCaseRun, recordGrid, todaysPuzzle,
 } from './practice';
 import { buildCasePrompt, buildDifferentialPrompt, buildGridPrompt } from './prompt';
@@ -89,6 +89,39 @@ test('recording a grid ignores cells that don’t exist', () => {
   assert.throws(() => recordGrid(grid, null, TODAY), /Nothing to save/);
 });
 
+test('editing a grid keeps what she missed with the right cell', () => {
+  const data = emptyPractice();
+  const [grid] = addGrids(data, parseGridReply(gridReply()).items, makeId, NOW);
+  recordGrid(grid, { [cellKey(2, 1)]: false, [cellKey(0, 0)]: true }, TODAY);
+  // Drop the first row, swap the columns, and add a row and a column.
+  editGrid(grid, {
+    title: 'Renamed', course: 'New',
+    columns: [{ name: 'Location', from: 1 }, { name: 'Timing', from: 0 }, { name: 'Added' }],
+    rows: [
+      { name: 'Aortic regurgitation', from: 2, cells: ['LSB', 'Diastolic', 'x'] },
+      { name: 'Mitral regurgitation', from: 1, cells: ['Apex', 'Holosystolic', 'x'] },
+      { name: 'Brand new', cells: ['a', 'b', 'c'] },
+    ],
+  });
+  assert.deepEqual([grid.title, grid.course, grid.columns], ['Renamed', 'New', ['Location', 'Timing', 'Added']]);
+  assert.deepEqual(grid.stats, { [cellKey(0, 0)]: { seen: 1, missed: 1 } }, 'the miss moved with its cell, and the dropped row’s record went');
+  assert.equal(grid.sessions.length, 1, 'past sittings stay');
+});
+
+test('a grid has to be complete to save', () => {
+  const data = emptyPractice();
+  const [grid] = addGrids(data, parseGridReply(gridReply()).items, makeId, NOW);
+  const ok = { title: 'T', columns: [{ name: 'A' }, { name: 'B' }], rows: [{ name: 'R', cells: ['1', '2'] }, { name: 'S', cells: ['3', '4'] }] };
+  assert.throws(() => editGrid(grid, { ...ok, title: '' }), /Give the grid a name/);
+  assert.throws(() => editGrid(grid, { ...ok, columns: [{ name: 'A' }] }), /2 to 8 columns/);
+  assert.throws(() => editGrid(grid, { ...ok, rows: [ok.rows[0]] }), /2 to 24 rows/);
+  assert.throws(() => editGrid(grid, { ...ok, rows: [ok.rows[0], { name: 'S', cells: ['3', ''] }] }), /every cell/);
+  assert.throws(() => editGrid(grid, { ...ok, rows: [ok.rows[0], { name: 'r', cells: ['3', '4'] }] }), /same name/);
+  assert.equal(grid.title, 'Murmurs', 'a refused edit changes nothing');
+  editGrid(grid, ok);
+  assert.equal(grid.title, 'T');
+});
+
 // ── Mock patient ─────────────────────────────────────────────────────────────
 
 test('a case reply is read, and its title can’t spoil the diagnosis', () => {
@@ -120,6 +153,17 @@ test('her view keeps the case’s secrets until she’s played it', () => {
   const after = caseForHer(item);
   assert.equal(after.diagnosis, 'Acute coronary syndrome');
   assert.equal(after.teaching, 'Get an ECG within 10 minutes.');
+});
+
+test('editing a case updates it and keeps its history', () => {
+  const data = emptyPractice();
+  const [item] = addCases(data, parseCaseReply(caseReply()).items, makeId, NOW);
+  recordCaseRun(item, [0], 60, TODAY);
+  const { id } = item;
+  editCase(item, { door: { age: '60', sex: 'woman', complaint: 'back pain', vitals: '' }, opening: 'Ouch.', script: item.script, exam: [], checklist: item.checklist, diagnosis: 'Dissection', teaching: '', course: 'New' });
+  assert.deepEqual([item.id, item.title, item.diagnosis, item.exam.length, item.runs.length], [id, '60-year-old woman: back pain', 'Dissection', 0, 1]);
+  assert.throws(() => editCase(item, { door: {}, script: [], checklist: [], diagnosis: '' }), /a chief complaint, a diagnosis, at least 3 history answers, at least 3 checklist items/);
+  assert.equal(item.diagnosis, 'Dissection', 'a refused edit changes nothing');
 });
 
 // ── Differential ─────────────────────────────────────────────────────────────
@@ -185,6 +229,21 @@ test('the streak counts days played, and sharing never spoils the answer', () =>
   assert.ok(!shared.includes('One'));
   assert.match(diffShareText(data.plays[b.id], 4), /stumped/);
   assert.deepEqual(normalizePractice(null), emptyPractice());
+});
+
+test('editing a Differential case keeps the answer among the choices and how she did', () => {
+  const data = puzzles('One');
+  const [p] = data.puzzles;
+  finishPuzzle(data, p.id, { cluesUsed: 2, solved: true }, TODAY);
+  const clues = p.clues;
+  editPuzzle(data, p.id, { answer: 'Corrected', clues, options: ['Pneumonia', 'Asthma', 'Pneumothorax', 'corrected'], explanation: 'Why', topic: 'T' });
+  assert.equal(p.answer, 'Corrected');
+  assert.deepEqual(p.options, ['Pneumonia', 'Asthma', 'Pneumothorax', 'Corrected']);
+  assert.equal('system' in p, false, 'clearing the system clears it');
+  assert.equal(data.plays[p.id].solved, true);
+  assert.throws(() => editPuzzle(data, p.id, { answer: '', clues, options: [] }), /no answer/);
+  assert.throws(() => editPuzzle(data, 'gone', {}), /isn’t here/);
+  assert.equal(p.answer, 'Corrected');
 });
 
 // ── The prompts ──────────────────────────────────────────────────────────────

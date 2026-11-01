@@ -9,6 +9,7 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import { useSitePopup } from '@/components/SitePopup';
 import { InlineMath } from '@/components/study/InlineMath';
 import { practiceGet, practicePost, SignedOut } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
 import { PartnerLink, useLiveSession } from '@/components/study/PartnerLink';
 import { fmtDay } from '@/components/study/TestRow';
 import { formatSeconds } from '@/lib/study/practice';
@@ -148,7 +149,12 @@ export default function PatientPage() {
               {item.teaching && <MathText>{item.teaching}</MathText>}
             </section>
           )}
-          {!live && <button type="button" className="hb-text-btn sd-self-start" onClick={remove}>Delete this case</button>}
+          {!live && (
+            <div className="sd-actions">
+              <Link className="btn btn-secondary" href={`/study/practice/patient/${id}/edit`}><Icon name="pencil" /> Edit this case</Link>
+              <button type="button" className="hb-text-btn sd-danger-link" onClick={remove}>Delete this case</button>
+            </div>
+          )}
         </>
       )}
     </div>

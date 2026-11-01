@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { ankiFile } from './anki';
 import { buildTestPrompt } from './prompt';
 import {
-  addTest, answerReview, choiceOrder, cleanAnswer, dueMisses, emptyProgress, emptyTests, finishAttempt, fixQuestion, parseTestReply,
+  addTest, answerReview, choiceOrder, cleanAnswer, dueMisses, emptyProgress, emptyTests, addQuestion, editQuestion, finishAttempt, parseTestReply,
   PANCE_SYSTEMS, readSystem, removeQuestion, removeTest, REVIEW_DAYS, saveAttempt, scoreAttempt, startAttempt, studyDays, studySummary,
   StudyInputError, todaySteps, type ProgressData, type StudyTest,
 } from './study';
@@ -257,14 +257,103 @@ test('fixing a wrong answer key regrades attempts and squares up the bank', () =
   assert.equal(scoreAttempt(attempt, t).right, 1);
   assert.ok(progress.misses[a]);
   // Her answer to a was right all along; b's key was wrong the other way.
-  fixQuestion(t, progress, a, { correct: [1], explanation: 'Fixed.' }, TODAY);
-  fixQuestion(t, progress, b, { correct: [3] }, TODAY);
+  const fix = (id: string, input: Record<string, unknown>) => {
+    const q = t.questions.find((x) => x.id === id);
+    return editQuestion(t, progress, id, { stem: q?.stem ?? 'Gone', choices: (q?.choices ?? ['a', 'b']).map((text, from) => ({ text, from })), correct: q?.correct, explanation: q?.explanation, topic: q?.topic, ...input }, TODAY);
+  };
+  fix(a, { correct: [1], explanation: 'Fixed.' });
+  fix(b, { correct: [3] });
   assert.equal(t.questions[0].explanation, 'Fixed.');
   assert.equal(progress.misses[a], undefined);
   assert.ok(progress.misses[b]);
   assert.equal(scoreAttempt(attempt, t).right, 1);
-  assert.throws(() => fixQuestion(t, progress, a, { correct: [] }, TODAY), /at least one/);
-  assert.throws(() => fixQuestion(t, progress, 'gone', { correct: [0] }, TODAY), /isn’t in this test/);
+  assert.throws(() => fix(a, { correct: [] }), /at least one/);
+  assert.throws(() => fix('gone', { correct: [0] }), /isn’t in this test/);
+});
+
+test('a past answer follows its choice when choices are moved, removed or added', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const id = t.questions[0].id;
+  const progress = emptyProgress();
+  const done = takeAndFinish(progress, t, { [id]: [1] });
+  progress.gameAnswers[id] = { testId: t.id, answer: [1], at: NOW };
+  const open = startAttempt(progress, t, { fresh: true }, makeId, 1, NOW);
+  saveAttempt(open, t, { answers: { [id]: [3] } });
+  // Drop A, put D first, keep B and C, and add a new one.
+  const [a, b, c, d] = t.questions[0].choices;
+  assert.ok(a);
+  editQuestion(t, progress, id, { stem: 'New stem', choices: [{ text: d, from: 3 }, { text: b, from: 1 }, { text: `${c} (reworded)`, from: 2 }, { text: 'Brand new' }], correct: [1], explanation: 'Now B', topic: 'T' }, TODAY);
+  assert.deepEqual(t.questions[0].choices, [d, b, `${c} (reworded)`, 'Brand new']);
+  assert.deepEqual(done.answers[id], [1], 'B is still what she picked');
+  assert.deepEqual(open.answers[id], [0], 'D moved to the front');
+  assert.deepEqual(progress.gameAnswers[id].answer, [1]);
+  assert.equal(scoreAttempt(done, t).right, 1, 'and it’s the right answer now');
+});
+
+test('an answer whose choice is removed counts as blank, not as some other choice', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const id = t.questions[0].id;
+  const progress = emptyProgress();
+  const done = takeAndFinish(progress, t, { [id]: [3] });
+  const open = startAttempt(progress, t, { fresh: true }, makeId, 1, NOW);
+  saveAttempt(open, t, { answers: { [id]: [3] } });
+  const q = t.questions[0];
+  editQuestion(t, progress, id, { stem: q.stem, choices: q.choices.slice(0, 3).map((text, from) => ({ text, from })), correct: [0], explanation: '', topic: 'T' }, TODAY);
+  assert.deepEqual(done.answers[id], []);
+  assert.equal(open.answers[id], undefined);
+  assert.equal(scoreAttempt(done, t).right, 0);
+});
+
+test('fixing a typo leaves the review schedule alone', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const id = t.questions[0].id;
+  const progress = emptyProgress();
+  takeAndFinish(progress, t, { [id]: [1] });
+  const before = { ...progress.misses[id] };
+  assert.ok(before.dueOn);
+  const q = t.questions[0];
+  // The right answer moves position, but it's still the same answer.
+  const order = [1, 0, 2, 3];
+  editQuestion(t, progress, id, { stem: 'A typo fixed', choices: order.map((from) => ({ text: q.choices[from], from })), correct: [order.indexOf(q.correct[0])], explanation: q.explanation, topic: q.topic }, addDays(TODAY, 3));
+  assert.deepEqual(progress.misses[id], before);
+});
+
+test('optional details can be set and cleared', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const id = t.questions[0].id;
+  const progress = emptyProgress();
+  const base = { stem: 'S', choices: [{ text: 'a', from: 0, why: '' }, { text: 'b', from: 1, why: 'Because' }], correct: [0], explanation: 'E' };
+  const q = editQuestion(t, progress, id, { ...base, topic: 'Asthma', system: 'Pulmonary', quote: 'A line' }, TODAY);
+  assert.deepEqual([q.topic, q.system, q.quote, q.whyWrong], ['Asthma', 'Pulmonary', 'A line', ['', 'Because']]);
+  const cleared = editQuestion(t, progress, id, { ...base, choices: [{ text: 'a', from: 0 }, { text: 'b', from: 1 }], topic: '', system: '', quote: '' }, TODAY);
+  assert.deepEqual([cleared.topic, 'system' in cleared, 'quote' in cleared, 'whyWrong' in cleared], ['General', false, false, false]);
+});
+
+test('a question has to make sense before it’s saved', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const id = t.questions[0].id;
+  const progress = emptyProgress();
+  const ok = { stem: 'S', choices: [{ text: 'a' }, { text: 'b' }], correct: [0], explanation: '', topic: '' };
+  assert.throws(() => editQuestion(t, progress, id, { ...ok, stem: ' ' }, TODAY), /Write the question/);
+  assert.throws(() => editQuestion(t, progress, id, { ...ok, choices: [{ text: 'a' }] }, TODAY), /at least two/);
+  assert.throws(() => editQuestion(t, progress, id, { ...ok, choices: [{ text: 'a' }, { text: ' ' }] }, TODAY), /empty choice/);
+  assert.throws(() => editQuestion(t, progress, id, { ...ok, choices: [{ text: 'a' }, { text: 'A' }] }, TODAY), /same thing/);
+  assert.throws(() => editQuestion(t, progress, id, { ...ok, correct: [] }, TODAY), /at least one/);
+  assert.equal(t.questions[0].choices.length, 4, 'a refused edit changes nothing');
+});
+
+test('she can write her own question', () => {
+  const data = emptyTests();
+  const t = addTest(data, parseTestReply(reply([question()])), {}, makeId, NOW);
+  const q = addQuestion(t, { stem: 'Mine?', choices: [{ text: 'Yes' }, { text: 'No' }, { text: 'Both' }], correct: [0, 2], explanation: '', topic: 'Mine' }, makeId);
+  assert.equal(t.questions.length, 2);
+  assert.deepEqual([q.stem, q.correct, q.topic], ['Mine?', [0, 2], 'Mine']);
+  assert.ok(q.id);
 });
 
 test('removing a question or a test takes its misses and tries with it', () => {

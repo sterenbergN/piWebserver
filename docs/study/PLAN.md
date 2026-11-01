@@ -300,6 +300,26 @@ so edits she's made in Anki aren't at risk. Anki still does all the
 scheduling: these cards aren't reviewed here and don't count toward the PANCE map until
 they come back in through an Anki import.
 
+## Editing
+
+Everything her AI writes can be changed, since it gets things wrong. A test has its
+own edit page, and the same question editor opens from results and from review, once
+she's seen the answer. It covers the question, choices, the right answer, why each
+choice is wrong, the explanation, topic, organ system and source line, and she can
+write questions of her own. Grids, mock patients, Differential cases and flashcard
+decks each have an editor too.
+
+The rules that keep her history honest:
+
+- Past answers are stored by a choice's position, so every answer moves with its
+  choice. One whose choice is deleted counts as blank, never as another choice.
+- Fixing wording leaves the review schedule alone. Only changing what's right
+  regrades her last answer and updates the miss bank.
+- What she's missed on a grid stays with the right cell when rows and columns move.
+- Editing a mock patient or Differential case shows its answers, so a page warns her
+  first if she hasn't played it, and nothing is fetched until she agrees. A patient
+  case can't be edited while someone's using it through a private link.
+
 ## How it looks
 
 Study has its own look, set while a Study page is showing (`app/study/theme.css`), so

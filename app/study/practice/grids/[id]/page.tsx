@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { useSitePopup } from '@/components/SitePopup';
 import { practiceGet, practicePost, SignedOut } from '@/components/study/api';
+import { GridEditor } from '@/components/study/GridEditor';
 import { Icon } from '@/components/study/Icon';
 import { InlineMath } from '@/components/study/InlineMath';
 import { Loading } from '@/components/study/Ui';
@@ -74,6 +75,7 @@ export default function GridPage() {
   const [marks, setMarks] = useState<Record<string, boolean>>({});
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +144,13 @@ export default function GridPage() {
     <div className="sd animate-fade-in">
       {popup}
       {head}
-      {hidden && !result ? (
+      {editing ? (
+        <GridEditor grid={grid} onCancel={() => setEditing(false)} onDone={async () => {
+          const fresh = await practiceGet<{ grid: CompareGrid }>(`grid=${encodeURIComponent(id)}`);
+          setGrid(fresh.grid);
+          setEditing(false);
+        }} />
+      ) : hidden && !result ? (
         <>
           <p className="hb-hint">Say each one to yourself, tap the ? to check, then say whether you knew it. On a phone, the table slides sideways.</p>
           <FullGrid
@@ -191,7 +199,10 @@ export default function GridPage() {
             <FullGrid grid={grid} />
           </details>
           {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
-          <button type="button" className="hb-text-btn sd-self-start" onClick={remove}>Delete this grid</button>
+          <div className="sd-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}><Icon name="pencil" /> Edit this grid</button>
+            <button type="button" className="hb-text-btn sd-danger-link" onClick={remove}>Delete this grid</button>
+          </div>
         </>
       )}
     </div>

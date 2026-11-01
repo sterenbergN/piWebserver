@@ -10,6 +10,7 @@ import './games.css';
 import './sets.css';
 import './practice.css';
 import './cards.css';
+import './edit.css';
 import './theme.css';
 
 export const metadata: Metadata = {
