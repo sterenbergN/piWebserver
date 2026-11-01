@@ -131,7 +131,7 @@ export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
           <p className="hb-hint">This tells the PANCE map what you’ve already studied. Your cards stay in Anki. Only counts and the cards you keep forgetting are saved here.</p>
         )}
         {data && !data.hasHistory && (
-          <p className="sd-warning" role="alert">⚠️ This export has no review history, so every card looks brand new. Export again with “Include Scheduling Information” turned on.</p>
+          <p className="sd-warning" role="alert">This export has no review history, so every card looks brand new. Export again with “Include Scheduling Information” turned on.</p>
         )}
         {!data && (
           <ol className="sd-howto">
@@ -141,7 +141,7 @@ export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
             <li>Choose the file below.</li>
           </ol>
         )}
-        {notice && <p className="sd-outcome">✓ {notice}</p>}
+        {notice && <p className="sd-outcome">{notice}</p>}
         {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
         {busy && (
           <div>

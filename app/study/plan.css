@@ -17,6 +17,9 @@
 .sd-pile { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; padding: 0.55rem 0.75rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); font-size: 0.9rem; }
 .sd-pile.is-cold-2 { border-color: var(--warning); }
 .sd-pile.is-cold-3 { border-color: var(--danger); }
+.sd-plate-progress { display: flex; align-items: center; gap: 0.7rem; }
+.sd-plate-progress .progress { flex: 1; }
+.sd-plate-progress small { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sd-plate-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .sd-plate-list li + li { border-top: 1px solid var(--surface-border); }
 .sd-plate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; padding: 0.55rem 0; }
@@ -42,7 +45,7 @@
 .sd-inline-form { display: flex; flex-direction: column; gap: 0.6rem; }
 .sd-sizes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
 .sd-sizes button { min-height: 2.4rem; padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
-.sd-sizes button[aria-checked='true'] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sd-sizes button[aria-checked='true'] { background: var(--accent); border-color: var(--accent); color: var(--primary-fg); }
 .sd-card .sd-sizes input { width: 4.2rem; }
 .sd-asks .sd-ask { margin: 0; font-size: 0.92rem; color: var(--foreground); }
 .sd-ask-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.75rem; padding: 0.4rem 0; font-size: 0.92rem; }

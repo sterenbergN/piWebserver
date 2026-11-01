@@ -70,7 +70,7 @@
 .sd-bar { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); }
 
 /* Adding a test */
-.sd-step { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; margin-right: 0.35rem; border-radius: 50%; background: var(--accent); color: #fff; font-size: 0.85rem; font-weight: 700; }
+.sd-step { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; margin-right: 0.35rem; border-radius: 50%; background: var(--accent); color: var(--primary-fg); font-size: 0.85rem; font-weight: 700; }
 .sd-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.6rem 0.75rem; }
 .sd-fields label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; font-weight: 600; min-width: 0; }
 .sd-fields .sd-wide { grid-column: 1 / -1; }
@@ -87,7 +87,7 @@
 
 .sd-segments { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); }
 .sd-segments button { flex: 1 1 auto; min-height: 2.5rem; padding: 0.4rem 0.75rem; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
-.sd-segments button[aria-checked='true'] { background: var(--accent); color: #fff; }
+.sd-segments button[aria-checked='true'] { background: var(--accent); color: var(--primary-fg); }
 .sd-segments button:disabled { opacity: 0.5; cursor: default; }
 
 /* The cover */
@@ -121,7 +121,7 @@
 .sd-choice-text { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
 .sd-choice-text small { color: var(--muted); font-size: 0.85rem; }
 .sd-letter { flex: none; display: grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; border: 1px solid var(--surface-border); font-size: 0.82rem; font-weight: 700; }
-.sd-choice.is-chosen .sd-letter { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sd-choice.is-chosen .sd-letter { background: var(--accent); border-color: var(--accent); color: var(--primary-fg); }
 .sd-choice.is-right .sd-letter { background: var(--success); border-color: var(--success); color: var(--background); }
 .sd-choice.is-wrong .sd-letter { background: var(--danger); border-color: var(--danger); color: var(--background); }
 .sd-cross { flex: none; width: 2.75rem; border: 0; border-left: 1px solid var(--surface-border); background: none; color: var(--muted); font: inherit; cursor: pointer; }
@@ -180,7 +180,7 @@
 .sd-systems { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; padding: 0; border: 0; }
 .sd-systems legend { margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600; }
 .sd-systems button { min-height: 2.3rem; padding: 0.3rem 0.75rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
-.sd-systems button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sd-systems button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--primary-fg); }
 .sd-class-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .sd-class-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.7rem; padding: 0.6rem 0; }
 .sd-class-list li + li { border-top: 1px solid var(--surface-border); }

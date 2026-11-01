@@ -15,6 +15,7 @@
     "looplab:compare": "tsx scripts/loop-lab-compare.ts"
   },
   "dependencies": {
+    "@fontsource-variable/newsreader": "^5.3.0",
     "adm-zip": "^0.5.17",
     "katex": "^0.16.47",
     "next": "16.2.2",

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Loading } from '@/components/study/Ui';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import AnkiImport from '@/components/study/AnkiImport';
 import { SignedOut, studyGet } from '@/components/study/api';
@@ -74,7 +75,7 @@ export default function AnkiPage() {
         </div>
       </header>
 
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading rows={2} />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your missed questions.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
 
       {state !== 'error' && <AnkiImport />}
@@ -83,7 +84,7 @@ export default function AnkiPage() {
         <>
           <section className="sd-card">
             <h2>Send your misses to Anki</h2>
-            {sent && <p className="sd-outcome">✓ {sent}</p>}
+            {sent && <p className="sd-outcome">{sent}</p>}
             {active > 0 ? (
               <>
                 <div className="sd-segments" role="radiogroup" aria-label="Which questions">

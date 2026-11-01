@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { practiceGet, practicePost, SignedOut } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
 import { InlineMath } from '@/components/study/InlineMath';
+import { Loading } from '@/components/study/Ui';
 import { diffScore, diffShareText, type DiffCase, type DiffPlay } from '@/lib/study/practice';
 
 // A case a day, one clue at a time. A wrong guess or asking for help shows the
@@ -83,7 +85,7 @@ function Result({ puzzle, play, stats, another }: { puzzle: DiffCase; play: Diff
         <p className="pr-live-big"><InlineMath>{puzzle.answer}</InlineMath></p>
         {play.solved && <p className="hb-hint">{play.score} points{play.wrong ? `, with ${play.wrong} wrong guess${play.wrong === 1 ? '' : 'es'}` : ''}.</p>}
         <div className="sd-actions">
-          <button type="button" className="hb-small-btn" onClick={share}>{copied ? '✓ Copied' : 'Copy my result'}</button>
+          <button type="button" className="hb-small-btn" onClick={share}><Icon name={copied ? 'check' : 'copy'} /> {copied ? 'Copied' : 'Copy my result'}</button>
         </div>
       </section>
       <section className="sd-card">
@@ -143,7 +145,7 @@ export default function DifferentialPage() {
           <p>Fewer clues, more points.</p>
         </div>
       </header>
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading rows={2} />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load today’s case.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
       {stats && stats.played > 0 && (

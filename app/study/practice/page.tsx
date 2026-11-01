@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { practiceGet, SignedOut } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
 import { useLiveSession } from '@/components/study/PartnerLink';
+import { CardHead, Loading } from '@/components/study/Ui';
 import { fmtDay, pct } from '@/components/study/TestRow';
 import type { GridSummary, PatientCaseForHer } from '@/lib/study/practice';
 
@@ -38,7 +40,7 @@ export default function PracticePage() {
           <p>Fill it in from memory, or get someone to quiz you.</p>
         </div>
       </header>
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your practice.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
       {session && (
         <div className="hb-banner">
@@ -49,19 +51,21 @@ export default function PracticePage() {
       {state === 'ready' && (
         <>
           <section className="sd-card">
-            <h2>🧮 Comparison grids</h2>
-            <p className="hb-hint">Things you mix up, side by side. Some cells are hidden and you fill them in from memory. The ones you miss come back first.</p>
+            <CardHead icon="grid" title="Comparison grids">Things you mix up, side by side. Some cells are hidden and you fill them in from memory. The ones you miss come back first.</CardHead>
             {grids.length > 0 && (
               <ul className="pr-list">
                 {grids.map((g) => (
                   <li key={g.id}>
                     <Link href={`/study/practice/grids/${g.id}`}>
-                      <strong>{g.title}</strong>
-                      <small>
-                        {g.rows.length} rows, {g.columns.length} columns{g.course ? ` · ${g.course}` : ''}
-                        {g.last ? ` · last ${pct(g.last.knew, g.last.total)}% on ${fmtDay(g.last.on)}` : ' · not tried yet'}
-                        {g.shaky > 0 ? ` · ${g.shaky} shaky` : ''}
-                      </small>
+                      <span className="pr-list-main">
+                        <strong>{g.title}</strong>
+                        <small>
+                          {g.rows.length} rows, {g.columns.length} columns{g.course ? ` · ${g.course}` : ''}
+                          {g.last ? ` · last ${pct(g.last.knew, g.last.total)}% on ${fmtDay(g.last.on)}` : ' · not tried yet'}
+                          {g.shaky > 0 ? ` · ${g.shaky} shaky` : ''}
+                        </small>
+                      </span>
+                      <Icon name="chevron" />
                     </Link>
                   </li>
                 ))}
@@ -71,14 +75,12 @@ export default function PracticePage() {
           </section>
 
           <section className="sd-card">
-            <h2>🗣️ Quiz me</h2>
-            <p className="hb-hint">Someone else’s phone shows the question and the answer. You answer out loud, and they mark it. Your results count like a review.</p>
+            <CardHead icon="chat" title="Quiz me">Someone else’s phone shows the question and the answer. You answer out loud, and they mark it. Your results count like a review.</CardHead>
             <Link className="btn btn-primary sd-self-start" href="/study/practice/quiz">Set up a quiz</Link>
           </section>
 
           <section className="sd-card">
-            <h2>🧑‍⚕️ Mock patient</h2>
-            <p className="hb-hint">OSCE practice. Someone plays the patient from a script that only gives things away if you ask, and scores you on a checklist.</p>
+            <CardHead icon="stethoscope" title="Mock patient">OSCE practice. Someone plays the patient from a script that only gives things away if you ask, and scores you on a checklist.</CardHead>
             {cases.length > 0 && (
               <ul className="pr-list">
                 {cases.map((c) => {
@@ -86,8 +88,11 @@ export default function PracticePage() {
                   return (
                     <li key={c.id}>
                       <Link href={`/study/practice/patient/${c.id}`}>
-                        <strong>{c.title}</strong>
-                        <small>{c.course ? `${c.course} · ` : ''}{last ? `last ${last.right} of ${last.total} on ${fmtDay(last.on)}` : 'not tried yet'}</small>
+                        <span className="pr-list-main">
+                          <strong>{c.title}</strong>
+                          <small>{c.course ? `${c.course} · ` : ''}{last ? `last ${last.right} of ${last.total} on ${fmtDay(last.on)}` : 'not tried yet'}</small>
+                        </span>
+                        <Icon name="chevron" />
                       </Link>
                     </li>
                   );

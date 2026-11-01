@@ -6,6 +6,7 @@ import AccountMenu, { type NavUser } from './AccountMenu';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
+import { Icon, studyGlyph } from './study/Icon';
 import { allPlaces, atPlace, isCurrentItem, isStudyPath, navGroups, placesFor, sectionOf, type NavItem } from './nav-links';
 import { markFound, rememberPage, useNavPins } from './useNavPins';
 
@@ -24,6 +25,12 @@ const readHash = () => window.location.hash.slice(1);
 /** How many pins fit along the bottom of a phone, beside the All button. */
 const DOCK_PINS = 4;
 /** These have their own bottom bar. */
+/** A page's mark: a line icon inside Study, and the emoji everywhere else. */
+function Glyph({ item, inStudy }: { item: NavItem; inStudy: boolean }) {
+  const name = inStudy ? studyGlyph(item.href) : undefined;
+  return <span aria-hidden>{name ? <Icon name={name} /> : item.icon}</span>;
+}
+
 const NO_DOCK = ['/workout', '/party', '/study/partner', '/study/games/snake'];
 /** Full-screen, printable or shared-by-link pages, where a row of other pages is only in the way. */
 const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report', '/study/partner'];
@@ -139,7 +146,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
         <nav ref={barRef} className={`section-bar${barGroup.bar === 'wide' ? ' is-wide-only' : ''}`} aria-label={barGroup.label}>
           {barGroup.items.map((item) => (
             <Link key={item.href} href={item.href} onClick={follow(item.href)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
-              <span aria-hidden>{item.icon}</span>{item.label}
+              <Glyph item={item} inStudy={inStudy} />{item.label}
             </Link>
           ))}
         </nav>
@@ -150,12 +157,12 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
         <nav className="site-dock" aria-label={inStudy ? 'Study' : 'Pinned pages'}>
           {dockItems.map((item) => (
             <Link key={item.href} href={item.href} onClick={follow(item.href)} aria-current={itemIsCurrent(item) ? 'page' : undefined}>
-              <span aria-hidden>{item.icon}</span>
+              <Glyph item={item} inStudy={inStudy} />
               <span>{item.short ?? item.label}</span>
             </Link>
           ))}
           <button type="button" onClick={() => setLauncher(true)}>
-            <span aria-hidden>🧭</span>
+            <span aria-hidden>{inStudy ? <Icon name="compass" /> : '🧭'}</span>
             <span>Explore</span>
           </button>
         </nav>

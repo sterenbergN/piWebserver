@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { Loading } from '@/components/study/Ui';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -207,7 +208,7 @@ export default function NightShiftPage() {
   }, [run]);
 
   if (status === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to play">This game uses your own questions.</SignInPrompt></div>;
-  if (status === 'loading') return <div className="sd"><p className="hb-hint">Loading…</p></div>;
+  if (status === 'loading') return <div className="sd"><Loading rows={2} /></div>;
   if (status === 'error') return <div className="sd"><div className="hb-banner is-error"><span>Couldn’t load your questions.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div></div>;
   if (status === 'empty' || !run) {
     return (

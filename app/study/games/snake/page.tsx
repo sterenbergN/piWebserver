@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState, type TouchEvent } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import { Icon } from '@/components/study/Icon';
 import { InlineMath } from '@/components/study/InlineMath';
+import { Loading } from '@/components/study/Ui';
 import { localToday } from '@/lib/habits/dates';
 import type { GameQuestion } from '@/lib/study/games';
 import { BOARD, nextQuestion, snakeQuestions, startSnake, tick, turn, type Dir, type SnakeRun } from '@/lib/study/snake';
@@ -140,7 +142,7 @@ export default function SnakePage() {
     return (
       <div className="sd sd-narrow animate-fade-in">
         {head}
-        {state === 'loading' && <p className="hb-hint">Loading…</p>}
+        {state === 'loading' && <Loading rows={2} />}
         {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your questions.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
         {state === 'empty' && (
           <section className="sd-card sd-done">
@@ -163,7 +165,7 @@ export default function SnakePage() {
     <div className="sd sd-narrow animate-fade-in">
       {head}
       <div className="pr-snake-bar">
-        <span aria-label={`${run.hearts} hearts left`}>{'❤️'.repeat(Math.max(0, run.hearts))}</span>
+        <span className="pr-hearts" role="img" aria-label={`${run.hearts} hearts left`}>{Array.from({ length: Math.max(0, run.hearts) }, (_, i) => <Icon key={i} name="heart" />)}</span>
         <span className="sd-count">{run.phase === 'waiting' ? 'Read it, then turn to go' : `${run.right} right · ${run.score} points${best ? ` · best ${best}` : ''}`}</span>
       </div>
 
@@ -197,7 +199,7 @@ export default function SnakePage() {
           )}
           {run.phase === 'feedback' && run.last && (
             <section className="sd-card" role="status">
-              <h2>{run.last.crashed ? 'Crashed! That cost a heart.' : run.last.right ? '✓ Right' : '✕ Not that one'}</h2>
+              <h2>{run.last.crashed ? 'Crashed! That cost a heart.' : run.last.right ? 'Right' : 'Not that one'}</h2>
               {question?.explanation && <MathText>{question.explanation}</MathText>}
               <button type="button" className="btn btn-primary sd-self-start" onClick={onward}>Next question</button>
             </section>
@@ -222,10 +224,10 @@ export default function SnakePage() {
             })}
           </div>
           <div className="pr-pad" aria-label="Steer">
-            <button type="button" className="hb-small-btn" aria-label="Up" style={{ gridArea: 'up' }} onClick={() => go('up')}>▲</button>
-            <button type="button" className="hb-small-btn" aria-label="Left" style={{ gridArea: 'left' }} onClick={() => go('left')}>◀</button>
-            <button type="button" className="hb-small-btn" aria-label="Down" style={{ gridArea: 'down' }} onClick={() => go('down')}>▼</button>
-            <button type="button" className="hb-small-btn" aria-label="Right" style={{ gridArea: 'right' }} onClick={() => go('right')}>▶</button>
+            <button type="button" className="hb-small-btn" aria-label="Up" style={{ gridArea: 'up' }} onClick={() => go('up')}><Icon name="left" className="is-up" /></button>
+            <button type="button" className="hb-small-btn" aria-label="Left" style={{ gridArea: 'left' }} onClick={() => go('left')}><Icon name="left" /></button>
+            <button type="button" className="hb-small-btn" aria-label="Down" style={{ gridArea: 'down' }} onClick={() => go('down')}><Icon name="left" className="is-down" /></button>
+            <button type="button" className="hb-small-btn" aria-label="Right" style={{ gridArea: 'right' }} onClick={() => go('right')}><Icon name="right" /></button>
           </div>
           </>
           )}

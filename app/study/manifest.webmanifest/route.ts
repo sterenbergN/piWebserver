@@ -9,8 +9,8 @@ const MANIFEST = {
   start_url: '/study',
   scope: '/study',
   display: 'standalone',
-  background_color: '#2b303b',
-  theme_color: '#2b303b',
+  background_color: '#11141b',
+  theme_color: '#11141b',
   icons: [
     { src: '/icons/study-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
     { src: '/icons/study-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },

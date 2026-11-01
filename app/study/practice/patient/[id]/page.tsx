@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Loading } from '@/components/study/Ui';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
@@ -85,7 +86,7 @@ export default function PatientPage() {
           <h1>Mock patient</h1>
         </div>
       </header>
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading rows={2} />}
       {state === 'error' && <div className="hb-banner is-error"><span>That case isn’t here any more.</span></div>}
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
 

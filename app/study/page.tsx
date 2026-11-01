@@ -5,16 +5,19 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
+import { Icon, KIND_GLYPH, Pancakes, type IconName } from '@/components/study/Icon';
 import Plate from '@/components/study/Plate';
 import { fmtDay, pct } from '@/components/study/TestRow';
+import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
 import { usePlan } from '@/components/study/usePlan';
 import { addDays, localToday } from '@/lib/habits/dates';
-import { KIND_ICON, plateView, upcoming } from '@/lib/study/plan';
+import { plateView, upcoming } from '@/lib/study/plan';
 import type { MapResponse } from '@/components/study/MapTypes';
 import { todaySteps, type StudySummary, type TestSummary } from '@/lib/study/study';
 
-// PA Today: the front page of her own corner of the site. What's waiting today,
-// and a clear point where it says she can stop.
+// PA Today: the front page of her own corner of the site. One line on where the day
+// stands, the thing to do next, what's on her plate, and a clear point where it says
+// she can stop.
 
 function greeting(now = new Date()) {
   const h = now.getHours();
@@ -26,17 +29,20 @@ function nextReview(nextOn: string | null) {
   return nextOn <= addDays(localToday(), 1) ? 'The next reviews come back tomorrow.' : `The next reviews come back ${fmtDay(nextOn)}.`;
 }
 
-function Step({ icon, title, note, href, action, primary = false }: { icon: string; title: string; note: string; href: string; action: string; primary?: boolean }) {
-  return (
-    <li className="sd-step-row">
-      <span className="sd-step-icon" aria-hidden>{icon}</span>
-      <span className="sd-test-main"><strong>{title}</strong><small>{note}</small></span>
-      <Link className={`btn ${primary ? 'btn-primary' : 'btn-secondary'}`} href={href}>{action}</Link>
-    </li>
-  );
-}
-
+const whenText = (days: number) => (days === 0 ? 'is today' : days === 1 ? 'is tomorrow' : `is in ${days} days`);
 const testNote = (test: TestSummary) => [test.course, `${test.count} question${test.count === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+
+const TILES: { href: string; icon: IconName; title: string; note: (s: StudySummary) => string }[] = [
+  { href: '/study/plan', icon: 'calendar', title: 'Plan', note: () => 'Dates and the work toward them' },
+  { href: '/study/tests', icon: 'tests', title: 'Practice tests', note: (s) => `${s.totals.tests} saved` },
+  { href: '/study/review', icon: 'review', title: 'Review misses', note: (s) => `${s.review.active} in the bank` },
+  { href: '/study/games', icon: 'moon', title: 'Games', note: () => 'Study that doesn’t feel like it' },
+  { href: '/study/practice', icon: 'users', title: 'Practice', note: () => 'Grids, Quiz me, mock patients' },
+  { href: '/study/map', icon: 'map', title: 'PANCE map', note: () => 'Covered, studied and proven' },
+  { href: '/study/classes', icon: 'cap', title: 'Classes', note: () => 'What you’ve finished' },
+  { href: '/study/anki', icon: 'layers', title: 'Anki', note: (s) => (s.review.forAnki ? `${s.review.forAnki} new to send` : 'Import decks, send misses') },
+  { href: '/study/add', icon: 'plus', title: 'Add a test', note: () => 'From your notes' },
+];
 
 /** Make this the place she lands, and put it on her home screen. */
 function HomeSetup({ home, onChange }: { home: boolean; onChange: (on: boolean) => Promise<void> }) {
@@ -90,13 +96,13 @@ function MapCard({ map }: { map: MapResponse['coverage'] }) {
   return (
     <section className="sd-card">
       <h2>PANCE map</h2>
-      <dl className="sd-stats">
-        <div><dt>Covered</dt><dd>{map.totals.covered}%</dd></div>
-        <div><dt>Studied</dt><dd>{map.totals.studied}%</dd></div>
-        <div><dt>Proven</dt><dd>{map.totals.proven}%</dd></div>
+      <dl className="sd-trio">
+        {([['Covered', map.totals.covered], ['Studied', map.totals.studied], ['Proven', map.totals.proven]] as const).map(([name, value]) => (
+          <div key={name}><dt>{name}</dt><dd><ScoreRing percent={value} size={62} label={name} tone="is-ok" /></dd></div>
+        ))}
       </dl>
       <p className="hb-hint"><strong>Worth a look: {next.label}.</strong> {next.note}</p>
-      <Link className="btn btn-secondary sd-self-start" href="/study/map">Open the map</Link>
+      <Link className="sd-more" href="/study/map">Open the map <Icon name="right" /></Link>
     </section>
   );
 }
@@ -139,20 +145,32 @@ export default function PaTodayPage() {
   const plan = planner.data?.plan;
   const next = plan ? upcoming(plan, planner.today).slice(0, 3) : [];
   const hasPlan = !!plan && (plan.tasks.length > 0 || plan.deadlines.length > 0);
+  const plate = planner.data ? plateView(planner.data.plan, planner.today, planner.data.reviewsDue) : null;
   // The plate holds the reviews and what's planned; a test left part way is the only thing besides.
-  const plateClear = !!planner.data && plateView(planner.data.plan, planner.today, planner.data.reviewsDue).total === 0;
+  const plateClear = !!plate && plate.total === 0;
   const dateText = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const soonest = next[0];
+  const hasOpen = !!today?.open.length;
   return (
     <div className="sd animate-fade-in">
-      <header className="sd-head">
+      <header className="sd-head is-hero">
         <div>
+          <p className="sd-eyebrow">{dateText}</p>
           <h1>{greeting()}</h1>
-          <p>{dateText}</p>
+          {plate && (
+            <p className="sd-lede">
+              {plate.clean ? <>A clean plate. <strong>You can stop here.</strong></>
+                : plate.total ? <><strong>{plate.total} pancake{plate.total === 1 ? '' : 's'}</strong> on your plate</>
+                  : plate.dayOff ? <>A day off. Enjoy it.</> : <>Nothing on your plate</>}
+              {soonest && !plate.clean && !plate.dayOff && <>{plate.total ? ', and ' : '. '}<strong>{soonest.deadline.title}</strong> {whenText(soonest.daysLeft)}.</>}
+              {!soonest && !plate.clean && !plate.dayOff && '.'}
+            </p>
+          )}
         </div>
-        <Link className="btn btn-primary" href="/study/add">Add a test</Link>
+        <Link className="btn btn-secondary" href="/study/add"><Icon name="plus" /> Add a test</Link>
       </header>
 
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your day.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
 
       {summary && review && total && today && (
@@ -166,83 +184,95 @@ export default function PaTodayPage() {
             </ol>
             <Link className="btn btn-primary" href="/study/add">Make your first test</Link>
             {map && !map.hasAnyEvidence && <p className="hb-hint">Already 5 months in? <Link href="/study/classes">Add your classes</Link> and <Link href="/study/anki">import from Anki</Link> to fill in the <Link href="/study/map">PANCE map</Link>.</p>}
-            {map?.hasAnyEvidence && <Link className="sd-more" href="/study/map">See your PANCE map →</Link>}
+            {map?.hasAnyEvidence && <Link className="sd-more" href="/study/map">See your PANCE map <Icon name="right" /></Link>}
           </section>
         ) : (
-          <div className="sd-columns">
-            <div className="sd-side">
-              {planner.data && <Plate planner={planner} />}
+          <>
+            <div className="sd-columns">
+              <div className="sd-side">
+                {today.open.map((test) => (
+                  <section key={test.id} className="sd-card sd-resume">
+                    <p className="sd-eyebrow">Pick up where you left off</p>
+                    <div className="sd-resume-row">
+                      <span className="sd-test-main"><strong>{test.title}</strong><small>{test.open?.answered} of {test.open?.total} answered</small></span>
+                      <Link className="btn btn-primary" href={`/study/tests/${test.id}`}>Continue <Icon name="right" /></Link>
+                    </div>
+                    <div className="progress" role="progressbar" aria-label="Answered so far" aria-valuemin={0} aria-valuemax={test.open?.total} aria-valuenow={test.open?.answered}>
+                      <div style={{ width: `${pct(test.open?.answered ?? 0, test.open?.total ?? 0)}%` }} />
+                    </div>
+                  </section>
+                ))}
 
-              {(today.open.length > 0 || today.next) && (
-                <section className={`sd-card sd-today${plateClear && !today.open.length ? ' is-clear' : ''}`}>
-                  <h2>{today.open.length ? 'Pick up where you left off' : plateClear ? 'If you feel like more' : 'Not taken yet'}</h2>
-                  {plateClear && !today.open.length && review.active > 0 && <p className="hb-hint">{nextReview(review.nextOn)}</p>}
-                  {today.open.length > 0 && (
-                    <ul className="sd-step-list">
-                      {today.open.map((test) => <Step key={test.id} icon="📝" title={test.title} note={`Part way through: ${test.open?.answered} of ${test.open?.total} answered`} href={`/study/tests/${test.id}`} action="Continue" primary />)}
+                {planner.data && <Plate planner={planner} quiet={hasOpen} />}
+
+                {today.next && (
+                  <section className="sd-card">
+                    <p className="sd-eyebrow">{plateClear ? 'If you feel like more' : 'Not taken yet'}</p>
+                    {plateClear && review.active > 0 && <p className="hb-hint">{nextReview(review.nextOn)}</p>}
+                    <div className="sd-resume-row">
+                      <span className="sd-test-main"><strong>{today.next.title}</strong><small>{testNote(today.next)}</small></span>
+                      <Link className="btn btn-secondary" href={`/study/tests/${today.next.id}`}>Open</Link>
+                    </div>
+                  </section>
+                )}
+              </div>
+
+              <aside className="sd-side">
+                <section className="sd-card">
+                  <h2>Coming up</h2>
+                  {next.length ? (
+                    <ul className="sd-next-list">
+                      {next.map(({ deadline, daysLeft, left }) => (
+                        <li key={deadline.id}>
+                          <span className={`sd-countdown${daysLeft <= 3 ? ' is-soon' : ''}${daysLeft <= 1 ? ' is-word' : ''}`}><strong>{daysLeft > 1 ? daysLeft : daysLeft === 1 ? 'Tmrw' : 'Today'}</strong>{daysLeft > 1 && <small>days</small>}</span>
+                          <span className="sd-test-main">
+                            <strong className="sd-title-icon"><Icon name={KIND_GLYPH[deadline.kind]} /> {deadline.title}</strong>
+                            <small>{left ? <><Pancakes count={left} /> left</> : fmtDay(deadline.dueOn)}</small>
+                          </span>
+                        </li>
+                      ))}
                     </ul>
-                  )}
-                  {today.next && (
-                    <ul className="sd-step-list">
-                      <Step icon="🆕" title={today.next.title} note={testNote(today.next)} href={`/study/tests/${today.next.id}`} action="Open" />
-                    </ul>
-                  )}
+                  ) : <p className="hb-hint">No dates yet. Add your exams and due dates, and your Google Calendar can fill them in.</p>}
+                  <Link className="sd-more" href="/study/plan">Open your plan <Icon name="right" /></Link>
                 </section>
-              )}
-
-              <nav className="sd-tiles" aria-label="Study">
-                <Link href="/study/plan"><span aria-hidden>🥞</span><strong>Plan</strong><small>Dates and the work toward them</small></Link>
-                <Link href="/study/tests"><span aria-hidden>📝</span><strong>Practice tests</strong><small>{total.tests} saved</small></Link>
-                <Link href="/study/review"><span aria-hidden>🔁</span><strong>Review misses</strong><small>{review.active} in the bank</small></Link>
-                <Link href="/study/games"><span aria-hidden>🌙</span><strong>Games</strong><small>Study that doesn’t feel like it</small></Link>
-                <Link href="/study/practice"><span aria-hidden>🧑‍⚕️</span><strong>Practice</strong><small>Grids, Quiz me, mock patients</small></Link>
-                <Link href="/study/map"><span aria-hidden>🗺️</span><strong>PANCE map</strong><small>What’s covered, studied and proven</small></Link>
-                <Link href="/study/classes"><span aria-hidden>🎓</span><strong>Classes</strong><small>What you’ve finished</small></Link>
-                <Link href="/study/anki"><span aria-hidden>🗂️</span><strong>Anki</strong><small>{review.forAnki ? `${review.forAnki} new to send` : 'Import decks, send misses'}</small></Link>
-                <Link href="/study/add"><span aria-hidden>➕</span><strong>Add a test</strong><small>From your notes</small></Link>
-              </nav>
+                {map && <MapCard map={map} />}
+                <section className="sd-card">
+                  <h2>So far</h2>
+                  <dl className="sd-trio">
+                    <div><dt>Tests taken</dt><dd>{total.taken}</dd></div>
+                    <div><dt>Answered</dt><dd>{total.answered.toLocaleString()}</dd></div>
+                    <div><dt>Right</dt><dd>{total.answered ? `${pct(total.right, total.answered)}%` : '–'}</dd></div>
+                  </dl>
+                  {review.cleared > 0 && <p className="hb-hint">{review.cleared} miss{review.cleared === 1 ? '' : 'es'} cleared for good.</p>}
+                </section>
+                {summary.weakTopics.length > 0 && (
+                  <section className="sd-card">
+                    <h2>Weakest topics</h2>
+                    <ul className="sd-topics">
+                      {summary.weakTopics.slice(0, 6).map((t) => (
+                        <li key={t.topic}>
+                          <span className="progress-label"><span>{t.topic}</span><span>{t.right}/{t.total}</span></span>
+                          <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className={`sd-bar ${scoreTone(pct(t.right, t.total))}`} style={{ width: `${pct(t.right, t.total)}%` }} /></span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </aside>
             </div>
 
-            <aside className="sd-side">
-              <section className="sd-card">
-                <h2>Coming up</h2>
-                {next.length ? (
-                  <ul className="sd-next-list">
-                    {next.map(({ deadline, daysLeft, left }) => (
-                      <li key={deadline.id}>
-                        <span className="sd-countdown"><strong>{daysLeft > 1 ? daysLeft : daysLeft === 1 ? 'Tmrw' : 'Today'}</strong>{daysLeft > 1 && <small>days</small>}</span>
-                        <span className="sd-test-main"><strong>{KIND_ICON[deadline.kind]} {deadline.title}</strong><small>{left ? `${left} 🥞 left` : fmtDay(deadline.dueOn)}</small></span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : <p className="hb-hint">No dates yet. Add your exams and due dates, and your Google Calendar can fill them in.</p>}
-                <Link className="sd-more" href="/study/plan">Open your plan →</Link>
-              </section>
-              {map && <MapCard map={map} />}
-              <section className="sd-card">
-                <h2>So far</h2>
-                <dl className="sd-stats">
-                  <div><dt>Tests taken</dt><dd>{total.taken}</dd></div>
-                  <div><dt>Questions answered</dt><dd>{total.answered.toLocaleString()}</dd></div>
-                  <div><dt>Right</dt><dd>{total.answered ? `${pct(total.right, total.answered)}%` : '–'}</dd></div>
-                  {review.cleared > 0 && <div><dt>Misses cleared</dt><dd>{review.cleared}</dd></div>}
-                </dl>
-              </section>
-              {summary.weakTopics.length > 0 && (
-                <section className="sd-card">
-                  <h2>Weakest topics</h2>
-                  <ul className="sd-topics">
-                    {summary.weakTopics.slice(0, 6).map((t) => (
-                      <li key={t.topic}>
-                        <span className="progress-label"><span>{t.topic}</span><span>{t.right}/{t.total}</span></span>
-                        <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className="sd-bar" style={{ width: `${pct(t.right, t.total)}%` }} /></span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </aside>
-          </div>
+            <nav className="sd-tiles-wrap" aria-label="Everything in Study">
+              <p className="sd-eyebrow">Everything</p>
+              <div className="sd-tiles">
+                {TILES.map((tile) => (
+                  <Link key={tile.href} href={tile.href}>
+                    <span className="sd-tile-icon"><Icon name={tile.icon} /></span>
+                    <span><strong>{tile.title}</strong><small>{tile.note(summary)}</small></span>
+                  </Link>
+                ))}
+              </div>
+            </nav>
+          </>
         )
       )}
 

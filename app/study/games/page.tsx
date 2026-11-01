@@ -6,7 +6,9 @@ import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { localToday } from '@/lib/habits/dates';
 import type { GameStats } from '@/lib/study/games';
+import { Icon } from '@/components/study/Icon';
 import { Scope } from '@/components/study/Scope';
+import { Loading } from '@/components/study/Ui';
 
 // The study games. Both draw from her own tests and lean on what she's been
 // missing, and every answer counts toward her miss bank and PANCE map.
@@ -17,7 +19,7 @@ function DifferentialCard() {
   return (
     <section className="sd-card ns-card">
       <div className="ns-card-head">
-        <span className="ns-card-icon" aria-hidden>🔍</span>
+        <span className="ns-card-icon"><Icon name="search" /></span>
         <div>
           <h2>Differential</h2>
           <p className="hb-hint">One case a day, one clue at a time. Name the diagnosis on fewer clues for more points.</p>
@@ -37,7 +39,7 @@ function SnakeCard({ options }: { options: Options }) {
   return (
     <section className="sd-card ns-card">
       <div className="ns-card-head">
-        <span className="ns-card-icon" aria-hidden>🐍</span>
+        <span className="ns-card-icon"><Icon name="snake" /></span>
         <div>
           <h2>Study Snake</h2>
           <p className="hb-hint">Snake, but the food is lettered answers. Eat the right one to grow. The snake waits while you read, and your answers count.</p>
@@ -63,7 +65,7 @@ function NightShiftCard({ options }: { options: Options }) {
   return (
     <section className="sd-card ns-card">
       <div className="ns-card-head">
-        <span className="ns-card-icon" aria-hidden>🌙</span>
+        <span className="ns-card-icon"><Icon name="moon" /></span>
         <div>
           <h2>The Night Shift</h2>
           <p className="hb-hint">Twelve hours on call, solo. Pick a door each hour, keep your coffee going, and face the Attending at 6 am on your weakest system. Wrong answers always stop to explain.</p>
@@ -122,7 +124,7 @@ function TriviaCard({ options }: { options: Options }) {
   return (
     <section className="sd-card ns-card">
       <div className="ns-card-head">
-        <span className="ns-card-icon" aria-hidden>💀</span>
+        <span className="ns-card-icon"><Icon name="skull" /></span>
         <div>
           <h2>Trivia Death, study edition</h2>
           <p className="hb-hint">The party game with your questions, for a study group of 3 to 8 with their phones. Everyone sees the explanation after each round. Join from a phone signed in to your account, and your answers count toward your miss bank.</p>
@@ -177,7 +179,7 @@ export default function GamesPage() {
           <p>Studying that doesn’t feel like it. Your answers still count.</p>
         </div>
       </header>
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your games.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
       {options && <DifferentialCard />}
       {options && (options.total === 0 && options.ankiCards === 0 ? (

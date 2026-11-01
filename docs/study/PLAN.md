@@ -284,6 +284,16 @@ never whose it is. It stops showing content when the sitting finishes, and stops
 working when she ends it, opens another, or after 24 hours. One account has one open
 link at a time. Her screen warns that anyone with the link can see that sitting.
 
+## How it looks
+
+Study has its own look, set while a Study page is showing (`app/study/theme.css`), so
+the rest of the site keeps its palette. Ink surfaces in dark mode and warm paper in
+light, one honey accent taken from the pancakes, a serif (Newsreader, served from the
+site itself) for headings and for reading questions, and line icons in place of emoji
+(`components/study/Icon.tsx`). The Night Shift keeps its emoji, since that's a game
+with its own character. Taking a test hides the nav, and a helper on a private link
+sees only the page, with no sign of the site around it.
+
 ## Dropped
 
 - Our own flashcard scheduler, since she uses Anki.

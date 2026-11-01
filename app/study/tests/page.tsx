@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
+import { EmptyState, Loading } from '@/components/study/Ui';
 import { pct, TestRow } from '@/components/study/TestRow';
 import { DIFFICULTIES } from '@/lib/study/prompt';
 import type { SetSummary } from '@/lib/study/sets';
@@ -28,7 +30,7 @@ function SetCard({ set }: { set: SetSummary }) {
         )}
         {set.score ? <span className="sd-score">{pct(set.score.right, set.score.total)}%</span> : <span className="td-chip">Not taken</span>}
       </Link>
-      <Link className="sd-more sd-set-next" href={`/study/add?set=${set.id}`}>+ Make the next test</Link>
+      <Link className="sd-more sd-set-next" href={`/study/add?set=${set.id}`}><Icon name="plus" /> Make the next test</Link>
     </li>
   );
 }
@@ -62,18 +64,16 @@ export default function TestsPage() {
           <h1>Practice tests</h1>
           {summary && summary.totals.tests > 0 && <p>{summary.totals.tests} saved, {summary.totals.taken} taken</p>}
         </div>
-        <Link className="btn btn-primary" href="/study/add">Add a test</Link>
+        <Link className="btn btn-primary" href="/study/add"><Icon name="plus" /> Add a test</Link>
       </header>
 
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your tests.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
 
       {summary && (summary.tests.length === 0 && sets.length === 0 ? (
-        <section className="sd-card sd-done">
-          <h2>No tests yet</h2>
-          <p className="hb-hint">Have your AI write one from your notes, then paste it here.</p>
-          <Link className="btn btn-secondary" href="/study/add">Make your first test</Link>
-        </section>
+        <EmptyState icon="tests" title="No tests yet" action={{ href: '/study/add', label: 'Make your first test' }}>
+          Have your AI write one from your notes, then paste it here.
+        </EmptyState>
       ) : (
         <>
           {summary.courses.length > 1 && (

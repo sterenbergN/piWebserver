@@ -7,7 +7,9 @@ import { useSitePopup } from '@/components/SitePopup';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { MathText } from '@/components/daily/MathText';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
 import { Choices, Explanation, MendQuestion } from '@/components/study/QuestionView';
+import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
 import { DIFFICULTIES } from '@/lib/study/prompt';
 import { choiceOrder, isRight, scoreAttempt, type Attempt, type AttemptMode, type StudyQuestion, type StudyTest } from '@/lib/study/study';
 
@@ -67,7 +69,7 @@ export default function TestPage() {
   };
 
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to see this test">Your tests are only shown to your account.</SignInPrompt></div>;
-  if (state === 'loading') return <div className="sd"><p className="hb-hint">Loading…</p></div>;
+  if (state === 'loading') return <div className="sd sd-narrow"><Loading rows={2} /></div>;
   if (state === 'error' || !data) {
     return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that test.'}</span></div><Link className="sd-back" href="/study/tests">← Practice tests</Link></div>;
   }
@@ -85,6 +87,7 @@ export default function TestPage() {
   const finished = attempts.filter((a) => a.finishedAt).sort((a, b) => String(b.finishedAt).localeCompare(String(a.finishedAt)));
   const open = attempts.find((a) => !a.finishedAt);
   const shown = viewing ? finished.find((a) => a.id === viewing) : null;
+  const before = shown ? finished[finished.indexOf(shown) + 1] : undefined;
 
   const deleteTest = async () => {
     const ok = await confirm({ title: 'Delete this test?', message: `“${test.title}”, every try at it, and its questions in your miss bank will be gone for good.`, confirmLabel: 'Delete', danger: true });
@@ -150,7 +153,7 @@ export default function TestPage() {
               <Link className="hb-small-btn" href={`/study/add?set=${inSet.id}`}>Make the next test</Link>
             </div>
           )}
-          <Results test={test} attempt={shown} onBack={() => setViewing(null)}
+          <Results test={test} attempt={shown} previous={before} onBack={() => setViewing(null)}
             onRetake={(ids) => start('exam', { fresh: true, questionIds: ids })} onFix={fix} onRemove={removeQ} />
         </>
       ) : (
@@ -172,12 +175,12 @@ export default function TestPage() {
                 <h2>{finished.length ? 'Take it again' : 'Take this test'}</h2>
                 <div className="sd-modes">
                   <button type="button" className="sd-mode" onClick={() => start('exam')}>
-                    <strong>📝 Exam</strong>
-                    <span>Answer everything, then see your score.</span>
+                    <span className="sd-tile-icon"><Icon name="tests" /></span>
+                    <span><strong>Exam</strong><small>Answer everything, then see your score.</small></span>
                   </button>
                   <button type="button" className="sd-mode" onClick={() => start('tutor')}>
-                    <strong>🧑‍🏫 Tutor</strong>
-                    <span>See the answer and why after each question.</span>
+                    <span className="sd-tile-icon"><Icon name="chat" /></span>
+                    <span><strong>Tutor</strong><small>See the answer and why after each question.</small></span>
                   </button>
                 </div>
               </>
@@ -197,7 +200,7 @@ export default function TestPage() {
                           <strong>{new Date(String(attempt.finishedAt)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
                           <small>{score.right} of {score.total} right · {clock(attempt.elapsed)} · {attempt.mode === 'tutor' ? 'Tutor' : 'Exam'}</small>
                         </span>
-                        <span className="sd-score">{pct(score.right, score.total)}%</span>
+                        <span className={`sd-score ${scoreTone(pct(score.right, score.total))}`}>{pct(score.right, score.total)}%</span>
                       </button>
                     </li>
                   );
@@ -243,6 +246,7 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
   const [checked, setChecked] = useState<string[]>(() => Object.keys(attempt.answers));
   const [elapsed, setElapsed] = useState(attempt.elapsed);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState('');
 
@@ -257,6 +261,7 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
     try {
       await studyPost('save', { attemptId: attempt.id, answers: l.answers, flagged: l.flagged, elapsed: l.elapsed });
       setSaveFailed(false);
+      setSavedOnce(true);
     } catch {
       l.dirty = true;
       setSaveFailed(true);
@@ -309,14 +314,20 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
     change({ flagged: next });
   };
 
-  // Keys, for a long test at a desk: a letter picks that choice, arrows move.
+  // Keys, for a long test at a desk: a letter or number picks that choice, arrows move, Enter goes on.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!question || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
       if (e.key === 'ArrowRight') { go(index + 1); return; }
       if (e.key === 'ArrowLeft') { go(index - 1); return; }
-      if (revealed || !/^[a-h]$/i.test(e.key)) return;
-      const shown = e.key.toUpperCase().charCodeAt(0) - 65;
+      if (e.key === 'Enter') {
+        if ((e.target as HTMLElement).closest?.('button, a')) return;
+        if (tutor && !revealed) { if (answers[question.id]?.length) setChecked((list) => [...list, question.id]); return; }
+        go(index + 1);
+        return;
+      }
+      if (revealed || !/^[a-h1-8]$/i.test(e.key)) return;
+      const shown = /\d/.test(e.key) ? Number(e.key) - 1 : e.key.toUpperCase().charCodeAt(0) - 65;
       const original = choiceOrder(question, attempt.seed)[shown];
       if (original === undefined) return;
       const current = answers[question.id] ?? [];
@@ -324,7 +335,7 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [question, index, go, revealed, attempt.seed, answers, setAnswer]);
+  }, [question, index, go, revealed, tutor, attempt.seed, answers, setAnswer]);
 
   const answered = questions.filter((q) => answers[q.id]?.length).length;
 
@@ -358,13 +369,18 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
   return (
     <div className="sd sd-narrow sd-runner">
       {popup}
-      <div className="sd-runner-bar">
-        <button type="button" className="hb-text-btn" onClick={async () => { latest.current.dirty = true; await flush(); await onLeave(); }}>← Save and leave</button>
-        <span className="sd-clock" aria-label={`Time ${clock(elapsed)}`}>⏱ {clock(elapsed)}</span>
-        <button type="button" className="btn btn-secondary sd-finish" disabled={finishing} onClick={finish}>{finishing ? 'Handing in…' : 'Hand in'}</button>
-      </div>
-      <div className="progress" role="progressbar" aria-label="Questions answered" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answered}>
-        <div style={{ width: `${(answered / questions.length) * 100}%` }} />
+      <div className="sd-runner-top">
+        <div className="sd-runner-bar">
+          <button type="button" className="hb-text-btn sd-with-icon" onClick={async () => { latest.current.dirty = true; await flush(); await onLeave(); }}><Icon name="left" /> Save and leave</button>
+          <span className="sd-runner-tools">
+            {savedOnce && !saveFailed && <span className="sd-saved">Saved</span>}
+            <span className="sd-clock" aria-label={`Time ${clock(elapsed)}`}><Icon name="clock" /> {clock(elapsed)}</span>
+            <button type="button" className="btn btn-secondary sd-finish" disabled={finishing} onClick={finish}>{finishing ? 'Handing in…' : 'Hand in'}</button>
+          </span>
+        </div>
+        <div className="progress" role="progressbar" aria-label="Questions answered" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answered}>
+          <div style={{ width: `${(answered / questions.length) * 100}%` }} />
+        </div>
       </div>
       {saveFailed && <div className="hb-banner is-error" role="alert"><span>Couldn’t save just now. Your answers are still here and it’ll try again.</span></div>}
       {finishError && <div className="hb-banner is-error" role="alert"><span>{finishError}</span></div>}
@@ -373,12 +389,14 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
         <div className="sd-question-head">
           <span className="sd-count">Question {index + 1} of {questions.length}</span>
           <button type="button" className={`sd-flag${flagged.includes(question.id) ? ' is-on' : ''}`} aria-pressed={flagged.includes(question.id)} onClick={() => toggleFlag(question.id)}>
-            🚩 Not sure
+            <Icon name="flag" /> Not sure
           </button>
         </div>
-        <MathText className="sd-stem">{question.stem}</MathText>
-        <Choices key={question.id} question={question} seed={attempt.seed} answer={answer} reveal={revealed} onChange={revealed ? undefined : (value) => setAnswer(question, value)} />
-        {revealed && <Explanation question={question} answer={answer} />}
+        <div className="sd-question-body" key={question.id}>
+          <MathText className="sd-stem">{question.stem}</MathText>
+          <Choices question={question} seed={attempt.seed} answer={answer} reveal={revealed} onChange={revealed ? undefined : (value) => setAnswer(question, value)} />
+          {revealed && <Explanation question={question} answer={answer} />}
+        </div>
         <div className="sd-actions sd-question-nav">
           <button type="button" className="btn btn-secondary" disabled={index === 0} onClick={() => go(index - 1)}>Back</button>
           {tutor && !revealed ? (
@@ -390,6 +408,8 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
           )}
         </div>
       </section>
+
+      <p className="sd-keys" aria-hidden><kbd>A</kbd> to <kbd>{String.fromCharCode(64 + Math.min(8, question.choices.length))}</kbd> answer · <kbd>←</kbd> <kbd>→</kbd> move · <kbd>Enter</kbd> {tutor && !revealed ? 'check' : 'next'}</p>
 
       <nav className="sd-map" aria-label="Jump to a question">
         {questions.map((q, i) => {
@@ -409,9 +429,13 @@ function Runner({ test, attempt, onLeave, onFinished }: { test: StudyTest; attem
 
 // ── Results ──────────────────────────────────────────────────────────────────
 
-function Results({ test, attempt, onBack, onRetake, onFix, onRemove }: {
+/** A plain word on the score: honest, and never a pat on the head for a bad day. */
+const verdict = (percent: number) => (percent === 100 ? 'A clean sheet' : percent >= 90 ? 'Excellent' : percent >= 80 ? 'Solid' : percent >= 60 ? 'Getting there' : 'Worth another pass');
+
+function Results({ test, attempt, previous, onBack, onRetake, onFix, onRemove }: {
   test: StudyTest;
   attempt: Attempt;
+  previous?: Attempt;
   onBack: () => void;
   onRetake: (questionIds: string[]) => void;
   onFix: (questionId: string, correct: number[], explanation: string) => Promise<void>;
@@ -423,27 +447,36 @@ function Results({ test, attempt, onBack, onRetake, onFix, onRemove }: {
   const unsure = score.results.filter((r) => r.flagged);
   const shown = filter === 'missed' ? missed : filter === 'unsure' ? unsure : score.results;
   const number = (id: string) => score.results.findIndex((r) => r.question.id === id) + 1;
+  const percent = pct(score.right, score.total);
+  const earlier = previous ? scoreAttempt(previous, test) : null;
+  const change = earlier && earlier.total ? percent - pct(earlier.right, earlier.total) : null;
 
   return (
     <>
       <section className="sd-card sd-result">
-        <div className="sd-result-top">
-          <div className="sd-big-score"><strong>{pct(score.right, score.total)}%</strong><span>{score.right} of {score.total} right</span></div>
-          <div className="sd-actions">
-            {missed.length > 0 && <button type="button" className="btn btn-primary" onClick={() => onRetake(missed.map((r) => r.question.id))}>Retake the {missed.length} I missed</button>}
-            <button type="button" className="btn btn-secondary" onClick={onBack}>Back to the test</button>
+        <div className="sd-result-hero">
+          <ScoreRing percent={percent} label="Your score" />
+          <div className="sd-result-text">
+            <h2>{verdict(percent)}</h2>
+            <p>{score.right} of {score.total} right, in {clock(attempt.elapsed)}</p>
+            {change !== null && (
+              <span className={`sd-delta ${change > 0 ? 'is-up' : change < 0 ? 'is-down' : 'is-same'}`}>
+                {change !== 0 && <Icon name="trend" />}{change > 0 ? `Up ${change} points from last time` : change < 0 ? `Down ${-change} points from last time` : 'The same as last time'}
+              </span>
+            )}
           </div>
         </div>
-        <p className="hb-hint">
-          {clock(attempt.elapsed)} on the clock.{' '}
-          {missed.length || unsure.length ? 'What you missed or weren’t sure of will come back in Review.' : 'A clean sheet, so nothing to review.'}
-        </p>
+        <p className="hb-hint">{missed.length || unsure.length ? 'What you missed or weren’t sure of will come back in Review.' : 'Nothing to review.'}</p>
+        <div className="sd-actions">
+          {missed.length > 0 && <button type="button" className="btn btn-primary" onClick={() => onRetake(missed.map((r) => r.question.id))}>Retake the {missed.length} I missed</button>}
+          <button type="button" className="btn btn-secondary" onClick={onBack}>Back to the test</button>
+        </div>
         {score.byTopic.length > 1 && (
           <ul className="sd-topics">
             {score.byTopic.map((t) => (
               <li key={t.topic}>
                 <span className="progress-label"><span>{t.topic}</span><span>{t.right}/{t.total}</span></span>
-                <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className="sd-bar" style={{ width: `${pct(t.right, t.total)}%` }} /></span>
+                <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className={`sd-bar ${scoreTone(pct(t.right, t.total))}`} style={{ width: `${pct(t.right, t.total)}%` }} /></span>
               </li>
             ))}
           </ul>
@@ -460,7 +493,7 @@ function Results({ test, attempt, onBack, onRetake, onFix, onRemove }: {
         <section key={question.id} className="sd-card sd-question">
           <div className="sd-question-head">
             <span className="sd-count">Question {number(question.id)}{question.topic !== 'General' ? ` · ${question.topic}` : ''}</span>
-            {flagged && <span className="sd-flag is-on is-static">🚩 Not sure</span>}
+            {flagged && <span className="sd-flag is-on is-static"><Icon name="flag" /> Not sure</span>}
           </div>
           <MathText className="sd-stem">{question.stem}</MathText>
           <Choices question={question} seed={attempt.seed} answer={answer} reveal />
@@ -470,7 +503,7 @@ function Results({ test, attempt, onBack, onRetake, onFix, onRemove }: {
             onRemove={() => onRemove(question.id)} />
         </section>
       ))}
-      {!shown.length && <p className="hb-hint">Nothing here.</p>}
+      {!shown.length && <p className="hb-hint">Nothing in this group.</p>}
     </>
   );
 }

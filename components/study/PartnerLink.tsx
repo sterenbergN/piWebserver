@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import type { OwnerSessionView } from '@/lib/study/partner';
 import { practiceGet, SignedOut } from './api';
+import { Icon } from './Icon';
 
 // The private link for whoever's quizzing her or playing the patient, and a watch
 // on how it's going, so her screen keeps up without her touching it.
@@ -67,7 +68,7 @@ export function PartnerLink({ token, onEnd, who }: { token: string; onEnd: () =>
           <p className="hb-hint">No account needed. Anyone with this link can see what’s in this sitting, until it’s over, you end it, or a day has passed.</p>
           <input readOnly value={url} aria-label="The private link" onFocus={(e) => e.target.select()} />
           <div className="sd-actions">
-            <button type="button" className="hb-small-btn" onClick={copy}>{copied ? '✓ Copied' : 'Copy link'}</button>
+            <button type="button" className="hb-small-btn" onClick={copy}><Icon name={copied ? 'check' : 'link'} /> {copied ? 'Copied' : 'Copy link'}</button>
             <button type="button" className="hb-text-btn" onClick={onEnd}>End this link</button>
           </div>
         </div>

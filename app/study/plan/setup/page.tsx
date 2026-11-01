@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { Icon, KIND_GLYPH, Pancakes } from '@/components/study/Icon';
+import { Loading } from '@/components/study/Ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { usePlan } from '@/components/study/usePlan';
@@ -34,7 +36,7 @@ function YourWeek({ planner }: { planner: Planner }) {
         <p className="sd-setup-title">Pancakes you can manage in a day, roughly</p>
         <div className="sd-actions">
           <button type="button" className="hb-small-btn" aria-label="One fewer" disabled={settings.perDay <= 1} onClick={() => save({ perDay: settings.perDay - 1 })}>−</button>
-          <strong className="sd-perday">{settings.perDay} 🥞</strong>
+          <strong className="sd-perday"><Pancakes count={settings.perDay} /></strong>
           <button type="button" className="hb-small-btn" aria-label="One more" disabled={settings.perDay >= 40} onClick={() => save({ perDay: settings.perDay + 1 })}>+</button>
           {pace !== null && Math.round(pace) !== settings.perDay && Math.round(pace) >= 1 && (
             <button type="button" className="hb-text-btn" onClick={() => save({ perDay: Math.round(pace) })}>Lately you’re eating about {Math.round(pace)} a day. Use that</button>
@@ -92,8 +94,8 @@ function GoogleCalendar({ planner }: { planner: Planner }) {
       <h2>Google Calendar</h2>
       {calendar.connected ? (
         <>
-          <p className="hb-hint">✓ Connected{when ? `, last read ${when}` : ''}. The site reads your calendar and never changes it. A moved exam moves its countdown and its upcoming pancakes.</p>
-          {calendar.lastError && <p className="sd-warning" role="alert">⚠️ {calendar.lastError}</p>}
+          <p className="hb-hint">Connected{when ? `, last read ${when}` : ''}. The site reads your calendar and never changes it. A moved exam moves its countdown and its upcoming pancakes.</p>
+          {calendar.lastError && <p className="sd-warning" role="alert"><Icon name="alert" /><span>{calendar.lastError}</span></p>}
           <div className="sd-actions">
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => run(async () => { await post('calendar-refresh'); })}>{busy ? 'Reading…' : 'Read it now'}</button>
             <Link className="sd-more" href="/study/plan">See what’s waiting →</Link>
@@ -123,7 +125,7 @@ function GoogleCalendar({ planner }: { planner: Planner }) {
           </details>
         </>
       )}
-      {notice && <p className="sd-outcome">✓ {notice}</p>}
+      {notice && <p className="sd-outcome"><Icon name="check" /> {notice}</p>}
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
     </section>
   );
@@ -185,11 +187,14 @@ function Syllabus({ planner }: { planner: Planner }) {
           <input value={course} maxLength={80} placeholder="Clinical Medicine II" onChange={(e) => { setCourse(e.target.value); setCopied('idle'); }} />
         </label>
       </div>
-      <textarea ref={box} className="sd-prompt" readOnly rows={5} value={prompt} aria-label="The prompt to copy" />
       <div className="sd-actions">
-        <button type="button" className="btn btn-secondary" onClick={copy}>{copied === 'copied' ? '✓ Copied' : 'Copy prompt'}</button>
-        {copied === 'failed' && <span className="hb-hint">Couldn’t reach the clipboard. It’s selected above, so copy it from there.</span>}
+        <button type="button" className="btn btn-secondary" onClick={copy}><Icon name={copied === 'copied' ? 'check' : 'copy'} /> {copied === 'copied' ? 'Copied' : 'Copy prompt'}</button>
+        {copied === 'failed' && <span className="hb-hint">Couldn’t reach the clipboard. It’s selected below, so copy it from there.</span>}
       </div>
+      <details className="sd-more-info" open={copied === 'failed' || undefined}>
+        <summary>Read the prompt</summary>
+        <textarea ref={box} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
+      </details>
       <textarea className="sd-reply" rows={6} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setNotice(''); }} />
       {readError && <div className="hb-banner is-error" role="alert"><span>{readError}</span></div>}
       {pack && (
@@ -199,7 +204,7 @@ function Syllabus({ planner }: { planner: Planner }) {
             {pack.deadlines.map((d) => (
               <li key={`${d.title}${d.dueOn}`}>
                 {KIND_ICON[d.kind]} <strong>{fmt(d.dueOn)}</strong> {d.title}
-                {pack.tasks.some((t) => t.forDeadline.toLowerCase() === d.title.toLowerCase()) && ` (${pack.tasks.filter((t) => t.forDeadline.toLowerCase() === d.title.toLowerCase()).reduce((n, t) => n + t.pancakes, 0)} 🥞)`}
+                {pack.tasks.some((t) => t.forDeadline.toLowerCase() === d.title.toLowerCase()) && ` (${pack.tasks.filter((t) => t.forDeadline.toLowerCase() === d.title.toLowerCase()).reduce((n, t) => n + t.pancakes, 0)} pancakes)`}
               </li>
             ))}
           </ul>
@@ -212,7 +217,7 @@ function Syllabus({ planner }: { planner: Planner }) {
           <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Add to my plan'}</button>
         </div>
       )}
-      {notice && <p className="sd-outcome">✓ {notice} <Link className="sd-more" href="/study/plan">See your plan →</Link></p>}
+      {notice && <p className="sd-outcome"><Icon name="check" /> {notice} <Link className="sd-more" href="/study/plan">See your plan <Icon name="right" /></Link></p>}
       {error && <p className="sd-warning" role="alert">{error}</p>}
     </section>
   );
@@ -233,7 +238,7 @@ export default function PlanSetupPage() {
           <h1>Your week &amp; calendar</h1>
         </div>
       </header>
-      {planner.status === 'loading' && <p className="hb-hint">Loading…</p>}
+      {planner.status === 'loading' && <Loading rows={2} />}
       {planner.status === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your plan.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
       {planner.data && (
         <>

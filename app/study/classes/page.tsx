@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Loading } from '@/components/study/Ui';
 import { useCallback, useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -127,7 +128,7 @@ export default function ClassesPage() {
         {!draft && <button type="button" className="btn btn-primary" onClick={() => { setError(''); setDraft(blank()); }}>Add a class</button>}
       </header>
 
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading rows={2} />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your classes.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
       {error && !draft && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
 

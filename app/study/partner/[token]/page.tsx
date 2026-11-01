@@ -3,7 +3,9 @@
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
+import { Icon } from '@/components/study/Icon';
 import { InlineMath } from '@/components/study/InlineMath';
+import { Loading } from '@/components/study/Ui';
 import { localToday } from '@/lib/habits/dates';
 import type { PartnerCaseView, PartnerQuizView } from '@/lib/study/partner';
 import { formatSeconds } from '@/lib/study/practice';
@@ -47,7 +49,7 @@ function Quiz({ view, act, busy }: { view: PartnerQuizView; act: (action: string
               const right = question.correct.includes(i);
               return (
                 <li key={i} className={right ? 'is-right' : ''}>
-                  <span aria-hidden>{right ? '✓' : choiceLetter(i)}</span>
+                  <span aria-hidden>{right ? <Icon name="check" /> : choiceLetter(i)}</span>
                   <span>{right && <span className="sr-only">Correct: </span>}<InlineMath>{choice}</InlineMath></span>
                 </li>
               );
@@ -67,8 +69,8 @@ function Quiz({ view, act, busy }: { view: PartnerQuizView; act: (action: string
       <div className="pr-marks">
         {question ? (
           <>
-            <button type="button" className="btn pr-wrong" disabled={busy} onClick={() => act('mark', { index: view.index, right: false })}>✕ Wrong</button>
-            <button type="button" className="btn pr-right" disabled={busy} onClick={() => act('mark', { index: view.index, right: true })}>✓ Right</button>
+            <button type="button" className="btn pr-wrong" disabled={busy} onClick={() => act('mark', { index: view.index, right: false })}><Icon name="x" /> Wrong</button>
+            <button type="button" className="btn pr-right" disabled={busy} onClick={() => act('mark', { index: view.index, right: true })}><Icon name="check" /> Right</button>
           </>
         ) : (
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('mark', { index: view.index, right: null })}>Skip it</button>
@@ -218,6 +220,7 @@ export default function PartnerPage() {
     <div className="sd sd-narrow animate-fade-in pr-partner">
       <header className="sd-head">
         <div>
+          <p className="pr-brand"><Icon name="stethoscope" /> PA Study</p>
           <h1>{view?.kind === 'patient' ? 'Mock patient' : 'Quiz me'}</h1>
         </div>
       </header>
@@ -227,7 +230,7 @@ export default function PartnerPage() {
           <p className="hb-hint">Links stop working when the sitting is ended, or after a day. Ask for a new one.</p>
         </section>
       )}
-      {!view && !ended && !error && <p className="hb-hint">Loading…</p>}
+      {!view && !ended && !error && <Loading rows={2} />}
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
       {view?.kind === 'quiz' && <Quiz view={view} act={act} busy={busy} />}
       {view?.kind === 'patient' && <Patient view={view} token={token} act={act} busy={busy} />}

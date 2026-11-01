@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { Icon } from '@/components/study/Icon';
+import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
 import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import type { MapResponse } from '@/components/study/MapTypes';
@@ -74,7 +76,7 @@ function SystemRow({ c }: { c: SystemCoverage }) {
                     {c.topics.slice(0, 8).map((t) => (
                       <li key={t.topic}>
                         <span className="progress-label"><span>{t.topic}</span><span>{t.right}/{t.total}</span></span>
-                        <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className="sd-bar" style={{ width: `${pct(t.right, t.total)}%` }} /></span>
+                        <span className="progress" role="img" aria-label={`${pct(t.right, t.total)}% right`}><span className={`sd-bar ${scoreTone(pct(t.right, t.total))}`} style={{ width: `${pct(t.right, t.total)}%` }} /></span>
                       </li>
                     ))}
                   </ul>
@@ -123,7 +125,7 @@ export default function MapPage() {
         </div>
       </header>
 
-      {state === 'loading' && <p className="hb-hint">Loading…</p>}
+      {state === 'loading' && <Loading />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your map.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
 
       {coverage && (
@@ -133,17 +135,17 @@ export default function MapPage() {
               <h2>Fill in what you’ve already done</h2>
               <ul className="sd-setup-steps">
                 <li className={hasClasses ? 'is-done' : ''}>
-                  <span aria-hidden>{hasClasses ? '✅' : '1️⃣'}</span>
+                  <span className={`sd-step${hasClasses ? ' is-done' : ''}`} aria-hidden>{hasClasses ? <Icon name="check" size="0.95rem" /> : 1}</span>
                   <span className="sd-test-main"><strong>Add your classes</strong><small>About a minute. Fills in Covered.</small></span>
                   <Link className={`btn ${hasClasses ? 'btn-secondary' : 'btn-primary'}`} href="/study/classes">{hasClasses ? 'Edit' : 'Add'}</Link>
                 </li>
                 <li className={hasAnki ? 'is-done' : ''}>
-                  <span aria-hidden>{hasAnki ? '✅' : '2️⃣'}</span>
+                  <span className={`sd-step${hasAnki ? ' is-done' : ''}`} aria-hidden>{hasAnki ? <Icon name="check" size="0.95rem" /> : 2}</span>
                   <span className="sd-test-main"><strong>Import from Anki</strong><small>One export. Fills in Studied.</small></span>
                   <Link className="btn btn-secondary" href="/study/anki">{hasAnki ? 'Open' : 'Import'}</Link>
                 </li>
                 <li className={hasTests ? 'is-done' : ''}>
-                  <span aria-hidden>{hasTests ? '✅' : '3️⃣'}</span>
+                  <span className={`sd-step${hasTests ? ' is-done' : ''}`} aria-hidden>{hasTests ? <Icon name="check" size="0.95rem" /> : 3}</span>
                   <span className="sd-test-main"><strong>Take a test</strong><small>Fills in Proven. Old AI tests can be converted and retaken too.</small></span>
                   <Link className="btn btn-secondary" href="/study/add">Add a test</Link>
                 </li>
@@ -153,14 +155,11 @@ export default function MapPage() {
 
           <section className="sd-card">
             <h2>Across the blueprint</h2>
-            <div className="sd-totals">
+            <dl className="sd-trio">
               {([['Covered', coverage.totals.covered], ['Studied', coverage.totals.studied], ['Proven', coverage.totals.proven]] as const).map(([name, value]) => (
-                <div key={name}>
-                  <span className="progress-label"><span>{name}</span><span>{value}%</span></span>
-                  <span className="progress" role="img" aria-label={`${name}: ${value}% of the blueprint`}><span className="sd-bar" style={{ width: `${value}%` }} /></span>
-                </div>
+                <div key={name}><dt>{name}</dt><dd><ScoreRing percent={value} size={92} label={`${name}, share of the blueprint`} tone="is-ok" /></dd></div>
               ))}
-            </div>
+            </dl>
             <p className="hb-hint">Share of the exam, by weight. A system counts as proven with {MIN_PROVEN} or more answers and at least 75% right, which is a guide and not a prediction of your score.</p>
           </section>
 

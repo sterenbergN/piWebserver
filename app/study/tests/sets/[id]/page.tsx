@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Loading } from '@/components/study/Ui';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
@@ -39,7 +40,7 @@ export default function SetPage() {
   useEffect(() => { void load(); }, [load]);
 
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to see this set">Your tests are only shown to your account.</SignInPrompt></div>;
-  if (state === 'loading') return <div className="sd"><p className="hb-hint">Loading…</p></div>;
+  if (state === 'loading') return <div className="sd"><Loading rows={2} /></div>;
   if (state === 'error' || !data) {
     return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that set.'}</span></div><Link className="sd-back" href="/study/tests">← Practice tests</Link></div>;
   }

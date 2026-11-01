@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState } from 'react';
 import { cleanStreak, plateView, type PlateItem } from '@/lib/study/plan';
+import { Icon } from './Icon';
 import type { usePlan } from './usePlan';
 
 // Today's plate: the stack, what's on it, and the ways to deal with it. The stack
@@ -56,7 +57,7 @@ export function PancakeStack({ count, cold = 0, clean = false }: { count: number
   );
 }
 
-function Row({ item, onEat, busy }: { item: PlateItem; onEat: (id: string, count: number) => void; busy: boolean }) {
+function Row({ item, onEat, busy, lead }: { item: PlateItem; onEat: (id: string, count: number) => void; busy: boolean; lead: boolean }) {
   const count = item.pile + item.today;
   return (
     <li className="sd-plate-row">
@@ -65,8 +66,8 @@ function Row({ item, onEat, busy }: { item: PlateItem; onEat: (id: string, count
         <small>{[item.deadline?.title, item.pile ? `${item.pile} from earlier` : ''].filter(Boolean).join(' · ') || 'No date'}</small>
       </span>
       <span className="sd-actions">
-        <button type="button" className="btn btn-primary sd-eat" disabled={busy} onClick={() => onEat(item.task.id, 1)} aria-label={`Eat one pancake of ${item.task.title}, ${count} on your plate`}>
-          🥞 Eat{count > 1 ? ` 1 of ${count}` : ''}
+        <button type="button" className={`btn ${lead ? 'btn-primary' : 'btn-secondary'} sd-eat`} disabled={busy} onClick={() => onEat(item.task.id, 1)} aria-label={`Eat one pancake of ${item.task.title}, ${count} on your plate`}>
+          <Icon name="pancake" /> Eat{count > 1 ? ` 1 of ${count}` : ''}
         </button>
         {count > 1 && <button type="button" className="hb-small-btn" disabled={busy} onClick={() => onEat(item.task.id, count)}>All</button>}
       </span>
@@ -74,7 +75,7 @@ function Row({ item, onEat, busy }: { item: PlateItem; onEat: (id: string, count
   );
 }
 
-export default function Plate({ planner, compact = false }: { planner: ReturnType<typeof usePlan>; compact?: boolean }) {
+export default function Plate({ planner, compact = false, quiet = false }: { planner: ReturnType<typeof usePlan>; compact?: boolean; quiet?: boolean }) {
   const { data, post, today } = planner;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -119,8 +120,8 @@ export default function Plate({ planner, compact = false }: { planner: ReturnTyp
     setLastEaten(null);
   });
 
-  const headline = view.clean ? '🧈 Clean plate!'
-    : view.dayOff && !view.total ? '🛌 Day off'
+  const headline = view.clean ? 'Clean plate'
+    : view.dayOff && !view.total ? 'Day off'
       : view.total ? `${view.total} pancake${view.total === 1 ? '' : 's'} on your plate`
         : 'Nothing on your plate';
   const detail = view.clean ? 'That’s everything for today. You can stop here.'
@@ -131,24 +132,33 @@ export default function Plate({ planner, compact = false }: { planner: ReturnTyp
   const shown = compact ? view.items.slice(0, 3) : view.items;
 
   return (
-    <section className={`sd-card sd-plate${compact ? ' is-compact' : ''}`} aria-label="Today’s plate">
+    <section className={`sd-card sd-plate${compact ? ' is-compact' : ''}${view.clean ? ' is-clean' : ''}`} aria-label="Today’s plate">
       <Confetti fire={fire} />
       <div className="sd-plate-top">
         <PancakeStack count={view.total} cold={view.cold} clean={view.clean} />
         <div className="sd-plate-text">
           <h2>{headline}</h2>
           <p className="hb-hint">{detail}</p>
-          {streak > 0 && <p className="sd-streak">🔥 {streak} clean plate{streak === 1 ? '' : 's'} in a row</p>}
+          {streak > 0 && <p className="sd-streak"><Icon name="flame" /> {streak} clean plate{streak === 1 ? '' : 's'} in a row</p>}
         </div>
       </div>
 
+      {view.total > 0 && view.eatenToday > 0 && (
+        <div className="sd-plate-progress">
+          <div className="progress" role="progressbar" aria-label="Eaten today" aria-valuemin={0} aria-valuemax={view.total + view.eatenToday} aria-valuenow={view.eatenToday}>
+            <div style={{ width: `${(view.eatenToday / (view.total + view.eatenToday)) * 100}%` }} />
+          </div>
+          <small>{view.eatenToday} of {view.total + view.eatenToday} today</small>
+        </div>
+      )}
+
       {view.pile > 0 && (
         <div className={`sd-pile is-cold-${view.cold}`}>
-          <span>{view.cold >= 3 ? '🥶 This pile has gone cold.' : view.cold === 2 ? '🥞 The pile is getting wobbly.' : '🥞 A few left from earlier.'}</span>
+          <span>{view.cold >= 3 ? 'This pile has gone cold.' : view.cold === 2 ? 'The pile is getting wobbly.' : 'A few left from earlier.'}</span>
           <button type="button" className="hb-small-btn" disabled={busy} onClick={onSpread}>Spread the pile</button>
         </div>
       )}
-      {spread > 0 && <p className="sd-outcome">✓ {spread} pancake{spread === 1 ? '' : 's'} spread over the coming days.</p>}
+      {spread > 0 && <p className="sd-outcome"><Icon name="check" /> {spread} pancake{spread === 1 ? '' : 's'} spread over the coming days.</p>}
       {error && <p className="sd-warning" role="alert">{error}</p>}
 
       {(shown.length > 0 || view.reviews > 0) && (
@@ -159,17 +169,17 @@ export default function Plate({ planner, compact = false }: { planner: ReturnTyp
                 <strong>Review your misses</strong>
                 <small>{data.reviewsDue} question{data.reviewsDue === 1 ? '' : 's'} due · {view.reviews} pancake{view.reviews === 1 ? '' : 's'}</small>
               </span>
-              <Link className="btn btn-primary sd-eat" href="/study/review">Review now</Link>
+              <Link className={`btn ${quiet ? 'btn-secondary' : 'btn-primary'} sd-eat`} href="/study/review">Review now</Link>
             </li>
           )}
-          {shown.map((item) => <Row key={item.task.id} item={item} onEat={onEat} busy={busy} />)}
+          {shown.map((item, i) => <Row key={item.task.id} item={item} onEat={onEat} busy={busy} lead={!quiet && i === 0 && !view.reviews} />)}
         </ul>
       )}
-      {compact && view.items.length > shown.length && <Link className="sd-more" href="/study">{view.items.length - shown.length} more on your plate →</Link>}
+      {compact && view.items.length > shown.length && <Link className="sd-more" href="/study">{view.items.length - shown.length} more on your plate <Icon name="right" /></Link>}
 
       {lastEaten && (
         <p className="sd-undo">
-          <span>🥞 Ate {lastEaten.count > 1 ? `${lastEaten.count} of ` : ''}{lastEaten.title}.</span>{' '}
+          <span>Ate {lastEaten.count > 1 ? `${lastEaten.count} of ` : ''}{lastEaten.title}.</span>{' '}
           <button type="button" className="hb-text-btn" disabled={busy} onClick={undo}>Undo</button>
         </p>
       )}
@@ -178,7 +188,7 @@ export default function Plate({ planner, compact = false }: { planner: ReturnTyp
         {view.dayOff
           ? <button type="button" className="hb-text-btn" disabled={busy} onClick={() => dayOff(false)}>Studying after all</button>
           : !view.clean && view.today > 0 && <button type="button" className="hb-text-btn" disabled={busy} onClick={() => dayOff(true)}>Take today off</button>}
-        {compact ? <Link className="sd-more" href="/study">Open PA Today →</Link> : <Link className="sd-more" href="/study/plan">Open your plan →</Link>}
+        {compact ? <Link className="sd-more" href="/study">Open PA Today <Icon name="right" /></Link> : <Link className="sd-more" href="/study/plan">Open your plan <Icon name="right" /></Link>}
       </div>
     </section>
   );

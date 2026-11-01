@@ -6,7 +6,9 @@ import { useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { useSitePopup } from '@/components/SitePopup';
 import { practiceGet, practicePost, SignedOut } from '@/components/study/api';
+import { Icon } from '@/components/study/Icon';
 import { InlineMath } from '@/components/study/InlineMath';
+import { Loading } from '@/components/study/Ui';
 import { fmtDay, pct } from '@/components/study/TestRow';
 import { cellKey, GRID_LEVELS, pickHidden, type CompareGrid } from '@/lib/study/practice';
 
@@ -43,8 +45,8 @@ function FullGrid({ grid, hidden, shown, marks, onShow, onMark }: {
                     <InlineMath>{cell}</InlineMath>
                     {isHidden && mark === undefined && (
                       <span className="pr-cell-marks">
-                        <button type="button" className="hb-small-btn" aria-label={`Knew ${row.name}: ${grid.columns[c]}`} onClick={() => onMark?.(key, true)}>✓ Knew it</button>
-                        <button type="button" className="hb-small-btn" aria-label={`Missed ${row.name}: ${grid.columns[c]}`} onClick={() => onMark?.(key, false)}>✕ Missed</button>
+                        <button type="button" className="hb-small-btn" aria-label={`Knew ${row.name}: ${grid.columns[c]}`} onClick={() => onMark?.(key, true)}><Icon name="check" /> Knew it</button>
+                        <button type="button" className="hb-small-btn" aria-label={`Missed ${row.name}: ${grid.columns[c]}`} onClick={() => onMark?.(key, false)}><Icon name="x" /> Missed</button>
                       </span>
                     )}
                   </td>
@@ -97,7 +99,7 @@ export default function GridPage() {
     return (
       <div className="sd sd-narrow animate-fade-in">
         {head}
-        {state === 'loading' ? <p className="hb-hint">Loading…</p> : <div className="hb-banner is-error"><span>That grid isn’t here any more.</span></div>}
+        {state === 'loading' ? <Loading rows={2} /> : <div className="hb-banner is-error"><span>That grid isn’t here any more.</span></div>}
       </div>
     );
   }

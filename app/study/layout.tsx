@@ -1,4 +1,5 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
+import '@fontsource-variable/newsreader/opsz.css';
 import 'katex/dist/katex.min.css';
 import '../daily/daily.css';
 import '../habits/habits.css';
@@ -8,6 +9,7 @@ import './plan.css';
 import './games.css';
 import './sets.css';
 import './practice.css';
+import './theme.css';
 
 export const metadata: Metadata = {
   title: { absolute: 'PA Study' },
@@ -20,6 +22,13 @@ export const metadata: Metadata = {
   icons: { icon: '/icons/study-192.png', apple: '/icons/study-apple-touch-icon.png' },
 };
 
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: '#11141b' },
+    { media: '(prefers-color-scheme: light)', color: '#f6f3ec' },
+  ],
+};
+
 export default function Layout({ children }: { children: React.ReactNode }) {
-  return children;
+  return <div className="study-space">{children}</div>;
 }

@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { practiceGet, practicePost, SignedOut } from '@/components/study/api';
+import { CopyPrompt, PasteReply } from '@/components/study/PromptSteps';
 import { parseCaseReply, parseDiffReply, parseGridReply } from '@/lib/study/practice';
 import { buildCasePrompt, buildDifferentialPrompt, buildGridPrompt } from '@/lib/study/prompt';
 import { StudyInputError } from '@/lib/study/study';
@@ -58,11 +59,9 @@ function AddPractice() {
   const [subject, setSubject] = useState('');
   const [course, setCourse] = useState('');
   const [count, setCount] = useState<number>(info.count);
-  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [reply, setReply] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const promptBox = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     practiceGet<{ used: string[] }>('differential=1').then((body) => setUsed(body.used)).catch((error) => { if (error instanceof SignedOut) setSignedOut(true); });
@@ -74,18 +73,6 @@ function AddPractice() {
     return buildDifferentialPrompt({ subject, count, used });
   }, [kind, subject, course, count, used]);
   const parsed = useMemo(() => readAny(kind, reply), [kind, reply]);
-  useEffect(() => setCopied('idle'), [prompt]);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(prompt);
-      setCopied('copied');
-    } catch {
-      promptBox.current?.focus();
-      promptBox.current?.select();
-      setCopied('failed');
-    }
-  }
 
   async function save() {
     if (!parsed.found || saving) return;
@@ -110,8 +97,7 @@ function AddPractice() {
         </div>
       </header>
 
-      <section className="sd-card">
-        <h2><span className="sd-step">1</span> Copy this into your AI, with your notes</h2>
+      <CopyPrompt prompt={prompt}>
         <div className="sd-fields">
           <label className="sd-wide">{info.subjectLabel}
             <input value={subject} maxLength={200} placeholder={info.subjectHint} onChange={(e) => setSubject(e.target.value)} />
@@ -129,16 +115,9 @@ function AddPractice() {
         </div>
         {kind !== 'grid' && <p className="hb-hint">These are made-up patients. Don’t paste in details from anyone real.</p>}
         {kind === 'puzzle' && used.length > 0 && <p className="hb-hint">The prompt asks it not to repeat the {used.length} diagnos{used.length === 1 ? 'is' : 'es'} you already have.</p>}
-        <textarea ref={promptBox} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
-        <div className="sd-actions">
-          <button type="button" className="btn btn-primary" onClick={copy}>{copied === 'copied' ? '✓ Copied' : 'Copy prompt'}</button>
-          {copied === 'failed' && <span className="hb-hint">Couldn’t reach the clipboard. It’s selected above, so copy it from there.</span>}
-        </div>
-      </section>
+      </CopyPrompt>
 
-      <section className="sd-card">
-        <h2><span className="sd-step">2</span> Paste what it wrote</h2>
-        <textarea className="sd-reply" rows={8} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setSaveError(''); }} />
+      <PasteReply value={reply} onChange={(text) => { setReply(text); setSaveError(''); }}>
         {parsed.error && <div className="hb-banner is-error" role="alert"><span>{parsed.error}</span></div>}
         {parsed.found && (
           <div className="sd-preview">
@@ -156,7 +135,7 @@ function AddPractice() {
             <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : info.save}</button>
           </div>
         )}
-      </section>
+      </PasteReply>
     </div>
   );
 }

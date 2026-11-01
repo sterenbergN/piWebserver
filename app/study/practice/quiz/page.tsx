@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Loading } from '@/components/study/Ui';
 import { useEffect, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -65,7 +66,7 @@ export default function QuizPage() {
         </div>
       </header>
       {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
-      {!loaded && <p className="hb-hint">Loading…</p>}
+      {!loaded && <Loading rows={2} />}
 
       {loaded && session?.kind === 'patient' && (
         <div className="hb-banner">
