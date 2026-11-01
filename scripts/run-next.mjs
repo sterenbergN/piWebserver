@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const command = process.argv[2];
@@ -26,6 +26,25 @@ if (command === 'start') {
 if (command === 'build' && process.env.NEXT_DIST_DIR) {
   const targetDir = path.join(process.cwd(), process.env.NEXT_DIST_DIR);
   await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+}
+
+// pdf.js loads its worker, fonts and character maps by address, so they're served from
+// public/ in a folder named for the version, always matching the installed package.
+if (command !== 'start') {
+  const pkg = path.join(process.cwd(), 'node_modules', 'pdfjs-dist');
+  const { version } = JSON.parse(await readFile(path.join(pkg, 'package.json'), 'utf-8'));
+  const assets = path.join(process.cwd(), 'public', 'reader-assets');
+  await rm(assets, { recursive: true, force: true });
+  const target = path.join(assets, `pdfjs-${version}`);
+  await mkdir(target, { recursive: true });
+  await copyFile(path.join(pkg, 'legacy', 'build', 'pdf.worker.min.mjs'), path.join(target, 'pdf.worker.min.mjs'));
+  const offline = ['pdf.worker.min.mjs'];
+  for (const folder of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
+    await cp(path.join(pkg, folder), path.join(target, folder), { recursive: true });
+    for (const name of await readdir(path.join(pkg, folder))) offline.push(`${folder}/${name}`);
+  }
+  // Everything a device should keep to read any PDF with no connection.
+  await writeFile(path.join(target, 'offline.json'), JSON.stringify(offline));
 }
 
 const isWindows = process.platform === 'win32';

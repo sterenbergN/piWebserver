@@ -31,9 +31,9 @@ function Glyph({ item, inStudy }: { item: NavItem; inStudy: boolean }) {
   return <span aria-hidden>{name ? <Icon name={name} /> : item.icon}</span>;
 }
 
-const NO_DOCK = ['/workout', '/party', '/study/partner', '/study/games/snake'];
+const NO_DOCK = ['/workout', '/party', '/study/partner', '/study/games/snake', '/reader'];
 /** Full-screen, printable or shared-by-link pages, where a row of other pages is only in the way. */
-const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report', '/study/partner'];
+const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report', '/study/partner', '/reader'];
 
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
   const pathname = usePathname();

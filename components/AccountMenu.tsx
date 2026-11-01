@@ -42,6 +42,8 @@ export default function AccountMenu({ user }: { user: NavUser }) {
   const signOut = async () => {
     await fetch('/api/workout/auth', { method: 'DELETE' });
     clearWorkoutCache();
+    // The Reader stops showing this account's offline books, until they sign in again.
+    try { localStorage.removeItem('reader-user'); } catch { /* Nothing to forget. */ }
     window.location.reload();
   };
 

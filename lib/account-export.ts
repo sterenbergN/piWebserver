@@ -6,6 +6,7 @@ import { choresFile, examHelpFile, findHousehold } from '@/lib/chores/households
 import { readFeedback, readUserDaily } from '@/lib/daily/store';
 import { folder as privatePostsFolder } from '@/lib/journal/private-posts';
 import { householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
+import { libraryFile as readerLibraryFile, notesFolder as readerNotesFolder, progressFile as readerProgressFile } from '@/lib/reader/store';
 import { studyFolder } from '@/lib/study/store';
 import { getWorkoutData } from '@/lib/workout/data';
 import { isPhotoId, photoPath } from '@/lib/workout/photos';
@@ -103,6 +104,11 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
   const daily = await readUserDaily(userId);
   const feedback = (await readFeedback()).entries?.filter((entry) => entry.userId === userId) ?? [];
 
+  // Notes and pen marks, not the books: those are the files you uploaded, and they can be huge.
+  const readerNotes = (await walk(readerNotesFolder(userId)))
+    .filter((file) => !file.endsWith('.tmp'))
+    .map((file) => ({ entry: `reader/notes/${path.basename(file)}`, file }));
+
   // Read-only: signing in to download shouldn't make a household or move a kitchen.
   const household = await findHousehold(userId);
 
@@ -120,6 +126,9 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     // Not calendar-secret.json: that address works like a password.
     { entry: 'study/plan.json', file: path.join(studyFolder(userId), 'plan.json') },
     { entry: 'study/practice.json', file: path.join(studyFolder(userId), 'practice.json') },
+    { entry: 'reader/library.json', file: readerLibraryFile(userId) },
+    { entry: 'reader/progress.json', file: readerProgressFile(userId) },
+    ...readerNotes,
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },
