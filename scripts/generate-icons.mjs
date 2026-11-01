@@ -97,3 +97,36 @@ for (const size of [192, 512]) {
   await sharp(Buffer.from(recipeBox(84))).resize(size, size).png().toFile(`public/icons/recipes-maskable-${size}.png`);
 }
 await sharp(Buffer.from(recipeBox(16))).resize(180, 180).png().toFile('public/icons/recipes-apple-touch-icon.png');
+
+// The notes app's own icon: a ruled page with a pencil writing across it.
+const notebookIcon = (padding) => {
+  const s = 512;
+  const k = (s - padding * 2) / 512;
+  const x = (v) => padding + v * k;
+  const rule = (y) => `<path d="M${x(150)} ${x(y)} H${x(402)}" stroke="#9db2d2" stroke-width="${7 * k}" stroke-linecap="round"/>`;
+  return `
+<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
+  <defs>
+    <linearGradient id="cover" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f4f8f"/>
+      <stop offset="1" stop-color="#1b2d58"/>
+    </linearGradient>
+  </defs>
+  <rect width="${s}" height="${s}" fill="url(#cover)"/>
+  <rect x="${x(104)}" y="${x(70)}" width="${336 * k}" height="${372 * k}" rx="${22 * k}" fill="#fbf6e9"/>
+  <rect x="${x(104)}" y="${x(70)}" width="${26 * k}" height="${372 * k}" fill="#e2a33f"/>
+  ${rule(146)}${rule(206)}${rule(266)}${rule(326)}
+  <path d="M${x(164)} ${x(250)} C${x(190)} ${x(206)} ${x(206)} ${x(290)} ${x(232)} ${x(244)} S${x(268)} ${x(286)} ${x(296)} ${x(250)}" fill="none" stroke="#1d2a4d" stroke-width="${10 * k}" stroke-linecap="round"/>
+  <g transform="rotate(45 ${x(346)} ${x(300)})">
+    <rect x="${x(322)}" y="${x(142)}" width="${48 * k}" height="${222 * k}" fill="#e2a33f"/>
+    <rect x="${x(322)}" y="${x(120)}" width="${48 * k}" height="${28 * k}" rx="${8 * k}" fill="#d9605a"/>
+    <path d="M${x(322)} ${x(364)} H${x(370)} L${x(346)} ${x(412)} Z" fill="#f1dcb8"/>
+    <path d="M${x(338)} ${x(396)} H${x(354)} L${x(346)} ${x(412)} Z" fill="#1d2a4d"/>
+  </g>
+</svg>`;
+};
+for (const size of [192, 512]) {
+  await sharp(Buffer.from(notebookIcon(0))).resize(size, size).png().toFile(`public/icons/notes-${size}.png`);
+  await sharp(Buffer.from(notebookIcon(70))).resize(size, size).png().toFile(`public/icons/notes-maskable-${size}.png`);
+}
+await sharp(Buffer.from(notebookIcon(0))).resize(180, 180).png().toFile('public/icons/notes-apple-touch-icon.png');

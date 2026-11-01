@@ -30,6 +30,13 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // Notes can record sound while you write, and it's the only page that can. Last one wins.
+        source: '/notes',
+        headers: [
+          { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=(self), payment=(), usb=()' },
+        ],
+      },
+      {
         // Always fetch a fresh service worker so updates roll out immediately.
         source: '/sw.js',
         headers: [

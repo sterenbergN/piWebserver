@@ -80,6 +80,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/chores', label: 'Chores', icon: '🧹', blurb: 'What’s due at home', keywords: 'cleaning household tasks' },
         { href: '/journal', label: 'Journal', icon: '📓', blurb: 'A private place to write', keywords: 'diary mood writing', account: true },
         { href: '/reader', label: 'Reader', icon: '📖', blurb: 'Your books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline', account: true },
+        { href: '/notes', label: 'Notes', icon: '✏️', blurb: 'Notebooks you write in, with or without a connection', keywords: 'goodnotes notability handwriting pencil notebook pdf annotate lecture recording offline', account: true },
         { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆', short: 'Ranks', blurb: 'How everyone’s doing', keywords: 'scores xp' },
       ],
       corners: [{

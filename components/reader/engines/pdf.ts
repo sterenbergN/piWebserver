@@ -22,7 +22,7 @@ class BlobRange extends pdfjs.PDFDataRangeTransport {
   }
 }
 
-async function loadDocument(blob: Blob) {
+export async function loadDocument(blob: Blob) {
   const first = new Uint8Array(await blob.slice(0, PIECE_BYTES).arrayBuffer());
   return pdfjs.getDocument({
     range: new BlobRange(blob, first),

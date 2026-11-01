@@ -128,7 +128,8 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
     .map(rel)
     // Party rooms are throwaway; tmp files are half-written. Reader books count as media:
     // they can be huge, and notes and reading positions (in .data/reader) are always kept.
-    .filter((p) => !p.startsWith('.data/party/') && !p.endsWith('.tmp') && (includeMedia || !p.startsWith('.data/reader-books/')));
+    // The same goes for the PDFs, pictures and recordings in .data/notes-files, and the ink in .data/notes.
+    .filter((p) => !p.startsWith('.data/party/') && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
   const content = (await walk(path.join(root(), 'public', 'content'))).map(rel);
   const uploads = (await walk(path.join(root(), 'public', 'uploads')))
     .map(rel)
@@ -149,6 +150,8 @@ const AREAS: [string, string[]][] = [
   ['Study tests & miss banks', ['.data/study/']],
   ['Reader notes & pen marks', ['.data/reader/']],
   ['Reader books', ['.data/reader-books/']],
+  ['Notebooks', ['.data/notes/']],
+  ['Notebook PDFs, pictures & recordings', ['.data/notes-files/']],
   ['Recipes, meal plans & grocery lists', ['.data/recipes/', 'public/uploads/recipes/']],
   ['Loop Lab notebooks', ['.data/loop-lab/']],
   ['Golf games & watched movies', ['.data/golf-saved-games', '.data/movies-watched']],
