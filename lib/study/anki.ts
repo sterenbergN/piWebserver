@@ -2,6 +2,7 @@
 // her flashcard scheduler. Each row carries a fixed GUID so importing the same
 // question again doesn't make a second card. Headers need Anki 2.1.54 or later.
 
+import { splitMath } from './math';
 import { choiceLetter, type StudyQuestion } from './study';
 
 export const ANKI_DECK = 'PA School::Missed questions';
@@ -10,18 +11,21 @@ export type AnkiRow = { question: StudyQuestion; course: string };
 
 const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** `}}` inside math would close a cloze blank early, so it gets a space, which LaTeX ignores. */
+const safeMath = (latex: string) => (latex.includes('{{c') ? latex : latex.replace(/\}\}/g, '} }'));
+
 /** One field's text as Anki HTML, on one line: bold survives, tabs can't split the row, and math uses Anki's delimiters. */
-function field(text: string) {
-  return escapeHtml(text)
-    .replace(/\t/g, ' ')
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\$\$([\s\S]+?)\$\$/g, '\\[$1\\]')
-    .replace(/\$([^$\n]+?)\$/g, '\\($1\\)')
-    .replace(/\r?\n/g, '<br>');
+export function ankiField(text: string) {
+  return splitMath(text.replace(/\t/g, ' ')).map((part) => {
+    if (!part.math) return escapeHtml(part.text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\r?\n/g, '<br>');
+    const latex = safeMath(escapeHtml(part.text)).replace(/\r?\n/g, ' ');
+    return part.display ? `\\[${latex}\\]` : `\\(${latex}\\)`;
+  }).join('');
 }
+const field = ankiField;
 
 /** A tag can't hold spaces; `::` makes it nest in Anki's tag tree. */
-const tag = (prefix: string, text: string) => {
+export const ankiTag = (prefix: string, text: string) => {
   const slug = text.trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
   return slug ? `${prefix}::${slug}` : '';
 };
@@ -43,7 +47,7 @@ function back(q: StudyQuestion) {
 
 export function ankiFile(rows: AnkiRow[]) {
   const lines = rows.map(({ question: q, course }) => {
-    const tags = ['missed', tag('course', course), tag('topic', q.topic), q.system ? tag('system', q.system) : ''].filter(Boolean).join(' ');
+    const tags = ['missed', ankiTag('course', course), ankiTag('topic', q.topic), q.system ? ankiTag('system', q.system) : ''].filter(Boolean).join(' ');
     return [`study-${q.id}`, front(q), back(q), tags].join('\t');
   });
   return [

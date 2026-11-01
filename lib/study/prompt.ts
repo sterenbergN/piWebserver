@@ -242,3 +242,76 @@ export function buildDifferentialPrompt(options: { subject?: string; count: numb
     `Rules for the JSON:\n- "options" holds only the wrong diagnoses, 4 to 7 of them. The answer gets added by itself.\n- Never name the answer in a clue.\n- "system" is exactly one of: ${PANCE_SYSTEMS.join(', ')}.\n- ${JSON_RULES}`,
   ].filter(Boolean).join('\n\n');
 }
+
+export type CardSource = 'notes' | 'leeches';
+
+const CARD_STYLE: Record<'mixed' | 'basic' | 'cloze', string> = {
+  mixed: 'Use whichever kind suits each fact: question and answer for reasoning and for things to tell apart, fill-in-the-blank for values, names and criteria.',
+  basic: 'Make every card a question and answer.',
+  cloze: 'Make every card fill-in-the-blank.',
+};
+const CARD_DEPTH: Record<'high-yield' | 'thorough' | 'everything', string> = {
+  'high-yield': 'Cover only what’s most likely to be tested or to matter in practice. Leave out background and rare details.',
+  thorough: 'Cover the main points and the details that tell similar things apart.',
+  everything: 'Cover every testable detail in the notes.',
+};
+
+/** Flashcards for Anki, written to the rules that make cards easy to remember. */
+export function buildCardPrompt(options: {
+  source: CardSource;
+  subject: string;
+  course: string;
+  count: number;
+  style: 'mixed' | 'basic' | 'cloze';
+  depth: 'high-yield' | 'thorough' | 'everything';
+  weakTopics: string[];
+  leeches: { front: string; back: string }[];
+  avoid: string[];
+}) {
+  const subject = options.subject.trim();
+  const course = options.course.trim();
+  const rewriting = options.source === 'leeches';
+  return [
+    rewriting
+      ? `These are flashcards a physician assistant student keeps forgetting in Anki. Rewrite them as about ${options.count} Anki flashcards that are easier to remember. A card people keep forgetting usually asks too much at once or looks too much like another, so split them up, make the wording specific, and add a short memory hook on the back where one really helps. Keep the facts as they are. If a card looks medically wrong, leave it out.\n\n${options.leeches.map((c, i) => `${i + 1}. ${c.front}${c.back ? ` -> ${c.back}` : ''}`).join('\n')}`
+      : `Write ${options.count} Anki flashcards for a physician assistant student${course ? ` in ${course}` : ''}${subject ? `, on: ${subject}` : ''}. ${SOURCE_RULES}`,
+    rewriting ? '' : CARD_DEPTH[options.depth],
+    options.weakTopics.length ? `Spend extra cards on what I find hardest: ${options.weakTopics.slice(0, 8).join(', ')}, as far as the notes cover them.` : '',
+    CARD_STYLE[options.style],
+    `What makes a good card:
+- One idea per card. If a card needs more than a few words to answer, split it.
+- Ask something specific with one right answer. Never ask yes or no, and never "list all of" something. Turn a list into several cards.
+- Start with enough context to tell what's being asked, like "HFrEF:", without giving away the answer.
+- Ask for what a clinician would need: the distinguishing finding, first-line treatment, mechanism or danger sign.
+- Fill-in-the-blank cards use {{c1::answer}}. Blank out one key term, or two at most. Leave enough of the sentence that only one answer fits.
+- Don't copy sentences from the notes with a word removed if they make no sense alone.`,
+    options.avoid.length ? `Don’t repeat what these cards already cover, even in other words:\n${options.avoid.slice(-150).map((front) => `- ${front.slice(0, 110)}`).join('\n')}` : '',
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "title": "A short name for these cards",
+  "course": "The class or module",
+  "cards": [
+    {
+      "kind": "basic",
+      "front": "HFrEF: which drug class replaces an ACE inhibitor to further reduce mortality?",
+      "back": "ARNI (sacubitril-valsartan)",
+      "topic": "Heart failure",
+      "system": "Cardiovascular",
+      "quote": "The short line of my notes this came from"
+    },
+    {
+      "kind": "cloze",
+      "front": "Inferior STEMI: most often caused by occlusion of the {{c1::right coronary artery}}.",
+      "back": "ST elevation in II, III and aVF.",
+      "topic": "Acute coronary syndrome",
+      "system": "Cardiovascular",
+      "quote": "The short line of my notes this came from"
+    }
+  ]
+}
+\`\`\``,
+    `Rules for the JSON:\n- "kind" is "basic" or "cloze". A cloze's "back" is optional extra shown after the answer.\n- ${rewriting ? '"quote" can be left out.' : '"quote" is copied word for word from my notes.'}\n- "system" is exactly one of: ${PANCE_SYSTEMS.join(', ')}. Leave it out if none fits.\n- Put math inside a blank, not a blank inside math.\n- ${JSON_RULES}`,
+  ].filter(Boolean).join('\n\n');
+}

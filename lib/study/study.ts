@@ -177,7 +177,7 @@ export function readReply(text: string): { value: unknown; cutOff: boolean } {
     try { return { value: JSON.parse(candidate), cutOff: false }; } catch { /* try the next */ }
   }
   // Long replies get cut off part way: keep every question that made it through.
-  const marker = unfenced.search(/"questions"\s*:\s*\[/);
+  const marker = unfenced.search(/"(?:questions|cards|cases|grids)"\s*:\s*\[/);
   const objects = completeObjects(marker >= 0 ? unfenced.slice(unfenced.indexOf('[', marker)) : unfenced.slice(start)).filter(isRecord);
   if (objects.length) return { value: { questions: objects }, cutOff: true };
   throw new StudyInputError('That isn’t valid JSON, and no whole questions could be read from it. Ask the AI to send it again as one JSON code block.');

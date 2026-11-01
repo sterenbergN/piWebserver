@@ -106,6 +106,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Study games', url: '/study/games', subtitle: 'Study: The Night Shift, Differential, Study Snake and Trivia Death', body: 'play fun trivia party solo night shift differential puzzle snake' },
   { kind: 'page', title: 'Study practice', url: '/study/practice', subtitle: 'Study: comparison grids, Quiz me and mock patients', body: 'osce history taking grids compare partner quiz patient' },
   { kind: 'page', title: 'Differential', url: '/study/games/differential', subtitle: 'Study: a daily case, clue by clue', body: 'puzzle diagnosis clues daily' },
+  { kind: 'page', title: 'Make flashcards', url: '/study/anki/cards', subtitle: 'Study: your AI writes Anki cards from your notes', body: 'anki flashcards cards prompt deck cloze make create generate' },
   { kind: 'page', title: 'Anki', url: '/study/anki', subtitle: 'Study: import your decks, and turn missed questions into cards', body: 'flashcards cards deck export import apkg' },
   { kind: 'page', title: 'PANCE map', url: '/study/map', subtitle: 'Study: every organ system, covered, studied and proven', body: 'blueprint coverage boards exam' },
   { kind: 'page', title: 'Classes', url: '/study/classes', subtitle: 'Study: what you’ve finished, and what it covers', body: 'modules courses checklist catch up' },

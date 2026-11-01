@@ -4,6 +4,7 @@
 // server, the browser and the tests share it.
 
 import { addDays, type DateKey } from '@/lib/habits/dates';
+import type { CardDeck } from './cards';
 import { readReply, readSystem, StudyInputError, type PanceSystem } from './study';
 
 const clip = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
@@ -60,15 +61,18 @@ export type PracticeData = {
   cases: PatientCase[];
   puzzles: DiffCase[];
   plays: Record<string, DiffPlay>;
+  /** Flashcard decks for Anki. Their logic is in cards.ts. */
+  cardDecks: CardDeck[];
 };
 
-export const emptyPractice = (): PracticeData => ({ grids: [], cases: [], puzzles: [], plays: {} });
+export const emptyPractice = (): PracticeData => ({ grids: [], cases: [], puzzles: [], plays: {}, cardDecks: [] });
 export function normalizePractice(raw: Partial<PracticeData> | null | undefined): PracticeData {
   return {
     grids: listOf(raw?.grids) as CompareGrid[],
     cases: listOf(raw?.cases) as PatientCase[],
     puzzles: listOf(raw?.puzzles) as DiffCase[],
     plays: isRecord(raw?.plays) ? (raw.plays as Record<string, DiffPlay>) : {},
+    cardDecks: listOf(raw?.cardDecks) as CardDeck[],
   };
 }
 

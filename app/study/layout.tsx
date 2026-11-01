@@ -9,6 +9,7 @@ import './plan.css';
 import './games.css';
 import './sets.css';
 import './practice.css';
+import './cards.css';
 import './theme.css';
 
 export const metadata: Metadata = {

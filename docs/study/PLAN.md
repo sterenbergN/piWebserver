@@ -284,6 +284,22 @@ never whose it is. It stops showing content when the sitting finishes, and stops
 working when she ends it, opens another, or after 24 hours. One account has one open
 link at a time. Her screen warns that anyone with the link can see that sitting.
 
+## Flashcards for Anki (added after phase 6)
+
+`/study/anki/cards` is a prompt maker for flashcards, the same copy-and-paste pattern
+as tests. She picks what to cover, how many, question and answer or fill in the blank,
+and how much depth. The prompt carries the rules for cards that are easy to remember:
+one idea each, no lists, one right answer. She can also have her AI rewrite the cards
+Anki says she keeps forgetting, once she's imported a deck.
+
+She reads the reply, takes out what she doesn't want, and saves it as a deck. A deck
+lives in `practice.json`, can make more without repeating itself, and downloads as a
+file for File → Import that can mix Basic and Cloze. Each card has a fixed ID, so
+importing again can't add a second copy. Downloading only what's new is the default,
+so edits she's made in Anki aren't at risk. Anki still does all the
+scheduling: these cards aren't reviewed here and don't count toward the PANCE map until
+they come back in through an Anki import.
+
 ## How it looks
 
 Study has its own look, set while a Study page is showing (`app/study/theme.css`), so

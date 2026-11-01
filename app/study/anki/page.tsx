@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loading } from '@/components/study/Ui';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import Link from 'next/link';
 import AnkiImport from '@/components/study/AnkiImport';
+import { Icon } from '@/components/study/Icon';
+import { CardHead } from '@/components/study/Ui';
 import { SignedOut, studyGet } from '@/components/study/api';
 import { localToday } from '@/lib/habits/dates';
 import { ANKI_DECK } from '@/lib/study/anki';
 import type { StudySummary } from '@/lib/study/study';
 
 // Anki stays her flashcard scheduler, so this page is the bridge to it. Her
-// review history comes in for the PANCE map, and missed questions go out as a
-// file for File → Import.
+// review history comes in for the PANCE map, and missed questions and cards her AI
+// writes go out as files for File → Import.
 
 export default function AnkiPage() {
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
@@ -71,12 +74,17 @@ export default function AnkiPage() {
       <header className="sd-head">
         <div>
           <h1>Anki</h1>
-          <p>Show the PANCE map what you’ve studied, and turn the questions you miss into cards.</p>
+          <p>Make new cards with your AI, send your misses over, and show the PANCE map what you’ve studied.</p>
         </div>
       </header>
 
       {state === 'loading' && <Loading rows={2} />}
       {state === 'error' && <div className="hb-banner is-error"><span>Couldn’t load your missed questions.</span><button type="button" className="hb-small-btn" onClick={() => window.location.reload()}>Try again</button></div>}
+
+      <section className="sd-card">
+        <CardHead icon="layers" title="Make flashcards with your AI">Your AI writes them from your notes, you check them here, and they go into Anki as a deck. Making more never repeats what the deck has.</CardHead>
+        <Link className="btn btn-primary sd-self-start" href="/study/anki/cards"><Icon name="plus" /> Make flashcards</Link>
+      </section>
 
       {state !== 'error' && <AnkiImport />}
 
