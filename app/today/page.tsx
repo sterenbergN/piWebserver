@@ -24,7 +24,7 @@ import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insight
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
 import { readTodayHidden, type TodayCard } from '@/lib/today-prefs';
-import { JournalCard, KitchenCard, StudyCard } from './DayCards';
+import { JournalCard, KitchenCard, ReaderCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
 import '../study/study.css';
@@ -69,6 +69,7 @@ export default function TodayPage() {
   const hidden = signedIn ? savedHidden : h.mode === 'loading' ? null : [];
   const showQuestion = !!hidden && !hidden.includes('question');
   const showStudy = signedIn && !!hidden && !hidden.includes('study');
+  const showReader = signedIn && !!hidden && !hidden.includes('reader');
 
   const setCardShown = async (card: TodayCard, shown: boolean) => {
     const before = savedHidden ?? [];
@@ -241,6 +242,8 @@ export default function TodayPage() {
 
           <JournalCard today={today} onWritten={setJournalWritten} />
 
+          {showReader && <ReaderCard />}
+
           {/* Workout */}
           <section className="td-card td-workout">
             <div className="td-card-head">
@@ -345,6 +348,13 @@ export default function TodayPage() {
             <span>
               <strong>PA Today</strong>
               <small>What’s waiting in Study, when there’s anything in it. PA Today stays in Explore.</small>
+            </span>
+          </label>
+          <label className="sd-check">
+            <input type="checkbox" checked={showReader} onChange={(e) => setCardShown('reader', e.target.checked)} />
+            <span>
+              <strong>Reading</strong>
+              <small>The book you’re partway through. The Reader stays in Explore.</small>
             </span>
           </label>
           {hiddenError && <p className="sd-warning" role="alert">{hiddenError}</p>}

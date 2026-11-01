@@ -79,6 +79,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/habits', label: 'Habits', icon: '✅', blurb: 'Keep your streaks going', keywords: 'routine tracker' },
         { href: '/chores', label: 'Chores', icon: '🧹', blurb: 'What’s due at home', keywords: 'cleaning household tasks' },
         { href: '/journal', label: 'Journal', icon: '📓', blurb: 'A private place to write', keywords: 'diary mood writing', account: true },
+        { href: '/reader', label: 'Reader', icon: '📖', blurb: 'Your books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline', account: true },
         { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆', short: 'Ranks', blurb: 'How everyone’s doing', keywords: 'scores xp' },
       ],
       corners: [{
@@ -197,7 +198,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       question: 'Can’t decide what to do?',
       color: 'var(--habit-5)',
       items: [
-        { href: '/reader', label: 'Reader', icon: '📖', blurb: 'Your books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline', account: true },
         { href: '/tools#movies', label: 'Movie picker', icon: '🎬', short: 'Movies', blurb: 'What to watch tonight', keywords: 'film random' },
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️', short: 'Eat', blurb: 'Pick a restaurant for you', keywords: 'restaurant dinner' },
         { href: '/tools#golf', label: 'Golf scores', icon: '⛳', short: 'Golf', blurb: 'Keep a scorecard', keywords: 'scorecard' },

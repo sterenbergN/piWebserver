@@ -7,6 +7,7 @@ import { usePlan } from '@/components/study/usePlan';
 import { useKitchen } from '../recipes/useKitchen';
 import type { DateKey } from '@/lib/habits/dates';
 import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
+import { booksInProgress, progressText, readingState, type BookMeta, type Progress } from '@/lib/reader/items';
 import { groceriesLeft, mealsToday, missingIngredients, recipesFor } from '@/lib/recipes/kitchen';
 import type { Recipe } from '@/lib/recipes/recipes';
 
@@ -18,6 +19,53 @@ export function StudyCard() {
   const data = planner.data;
   if (!data || (!data.tests.length && !data.plan.tasks.length && !data.plan.deadlines.length)) return null;
   return <div className="td-study"><Plate planner={planner} compact /></div>;
+}
+
+/** What you're reading, a tap from where you left off. */
+export function ReaderCard() {
+  const [shelf, setShelf] = useState<{ books: BookMeta[]; progress: Record<string, Progress> } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/reader', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => { if (!cancelled && body?.success) setShelf({ books: body.books, progress: body.progress }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!shelf) return null;
+  const reading = booksInProgress(shelf.books, shelf.progress);
+  const finished = shelf.books.filter((book) => readingState(shelf.progress[book.id]) === 'finished').length;
+  const current = reading[0];
+  const place = current && shelf.progress[current.id];
+
+  return (
+    <section className="td-card td-reader">
+      <div className="td-card-head">
+        <h2><span aria-hidden>📖</span> Reading</h2>
+        {shelf.books.length > 0 && <span className="td-chip">{reading.length} on the go{finished ? ` · ${finished} finished` : ''}</span>}
+      </div>
+      {current && place ? (
+        <>
+          <Link className="td-reader-book" href={`/reader?book=${encodeURIComponent(current.id)}`}>
+            {current.hasCover && <img src={`/api/reader/file?book=${encodeURIComponent(current.id)}&cover=1`} alt="" />}
+            <span>
+              <strong>{current.title}</strong>
+              <small>{progressText(place)}</small>
+              <span className="td-reader-bar"><span style={{ width: `${Math.round(place.pct * 100)}%` }} /></span>
+            </span>
+          </Link>
+          <Link className="td-more" href="/reader">{reading.length > 1 ? `${reading.length - 1} more on the go →` : 'All your books →'}</Link>
+        </>
+      ) : (
+        <>
+          <p className="hb-hint">{shelf.books.length ? 'Nothing on the go. Pick something off the shelf.' : 'Your own books and notes, on your phone and iPad, with or without a connection.'}</p>
+          <Link className="btn btn-secondary" href="/reader">{shelf.books.length ? 'Open your books' : 'Add a book'}</Link>
+        </>
+      )}
+    </section>
+  );
 }
 
 /** Today's journal entry: tap a mood right here, or open the page to write. */
