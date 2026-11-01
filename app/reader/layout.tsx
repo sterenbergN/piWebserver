@@ -14,10 +14,11 @@ export const metadata: Metadata = {
   icons: { icon: '/icons/reader-192.png', apple: '/icons/reader-apple-touch-icon.png' },
 };
 
-// `cover` lets the page use the whole screen, around the notch too. Pinch-zooming the
-// whole app is off because a pinch means zooming the page of the book.
+// No `viewportFit: 'cover'`: on an iPad that puts the page under the status bar, and
+// iPadOS then lays a dark gradient over the top of it. The workout pages leave it out and
+// don't get one. Pinch-zooming the whole app is off because a pinch means zooming the
+// page of the book.
 export const viewport: Viewport = {
-  viewportFit: 'cover',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,

@@ -13,12 +13,16 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 
 .reader-signin { padding: 2rem 1rem; }
 
-/* Home-screen apps on an iPad get a dark gradient over the top of the screen, taller
-   than the safe area it reports (about 3% of the height), and taps there go to the
-   system. So the top bar and the page start below it, however much the iPad admits to. */
-.reader-space { --rd-top: env(safe-area-inset-top, 0px); --rd-text-top: calc(env(safe-area-inset-top, 0px) + 28px); }
-@media (display-mode: standalone) and (min-width: 700px), (display-mode: fullscreen) and (min-width: 700px) {
-  .reader-space { --rd-top: max(44px, calc(env(safe-area-inset-top, 0px) + 12px)); --rd-text-top: calc(var(--rd-top) + 6px); }
+/* The notch and status bar are the browser's to keep clear (see layout.tsx), so these are
+   zero on most screens. The home-screen bar along the bottom isn't reported, and a button
+   right on top of it fights the swipe that goes home. */
+.reader-space {
+  --rd-top: env(safe-area-inset-top, 0px);
+  --rd-text-top: calc(env(safe-area-inset-top, 0px) + 28px);
+  --rd-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (display-mode: standalone) {
+  .reader-space { --rd-bottom: max(env(safe-area-inset-bottom, 0px), 14px); }
 }
 
 .reader-space {
@@ -97,7 +101,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-library {
   position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   background: var(--rd-bg); color: var(--rd-fg);
-  padding: calc(var(--rd-top) + 1rem) calc(env(safe-area-inset-right) + 1rem) calc(env(safe-area-inset-bottom) + 1.5rem) calc(env(safe-area-inset-left) + 1rem);
+  padding: calc(var(--rd-top) + 1rem) calc(env(safe-area-inset-right) + 1rem) calc(var(--rd-bottom) + 1.5rem) calc(env(safe-area-inset-left) + 1rem);
 }
 .rd-library.is-dragging { outline: 3px dashed var(--rd-accent); outline-offset: -8px; }
 .rd-library > * { max-width: 1120px; margin-left: auto; margin-right: auto; }
@@ -139,7 +143,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-shelf-head .rd-icon-btn { flex: none; color: var(--rd-muted); font-size: 1rem; }
 
 .rd-select-bar {
-  position: sticky; bottom: calc(env(safe-area-inset-bottom) + 0.25rem); display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; padding: 0.45rem 0.45rem 0.45rem 0.9rem; border-radius: 14px;
+  position: sticky; bottom: calc(var(--rd-bottom) + 0.25rem); display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; padding: 0.45rem 0.45rem 0.45rem 0.9rem; border-radius: 14px;
   background: var(--rd-surface); box-shadow: 0 0 0 1px var(--rd-line), 0 10px 24px -10px rgba(0, 0, 0, 0.5); font-size: 0.92rem; font-weight: 550;
 }
 
@@ -207,10 +211,10 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 /* Its own stacking context: what's layered inside it stays under the bars and sheets. */
 .rd-stage { position: absolute; inset: 0; overflow: hidden; isolation: isolate; }
 
-.rd-flow { z-index: 1; position: absolute; left: 0; right: 0; top: var(--rd-text-top); bottom: calc(env(safe-area-inset-bottom) + 34px); overflow: hidden; }
+.rd-flow { z-index: 1; position: absolute; left: 0; right: 0; top: var(--rd-text-top); bottom: calc(var(--rd-bottom) + 34px); overflow: hidden; }
 .rd-frame { position: absolute; left: 0; top: 0; border: 0; display: block; pointer-events: none; will-change: transform; background: var(--rd-bg); }
 
-.rd-fixed { z-index: 1; position: absolute; left: 0; right: 0; top: var(--rd-top); bottom: calc(env(safe-area-inset-bottom) + 24px); overflow: hidden; }
+.rd-fixed { z-index: 1; position: absolute; left: 0; right: 0; top: var(--rd-top); bottom: calc(var(--rd-bottom) + 24px); overflow: hidden; }
 .rd-fixed canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; }
 .rd-fixed[data-theme='night'][data-invert='true'] canvas { filter: invert(1) hue-rotate(180deg) brightness(0.92); }
 .rd-fixed[data-theme='sepia'][data-invert='true'] canvas { filter: sepia(0.35) brightness(0.97); }
@@ -225,7 +229,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-status p { margin: 0; line-height: 1.45; max-width: 26rem; }
 .rd-status .rd-meter { flex: none; width: min(70vw, 280px); }
 
-.rd-folio { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 8px); text-align: center; font-size: 0.72rem; font-variant-numeric: tabular-nums; color: var(--rd-muted); pointer-events: none; }
+.rd-folio { position: absolute; left: 0; right: 0; bottom: calc(var(--rd-bottom) + 8px); text-align: center; font-size: 0.72rem; font-variant-numeric: tabular-nums; color: var(--rd-muted); pointer-events: none; }
 
 .rd-page-note {
   position: absolute; top: calc(var(--rd-top) + 2px); right: calc(env(safe-area-inset-right) + 6px);
@@ -238,7 +242,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
   background: var(--rd-fg); color: var(--rd-bg); font-size: 0.9rem; font-weight: 550; line-height: 1.35; text-align: center; pointer-events: none;
 }
 .rd-tool-pill {
-  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 30px); z-index: 4; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0 0.9rem; border: 0; border-radius: 22px;
+  position: absolute; left: 50%; bottom: calc(var(--rd-bottom) + 30px); z-index: 4; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0 0.9rem; border: 0; border-radius: 22px;
   background: var(--rd-accent); color: var(--rd-accent-fg); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.5);
 }
 
@@ -248,7 +252,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 
 .rd-bar { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 0.15rem; background: var(--rd-bar); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 0 0 1px var(--rd-line); }
 .rd-top { top: 0; padding: var(--rd-top) calc(env(safe-area-inset-right) + 0.25rem) 0 calc(env(safe-area-inset-left) + 0.25rem); }
-.rd-bottom { bottom: 0; gap: 0.8rem; padding: 0.4rem calc(env(safe-area-inset-right) + 0.8rem) calc(env(safe-area-inset-bottom) + 0.4rem) calc(env(safe-area-inset-left) + 0.8rem); }
+.rd-bottom { bottom: 0; gap: 0.8rem; padding: 0.4rem calc(env(safe-area-inset-right) + 0.8rem) calc(var(--rd-bottom) + 0.4rem) calc(env(safe-area-inset-left) + 0.8rem); }
 .rd-bar-title { flex: 1; min-width: 0; padding: 0 0.3rem; line-height: 1.25; }
 .rd-bar-title strong, .rd-bar-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rd-bar-title strong { font-size: 0.92rem; font-weight: 600; }
@@ -257,7 +261,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-slider { flex: 1; min-width: 0; height: 44px; accent-color: var(--rd-accent); }
 
 .rd-tools {
-  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 10px); transform: translateX(-50%);
+  position: absolute; left: 50%; bottom: calc(var(--rd-bottom) + 10px); transform: translateX(-50%);
   display: flex; align-items: center; gap: 0.1rem; max-width: calc(100vw - 12px); box-sizing: border-box; padding: 0.25rem 0.4rem; border-radius: 16px;
   background: var(--rd-bar); box-shadow: 0 0 0 1px var(--rd-line), 0 10px 24px -10px rgba(0, 0, 0, 0.5); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
 }
@@ -277,7 +281,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-sheet-title { min-width: 0; line-height: 1.25; }
 .rd-sheet-title strong, .rd-sheet-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rd-sheet-title span { font-size: 0.8rem; color: var(--rd-muted); }
-.rd-sheet-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0.9rem 0.9rem calc(env(safe-area-inset-bottom) + 1.5rem); }
+.rd-sheet-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0.9rem 0.9rem calc(var(--rd-bottom) + 1.5rem); }
 @media (max-width: 560px) {
   .rd-sheet-wrap:not(.is-center) { align-items: flex-end; }
   .rd-sheet { width: 100%; height: 88%; border-radius: 18px 18px 0 0; padding-top: 0; padding-right: 0; box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.25); }
