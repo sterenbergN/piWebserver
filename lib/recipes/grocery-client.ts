@@ -7,6 +7,8 @@ import { addListItem, emptyKitchen, newKitchenId, normalizeKitchen, type Kitchen
 
 export const KITCHEN_PREF = 'recipes:kitchen';
 export const KITCHEN_CHANGED = 'kitchen:changed';
+/** The last recipes seen, so the list and plan still work with no signal at the store. */
+export const RECIPES_COPY = 'recipes:copy';
 
 const OUTBOX_PREF = 'recipes:kitchen:outbox';
 const OUTBOX_LIMIT = 500;
@@ -52,6 +54,14 @@ export function readLocalKitchen(): KitchenState {
   } catch {
     return emptyKitchen();
   }
+}
+
+/** On signing out: these are the account's, and shouldn't show signed out or reach the next account. */
+export function forgetKitchenCopies() {
+  outboxCopy = [];
+  try {
+    for (const key of [KITCHEN_PREF, OUTBOX_PREF, RECIPES_COPY]) localStorage.removeItem(key);
+  } catch { /* Nothing was kept. */ }
 }
 
 export const isEmptyKitchen = (k: KitchenState) => !k.have.length && !Object.keys(k.pantry).length && !Object.keys(k.plans).length && !k.listRecipes.length && !k.listItems.length;

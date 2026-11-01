@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import AccountMenu, { type NavUser } from './AccountMenu';
+import { useSessionCheck } from './account-session';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTheme } from './ThemeProvider';
@@ -36,6 +37,7 @@ const NO_DOCK = ['/workout', '/party', '/study/partner', '/study/games/snake', '
 const NO_BAR = ['/workout/active', '/workout/station', '/workout/shared-', '/workout/config/qr', '/workout/users', '/daily/report', '/study/partner', '/reader'];
 
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
+  useSessionCheck(isAdmin, user?.username);
   const pathname = usePathname();
   const search = useSearchParams().toString();
   const hash = useSyncExternalStore(subscribeHash, readHash, () => '');
@@ -143,7 +145,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
           <span className="nav-theme-sun" aria-hidden>☀️</span>
           <span className="nav-theme-moon" aria-hidden>🌙</span>
         </button>
-        <AccountMenu user={user} />
+        <AccountMenu user={user} isAdmin={isAdmin} />
       </nav>
 
       {/* The pages next to this one, so moving around a section takes one tap. */}

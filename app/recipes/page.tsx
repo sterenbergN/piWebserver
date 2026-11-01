@@ -3,6 +3,7 @@
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
+import { RECIPES_COPY } from '@/lib/recipes/grocery-client';
 import { currentWeek, groceriesLeft, pantryChecks, pendingCooks, planEntryFor, recipesFor } from '@/lib/recipes/kitchen';
 import { madeKey, recipesUsing, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
@@ -22,8 +23,6 @@ import { useRecipeTimers } from './useRecipeTimers';
 import './recipes.css';
 
 const UNITS_PREF = 'recipes:units';
-/** The last recipes seen, so the list and plan still work with no signal at the store. */
-const RECIPES_COPY = 'recipes:copy';
 
 type View = 'recipes' | 'week' | 'list' | 'pantry';
 

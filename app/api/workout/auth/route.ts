@@ -30,7 +30,9 @@ export async function POST(request: Request) {
       cookieStore.set('workout_auth', createWorkoutAuthToken(user.id), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        // Not 'strict': that leaves the cookie off a page opened from a link on another site, while
+        // everything the page then loads has it, so the navbar says signed out over your own data.
+        sameSite: 'lax',
         path: '/',
         maxAge: 60 * 60 * 24 * 30 // 30 days
       });
@@ -45,9 +47,11 @@ export async function POST(request: Request) {
   }
 }
 
+/** "Sign out" means all of it: the admin sign-in unlocks the same pages. */
 export async function DELETE() {
   const cookieStore = await cookies();
   cookieStore.delete('workout_auth');
+  cookieStore.delete('pi_auth');
   return NextResponse.json({ success: true });
 }
 

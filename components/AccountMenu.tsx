@@ -3,16 +3,17 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { clearWorkoutCache } from '@/lib/workout/offline-cache';
+import { announceAccountChange, signOut } from './account-session';
 
 export type NavUser = { username: string; /** Starts on PA Today, not the main site. */ studyHome?: boolean } | null;
 
 /**
  * Sign-in chip for the navbar. Accounts are the workout accounts (created by the
  * admin); one sign-in covers every page that remembers you. Everything still
- * works signed out, it just stays on this device.
+ * works signed out, it just stays on this device. The site admin sign-in is
+ * separate but unlocks the same pages, so it shows here too.
  */
-export default function AccountMenu({ user }: { user: NavUser }) {
+export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -39,15 +40,9 @@ export default function AccountMenu({ user }: { user: NavUser }) {
     return () => window.removeEventListener('site:sign-in', open);
   }, []);
 
-  const signOut = async () => {
-    await fetch('/api/workout/auth', { method: 'DELETE' });
-    clearWorkoutCache();
-    // The Reader stops showing this account's offline books, until they sign in again.
-    try { localStorage.removeItem('reader-user'); } catch { /* Nothing to forget. */ }
-    window.location.reload();
-  };
+  const name = user?.username ?? 'Admin';
 
-  if (!user) {
+  if (!user && !isAdmin) {
     return (
       <>
         <button className="nav-account" onClick={() => setDialogOpen(true)} aria-label="Sign in" title="Sign in">
@@ -65,28 +60,36 @@ export default function AccountMenu({ user }: { user: NavUser }) {
         onClick={() => setMenuOpen((o) => !o)}
         aria-expanded={menuOpen}
         aria-controls="nav-account-menu"
-        title={`Signed in as ${user.username}`}
+        title={`Signed in as ${name}`}
       >
-        <span className="nav-avatar" aria-hidden>{user.username.slice(0, 1).toUpperCase()}</span>
-        <span className="nav-account-name">{user.username}</span>
+        <span className="nav-avatar" aria-hidden>{name.slice(0, 1).toUpperCase()}</span>
+        <span className="nav-account-name">{name}</span>
       </button>
       {menuOpen && (
         <div className="nav-menu is-right" id="nav-account-menu">
           <div className="nav-menu-panel">
-            <p className="nav-menu-note">Signed in as <strong>{user.username}</strong></p>
-            {user.studyHome && <Link href="/study" onClick={() => setMenuOpen(false)}><span aria-hidden>🩺</span>PA Today</Link>}
-            <Link href="/today" onClick={() => setMenuOpen(false)}><span aria-hidden>☀️</span>Today</Link>
-            <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
-            <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
-            <Link href="/chores" onClick={() => setMenuOpen(false)}><span aria-hidden>🧹</span>Chores</Link>
-            <Link href="/journal" onClick={() => setMenuOpen(false)}><span aria-hidden>📓</span>Journal</Link>
-            <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
-            <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
-            <a href="/api/account/export" download onClick={() => setMenuOpen(false)}><span aria-hidden>📦</span>Download my data</a>
+            <p className="nav-menu-note">Signed in as <strong>{name}</strong></p>
+            {user ? (
+              <>
+                {user.studyHome && <Link href="/study" onClick={() => setMenuOpen(false)}><span aria-hidden>🩺</span>PA Today</Link>}
+                <Link href="/today" onClick={() => setMenuOpen(false)}><span aria-hidden>☀️</span>Today</Link>
+                <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
+                <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
+                <Link href="/chores" onClick={() => setMenuOpen(false)}><span aria-hidden>🧹</span>Chores</Link>
+                <Link href="/journal" onClick={() => setMenuOpen(false)}><span aria-hidden>📓</span>Journal</Link>
+                <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
+                <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
+                <a href="/api/account/export" download onClick={() => setMenuOpen(false)}><span aria-hidden>📦</span>Download my data</a>
+              </>
+            ) : (
+              <button type="button" onClick={() => { setMenuOpen(false); setDialogOpen(true); }}><span aria-hidden>👤</span>Sign in to your account</button>
+            )}
+            {isAdmin && <Link href="/admin" onClick={() => setMenuOpen(false)}><span aria-hidden>🔧</span>Admin</Link>}
             <button type="button" onClick={signOut}><span aria-hidden>🚪</span>Sign out</button>
           </div>
         </div>
       )}
+      {dialogOpen && <SignInDialog onClose={() => setDialogOpen(false)} />}
     </div>
   );
 }
@@ -118,6 +121,7 @@ function SignInDialog({ onClose }: { onClose: () => void }) {
       });
       const data = await res.json().catch(() => ({}));
       if (data.success) {
+        announceAccountChange();
         // Signing in on the home page takes you to your own; anywhere else, you stay where you were going.
         if (data.user?.studyHome && window.location.pathname === '/') {
           window.location.assign('/study');

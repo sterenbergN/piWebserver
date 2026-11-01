@@ -3,8 +3,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
-import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from "@/lib/security/server-auth";
-import { findWorkoutUser } from "@/lib/workout/users";
+import { isAdminAuthenticated } from "@/lib/security/server-auth";
+import { signedInUser } from "@/lib/security/session";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
@@ -30,24 +30,14 @@ export const viewport: Viewport = {
   ],
 };
 
-/** The account this browser is signed in to, for the navbar (null when signed out or unreadable). */
-async function signedInUser() {
-  try {
-    const userId = await getAuthenticatedWorkoutUserId();
-    const user = userId ? await findWorkoutUser(userId) : null;
-    return user && typeof user.username === "string" ? { username: user.username, studyHome: user.studyHome === true } : null;
-  } catch {
-    return null;
-  }
-}
-
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   const isAdmin = await isAdminAuthenticated();
-  const user = await signedInUser();
+  // Unreadable counts as signed out here; the navbar's own check corrects it.
+  const user = await signedInUser().catch(() => null);
 
   return (
     <html lang="en" suppressHydrationWarning>

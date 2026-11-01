@@ -25,7 +25,8 @@ import IntensitySlider from '@/components/workout/IntensitySlider';
 import BodyweightCard from '@/components/workout/BodyweightCard';
 import GoalsCard from '@/components/workout/GoalsCard';
 import DeloadSuggestion from '@/components/workout/DeloadSuggestion';
-import { clearWorkoutCache, fetchWorkoutJson } from '@/lib/workout/offline-cache';
+import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
+import { announceAccountChange, signOut } from '@/components/account-session';
 import { suggestDeload } from '@/lib/workout/deload';
 import { recoveryDeloadReason } from '@/lib/workout/health-coach';
 import type { PublicHealth } from '@/lib/workout/health';
@@ -275,6 +276,7 @@ export default function WorkoutDashboard() {
       const data = await res.json();
       
       if (data.success) {
+        announceAccountChange();
         window.location.reload(); // Reloads to hydrate authenticated state proper
       } else {
         setLoginError(data.message || 'Login failed');
@@ -282,12 +284,6 @@ export default function WorkoutDashboard() {
     } catch {
       setLoginError('Network Error');
     }
-  };
-
-  const handleLogout = async () => {
-    await fetch('/api/workout/auth', { method: 'DELETE' });
-    clearWorkoutCache();
-    window.location.reload();
   };
 
   const handleSaveProfile = async () => {
@@ -526,7 +522,7 @@ export default function WorkoutDashboard() {
                 boxShadow: '0 4px 15px rgba(0,0,0,0.3)' 
              }}>
                 <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem' }} onClick={() => setShowProfileEditor(!showProfileEditor)}>✏️ Edit Profile</button>
-                <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem', color: 'var(--danger)' }} onClick={handleLogout}>🚪 Logout</button>
+                <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left', background: 'var(--background)', border: 'none', padding: '0.5rem', color: 'var(--danger)' }} onClick={signOut}>🚪 Logout</button>
              </div>
           )}
 
