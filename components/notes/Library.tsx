@@ -8,8 +8,9 @@ import { folderPath, wouldNest, type Folder, type Notebook, type TemplateId } fr
 import { listBook, listLibrary, livePages } from './db';
 import {
   COVER_COLORS, createFolder, createNotebook, deleteFolder, deleteNotebookForever, duplicateNotebook, emptyOldTrash, importPdfNotebook, importPictureNotebook, isFolder, isNotebook, moveFolder, moveNotebook,
-  notebookThumb, renameFolder, restoreNotebook, searchEverything, trashNotebook, updateNotebook, type SearchHit,
+  allTags, notebookThumb, renameFolder, restoreNotebook, searchEverything, trashNotebook, updateNotebook, type SearchHit,
 } from './notebooks';
+import { Glyph } from './Connect';
 import { exportPdf, safeFileName, shareOrSave } from './export';
 import { watchNews, watchSync, type SyncState } from './sync';
 import { PaperPicker, type PaperChoice } from './TemplatePicker';
@@ -18,7 +19,7 @@ import { PaperPicker, type PaperChoice } from './TemplatePicker';
 // connection, and every device catches up when there is one. Deleting goes to the trash first,
 // since a semester of notes shouldn't be one mistaken tap from gone.
 
-type View = { kind: 'folder'; folder: string | null } | { kind: 'starred' } | { kind: 'trash' };
+type View = { kind: 'folder'; folder: string | null } | { kind: 'starred' } | { kind: 'trash' } | { kind: 'tags' };
 type Sort = 'edited' | 'title' | 'created';
 type Dialog =
   | { kind: 'new-notebook' }
@@ -170,6 +171,39 @@ function NewNotebookDialog({ folder, onCreate, onCancel }: { folder: string | nu
   );
 }
 
+const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag' };
+
+/** Every tag in every notebook: pick one to see its pages. */
+function TagsView({ onOpen }: { onOpen: (notebook: string, page?: string | null) => void }) {
+  const [tags, setTags] = useState<Awaited<ReturnType<typeof allTags>> | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => { void allTags().then(setTags); }, []);
+  if (!tags) return <p className="nt-empty">Gathering tags…</p>;
+  if (!tags.length) return <p className="nt-empty">No tags yet. Tag a page from its menu in the Pages panel, or lasso a word you wrote and make it a keyword.</p>;
+  const chosen = tags.find((tag) => tag.name === picked);
+  return (
+    <section>
+      <div className="nt-tag-list">
+        {tags.map((tag) => (
+          <button type="button" key={tag.name} className={`nt-chip${picked === tag.name ? ' is-on' : ''}`} aria-pressed={picked === tag.name} onClick={() => setPicked(picked === tag.name ? null : tag.name)}>
+            #{tag.name} <small>{tag.places.length}</small>
+          </button>
+        ))}
+      </div>
+      {chosen && (
+        <div className="nt-results">
+          {chosen.places.map((place) => (
+            <button type="button" key={`${place.notebook}/${place.page}`} className="nt-result" onClick={() => onOpen(place.notebook, place.page)}>
+              <strong>{place.title}</strong>
+              <small>Page {place.pageNumber}{place.label ? ` · ${place.label}` : ''}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Results({ query, onOpen }: { query: string; onOpen: (notebook: string, page: string | null) => void }) {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [done, setDone] = useState(false);
@@ -187,7 +221,7 @@ function Results({ query, onOpen }: { query: string; onOpen: (notebook: string, 
       {hits.map((hit, i) => (
         <button type="button" key={`${hit.notebook}/${hit.page}/${i}`} className="nt-result" onClick={() => onOpen(hit.notebook, hit.page)}>
           <strong>{hit.title}</strong>
-          {hit.page && <small>Page {hit.pageNumber}{hit.where === 'pdf' ? ' · in the PDF' : hit.where === 'page' ? ' · page title' : ''}</small>}
+          {hit.page && <small>Page {hit.pageNumber}{WHERE[hit.where]}</small>}
           {hit.snippet && <span>{hit.snippet}</span>}
         </button>
       ))}
@@ -251,6 +285,7 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
     const live = notebooks.filter((notebook) => !notebook.trashedAt);
     if (view.kind === 'trash') return notebooks.filter((notebook) => notebook.trashedAt).sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
     if (view.kind === 'starred') return live.filter((notebook) => notebook.starred).sort(sortBy);
+    if (view.kind === 'tags') return [];
     // A folder that went away on another device mustn't strand what's in it.
     const known = new Set(folders.map((f) => f.id));
     return live.filter((notebook) => (notebook.folder && known.has(notebook.folder) ? notebook.folder : null) === view.folder).sort(sortBy);
@@ -320,7 +355,7 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
 
   const moveTarget = (item: Notebook | Folder, folder: string | undefined) => (item.kind === 'notebook' ? moveNotebook(item, folder) : moveFolder(item, folder));
 
-  const title = view.kind === 'trash' ? 'Recently deleted' : view.kind === 'starred' ? 'Starred' : crumbs[crumbs.length - 1]?.name ?? 'Notes';
+  const title = view.kind === 'tags' ? 'Tags' : view.kind === 'trash' ? 'Recently deleted' : view.kind === 'starred' ? 'Starred' : crumbs[crumbs.length - 1]?.name ?? 'Notes';
 
   return (
     <div
@@ -377,6 +412,7 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
             <button type="button" className={view.kind === 'folder' && !view.folder ? 'is-on' : ''} onClick={() => setView({ kind: 'folder', folder: null })}>All notebooks</button>
             <button type="button" className={view.kind === 'starred' ? 'is-on' : ''} onClick={() => setView({ kind: 'starred' })}><Icon name="star" /> Starred</button>
             <button type="button" className={view.kind === 'trash' ? 'is-on' : ''} onClick={() => setView({ kind: 'trash' })}><Icon name="trash" /> Recently deleted</button>
+            <button type="button" className={view.kind === 'tags' ? 'is-on' : ''} onClick={() => setView({ kind: 'tags' })}><Glyph name="tag" /> Tags</button>
             <span className="nt-grow" />
             <label className="nt-sort">
               <span className="sr-only">Sort by</span>
@@ -406,7 +442,9 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
 
           {view.kind === 'trash' && shown.length > 0 && <p className="nt-hint">Things here are deleted for good after 30 days.</p>}
 
-          {loaded && !shown.length && !shownFolders.length && (
+          {view.kind === 'tags' && <TagsView onOpen={onOpen} />}
+
+          {loaded && view.kind !== 'tags' && !shown.length && !shownFolders.length && (
             view.kind === 'folder' && !view.folder ? (
               <div className="nt-welcome">
                 <Icon name="pencil" size="2.4rem" />

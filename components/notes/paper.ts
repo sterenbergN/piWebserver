@@ -3,7 +3,7 @@
 import { isDark, type PageElement, type PageRecord, type StrokeElement } from '@/lib/notes/items';
 import { markColors, templateMarks, type TemplateMarks } from '@/lib/notes/templates';
 import { getFile } from './db';
-import { drawImageElement, drawStroke, drawText } from './ink';
+import { drawImageElement, drawMark, drawStroke, drawText } from './ink';
 import { fetchFile } from './sync';
 
 // Drawing a whole page to any canvas, with the canvas's transform already set to points: what
@@ -207,10 +207,11 @@ export class Assets {
   }
 }
 
-/** The order things sit on a page: pictures, then highlighter, then writing, then tape over the top. */
+/** The order things sit on a page: pictures, highlighter, writing, tape, and links and keywords over everything. */
 function layer(element: PageElement) {
   if (element.kind === 'image') return 0;
   if (element.kind === 'text') return 2;
+  if (element.kind === 'mark') return 4;
   if (element.style === 'marker') return 1;
   return element.style === 'tape' ? 3 : 2;
 }
@@ -232,6 +233,7 @@ export function drawElements(ctx: CanvasRenderingContext2D, elements: PageElemen
 export function drawElement(ctx: CanvasRenderingContext2D, element: PageElement, darkPaper: boolean, assets: Assets | null, revealed?: Set<string>) {
   if (element.kind === 'stroke') drawStroke(ctx, element as StrokeElement, darkPaper, revealed?.has(element.id));
   else if (element.kind === 'text') drawText(ctx, element);
+  else if (element.kind === 'mark') drawMark(ctx, element);
   else drawImageElement(ctx, element, assets?.picture(element.file) ?? null);
 }
 

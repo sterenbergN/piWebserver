@@ -2,7 +2,7 @@
 
 import { getStroke } from 'perfect-freehand';
 import { boundsOf, turnedBounds, unpackPoints, type Box } from '@/lib/notes/geometry';
-import type { ImageElement, PageElement, StrokeElement, StrokeStyle, TextElement, TextFont } from '@/lib/notes/items';
+import type { ImageElement, MarkElement, MarkRole, PageElement, StrokeElement, StrokeStyle, TextElement, TextFont } from '@/lib/notes/items';
 
 // Turning strokes into shapes on a canvas. A stroke's outline comes from perfect-freehand, as
 // a filled shape, so it's the same at any zoom, and the wet line under the pencil is drawn by
@@ -218,6 +218,51 @@ export function drawText(ctx: CanvasRenderingContext2D, element: TextElement) {
     ctx.textAlign = 'left';
   });
 }
+
+export const MARK_COLORS: Record<MarkRole, string> = { link: '#2f6fed', heading: '#e07b1a', keyword: '#2c8a57' };
+const MARK_PAD = 2.5;
+
+/** A link, heading or keyword over its ink: a faint box in its colour, so the writing stays readable. */
+export function drawMark(ctx: CanvasRenderingContext2D, mark: MarkElement) {
+  const color = MARK_COLORS[mark.role];
+  const x = mark.x - MARK_PAD;
+  const y = mark.y - MARK_PAD;
+  const w = mark.w + MARK_PAD * 2;
+  const h = mark.h + MARK_PAD * 2;
+  const box = () => {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, 3);
+    else ctx.rect(x, y, w, h);
+  };
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.09;
+  box();
+  ctx.fill();
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 0.9;
+  if (mark.role === 'heading') {
+    // A bar down the left, heavier for a bigger heading.
+    ctx.fillRect(x - 4, y, mark.level === 1 || !mark.level ? 3 : mark.level === 2 ? 2 : 1.2, h);
+  } else if (mark.role === 'link') {
+    ctx.beginPath();
+    ctx.moveTo(x + 1, y + h);
+    ctx.lineTo(x + w - 1, y + h);
+    ctx.stroke();
+    ctx.font = `600 ${Math.min(9, Math.max(6, h * 0.35))}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText('↗', x + w + 8, y + 6);
+    ctx.textAlign = 'left';
+  } else {
+    ctx.setLineDash([2.5, 2]);
+    box();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export const markBox = (mark: MarkElement) => ({ x: mark.x - MARK_PAD, y: mark.y - MARK_PAD, w: mark.w + MARK_PAD * 2, h: mark.h + MARK_PAD * 2, rot: mark.rot });
 
 export function drawImageElement(ctx: CanvasRenderingContext2D, element: ImageElement, bitmap: CanvasImageSource | null) {
   withTurn(ctx, element, () => {

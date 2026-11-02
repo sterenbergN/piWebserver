@@ -1,8 +1,9 @@
 'use client';
 
-import { orderBetween, type Folder, type Notebook, type PageElement, type PageRecord, type TemplateId } from '@/lib/notes/items';
+import { findInText } from '@/lib/notes/search';
+import { orderBetween, type InkText, type MarkElement, type Folder, type Notebook, type PageElement, type PageRecord, type TemplateId } from '@/lib/notes/items';
 import {
-  forgetNotebook, getElements, getFile, getKv, getNotebookElements, getNotebookText, getThumb, listBook, listLibrary, livePages, pdfTextKey, putBook, putElements, putKv, putLibrary, putThumb,
+  forgetNotebook, getElements, getFile, getKv, getNotebookElements, getNotebookMarks, kvValues, getNotebookText, getThumb, listBook, listLibrary, livePages, pdfTextKey, putBook, putElements, putKv, putLibrary, putThumb,
   type StoredBook, type StoredElement, type StoredLibrary,
 } from './db';
 import { newId, tombstone } from './doc';
@@ -316,7 +317,13 @@ export function notebookThumb(notebook: Notebook): Promise<Blob | null> {
 
 // ── Finding things ───────────────────────────────────────────────────────────────
 
-export type SearchHit = { notebook: string; title: string; page: string | null; pageNumber: number; where: 'title' | 'page' | 'text' | 'pdf'; snippet: string };
+export type SearchHit = {
+  notebook: string; title: string; page: string | null; pageNumber: number;
+  where: 'title' | 'page' | 'text' | 'pdf' | 'ink' | 'mark' | 'tag';
+  snippet: string;
+  /** Where on the page, to point it out when you get there. */
+  box?: { x: number; y: number; w: number; h: number };
+};
 
 function snippetAround(text: string, at: number, length: number) {
   const start = Math.max(0, at - 40);
@@ -347,10 +354,29 @@ export async function searchNotebook(notebook: string, title: string, query: str
     const at = page.title?.toLowerCase().indexOf(needle) ?? -1;
     if (at >= 0) hits.push({ notebook, title, page: page.id, pageNumber: number.get(page.id)!, where: 'page', snippet: page.title! });
   }
+  for (const page of pages) {
+    const tag = page.tags?.find((t) => t.toLowerCase().includes(needle.replace(/^#/, '')));
+    if (tag) hits.push({ notebook, title, page: page.id, pageNumber: number.get(page.id)!, where: 'tag', snippet: `#${tag}` });
+  }
   for (const element of await getNotebookText(notebook)) {
     if (element.kind !== 'text' || element.deleted || !number.has(element.page)) continue;
     const at = element.text.toLowerCase().indexOf(needle);
-    if (at >= 0) hits.push({ notebook, title, page: element.page, pageNumber: number.get(element.page)!, where: 'text', snippet: snippetAround(element.text, at, needle.length) });
+    if (at >= 0) hits.push({ notebook, title, page: element.page, pageNumber: number.get(element.page)!, where: 'text', snippet: snippetAround(element.text, at, needle.length), box: element });
+  }
+  for (const element of await getNotebookMarks(notebook)) {
+    if (element.kind !== 'mark' || element.deleted || !number.has(element.page)) continue;
+    if (element.label.toLowerCase().includes(needle)) hits.push({ notebook, title, page: element.page, pageNumber: number.get(element.page)!, where: 'mark', snippet: element.label, box: element });
+  }
+  // What the server read in the handwriting, a line at a time, so the line can be pointed to.
+  for (const record of await kvValues<InkText>(`inktext:${notebook}:`)) {
+    if (!number.has(record.page)) continue;
+    for (const line of record.lines) {
+      const found = findInText(line.text, query, true);
+      if (found) {
+        hits.push({ notebook, title, page: record.page, pageNumber: number.get(record.page)!, where: 'ink', snippet: snippetAround(line.text, found[0], found[1]), box: line.box });
+        break;
+      }
+    }
   }
   const files = new Set(pages.flatMap((page) => (page.pdf ? [page.pdf.file] : [])));
   for (const file of files) {
@@ -379,6 +405,86 @@ export async function searchEverything(query: string, onHits: (hits: SearchHit[]
     const hits = await searchNotebook(notebook.id, notebook.title, query, 12);
     if (hits.length && stillWanted()) onHits(hits);
   }
+}
+
+// ── Tags, links and the outline ─────────────────────────────────────────────────
+
+export type PagePlace = { notebook: string; title: string; page: string; pageNumber: number; label?: string };
+
+const liveNotebooks = async () => (await listLibrary()).filter((record): record is Notebook & StoredLibrary => record.kind === 'notebook' && !record.deleted && !record.trashedAt);
+
+/** Every tag, on pages or lassoed as a keyword, with where each one is. */
+export async function allTags() {
+  const tags = new Map<string, { name: string; places: PagePlace[] }>();
+  const add = (name: string, place: PagePlace) => {
+    const key = name.toLowerCase();
+    const held = tags.get(key) ?? { name, places: [] };
+    if (!held.places.some((p) => p.page === place.page)) held.places.push(place);
+    tags.set(key, held);
+  };
+  for (const notebook of await liveNotebooks()) {
+    const pages = livePages(await listBook(notebook.id));
+    const number = new Map(pages.map((page, i) => [page.id, i + 1]));
+    for (const page of pages) {
+      for (const tag of page.tags ?? []) add(tag, { notebook: notebook.id, title: notebook.title, page: page.id, pageNumber: number.get(page.id)!, label: page.title });
+    }
+    for (const mark of await getNotebookMarks(notebook.id)) {
+      if (mark.kind === 'mark' && mark.role === 'keyword' && !mark.deleted && number.has(mark.page)) {
+        add(mark.label, { notebook: notebook.id, title: notebook.title, page: mark.page, pageNumber: number.get(mark.page)! });
+      }
+    }
+  }
+  return [...tags.values()].sort((a, b) => b.places.length - a.places.length || a.name.localeCompare(b.name));
+}
+
+/** The links, in any notebook, that come to this page, or to this notebook as a whole if it's the first page. */
+export async function linksTo(notebook: string, page: string, isFirst: boolean) {
+  const out: (PagePlace & { label: string })[] = [];
+  for (const source of await liveNotebooks()) {
+    const pages = livePages(await listBook(source.id));
+    const number = new Map(pages.map((p, i) => [p.id, i + 1]));
+    for (const mark of await getNotebookMarks(source.id)) {
+      if (mark.kind !== 'mark' || mark.role !== 'link' || mark.deleted || !mark.target || 'url' in mark.target || !number.has(mark.page)) continue;
+      const target = mark.target;
+      if (target.notebook !== notebook || (target.page ? target.page !== page : !isFirst)) continue;
+      out.push({ notebook: source.id, title: source.title, page: mark.page, pageNumber: number.get(mark.page)!, label: mark.label });
+    }
+  }
+  return out;
+}
+
+/** A notebook's headings and page titles, in order: its table of contents. */
+export async function notebookOutline(notebook: string) {
+  const pages = livePages(await listBook(notebook));
+  const number = new Map(pages.map((page, i) => [page.id, i + 1]));
+  const entries: { page: string; pageNumber: number; label: string; level: number; box?: MarkElement }[] = [];
+  for (const page of pages) if (page.title) entries.push({ page: page.id, pageNumber: number.get(page.id)!, label: page.title, level: 0 });
+  for (const mark of await getNotebookMarks(notebook)) {
+    if (mark.kind === 'mark' && mark.role === 'heading' && !mark.deleted && number.has(mark.page)) {
+      entries.push({ page: mark.page, pageNumber: number.get(mark.page)!, label: mark.label || 'Heading', level: mark.level ?? 1, box: mark });
+    }
+  }
+  return entries.sort((a, b) => a.pageNumber - b.pageNumber || a.level - b.level || (a.box?.y ?? 0) - (b.box?.y ?? 0));
+}
+
+/** Pages to link to: every page of a notebook, with its title and first heading to know it by. */
+export async function pagesToLinkTo(notebook: string) {
+  const pages = livePages(await listBook(notebook));
+  const headings = new Map<string, string>();
+  for (const mark of await getNotebookMarks(notebook)) {
+    if (mark.kind === 'mark' && mark.role === 'heading' && !mark.deleted && !headings.has(mark.page)) headings.set(mark.page, mark.label);
+  }
+  return pages.map((page, i) => ({ id: page.id, number: i + 1, label: page.title ?? headings.get(page.id) ?? '' }));
+}
+
+export { liveNotebooks };
+
+/** Read some handwriting now, on the server. */
+export async function readInk(strokes: { id: string; p: number[]; width: number }[]) {
+  const res = await fetch('/api/notes/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strokes }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.success) throw new Error(body.message || 'That couldn’t be read.');
+  return body.text as string;
 }
 
 export const isNotebook = (record: StoredLibrary): record is Notebook & StoredLibrary => record.kind === 'notebook' && !record.deleted;

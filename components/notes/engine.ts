@@ -4,9 +4,9 @@ import {
   boundsOf, boxesTouch, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoint, movePoints, NO_MOVE, packPoints, pointInBox, recognizeShape, shapeFromDrag, strokeTouches, unionBoxes,
   type Box, type Move, type ShapeKind,
 } from '@/lib/notes/geometry';
-import { isDark, MAX_STROKE_POINTS, type ImageElement, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
+import { isDark, MAX_STROKE_POINTS, type ImageElement, type MarkElement, type MarkRole, type MarkTarget, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
 import { newId, tombstone, type NotebookDoc, type Step } from './doc';
-import { drawStroke, drawWet, elementBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight } from './ink';
+import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight } from './ink';
 import { Assets, drawElement, drawElements, drawPaper, sortForDrawing } from './paper';
 
 // The notebook on screen. Everything is drawn in screen space on two canvases the size of the
@@ -48,7 +48,7 @@ export type EngineSettings = {
   snapShapes: boolean;
 };
 
-export type SelectionInfo = { count: number; rect: Box; hasImage: boolean; hasText: boolean; hasStroke: boolean };
+export type SelectionInfo = { count: number; rect: Box; hasImage: boolean; hasText: boolean; hasStroke: boolean; mark: MarkElement | null };
 
 export type EngineEvents = {
   onPage: (index: number) => void;
@@ -59,6 +59,7 @@ export type EngineEvents = {
   onSay: (text: string) => void;
   onEditing: (style: TextStyle | null) => void;
   onInkTap: (stroke: StrokeElement) => void;
+  onFollow: (mark: MarkElement) => void;
   onUndoState: () => void;
 };
 
@@ -768,6 +769,40 @@ export class NoteCanvas {
 
     if (this.selection) this.paintSelection(ctx);
     if (this.playback) this.paintPlayback(ctx);
+    if (this.flashing) this.paintFlash(ctx);
+  }
+
+  private flashing: { page: string; box: Box; until: number } | null = null;
+
+  /** Draw the eye to part of a page, like a line search found, for a couple of seconds. */
+  flash(page: string, box: Box) {
+    this.flashing = { page, box, until: performance.now() + 2200 };
+    const tick = () => {
+      if (!this.flashing) return;
+      if (performance.now() > this.flashing.until) this.flashing = null;
+      this.paintLive();
+      if (this.flashing) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  private paintFlash(ctx: CanvasRenderingContext2D) {
+    const flash = this.flashing!;
+    const rect = this.rectOf(flash.page);
+    if (!rect) return;
+    const left = (flash.until - performance.now()) / 2200;
+    this.pageTransform(ctx, rect);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, left * 1.6)) * (0.55 + 0.45 * Math.sin(performance.now() / 120) ** 2);
+    ctx.fillStyle = 'rgba(255, 200, 40, 0.35)';
+    ctx.strokeStyle = '#f0a020';
+    ctx.lineWidth = 2 / this.z;
+    const pad = 4;
+    ctx.beginPath();
+    ctx.rect(flash.box.x - pad, flash.box.y - pad, flash.box.w + pad * 2, flash.box.h + pad * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   private paintPlayback(ctx: CanvasRenderingContext2D) {
@@ -865,6 +900,7 @@ export class NoteCanvas {
       hasImage: elements.some((e) => e.kind === 'image'),
       hasText: elements.some((e) => e.kind === 'text'),
       hasStroke: elements.some((e) => e.kind === 'stroke'),
+      mark: elements.length === 1 && elements[0].kind === 'mark' ? elements[0] : null,
     });
   }
 
@@ -1246,10 +1282,12 @@ export class NoteCanvas {
       // A tap isn't always a dot: on ink while listening it jumps there, and on tape it lifts it.
       if (this.wet.pts.length <= 6 && !this.wet.snapped) {
         const hit = this.playback ? this.strokeAt(x, y) : null;
-        const tape = this.tapeAt(x, y);
-        if (hit || tape) {
+        const link = hit ? null : this.linkAt(x, y);
+        const tape = hit || link ? null : this.tapeAt(x, y);
+        if (hit || link || tape) {
           this.wet = null;
           if (hit) this.events.onInkTap(hit);
+          else if (link) this.events.onFollow(link);
           else this.toggleTape(tape!);
           this.requestLive();
           return;
@@ -1356,6 +1394,12 @@ export class NoteCanvas {
       const target = this.elementAt(x, y);
       if (target) { this.select(target.page, [target.element.id]); return; }
     }
+    // A link goes where it says, with any tool but the lasso, which picks it up to change it.
+    const link = this.linkAt(x, y);
+    if (link) {
+      this.events.onFollow(link);
+      return;
+    }
     // Tape lifts when it's tapped, and goes back when it's tapped again.
     const tape = this.tapeAt(x, y);
     if (tape) {
@@ -1389,6 +1433,13 @@ export class NoteCanvas {
     const [px, py] = this.toPage(rect, x, y);
     const radius = 10 / this.z;
     return this.doc.elementsOf(rect.page.id).find((element): element is StrokeElement => element.kind === 'stroke' && strokeTouches(strokePoints(element), px, py, radius + element.width / 2)) ?? null;
+  }
+
+  private linkAt(x: number, y: number) {
+    const rect = this.pageAt(x, y);
+    if (!rect) return null;
+    const [px, py] = this.toPage(rect, x, y);
+    return this.doc.elementsOf(rect.page.id).find((element): element is MarkElement => element.kind === 'mark' && element.role === 'link' && pointInBox(px, py, markBox(element), 4 / this.z)) ?? null;
   }
 
   private tapeAt(x: number, y: number) {
@@ -1782,7 +1833,7 @@ export class NoteCanvas {
     const now = Date.now();
     const steps: Step[] = [];
     for (const element of this.selectedElements()) {
-      if (element.kind === 'image') continue;
+      if (element.kind === 'image' || element.kind === 'mark') continue;
       steps.push({ type: 'element', page, before: element, after: { ...element, color, updatedAt: now } });
     }
     const ids = [...this.selection.ids];
@@ -1807,6 +1858,69 @@ export class NoteCanvas {
   }
 
   /** The chosen text box, opened for typing, if one thing is selected and it's text. */
+  /** The selected pen strokes, as stored, for the server to read. */
+  selectionInk() {
+    return this.selectedElements()
+      .filter((element): element is StrokeElement => element.kind === 'stroke' && element.style !== 'marker' && element.style !== 'tape')
+      .map((stroke) => ({ id: stroke.id, p: stroke.p, width: stroke.width }));
+  }
+
+  /** Mark the selection as a link, heading or keyword. The mark sits over the ink, which stays as it was. */
+  markSelection(role: MarkRole, label: string, extra: { level?: 1 | 2 | 3; target?: MarkTarget } = {}) {
+    if (!this.selection) return;
+    this.bakeSelection(true);
+    const selection = this.selection;
+    if (!selection) return;
+    const box = unionBoxes(this.selectedElements().filter((element) => element.kind !== 'mark').map(elementBox));
+    const now = Date.now();
+    const mark: MarkElement = { id: newId(), kind: 'mark', role, x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, label, ...extra, createdAt: now, updatedAt: now };
+    this.selection = null;
+    this.doc.apply([{ type: 'element', page: selection.page, before: null, after: mark }]);
+    this.events.onSelection(null);
+    this.events.onUndoState();
+    this.requestPaint();
+  }
+
+  updateMark(mark: MarkElement, changes: Partial<MarkElement>) {
+    const page = this.selection?.page ?? this.rects.find((r) => this.doc.element(r.page.id, mark.id))?.page.id;
+    if (!page) return;
+    const held = this.doc.element(page, mark.id);
+    if (!held) return;
+    const next = { ...held, ...changes, updatedAt: Date.now() } as MarkElement;
+    if (changes.target === undefined && 'target' in changes) delete next.target;
+    this.selection = null;
+    this.doc.apply([{ type: 'element', page, before: held, after: next }]);
+    this.select(page, [mark.id]);
+    this.events.onUndoState();
+  }
+
+  /** Swap the selected handwriting for typed text that says the same, about the same size. */
+  convertSelectionToText(text: string) {
+    if (!this.selection || !text.trim()) return;
+    this.bakeSelection(true);
+    const selection = this.selection;
+    if (!selection) return;
+    const page = selection.page;
+    const strokes = this.selectedElements().filter((element): element is StrokeElement => element.kind === 'stroke');
+    if (!strokes.length) return;
+    const box = unionBoxes(strokes.map(elementBox));
+    const lineCount = Math.max(1, text.split('\n').length);
+    const size = Math.round(Math.max(9, Math.min(48, (box.h / lineCount) * 0.62)));
+    const now = Date.now();
+    const typed: TextElement = {
+      id: newId(), kind: 'text', x: box.x, y: box.y, w: Math.max(box.w, 60), h: 0, rot: 0,
+      text: text.trim(), size, color: strokes[0].color, font: 'sans', createdAt: now, updatedAt: now,
+    };
+    typed.h = textHeight(typed);
+    this.selection = null;
+    this.doc.apply([
+      ...strokes.map((stroke): Step => ({ type: 'element', page, before: stroke, after: tombstone(stroke, now) })),
+      { type: 'element', page, before: null, after: typed },
+    ]);
+    this.select(page, [typed.id]);
+    this.events.onUndoState();
+  }
+
   editSelectedText() {
     const held = this.selectedElements();
     if (held.length !== 1 || held[0].kind !== 'text') return;

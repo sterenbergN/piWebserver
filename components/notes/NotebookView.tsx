@@ -5,12 +5,13 @@ import { Icon, type IconName } from '@/components/study/Icon';
 import { useTheme } from '@/components/ThemeProvider';
 import { useWakeLock } from '@/components/useWakeLock';
 import type { ShapeKind } from '@/lib/notes/geometry';
-import { isDark, TEXT_FONTS, type Notebook, type PageRecord, type StrokeElement, type TextFont } from '@/lib/notes/items';
+import { isDark, TEXT_FONTS, type MarkElement, type MarkRole, type Notebook, type PageRecord, type StrokeElement, type TextFont } from '@/lib/notes/items';
 import { getKv, getLibraryRecord, placeKey, putKv } from './db';
 import { NotebookDoc } from './doc';
 import { NoteCanvas, noteClipboard, type EngineSettings, type SelectionInfo, type TextStyle, type ToolName, type Tools } from './engine';
 import { exportPdf, exportPng, parsePageRange, safeFileName, shareOrSave } from './export';
-import { addPdfToNotebook, bringFilesAcross, preparePicture, searchNotebook, type SearchHit } from './notebooks';
+import { ConnectDialog, Glyph, type ConnectRequest } from './Connect';
+import { addPdfToNotebook, bringFilesAcross, linksTo, preparePicture, searchNotebook, type PagePlace, type SearchHit } from './notebooks';
 import PagesPanel from './PagesPanel';
 import { RecordingBar, RecordingsPanel, useRecorder } from './Recorder';
 import { keepNewFile, newFileId, scheduleSync, syncNow, watchNews, watchSync, type SyncState } from './sync';
@@ -19,7 +20,10 @@ import { TemplateGrid, PaperSwatches } from './TemplatePicker';
 // A notebook, full screen: the canvas (engine.ts), with the toolbar, tool settings and panels
 // around it. The canvas draws outside React and tells this what's changed through its events.
 
-type Panel = 'pages' | 'search' | 'export' | 'settings' | 'recordings' | 'add-page' | null;
+type Panel = 'pages' | 'search' | 'export' | 'settings' | 'recordings' | 'add-page' | 'links-here' | null;
+
+/** Where you were before following a link, to come back to. */
+export type Place = { notebook: string; page: string };
 
 const TOOLS_KEY = 'notes-tools';
 const SETTINGS_KEY = 'notes-settings';
@@ -104,7 +108,14 @@ function Widths({ widths, value, scale, onPick }: { widths: number[]; value: num
   );
 }
 
-export default function NotebookView({ notebook, startPage, onExit }: { notebook: string; startPage: string | null; onExit: () => void }) {
+export default function NotebookView({ notebook, startPage, returnTo, onExit, onOpen }: {
+  notebook: string;
+  startPage: string | null;
+  /** Followed a link here from another notebook: the way back. */
+  returnTo: Place | null;
+  onExit: () => void;
+  onOpen: (notebook: string, page: string | null, from: Place | null) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLElement>(null);
   const engineRef = useRef<NoteCanvas | null>(null);
@@ -128,6 +139,12 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
   const [optionsOpen, setOptionsOpen] = useState(true);
   const [sync, setSync] = useState<SyncState>('idle');
   const [recolor, setRecolor] = useState(false);
+  const [connect, setConnect] = useState<ConnectRequest | null>(null);
+  const [connectInk, setConnectInk] = useState<{ id: string; p: number[]; width: number }[]>([]);
+  /** Followed a link within this notebook: the page to go back to. */
+  const [cameFrom, setCameFrom] = useState<string | null>(null);
+  const [linksHere, setLinksHere] = useState<(PagePlace & { label: string })[]>([]);
+  const followRef = useRef<(mark: MarkElement) => void>(() => {});
   const [, setDocTick] = useState(0);
   const pictureRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
@@ -228,6 +245,7 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
         onSay: say,
         onEditing: setEditing,
         onInkTap: (stroke: StrokeElement) => recorderRef.current.seekToStroke(stroke),
+        onFollow: (mark) => followRef.current(mark),
         onUndoState: refreshUndo,
       });
       canvas.setNight(savedNight);
@@ -308,6 +326,55 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
     if (next.penColor !== now.penColor || next.shapeColor !== now.shapeColor || next.text.color !== now.text.color) applyTools(next);
   }, [onDarkPaper, applyTools]);
   const bookmarked = !!here?.starred;
+
+  const goTo = (place: Place) => {
+    if (place.notebook !== notebook) { onOpen(place.notebook, place.page, { notebook, page: here?.id ?? '' }); return; }
+    setCameFrom(here?.id ?? null);
+    engine?.goToPageId(place.page);
+  };
+
+  // Following a link: to a page here, a page in another notebook, or out to the web.
+  const follow = (mark: MarkElement) => {
+    const target = mark.target;
+    if (!target) return;
+    if ('url' in target) {
+      window.open(target.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (target.notebook === notebook) {
+      const page = target.page ?? doc.pages[0]?.id;
+      if (!page || !doc.pages.some((p) => p.id === page)) { say('That page isn’t there any more.', 2500); return; }
+      setCameFrom(here?.id ?? null);
+      engine?.goToPageId(page);
+      return;
+    }
+    onOpen(target.notebook, target.page ?? null, { notebook, page: here?.id ?? '' });
+  };
+  useEffect(() => { followRef.current = follow; });
+
+  const goBack = () => {
+    if (cameFrom) {
+      engine?.goToPageId(cameFrom);
+      setCameFrom(null);
+    } else if (returnTo) {
+      onOpen(returnTo.notebook, returnTo.page, null);
+    }
+  };
+
+  const openConnect = (request: ConnectRequest) => {
+    setConnectInk(request.mark ? [] : engine?.selectionInk() ?? []);
+    setConnect(request);
+  };
+
+  // Links from anywhere that come to this page.
+  const herePage = here?.id;
+  const firstPage = doc.pages[0]?.id;
+  useEffect(() => {
+    if (!herePage) return;
+    let live = true;
+    void linksTo(notebook, herePage, herePage === firstPage).then((links) => { if (live) setLinksHere(links); });
+    return () => { live = false; };
+  }, [notebook, herePage, firstPage, undoState]);
 
   const toggleBookmark = () => {
     const page = here;
@@ -513,6 +580,17 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
           <button type="button" aria-label="Cut" title="Cut" onClick={() => { engine?.cutSelection(); refreshUndo(); }}><Icon name="scissors" /></button>
           <button type="button" aria-label="Copy" title="Copy" onClick={() => { engine?.copySelection(); refreshUndo(); }}><Icon name="copy" /></button>
           <button type="button" aria-label="Duplicate" title="Duplicate" onClick={() => engine?.duplicateSelection()}><Icon name="pages" /></button>
+          {selection.hasStroke && (
+            <>
+              <button type="button" aria-label="Turn into typed text" title="Turn into typed text" onClick={() => openConnect({ role: 'text' })}><Glyph name="to-text" /></button>
+              <button type="button" aria-label="Make a link" title="Make a link" onClick={() => openConnect({ role: 'link' })}><Icon name="link" /></button>
+              <button type="button" aria-label="Make a heading" title="Make a heading" onClick={() => openConnect({ role: 'heading' })}><Glyph name="heading" /></button>
+              <button type="button" aria-label="Make a keyword" title="Make a keyword" onClick={() => openConnect({ role: 'keyword' })}><Glyph name="tag" /></button>
+            </>
+          )}
+          {selection.mark && (
+            <button type="button" aria-label={`Change ${selection.mark.role}`} title={`Change ${selection.mark.role}`} onClick={() => openConnect({ role: selection.mark!.role, mark: selection.mark! })}><Icon name="pencil" /></button>
+          )}
           {selection.count === 1 && selection.hasText && <button type="button" aria-label="Edit text" title="Edit text" onClick={() => engine?.editSelectedText()}><Icon name="text" /></button>}
           {selection.hasImage && <button type="button" aria-label="Bring to front" title="Bring to front" onClick={() => engine?.bringForward()}><Icon name="layers" /></button>}
           {(selection.hasStroke || selection.hasText) && <button type="button" aria-label="Change colour" title="Change colour" aria-expanded={recolor} onClick={() => setRecolor((open) => !open)}><span className="nt-recolor-dot" /></button>}
@@ -531,6 +609,12 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
 
       {phase === 'ready' && (
         <div className="nt-corner">
+          {(cameFrom || returnTo) && (
+            <button type="button" className="nt-chip is-back" onClick={goBack}><Icon name="left" /> Back</button>
+          )}
+          {linksHere.length > 0 && (
+            <button type="button" className="nt-chip" onClick={() => setPanel('links-here')} aria-label={`${linksHere.length} link${linksHere.length === 1 ? '' : 's'} to this page`}><Icon name="link" /> {linksHere.length}</button>
+          )}
           {zoom !== 100 && <button type="button" className="nt-chip" onClick={() => engine?.fit()} aria-label="Fit the page to the window">{zoom}%</button>}
           {sync === 'offline' && <span className="nt-chip is-quiet" title="Saved here. It’ll go up when there’s a connection."><Icon name="offline" /></span>}
           {undoState.paste && !selection && <button type="button" className="nt-chip" onClick={pasteHere}><Icon name="paste" /> Paste</button>}
@@ -540,6 +624,24 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
       )}
 
       <RecordingBar recorder={recorder} onOpen={() => setPanel('recordings')} />
+
+      {connect && (
+        <div className="nt-sheet-wrap is-center" onClick={() => setConnect(null)}>
+          <ConnectDialog
+            request={connect}
+            ink={connectInk}
+            notebook={notebook}
+            onCancel={() => setConnect(null)}
+            onConvert={(text) => { engine?.convertSelectionToText(text); setConnect(null); }}
+            onSave={(label, extra) => {
+              if (connect.mark) engine?.updateMark(connect.mark, { label, ...extra });
+              else engine?.markSelection(connect.role as MarkRole, label, extra);
+              setConnect(null);
+              say(connect.role === 'link' ? 'Linked. Tap it to follow.' : connect.role === 'heading' ? 'Heading added to the outline' : 'Keyword added');
+            }}
+          />
+        </div>
+      )}
 
       <input ref={pictureRef} type="file" hidden accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) void insertPicture(file); e.target.value = ''; }} />
       <input ref={pdfRef} type="file" hidden accept="application/pdf,.pdf" onChange={(e) => { const file = e.target.files?.[0]; if (file) void addPdf(file); e.target.value = ''; }} />
@@ -552,12 +654,25 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
                 doc={doc}
                 notebook={notebook}
                 current={here?.id ?? ''}
-                onGo={(page) => { setPanel(null); engine?.goToPageId(page); }}
+                onGo={(page, box) => { setPanel(null); engine?.goToPageId(page); if (box) engine?.flash(page, box); }}
                 onClose={() => setPanel(null)}
                 onSay={say}
               />
             )}
-            {panel === 'search' && <SearchPanel notebook={notebook} title={title} onGo={(page) => { setPanel(null); engine?.goToPageId(page); }} onClose={() => setPanel(null)} />}
+            {panel === 'search' && <SearchPanel notebook={notebook} title={title} onGo={(page, box) => { setPanel(null); engine?.goToPageId(page); if (box) engine?.flash(page, box); }} onClose={() => setPanel(null)} />}
+            {panel === 'links-here' && (
+              <>
+                <div className="nt-sheet-head"><strong>Links to this page</strong><span className="nt-grow" /><button type="button" className="nt-icon-btn" aria-label="Close" onClick={() => setPanel(null)}><Icon name="x" /></button></div>
+                <div className="nt-sheet-body">
+                  {linksHere.map((link, i) => (
+                    <button type="button" key={`${link.page}/${i}`} className="nt-result" onClick={() => { setPanel(null); goTo({ notebook: link.notebook, page: link.page }); }}>
+                      <strong>{link.label || 'A link'}</strong>
+                      <small>{link.notebook === notebook ? 'This notebook' : link.title} · page {link.pageNumber}</small>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {panel === 'export' && <ExportPanel doc={doc} notebook={notebook} title={title} current={here} onClose={() => setPanel(null)} />}
             {panel === 'recordings' && <RecordingsPanel doc={doc} notebook={notebook} recorder={recorder} onClose={() => setPanel(null)} />}
             {panel === 'add-page' && (
@@ -602,6 +717,7 @@ export default function NotebookView({ notebook, startPage, onExit }: { notebook
                     <input type="checkbox" checked={theme === 'light'} onChange={toggleTheme} />
                     <span><strong>Light toolbar</strong>The app’s bars and panels in the light theme.</span>
                   </label>
+                  <ReadingStatus />
                   <div className="nt-label">Quick gestures</div>
                   <ul className="nt-gestures">
                     <li><strong>Apple Pencil</strong><span>Always writes. Your palm can rest on the screen.</span></li>
@@ -644,7 +760,29 @@ function TextOptions({ style, onChange }: { style: TextStyle; onChange: (style: 
   );
 }
 
-function SearchPanel({ notebook, title, onGo, onClose }: { notebook: string; title: string; onGo: (page: string) => void; onClose: () => void }) {
+/** Whether the server can read handwriting, and what to know about it. */
+function ReadingStatus() {
+  const [status, setStatus] = useState<{ state: string; problem: string } | null>(null);
+  useEffect(() => {
+    void fetch('/api/notes/read').then((res) => res.json()).then((body) => { if (body.success) setStatus(body); }).catch(() => {});
+  }, []);
+  const words: Record<string, string> = {
+    ready: 'Ready. Pages are read about a minute after you stop writing on them.',
+    idle: 'Ready. Pages are read about a minute after you stop writing on them.',
+    downloading: 'Getting the handwriting model onto the server (63 MB, once).',
+    unavailable: `Not available right now${status?.problem ? `: ${status.problem}` : '.'} It tries again in a few minutes.`,
+  };
+  return (
+    <>
+      <div className="nt-label">Reading handwriting</div>
+      <p className="nt-hint">{status ? words[status.state] ?? words.idle : 'Needs a connection to check.'} Search finds what it reads, near misses included. It reads neat writing best.</p>
+    </>
+  );
+}
+
+const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag' };
+
+function SearchPanel({ notebook, title, onGo, onClose }: { notebook: string; title: string; onGo: (page: string, box?: SearchHit['box']) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   useEffect(() => {
@@ -662,8 +800,8 @@ function SearchPanel({ notebook, title, onGo, onClose }: { notebook: string; tit
         <input className="nt-input" type="search" autoFocus placeholder="Page titles, typed text, PDFs" aria-label="Search this notebook" value={query} onChange={(e) => setQuery(e.target.value)} />
         {hits && !hits.length && <p className="nt-empty">Nothing found. Handwriting can’t be searched, but page titles can, and you can give a page one in the Pages panel.</p>}
         {hits?.map((hit, i) => (
-          <button type="button" key={`${hit.page}/${i}`} className="nt-result" onClick={() => hit.page && onGo(hit.page)}>
-            <small>Page {hit.pageNumber}{hit.where === 'pdf' ? ' · in the PDF' : hit.where === 'page' ? ' · page title' : ''}</small>
+          <button type="button" key={`${hit.page}/${i}`} className="nt-result" onClick={() => hit.page && onGo(hit.page, hit.box)}>
+            <small>Page {hit.pageNumber}{WHERE[hit.where]}</small>
             <span>{hit.snippet}</span>
           </button>
         ))}

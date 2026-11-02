@@ -5,7 +5,8 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { readJson, updateJson } from '@/lib/json-store';
 import {
-  cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, isId, MAX_FILE_BYTES, mergeChanges, recordsSince, sniffFile, type BookRecord, type LibraryRecord, type PageElement, type RecordFile,
+  cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, isId, MAX_FILE_BYTES, mergeChanges, recordsSince, sniffFile, type BookRecord, type InkText, type LibraryRecord, type PageElement, type RecordFile,
+  type StrokeElement,
 } from './items';
 
 // One folder per account, and inside it one file for the library, one for each notebook's
@@ -31,6 +32,8 @@ const filesFolder = (userId: string) => path.join(process.cwd(), '.data', 'notes
 const libraryPath = (userId: string) => path.join(notesFolder(userId), 'library.json');
 const bookFolder = (userId: string, notebook: string) => path.join(notesFolder(userId), 'books', safe(notebook, 'notebook'));
 const bookPath = (userId: string, notebook: string) => path.join(bookFolder(userId, notebook), 'book.json');
+/** What was read in each page's handwriting. Written only here, never by a device. */
+const inkTextPath = (userId: string, notebook: string) => path.join(bookFolder(userId, notebook), 'inktext.json');
 const pagePath = (userId: string, notebook: string, page: string) => path.join(bookFolder(userId, notebook), 'pages', `${safe(page, 'page')}.json`);
 const storedFile = (userId: string, notebook: string, file: string) => path.join(filesFolder(userId), safe(notebook, 'notebook'), safe(file, 'file'));
 const incomingFile = (userId: string, notebook: string, file: string) => `${storedFile(userId, notebook, file)}.incoming`;
@@ -84,7 +87,58 @@ export async function syncBook(userId: string, notebook: string, cursor: number,
     return { seq: book.seq, items: recordsSince(book, cursor), pageSeqs: book.pageSeqs, changed };
   });
   if (out.changed) await bumpRev(userId, notebook);
-  return { cursor: out.seq, items: out.items, pageSeqs: out.pageSeqs };
+  const textSeq = (await readJson<Partial<RecordFile<InkText>>>(inkTextPath(userId, notebook), {})).seq ?? 0;
+  return { cursor: out.seq, items: out.items, pageSeqs: out.pageSeqs, textSeq };
+}
+
+/** The text read from a notebook's handwriting since `cursor`, for a device to search with no connection. */
+export async function syncInkText(userId: string, notebook: string, cursor: number) {
+  if (!(await hasNotebook(userId, notebook))) throw new NotebookGone();
+  const file = { ...emptyFile<InkText & { keys?: string[] }>(), ...(await readJson<Partial<RecordFile<InkText & { keys?: string[] }>>>(inkTextPath(userId, notebook), {})) };
+  // The keys say which strokes each line came from, and only matter here.
+  const items = Object.values(file.items).filter((record) => (record.seq ?? 0) > cursor).map(({ keys: _keys, ...record }) => record);
+  return { cursor: file.seq, items };
+}
+
+export type PageInk = { strokes: { id: string; p: number[]; width: number; updatedAt: number }[]; seq: number };
+
+/** A page's pen strokes, as stored: the writing to read. Highlighter, tape and shapes aren't writing. */
+export async function readPageInk(userId: string, notebook: string, page: string): Promise<PageInk> {
+  const file = await readJson<RecordFile<PageElement>>(pagePath(userId, notebook, page), emptyFile<PageElement>());
+  const strokes = Object.values(file.items)
+    .filter((element): element is StrokeElement => element.kind === 'stroke' && !element.deleted && (element.style === 'ball' || element.style === 'fountain' || element.style === 'brush'))
+    .map(({ id, p, width, updatedAt }) => ({ id, p, width, updatedAt }));
+  return { strokes, seq: file.seq };
+}
+
+export async function readInkText(userId: string, notebook: string, page: string) {
+  const file = await readJson<RecordFile<InkText & { keys?: string[] }>>(inkTextPath(userId, notebook), emptyFile());
+  return file.items?.[page] ?? null;
+}
+
+/** Keep what was read on a page, and tell the devices there's something new. */
+export async function saveInkText(userId: string, notebook: string, record: Omit<InkText, 'seq' | 'updatedAt'> & { keys: string[] }, now: number) {
+  if (!(await hasNotebook(userId, notebook))) return;
+  await updateJson<RecordFile<InkText & { keys?: string[] }>>(inkTextPath(userId, notebook), emptyFile(), (file) => {
+    file.seq += 1;
+    file.items[record.page] = { ...record, updatedAt: now, seq: file.seq };
+  });
+  await bumpRev(userId, notebook);
+}
+
+/** Every page whose writing has changed since it was last read. */
+export async function pagesToRead(userId: string) {
+  const library = await readLibrary(userId);
+  const out: { notebook: string; page: string }[] = [];
+  for (const record of Object.values(library.items)) {
+    if (record.kind !== 'notebook' || record.deleted) continue;
+    const book = await readJson<Partial<BookFile>>(bookPath(userId, record.id), {});
+    const text = await readJson<Partial<RecordFile<InkText>>>(inkTextPath(userId, record.id), {});
+    for (const [page, seq] of Object.entries(book.pageSeqs ?? {})) {
+      if ((text.items?.[page]?.pageSeq ?? 0) < seq) out.push({ notebook: record.id, page });
+    }
+  }
+  return out;
 }
 
 /** And for what's on one page. */
@@ -100,7 +154,7 @@ export async function syncPage(userId: string, notebook: string, page: string, c
     });
     await bumpRev(userId, notebook);
   }
-  return { cursor: out.seq, items: out.items };
+  return { cursor: out.seq, items: out.items, changed: out.changed };
 }
 
 export class UploadRefused extends Error {}

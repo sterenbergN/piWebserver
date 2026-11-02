@@ -5,14 +5,17 @@ import { Icon } from '@/components/study/Icon';
 import type { Notebook, PageRecord, TemplateId } from '@/lib/notes/items';
 import { listLibrary } from './db';
 import type { NotebookDoc } from './doc';
-import { copyPageToNotebook, isNotebook } from './notebooks';
+import { Glyph, TagEditor } from './Connect';
+import { allTags, copyPageToNotebook, isNotebook, notebookOutline } from './notebooks';
 import { Assets, renderPage } from './paper';
 import { PaperSwatches, TemplateGrid } from './TemplatePicker';
 
 // Every page in the notebook as a picture: go to one, drag it somewhere else, bookmark it, give
-// it a title you can search for, change its paper, or copy it to another notebook.
+// it a title or tags you can search for, change its paper, or copy it to another notebook. The
+// outline is the notebook's table of contents: page titles, and headings lassoed in the writing.
 
-type Filter = 'all' | 'marked' | 'titled';
+type Filter = 'all' | 'marked' | 'outline';
+type OutlineEntry = Awaited<ReturnType<typeof notebookOutline>>[number];
 
 const THUMB_WIDTH = 180;
 
@@ -59,13 +62,16 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
   doc: NotebookDoc;
   notebook: string;
   current: string;
-  onGo: (page: string) => void;
+  onGo: (page: string, box?: { x: number; y: number; w: number; h: number }) => void;
   onClose: () => void;
   onSay: (text: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>('all');
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [outline, setOutline] = useState<OutlineEntry[]>([]);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
   const [menu, setMenu] = useState<PageRecord | null>(null);
-  const [mode, setMode] = useState<'menu' | 'title' | 'paper' | 'copy'>('menu');
+  const [mode, setMode] = useState<'menu' | 'title' | 'paper' | 'copy' | 'tags'>('menu');
   const [title, setTitle] = useState('');
   const [others, setOthers] = useState<Notebook[]>([]);
   const [drag, setDrag] = useState<{ id: string; over: number; x: number; y: number } | null>(null);
@@ -79,8 +85,22 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
     listRef.current?.querySelector('.is-current')?.scrollIntoView({ block: 'center' });
   }, []);
 
+  useEffect(() => {
+    if (filter === 'outline') void notebookOutline(notebook).then(setOutline);
+  }, [filter, notebook, menu]);
+  useEffect(() => { void allTags().then((tags) => setKnownTags(tags.map((t) => t.name))); }, [menu]);
+
   const pages = doc.pages;
-  const shown = filter === 'marked' ? pages.filter((page) => page.starred) : filter === 'titled' ? pages.filter((page) => page.title) : pages;
+  const tagsHere = [...new Set(pages.flatMap((page) => page.tags ?? []))].sort((a, b) => a.localeCompare(b));
+  const tagged = (page: PageRecord) => !tagFilter || (page.tags ?? []).some((t) => t.toLowerCase() === tagFilter.toLowerCase());
+  const shown = (filter === 'marked' ? pages.filter((page) => page.starred) : pages).filter(tagged);
+
+  const saveTags = (page: PageRecord, tags: string[]) => {
+    const { tags: _old, ...rest } = page;
+    const after = { ...rest, ...(tags.length ? { tags } : {}), updatedAt: Date.now() };
+    doc.apply([{ type: 'book', before: page, after }]);
+    setMenu(after);
+  };
 
   const openMenu = (page: PageRecord) => {
     setMenu(page);
@@ -140,13 +160,32 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
         <div className="nt-tabs is-small">
           <button type="button" className={filter === 'all' ? 'is-on' : ''} onClick={() => setFilter('all')}>All</button>
           <button type="button" className={filter === 'marked' ? 'is-on' : ''} onClick={() => setFilter('marked')}>Bookmarks</button>
-          <button type="button" className={filter === 'titled' ? 'is-on' : ''} onClick={() => setFilter('titled')}>Outline</button>
+          <button type="button" className={filter === 'outline' ? 'is-on' : ''} onClick={() => setFilter('outline')}>Outline</button>
         </div>
         <span className="nt-grow" />
         <button type="button" className="nt-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
       </div>
+      {filter !== 'outline' && tagsHere.length > 0 && (
+        <div className="nt-tag-filter">
+          <Glyph name="tag" />
+          {tagsHere.map((tag) => (
+            <button type="button" key={tag} className={`nt-chip${tagFilter === tag ? ' is-on' : ''}`} aria-pressed={tagFilter === tag} onClick={() => setTagFilter(tagFilter === tag ? null : tag)}>#{tag}</button>
+          ))}
+        </div>
+      )}
+      {filter === 'outline' ? (
+        <div className="nt-sheet-body">
+          {!outline.length && <p className="nt-empty">Give a page a title, or lasso some writing and make it a heading, and it’s listed here like a table of contents.</p>}
+          {outline.map((entry, i) => (
+            <button type="button" key={`${entry.page}/${i}`} className={`nt-outline is-level-${entry.level}`} onClick={() => onGo(entry.page, entry.box)}>
+              <span>{entry.label}</span>
+              <small>{entry.pageNumber}</small>
+            </button>
+          ))}
+        </div>
+      ) : (
       <ul className="nt-pages" ref={listRef}>
-        {!shown.length && <li className="nt-empty is-wide">{filter === 'marked' ? 'Bookmark a page with the ribbon at the top of the screen.' : 'Give a page a title and it’s listed here, like a table of contents.'}</li>}
+        {!shown.length && <li className="nt-empty is-wide">{filter === 'marked' ? 'Bookmark a page with the ribbon at the top of the screen.' : 'No page has that tag.'}</li>}
         {shown.map((page) => {
           const index = pages.findIndex((p) => p.id === page.id);
           return (
@@ -164,13 +203,14 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
                     <Icon name="list" />
                   </button>
                 )}
-                <span className="nt-page-name">{index + 1}{page.title ? ` · ${page.title}` : ''}</span>
+                <span className="nt-page-name">{index + 1}{page.title ? ` · ${page.title}` : ''}{page.tags?.length ? <small> {page.tags.map((t) => `#${t}`).join(' ')}</small> : null}</span>
                 <button type="button" className="nt-icon-btn is-small" aria-label={`More about page ${index + 1}`} onClick={() => openMenu(page)}><Icon name="more" /></button>
               </div>
             </li>
           );
         })}
       </ul>
+      )}
 
       {menu && (
         <div className="nt-sheet-wrap is-center" onClick={closeMenu}>
@@ -179,6 +219,7 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
               <>
                 <p className="nt-menu-title">Page {pages.findIndex((p) => p.id === menu.id) + 1}{menu.title ? `: ${menu.title}` : ''}</p>
                 <button type="button" onClick={() => setMode('title')}><Icon name="text" /> {menu.title ? 'Change title' : 'Give it a title'}</button>
+                <button type="button" onClick={() => setMode('tags')}><Glyph name="tag" /> {menu.tags?.length ? `Tags: ${menu.tags.map((t) => `#${t}`).join(' ')}` : 'Add tags'}</button>
                 <button type="button" onClick={() => toggleBookmark(menu)}><Icon name="bookmark" /> {menu.starred ? 'Remove bookmark' : 'Bookmark'}</button>
                 {!menu.pdf && <button type="button" onClick={() => setMode('paper')}><Icon name="grid" /> Change paper</button>}
                 <button type="button" onClick={() => { void doc.duplicatePage(menu).then(() => onSay('Page duplicated')); closeMenu(); }}><Icon name="copy" /> Duplicate</button>
@@ -199,6 +240,16 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
                   <button type="button" className="nt-btn" onClick={closeMenu}>Cancel</button>
                   <span className="nt-grow" />
                   <button type="button" className="nt-btn is-primary" onClick={() => saveTitle(menu)}>Save</button>
+                </div>
+              </>
+            )}
+            {mode === 'tags' && (
+              <>
+                <p className="nt-menu-title">Tags<small>Find every page with a tag, in any notebook, under Tags in your notebooks.</small></p>
+                <TagEditor tags={menu.tags ?? []} known={knownTags} onChange={(tags) => saveTags(menu, tags)} />
+                <div className="nt-row">
+                  <span className="nt-grow" />
+                  <button type="button" className="nt-btn is-primary" onClick={closeMenu}>Done</button>
                 </div>
               </>
             )}

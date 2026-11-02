@@ -20,6 +20,7 @@
     "fflate": "^0.8.3",
     "katex": "^0.16.47",
     "next": "16.2.2",
+    "onnxruntime-node": "^1.31.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
     "perfect-freehand": "^1.2.3",

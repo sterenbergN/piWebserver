@@ -195,6 +195,8 @@ export async function exportPdf(notebook: string, title: string, pages: PageReco
       const elements = (await getElements(page.id)).filter((element) => !element.deleted) as PageElement[];
       const dark = isDark(page.paper);
       for (const element of sortForDrawing(elements)) {
+        // Links, headings and keywords are for finding your way in the app, not for print.
+        if (element.kind === 'mark') continue;
         if (element.kind === 'stroke') drawStroke(target, element, dark, ox, oy, page.h);
         else if (element.kind === 'text') await drawText(target, element, ox, oy, page.h);
         else await drawImage(target, element, ox, oy, page.h);

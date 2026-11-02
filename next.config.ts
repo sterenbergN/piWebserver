@@ -9,7 +9,13 @@ const standalone = process.env.NEXT_OUTPUT === 'standalone';
 const nextConfig: NextConfig = {
   distDir: distDir || ".next",
   ...(standalone ? { output: 'standalone' as const } : {}),
-  serverExternalPackages: [],
+  // Native code with its own binaries for each platform: loaded from node_modules, not bundled.
+  serverExternalPackages: ['onnxruntime-node'],
+  // Tracing finds the handwriting runtime's binding but not the library the binding loads, so
+  // name it. Only the build machine's own, since a release runs on the machine type it's built on.
+  outputFileTracingIncludes: {
+    '/api/notes/*': [`./node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/**/*`],
+  },
   // Don't advertise the framework in every response.
   poweredByHeader: false,
   async headers() {

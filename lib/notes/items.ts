@@ -53,6 +53,8 @@ export type PageRecord = Synced & {
   paper: string;
   title?: string;
   starred?: boolean;
+  /** Words to find the page by, across every notebook. */
+  tags?: string[];
   /** A page of a PDF underneath everything. `page` counts from 0. */
   pdf?: { file: string; page: number };
 };
@@ -83,7 +85,21 @@ export type TextElement = Synced & {
 
 export type ImageElement = Synced & { kind: 'image'; x: number; y: number; w: number; h: number; rot: number; file: string; z?: number };
 
-export type PageElement = StrokeElement | TextElement | ImageElement;
+/**
+ * A mark over some ink, the way a Supernote does it: lasso some writing and make it a link to
+ * another page (or notebook, or web address), a heading for the notebook's outline, or a
+ * keyword to find it by. The box is where it sits; the label is what the writing says.
+ */
+export type MarkTarget = { notebook: string; page?: string } | { url: string };
+export const MARK_ROLES = ['link', 'heading', 'keyword'] as const;
+export type MarkRole = (typeof MARK_ROLES)[number];
+export type MarkElement = Synced & { kind: 'mark'; role: MarkRole; x: number; y: number; w: number; h: number; rot: number; label: string; level?: 1 | 2 | 3; target?: MarkTarget };
+
+export type PageElement = StrokeElement | TextElement | ImageElement | MarkElement;
+
+/** What the server read in a page's handwriting, a line at a time, for searching. Only the server writes these. */
+export type InkLineText = { text: string; box: { x: number; y: number; w: number; h: number } };
+export type InkText = { id: string; kind: 'inktext'; page: string; text: string; lines: InkLineText[]; pageSeq: number; updatedAt: number; seq?: number };
 
 export type RecordFile<T> = { seq: number; items: Record<string, T> };
 export const emptyFile = <T>(): RecordFile<T> => ({ seq: 0, items: {} });
@@ -99,6 +115,35 @@ const MAX_PAGE_POINTS = 5_000;
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 export const isColor = (value: unknown): value is string => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+
+export const MAX_TAGS = 20;
+/** A tag as it's kept: trimmed, one space at most between words, no leading #. */
+export const cleanTag = (value: unknown) => (typeof value === 'string' ? value.replace(/^#+/, '').trim().replace(/\s+/g, ' ').slice(0, 40) : '');
+
+export function cleanTags(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of raw) {
+    const tag = cleanTag(value);
+    if (!tag || seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase());
+    out.push(tag);
+    if (out.length >= MAX_TAGS) break;
+  }
+  return out;
+}
+
+/** Only ordinary web addresses: never javascript: or anything else that could run in the app. */
+export function cleanUrl(value: unknown) {
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 const cleanName = (value: unknown, limit = 200) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, limit) : '');
 
 export const isDark = (hex: string) => {
@@ -161,6 +206,7 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
   const size = cleanSize(r);
   if (!size) return null;
   const pdf = r.pdf as { file?: unknown; page?: unknown } | undefined;
+  const tags = cleanTags(r.tags);
   return {
     ...common,
     kind: 'page',
@@ -170,6 +216,7 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
     paper: isColor(r.paper) ? r.paper : '#ffffff',
     ...(cleanName(r.title) ? { title: cleanName(r.title) } : {}),
     ...(r.starred === true ? { starred: true } : {}),
+    ...(tags.length ? { tags } : {}),
     ...(pdf && isId(pdf.file) && finite(pdf.page) && pdf.page >= 0 ? { pdf: { file: pdf.file, page: Math.floor(pdf.page) } } : {}),
   };
 }
@@ -187,15 +234,17 @@ export function cleanElement(raw: unknown, now: number): PageElement | null {
     if (!Array.isArray(r.p) || r.p.length < 3 || r.p.length % 3 !== 0 || r.p.length > MAX_STROKE_POINTS * 3 || !r.p.every(finite)) return null;
     return { ...common, kind: 'stroke', style: r.style as StrokeStyle, color: r.color, width: r.width, p: r.p as number[] };
   }
-  if (r.kind !== 'text' && r.kind !== 'image') return null;
+  if (r.kind !== 'text' && r.kind !== 'image' && r.kind !== 'mark') return null;
   const box = { x: r.x, y: r.y, w: r.w, h: r.h, rot: r.rot ?? 0 };
   if (common.deleted) {
+    if (r.kind === 'mark') return { ...common, kind: 'mark', role: 'keyword', x: 0, y: 0, w: 1, h: 1, rot: 0, label: '' };
     return r.kind === 'text'
       ? { ...common, kind: 'text', x: 0, y: 0, w: 1, h: 1, rot: 0, text: '', size: 12, color: '#000000', font: 'sans' }
       : { ...common, kind: 'image', x: 0, y: 0, w: 1, h: 1, rot: 0, file: '' };
   }
   if (!Object.values(box).every(finite) || (box.w as number) <= 0 || (box.h as number) < 0) return null;
   const placed = box as { x: number; y: number; w: number; h: number; rot: number };
+  if (r.kind === 'mark') return cleanMark(r, common, placed);
   if (r.kind === 'image') {
     if (!isId(r.file)) return null;
     return { ...common, kind: 'image', ...placed, file: r.file, ...(finite(r.z) ? { z: r.z } : {}) };
@@ -213,6 +262,22 @@ export function cleanElement(raw: unknown, now: number): PageElement | null {
     ...(r.italic === true ? { italic: true } : {}),
     ...(r.align === 'center' || r.align === 'right' ? { align: r.align } : {}),
   };
+}
+
+function cleanMark(r: Record<string, unknown>, common: Synced, placed: { x: number; y: number; w: number; h: number; rot: number }): MarkElement | null {
+  if (!MARK_ROLES.includes(r.role as MarkRole)) return null;
+  const label = cleanName(r.label, 200);
+  const mark: MarkElement = { ...common, kind: 'mark', role: r.role as MarkRole, ...placed, label };
+  if (mark.role === 'heading') mark.level = r.level === 2 || r.level === 3 ? r.level : 1;
+  if (mark.role === 'keyword' && !label) return null;
+  if (mark.role === 'link') {
+    const target = r.target as { notebook?: unknown; page?: unknown; url?: unknown } | undefined;
+    const url = cleanUrl(target?.url);
+    if (url) mark.target = { url };
+    else if (target && isId(target.notebook)) mark.target = { notebook: target.notebook, ...(isId(target.page) ? { page: target.page } : {}) };
+    else return null;
+  }
+  return mark;
 }
 
 /** Bring a device's changes into a stored file, newest edit of each record winning. */

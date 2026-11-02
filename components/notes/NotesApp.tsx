@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { selectAccount } from './db';
 import Library from './Library';
-import NotebookView from './NotebookView';
+import NotebookView, { type Place } from './NotebookView';
 import { prepareOffline } from './offline';
 import { fetchAccount, NotesSignedOut, syncNow, USER_KEY, watchSync } from './sync';
 
@@ -29,7 +29,7 @@ export default function NotesApp() {
   const [phase, setPhase] = useState<Phase>('starting');
   const [signedOut, setSignedOut] = useState(false);
   const [online, setOnline] = useState(true);
-  const [open, setOpen] = useState<{ notebook: string; page: string | null } | null>(null);
+  const [open, setOpen] = useState<{ notebook: string; page: string | null; from?: Place | null } | null>(null);
   const userRef = useRef<string | null>(null);
 
   /** Ask the server who's here, and settle what state the page should be in. */
@@ -89,9 +89,10 @@ export default function NotesApp() {
     };
   }, [refresh]);
 
-  const openNotebook = useCallback((notebook: string, page: string | null = null) => {
+  /** `from` is where a link was followed from, so the notebook can offer the way back. */
+  const openNotebook = useCallback((notebook: string, page: string | null = null, from: Place | null = null) => {
     window.history.pushState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}${page ? `&page=${encodeURIComponent(page)}` : ''}`);
-    setOpen({ notebook, page });
+    setOpen({ notebook, page, from });
   }, []);
 
   const closeNotebook = useCallback(() => {
@@ -126,7 +127,7 @@ export default function NotesApp() {
     <div className="notes-space">
       {phase === 'ready' && (
         open ? (
-          <NotebookView key={open.notebook} notebook={open.notebook} startPage={open.page} onExit={closeNotebook} />
+          <NotebookView key={open.notebook} notebook={open.notebook} startPage={open.page} returnTo={open.from ?? null} onExit={closeNotebook} onOpen={openNotebook} />
         ) : (
           <Library online={online} signedOut={signedOut} onOpen={openNotebook} onSignIn={() => window.dispatchEvent(new Event('site:sign-in'))} />
         )

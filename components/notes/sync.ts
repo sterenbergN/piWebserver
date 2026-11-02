@@ -1,8 +1,8 @@
 'use client';
 
-import { MAX_CHANGES, UPLOAD_CHUNK_BYTES, type BookRecord, type LibraryRecord, type PageElement } from '@/lib/notes/items';
+import { MAX_CHANGES, UPLOAD_CHUNK_BYTES, type BookRecord, type InkText, type LibraryRecord, type PageElement } from '@/lib/notes/items';
 import {
-  clearDirtyPage, cursorKey, deleteKv, forgetNotebook, getElements, getFile, getKv, kvKeys, listBook, listDirtyPages, listLibrary, neededKey, putBook, putElements, putFile, putKv, putLibrary, uploadKey,
+  clearDirtyPage, cursorKey, deleteKv, inkTextKey, forgetNotebook, getElements, getFile, getKv, kvKeys, listBook, listDirtyPages, listLibrary, neededKey, putBook, putElements, putFile, putKv, putLibrary, uploadKey,
   type StoredBook, type StoredElement, type StoredLibrary,
 } from './db';
 
@@ -132,7 +132,7 @@ async function syncLibraryLevel() {
 }
 
 async function syncBookLevel(notebook: string) {
-  const out = await syncLevel<StoredBook, BookRecord, { pageSeqs: Record<string, number> }>({
+  const out = await syncLevel<StoredBook, BookRecord, { pageSeqs: Record<string, number>; textSeq?: number }>({
     load: () => listBook(notebook),
     save: putBook,
     strip: ({ dirty: _dirty, notebook: _notebook, seq: _seq, ...record }) => record,
@@ -164,8 +164,19 @@ async function syncPageLevel(notebook: string, page: string) {
   return out.news.length > 0;
 }
 
+/** What the server has read in the handwriting since last time, kept here so search works offline. */
+async function syncInkText(notebook: string) {
+  const name = cursorKey(notebook, '#text');
+  const cursor = (await getKv<number>(name)) ?? 0;
+  const body = await post<{ cursor: number; items: InkText[] }>({ level: 'text', notebook, cursor, changes: [] });
+  for (const record of body.items) await putKv(inkTextKey(notebook, record.page), record);
+  await putKv(name, body.cursor);
+  return body.items.length > 0;
+}
+
 async function syncNotebook(notebook: string, alsoPages: string[]) {
   const book = await syncBookLevel(notebook);
+  if ((book.last.textSeq ?? 0) > ((await getKv<number>(cursorKey(notebook, '#text'))) ?? 0)) await syncInkText(notebook);
   const changed: string[] = [];
   const pages = new Set(alsoPages);
   for (const [page, seq] of Object.entries(book.last.pageSeqs)) {

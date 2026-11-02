@@ -68,6 +68,7 @@ export const putBook = (records: StoredBook[]) => run('book', 'readwrite', (s) =
 
 export const getElements = (page: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('page').getAll(page));
 export const getNotebookElements = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebook').getAll(notebook));
+export const getNotebookMarks = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'mark']));
 export const getNotebookText = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'text']));
 
 /** Keep elements, and if any are waiting to go up, say so in the same breath. */
@@ -131,6 +132,7 @@ export async function putThumb(notebook: string, blob: Blob, stamp: number) {
 export const getKv = <T>(key: string) => run<T | undefined>('kv', 'readonly', (s) => s.get(key));
 export const putKv = (key: string, value: unknown) => run('kv', 'readwrite', (s) => { s.put(value, key); });
 export const deleteKv = (key: string) => run('kv', 'readwrite', (s) => { s.delete(key); });
+export const kvValues = <T>(start: string) => run<T[]>('kv', 'readonly', (s) => s.getAll(prefix(start)));
 export const kvKeys = async (start: string) => (await run<IDBValidKey[]>('kv', 'readonly', (s) => s.getAllKeys(prefix(start)))) as string[];
 
 // Keys in kv, with the notebook's id right after the first colon, so they can all go with it.
@@ -140,8 +142,10 @@ export const neededKey = (notebook: string, file: string) => `needed:${notebook}
 export const pdfTextKey = (notebook: string, file: string) => `pdftext:${notebook}:${file}`;
 export const placeKey = (notebook: string) => `place:${notebook}:`;
 export const recordingKey = (notebook: string, id: string) => `recording:${notebook}:${id}`;
+/** What the server read in a page's handwriting. */
+export const inkTextKey = (notebook: string, page: string) => `inktext:${notebook}:${page}`;
 
-const KV_KINDS = ['cursor', 'upload', 'needed', 'pdftext', 'place', 'recording', 'rev'];
+const KV_KINDS = ['cursor', 'upload', 'needed', 'pdftext', 'place', 'recording', 'rev', 'inktext'];
 
 /** Everything about one notebook on this device, except its tombstone, which still has to reach the others. */
 export async function forgetNotebook(notebook: string) {
