@@ -1,14 +1,15 @@
 import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
+import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { findWorkoutUser } from '@/lib/workout/users';
-import { addSharedTest, copyOf, isShareId, sharedTitle, shareTest, sharePreview, unshareTest, type Share } from '@/lib/study/sharing';
+import { addSharedTest, copyOf, guestCopy, isShareId, sharedTitle, shareTest, sharePreview, unshareTest, type Share } from '@/lib/study/sharing';
 import { everyShare, readTests, updateShares, updateTests } from '@/lib/study/store';
 import { StudyInputError } from '@/lib/study/study';
 
-// Tests shared between accounts. Everything here needs an account. A link shows its
-// test only while it's shared, and only what the owner chose to share: never their
-// tries, misses or anything else of theirs.
+// Tests shared between accounts. Opening a link is the one thing that works without
+// an account; the rest needs one. A link shows its test only while it's shared, and
+// only the test itself: never the owner's tries, misses or anything else of theirs.
 
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
 const json = (body: Record<string, unknown>) => NextResponse.json({ success: true, ...body }, { headers: PRIVATE });
@@ -43,8 +44,15 @@ async function previews(list: { ownerId: string; share: Share }[]) {
 
 export async function GET(request: Request) {
   try {
-    const userId = await requireWorkoutUserId();
     const id = new URL(request.url).searchParams.get('id');
+    // A link works without an account too. They get the whole test to take in their
+    // browser, since there's no account to keep a copy in.
+    const signedIn = await getAuthenticatedWorkoutUserId();
+    if (id !== null && !signedIn) {
+      const { ownerId, share, test, title } = await openShare(id);
+      return json({ guest: true, preview: sharePreview(share, test, await nameOf(ownerId), title), test: guestCopy(test, title) });
+    }
+    const userId = await requireWorkoutUserId();
     if (id !== null) {
       const { ownerId, share, test, title } = await openShare(id);
       const copy = copyOf(await readTests(userId), share.id);

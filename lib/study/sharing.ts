@@ -91,3 +91,15 @@ export function addSharedTest(tests: TestsData, shareId: string, from: StudyTest
   tests.tests.unshift(test);
   return { test, added: true };
 }
+
+/** The test as a guest takes it: questions and answers, nothing about the owner's set or where it came from. */
+export function guestCopy(test: StudyTest, title = test.title): StudyTest {
+  return {
+    id: test.id,
+    title,
+    course: test.course,
+    createdAt: test.createdAt,
+    questions: structuredClone(test.questions),
+    ...(test.difficulty ? { difficulty: test.difficulty } : {}),
+  };
+}

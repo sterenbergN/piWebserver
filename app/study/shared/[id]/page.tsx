@@ -10,11 +10,14 @@ import { InlineMath } from '@/components/study/InlineMath';
 import { Loading } from '@/components/study/Ui';
 import { DIFFICULTIES } from '@/lib/study/prompt';
 import type { SharePreview } from '@/lib/study/sharing';
+import type { StudyTest } from '@/lib/study/study';
+import { GuestTest } from '@/components/study/GuestTest';
 
 // One shared test, from a link or the shared list: what it covers, a taste of its
-// questions and none of the answers, then a copy of her own to take.
+// questions and none of the answers, then a copy of her own to take. Without an
+// account, the link opens the test itself, to take in this browser.
 
-type Loaded = { preview: SharePreview; mine: boolean; testId?: string; addedId: string | null };
+type Loaded = { preview: SharePreview; mine: boolean; testId?: string; addedId: string | null; guest?: false } | { guest: true; preview: SharePreview; test: StudyTest };
 
 export default function SharedTestPage() {
   const { id } = useParams<{ id: string }>();
@@ -57,6 +60,19 @@ export default function SharedTestPage() {
 
   const { preview: p } = data;
   const level = p.difficulty ? DIFFICULTIES[p.difficulty - 1]?.label : '';
+  if (data.guest) {
+    return (
+      <div className="sd sd-narrow animate-fade-in">
+        <header className="sd-head">
+          <div>
+            <h1>{p.title}</h1>
+            <p>{[`Shared by ${p.by}`, p.course, `${p.count} question${p.count === 1 ? '' : 's'}`, level].filter(Boolean).join(' · ')}</p>
+          </div>
+        </header>
+        <GuestTest shareId={id} preview={p} latest={data.test} />
+      </div>
+    );
+  }
   return (
     <div className="sd sd-narrow animate-fade-in">
       <header className="sd-head">

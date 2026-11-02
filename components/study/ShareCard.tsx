@@ -49,7 +49,7 @@ export function ShareCard({ testId, share, onChange }: { testId: string; share: 
       <h2><Icon name="share" /> {share ? 'Shared' : 'Share it'}</h2>
       {!share ? (
         <>
-          <p className="hb-hint">Friends with an account here can add their own copy to take. Everything in the test goes with it: questions, answers, explanations and the lines from your notes. Your tries and misses stay yours.</p>
+          <p className="hb-hint">Friends with an account here can add their own copy to take, and anyone without one can take it from the link, with their answers kept in their own browser. Everything in the test goes with it: questions, answers, explanations and the lines from your notes. Your tries and misses stay yours.</p>
           <div className="sd-actions">
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => shareIt(false)}><Icon name="link" /> Get a private link</button>
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => shareIt(true)}><Icon name="users" /> Publish for everyone</button>
@@ -57,7 +57,7 @@ export function ShareCard({ testId, share, onChange }: { testId: string; share: 
         </>
       ) : (
         <>
-          <p className="hb-hint">{share.public ? 'Anyone signed in can find it in Shared tests, or open the link.' : 'Only people you send the link to can open it. They need an account here.'} They’ll see it as it is now, so your edits reach anyone who adds it later.</p>
+          <p className="hb-hint">{share.public ? 'Anyone signed in can find it in Shared tests. Anyone with the link can open it, account or not.' : 'Only people you send the link to can open it, account or not.'} Without an account, their answers stay in their own browser. They’ll see it as it is now, so your edits reach anyone who opens it later.</p>
           <div className="sd-share-link">
             <input readOnly value={link} aria-label="Link to this test" onFocus={(e) => e.target.select()} />
             <button type="button" className="hb-small-btn" onClick={copy}><Icon name={copied ? 'check' : 'copy'} /> {copied ? 'Copied' : 'Copy'}</button>

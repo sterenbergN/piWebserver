@@ -42,3 +42,8 @@
 .sd-share-link input { flex: 1; min-width: 0; font-size: 0.85rem; }
 .sd-share-topics { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .sd-share-sample { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.6rem; line-height: 1.5; overflow-wrap: anywhere; }
+.sd-guest { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.9rem 1rem; border-radius: 14px; border: 1px solid rgba(var(--accent-rgb), 0.45); background: var(--sd-honey-wash, var(--input-bg)); }
+.sd-guest > svg { flex: none; margin-top: 0.15rem; color: var(--accent-light); }
+.sd-guest > div { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+.sd-guest p { margin: 0; font-size: 0.9rem; line-height: 1.5; color: var(--foreground); }
+.sd-guest .sd-warning { margin: 0; }

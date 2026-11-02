@@ -339,7 +339,12 @@ the owner's own folder (`shares.json`), so backups and account exports include t
 - **Adding** makes the other person's own copy, with new ids, outside any set. Adding
   twice opens the first copy. Copies don't follow later edits, and a copy can't be
   shared onward, so stopping sharing really stops it.
-- Everything needs an account here, and links are unguessable.
+- **Without an account**, a link still opens: the test itself, to take in the browser
+  (`lib/study/guest.ts`, `components/study/GuestTest.tsx`). Tries and scores are kept in
+  that browser's storage only, and the page says so, and that keeping track properly
+  needs an account (which the person who shared it can ask for). It keeps the version its
+  tries were graded on. Nothing is saved to the server, and stopping sharing closes it.
+- Everything else needs an account here, and links are unguessable.
 
 ## Trivia Death: sets and short questions
 
