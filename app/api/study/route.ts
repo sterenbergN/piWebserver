@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
-import { afterStudying, readPlan, readProgress, readTests, updateProgress, updateTests } from '@/lib/study/store';
+import { afterStudying, readPlan, readProgress, readShares, readTests, updateProgress, updateShares, updateTests } from '@/lib/study/store';
+import { shareOf, unshareTest } from '@/lib/study/sharing';
 import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
 import {
   addQuestion, addTest, answerReview, cleanAnswer, dueMisses, editQuestion, finishAttempt, parseTestReply, removeQuestion, removeTest, renameTest,
@@ -30,7 +31,8 @@ export async function GET(request: Request) {
     if (testId !== null) {
       const test = tests.tests.find((t) => t.id === testId);
       if (!test) throw new ApiError(404, 'That test isn’t here any more.');
-      return NextResponse.json({ success: true, test, attempts: progress.attempts.filter((a) => a.testId === testId), sets: tests.sets.map((s) => ({ id: s.id, title: s.title })) }, { headers: PRIVATE });
+      const share = shareOf(await readShares(userId), testId);
+      return NextResponse.json({ success: true, test, attempts: progress.attempts.filter((a) => a.testId === testId), sets: tests.sets.map((s) => ({ id: s.id, title: s.title })), share }, { headers: PRIVATE });
     }
     const setId = params.get('set');
     if (setId !== null) {
@@ -109,6 +111,8 @@ export async function POST(request: Request) {
       }
       case 'delete-test': {
         await updateTests(userId, (data) => updateProgress(userId, (progress) => removeTest(data, progress, String(body.testId))));
+        // Its link goes with it.
+        await updateShares(userId, (data) => unshareTest(data, String(body.testId)));
         return NextResponse.json({ success: true }, { headers: PRIVATE });
       }
       case 'start': {

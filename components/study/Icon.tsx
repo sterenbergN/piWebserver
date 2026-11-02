@@ -87,7 +87,7 @@ export const KIND_GLYPH: Record<DeadlineKind, IconName> = { exam: 'tests', quiz:
 
 const NAV_GLYPH: Record<string, IconName> = {
   '/study': 'stethoscope', '/study/plan': 'calendar', '/study/tests': 'tests', '/study/review': 'review', '/study/games': 'moon',
-  '/study/practice': 'users', '/study/map': 'map', '/study/classes': 'cap', '/study/anki': 'layers', '/study/add': 'plus',
+  '/study/practice': 'users', '/study/map': 'map', '/study/classes': 'cap', '/study/anki': 'layers', '/study/add': 'plus', '/study/shared': 'share',
 };
 /** Study's own pages get line icons in the nav. Everything else keeps its emoji. */
 export const studyGlyph = (href: string): IconName | undefined => NAV_GLYPH[href];

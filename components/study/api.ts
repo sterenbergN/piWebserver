@@ -41,3 +41,15 @@ export async function practicePost<T = Record<string, unknown>>(action: string, 
     body: JSON.stringify({ action, today: localToday(), ...payload }),
   }));
 }
+
+export async function sharedGet<T>(query = ''): Promise<T> {
+  return read<T>(await fetch(`/api/study/shared?${new URLSearchParams(query)}`, { cache: 'no-store' }));
+}
+
+export async function sharedPost<T = Record<string, unknown>>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  return read<T>(await fetch('/api/study/shared', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload }),
+  }));
+}

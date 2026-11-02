@@ -325,6 +325,31 @@ The rules that keep her history honest:
   first if she hasn't played it, and nothing is fetched until she agrees. A patient
   case can't be edited while someone's using it through a private link.
 
+## Sharing tests
+
+A test can be shared from its page (`lib/study/sharing.ts`, `/study/shared`). Sharing
+makes a link; publishing it also lists it in Shared tests for everyone signed in. The
+link stays the same either way, and stopping sharing ends it at once. Shares are kept in
+the owner's own folder (`shares.json`), so backups and account exports include them.
+
+- **What goes:** the whole test, including answers, explanations and the lines quoted
+  from her notes, and the card says so. Never her tries or misses.
+- **Before adding:** the title (a set's tests get the set's name in front), who shared
+  it, class, topics and the first three questions, with no answers.
+- **Adding** makes the other person's own copy, with new ids, outside any set. Adding
+  twice opens the first copy. Copies don't follow later edits, and a copy can't be
+  shared onward, so stopping sharing really stops it.
+- Everything needs an account here, and links are unguessable.
+
+## Trivia Death: sets and short questions
+
+The study edition can draw from one set, and can be limited to short questions: a stem
+of 160 characters or less and choices of 80 or less, after math is flattened, which
+leaves out patient cases. The clock can go down to 15 or 20 seconds, and ticking short
+questions starts it at 20. With fewer than 11 short questions it points to making a
+test in the Quick recall style (`/study/add?style=recall`, which wins over the set's
+own style).
+
 ## How it looks
 
 Study has its own look, set while a Study page is showing (`app/study/theme.css`), so

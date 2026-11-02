@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
 import { createRoom, setStudyDeck } from '@/lib/party/engine';
-import { ankiQuestions, emptyGameStats, gamePool, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, triviaDeck, weakestSystem } from '@/lib/study/games';
+import { ankiQuestions, emptyGameStats, gamePool, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, triviaDeck, triviaUsable, weakestSystem } from '@/lib/study/games';
 import { eatGame } from '@/lib/study/plan';
 import { afterStudying, readAnki, readProgress, readTests, updatePlan, updateProgress } from '@/lib/study/store';
 import { cleanAnswer } from '@/lib/study/study';
@@ -13,7 +13,7 @@ import { cleanAnswer } from '@/lib/study/study';
 // only the owner's get saved.
 
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
-const TRIVIA_SECONDS = [30, 45, 60, 90];
+const TRIVIA_SECONDS = [15, 20, 30, 45, 60, 90];
 
 /** `?options=1` what she can play with; otherwise the questions for a run, narrowed by class, system or misses. */
 export async function GET(request: Request) {
@@ -33,6 +33,13 @@ export async function GET(request: Request) {
         total: all.length,
         misses: all.filter((q) => q.priority > 1).length,
         courses: [...new Set(tests.tests.map((t) => t.course).filter(Boolean))].sort(),
+        // Sets with something a party game can use, and how much of it is short.
+        sets: tests.sets.flatMap((set) => {
+          const pool = gamePool(tests, progress, { setId: set.id }, today);
+          const usable = triviaUsable(pool).length;
+          return usable ? [{ id: set.id, title: set.title, usable, short: triviaUsable(pool, true).length }] : [];
+        }),
+        shortQuestions: triviaUsable(all, true).length,
         systems,
         ankiCards: ankiQuestions(anki).length,
         stats,
@@ -73,11 +80,14 @@ export async function POST(request: Request) {
       }
       case 'host-trivia': {
         const [tests, progress] = await Promise.all([readTests(userId), readProgress(userId)]);
-        const pool = gamePool(tests, progress, { course: body.course, system: body.system, missesOnly: body.missesOnly === true }, today);
-        const deck = triviaDeck(pool);
+        const pool = gamePool(tests, progress, { course: body.course, system: body.system, missesOnly: body.missesOnly === true, setId: body.setId }, today);
+        const shortOnly = body.short === true;
+        const deck = triviaDeck(pool, Math.random, shortOnly);
         const different = new Set(deck.map((c) => c.studyId)).size;
         if (different < MIN_TRIVIA_QUESTIONS) {
-          throw new ApiError(400, `A game needs at least ${MIN_TRIVIA_QUESTIONS} questions with one right answer, and that selection has ${different}. Pick something wider, or add a test.`);
+          throw new ApiError(400, shortOnly
+            ? `A game needs at least ${MIN_TRIVIA_QUESTIONS} short questions, and that selection has ${different}. Make a test in the Quick recall style for more, or allow longer questions.`
+            : `A game needs at least ${MIN_TRIVIA_QUESTIONS} questions with one right answer, and that selection has ${different}. Pick something wider, or add a test.`);
         }
         const seconds = TRIVIA_SECONDS.includes(Number(body.seconds)) ? Number(body.seconds) : 45;
         const { roomCode, hostId } = await createRoom('trivia-death', { phonesOnly: body.mode === 'phones' });

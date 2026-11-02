@@ -9,9 +9,11 @@ import { MathText } from '@/components/daily/MathText';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { Icon } from '@/components/study/Icon';
 import { QuestionEditor } from '@/components/study/QuestionEditor';
+import { ShareCard } from '@/components/study/ShareCard';
 import { Choices, Explanation } from '@/components/study/QuestionView';
 import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
 import { DIFFICULTIES } from '@/lib/study/prompt';
+import type { Share } from '@/lib/study/sharing';
 import { choiceOrder, isRight, scoreAttempt, type Attempt, type AttemptMode, type QuestionInput, type StudyQuestion, type StudyTest } from '@/lib/study/study';
 
 // One test: its cover (take it, or look back at past tries), taking it, and the
@@ -28,7 +30,7 @@ const clock = (seconds: number) => {
 const pct = (right: number, total: number) => (total ? Math.round((right / total) * 100) : 0);
 
 type SetOption = { id: string; title: string };
-type Loaded = { test: StudyTest; attempts: Attempt[]; sets: SetOption[] };
+type Loaded = { test: StudyTest; attempts: Attempt[]; sets: SetOption[]; share: Share | null };
 
 export default function TestPage() {
   const { id } = useParams<{ id: string }>();
@@ -47,7 +49,7 @@ export default function TestPage() {
   const load = useCallback(async () => {
     try {
       const body = await studyGet<Loaded>(`test=${encodeURIComponent(id)}`);
-      setData({ test: body.test, attempts: body.attempts, sets: body.sets });
+      setData({ test: body.test, attempts: body.attempts, sets: body.sets, share: body.share ?? null });
       setState('ready');
       return body;
     } catch (e) {
@@ -75,7 +77,7 @@ export default function TestPage() {
     return <div className="sd"><div className="hb-banner is-error"><span>{error || 'Couldn’t load that test.'}</span></div><Link className="sd-back" href="/study/tests">← Practice tests</Link></div>;
   }
 
-  const { test, attempts, sets } = data;
+  const { test, attempts, sets, share } = data;
   const inSet = sets.find((s) => s.id === test.setId);
   if (taking) {
     return (
@@ -141,7 +143,7 @@ export default function TestPage() {
         <div>
           <Link className="sd-back" href={inSet ? `/study/tests/sets/${inSet.id}` : '/study/tests'}>← {inSet ? inSet.title : 'Practice tests'}</Link>
           <h1>{test.title}</h1>
-          <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`, test.difficulty ? DIFFICULTIES[test.difficulty - 1]?.label : ''].filter(Boolean).join(' · ')}</p>
+          <p>{[test.course, `${test.questions.length} question${test.questions.length === 1 ? '' : 's'}`, test.difficulty ? DIFFICULTIES[test.difficulty - 1]?.label : '', test.source ? `from ${test.source.by}` : ''].filter(Boolean).join(' · ')}</p>
         </div>
         {!shown && <Link className="btn btn-secondary" href={`/study/tests/${id}/edit`}><Icon name="pencil" /> Edit</Link>}
       </header>
@@ -224,6 +226,9 @@ export default function TestPage() {
               <button type="submit" className="hb-small-btn is-primary" disabled={!setName.trim()}>Create</button>
             </form>
           )}
+
+          {/* A copy of someone else's test is theirs to share, not passed on from here. */}
+          {!test.source && test.questions.length > 0 && <ShareCard testId={test.id} share={share} onChange={(next) => setData({ ...data, share: next })} />}
 
           <button type="button" className="hb-text-btn sd-danger-link" onClick={deleteTest}>Delete this test</button>
         </>

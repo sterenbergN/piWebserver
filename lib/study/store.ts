@@ -5,6 +5,7 @@ import { emptyMap, normalizeMap, type AnkiData, type MapData } from './coverage'
 import { isExpired, isToken, type PartnerSession } from './partner';
 import { eatTest, emptyPlan, normalizePlan, noteClean, type PlanData } from './plan';
 import { emptyPractice, normalizePractice, type PracticeData } from './practice';
+import { emptyShares, normalizeShares, type Share, type SharesData } from './sharing';
 import { studyXp } from './xp';
 import { dueMisses, emptyProgress, emptyTests, normalizeProgress, normalizeTests, type ProgressData, type TestsData } from './study';
 
@@ -87,6 +88,26 @@ export async function updatePractice<R>(userId: string, mutate: (data: PracticeD
     return { result: mutate(stored) };
   });
   return result;
+}
+
+const sharesFile = (userId: string) => path.join(studyFolder(userId), 'shares.json');
+
+export const readShares = async (userId: string) => normalizeShares(await readJson<Partial<SharesData>>(sharesFile(userId), emptyShares()));
+
+export function updateShares<R>(userId: string, mutate: (data: SharesData) => R) {
+  return updateJson<SharesData, { result: R }>(sharesFile(userId), emptyShares(), (stored) => {
+    Object.assign(stored, normalizeShares(stored));
+    return { result: mutate(stored) };
+  }).then((out) => out.result);
+}
+
+/** Every account's shares, for the shared list and for opening a link. Only read here, never changed. */
+export async function everyShare(): Promise<{ ownerId: string; share: Share }[]> {
+  const root = path.join(process.cwd(), '.data', 'study');
+  const folders = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  const owners = folders.filter((f) => f.isDirectory() && /^[\w-]{1,64}$/.test(f.name)).map((f) => f.name);
+  const lists = await Promise.all(owners.map(async (ownerId) => (await readShares(ownerId)).shares.map((share) => ({ ownerId, share }))));
+  return lists.flat();
 }
 
 /** A drill or a sitting counts as studying today, which is part of what cleans the plate. */

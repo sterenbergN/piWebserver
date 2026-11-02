@@ -133,6 +133,7 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     // Not calendar-secret.json: that address works like a password.
     { entry: 'study/plan.json', file: path.join(studyFolder(userId), 'plan.json') },
     { entry: 'study/practice.json', file: path.join(studyFolder(userId), 'practice.json') },
+    { entry: 'study/shares.json', file: path.join(studyFolder(userId), 'shares.json') },
     { entry: 'reader/library.json', file: readerLibraryFile(userId) },
     { entry: 'reader/progress.json', file: readerProgressFile(userId) },
     ...readerNotes,

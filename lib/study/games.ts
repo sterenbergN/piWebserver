@@ -15,13 +15,15 @@ export type GameQuestion = Pick<StudyQuestion, 'id' | 'stem' | 'choices' | 'corr
   priority: 1 | 2 | 3;
 };
 
-export type PoolFilter = { course?: unknown; system?: unknown; missesOnly?: unknown };
+export type PoolFilter = { course?: unknown; system?: unknown; missesOnly?: unknown; setId?: unknown };
 
 export function gamePool(tests: TestsData, progress: ProgressData, filter: PoolFilter, today: DateKey): GameQuestion[] {
   const course = typeof filter.course === 'string' ? filter.course : '';
   const system = typeof filter.system === 'string' ? filter.system : '';
+  const setId = typeof filter.setId === 'string' ? filter.setId : '';
   return tests.tests.flatMap((test) => {
     if (course && test.course !== course) return [];
+    if (setId && test.setId !== setId) return [];
     return test.questions.flatMap((q): GameQuestion[] => {
       if (system && q.system !== system) return [];
       const miss = progress.misses[q.id];
@@ -118,9 +120,18 @@ export type TriviaStudyQuestion = {
 export const MIN_TRIVIA_QUESTIONS = 11;
 const TRIVIA_DECK_SIZE = 31;
 
+/** Short enough to read across a room and answer in seconds: a quick-recall question, not a patient case. */
+export const SHORT_STEM = 160;
+const SHORT_CHOICE = 80;
+export const isShort = (q: Pick<GameQuestion, 'stem' | 'choices'>) => mathToPlain(q.stem).length <= SHORT_STEM && q.choices.every((c) => mathToPlain(c).length <= SHORT_CHOICE);
+
+/** What a party game can use: one right answer, from one of her tests, and short if she asked for short. */
+export const triviaUsable = (pool: GameQuestion[], shortOnly = false) =>
+  pool.filter((q) => q.correct.length === 1 && q.choices.length >= 2 && q.testId && (!shortOnly || isShort(q)));
+
 /** Her questions for Trivia Death, what she's missing first. Select-all questions don't fit a one-tap game. */
-export function triviaDeck(pool: GameQuestion[], random = Math.random): TriviaStudyQuestion[] {
-  const usable = pool.filter((q) => q.correct.length === 1 && q.choices.length >= 2 && q.testId);
+export function triviaDeck(pool: GameQuestion[], random = Math.random, shortOnly = false): TriviaStudyQuestion[] {
+  const usable = triviaUsable(pool, shortOnly);
   const ordered = [...shuffled(usable.filter((q) => q.priority > 1), random), ...shuffled(usable.filter((q) => q.priority === 1), random)].slice(0, TRIVIA_DECK_SIZE);
   // Misses come first in the draw, but shouldn't all land in the first rounds.
   const cards = shuffled(ordered, random).map((q): TriviaStudyQuestion => {

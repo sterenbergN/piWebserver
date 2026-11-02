@@ -41,6 +41,8 @@ export type StudyTest = {
   setId?: string;
   /** How hard it was asked to be, 1 to 5. */
   difficulty?: number;
+  /** Added from someone else's shared test (see sharing.ts). */
+  source?: { shareId: string; by: string; addedAt: string };
 };
 
 export type PromptStyle = 'vignette' | 'recall' | 'mixed';

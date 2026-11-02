@@ -2,11 +2,12 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { addDays } from '../habits/dates';
 import { coverageMap, emptyMap, type AnkiData } from './coverage';
-import { ankiQuestions, gamePool, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, triviaDeck, weakestSystem, type GameQuestion } from './games';
+import { ankiQuestions, gamePool, isShort, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, SHORT_STEM, triviaDeck, triviaUsable, weakestSystem, type GameQuestion } from './games';
 import {
   answerQuestion, clockFor, defibResult, defibZone, enterDoor, MAX_COFFEE, proceed, questionOf, SECOND_OPINION, SHIFT_ROOMS, startRun, spendConsult, spendOpinion, type Run,
 } from './night-shift';
 import { addTask, eat, emptyPlan, eatGame, GAME_TASK } from './plan';
+import { createSet } from './sets';
 import {
   addTest, dueMisses, emptyProgress, emptyTests, finishAttempt, parseTestReply, saveAttempt, startAttempt, studyDays, type ProgressData, type StudyTest, type TestsData,
 } from './study';
@@ -127,6 +128,34 @@ test('Anki leeches become questions with borrowed wrong answers', () => {
   assert.equal(cloze.choices[cloze.correct[0]], 'Furosemide');
   assert.deepEqual(ankiQuestions(null), []);
   assert.deepEqual(ankiQuestions({ ...anki, leeches: anki.leeches.slice(0, 2) }), [], 'too few to fill the choices');
+});
+
+test('a game can draw from one set', () => {
+  const { data, tests } = makeTests([{ n: 4 }, { n: 6 }]);
+  const set = createSet(data, { title: 'Cardio' }, makeId, NOW);
+  tests[1].setId = set.id;
+  const pool = gamePool(data, emptyProgress(), { setId: set.id }, TODAY);
+  assert.equal(pool.length, 6);
+  assert.ok(pool.every((q) => q.testId === tests[1].id));
+  assert.equal(gamePool(data, emptyProgress(), { setId: '' }, TODAY).length, 10, 'no set means every test');
+});
+
+test('short questions only leaves out patient cases and long answers', () => {
+  const quick = { stem: 'First-line drug for absence seizures?', choices: ['Ethosuximide', 'Phenytoin'] };
+  const vignette = { stem: `A 24-year-old woman ${'with a long history and an exam that goes on '.repeat(5)}presents. What next?`, choices: ['A', 'B'] };
+  const longChoice = { stem: 'Which is true?', choices: ['Short', 'x'.repeat(120)] };
+  assert.ok(isShort(quick));
+  assert.ok(vignette.stem.length > SHORT_STEM && !isShort(vignette));
+  assert.ok(!isShort(longChoice));
+  assert.ok(isShort({ stem: `What is $${'\frac{1}{2}'.repeat(3)}$?`, choices: ['$x$', '$y$'] }), 'math is measured as it reads');
+
+  const { data, tests } = makeTests([{ n: 12 }, { n: 3 }]);
+  tests[1].questions.forEach((q) => { q.stem = vignette.stem; });
+  const pool = gamePool(data, emptyProgress(), {}, TODAY);
+  assert.equal(triviaUsable(pool).length, 15);
+  assert.equal(triviaUsable(pool, true).length, 12);
+  const deck = triviaDeck(pool, Math.random, true);
+  assert.ok(deck.every((card) => tests[0].questions.some((q) => q.id === card.studyId)), 'only short ones in the deck');
 });
 
 test('the trivia deck has one right answer, four choices at most, and a way back', () => {

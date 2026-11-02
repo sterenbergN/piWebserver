@@ -64,7 +64,10 @@ export default function TestsPage() {
           <h1>Practice tests</h1>
           {summary && summary.totals.tests > 0 && <p>{summary.totals.tests} saved, {summary.totals.taken} taken</p>}
         </div>
-        <Link className="btn btn-primary" href="/study/add"><Icon name="plus" /> Add a test</Link>
+        <div className="sd-actions">
+          <Link className="btn btn-secondary" href="/study/shared"><Icon name="share" /> Shared tests</Link>
+          <Link className="btn btn-primary" href="/study/add"><Icon name="plus" /> Add a test</Link>
+        </div>
       </header>
 
       {state === 'loading' && <Loading />}

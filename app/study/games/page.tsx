@@ -13,7 +13,8 @@ import { Loading } from '@/components/study/Ui';
 // The study games. Both draw from her own tests and lean on what she's been
 // missing, and every answer counts toward her miss bank and PANCE map.
 
-type Options = { total: number; misses: number; courses: string[]; systems: string[]; ankiCards: number; stats: GameStats; rank: string };
+type Options = { total: number; misses: number; courses: string[]; systems: string[]; ankiCards: number; stats: GameStats; rank: string; sets: TriviaSet[]; shortQuestions: number };
+type TriviaSet = { id: string; title: string; usable: number; short: number };
 
 function DifferentialCard() {
   return (
@@ -100,8 +101,18 @@ function TriviaCard({ options }: { options: Options }) {
   const router = useRouter();
   const [course, setCourse] = useState('');
   const [system, setSystem] = useState('');
+  const [setId, setSetId] = useState('');
+  const [short, setShort] = useState(false);
   const [seconds, setSeconds] = useState(45);
   const [mode, setMode] = useState<'tv' | 'phones'>('tv');
+  const chosenSet = options.sets.find((x) => x.id === setId);
+  const shortAvailable = chosenSet ? chosenSet.short : options.shortQuestions;
+  // Short questions don't need long to read: start them on a quicker clock.
+  const toggleShort = (on: boolean) => {
+    setShort(on);
+    if (on && seconds > 30) setSeconds(20);
+    if (!on && seconds < 30) setSeconds(45);
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const host = async () => {
@@ -111,7 +122,7 @@ function TriviaCard({ options }: { options: Options }) {
       const res = await fetch('/api/study/games', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'host-trivia', course, system, seconds, mode, today: localToday() }),
+        body: JSON.stringify({ action: 'host-trivia', course, system, setId, short, seconds, mode, today: localToday() }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) throw new Error(body.message || 'Couldn’t open a room. Try again.');
@@ -130,11 +141,28 @@ function TriviaCard({ options }: { options: Options }) {
           <p className="hb-hint">The party game with your questions, for a study group of 3 to 8 with their phones. Everyone sees the explanation after each round, and the host can pause to talk it through. Join from a phone signed in to your account, and your answers count toward your miss bank.</p>
         </div>
       </div>
+      {options.sets.length > 0 && (
+        <div className="sd-fields">
+          <label className="sd-wide">Set
+            <select value={setId} onChange={(e) => setSetId(e.target.value)}>
+              <option value="">Any of my tests</option>
+              {options.sets.map((x) => <option key={x.id} value={x.id}>{x.title} ({x.usable} question{x.usable === 1 ? '' : 's'})</option>)}
+            </select>
+          </label>
+        </div>
+      )}
       <Scope options={options} course={course} system={system} setCourse={setCourse} setSystem={setSystem} />
+      <label className="sd-check">
+        <input type="checkbox" checked={short} onChange={(e) => toggleShort(e.target.checked)} />
+        <span>Short questions only <small className="hb-hint">Quick recall instead of patient cases. {shortAvailable} {chosenSet ? 'in this set' : 'in your tests'}{shortAvailable < 11 ? ', and a game needs 11' : ''}.</small></span>
+      </label>
+      {short && shortAvailable < 11 && (
+        <p className="hb-hint">For more, make a test in the Quick recall style. <Link className="td-inline" href={chosenSet ? `/study/add?set=${chosenSet.id}&style=recall` : '/study/add?style=recall'}>Make one</Link></p>
+      )}
       <div className="sd-fields">
         <label>Time per question
           <select value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
-            {[30, 45, 60, 90].map((s) => <option key={s} value={s}>{s} seconds</option>)}
+            {[15, 20, 30, 45, 60, 90].map((s) => <option key={s} value={s}>{s} seconds</option>)}
           </select>
         </label>
         <label>Where it’s shown

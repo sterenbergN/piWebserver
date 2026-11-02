@@ -117,6 +117,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/study/classes', label: 'Classes', icon: '🎓', blurb: 'What you’ve finished, and what it covers', keywords: 'modules courses checklist catch up', account: true },
         { href: '/study/anki', label: 'Anki', icon: '🗂️', blurb: 'Make cards with your AI, import decks, send misses', keywords: 'flashcards cards export import deck apkg prompt make cloze', account: true },
         { href: '/study/add', label: 'Add a test', icon: '➕', short: 'Add', blurb: 'Copy a prompt, paste back what your AI writes', keywords: 'import paste notes ai prompt', account: true },
+        { href: '/study/shared', label: 'Shared tests', icon: '🤝', short: 'Shared', blurb: 'Tests your friends have shared, and the ones you share', keywords: 'share publish public friends classmates link copy pool', account: true },
       ],
     },
     {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { CopyPrompt, PasteReply } from '@/components/study/PromptSteps';
@@ -72,6 +72,7 @@ export default function AddTestPage() {
   const [focus, setFocus] = useState('');
   const [count, setCount] = useState(25);
   const [style, setStyle] = useState<PromptStyle>('vignette');
+  const askedStyle = useRef<PromptStyle | null>(null);
   const [difficulty, setDifficulty] = useState(3);
   const [useWeak, setUseWeak] = useState(true);
   const [use, setUse] = useState(ALL_RESULTS);
@@ -89,6 +90,12 @@ export default function AddTestPage() {
     // The map sends you here to make a test on one organ system, and a set to make its next test.
     const wanted = params.get('focus');
     if (wanted) setFocus(wanted.slice(0, 200));
+    // Trivia sends you here for short questions, which a set's own style mustn't undo.
+    const asked = params.get('style');
+    if (asked === 'recall' || asked === 'mixed' || asked === 'vignette') {
+      askedStyle.current = asked;
+      setStyle(asked);
+    }
     const set = params.get('set');
     if (set) setTarget(set);
   }, []);
@@ -106,7 +113,8 @@ export default function AddTestPage() {
       setBrief(body.brief);
       setCourse(set.course);
       setFocus(set.focus);
-      setStyle(set.style);
+      setStyle(askedStyle.current ?? set.style);
+      askedStyle.current = null;
       setCount(set.count);
       setDifficulty(set.difficulty);
     }).catch(() => { if (!cancelled) setTarget(NEW_SET); });
