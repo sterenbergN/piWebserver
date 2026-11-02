@@ -71,16 +71,36 @@ export const getNotebookElements = (notebook: string) => run<StoredElement[]>('e
 export const getNotebookMarks = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'mark']));
 export const getNotebookText = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'text']));
 
-/** Keep elements, and if any are waiting to go up, say so in the same breath. */
+/**
+ * Which pages have changes waiting, and which elements they are, so sending them means reading
+ * those few and not the whole page. A record with no `ids` (from before they were kept) means
+ * "look through the page".
+ */
+type DirtyPage = { page: string; notebook: string; ids?: string[] };
+
+/** Keep elements, and if any are waiting to go up, note which, in the same breath. */
 export async function putElements(elements: StoredElement[]) {
   const db = await database();
+  const waiting = new Map<string, { notebook: string; ids: Set<string> }>();
+  for (const element of elements) {
+    if (!element.dirty) continue;
+    const held = waiting.get(element.page) ?? { notebook: element.notebook, ids: new Set<string>() };
+    held.ids.add(element.id);
+    waiting.set(element.page, held);
+  }
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(['elements', 'dirty'], 'readwrite');
     const store = tx.objectStore('elements');
     const dirty = tx.objectStore('dirty');
-    for (const element of elements) {
-      store.put(element);
-      if (element.dirty) dirty.put({ page: element.page, notebook: element.notebook });
+    for (const element of elements) store.put(element);
+    for (const [page, { notebook, ids }] of waiting) {
+      const request = dirty.get(page);
+      request.onsuccess = () => {
+        const held = request.result as DirtyPage | undefined;
+        // Held without a list means the whole page is to be looked through anyway.
+        if (held && !held.ids) return;
+        dirty.put({ page, notebook, ids: [...new Set([...(held?.ids ?? []), ...ids])] });
+      };
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -88,8 +108,73 @@ export async function putElements(elements: StoredElement[]) {
   });
 }
 
-export const listDirtyPages = () => run<{ page: string; notebook: string }[]>('dirty', 'readonly', (s) => s.getAll());
-export const clearDirtyPage = (page: string) => run('dirty', 'readwrite', (s) => { s.delete(page); });
+export const listDirtyPages = () => run<DirtyPage[]>('dirty', 'readonly', (s) => s.getAll());
+
+export async function getElementsByIds(ids: string[]) {
+  if (!ids.length) return [];
+  const db = await database();
+  return new Promise<StoredElement[]>((resolve, reject) => {
+    const tx = db.transaction('elements', 'readonly');
+    const store = tx.objectStore('elements');
+    const out: StoredElement[] = [];
+    for (const id of ids) {
+      const request = store.get(id);
+      request.onsuccess = () => { if (request.result) out.push(request.result as StoredElement); };
+    }
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** The elements of a page waiting to go up. */
+export async function getDirtyElements(page: string) {
+  const held = await run<DirtyPage | undefined>('dirty', 'readonly', (s) => s.get(page));
+  if (!held) return [];
+  const elements = held.ids ? await getElementsByIds(held.ids) : await getElements(page);
+  return elements.filter((element) => element.dirty);
+}
+
+/** Forget the waiting elements that have gone up, in one go, so one marked meanwhile isn't lost. */
+export async function settleDirtyPage(page: string) {
+  const db = await database();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(['elements', 'dirty'], 'readwrite');
+    const store = tx.objectStore('elements');
+    const dirty = tx.objectStore('dirty');
+    const request = dirty.get(page);
+    request.onsuccess = () => {
+      const held = request.result as DirtyPage | undefined;
+      if (!held) return;
+      const still: string[] = [];
+      const check = (element: StoredElement | undefined) => { if (element?.dirty) still.push(element.id); };
+      const finish = (remaining: string[]) => {
+        if (remaining.length) dirty.put({ ...held, ids: remaining });
+        else dirty.delete(page);
+      };
+      if (held.ids) {
+        let left = held.ids.length;
+        if (!left) { finish([]); return; }
+        for (const id of held.ids) {
+          const get = store.get(id);
+          get.onsuccess = () => {
+            check(get.result as StoredElement | undefined);
+            left -= 1;
+            if (!left) finish(still);
+          };
+        }
+      } else {
+        const all = store.index('page').getAll(page);
+        all.onsuccess = () => {
+          for (const element of all.result as StoredElement[]) check(element);
+          finish(still);
+        };
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
 
 /**
  * Keep a file. A Blob is best, since it's read from disk a piece at a time, but Safari

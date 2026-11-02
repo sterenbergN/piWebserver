@@ -723,6 +723,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                     <span><strong>Light toolbar</strong>The app’s bars and panels in the light theme.</span>
                   </label>
                   <ReadingStatus />
+                  <PencilCheck engine={engine} />
                   <div className="nt-label">Quick gestures</div>
                   <ul className="nt-gestures">
                     <li><strong>Apple Pencil</strong><span>Always writes. Your palm can rest on the screen.</span></li>
@@ -766,6 +767,48 @@ function TextOptions({ style, onChange }: { style: TextStyle; onChange: (style: 
 }
 
 /** Whether the server can read handwriting, and what to know about it. */
+/**
+ * How the pencil and the screen did on the last few strokes, measured on this device. A browser
+ * can't be timed from outside, so this is how a slow pencil on a real iPad can be looked into.
+ */
+function PencilCheck({ engine }: { engine: NoteCanvas | null }) {
+  const [copied, setCopied] = useState(false);
+  const strokes = engine?.pencilCheck() ?? [];
+  if (!strokes.length) {
+    return (
+      <>
+        <div className="nt-label">Pencil check</div>
+        <p className="nt-hint">Write a few lines, then come back here to see how quickly the pencil and the screen kept up.</p>
+      </>
+    );
+  }
+  const timed = strokes.filter((s) => s.ms > 80);
+  const rate = (count: (s: typeof strokes[number]) => number) => {
+    const rates = timed.map((s) => (count(s) * 1000) / s.ms).sort((a, b) => a - b);
+    return rates.length ? Math.round(rates[Math.floor(rates.length / 2)]) : 0;
+  };
+  const rows: [string, string][] = [
+    ['Pencil points a second', String(rate((s) => s.points))],
+    ['Updates a second', String(rate((s) => s.events))],
+    ['Extra points between updates', strokes.some((s) => s.coalesced) ? 'yes' : 'no'],
+    ['Screen redraws a second', String(rate((s) => s.paints))],
+    ['Longest wait for the pencil', `${Math.max(...strokes.map((s) => s.slowestGap))} ms`],
+    ['Longest frame while writing', `${Math.max(...strokes.map((s) => s.slowestFrame))} ms`],
+    ['Saving a finished stroke', `${Math.max(...strokes.map((s) => s.commitMs))} ms`],
+  ];
+  const report = [`Pencil check (${strokes.length} strokes, ${navigator.userAgent})`, ...rows.map(([label, value]) => `${label}: ${value}`)].join('\n');
+  return (
+    <>
+      <div className="nt-label">Pencil check</div>
+      <dl className="nt-pencil-check">
+        {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>
+      <p className="nt-hint">From your last {strokes.length} strokes. A smooth screen redraws about 60 times a second, and a frame over 30 ms is a stutter you can see.</p>
+      <button type="button" className="nt-btn is-small nt-gap" onClick={() => { void navigator.clipboard?.writeText(report).then(() => setCopied(true)); }}>{copied ? 'Copied' : 'Copy these numbers'}</button>
+    </>
+  );
+}
+
 function ReadingStatus() {
   const [status, setStatus] = useState<{ state: string; problem: string } | null>(null);
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 import { MAX_CHANGES, UPLOAD_CHUNK_BYTES, type BookRecord, type InkText, type LibraryRecord, type PageElement } from '@/lib/notes/items';
 import {
-  clearDirtyPage, cursorKey, deleteKv, inkTextKey, forgetNotebook, getElements, getFile, getKv, kvKeys, listBook, listDirtyPages, listLibrary, neededKey, putBook, putElements, putFile, putKv, putLibrary, uploadKey,
+  cursorKey, deleteKv, getDirtyElements, getElementsByIds, settleDirtyPage, inkTextKey, forgetNotebook, getElements, getFile, getKv, kvKeys, listBook, listDirtyPages, listLibrary, neededKey, putBook, putElements, putFile, putKv, putLibrary, uploadKey,
   type StoredBook, type StoredElement, type StoredLibrary,
 } from './db';
 
@@ -83,7 +83,10 @@ type Stamped = { id: string; updatedAt: number; dirty?: boolean };
  * made while a request was out is looked at again afterwards, so it isn't marked as sent.
  */
 async function syncLevel<S extends Stamped, R extends { id: string; updatedAt: number }, Extra>(options: {
-  load: () => Promise<S[]>;
+  /** What's waiting to go up: at least everything marked dirty. */
+  loadChanged: () => Promise<S[]>;
+  /** These records as they are now. Can return more. */
+  loadSome: (ids: string[]) => Promise<S[]>;
   save: (records: S[]) => Promise<unknown>;
   strip: (record: S) => unknown;
   adopt: (incoming: R, mine?: S) => S;
@@ -93,12 +96,13 @@ async function syncLevel<S extends Stamped, R extends { id: string; updatedAt: n
   const news: R[] = [];
   let last: ({ cursor: number; items: R[] } & Extra) | null = null;
   for (let round = 0; round < 200; round++) {
-    const changes = (await options.load()).filter((record) => record.dirty).slice(0, MAX_CHANGES);
+    const changes = (await options.loadChanged()).filter((record) => record.dirty).slice(0, MAX_CHANGES);
     const cursor = (await getKv<number>(options.cursorName)) ?? 0;
     const body = await options.send(cursor, changes.map(options.strip));
     last = body;
 
-    const latest = new Map((await options.load()).map((record) => [record.id, record]));
+    const ids = [...new Set([...changes.map((record) => record.id), ...body.items.map((record) => record.id)])];
+    const latest = new Map((await options.loadSome(ids)).map((record) => [record.id, record]));
     const save = new Map<string, S>();
     for (const incoming of body.items) {
       const mine = latest.get(incoming.id);
@@ -122,7 +126,8 @@ const fileIn = (record: { kind: string; file?: string; pdf?: { file: string } })
 
 async function syncLibraryLevel() {
   return syncLevel<StoredLibrary, LibraryRecord, { revs: Record<string, number> }>({
-    load: listLibrary,
+    loadChanged: listLibrary,
+    loadSome: listLibrary,
     save: putLibrary,
     strip: ({ dirty: _dirty, seq: _seq, ...record }) => record,
     adopt: (incoming) => ({ ...incoming, dirty: false }),
@@ -133,7 +138,8 @@ async function syncLibraryLevel() {
 
 async function syncBookLevel(notebook: string) {
   const out = await syncLevel<StoredBook, BookRecord, { pageSeqs: Record<string, number>; textSeq?: number }>({
-    load: () => listBook(notebook),
+    loadChanged: () => listBook(notebook),
+    loadSome: () => listBook(notebook),
     save: putBook,
     strip: ({ dirty: _dirty, notebook: _notebook, seq: _seq, ...record }) => record,
     adopt: (incoming) => ({ ...incoming, notebook, dirty: false }),
@@ -149,7 +155,9 @@ async function syncBookLevel(notebook: string) {
 
 async function syncPageLevel(notebook: string, page: string) {
   const out = await syncLevel<StoredElement, PageElement, object>({
-    load: () => getElements(page),
+    // A page can hold thousands of strokes: read just the ones that changed, and the ones that came back.
+    loadChanged: () => getDirtyElements(page),
+    loadSome: getElementsByIds,
     save: putElements,
     strip: ({ dirty: _dirty, notebook: _notebook, page: _page, seq: _seq, ...element }) => element,
     adopt: (incoming) => ({ ...incoming, notebook, page, dirty: false }),
@@ -159,8 +167,8 @@ async function syncPageLevel(notebook: string, page: string) {
   for (const element of out.news) {
     if (element.kind === 'image' && !element.deleted && !(await getFile(notebook, element.file))) await putKv(neededKey(notebook, element.file), true);
   }
-  // Nothing was marked dirty while that ran: this page is level with the server.
-  if (!(await getElements(page)).some((element) => element.dirty)) await clearDirtyPage(page);
+  // Whatever was sent and hasn't changed since is level with the server now.
+  await settleDirtyPage(page);
   return out.news.length > 0;
 }
 
@@ -295,10 +303,31 @@ export function syncNow(): Promise<void> {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null;
+let writing = false;
+let wroteAt = 0;
+/** How long after the pencil lifts before saving to the server may start. Writing often pauses for less. */
+const AFTER_WRITING_MS = 4000;
+
+/**
+ * The pencil is on the page, or has just lifted. Syncing does real work on the same thread as
+ * drawing, so it waits: a stroke started while it ran would stutter.
+ */
+export function setWriting(now: boolean) {
+  writing = now;
+  wroteAt = Date.now();
+}
 
 export function scheduleSync(delay = 2500) {
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => { timer = null; void syncNow(); }, delay);
+  timer = setTimeout(() => {
+    timer = null;
+    const quietFor = Date.now() - wroteAt;
+    if (writing || quietFor < AFTER_WRITING_MS) {
+      scheduleSync(writing ? AFTER_WRITING_MS : AFTER_WRITING_MS - quietFor);
+      return;
+    }
+    void syncNow();
+  }, delay);
 }
 
 export function cancelScheduledSync() {

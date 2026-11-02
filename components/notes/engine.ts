@@ -6,6 +6,7 @@ import {
 } from '@/lib/notes/geometry';
 import { isDark, MAX_STROKE_POINTS, type ImageElement, type MarkElement, type MarkRole, type MarkTarget, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
 import { newId, tombstone, type NotebookDoc, type Step } from './doc';
+import { setWriting } from './sync';
 import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight } from './ink';
 import { Assets, drawElement, drawElements, drawPaper, sortForDrawing } from './paper';
 
@@ -104,8 +105,6 @@ type Wet = {
   anchorX: number;
   anchorY: number;
   isFinger: boolean;
-  /** Where the browser expects the pencil to be next: drawn, so the line keeps up, but never saved. */
-  predicted: number[];
 };
 
 type Selection = {
@@ -470,7 +469,7 @@ export class NoteCanvas {
   setNight(night: boolean) {
     this.host.classList.toggle('is-night', night);
     this.desk = '';
-    this.sharpKey = '';
+    this.viewKey = '';
     this.requestPaint();
   }
 
@@ -540,7 +539,7 @@ export class NoteCanvas {
   }
 
   invalidateAll() {
-    this.sharpKey = '';
+    this.viewKey = '';
     for (const cached of this.caches.values()) cached.version = -1;
     this.region = null;
     this.requestPaint();
@@ -634,12 +633,12 @@ export class NoteCanvas {
   }
 
   private paint() {
-    // Zoomed in and still, with nothing changed since the last sharp frame: it's already right.
-    if (!this.moving && this.sharpKey && this.sharpKey === this.sharpFrameKey()) {
+    // Still, with nothing changed since the last full paint: what's on screen is already right.
+    if (!this.moving && this.viewKey && this.viewKey === this.frameKey()) {
       this.paintLive();
       return;
     }
-    this.sharpKey = '';
+    this.viewKey = '';
     const ctx = this.viewCtx;
     const dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -674,9 +673,9 @@ export class NoteCanvas {
       ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
     }
     this.trimCaches(visible);
-    // Every page here drawn sharp and complete: remember it, so the next paint can be skipped.
-    if (!this.moving && !needsMore && visible.length && visible.every((r) => !this.isSharpAtThisZoom(r.page) && this.doc.isLoaded(r.page.id))) {
-      this.sharpKey = this.sharpFrameKey();
+    // Every page here drawn complete: remember it, so the next paint can be skipped.
+    if (!this.moving && !needsMore && visible.length && visible.every((r) => this.doc.isLoaded(r.page.id))) {
+      this.viewKey = this.frameKey();
     }
     this.paintLive();
     if (needsMore) this.requestPaint();
@@ -764,7 +763,7 @@ export class NoteCanvas {
     const rect = this.rectOf(wet.page.id);
     const ctx = this.liveCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const pts = wet.snapped ?? (wet.predicted.length ? wet.pts.concat(wet.predicted) : wet.pts);
+    const pts = wet.snapped ?? wet.pts;
     const box = boundsOf(pts, wet.width * 2);
     const dpr = this.dpr;
     const area = rect ? {
@@ -817,7 +816,7 @@ export class NoteCanvas {
         ctx.clip();
         const alpha = this.wet.style === 'marker' && isDark(rect.page.paper);
         if (alpha) ctx.globalAlpha = 0.42;
-        drawWet(ctx, this.wet.snapped ?? this.wet.pts.concat(this.wet.predicted), this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped);
+        drawWet(ctx, this.wet.snapped ?? this.wet.pts, this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped);
         ctx.restore();
       }
     }
@@ -1114,20 +1113,28 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', predicted: [],
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch',
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
       this.wet.snappedKind = t.shapeKind;
     }
     if (tool === 'pen' || tool === 'marker' || tool === 'tape') this.armHold();
+    this.noteStrokeStart(performance.now());
+    setWriting(true);
     this.requestLive();
   }
 
   private liveFrame = 0;
   private requestLive() {
-    if (!this.liveFrame) this.liveFrame = requestAnimationFrame(() => {
+    if (!this.liveFrame) this.liveFrame = requestAnimationFrame((at) => {
       this.liveFrame = 0;
+      const log = this.strokeLog;
+      if (log.start) {
+        if (log.lastFrameAt) log.slowestFrame = Math.max(log.slowestFrame, at - log.lastFrameAt);
+        log.lastFrameAt = at;
+        log.paints += 1;
+      }
       this.paintLive();
     });
   }
@@ -1155,6 +1162,13 @@ export class NoteCanvas {
     const rect = this.rectOf(wet.page.id);
     if (!rect) return;
     const events = e.getCoalescedEvents?.() ?? [];
+    const log = this.strokeLog;
+    const nowAt = performance.now();
+    log.events += 1;
+    log.points += Math.max(1, events.length);
+    if (events.length > 1) log.coalesced = true;
+    log.slowestGap = Math.max(log.slowestGap, nowAt - log.lastEventAt);
+    log.lastEventAt = nowAt;
     for (const event of events.length ? events : [e]) {
       const { x, y } = this.position(event);
       const [px, py] = this.toPage(rect, x, y);
@@ -1183,14 +1197,32 @@ export class NoteCanvas {
         wet.pts = carry;
       }
     }
-    wet.predicted = [];
-    if (!wet.snapped) {
-      for (const event of e.getPredictedEvents?.() ?? []) {
-        const { x, y } = this.position(event);
-        wet.predicted.push(...this.toPage(rect, x, y), pressureOf(event));
-      }
-    }
     this.requestLive();
+  }
+
+  /** How the last stroke went, for the pencil check in Settings. */
+  private stats = { upAt: 0, commitMs: 0 };
+  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0 };
+  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; slowestGap: number; slowestFrame: number; paints: number; commitMs: number }[] = [];
+
+  /** The last strokes, measured: how often the pencil reported, and how long the screen took. */
+  pencilCheck() {
+    return [...this.recentStrokes];
+  }
+
+  private noteStrokeStart(at: number) {
+    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0 };
+  }
+
+  private noteStrokeEnd() {
+    const log = this.strokeLog;
+    if (!log.start) return;
+    this.recentStrokes.push({
+      ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced,
+      slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), paints: log.paints, commitMs: Math.round(this.stats.commitMs * 10) / 10,
+    });
+    if (this.recentStrokes.length > 12) this.recentStrokes.shift();
+    log.start = 0;
   }
 
   private commitWet(clear = true) {
@@ -1220,19 +1252,21 @@ export class NoteCanvas {
     this.addToCache(wet.page.id, element);
     const drawnOnView = this.addToView(wet.page.id, element);
     this.doc.apply([{ type: 'element', page: wet.page.id, before: null, after: element }]);
-    if (drawnOnView) this.sharpKey = this.sharpFrameKey();
+    if (drawnOnView) this.viewKey = this.frameKey();
+    this.stats.commitMs = performance.now() - this.stats.upAt;
     this.events.onUndoState();
     this.requestPaint();
   }
 
   /**
-   * Zoomed in, the page on screen is drawn sharp, straight from its strokes, which takes a while
-   * on a full page. A new pen stroke goes on top of what's there instead of drawing it all again.
+   * A new pen stroke goes on top of what's on screen, instead of the screen being drawn again for
+   * one line of ink. Redrawing it all takes a while on a full page, zoomed in, or on an older iPad,
+   * and the next stroke waits for it.
    */
   private addToView(page: string, element: StrokeElement) {
     const rect = this.rectOf(page);
-    if (!rect || this.moving || this.isSharpAtThisZoom(rect.page) || element.style === 'marker' || element.style === 'tape') return false;
-    if (this.sharpKey !== this.sharpFrameKey()) return false;
+    if (!rect || this.moving || !this.onTopOfEverything(page, element)) return false;
+    if (this.viewKey !== this.frameKey()) return false;
     const ctx = this.viewCtx;
     const x = rect.x * this.z + this.camX;
     const y = rect.y * this.z + this.camY;
@@ -1247,10 +1281,17 @@ export class NoteCanvas {
     return true;
   }
 
-  /** What a sharp frame showed: if nothing in this has changed, it can stay as it is. */
-  private sharpKey = '';
+  /** Whether a new stroke would be drawn last anyway: pen ink, with no tape, text or link over where it is. */
+  private onTopOfEverything(page: string, element: StrokeElement) {
+    if (element.style === 'marker' || element.style === 'tape') return false;
+    const box = strokeBox(element);
+    return !this.doc.elementsOf(page).some((other) => (other.kind === 'text' || other.kind === 'mark' || (other.kind === 'stroke' && other.style === 'tape')) && boxesTouch(elementBox(other), box));
+  }
 
-  private sharpFrameKey() {
+  /** What the screen showed after its last full paint: while nothing in this has changed, it can stay as it is. */
+  private viewKey = '';
+
+  private frameKey() {
     const pages = this.visibleRects().map((r) => `${r.page.id}:${this.pageStamp(r.page.id)}`).join();
     return `${this.camX}/${this.camY}/${this.z}/${this.width}/${this.height}/${this.cacheToken()}/${this.region?.key ?? ''}/${pages}`;
   }
@@ -1259,7 +1300,7 @@ export class NoteCanvas {
   private addToCache(page: string, element: StrokeElement) {
     const cached = this.caches.get(page);
     const rect = this.rectOf(page);
-    if (!cached || !rect || element.style === 'marker' || element.style === 'tape') return;
+    if (!cached || !rect || !this.onTopOfEverything(page, element)) return;
     const expected = this.pageStamp(page);
     if (cached.version !== expected || cached.token !== this.cacheToken()) return;
     cached.ctx.setTransform(cached.scale, 0, 0, cached.scale, 0, 0);
@@ -1269,6 +1310,7 @@ export class NoteCanvas {
 
   private cancelMark() {
     if (this.holdTimer) clearTimeout(this.holdTimer);
+    if (this.wet) setWriting(false);
     this.wet = null;
     this.lasso = null;
     if (this.erasing) this.endErasing();
@@ -1399,6 +1441,7 @@ export class NoteCanvas {
         const tape = hit || link ? null : this.tapeAt(x, y);
         if (hit || link || tape) {
           this.wet = null;
+          setWriting(false);
           if (hit) this.events.onInkTap(hit);
           else if (link) this.events.onFollow(link);
           else this.toggleTape(tape!);
@@ -1407,7 +1450,10 @@ export class NoteCanvas {
         }
       }
       // Whatever was already drawn is kept, even if the system took the pencil away.
+      this.stats.upAt = performance.now();
       this.commitWet();
+      this.noteStrokeEnd();
+      setWriting(false);
       return;
     }
     if (this.selection?.drag?.pointer === e.pointerId) {
