@@ -246,3 +246,10 @@ test('the eraser touches strokes along their length, not just at their points', 
   assert.ok(!strokeTouches(line, 5, 2, 1));
   assert.ok(strokeTouches([3, 3, 0.5], 3.5, 3, 1));
 });
+
+test('a handwritten note keeps what it was read as, and nothing that isn’t text', () => {
+  const sketch = { id: 'sk1', kind: 'sketch', anchor: { page: 3 }, createdAt: 1, updatedAt: 2, aspect: 0.5, strokes: [{ tool: 'pen', color: 'ink', width: 0.01, pts: [0.1, 0.1, 0.5, 0.2, 0.2, 0.5] }] };
+  assert.equal(cleanItem({ ...sketch, text: '  brachial plexus ' }, 10)?.text, 'brachial plexus');
+  assert.equal(cleanItem({ ...sketch, text: 42 }, 10)?.text, undefined);
+  assert.equal(cleanItem(sketch, 10)?.text, undefined);
+});

@@ -170,8 +170,10 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
     engine?.setPlayback(heard ? { startedAt: heard.record.startedAt, at: heard.at } : null);
   }, [engine, heard]);
 
+  // Called after every stroke, so it only redraws the screen when the buttons really change.
   const refreshUndo = useCallback(() => {
-    setUndoState({ undo: doc.canUndo, redo: doc.canRedo, paste: noteClipboard.elements.length > 0 });
+    const next = { undo: doc.canUndo, redo: doc.canRedo, paste: noteClipboard.elements.length > 0 };
+    setUndoState((held) => (held.undo === next.undo && held.redo === next.redo && held.paste === next.paste ? held : next));
   }, [doc]);
 
   const applyTools = useCallback((next: Tools) => {
@@ -258,7 +260,10 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
       if (startPage) canvas.goToPageId(startPage);
       setPhase('ready');
       setPageCount(doc.pages.length);
-      stopDoc = doc.subscribe(() => {
+      // Only changes to the pages themselves show here. A stroke is the canvas's business, and
+      // redrawing all of this after each one would hold up the next.
+      stopDoc = doc.subscribe((page) => {
+        if (page !== null) return;
         setPageCount(doc.pages.length);
         setDocTick((tick) => tick + 1);
       });

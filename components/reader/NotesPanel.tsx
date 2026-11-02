@@ -1,5 +1,6 @@
 'use client';
 
+import { findInText } from '@/lib/notes/search';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
 import { markedPages, notesByChapter, roundStroke, type Anchor, type ReaderItem, type Stroke } from '@/lib/reader/items';
@@ -74,7 +75,12 @@ function SketchPad({ theme, onSave, onCancel }: { theme: ReaderTheme; onSave: (s
       <div className="rd-pad-card">
         <canvas
           ref={canvasRef}
-          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); live.current = point(e); repaint(live.current); }}
+          onPointerDown={(e) => {
+            // It throws for a pointer that's already gone, and that mustn't cost the stroke.
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* Then it just isn't captured. */ }
+            live.current = point(e);
+            repaint(live.current);
+          }}
           onPointerMove={(e) => { if (live.current) { live.current.push(...point(e)); repaint(live.current); } }}
           onPointerUp={(e) => {
             if (!live.current) return;
@@ -98,11 +104,12 @@ function SketchPad({ theme, onSave, onCancel }: { theme: ReaderTheme; onSave: (s
   );
 }
 
-function NoteCard({ item, onJump, onEdit, onDelete }: {
+function NoteCard({ item, onJump, onEdit, onDelete, onMakeTyped }: {
   item: ReaderItem;
   onJump: (anchor: Anchor) => void;
   onEdit: (item: ReaderItem, text: string) => void;
   onDelete: (item: ReaderItem) => void;
+  onMakeTyped?: (item: ReaderItem, text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(item.text ?? '');
@@ -113,7 +120,9 @@ function NoteCard({ item, onJump, onEdit, onDelete }: {
         <button type="button" className="rd-note-page" onClick={() => onJump(item.anchor)}>p. {item.anchor.page}</button>
         <span className="rd-note-date">{fmtDate(item.createdAt)}</span>
         <span className="rd-grow" />
-        {item.kind === 'note' && !editing && <button type="button" className="rd-icon-btn" aria-label="Edit note" onClick={() => { setText(item.text ?? ''); setEditing(true); }}><Icon name="pencil" /></button>}
+        {(item.kind === 'note' || (item.kind === 'sketch' && item.text)) && !editing && (
+          <button type="button" className="rd-icon-btn" aria-label={item.kind === 'note' ? 'Edit note' : 'Correct what it says'} onClick={() => { setText(item.text ?? ''); setEditing(true); }}><Icon name="pencil" /></button>
+        )}
         {confirming
           ? <button type="button" className="rd-btn is-danger is-small" onClick={() => onDelete(item)}>Delete</button>
           : <button type="button" className="rd-icon-btn" aria-label="Delete note" onClick={() => setConfirming(true)}><Icon name="trash" /></button>}
@@ -128,7 +137,17 @@ function NoteCard({ item, onJump, onEdit, onDelete }: {
           </div>
         </form>
       ) : item.kind === 'sketch' ? (
-        <button type="button" className="rd-note-jump" onClick={() => onJump(item.anchor)} aria-label={`Go to page ${item.anchor.page}`}><SketchView item={item} /></button>
+        <>
+          <button type="button" className="rd-note-jump" onClick={() => onJump(item.anchor)} aria-label={`Go to page ${item.anchor.page}`}><SketchView item={item} /></button>
+          {item.text ? (
+            <div className="rd-note-reads">
+              <p><span>Reads as</span> {item.text}</p>
+              {onMakeTyped && <button type="button" className="rd-btn is-small" onClick={() => onMakeTyped(item, item.text!)}>Make it a typed note</button>}
+            </div>
+          ) : (
+            <p className="rd-note-reads is-waiting">It’s read when there’s a connection, so it can be searched.</p>
+          )}
+        </>
       ) : (
         <p className="rd-note-text">{item.text}</p>
       )}
@@ -148,14 +167,22 @@ export type NotesPanelProps = {
   onAddSketch?: (strokes: Stroke[], aspect: number) => void;
   onEdit: (item: ReaderItem, text: string) => void;
   onDelete: (item: ReaderItem) => void;
+  /** Swap a handwritten note for a typed one. */
+  onMakeTyped?: (item: ReaderItem, text: string) => void;
 };
 
-export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, onJump, onAddNote, onAddSketch, onEdit, onDelete }: NotesPanelProps) {
+export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, onJump, onAddNote, onAddSketch, onEdit, onDelete, onMakeTyped }: NotesPanelProps) {
   const [draft, setDraft] = useState('');
   const [writing, setWriting] = useState(false);
   const [onlyHere, setOnlyHere] = useState(!!startOnPage);
+  const [query, setQuery] = useState('');
 
-  const shown = useMemo(() => (onlyHere && isOnPage ? items.filter((item) => isOnPage(item.anchor)) : items), [items, onlyHere, isOnPage]);
+  const shown = useMemo(() => {
+    const placed = onlyHere && isOnPage ? items.filter((item) => isOnPage(item.anchor)) : items;
+    if (!query.trim()) return placed;
+    // Handwriting was read by a machine, so a word a letter or two off still counts there.
+    return placed.filter((item) => item.text && findInText(item.text, query, item.kind === 'sketch'));
+  }, [items, onlyHere, isOnPage, query]);
   const groups = useMemo(() => notesByChapter(shown), [shown]);
   const marks = useMemo(() => markedPages(items), [items]);
   const total = useMemo(() => notesByChapter(items).reduce((n, g) => n + g.notes.length, 0), [items]);
@@ -178,6 +205,10 @@ export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, 
         )
       )}
 
+      {total > 2 && (
+        <input className="rd-input rd-note-search" type="search" placeholder="Search these notes" aria-label="Search these notes" value={query} onChange={(e) => setQuery(e.target.value)} />
+      )}
+
       {isOnPage && total > 0 && (
         <div className="rd-tabs" role="group" aria-label="Which notes">
           <button type="button" className={!onlyHere ? 'is-on' : ''} aria-pressed={!onlyHere} onClick={() => setOnlyHere(false)}>All {total}</button>
@@ -185,18 +216,18 @@ export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, 
         </div>
       )}
 
-      {!groups.length && <p className="rd-empty">{onlyHere ? 'No notes on this page yet.' : 'No notes yet. They’ll collect here, in the order of the book.'}</p>}
+      {!groups.length && <p className="rd-empty">{query.trim() ? 'No note says that. Handwritten notes are found once they’ve been read.' : onlyHere ? 'No notes on this page yet.' : 'No notes yet. They’ll collect here, in the order of the book.'}</p>}
 
       {groups.map((group, i) => (
         <section key={`${group.chapter}-${i}`} className="rd-note-group">
           {group.chapter && <h3>{group.chapter}</h3>}
           <ul>
-            {group.notes.map((item) => <NoteCard key={item.id} item={item} onJump={onJump} onEdit={onEdit} onDelete={onDelete} />)}
+            {group.notes.map((item) => <NoteCard key={item.id} item={item} onJump={onJump} onEdit={onEdit} onDelete={onDelete} onMakeTyped={onMakeTyped} />)}
           </ul>
         </section>
       ))}
 
-      {!onlyHere && marks.length > 0 && (
+      {!onlyHere && !query.trim() && marks.length > 0 && (
         <section className="rd-note-group">
           <h3>Pages you’ve marked</h3>
           <div className="rd-chips">

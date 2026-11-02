@@ -10,11 +10,13 @@ import type { ImageElement, MarkElement, MarkRole, PageElement, StrokeElement, S
 // to work out, so each one is kept beside its stroke until the stroke goes away.
 
 export const STROKE_OPTIONS: Record<Exclude<StrokeStyle, 'shape'>, Parameters<typeof getStroke>[1]> = {
-  ball: { thinning: 0.22, smoothing: 0.6, streamline: 0.32, simulatePressure: false },
-  fountain: { thinning: 0.68, smoothing: 0.62, streamline: 0.38, simulatePressure: false },
-  brush: { thinning: 0.92, smoothing: 0.7, streamline: 0.42, simulatePressure: false, start: { taper: 16 }, end: { taper: 22 } },
-  marker: { thinning: 0, smoothing: 0.7, streamline: 0.55, simulatePressure: false },
-  tape: { thinning: 0, smoothing: 0.7, streamline: 0.6, simulatePressure: false },
+  // Streamline is kept low: it pulls each point back towards the last, which smooths the line but
+  // leaves its end trailing behind the pencil. Smoothing does the tidying instead, at no cost in lag.
+  ball: { thinning: 0.22, smoothing: 0.62, streamline: 0.12, simulatePressure: false },
+  fountain: { thinning: 0.68, smoothing: 0.64, streamline: 0.14, simulatePressure: false },
+  brush: { thinning: 0.92, smoothing: 0.72, streamline: 0.18, simulatePressure: false, start: { taper: 16 }, end: { taper: 22 } },
+  marker: { thinning: 0, smoothing: 0.72, streamline: 0.25, simulatePressure: false },
+  tape: { thinning: 0, smoothing: 0.72, streamline: 0.3, simulatePressure: false },
 };
 
 type Cached = { pts: number[]; box?: Box; path?: Path2D };

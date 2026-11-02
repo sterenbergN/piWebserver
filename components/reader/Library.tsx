@@ -6,6 +6,7 @@ import { formatFromName, MAX_BOOK_BYTES, notesByChapter, progressText, readingSt
 import { readBookInfo } from './bookinfo';
 import { deleteFile, getCover, getItems, getProgress, listFileIds, type StoredProgress } from './db';
 import NotesPanel from './NotesPanel';
+import NotesSearch from './NotesSearch';
 import PublicShelf from './PublicShelf';
 import type { ReaderSettings } from './source';
 import {
@@ -111,7 +112,7 @@ function InstallHint() {
 
 /** A book's notes, from the shelf, without having to open the book. */
 function BookNotes({ book, theme, onOpenAt, onClose }: { book: BookMeta; theme: ReaderSettings['theme']; onOpenAt: (anchor: Anchor) => void; onClose: () => void }) {
-  const { all, version, editNote, remove, loaded } = useBookItems(book.id);
+  const { all, version, editNote, makeTyped, remove, loaded } = useBookItems(book.id);
   // `version` is what says the list has changed.
   const items = useMemo<ReaderItem[]>(() => all(), [all, version]);
   const count = notesByChapter(items).reduce((n, g) => n + g.notes.length, 0);
@@ -127,7 +128,7 @@ function BookNotes({ book, theme, onOpenAt, onClose }: { book: BookMeta; theme: 
           <button type="button" className="rd-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         </div>
         <div className="rd-sheet-body">
-          <NotesPanel items={items} theme={theme} onJump={onOpenAt} onEdit={editNote} onDelete={remove} />
+          <NotesPanel items={items} theme={theme} onJump={onOpenAt} onEdit={editNote} onDelete={remove} onMakeTyped={makeTyped} />
         </div>
       </aside>
     </div>
@@ -409,6 +410,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
           <p>Add an EPUB, PDF, CBZ, text, Markdown or HTML file, or bring one over from the Library. It’s saved to your account, so it’s on your phone and your iPad, and only you can see it.</p>
         </div>
       )}
+
+      {books.length > 0 && !selected && <NotesSearch books={books} onOpen={onOpen} />}
 
       {shownView === 'all' && !selected && reading.length > 0 && (
         <section className="rd-continue" aria-label="Continue reading">

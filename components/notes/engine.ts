@@ -104,6 +104,8 @@ type Wet = {
   anchorX: number;
   anchorY: number;
   isFinger: boolean;
+  /** Where the browser expects the pencil to be next: drawn, so the line keeps up, but never saved. */
+  predicted: number[];
 };
 
 type Selection = {
@@ -243,6 +245,7 @@ export class NoteCanvas {
   }
 
   private fitToHost(first = false) {
+    this.measure();
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     if (!width || !height) return;
@@ -288,9 +291,20 @@ export class NoteCanvas {
     return [(x - this.camX) / this.z - rect.x, (y - this.camY) / this.z - rect.y];
   }
 
-  private position(e: PointerEvent) {
+  /**
+   * Where the canvas sits in the window. Measured when a touch starts and when the window
+   * changes, not on every pencil event: measuring right after the screen has changed makes the
+   * browser lay the page out again there and then, in the middle of a stroke.
+   */
+  private origin = { left: 0, top: 0 };
+
+  private measure() {
     const box = this.host.getBoundingClientRect();
-    return { x: e.clientX - box.left, y: e.clientY - box.top };
+    this.origin = { left: box.left, top: box.top };
+  }
+
+  private position(e: PointerEvent) {
+    return { x: e.clientX - this.origin.left, y: e.clientY - this.origin.top };
   }
 
   private visibleRects() {
@@ -456,6 +470,7 @@ export class NoteCanvas {
   setNight(night: boolean) {
     this.host.classList.toggle('is-night', night);
     this.desk = '';
+    this.sharpKey = '';
     this.requestPaint();
   }
 
@@ -525,6 +540,7 @@ export class NoteCanvas {
   }
 
   invalidateAll() {
+    this.sharpKey = '';
     for (const cached of this.caches.values()) cached.version = -1;
     this.region = null;
     this.requestPaint();
@@ -618,6 +634,12 @@ export class NoteCanvas {
   }
 
   private paint() {
+    // Zoomed in and still, with nothing changed since the last sharp frame: it's already right.
+    if (!this.moving && this.sharpKey && this.sharpKey === this.sharpFrameKey()) {
+      this.paintLive();
+      return;
+    }
+    this.sharpKey = '';
     const ctx = this.viewCtx;
     const dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -652,6 +674,10 @@ export class NoteCanvas {
       ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
     }
     this.trimCaches(visible);
+    // Every page here drawn sharp and complete: remember it, so the next paint can be skipped.
+    if (!this.moving && !needsMore && visible.length && visible.every((r) => !this.isSharpAtThisZoom(r.page) && this.doc.isLoaded(r.page.id))) {
+      this.sharpKey = this.sharpFrameKey();
+    }
     this.paintLive();
     if (needsMore) this.requestPaint();
     if (!this.moving && visible.length) this.loadAround();
@@ -728,11 +754,58 @@ export class NoteCanvas {
     ctx.setTransform(dpr * this.z, 0, 0, dpr * this.z, dpr * (rect.x * this.z + this.camX), dpr * (rect.y * this.z + this.camY));
   }
 
-  private paintLive() {
+  private blend = 'normal';
+  /** The part of the live layer the last wet line covered, so only that needs clearing next frame. */
+  private wetArea: { x: number; y: number; w: number; h: number } | null = null;
+
+  /** Just the wet line, drawn over only the part it covers. The common case while writing, so it's kept cheap. */
+  private paintWetOnly() {
+    const wet = this.wet!;
+    const rect = this.rectOf(wet.page.id);
     const ctx = this.liveCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const pts = wet.snapped ?? (wet.predicted.length ? wet.pts.concat(wet.predicted) : wet.pts);
+    const box = boundsOf(pts, wet.width * 2);
+    const dpr = this.dpr;
+    const area = rect ? {
+      x: Math.floor(((rect.x + box.x) * this.z + this.camX) * dpr) - 2,
+      y: Math.floor(((rect.y + box.y) * this.z + this.camY) * dpr) - 2,
+      w: Math.ceil(box.w * this.z * dpr) + 4,
+      h: Math.ceil(box.h * this.z * dpr) + 4,
+    } : null;
+    if (this.wetArea) ctx.clearRect(this.wetArea.x, this.wetArea.y, this.wetArea.w, this.wetArea.h);
+    if (area) ctx.clearRect(area.x, area.y, area.w, area.h);
+    this.wetArea = area;
+    if (!rect) return;
+    this.pageTransform(ctx, rect);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, rect.page.w, rect.page.h);
+    ctx.clip();
+    if (wet.style === 'marker' && isDark(rect.page.paper)) ctx.globalAlpha = 0.42;
+    drawWet(ctx, pts, wet.style, wet.color, wet.width, !!wet.snapped);
+    ctx.restore();
+  }
+
+  private paintLive() {
+    const ctx = this.liveCtx;
+    if (this.wet && !this.lasso && !this.selection && !this.playback && !this.flashing) {
+      const blend = this.wet.style === 'marker' && !isDark(this.wet.page.paper) ? 'multiply' : 'normal';
+      if (blend !== this.blend) {
+        this.blend = blend;
+        this.live.style.mixBlendMode = blend;
+      }
+      this.paintWetOnly();
+      return;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.live.width, this.live.height);
-    this.live.style.mixBlendMode = this.wet?.style === 'marker' && !isDark(this.wet.page.paper) ? 'multiply' : 'normal';
+    this.wetArea = null;
+    const blend = this.wet?.style === 'marker' && !isDark(this.wet.page.paper) ? 'multiply' : 'normal';
+    if (blend !== this.blend) {
+      this.blend = blend;
+      this.live.style.mixBlendMode = blend;
+    }
 
     if (this.wet) {
       const rect = this.rectOf(this.wet.page.id);
@@ -744,7 +817,7 @@ export class NoteCanvas {
         ctx.clip();
         const alpha = this.wet.style === 'marker' && isDark(rect.page.paper);
         if (alpha) ctx.globalAlpha = 0.42;
-        drawWet(ctx, this.wet.snapped ?? this.wet.pts, this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped);
+        drawWet(ctx, this.wet.snapped ?? this.wet.pts.concat(this.wet.predicted), this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped);
         ctx.restore();
       }
     }
@@ -928,6 +1001,7 @@ export class NoteCanvas {
   private onDown = (e: PointerEvent) => {
     if ((e.target as Element | null)?.closest?.('.nt-text-edit, .nt-text-grip')) return;
     if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return;
+    if (!this.wet && !this.erasing && !this.lasso && !this.touches.size) this.measure();
     // It throws for a pointer that's already gone, and that mustn't cost a stroke.
     try { this.host.setPointerCapture?.(e.pointerId); } catch { /* Then it just isn't captured. */ }
     const { x, y } = this.position(e);
@@ -1040,7 +1114,7 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch',
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', predicted: [],
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
@@ -1109,6 +1183,13 @@ export class NoteCanvas {
         wet.pts = carry;
       }
     }
+    wet.predicted = [];
+    if (!wet.snapped) {
+      for (const event of e.getPredictedEvents?.() ?? []) {
+        const { x, y } = this.position(event);
+        wet.predicted.push(...this.toPage(rect, x, y), pressureOf(event));
+      }
+    }
     this.requestLive();
   }
 
@@ -1137,9 +1218,41 @@ export class NoteCanvas {
     const now = Date.now();
     const element: StrokeElement = { id: newId(), kind: 'stroke', style, color: wet.color, width: wet.width, p: packPoints(pts), createdAt: wet.startedAt, updatedAt: now };
     this.addToCache(wet.page.id, element);
+    const drawnOnView = this.addToView(wet.page.id, element);
     this.doc.apply([{ type: 'element', page: wet.page.id, before: null, after: element }]);
+    if (drawnOnView) this.sharpKey = this.sharpFrameKey();
     this.events.onUndoState();
     this.requestPaint();
+  }
+
+  /**
+   * Zoomed in, the page on screen is drawn sharp, straight from its strokes, which takes a while
+   * on a full page. A new pen stroke goes on top of what's there instead of drawing it all again.
+   */
+  private addToView(page: string, element: StrokeElement) {
+    const rect = this.rectOf(page);
+    if (!rect || this.moving || this.isSharpAtThisZoom(rect.page) || element.style === 'marker' || element.style === 'tape') return false;
+    if (this.sharpKey !== this.sharpFrameKey()) return false;
+    const ctx = this.viewCtx;
+    const x = rect.x * this.z + this.camX;
+    const y = rect.y * this.z + this.camY;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.beginPath();
+    ctx.rect(x, y, rect.page.w * this.z, rect.page.h * this.z);
+    ctx.clip();
+    this.pageTransform(ctx, rect);
+    drawStroke(ctx, element, isDark(rect.page.paper));
+    ctx.restore();
+    return true;
+  }
+
+  /** What a sharp frame showed: if nothing in this has changed, it can stay as it is. */
+  private sharpKey = '';
+
+  private sharpFrameKey() {
+    const pages = this.visibleRects().map((r) => `${r.page.id}:${this.pageStamp(r.page.id)}`).join();
+    return `${this.camX}/${this.camY}/${this.z}/${this.width}/${this.height}/${this.cacheToken()}/${this.region?.key ?? ''}/${pages}`;
   }
 
   /** Save redrawing a page for one new line: add it to the page's picture if nothing else has changed. */

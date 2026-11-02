@@ -95,7 +95,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
   // ── Pen marks ────────────────────────────────────────────────────────────────
 
   const redrawRef = useRef<() => void>(() => {});
-  const { all, version, addInk, addNote, addSketch, editNote, remove, restore } = useBookItems(book.id, () => redrawRef.current());
+  const { all, version, addInk, addNote, addSketch, editNote, makeTyped, remove, restore } = useBookItems(book.id, () => redrawRef.current());
   const allRef = useRef(all);
   const settingsRef = useRef(settings);
 
@@ -298,10 +298,15 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       }
     };
 
-    const position = (e: PointerEvent) => {
+    // Where the page sits, measured when a touch starts rather than on every pencil event:
+    // measuring just after the screen has changed makes the browser lay it out mid-stroke.
+    let origin = { left: 0, top: 0 };
+    const measure = () => {
       const rect = stage.getBoundingClientRect();
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      origin = { left: rect.left, top: rect.top };
     };
+    measure();
+    const position = (e: PointerEvent) => ({ x: e.clientX - origin.left, y: e.clientY - origin.top });
 
     const paintLive = () => {
       liveFrame = 0;
@@ -384,8 +389,10 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
     };
 
     const onDown = (e: PointerEvent) => {
+      if (!stroke && erasing === null && !touches.size) measure();
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      layer.setPointerCapture?.(e.pointerId);
+      // It throws for a pointer that's already gone, and that mustn't cost a stroke.
+      try { layer.setPointerCapture?.(e.pointerId); } catch { /* Then it just isn't captured. */ }
       const { x, y } = position(e);
       if (e.pointerType === 'pen') {
         // The pencil always writes, and a palm that landed first stops counting.
@@ -754,6 +761,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
                   onAddSketch={(strokes, aspect) => addSketch(engineRef.current!.here(), strokes, aspect)}
                   onEdit={editNote}
                   onDelete={remove}
+                  onMakeTyped={makeTyped}
                 />
               )}
               {panel === 'look' && (

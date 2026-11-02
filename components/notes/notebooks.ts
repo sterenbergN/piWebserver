@@ -479,13 +479,7 @@ export async function pagesToLinkTo(notebook: string) {
 
 export { liveNotebooks };
 
-/** Read some handwriting now, on the server. */
-export async function readInk(strokes: { id: string; p: number[]; width: number }[]) {
-  const res = await fetch('/api/notes/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strokes }) });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || !body.success) throw new Error(body.message || 'That couldn’t be read.');
-  return body.text as string;
-}
+export { readInk } from './read-ink';
 
 export const isNotebook = (record: StoredLibrary): record is Notebook & StoredLibrary => record.kind === 'notebook' && !record.deleted;
 export const isFolder = (record: StoredLibrary): record is Folder & StoredLibrary => record.kind === 'folder' && !record.deleted;

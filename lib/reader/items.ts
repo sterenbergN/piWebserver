@@ -55,7 +55,7 @@ export type ReaderItem = {
   seq?: number;
   /** A typed note. */
   text?: string;
-  /** A handwritten note: strokes on a blank card, in card widths, `aspect` tall. */
+  /** A handwritten note: strokes on a blank card, in card widths, `aspect` tall. Its `text` is what the server read in it. */
   strokes?: Stroke[];
   aspect?: number;
   /** A mark on the page. */
@@ -227,7 +227,8 @@ export function cleanItem(raw: unknown, now: number): ReaderItem | null {
   if (!Array.isArray(r.strokes) || r.strokes.length > MAX_SKETCH_STROKES || !finite(r.aspect) || r.aspect <= 0 || r.aspect > 10) return null;
   const strokes = r.strokes.map(cleanStroke);
   if (strokes.includes(null)) return null;
-  return { ...base, strokes: strokes as Stroke[], aspect: r.aspect };
+  const text = typeof r.text === 'string' ? r.text.trim().slice(0, MAX_NOTE_CHARS) : '';
+  return { ...base, strokes: strokes as Stroke[], aspect: r.aspect, ...(text ? { text } : {}) };
 }
 
 /** Bring a device's changes into the stored notes, newest edit of each item winning. */

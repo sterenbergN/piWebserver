@@ -319,3 +319,18 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-stepper span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
 .rd-look .rd-tabs { display: flex; }
 .rd-look .rd-tabs button { flex: 1; }
+
+/* ─── Reading handwritten notes, and searching notes ─────────────────────── */
+
+.rd-note-reads { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-top: 0.4rem; }
+.rd-note-reads p { flex: 1 1 12rem; margin: 0; font-size: 0.9rem; line-height: 1.4; overflow-wrap: anywhere; }
+.rd-note-reads p span { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.03em; color: var(--rd-muted); margin-right: 0.2rem; }
+.rd-note-reads.is-waiting { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--rd-muted); }
+.rd-note-search { margin-bottom: 0.6rem; }
+.rd-notes-search { margin-bottom: 1rem; }
+.rd-notes-search .rd-input { max-width: 30rem; }
+.rd-notes-results { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.3rem; max-width: 46rem; }
+.rd-notes-results button { display: grid; gap: 0.15rem; width: 100%; min-height: 48px; padding: 0.5rem 0.7rem; border: 0; border-radius: 10px; background: var(--rd-surface); box-shadow: 0 0 0 1px var(--rd-line); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rd-notes-results strong { font-size: 0.92rem; font-weight: 600; }
+.rd-notes-results small { font-size: 0.78rem; color: var(--rd-muted); }
+.rd-notes-results span { font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
