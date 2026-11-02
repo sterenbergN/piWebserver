@@ -165,6 +165,15 @@ export default function Calculator() {
     setVersion((v) => v + 1);
   };
 
+  /** Bring a past sum back into the display to change its numbers. */
+  const reuse = (tree: MathRow) => {
+    fresh.current = false;
+    ed.load(tree);
+    setCopied(false);
+    setVersion((v) => v + 1);
+    field.current?.focus({ preventScroll: true });
+  };
+
   const press = (k: Key) => {
     if (k.special === 'second') { setSecond((v) => !v); return; }
     if (k.special === 'clear') { run((e) => e.clear()); return; }
@@ -181,6 +190,8 @@ export default function Calculator() {
     let act: Act | null = null;
     let carries = true;
     if (k === 'Enter' || k === '=') { e.preventDefault(); equals(); return; }
+    // Like a calculator's entry recall: ↑ after = (or on an empty display) brings the last sum back.
+    if (k === 'ArrowUp' && (fresh.current || ed.isEmpty()) && history[0]) { e.preventDefault(); reuse(history[0].tree); return; }
     if (k === 'Backspace') act = (x) => x.backspace();
     else if (k === 'ArrowLeft') act = (x) => x.left();
     else if (k === 'ArrowRight') act = (x) => x.right();
@@ -238,11 +249,14 @@ export default function Calculator() {
         </header>
 
         {history.length > 0 && (
-          <ol className="dq-calc-history" aria-label="Recent">
+          <ol className="dq-calc-history" aria-label="Recent sums">
             {history.map((h, i) => (
               <li key={i}>
-                <button type="button" title="Use this answer" onClick={() => run(text(fmt(h.value)))}>
-                  <span className="dq-mf"><Row row={h.tree} /></span> <strong>= {fmt(h.value)}</strong>
+                <button type="button" className="dq-calc-hist-expr" title="Edit this sum" aria-label={`Edit this sum (= ${fmt(h.value)})`} onClick={() => reuse(h.tree)}>
+                  <span className="dq-mf"><Row row={h.tree} /></span><span className="dq-calc-hist-edit" aria-hidden>edit</span>
+                </button>
+                <button type="button" className="dq-calc-hist-value" title="Insert this answer" aria-label={`Insert ${fmt(h.value)}`} onClick={() => run(text(fmt(h.value)))}>
+                  = {fmt(h.value)}
                 </button>
               </li>
             ))}

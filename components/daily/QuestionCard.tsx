@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import AnswerInput, { AnswerText, toResponse, type Draft } from './AnswerInput';
 import { MathText } from './MathText';
 import type { PartResult, PublicInput, PublicQuestion, QuestionStatus } from '@/lib/daily/grade';
@@ -223,33 +223,56 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
             </ul>
           </section>
 
-          {signedIn && answered.feedback && <FeedbackBox feedback={answered.feedback} onChange={onFeedback} />}
+          {signedIn && answered.feedback && <FeedbackBox feedback={answered.feedback} level={q.difficulty} onChange={onFeedback} />}
         </>
       )}
     </article>
   );
 }
 
-function FeedbackBox({ feedback, onChange }: { feedback: Feedback; onChange: (patch: Partial<Feedback>) => Promise<void> }) {
+const DIFFICULTY_VOTES = [
+  { id: 'easy', label: 'Too easy' },
+  { id: 'right', label: 'About right' },
+  { id: 'hard', label: 'Too hard' },
+] as const;
+
+function FeedbackBox({ feedback, level, onChange }: { feedback: Feedback; level: number; onChange: (patch: Partial<Feedback>) => Promise<void> }) {
   const [reporting, setReporting] = useState(false);
   const [kind, setKind] = useState<string>(REPORT_KINDS[0]);
   const [note, setNote] = useState('');
+  const id = useId();
 
   return (
     <section className="dq-feedback">
       <h3>How was this one?</h3>
-      <p className="dq-hint">Your ratings shape next week’s questions.</p>
-      <div className="dq-feedback-row">
-        <div className="dq-seg" role="radiogroup" aria-label="Difficulty">
-          {(['easy', 'right', 'hard'] as const).map((d) => (
-            <button key={d} type="button" role="radio" aria-checked={feedback.difficulty === d} onClick={() => onChange({ difficulty: d })}>
-              {d === 'easy' ? 'Too easy' : d === 'right' ? 'About right' : 'Too hard'}
-            </button>
+      <p className="dq-hint">Two separate questions, both optional. The weekly question writer reads them when it plans the next questions.</p>
+
+      <div className="dq-feedback-q">
+        <strong id={`${id}-difficulty`}>How hard was it for you?</strong>
+        <p className="dq-hint">
+          Go by how it felt to you, not by the {level}-of-5 rating. Mostly “too hard” moves this topic’s next questions down a level;
+          mostly “too easy” moves them up.
+        </p>
+        <div className="dq-seg" role="radiogroup" aria-labelledby={`${id}-difficulty`}>
+          {DIFFICULTY_VOTES.map((d) => (
+            <button key={d.id} type="button" role="radio" aria-checked={feedback.difficulty === d.id} onClick={() => onChange({ difficulty: d.id })}>{d.label}</button>
           ))}
         </div>
-        <div className="dq-thumbs">
-          <button type="button" aria-pressed={feedback.rating === 'up'} aria-label="Good question" onClick={() => onChange({ rating: feedback.rating === 'up' ? null : 'up' })}>👍</button>
-          <button type="button" aria-pressed={feedback.rating === 'down'} aria-label="Not a good question" onClick={() => onChange({ rating: feedback.rating === 'down' ? null : 'down' })}>👎</button>
+      </div>
+
+      <div className="dq-feedback-q">
+        <strong id={`${id}-rating`}>Was it a good question?</strong>
+        <p className="dq-hint">
+          Nothing to do with difficulty: was it clear, realistic and worth your time? 👍 asks for more like it; 👎 means
+          something was off (wordy, ambiguous, tedious arithmetic) and similar ones get avoided. Tap again to undo.
+        </p>
+        <div className="dq-thumbs" role="group" aria-labelledby={`${id}-rating`}>
+          <button type="button" aria-pressed={feedback.rating === 'up'} onClick={() => onChange({ rating: feedback.rating === 'up' ? null : 'up' })}>
+            <span aria-hidden>👍</span> Good question
+          </button>
+          <button type="button" aria-pressed={feedback.rating === 'down'} onClick={() => onChange({ rating: feedback.rating === 'down' ? null : 'down' })}>
+            <span aria-hidden>👎</span> Not great
+          </button>
         </div>
       </div>
       {feedback.report ? (

@@ -66,14 +66,14 @@ test('validateDay: zero answers need abs, figures need alt text, ids must be uni
 test('validateDay: solution figures must be SVG with alt text, and placed in the solution', () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
   const placed = 'Work.\n\n![](figure:resp)\n\nMore.';
-  const ok = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg, alt: 'A step response', caption: 'Marked', junk: 1 }] }) }));
+  const ok = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg, alt: 'A step response', caption: 'Marked', junk: 1 } as any] }) }));
   assert.deepEqual(ok.errors, []);
   assert.deepEqual(ok.day!.core.solutionFigures, [{ id: 'resp', svg, alt: 'A step response', caption: 'Marked' }]);
   const unplaced = validateDay(day({ core: question({ solutionFigures: [{ id: 'resp', svg, alt: 'x' }] }) }));
   assert.match(unplaced.errors.join(), /isn't placed/);
   const missing = validateDay(day({ core: question({ solution: placed }) }));
   assert.match(missing.errors.join(), /figure:resp, which isn't in solutionFigures/);
-  const bad = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg: '<img>' }] }) }));
+  const bad = validateDay(day({ core: question({ solution: placed, solutionFigures: [{ id: 'resp', svg: '<img>' } as any] }) }));
   assert.match(bad.errors.join(), /SVG markup and an alt/);
 });
 

@@ -66,3 +66,18 @@ test('backspace climbs out of boxes and removes empty ones', () => {
   root.backspace(); // takes the root off, keeps the 4
   assert.equal(root.toExpression(), '4');
 });
+
+test('load brings back a past sum to edit, without changing the saved copy', () => {
+  const ed = new MathEditor();
+  ed.insertText('9');
+  ed.insertFraction();
+  ed.insertText('4');
+  const saved = structuredClone(ed.root);
+  ed.setText('2.25');
+  ed.load(saved);
+  ed.left(); ed.backspace(); ed.insertText('3'); // 9/4 → 9/3
+  assert.equal(value(ed), 3);
+  const check = new MathEditor();
+  check.load(saved);
+  assert.equal(check.toExpression(), '((9)/(4))', 'the saved sum is unchanged');
+});

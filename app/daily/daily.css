@@ -197,13 +197,17 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-sources ul { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.9rem; }
 .dq-sources a { color: var(--accent-light); }
 .dq-feedback .dq-hint { margin: 0.2rem 0 0.6rem; }
-.dq-feedback-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.6rem; }
 .dq-seg { flex: 1 1 260px; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.25rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); }
 .dq-seg button { min-height: 36px; border: none; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
 .dq-seg button[aria-checked="true"] { background: rgba(var(--accent-rgb), 0.28); color: var(--foreground); }
 .dq-thumbs { display: flex; gap: 0.35rem; }
-.dq-thumbs button { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); font-size: 1.15rem; cursor: pointer; filter: grayscale(0.7); }
-.dq-thumbs button[aria-pressed="true"] { filter: none; border-color: var(--accent-light); background: rgba(var(--accent-rgb), 0.18); }
+.dq-feedback-q { margin-bottom: 1rem; }
+.dq-feedback-q > strong { display: block; font-size: 0.92rem; }
+.dq-feedback-q .dq-seg { max-width: 420px; }
+.dq-thumbs button { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 40px; padding: 0 0.85rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--muted); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+.dq-thumbs button > span { font-size: 1.05rem; filter: grayscale(0.7); }
+.dq-thumbs button[aria-pressed="true"] { color: var(--foreground); border-color: var(--accent-light); background: rgba(var(--accent-rgb), 0.18); }
+.dq-thumbs button[aria-pressed="true"] > span { filter: none; }
 .dq-report { display: flex; flex-direction: column; gap: 0.5rem; }
 
 /* Archive */
@@ -296,10 +300,14 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-calc-close { margin-left: auto; width: 32px; height: 32px; border: none; border-radius: 10px; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }
 .dq-calc-close:hover { background: var(--surface-hover); color: var(--foreground); }
 .dq-calc-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.dq-calc-history button { width: 100%; display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0.3rem; border: none; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; cursor: pointer; text-align: left; }
-.dq-calc-history .dq-mf { flex: 1; min-width: 0; justify-content: flex-start; overflow: hidden; font-size: 0.8rem; }
-.dq-calc-history button strong { white-space: nowrap; color: var(--foreground); font-weight: 600; }
+.dq-calc-history li { display: flex; align-items: center; justify-content: space-between; gap: 0.25rem; }
+.dq-calc-history button { display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.3rem; border: none; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; cursor: pointer; text-align: left; }
 .dq-calc-history button:hover { background: var(--surface-hover); }
+.dq-calc-hist-expr { flex: 0 1 auto; min-width: 0; }
+.dq-calc-history .dq-mf { flex: 1; min-width: 0; justify-content: flex-start; overflow: hidden; font-size: 0.8rem; }
+.dq-calc-hist-edit { flex-shrink: 0; padding: 0 0.35rem; border-radius: 999px; border: 1px solid var(--surface-border); color: var(--accent-light); font-size: 0.68rem; line-height: 1.4; opacity: 0.75; }
+.dq-calc-hist-expr:hover .dq-calc-hist-edit { opacity: 1; }
+.dq-calc-hist-value { flex-shrink: 0; white-space: nowrap; color: var(--foreground) !important; font-weight: 600; }
 .dq-calc-input { min-height: 3.2rem; padding: 0.55rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); cursor: text; font-size: 1.15rem; }
 .dq-calc-input:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 1px; }
 /* The expression, with fractions, roots and powers drawn as boxes. */

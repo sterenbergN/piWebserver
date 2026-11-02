@@ -69,6 +69,12 @@ export class MathEditor {
 
   clear() { this.root.length = 0; this.cursor = { row: this.root, i: 0 }; }
 
+  /** Replace the expression with a copy of `tree` (a past sum, to edit), cursor at the end. */
+  load(tree: MathRow) {
+    this.root.splice(0, this.root.length, ...structuredClone(tree));
+    this.cursor = { row: this.root, i: this.root.length };
+  }
+
   setText(text: string) {
     this.clear();
     this.insertText(text);
