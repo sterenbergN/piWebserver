@@ -127,7 +127,7 @@ function TriviaCard({ options }: { options: Options }) {
         <span className="ns-card-icon"><Icon name="skull" /></span>
         <div>
           <h2>Trivia Death, study edition</h2>
-          <p className="hb-hint">The party game with your questions, for a study group of 3 to 8 with their phones. Everyone sees the explanation after each round. Join from a phone signed in to your account, and your answers count toward your miss bank.</p>
+          <p className="hb-hint">The party game with your questions, for a study group of 3 to 8 with their phones. Everyone sees the explanation after each round, and the host can pause to talk it through. Join from a phone signed in to your account, and your answers count toward your miss bank.</p>
         </div>
       </div>
       <Scope options={options} course={course} system={system} setCourse={setCourse} setSystem={setSystem} />

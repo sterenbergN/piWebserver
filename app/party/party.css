@@ -2169,3 +2169,8 @@ body.party-tv .host-stage { padding-bottom: 5.5rem; }
 .party-switcher { display: flex; flex-direction: column; gap: 0.55rem; align-items: center; width: 100%; }
 .party-switcher-group { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; width: 100%; }
 .party-switcher-games { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35rem; }
+
+/* ── A paused game: the screen stays up to talk over, but nothing can be tapped. ── */
+.party-paused { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0.2rem 0.6rem; padding: 0.5rem 1rem; background: var(--party-yellow); color: #000; font-size: 0.9rem; font-weight: 600; text-align: center; }
+.party-paused strong { font-family: var(--party-font-display); font-size: 1.05rem; font-weight: 900; }
+.party-locked { opacity: 0.65; }

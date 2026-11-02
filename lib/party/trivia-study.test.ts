@@ -2,6 +2,7 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { triviaDeathLogic } from './games/trivia-death';
 import { hostView } from './engine';
+import { canPause, pauseGame, resumeGame } from './pause';
 import type { GameState } from './types';
 
 // Trivia Death with a host's own study questions.
@@ -61,6 +62,34 @@ test('a regular game is unchanged', async () => {
   assert.equal(state.hostData.timerDuration, 6);
   assert.equal(state.hostData.explanation, undefined);
   assert.equal(state.playerData.a.study, undefined);
+});
+
+test('a pause takes the deadline away, and resuming gives back the time that was left', async () => {
+  const state = room();
+  await triviaDeathLogic.onStart(state);
+  const { timerStart, autoAdvanceAt, autoAdvanceAction } = state.hostData;
+  assert.ok(canPause(state));
+
+  pauseGame(state, timerStart + 10_000);
+  assert.equal(state.hostData.autoAdvanceAt, undefined, 'nothing left for a timer to fire');
+  assert.equal(state.hostData.autoAdvanceAction, undefined, 'and nothing for Skip to send');
+  assert.equal(state.hostData.question, 'Study question 0', 'the question stays on screen');
+  assert.ok(!canPause(state), 'already paused');
+
+  resumeGame(state, timerStart + 70_000);
+  assert.equal(state.paused, undefined);
+  assert.equal(state.hostData.autoAdvanceAt, autoAdvanceAt + 60_000);
+  assert.equal(state.hostData.autoAdvanceAction, autoAdvanceAction);
+  assert.equal(state.hostData.timerStart, timerStart + 60_000);
+  assert.equal(state.playerData.a.timerStart, state.hostData.timerStart);
+});
+
+test('only a timed moment in Trivia Death can pause', async () => {
+  const lobby = room();
+  assert.ok(!canPause(lobby), 'no clock in the lobby');
+  const state = room();
+  await triviaDeathLogic.onStart(state);
+  assert.ok(!canPause({ ...state, gameType: 'quip-clash' }), 'other games keep running');
 });
 
 test('the TV never gets the deck itself', () => {

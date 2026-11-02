@@ -19,6 +19,7 @@ import { GAME_CATALOG, GAME_INFO } from './catalog';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
 import { AVATARS, isAvatar, isReaction } from './avatars';
+import { canPause, pauseGame, resumeGame } from './pause';
 import { getPrompts, listPacks } from './prompts';
 
 const DATA_DIR = path.join(process.cwd(), '.data', 'party');
@@ -314,6 +315,7 @@ export function audienceView(state: GameState, audienceId: string) {
     gameType: state.gameType,
     phase: state.phase,
     me,
+    paused: !!state.paused,
     players: Object.values(state.players).map(({ id, name, score, avatarColor }) => ({ id, name, score, avatarColor })),
     audienceSize: members.length,
     audienceLeaders: members.filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map(({ name, score }) => ({ name, score })),
@@ -504,6 +506,7 @@ function resetToLobby(state: GameState) {
     if (state.players[pid]?.left) purgePlayer(state, pid);
   }
   state.phase = 'LOBBY';
+  delete state.paused;
   state.hostData = {};
   state.playerData = {};
   state.gameData = {
@@ -558,6 +561,7 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         return res;
       }
       if (action.type !== 'AUDIENCE_VOTE') return { success: false, error: 'The audience can only vote' };
+      if (state.paused) return { success: false, error: 'The game is paused' };
       if (!recordAudienceVote(state, audienceId, action.choice)) return { success: false, error: 'Voting is closed' };
       await saveGameState(state);
       return { success: true };
@@ -615,6 +619,16 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         state.gameData = { ...(state.gameData || {}), baseScores };
         break;
       }
+      case 'PAUSE_GAME':
+        // A double tap isn't a mistake worth showing.
+        if (state.paused) return { success: true };
+        if (!canPause(state)) return { success: false, error: 'This can’t be paused right now' };
+        pauseGame(state);
+        break;
+      case 'RESUME_GAME':
+        if (!state.paused) return { success: true };
+        resumeGame(state);
+        break;
       case 'QUIT_GAME':
         resetToLobby(state);
         break;
@@ -653,6 +667,8 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         break;
       }
       default:
+        // Nothing moves while the clock is stopped, including answers and Skip.
+        if (state.paused) return { success: false, error: 'The game is paused' };
         await LOGIC[state.gameType].processAction(state, playerId, action);
     }
 

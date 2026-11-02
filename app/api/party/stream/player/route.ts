@@ -97,6 +97,7 @@ export async function GET(request: Request) {
           settings: state.settings,
           audienceSize: Object.keys(state.audience || {}).length,
           hostData: state.hostData || {},
+          paused: state.paused || null,
           baseScores: state.gameData?.baseScores || null,
           targetRounds: state.gameData?.targetRounds || null,
           kartConfig: state.gameType === 'kart-clash' ? {

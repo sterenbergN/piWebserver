@@ -9,6 +9,7 @@ type AudienceState = {
   roomCode: string;
   gameType: string;
   phase: string;
+  paused: boolean;
   me: { id: string; name: string; score: number };
   players: { id: string; name: string; score: number; avatarColor: string }[];
   audienceSize: number;
@@ -104,6 +105,12 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
           </div>
         </div>
       </div>
+      {state.paused && (
+        <div className="party-paused party-content" role="status">
+          <strong>⏸️ Paused</strong>
+          <span>Votes are locked until the host starts the clock again.</span>
+        </div>
+      )}
       {reconnecting && (
         <div role="status" style={{ background: 'var(--party-yellow)', color: '#000', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem', padding: '0.35rem' }}>Reconnecting…</div>
       )}
@@ -117,7 +124,7 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
               {state.poll.choices.map((c) => {
                 const mine = state.poll!.myChoice === c.id;
                 return (
-                  <button key={c.id} className={state.poll!.choices.length > 4 ? 'player-faker-vote-btn' : 'player-vote-btn'} disabled={pending !== null}
+                  <button key={c.id} className={state.poll!.choices.length > 4 ? 'player-faker-vote-btn' : 'player-vote-btn'} disabled={pending !== null || state.paused}
                     aria-pressed={mine}
                     style={mine ? { outline: '3px solid var(--party-cyan)', outlineOffset: 2 } : undefined}
                     onClick={() => vote(c.id)}>

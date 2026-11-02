@@ -234,7 +234,8 @@ on the map.
   case. Each answer is saved as she goes. The run itself isn't saved, so leaving ends it.
 - **Trivia Death, study edition.** Opened from Games, she picks a class or system, 30 to
   90 seconds a question, and TV or phones. The explanation shows on the TV and phones
-  after each round, which stays up for 15 seconds. It needs 11 questions with one right
+  after each round, which stays up for 15 seconds unless the host pauses to talk it
+  through (`lib/party/pause.ts`). A pause freezes the clock and locks answers. It needs 11 questions with one right
   answer; select-all questions are left out, and five-choice ones drop to four. Only
   regular rounds are saved, not the final escape or Killing Floor mini-games.
 - **Whose answers count.** Each phone sends its answer to its own account, and the server

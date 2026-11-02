@@ -73,6 +73,8 @@ export interface GameState {
   };
   /** The questions behind `settings.study`. Answers are in here, so it never leaves the server. */
   studyDeck?: TriviaStudyQuestion[];
+  /** The host has stopped the clock. Holds the deadline to put back on resuming (see pause.ts). */
+  paused?: { at: number; autoAdvanceAt: number; autoAdvanceAction: string };
   // Game-specific data for the host
   hostData: any;
   // Game-specific data tailored for players (playerId -> data)

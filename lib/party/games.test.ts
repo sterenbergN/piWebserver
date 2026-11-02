@@ -277,6 +277,50 @@ test('in-session profile updates, leaving rooms, closing rooms, and disconnected
   assert.equal((await engine.checkRoomSeat(roomCode, { hostId })).valid, false);
 });
 
+test('Trivia Death: while paused only the host can restart it, and nothing else moves', async () => {
+  const { roomCode, hostId } = await engine.createRoom('trivia-death');
+  const keys: string[] = [];
+  for (const name of ['Ann', 'Bo', 'Cy']) {
+    const joined = await engine.joinRoom(roomCode, name);
+    assert.ok('playerId' in joined);
+    keys.push(joined.playerId);
+  }
+  const audience = await engine.joinRoom(roomCode, 'Viewer', { asAudience: true });
+  assert.ok('playerId' in audience);
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'PAUSE_GAME' }), { success: false, error: 'This can’t be paused right now' }, 'not from the lobby');
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+
+  assert.equal((await engine.processAction(roomCode, keys[0], { type: 'PAUSE_GAME' })).success, false, 'players can’t');
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'PAUSE_GAME' }), { success: true });
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'PAUSE_GAME' }), { success: true }, 'a double tap is harmless');
+
+  const held = (await engine.getGameState(roomCode))!;
+  assert.equal(held.phase, 'QUESTION');
+  const before = held.paused!.autoAdvanceAt;
+  const paused = { success: false, error: 'The game is paused' };
+  assert.deepEqual(await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_TRIVIA_ANSWER', answer: 0 }), paused);
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'FORCE_TRIVIA_REVEAL' }), paused, 'no skipping past a pause');
+  assert.deepEqual(await engine.processAction(roomCode, audience.playerId, { type: 'AUDIENCE_VOTE', choice: '0' }), paused);
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'FORCE_TRIVIA_REVEAL', deadline: before }), { success: true }, 'a timer already on its way is ignored');
+  const still = (await engine.getGameState(roomCode))!;
+  assert.equal(still.phase, 'QUESTION');
+  assert.deepEqual(still.gameData.currentAnswers, {});
+  assert.equal(engine.audienceView(still, Object.keys(still.audience!)[0]).paused, true);
+
+  assert.equal((await engine.processAction(roomCode, keys[0], { type: 'RESUME_GAME' })).success, false, 'players can’t resume either');
+  assert.deepEqual(await engine.processAction(roomCode, hostId, { type: 'RESUME_GAME' }), { success: true });
+  const back = (await engine.getGameState(roomCode))!;
+  assert.equal(back.paused, undefined);
+  assert.ok(back.hostData.autoAdvanceAt >= before);
+  assert.deepEqual(await engine.processAction(roomCode, keys[0], { type: 'SUBMIT_TRIVIA_ANSWER', answer: 0 }), { success: true });
+  assert.equal((await engine.getGameState(roomCode))!.gameData.currentAnswers[Object.keys(back.players)[0]], 0);
+
+  await engine.processAction(roomCode, hostId, { type: 'PAUSE_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'QUIT_GAME' });
+  assert.equal((await engine.getGameState(roomCode))!.paused, undefined, 'ending the game ends the pause');
+  await engine.processAction(roomCode, hostId, { type: 'CLOSE_ROOM' });
+});
+
 test('Spyfall: discussion, spy location guess, and voting flow', async () => {
   const { roomCode, hostId } = await engine.createRoom('spyfall');
   const p1 = (await engine.joinRoom(roomCode, 'Alice')) as { playerId: string };

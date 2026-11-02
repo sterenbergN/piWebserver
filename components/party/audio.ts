@@ -147,6 +147,14 @@ class PartyAudio {
     if (!prefs.voice && typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
   }
 
+  /** Quiet the room for a pause. `resumeMusic` picks the music back up. */
+  hush() {
+    const m = this.mood;
+    this.music(null);
+    this.mood = m;
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+  }
+
   resumeMusic() {
     const m = this.mood;
     this.mood = null;

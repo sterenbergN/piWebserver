@@ -19,10 +19,11 @@ function EmojiText({ text }: { text: string }) {
   return <>{String(text ?? '').split(EMOJI_RUN).map((part, i) => (i % 2 ? <span key={i} className="host-emoji">{part}</span> : part))}</>;
 }
 
-function useCountdown(timerStart?: number, timerDuration?: number) {
+function useCountdown(timerStart?: number, timerDuration?: number, pausedAt?: number) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   useEffect(() => {
     if (!timerStart || !timerDuration) { setSecondsLeft(null); return; }
+    if (pausedAt) { setSecondsLeft(Math.max(0, timerDuration - (pausedAt - timerStart) / 1000)); return; }
     const tick = () => {
       const elapsed = (Date.now() - timerStart) / 1000;
       setSecondsLeft(Math.max(0, timerDuration - elapsed));
@@ -30,7 +31,7 @@ function useCountdown(timerStart?: number, timerDuration?: number) {
     tick();
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
-  }, [timerStart, timerDuration]);
+  }, [timerStart, timerDuration, pausedAt]);
   const pct = (timerStart && timerDuration && secondsLeft !== null)
     ? (secondsLeft / timerDuration) * 100 : 100;
   return { secondsLeft, pct };
@@ -162,7 +163,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   const phaseRef = useRef('');
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration);
+  const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration, state?.paused?.at);
   useImmersive('party-tv');
   const show = useShowDirector(state, secondsLeft);
 
@@ -244,6 +245,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
     ? 'FINISH_KART_RACE'
     : state?.hostData?.autoAdvanceAction;
   const canSkip = isPlaying && skipAction && skipAction !== 'RACE_TICK';
+  const canPause = isPlaying && state?.gameType === 'trivia-death' && (state?.paused || state?.hostData?.autoAdvanceAt);
   // The race takes over the whole screen, so the usual top bar and score strip step aside
   const kartRacing = state?.gameType === 'kart-clash' && state?.phase === 'RACING';
   const currentMeta = HOST_GAME_META[state?.gameType] || HOST_GAME_META['quip-clash'];
@@ -320,6 +322,15 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             >
               ❓ How to Play
             </button>
+            {canPause && (
+              <button
+                onClick={() => sendAction({ type: state.paused ? 'RESUME_GAME' : 'PAUSE_GAME' })}
+                title={state.paused ? 'Start the clock again' : 'Stop the clock to talk something through'}
+                style={{ background: state.paused ? 'var(--party-yellow)' : 'rgba(255,255,255,0.1)', border: `2px solid ${state.paused ? 'var(--party-yellow)' : 'var(--party-border)'}`, borderRadius: '12px', color: state.paused ? '#000' : 'var(--party-text)', fontWeight: 800, padding: '0.6rem 1rem', cursor: 'pointer' }}
+              >
+                {state.paused ? '▶️ Resume' : '⏸️ Pause'}
+              </button>
+            )}
             {canSkip && (
               <button
                 onClick={() => sendAction({ type: skipAction })}
@@ -339,6 +350,13 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
           <SoundBar prefs={show.prefs} setPrefs={show.setPrefs} soundOn={show.soundOn} enableSound={show.enableSound} />
         </div>
       </div>}
+
+      {state.paused && (
+        <div className="party-paused party-content" role="status">
+          <strong>⏸️ Paused</strong>
+          <span>Take your time. The clock picks up where it stopped.</span>
+        </div>
+      )}
 
       <div className="host-stage party-content">
         {/* ===== LOBBY ===== */}

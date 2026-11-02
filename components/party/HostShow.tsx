@@ -16,6 +16,7 @@ type HostState = {
   players: Record<string, Player>;
   playerOrder: string[];
   hostData: any;
+  paused?: unknown;
   reactions?: Reaction[];
 };
 
@@ -187,8 +188,17 @@ export function useShowDirector(state: HostState | null, secondsLeft: number | n
   const setPrefs = (next: SoundPrefs) => {
     setPrefsState(next);
     partyAudio.setPrefs(next);
-    if (next.music && state) partyAudio.resumeMusic();
+    if (next.music && state && !state.paused) partyAudio.resumeMusic();
   };
+
+  // A pause goes quiet, and the music comes back with the clock.
+  const paused = !!state?.paused;
+  const wasPaused = useRef(false);
+  useEffect(() => {
+    if (paused) partyAudio.hush();
+    else if (wasPaused.current) partyAudio.resumeMusic();
+    wasPaused.current = paused;
+  }, [paused]);
 
   // New players: a pop and a welcome.
   useEffect(() => {

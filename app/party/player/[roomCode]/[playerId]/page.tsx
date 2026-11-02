@@ -33,10 +33,11 @@ function capGraphemes(text: string, max: number) {
   return parts.length > max ? parts.slice(0, max).join('') : text;
 }
 
-function useCountdown(timerStart?: number, timerDuration?: number) {
+function useCountdown(timerStart?: number, timerDuration?: number, pausedAt?: number) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   useEffect(() => {
     if (!timerStart || !timerDuration) { setSecondsLeft(null); return; }
+    if (pausedAt) { setSecondsLeft(Math.max(0, timerDuration - (pausedAt - timerStart) / 1000)); return; }
     const tick = () => {
       const elapsed = (Date.now() - timerStart) / 1000;
       setSecondsLeft(Math.max(0, timerDuration - elapsed));
@@ -44,7 +45,7 @@ function useCountdown(timerStart?: number, timerDuration?: number) {
     tick();
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [timerStart, timerDuration]);
+  }, [timerStart, timerDuration, pausedAt]);
   const pct = (timerStart && timerDuration && secondsLeft !== null)
     ? (secondsLeft / timerDuration) * 100 : 100;
   return { secondsLeft, pct };
@@ -130,7 +131,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     fetch('/api/party/packs').then(r => r.json()).then(d => { if (d.success) setPacks(d.packs); }).catch(() => {});
   }, [hostId]);
 
-  const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration);
+  const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration, state?.paused?.at);
 
   // Vibrate when a new screen asks for input.
   const inputPhases = [
@@ -274,6 +275,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     ? 'FINISH_KART_RACE'
     : hd?.autoAdvanceAction;
   const canSkip = !!hostId && isPlaying && skipAction && skipAction !== 'RACE_TICK';
+  const paused = !!state.paused;
+  const canPause = !!hostId && isPlaying && state.gameType === 'trivia-death' && (paused || hd?.autoAdvanceAt);
   const currentGameInfo = ALL_GAMES.find((g) => g.id === state.gameType) || ALL_GAMES[0];
   const PACK_LIST_KEY: Record<string, string> = {
     'quip-clash': 'quipClash',
@@ -361,6 +364,15 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           )}
           {hostId && (
             <div style={{ display: 'flex', gap: '0.4rem', marginLeft: 'auto' }}>
+              {canPause && (
+                <button
+                  type="button"
+                  onClick={() => sendHostAction({ type: paused ? 'RESUME_GAME' : 'PAUSE_GAME' })}
+                  style={{ background: paused ? 'var(--party-yellow)' : 'rgba(255,255,255,0.1)', border: `1px solid ${paused ? 'var(--party-yellow)' : 'var(--party-border)'}`, borderRadius: '8px', color: paused ? '#000' : 'var(--party-text)', fontSize: '0.75rem', fontWeight: 800, padding: '0.25rem 0.6rem', cursor: 'pointer' }}
+                >
+                  {paused ? '▶️ Resume' : '⏸️ Pause'}
+                </button>
+              )}
               {canSkip && (
                 <button
                   type="button"
@@ -382,6 +394,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         </div>
       )}
 
+      {paused && (
+        <div className="party-paused party-content" role="status">
+          <strong>⏸️ Paused</strong>
+          <span>{hostId ? 'Tap Resume when you’re ready. The clock picks up where it stopped.' : 'Answers are locked until the host starts the clock again.'}</span>
+        </div>
+      )}
       {reconnecting && (
         <div role="status" style={{ background: 'var(--party-yellow)', color: '#000', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem', padding: '0.35rem' }}>
           Reconnecting…
@@ -984,7 +1002,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
         {/* ===== TRIVIA DEATH — MURDER HOTEL ===== */}
         {(pd?.phase === 'QUESTION' || pd?.phase === 'FINAL_ESCAPE') && state.gameType === 'trivia-death' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div inert={paused} className={paused ? 'party-locked' : undefined} style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             {pd.status === 'ghost' && (
               <div className="player-ghost-streak">
                 <span>👻</span>
@@ -1059,7 +1077,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           </div>
         )}
         {pd?.phase === 'KILLING_FLOOR' && state.gameType === 'trivia-death' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div inert={paused} className={paused ? 'party-locked' : undefined} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
             {pd.isOnFloor ? (
               <>
                 <div style={{ fontFamily: 'var(--party-font-display)', fontWeight: 900, fontSize: '1.3rem', color: 'var(--party-red)', textAlign: 'center', marginBottom: '0.5rem' }}>THE KILLING FLOOR</div>
