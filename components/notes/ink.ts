@@ -65,14 +65,22 @@ export function outlineCommands(outline: number[][]) {
   return commands;
 }
 
-export function outlineOf(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean) {
+/** Which ends of a piece of a line are the line's real ends: a middle piece has plain round ends, so pieces join without a seam. */
+export type Ends = { start: boolean; end: boolean };
+const PLAIN_END = { cap: true, taper: 0 };
+
+export function outlineOf(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends: Ends = { start: true, end: true }) {
   const options = STROKE_OPTIONS[style === 'shape' ? 'ball' : style];
-  return getStroke(triples(pts), { ...options, size: width, last: finished }) as number[][];
+  return getStroke(triples(pts), {
+    ...options, size: width, last: finished,
+    ...(ends.start ? {} : { start: PLAIN_END }),
+    ...(ends.end ? {} : { end: PLAIN_END }),
+  }) as number[][];
 }
 
-function filledPath(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean) {
+function filledPath(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends?: Ends) {
   const path = new Path2D();
-  for (const command of outlineCommands(outlineOf(pts, style, width, finished))) {
+  for (const command of outlineCommands(outlineOf(pts, style, width, finished, ends))) {
     if (command[0] === 'M') path.moveTo(command[1], command[2]);
     else if (command[0] === 'L') path.lineTo(command[1], command[2]);
     else if (command[0] === 'Q') path.quadraticCurveTo(command[1], command[2], command[3], command[4]);
@@ -129,7 +137,7 @@ export function drawStroke(ctx: CanvasRenderingContext2D, stroke: StrokeElement,
 }
 
 /** The line still being drawn. `flat` is for one that's been snapped to a clean shape. */
-export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, style: StrokeStyle, color: string, width: number, flat: boolean) {
+export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, style: StrokeStyle, color: string, width: number, flat: boolean, ends?: Ends) {
   // On the live layer, which is blended by CSS, so a marker needs no blending of its own.
   if (flat || style === 'shape') {
     ctx.strokeStyle = color;
@@ -140,7 +148,7 @@ export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, s
     return;
   }
   ctx.fillStyle = color;
-  ctx.fill(filledPath(pts, style, width, false));
+  ctx.fill(filledPath(pts, style, width, false, ends));
 }
 
 // ── Text ─────────────────────────────────────────────────────────────────────────

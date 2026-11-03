@@ -53,6 +53,8 @@ export type EngineSettings = {
   fingerDraws: 'auto' | 'on' | 'off';
   gestures: Record<GestureName, GestureAction>;
   snapShapes: boolean;
+  /** Draw a little way along where the browser expects the pencil to go next. */
+  drawAhead: boolean;
 };
 
 export type SelectionInfo = { count: number; rect: Box; hasImage: boolean; hasText: boolean; hasStroke: boolean; mark: MarkElement | null };
@@ -88,6 +90,12 @@ const QUICK_TAP_MOVE_PIXELS = 18;
 const PEN_QUIET_MS = 450;
 const SETTLE_MS = 140;
 const HOLD_MS = 550;
+/** Points written before the oldest of them are drawn for good, how many stay redrawn each frame, and how far the two overlap. */
+const SETTLE_AFTER = 48;
+const KEEP_WET = 20;
+const OVERLAP = 4;
+/** How far ahead of the pencil the browser's guess may be drawn, in screen pixels: further is likely wrong. */
+const AHEAD_PIXELS = 18;
 const HOLD_FINGER_MS = 500;
 const DOUBLE_TAP_MS = 280;
 const HOLD_STILL_PIXELS = 3;
@@ -115,6 +123,10 @@ type Wet = {
   anchorX: number;
   anchorY: number;
   isFinger: boolean;
+  /** How many points are already drawn for good on the settled layer: only the rest is redrawn each frame. */
+  settledPoints: number;
+  /** Where the browser expects the pencil next, when drawing ahead is on. Drawn, never saved. */
+  predicted: number[];
 };
 
 type Selection = {
@@ -132,8 +144,11 @@ const pressureOf = (e: PointerEvent) => (e.pointerType === 'pen' && e.pressure >
 export class NoteCanvas {
   private view: HTMLCanvasElement;
   private live: HTMLCanvasElement;
+  /** The part of the line being written that is well behind the pencil, drawn once. */
+  private settled: HTMLCanvasElement;
   private viewCtx: CanvasRenderingContext2D;
   private liveCtx: CanvasRenderingContext2D;
+  private settledCtx: CanvasRenderingContext2D;
   private assets: Assets;
   private rects: PageRect[] = [];
   private contentW = 612;
@@ -185,11 +200,14 @@ export class NoteCanvas {
     this.settings = settings;
     this.view = document.createElement('canvas');
     this.live = document.createElement('canvas');
+    this.settled = document.createElement('canvas');
+    this.settled.className = 'nt-live';
     this.view.className = 'nt-view';
     this.live.className = 'nt-live';
-    host.append(this.view, this.live);
+    host.append(this.view, this.settled, this.live);
     this.viewCtx = this.view.getContext('2d', { alpha: false })!;
     this.liveCtx = this.live.getContext('2d')!;
+    this.settledCtx = this.settled.getContext('2d')!;
     this.assets = new Assets(doc.notebook, () => this.invalidateAll());
     try { this.penSeen = localStorage.getItem(PEN_SEEN_KEY) === 'yes'; } catch { /* Private browsing: it'll notice again. */ }
 
@@ -231,6 +249,7 @@ export class NoteCanvas {
     this.cancelFingerHold();
     this.view.remove();
     this.live.remove();
+    this.settled.remove();
     this.assets.destroy();
     this.caches.clear();
   }
@@ -266,7 +285,7 @@ export class NoteCanvas {
     this.width = width;
     this.height = height;
     this.dpr = Math.min(window.devicePixelRatio || 1, 3);
-    for (const canvas of [this.view, this.live]) {
+    for (const canvas of [this.view, this.settled, this.live]) {
       canvas.width = Math.round(width * this.dpr);
       canvas.height = Math.round(height * this.dpr);
       canvas.style.width = `${width}px`;
@@ -770,13 +789,34 @@ export class NoteCanvas {
   private wetArea: { x: number; y: number; w: number; h: number } | null = null;
 
   /** Just the wet line, drawn over only the part it covers. The common case while writing, so it's kept cheap. */
+  /**
+   * The line being written. Working out a pen line's outline costs more the longer it gets, and
+   * doing it all again every frame made long strokes stutter. So once a stretch of it is well
+   * behind the pencil, it's drawn once onto the settled layer, and each frame only redraws the
+   * last stretch, over a small area: the same small cost however long the stroke.
+   */
   private paintWetOnly() {
     const wet = this.wet!;
     const rect = this.rectOf(wet.page.id);
     const ctx = this.liveCtx;
+    const started = performance.now();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const pts = wet.snapped ?? wet.pts;
-    const box = boundsOf(pts, wet.width * 2);
+    const pen = !wet.snapped && (wet.style === 'ball' || wet.style === 'fountain' || wet.style === 'brush');
+    const camera = `${this.camX},${this.camY},${this.z}`;
+    if (this.settledDirty && (!pen || camera !== this.settledCamera)) this.clearSettled();
+    if (!this.settledDirty) wet.settledPoints = 0;
+    this.settledCamera = camera;
+    const count = wet.pts.length / 3;
+    if (rect && pen && count - wet.settledPoints > SETTLE_AFTER) {
+      const upTo = count - KEEP_WET;
+      const from = Math.max(0, wet.settledPoints - OVERLAP);
+      this.drawPiece(this.settledCtx, rect, wet, wet.pts.slice(from * 3, upTo * 3), { start: from === 0, end: false });
+      wet.settledPoints = upTo;
+      this.settledDirty = true;
+    }
+    const tailFrom = pen ? Math.max(0, wet.settledPoints - OVERLAP) : 0;
+    const tail = wet.snapped ?? (tailFrom || wet.predicted.length ? wet.pts.slice(tailFrom * 3).concat(wet.predicted) : wet.pts);
+    const box = boundsOf(tail, wet.width * 2);
     const dpr = this.dpr;
     const area = rect ? {
       x: Math.floor(((rect.x + box.x) * this.z + this.camX) * dpr) - 2,
@@ -787,15 +827,30 @@ export class NoteCanvas {
     if (this.wetArea) ctx.clearRect(this.wetArea.x, this.wetArea.y, this.wetArea.w, this.wetArea.h);
     if (area) ctx.clearRect(area.x, area.y, area.w, area.h);
     this.wetArea = area;
-    if (!rect) return;
+    if (rect) this.drawPiece(ctx, rect, wet, tail, { start: tailFrom === 0, end: true });
+    this.strokeLog.drawMs = Math.max(this.strokeLog.drawMs, performance.now() - started);
+  }
+
+  private drawPiece(ctx: CanvasRenderingContext2D, rect: PageRect, wet: Wet, pts: number[], ends: { start: boolean; end: boolean }) {
     this.pageTransform(ctx, rect);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, rect.page.w, rect.page.h);
     ctx.clip();
     if (wet.style === 'marker' && isDark(rect.page.paper)) ctx.globalAlpha = 0.42;
-    drawWet(ctx, pts, wet.style, wet.color, wet.width, !!wet.snapped);
+    drawWet(ctx, pts, wet.style, wet.color, wet.width, !!wet.snapped, ends);
     ctx.restore();
+  }
+
+  private settledDirty = false;
+  private settledCamera = '';
+
+  /** The settled layer is only for the line being written: once it's on the page, it goes. */
+  private clearSettled() {
+    if (!this.settledDirty) return;
+    this.settledCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this.settledCtx.clearRect(0, 0, this.settled.width, this.settled.height);
+    this.settledDirty = false;
   }
 
   private paintLive() {
@@ -809,6 +864,7 @@ export class NoteCanvas {
       this.paintWetOnly();
       return;
     }
+    this.clearSettled();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.live.width, this.live.height);
     this.wetArea = null;
@@ -1127,7 +1183,7 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch',
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0, predicted: [],
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
@@ -1146,6 +1202,7 @@ export class NoteCanvas {
       const log = this.strokeLog;
       if (log.start) {
         if (log.lastFrameAt) log.slowestFrame = Math.max(log.slowestFrame, at - log.lastFrameAt);
+        if (log.lastFrameAt && at - log.lastFrameAt > 24) log.longFrames += 1;
         log.lastFrameAt = at;
         log.paints += 1;
       }
@@ -1176,7 +1233,9 @@ export class NoteCanvas {
     const rect = this.rectOf(wet.page.id);
     if (!rect) return;
     const events = e.getCoalescedEvents?.() ?? [];
+    const guesses = e.getPredictedEvents?.() ?? [];
     const log = this.strokeLog;
+    if (guesses.length) log.predictions = true;
     const nowAt = performance.now();
     log.events += 1;
     log.points += Math.max(1, events.length);
@@ -1209,6 +1268,24 @@ export class NoteCanvas {
         const carry = wet.pts.slice(-3);
         this.commitWet(false);
         wet.pts = carry;
+        this.clearSettled();
+      }
+    }
+    // Drawing ahead, only when asked for, and only a little: the guess is drawn, never saved.
+    wet.predicted = [];
+    if (this.settings.drawAhead && !wet.snapped && guesses.length) {
+      let lastX = wet.pts[wet.pts.length - 3];
+      let lastY = wet.pts[wet.pts.length - 2];
+      const lastPressure = wet.pts[wet.pts.length - 1];
+      for (const guess of guesses.slice(0, 2)) {
+        const { x, y } = this.position(guess);
+        const [px, py] = this.toPage(rect, x, y);
+        const step = Math.hypot(px - lastX, py - lastY) * this.z;
+        if (step > AHEAD_PIXELS) break;
+        if (step < MIN_POINT_PIXELS) continue;
+        wet.predicted.push(px, py, guess.pressure ? pressureOf(guess) : lastPressure);
+        lastX = px;
+        lastY = py;
       }
     }
     this.requestLive();
@@ -1216,8 +1293,8 @@ export class NoteCanvas {
 
   /** How the last stroke went, for the pencil check in Settings. */
   private stats = { upAt: 0, commitMs: 0 };
-  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0 };
-  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; slowestGap: number; slowestFrame: number; paints: number; commitMs: number }[] = [];
+  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, drawMs: 0 };
+  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; predictions: boolean; slowestGap: number; slowestFrame: number; longFrames: number; drawMs: number; paints: number; commitMs: number }[] = [];
 
   /** The last strokes, measured: how often the pencil reported, and how long the screen took. */
   pencilCheck() {
@@ -1225,15 +1302,16 @@ export class NoteCanvas {
   }
 
   private noteStrokeStart(at: number) {
-    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0 };
+    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, drawMs: 0 };
   }
 
   private noteStrokeEnd() {
     const log = this.strokeLog;
     if (!log.start) return;
     this.recentStrokes.push({
-      ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced,
-      slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), paints: log.paints, commitMs: Math.round(this.stats.commitMs * 10) / 10,
+      ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced, predictions: log.predictions,
+      slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), longFrames: log.longFrames, drawMs: Math.round(log.drawMs * 10) / 10,
+      paints: log.paints, commitMs: Math.round(this.stats.commitMs * 10) / 10,
     });
     if (this.recentStrokes.length > 12) this.recentStrokes.shift();
     log.start = 0;
