@@ -26,6 +26,12 @@ async function fetchDay(date?: string) {
   return body;
 }
 
+async function fetchPractice(question: string) {
+  const res = await fetch(`/api/daily/practice?today=${localToday()}&id=${encodeURIComponent(question)}`, { cache: 'no-store' });
+  const body = await res.json().catch(() => null) as { success: boolean; question?: PublicQuestion } | null;
+  return res.ok && body?.success && body.question ? body.question : null;
+}
+
 /** A day's questions, to tie a page to. */
 export async function dailyChoices(date?: string) {
   const body = await fetchDay(date);
@@ -38,7 +44,8 @@ export async function dailyChoices(date?: string) {
 }
 
 /** Where the daily question lives on the site, to go back to it from its page. */
-export const questionHref = (link: QuestionLink) => `/daily?date=${link.date}`;
+/** Back to the question itself: on its day, or in Practice when it isn't one of the day's. */
+export const questionHref = (link: QuestionLink) => `/daily?date=${link.date}&question=${encodeURIComponent(link.id)}`;
 
 /** The pages, anywhere, already tied to a question. */
 async function tiedPages(question: string) {
@@ -75,9 +82,12 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   try {
     const { day } = await fetchDay(date);
     const found = day && [day.core, ...day.bonus].find((q) => q.id === question);
-    if (found) {
-      title = found.title;
-      prompt = mathToPlain(found.prompt);
+    // Not one of the day's: a practice question, which Practice can open by itself.
+    const practice = found ? null : await fetchPractice(question);
+    const asked = found ?? practice;
+    if (asked) {
+      title = asked.title;
+      prompt = mathToPlain(asked.prompt);
     }
   } catch { /* Offline: the page still gets made, with the title it was given. */ }
 

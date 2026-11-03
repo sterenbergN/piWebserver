@@ -16,6 +16,7 @@ import { TRACKS, TRACK_LABEL, type Track } from '@/lib/daily/types';
 import type { PartResponse } from '@/lib/daily/types';
 import 'katex/dist/katex.min.css';
 import './daily.css';
+import { notesLinks, useTiedPages } from '@/components/daily/notes-links';
 
 const TABS = [
   { id: 'today', icon: '🧠', label: 'Questions' },
@@ -41,6 +42,9 @@ export default function DailyPage() {
   const [toast, setToast] = useState('');
   /** ?focus=track|topic (from the report's "Practice this") opens Practice filtered to it. */
   const [focus, setFocus] = useState<{ track: Track; topic: string } | null>(null);
+  /** ?question= (from a Notes page tied to it) shows that question: on its day, or in Practice. */
+  const [wanted, setWanted] = useState<string | null>(null);
+  const [practiceFirst, setPracticeFirst] = useState<string | null>(null);
 
   useEffect(() => {
     const fromHash = () => {
@@ -50,10 +54,30 @@ export default function DailyPage() {
     fromHash();
     const [track, topic] = (new URLSearchParams(window.location.search).get('focus') || '').split('|');
     if ((TRACKS as readonly string[]).includes(track) && topic) { setFocus({ track: track as Track, topic }); setTab('practice'); }
+    setWanted(new URLSearchParams(window.location.search).get('question'));
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
   }, []);
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
+
+  useEffect(() => {
+    if (!wanted || !d.day || d.state !== 'ready') return;
+    setWanted(null);
+    if ([d.day.core, ...d.day.bonus].some((q) => q.id === wanted)) {
+      setTab('today');
+      // Once the cards are drawn and what loads around them has settled.
+      let tries = 0;
+      const find = () => {
+        const card = document.getElementById(`q-${wanted}`);
+        if (card) card.scrollIntoView({ block: 'start' });
+        else if (++tries < 20) setTimeout(find, 100);
+      };
+      setTimeout(find, 300);
+    } else {
+      setPracticeFirst(wanted);
+      setTab('practice');
+    }
+  }, [wanted, d.day, d.state]);
 
   // The profile level also counts habits and chores.
   useEffect(() => { if (d.state === 'ready') Promise.all([habitsXpElsewhere(), choresXpElsewhere(), studyXpElsewhere()]).then(([a, b, c]) => setOtherXp({ habits: a, chores: b, study: c })); }, [d.state, d.signedIn]);
@@ -105,24 +129,8 @@ export default function DailyPage() {
   const isPast = !!d.date && d.date < d.today;
 
   // Notes pages tied to today's questions, so each card can link to its working.
-  const [tied, setTied] = useState<{ question: string; notebook: string; notebookTitle: string; page: string; pageNumber: number }[]>([]);
-  const dayIds = d.day ? [d.day.core.id, ...d.day.bonus.map((q) => q.id)].join(',') : '';
-  useEffect(() => {
-    if (!d.signedIn || !dayIds) { setTied([]); return; }
-    let live = true;
-    void fetch(`/api/notes/tied?questions=${encodeURIComponent(dayIds)}`, { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => { if (live && body?.success) setTied(body.pages); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, [d.signedIn, dayIds]);
-  const notesFor = (q: { id: string; title: string }) => (d.signedIn && d.date ? {
-    start: `/notes?work=${encodeURIComponent(q.id)}&date=${d.date}&title=${encodeURIComponent(q.title)}`,
-    pages: tied.filter((t) => t.question === q.id).map((t) => ({
-      href: `/notes?notebook=${encodeURIComponent(t.notebook)}&page=${encodeURIComponent(t.page)}`,
-      label: `${t.notebookTitle}, page ${t.pageNumber}`,
-    })),
-  } : undefined);
+  const tied = useTiedPages(d.day ? [d.day.core.id, ...d.day.bonus.map((q) => q.id)] : [], d.signedIn);
+  const notesFor = (q: { id: string; title: string }) => (d.date ? notesLinks(q, d.date, tied) : undefined);
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));
   const openDay = (date: DateKey) => { d.open(date); chooseTab('today'); window.scrollTo({ top: 0 }); };
   const statusFor = (date: DateKey) => d.progress?.stats.coreByDay[date];
@@ -263,7 +271,7 @@ export default function DailyPage() {
             )
           )}
 
-          {tab === 'practice' && <Practice key={focus ? `${focus.track}|${focus.topic}` : 'all'} today={d.today} signedIn={d.signedIn} onAnswered={d.reloadProgress} initialFocus={focus} />}
+          {tab === 'practice' && <Practice key={focus ? `${focus.track}|${focus.topic}` : 'all'} today={d.today} signedIn={d.signedIn} onAnswered={d.reloadProgress} initialFocus={focus} initialQuestion={practiceFirst} />}
 
           {tab === 'stats' && (
             <a className="dq-report-link" href="/daily/report">

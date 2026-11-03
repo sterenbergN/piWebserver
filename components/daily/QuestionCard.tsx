@@ -7,6 +7,7 @@ import type { PartResult, PublicInput, PublicQuestion, QuestionStatus } from '@/
 import { XP_RULES, triesFactor } from '@/lib/daily/progress';
 import type { CheckResult } from './useDaily';
 import { REPORT_KINDS, REPORT_LABEL, TRACK_LABEL, type Formula, type PartResponse, type Question } from '@/lib/daily/types';
+import type { NotesLinks } from './notes-links';
 
 export type Feedback = { rating: 'up' | 'down' | null; difficulty: 'easy' | 'right' | 'hard' | null; report: { kind: string; note: string } | null };
 
@@ -63,7 +64,7 @@ type Props = {
   onReveal: (hints: number) => Promise<unknown>;
   onFeedback: (patch: Partial<Feedback>) => Promise<void>;
   /** Working in Notes: where to start a page for this question, and the pages already tied to it. */
-  notes?: { start: string; pages: { href: string; label: string }[] };
+  notes?: NotesLinks;
 };
 
 export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback, notes }: Props) {
@@ -96,7 +97,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
   const usedFormulas = (q.formulas ?? []).map((id) => formulas.find((f) => f.id === id)).filter(Boolean) as Formula[];
 
   return (
-    <article className={`dq-card is-${q.track}${kind === 'core' ? ' is-core' : ''}${answered ? ` is-${answered.status}` : ''}`}>
+    <article id={`q-${q.id}`} className={`dq-card is-${q.track}${kind === 'core' ? ' is-core' : ''}${answered ? ` is-${answered.status}` : ''}`}>
       <header className="dq-card-head">
         <div className="dq-badges">
           <span className="dq-badge is-kind">{kind === 'core' ? (boss ? '👹 Boss problem' : '⭐ Today’s question') : kind === 'practice' ? '🎲 Practice' : '🎁 Bonus'}</span>
@@ -108,6 +109,21 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
         </div>
         <h2>{q.title}</h2>
       </header>
+
+      {notes && (
+        <div className="dq-notes">
+          {!signedIn ? (
+            <button type="button" className="dq-notes-start" onClick={() => window.dispatchEvent(new Event('site:sign-in'))}>✏️ Sign in to work it out in Notes</button>
+          ) : notes.pages.length > 0 ? (
+            <div className="dq-notes-pages">
+              <span>Your working</span>
+              {notes.pages.map((page) => <a key={page.href} href={page.href}>✏️ {page.label}</a>)}
+            </div>
+          ) : (
+            <a className="dq-notes-start" href={notes.start}>✏️ Work it out in Notes</a>
+          )}
+        </div>
+      )}
 
       <MathText>{q.prompt}</MathText>
       {q.figure && (
@@ -229,19 +245,6 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
         </>
       )}
 
-      {notes && (
-        <footer className="dq-notes">
-          {notes.pages.length > 0 && (
-            <div className="dq-notes-pages">
-              <span>Your working</span>
-              {notes.pages.map((page) => <a key={page.href} href={page.href}>{page.label}</a>)}
-            </div>
-          )}
-          {!notes.pages.length && (
-            <a className="dq-notes-start" href={notes.start}>✏️ Work it out in Notes</a>
-          )}
-        </footer>
-      )}
     </article>
   );
 }

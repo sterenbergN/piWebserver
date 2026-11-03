@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QuestionCard, { type Answered } from './QuestionCard';
 import FormulaSheet from './FormulaSheet';
+import { notesLinks, useTiedPages } from './notes-links';
 import { fetchAnalysis, readDeviceAttempts, regradeDeviceAttempt, sendAnswer, sendFeedback, type CheckResult } from './useDaily';
 import { addDays, weekStart, type DateKey } from '@/lib/habits/dates';
 import type { PublicQuestion, QuestionStatus } from '@/lib/daily/grade';
@@ -72,7 +73,7 @@ function readPrefs(): Prefs | null {
  * status or a search, sort the list, then open one or take a random one. All
  * practice is half XP.
  */
-export default function Practice({ today, signedIn, onAnswered, initialFocus }: { today: DateKey; signedIn: boolean; onAnswered: () => void; initialFocus?: { track: Track; topic: string } | null }) {
+export default function Practice({ today, signedIn, onAnswered, initialFocus, initialQuestion }: { today: DateKey; signedIn: boolean; onAnswered: () => void; initialFocus?: { track: Track; topic: string } | null; initialQuestion?: string | null }) {
   const [pool, setPool] = useState<PoolItem[] | null>(null);
   const [gens, setGens] = useState<GenItem[]>([]);
   const [generatedDone, setGeneratedDone] = useState(0);
@@ -90,6 +91,7 @@ export default function Practice({ today, signedIn, onAnswered, initialFocus }: 
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [current, setCurrent] = useState<Current | null>(null);
+  const tied = useTiedPages(current ? [current.id] : [], signedIn);
   const [loadingQ, setLoadingQ] = useState(false);
   const [seen, setSeen] = useState<string[]>([]);
   const [session, setSession] = useState({ done: 0, xp: 0 });
@@ -205,6 +207,14 @@ export default function Practice({ today, signedIn, onAnswered, initialFocus }: 
     }
   }, [today, signedIn]);
 
+  // Opened from a Notes page tied to this question: straight to it.
+  const openedFirst = useRef(false);
+  useEffect(() => {
+    if (!initialQuestion || openedFirst.current) return;
+    openedFirst.current = true;
+    void open(initialQuestion);
+  }, [initialQuestion, open]);
+
   const openRow = (r: Row) => (r.genKey ? open(newGeneratedId(r.genKey)) : open(r.id));
 
   /**
@@ -274,6 +284,7 @@ export default function Practice({ today, signedIn, onAnswered, initialFocus }: 
         <QuestionCard key={current.id} q={current.question} kind={current.source === 'day' ? (current.core ? 'core' : 'bonus') : 'practice'} boss={current.boss}
           late={current.source === 'day' && current.date! < today}
           answered={current.answered ?? undefined} tries={current.tries} formulas={current.formulas} signedIn={signedIn}
+          notes={notesLinks({ id: current.id, title: current.question.title }, current.date ?? today, tied)}
           onAnswer={(r, h) => answer(r, h)} onReveal={(h) => answer(null, h)}
           onFeedback={async (patch) => {
             try {
