@@ -136,6 +136,18 @@ async function syncLibraryLevel() {
   });
 }
 
+/**
+ * Deleted pages used to be turned away by the server without a word, and marked as sent here.
+ * Each device sends the ones it has once more, so pages deleted then go from the others too.
+ */
+async function resendPageDeletes(notebook: string) {
+  const resent = `fixed:${notebook}:page-deletes`;
+  if (await getKv<boolean>(resent)) return;
+  const lost = (await listBook(notebook)).filter((record) => record.kind === 'page' && record.deleted && !record.dirty);
+  if (lost.length) await putBook(lost.map((record) => ({ ...record, dirty: true })));
+  await putKv(resent, true);
+}
+
 async function syncBookLevel(notebook: string) {
   const out = await syncLevel<StoredBook, BookRecord, { pageSeqs: Record<string, number>; textSeq?: number }>({
     loadChanged: () => listBook(notebook),
@@ -263,6 +275,7 @@ async function syncOnce() {
   for (const { id } of notebooks) {
     const rev = library.last.revs[id] ?? 0;
     const seen = (await getKv<number>(`rev:${id}:`)) ?? -1;
+    await resendPageDeletes(id);
     const dirtyBook = (await listBook(id)).some((record) => record.dirty);
     const pages = dirtyPages.filter((entry) => entry.notebook === id).map((entry) => entry.page);
     if (rev === seen && !dirtyBook && !pages.length) continue;

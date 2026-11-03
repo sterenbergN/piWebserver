@@ -228,6 +228,16 @@ test('two devices sync through the library, a notebook and a page', async () => 
   assert.equal((await syncLibrary('ann', 1, [], NOW)).revs.nb1, 2);
 });
 
+test('a page deleted on one device is deleted on the others', async () => {
+  await syncLibrary('pam', 0, [notebook('nb1')], NOW);
+  await syncBook('pam', 'nb1', 0, [page('p1'), page('p2')], NOW);
+  // What the app sends for a deleted page: a tombstone, with no place or size.
+  const gone = await syncBook('pam', 'nb1', 0, [{ id: 'p2', kind: 'page', createdAt: 1, updatedAt: 20, deleted: true }], NOW);
+  assert.equal(gone.items.find((r) => r.id === 'p2')?.deleted, true);
+  const other = await syncBook('pam', 'nb1', 0, [], NOW);
+  assert.deepEqual(other.items.filter((r) => !r.deleted).map((r) => r.id), ['p1']);
+});
+
 test('one account never reads another’s', async () => {
   await syncLibrary('ann2', 0, [notebook('nb9')], NOW);
   await assert.rejects(() => syncBook('ben2', 'nb9', 0, [], NOW), NotebookGone);

@@ -224,6 +224,8 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
     if (!isId(r.file) || !finite(r.startedAt) || !finite(r.duration) || r.duration < 0) return null;
     return { ...common, kind: 'recording', file: r.file, startedAt: r.startedAt, duration: r.duration, title: cleanName(r.title) || 'Recording', mime: cleanName(r.mime, 80) };
   }
+  // A deleted page is only a tombstone, with no place or size, and it still has to reach the other devices.
+  if (r.kind === 'page' && common.deleted) return { ...common, kind: 'page', order: 0, w: 612, h: 792, template: 'blank', paper: '#ffffff' };
   if (r.kind !== 'page' || !finite(r.order)) return null;
   const size = cleanSize(r);
   if (!size) return null;

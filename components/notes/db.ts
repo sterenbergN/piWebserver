@@ -230,7 +230,7 @@ export const recordingKey = (notebook: string, id: string) => `recording:${noteb
 /** What the server read in a page's handwriting. */
 export const inkTextKey = (notebook: string, page: string) => `inktext:${notebook}:${page}`;
 
-const KV_KINDS = ['cursor', 'upload', 'needed', 'pdftext', 'place', 'recording', 'rev', 'inktext'];
+const KV_KINDS = ['cursor', 'upload', 'needed', 'pdftext', 'place', 'recording', 'rev', 'inktext', 'fixed'];
 
 /** Everything about one notebook on this device, except its tombstone, which still has to reach the others. */
 export async function forgetNotebook(notebook: string) {
