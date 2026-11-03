@@ -82,6 +82,10 @@ const SIDE_PAD = 12;
 const END_PAD = 90;
 const MAX_ZOOM_FACTOR = 8;
 const MIN_ZOOM_FACTOR = 0.35;
+/** Turning a page, side to side: how long the slide takes, and how far a swipe must go to turn one. */
+const PAGE_TURN_MS = 280;
+const TURN_FRACTION = 0.22;
+const TURN_SPEED = 0.3;
 const TAP_PIXELS = 10;
 const TAP_MS = 350;
 const QUICK_TAP_MOVE_PIXELS = 18;
@@ -188,6 +192,15 @@ export class NoteCanvas {
   private playback: { startedAt: number; at: number } | null = null;
   private lastTap = { at: 0, x: 0, y: 0 };
   private wheelTimer = 0;
+  /** Side to side, the page you're on: the camera stays on it until a swipe turns to another. */
+  private turnedTo: string | null = null;
+  /** A finger is moving the page, so it can be pulled past the edge towards the next one. */
+  private dragging = false;
+  /** Sliding to a page: the camera is between pages on purpose. */
+  private turning = false;
+  /** A trackpad pushing at the edge of a page, and whether that push has turned one already. */
+  private wheelPush = 0;
+  private wheelTurned = false;
 
   constructor(private host: HTMLElement, private doc: NotebookDoc, tools: Tools, settings: EngineSettings, private events: EngineEvents) {
     this.tools = tools;
@@ -254,7 +267,11 @@ export class NoteCanvas {
     const pages = this.doc.pages;
     const vertical = this.settings.direction === 'vertical';
     const across = Math.max(1, ...pages.map((page) => (vertical ? page.w : page.h)));
-    const gap = PAGE_GAP / Math.max(0.3, this.fitZ);
+    const narrowest = Math.min(...pages.map((page) => page.w));
+    // Side to side, pages sit far enough apart that only one shows until you swipe.
+    const gap = vertical
+      ? PAGE_GAP / Math.max(0.3, this.fitZ)
+      : Math.max(PAGE_GAP / this.fitZ, (this.width / this.fitZ - narrowest) / 2 + PAGE_GAP / this.fitZ);
     let along = 0;
     this.rects = pages.map((page) => {
       const rect = vertical
@@ -296,8 +313,17 @@ export class NoteCanvas {
 
   private layoutAndFit() {
     const vertical = this.settings.direction === 'vertical';
-    const widest = Math.max(1, ...this.doc.pages.map((page) => (vertical ? page.w : page.h)));
-    this.fitZ = (vertical ? this.width - SIDE_PAD * 2 : this.height - this.topInset - SIDE_PAD * 2) / widest;
+    if (vertical) {
+      const widest = Math.max(1, ...this.doc.pages.map((page) => page.w));
+      this.fitZ = (this.width - SIDE_PAD * 2) / widest;
+    } else {
+      // The whole page on the screen, like a notebook open in front of you.
+      const roomW = this.width - SIDE_PAD * 2;
+      const roomH = this.height - this.topInset - SIDE_PAD * 2;
+      const fits = this.doc.pages.map((page) => Math.min(roomW / page.w, roomH / page.h));
+      this.fitZ = Math.max(0.05, fits.length ? Math.min(...fits) : 1);
+      if (this.z < this.fitZ) this.z = this.fitZ;
+    }
     this.layout();
   }
 
@@ -347,8 +373,40 @@ export class NoteCanvas {
     };
     const vertical = this.settings.direction === 'vertical';
     const top = this.topInset + SIDE_PAD;
+    if (this.paged && this.rects.length) {
+      if (!this.turning) {
+        const { lo, hi } = this.pageRange(this.turnedRect());
+        const give = this.dragging ? this.width : 0;
+        this.camX = Math.max(lo - give, Math.min(hi + give, this.camX));
+      }
+      this.camY = fit(this.camY, this.contentH, this.height, top, SIDE_PAD);
+      return;
+    }
     this.camX = fit(this.camX, this.contentW, this.width, vertical ? SIDE_PAD : END_PAD, vertical ? SIDE_PAD : END_PAD);
     this.camY = vertical ? fit(this.camY, this.contentH, this.height, top, END_PAD) : fit(this.camY, this.contentH, this.height, top, SIDE_PAD);
+  }
+
+  private get paged() {
+    return this.settings.direction === 'horizontal';
+  }
+
+  /** As far out as you can zoom: side to side, the whole page and no further. */
+  private get minZ() {
+    return this.paged ? this.fitZ : this.fitZ * MIN_ZOOM_FACTOR;
+  }
+
+  private turnedRect() {
+    return this.rectOf(this.turnedTo ?? '') ?? this.rects[Math.max(0, Math.min(this.rects.length - 1, this.currentIndex))] ?? this.rects[0];
+  }
+
+  /** Where the camera can be, side to side, to show this page: in the middle, or from edge to edge when zoomed in. */
+  private pageRange(rect: PageRect) {
+    const size = rect.page.w * this.z;
+    if (size + SIDE_PAD * 2 <= this.width) {
+      const middle = (this.width - size) / 2 - rect.x * this.z;
+      return { lo: middle, hi: middle };
+    }
+    return { lo: this.width - SIDE_PAD - (rect.x + rect.page.w) * this.z, hi: SIDE_PAD - rect.x * this.z };
   }
 
   /** How much of the top of the window the toolbar covers, so pages can scroll clear of it. */
@@ -388,6 +446,7 @@ export class NoteCanvas {
   private showAnchor(anchor: { page: string; fx: number; fy: number }) {
     const rect = this.rectOf(anchor.page);
     if (!rect) return;
+    this.turnedTo = rect.page.id;
     this.camX = this.width / 2 - (rect.x + anchor.fx * rect.page.w) * this.z;
     this.camY = this.height / 2 - (rect.y + anchor.fy * rect.page.h) * this.z;
     this.cameraMoved();
@@ -396,8 +455,9 @@ export class NoteCanvas {
   private showPageTop(index: number) {
     const rect = this.rects[Math.max(0, Math.min(this.rects.length - 1, index))];
     if (!rect) return;
+    this.turnedTo = rect.page.id;
     if (this.settings.direction === 'vertical') this.camY = this.topInset + SIDE_PAD - rect.y * this.z;
-    else this.camX = END_PAD - rect.x * this.z;
+    else this.camX = this.pageRange(rect).hi;
     this.cameraMoved();
   }
 
@@ -420,6 +480,7 @@ export class NoteCanvas {
   restorePlace(place: { page: string; fx: number; fy: number } | null | undefined) {
     if (place && this.rectOf(place.page)) {
       const rect = this.rectOf(place.page)!;
+      this.turnedTo = rect.page.id;
       if (this.settings.direction === 'vertical') this.camY = this.height / 2 - (rect.y + place.fy * rect.page.h) * this.z;
       else this.camX = this.width / 2 - (rect.x + place.fx * rect.page.w) * this.z;
       this.cameraMoved();
@@ -437,8 +498,8 @@ export class NoteCanvas {
     this.moving = true;
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => this.settle(), SETTLE_MS);
-    const anchor = this.centerAnchor();
-    const index = anchor ? this.rects.findIndex((r) => r.page.id === anchor.page) : 0;
+    const shown = this.paged ? this.turnedRect()?.page.id : this.centerAnchor()?.page;
+    const index = shown ? this.rects.findIndex((r) => r.page.id === shown) : 0;
     if (index !== this.currentIndex) {
       this.currentIndex = index;
       this.events.onPage(index);
@@ -504,9 +565,10 @@ export class NoteCanvas {
   }
 
   fit() {
-    const anchor = this.centerAnchor();
+    const anchor = this.paged ? null : this.centerAnchor();
     this.z = this.fitZ;
-    if (anchor) this.showAnchor(anchor);
+    if (this.paged) this.showPageTop(this.rects.indexOf(this.turnedRect()));
+    else if (anchor) this.showAnchor(anchor);
     this.sayZoom(true);
     this.settle();
   }
@@ -1469,7 +1531,12 @@ export class NoteCanvas {
       if (!this.pinchFrame) this.pinchFrame = requestAnimationFrame(() => this.applyPinch());
       return;
     }
-    this.camX += dx;
+    this.dragging = true;
+    // Past the first or last page, the page gives a little, but there's nowhere to go.
+    const rect = this.paged ? this.turnedRect() : null;
+    const { lo, hi } = rect ? this.pageRange(rect) : { lo: 0, hi: 0 };
+    const stiff = rect && ((this.camX > hi && dx > 0 && rect === this.rects[0]) || (this.camX < lo && dx < 0 && rect === this.rects[this.rects.length - 1]));
+    this.camX += stiff ? dx * 0.35 : dx;
     this.camY += dy;
     this.samples.push({ x, y, at: performance.now() });
     if (this.samples.length > 6) this.samples.shift();
@@ -1486,8 +1553,9 @@ export class NoteCanvas {
     const midX = (a.x + b.x) / 2;
     const midY = (a.y + b.y) / 2;
     const factor = distance / Math.max(1, this.pinch.distance);
-    const next = Math.max(this.fitZ * MIN_ZOOM_FACTOR, Math.min(this.fitZ * MAX_ZOOM_FACTOR, this.z * factor));
+    const next = Math.max(this.minZ, Math.min(this.fitZ * MAX_ZOOM_FACTOR, this.z * factor));
     const applied = next / this.z;
+    this.dragging = true;
     // Keep the point between the fingers under them, and follow them as they move together.
     this.camX = midX - (this.pinch.midX - this.camX) * applied;
     this.camY = midY - (this.pinch.midY - this.camY) * applied;
@@ -1585,19 +1653,22 @@ export class NoteCanvas {
       // Done, as soon as the first finger's up. The other one lifting too shouldn't count as anything.
       this.touches.clear();
       this.pinch = null;
-      this.flingFromSamples();
+      this.dragging = false;
+      this.flingOrTurn();
       if (!gesture.moved && !cancelled && Date.now() - gesture.at < TAP_MS && Date.now() - this.lastPenAt > PEN_QUIET_MS) this.fingerTap(gesture.fingers);
       this.settle();
       return;
     }
 
-    if (cancelled) return;
+    this.dragging = false;
     const moved = Math.hypot(touch.x - touch.startX, touch.y - touch.startY);
-    if (moved < TAP_PIXELS && Date.now() - touch.at < TAP_MS) {
-      this.handleTap(touch.x, touch.y);
+    if (cancelled || (moved < TAP_PIXELS && Date.now() - touch.at < TAP_MS)) {
+      // Anything pulled past the edge goes back.
+      if (this.paged) this.cameraMoved();
+      if (!cancelled) this.handleTap(touch.x, touch.y);
       return;
     }
-    this.flingFromSamples();
+    this.flingOrTurn();
     this.settle();
   };
 
@@ -1745,17 +1816,89 @@ export class NoteCanvas {
   private stopMomentum() {
     if (this.momentum) cancelAnimationFrame(this.momentum);
     this.momentum = 0;
+    this.turning = false;
+  }
+
+  /** Side to side, a swipe past the edge of the page turns it; anything less slides back. */
+  private flingOrTurn() {
+    if (!this.paged || !this.rects.length) {
+      this.flingFromSamples();
+      return;
+    }
+    const speed = this.sampleSpeed();
+    this.samples = [];
+    const rect = this.turnedRect();
+    const index = this.rects.indexOf(rect);
+    const { lo, hi } = this.pageRange(rect);
+    const back = this.camX - hi;
+    const ahead = lo - this.camX;
+    const far = this.width * TURN_FRACTION;
+    if (index > 0 && (back > far || (back > 8 && speed.x > TURN_SPEED))) this.turnTo(index - 1);
+    else if (index < this.rects.length - 1 && (ahead > far || (ahead > 8 && speed.x < -TURN_SPEED))) this.turnTo(index + 1);
+    else if (back > 0.5 || ahead > 0.5) this.slideTo(Math.max(lo, Math.min(hi, this.camX)), this.camY);
+    else this.flingWith(speed);
+  }
+
+  /** Turn to a page, sliding there: going forward shows its left edge, going back its right. */
+  private turnTo(index: number) {
+    const rect = this.rects[index];
+    if (!rect) return;
+    const forward = index > this.rects.indexOf(this.turnedRect());
+    this.commitSelection();
+    this.turnedTo = rect.page.id;
+    const { lo, hi } = this.pageRange(rect);
+    this.slideTo(forward ? hi : lo, this.camY);
+  }
+
+  /** One page on or back, from a trackpad or a key. */
+  turnBy(step: number) {
+    const index = this.rects.indexOf(this.turnedRect()) + step;
+    if (index >= 0 && index < this.rects.length) this.turnTo(index);
+  }
+
+  private slideTo(x: number, y: number) {
+    this.stopMomentum();
+    const fromX = this.camX;
+    const fromY = this.camY;
+    const start = performance.now();
+    this.turning = true;
+    const step = (time: number) => {
+      const t = Math.min(1, Math.max(0, (time - start) / PAGE_TURN_MS));
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.camX = fromX + (x - fromX) * eased;
+      this.camY = fromY + (y - fromY) * eased;
+      if (t >= 1) {
+        this.turning = false;
+        this.momentum = 0;
+        this.cameraMoved();
+        this.settle();
+        return;
+      }
+      this.cameraMoved();
+      this.momentum = requestAnimationFrame(step);
+    };
+    this.momentum = requestAnimationFrame(step);
+  }
+
+  /** How fast the fingers were going as they lifted, in pixels a millisecond. */
+  private sampleSpeed() {
+    const samples = this.samples;
+    if (samples.length < 2) return { x: 0, y: 0 };
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    if (performance.now() - last.at > 80) return { x: 0, y: 0 };
+    const dt = Math.max(1, last.at - first.at);
+    return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
   }
 
   private flingFromSamples() {
-    const samples = this.samples;
+    const speed = this.sampleSpeed();
     this.samples = [];
-    if (samples.length < 2) return;
-    const first = samples[0];
-    const last = samples[samples.length - 1];
-    if (performance.now() - last.at > 80) return;
-    const dt = Math.max(1, last.at - first.at);
-    this.velocity = { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
+    this.flingWith(speed);
+  }
+
+  private flingWith(speed: { x: number; y: number }) {
+    this.velocity = { ...speed };
     if (Math.hypot(this.velocity.x, this.velocity.y) < 0.25) return;
     let lastTime = performance.now();
     const step = (time: number) => {
@@ -1780,10 +1923,15 @@ export class NoteCanvas {
   private onWheel = (e: WheelEvent) => {
     if ((e.target as Element | null)?.closest?.('.nt-text-edit')) return;
     e.preventDefault();
+    // A trackpad keeps sending after a flick: that mustn't stop a page mid-turn, or turn another.
+    if (this.turning && !(e.ctrlKey || e.metaKey)) {
+      this.waitForWheelToStop();
+      return;
+    }
     this.stopMomentum();
     const { x, y } = this.position(e as unknown as PointerEvent);
     if (e.ctrlKey || e.metaKey) {
-      const next = Math.max(this.fitZ * MIN_ZOOM_FACTOR, Math.min(this.fitZ * MAX_ZOOM_FACTOR, this.z * Math.exp(-e.deltaY / 240)));
+      const next = Math.max(this.minZ, Math.min(this.fitZ * MAX_ZOOM_FACTOR, this.z * Math.exp(-e.deltaY / 240)));
       const applied = next / this.z;
       this.camX = x - (x - this.camX) * applied;
       this.camY = y - (y - this.camY) * applied;
@@ -1791,13 +1939,36 @@ export class NoteCanvas {
       this.sayZoom();
     } else {
       const scale = e.deltaMode === 1 ? 24 : 1;
+      const beforeX = this.camX;
+      const beforeY = this.camY;
       this.camX -= e.deltaX * scale;
       this.camY -= e.deltaY * scale;
+      this.cameraMoved();
+      // Side to side, scrolling on at the edge of a page turns it, once a scroll.
+      if (this.paged) {
+        if (Math.abs(this.camX - beforeX) + Math.abs(this.camY - beforeY) > 0.5) this.wheelPush = 0;
+        else {
+          this.wheelPush += (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * scale;
+          if (!this.wheelTurned && Math.abs(this.wheelPush) > 60) {
+            this.wheelTurned = true;
+            this.turnBy(Math.sign(this.wheelPush));
+          }
+        }
+      }
     }
     this.cameraMoved();
-    window.clearTimeout(this.wheelTimer);
-    this.wheelTimer = window.setTimeout(() => this.settle(), SETTLE_MS);
+    this.waitForWheelToStop();
   };
+
+  /** A scroll is over once the wheel has been quiet for a moment: the next one can turn a page again. */
+  private waitForWheelToStop() {
+    window.clearTimeout(this.wheelTimer);
+    this.wheelTimer = window.setTimeout(() => {
+      this.wheelPush = 0;
+      this.wheelTurned = false;
+      this.settle();
+    }, SETTLE_MS * 1.5);
+  }
 
   private onKey = (e: KeyboardEvent) => {
     const target = e.target as HTMLElement | null;
@@ -1822,7 +1993,8 @@ export class NoteCanvas {
     const pageKeys: Record<string, number> = { PageDown: 1, PageUp: -1, ArrowRight: 1, ArrowLeft: -1 };
     if (pageKeys[e.key]) {
       e.preventDefault();
-      this.goToPage(Math.max(0, this.currentIndex) + pageKeys[e.key]);
+      if (this.paged) this.turnBy(pageKeys[e.key]);
+      else this.goToPage(Math.max(0, this.currentIndex) + pageKeys[e.key]);
       return;
     }
     if (e.key === ' ' && target?.tagName === 'BUTTON') return;

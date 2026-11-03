@@ -28,6 +28,8 @@ export type Place = { notebook: string; page: string };
 
 const TOOLS_KEY = 'notes-tools';
 const SETTINGS_KEY = 'notes-settings';
+/** The height of the tool options under the toolbar, with the gap above them. */
+const OPTIONS_ROOM = 58;
 const HINT_KEY = 'notes-gesture-hint';
 const NIGHT_KEY = 'notes-night';
 
@@ -338,16 +340,20 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
 
   useEffect(() => { engine?.setNight(night); }, [engine, night, theme]);
 
-  // Pages scroll clear of the toolbar, or right to the top with it hidden.
+  // Pages scroll clear of the toolbar, or right to the top with it hidden. Side to side, a page
+  // can't scroll, so it also keeps clear of the tool options under the toolbar, whether or not
+  // they're showing: a page that changed size with every tool would be worse.
+  const paged = settings.direction === 'horizontal';
   useEffect(() => {
     if (!engine) return;
     const bar = barRef.current;
     if (!bar) { engine.setTopInset(0); return; }
-    const observer = new ResizeObserver(() => engine.setTopInset(bar.offsetHeight));
+    const inset = () => bar.offsetHeight + (paged ? OPTIONS_ROOM : 0);
+    const observer = new ResizeObserver(() => engine.setTopInset(inset()));
     observer.observe(bar);
-    engine.setTopInset(bar.offsetHeight);
+    engine.setTopInset(inset());
     return () => observer.disconnect();
-  }, [engine, chrome]);
+  }, [engine, chrome, paged]);
 
   const applySettings = (next: EngineSettings) => {
     setSettings(next);
