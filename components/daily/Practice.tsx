@@ -284,7 +284,7 @@ export default function Practice({ today, signedIn, onAnswered, initialFocus, in
         <QuestionCard key={current.id} q={current.question} kind={current.source === 'day' ? (current.core ? 'core' : 'bonus') : 'practice'} boss={current.boss}
           late={current.source === 'day' && current.date! < today}
           answered={current.answered ?? undefined} tries={current.tries} formulas={current.formulas} signedIn={signedIn}
-          notes={notesLinks({ id: current.id, title: current.question.title }, current.date ?? today, tied)}
+          notes={notesLinks({ id: current.id }, current.date ?? today, tied)}
           onAnswer={(r, h) => answer(r, h)} onReveal={(h) => answer(null, h)}
           onFeedback={async (patch) => {
             try {

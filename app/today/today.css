@@ -55,7 +55,13 @@
 .td-question.is-automation { --td-track: var(--habit-3); }
 .td-eyebrow { margin: 0; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); }
 .td-question-title { font-size: 1.25rem; line-height: 1.3; }
-.td-question-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.td-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; font-size: 0.9rem; }
+.td-notes .dq-notes-start { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 40px; padding: 0 0.95rem; border: 0; border-radius: 20px; background: rgba(var(--accent-rgb), 0.14); color: var(--foreground); font: inherit; font-weight: 600; cursor: pointer; }
+.td-notes .dq-notes-start:disabled { opacity: 0.6; cursor: default; }
+.td-notes .dq-notes-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.7rem; }
+.td-notes .dq-notes-pages span { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.td-notes .dq-notes-pages a { color: var(--accent-light); font-weight: 600; text-decoration: none; }
+.td-notes .dq-notes-problem { color: var(--danger, #e5484d); font-size: 0.85rem; }
 .td-status { margin: 0; font-size: 0.95rem; }
 .td-more { color: var(--accent-light); font-size: 0.88rem; margin-top: 0.2rem; }
 

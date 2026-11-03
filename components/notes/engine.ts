@@ -7,7 +7,7 @@ import {
 import { isDark, MAX_STROKE_POINTS, type ImageElement, type MarkElement, type MarkRole, type MarkTarget, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
 import { newId, tombstone, type NotebookDoc, type Step } from './doc';
 import { setWriting } from './sync';
-import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight } from './ink';
+import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight, textBox } from './ink';
 import { Assets, drawElement, drawElements, drawPaper, sortForDrawing } from './paper';
 
 // The notebook on screen. Everything is drawn in screen space on two canvases the size of the
@@ -2310,6 +2310,13 @@ export class NoteCanvas {
   }
 
   /** The chosen text box, opened for typing, if one thing is selected and it's text. */
+  /** What the selected text boxes say, to name a link or heading after. */
+  selectionText() {
+    return this.selectedElements()
+      .filter((element): element is TextElement => element.kind === 'text')
+      .map((element) => element.text.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 200);
+  }
+
   /** The selected pen strokes, as stored, for the server to read. */
   selectionInk() {
     return this.selectedElements()
@@ -2323,7 +2330,8 @@ export class NoteCanvas {
     this.bakeSelection(true);
     const selection = this.selection;
     if (!selection) return;
-    const box = unionBoxes(this.selectedElements().filter((element) => element.kind !== 'mark').map(elementBox));
+    // Over typed text, the mark covers the words, not the whole width of the box.
+    const box = unionBoxes(this.selectedElements().filter((element) => element.kind !== 'mark').map((element) => (element.kind === 'text' ? textBox(element) : elementBox(element))));
     const now = Date.now();
     const mark: MarkElement = { id: newId(), kind: 'mark', role, x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, label, ...extra, createdAt: now, updatedAt: now };
     this.selection = null;

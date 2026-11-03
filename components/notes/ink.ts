@@ -171,6 +171,17 @@ function measuring() {
   return measure!;
 }
 
+/** Where a text box's words are: its box can be far wider than what's written in it. */
+export function textBox(element: TextElement): Box & { rot: number } {
+  const lines = layoutText(element);
+  const ctx = measuring();
+  ctx.font = textFont(element);
+  const w = Math.min(element.w, Math.max(1, ...lines.map((line) => ctx.measureText(line).width)));
+  const h = lines.length * element.size * TEXT_LINE_HEIGHT;
+  const x = element.align === 'center' ? element.x + (element.w - w) / 2 : element.align === 'right' ? element.x + element.w - w : element.x;
+  return { x, y: element.y, w, h, rot: element.rot };
+}
+
 /** The lines a text box breaks into, the same way for the screen and for an exported PDF. */
 export function layoutText(element: Pick<TextElement, 'text' | 'w' | 'size' | 'font' | 'bold' | 'italic'>) {
   const ctx = measuring();

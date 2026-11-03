@@ -65,12 +65,19 @@ export default function DailyPage() {
     setWanted(null);
     if ([d.day.core, ...d.day.bonus].some((q) => q.id === wanted)) {
       setTab('today');
-      // Once the cards are drawn and what loads around them has settled.
+      // Once the cards are drawn, and again for a few seconds while what loads around them
+      // settles (the page can grow, or the browser put it back where it was), until you touch it.
       let tries = 0;
+      let touched = false;
+      const stop = () => { touched = true; };
+      const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+      for (const name of events) window.addEventListener(name, stop, { once: true, passive: true });
       const find = () => {
+        tries += 1;
         const card = document.getElementById(`q-${wanted}`);
-        if (card) card.scrollIntoView({ block: 'start' });
-        else if (++tries < 20) setTimeout(find, 100);
+        if (!touched && card && Math.abs(card.getBoundingClientRect().top) > 40) card.scrollIntoView({ block: 'start' });
+        if (!touched && tries < 20) setTimeout(find, 150);
+        else for (const name of events) window.removeEventListener(name, stop);
       };
       setTimeout(find, 300);
     } else {

@@ -8,6 +8,7 @@ import { XP_RULES, triesFactor } from '@/lib/daily/progress';
 import type { CheckResult } from './useDaily';
 import { REPORT_KINDS, REPORT_LABEL, TRACK_LABEL, type Formula, type PartResponse, type Question } from '@/lib/daily/types';
 import type { NotesLinks } from './notes-links';
+import WorkInNotes from './WorkInNotes';
 
 export type Feedback = { rating: 'up' | 'down' | null; difficulty: 'easy' | 'right' | 'hard' | null; report: { kind: string; note: string } | null };
 
@@ -110,20 +111,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
         <h2>{q.title}</h2>
       </header>
 
-      {notes && (
-        <div className="dq-notes">
-          {!signedIn ? (
-            <button type="button" className="dq-notes-start" onClick={() => window.dispatchEvent(new Event('site:sign-in'))}>✏️ Sign in to work it out in Notes</button>
-          ) : notes.pages.length > 0 ? (
-            <div className="dq-notes-pages">
-              <span>Your working</span>
-              {notes.pages.map((page) => <a key={page.href} href={page.href}>✏️ {page.label}</a>)}
-            </div>
-          ) : (
-            <a className="dq-notes-start" href={notes.start}>✏️ Work it out in Notes</a>
-          )}
-        </div>
-      )}
+      {notes && <WorkInNotes key={q.id} question={q.id} date={notes.date} pages={notes.pages} signedIn={signedIn} />}
 
       <MathText>{q.prompt}</MathText>
       {q.figure && (

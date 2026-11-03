@@ -1,11 +1,11 @@
 'use client';
 
-import { orderBetween, type Notebook, type PageElement, type QuestionLink } from '@/lib/notes/items';
+import { orderBetween, type MarkElement, type Notebook, type PageElement, type PageRecord, type QuestionLink, type TextElement } from '@/lib/notes/items';
 import { localToday } from '@/lib/habits/dates';
 import { mathToPlain } from '@/lib/notes/plain-math';
 import { listBook, listLibrary, livePages, putBook, putElements, putLibrary, type StoredBook, type StoredElement, type StoredLibrary } from './db';
 import { newId } from './doc';
-import { layoutText, TEXT_LINE_HEIGHT } from './ink';
+import { layoutText, textBox, TEXT_LINE_HEIGHT } from './ink';
 import { scheduleSync, syncNow } from './sync';
 
 // Doing the engineering question of the day in Notes. A question opens a page of its own in one
@@ -46,6 +46,43 @@ export async function dailyChoices(date?: string) {
 /** Where the daily question lives on the site, to go back to it from its page. */
 /** Back to the question itself: on its day, or in Practice when it isn't one of the day's. */
 export const questionHref = (link: QuestionLink) => `/daily?date=${link.date}&question=${encodeURIComponent(link.id)}`;
+
+/** The same, as a full address, for a link on the page. */
+const questionUrl = (link: QuestionLink) => new URL(questionHref(link), window.location.origin).href;
+
+/** The question a link on a page goes to, if it goes to one on this site. */
+function questionOf(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === window.location.origin && parsed.pathname === '/daily' ? parsed.searchParams.get('question') : null;
+  } catch {
+    return null;
+  }
+}
+
+export const linksToQuestion = (element: PageElement, question: string) =>
+  element.kind === 'mark' && element.role === 'link' && !element.deleted && !!element.target && 'url' in element.target && questionOf(element.target.url) === question;
+
+/** A link over the question's title on its page, the same kind as one you'd make yourself. */
+function titleLink(heading: TextElement, link: QuestionLink): MarkElement {
+  const box = textBox(heading);
+  const now = Date.now();
+  return { id: newId(), kind: 'mark', role: 'link', ...box, label: link.title, target: { url: questionUrl(link) }, createdAt: now, updatedAt: now };
+}
+
+/**
+ * Links for a page's questions that its title doesn't have yet: pages made before titles were
+ * links had theirs at the foot of the screen. A question whose title has gone gets none.
+ */
+export function missingTitleLinks(page: PageRecord, elements: PageElement[]) {
+  const out: MarkElement[] = [];
+  for (const link of page.questions ?? []) {
+    if (elements.some((element) => linksToQuestion(element, link.id))) continue;
+    const heading = elements.find((element): element is TextElement => element.kind === 'text' && !element.deleted && element.text.startsWith(link.title));
+    if (heading) out.push(titleLink(heading, link));
+  }
+  return out;
+}
 
 /** The pages, anywhere, already tied to a question. */
 async function tiedPages(question: string) {
@@ -111,6 +148,8 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
     const element = { id: newId(), kind: 'text', x: 40, y, w: 532, h: 0, rot: 0, text: part.text, size: part.size, color: '#1d1f27', font: 'sans', ...(part.bold ? { bold: true } : {}), createdAt: now, updatedAt: now } as PageElement & { kind: 'text' };
     element.h = layoutText(element).length * element.size * TEXT_LINE_HEIGHT;
     elements.push({ ...element, notebook, page: page.id, dirty: true } as StoredElement);
+    // The title is the way back to the question.
+    if (part === heading) elements.push({ ...titleLink(element, { id: question, date, title }), notebook, page: page.id, dirty: true } as StoredElement);
     y += element.h + 10;
   }
   if (elements.length) await putElements(elements);

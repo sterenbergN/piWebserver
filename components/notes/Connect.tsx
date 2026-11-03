@@ -29,17 +29,19 @@ type Ink = { id: string; p: number[]; width: number }[];
 
 const TITLES: Record<ConnectRequest['role'], string> = { link: 'Link', heading: 'Heading', keyword: 'Keyword', text: 'Turn into typed text' };
 
-export function ConnectDialog({ request, ink, notebook, onSave, onConvert, onCancel }: {
+export function ConnectDialog({ request, ink, text = '', notebook, onSave, onConvert, onCancel }: {
   request: ConnectRequest;
   ink: Ink;
+  /** What selected typed text says, to start the label with. */
+  text?: string;
   notebook: string;
   onSave: (label: string, extra: { level?: 1 | 2 | 3; target?: MarkTarget }) => void;
   onConvert: (text: string) => void;
   onCancel: () => void;
 }) {
   const { role, mark } = request;
-  const [label, setLabel] = useState(mark?.label ?? '');
-  const [reading, setReading] = useState(!mark && ink.length > 0);
+  const [label, setLabel] = useState(mark?.label ?? text);
+  const [reading, setReading] = useState(!mark && !text && ink.length > 0);
   const [problem, setProblem] = useState('');
   const [level, setLevel] = useState<1 | 2 | 3>(mark?.level ?? 1);
   const target = mark?.target;
@@ -52,7 +54,7 @@ export function ConnectDialog({ request, ink, notebook, onSave, onConvert, onCan
 
   // Fill in what the writing says.
   useEffect(() => {
-    if (mark || !ink.length) return;
+    if (mark || text || !ink.length) return;
     let live = true;
     readInk(ink).then((text) => {
       if (!live) return;
@@ -61,7 +63,7 @@ export function ConnectDialog({ request, ink, notebook, onSave, onConvert, onCan
       if (live) setProblem(`${error instanceof Error ? error.message : 'It couldn’t be read.'} Type what it says instead.`);
     }).finally(() => { if (live) setReading(false); });
     return () => { live = false; };
-  }, [ink, mark, role]);
+  }, [ink, mark, role, text]);
 
   useEffect(() => {
     if (role !== 'link') return;

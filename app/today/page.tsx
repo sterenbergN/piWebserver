@@ -7,7 +7,8 @@ import ChoreCard from '@/components/chores/ChoreCard';
 import { useChores } from '@/components/chores/useChores';
 import { useHabits } from '@/components/habits/useHabits';
 import { deviceProgress, readDeviceAttempts } from '@/components/daily/useDaily';
-import { startInNotes } from '@/components/daily/notes-links';
+import { notesLinks, useTiedPages } from '@/components/daily/notes-links';
+import WorkInNotes from '@/components/daily/WorkInNotes';
 import { isActive } from '@/lib/habits/habits';
 import { freezeState, habitMeta, habitXp, isDueOn, isWeekly, plantState } from '@/lib/habits/stats';
 import { Plant } from '@/components/habits/Garden';
@@ -141,6 +142,8 @@ export default function TodayPage() {
 
   // A hidden question doesn't count toward the day. Its XP still counts toward her level.
   const core = showQuestion ? question?.day?.core : undefined;
+  // Today's question's page in Notes, if it's been made.
+  const tied = useTiedPages(core ? [core.id] : [], signedIn);
 
   // The day at a glance: the question, each daily habit, chores due today, and the journal once signed in.
   const dueToday = dueChores.filter((x) => ['overdue', 'today'].includes(dueStatus(x, today).status)).length;
@@ -231,10 +234,8 @@ export default function TodayPage() {
                   ) : (
                     <>
                       <p className="hb-hint">{question.streak ? `Answer it to make it ${question.streak + 1} days in a row.` : 'Answer it to start a streak.'}</p>
-                      <div className="td-question-actions">
-                        <Link className="btn btn-primary" href="/daily">Answer it</Link>
-                        {signedIn && question.day && <a className="btn btn-secondary" href={startInNotes(core, question.day.date)}>✏️ Work it out in Notes</a>}
-                      </div>
+                      <Link className="btn btn-primary" href="/daily">Answer it</Link>
+                      {signedIn && question.day && <WorkInNotes className="dq-notes td-notes" question={core.id} date={question.day.date} pages={notesLinks(core, question.day.date, tied).pages} signedIn />}
                     </>
                   )}
                 </>

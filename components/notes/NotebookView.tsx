@@ -11,7 +11,7 @@ import { NotebookDoc } from './doc';
 import { GESTURE_ACTIONS, GESTURES, NoteCanvas, noteClipboard, type EngineSettings, type GestureAction, type GestureName, type SelectionInfo, type TextStyle, type ToolName, type Tools } from './engine';
 import { exportPdf, exportPng, parsePageRange, safeFileName, shareOrSave } from './export';
 import { ConnectDialog, Glyph, type ConnectRequest } from './Connect';
-import { questionHref } from './daily';
+import { linksToQuestion, missingTitleLinks, questionHref } from './daily';
 import { addPdfToNotebook, bringFilesAcross, linksTo, preparePicture, searchNotebook, type PagePlace, type SearchHit } from './notebooks';
 import PagesPanel from './PagesPanel';
 import { RecordingBar, RecordingsPanel, useRecorder } from './Recorder';
@@ -176,6 +176,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
   const [recolor, setRecolor] = useState(false);
   const [connect, setConnect] = useState<ConnectRequest | null>(null);
   const [connectInk, setConnectInk] = useState<{ id: string; p: number[]; width: number }[]>([]);
+  const [connectText, setConnectText] = useState('');
   /** Followed a link within this notebook: the page to go back to. */
   const [cameFrom, setCameFrom] = useState<string | null>(null);
   const [linksHere, setLinksHere] = useState<(PagePlace & { label: string })[]>([]);
@@ -364,6 +365,29 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
   // ── Things you can do ────────────────────────────────────────────────────────
 
   const here: PageRecord | undefined = doc.pages[pageIndex] ?? doc.pages[0];
+
+  // A page's daily question is linked from its title. Pages from before then get that link
+  // now; a question whose title has gone keeps a way back at the foot of the screen.
+  const [untitled, setUntitled] = useState<string[]>([]);
+  // Looked at after every change shown here, but only worked through when the page, its
+  // questions or what's written on it have changed: what's on it can arrive after it opens.
+  const titleChecked = useRef('');
+  useEffect(() => {
+    const page = here;
+    const key = page?.questions?.length ? `${page.id}|${page.questions.map((link) => link.id).join(',')}|${doc.isLoaded(page.id) ? doc.version(page.id) : '-'}` : '';
+    if (key === titleChecked.current) return;
+    titleChecked.current = key;
+    if (!page?.questions?.length) { setUntitled([]); return; }
+    if (!doc.isLoaded(page.id)) {
+      void doc.ensure(page.id).then(() => setDocTick((tick) => tick + 1));
+      return;
+    }
+    const elements = doc.elementsOf(page.id);
+    const marks = missingTitleLinks(page, elements);
+    if (marks.length) doc.apply(marks.map((mark) => ({ type: 'element' as const, page: page.id, before: null, after: mark })), false);
+    const linked = [...elements, ...marks];
+    setUntitled(page.questions.filter((link) => !linked.some((element) => linksToQuestion(element, link.id))).map((link) => link.id));
+  });
   const onDarkPaper = isDark(here?.paper ?? '#ffffff');
 
   // Black ink can't be seen on black paper. Arriving on a page where the pen wouldn't show
@@ -406,6 +430,8 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
     const target = mark.target;
     if (!target) return;
     if ('url' in target) {
+      // Somewhere else on this site, like a daily question, opens here once the page is saved.
+      if (new URL(target.url).origin === window.location.origin) { void doc.settled().then(() => window.location.assign(target.url)); return; }
       window.open(target.url, '_blank', 'noopener,noreferrer');
       return;
     }
@@ -431,6 +457,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
 
   const openConnect = (request: ConnectRequest) => {
     setConnectInk(request.mark ? [] : engine?.selectionInk() ?? []);
+    setConnectText(request.mark ? '' : engine?.selectionText() ?? '');
     setConnect(request);
   };
 
@@ -648,9 +675,9 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
           <button type="button" aria-label="Cut" title="Cut" onClick={() => { engine?.cutSelection(); refreshUndo(); }}><Icon name="scissors" /></button>
           <button type="button" aria-label="Copy" title="Copy" onClick={() => { engine?.copySelection(); refreshUndo(); }}><Icon name="copy" /></button>
           <button type="button" aria-label="Duplicate" title="Duplicate" onClick={() => engine?.duplicateSelection()}><Icon name="pages" /></button>
-          {selection.hasStroke && (
+          {selection.hasStroke && <button type="button" aria-label="Turn into typed text" title="Turn into typed text" onClick={() => openConnect({ role: 'text' })}><Glyph name="to-text" /></button>}
+          {(selection.hasStroke || selection.hasText) && (
             <>
-              <button type="button" aria-label="Turn into typed text" title="Turn into typed text" onClick={() => openConnect({ role: 'text' })}><Glyph name="to-text" /></button>
               <button type="button" aria-label="Make a link" title="Make a link" onClick={() => openConnect({ role: 'link' })}><Icon name="link" /></button>
               <button type="button" aria-label="Make a heading" title="Make a heading" onClick={() => openConnect({ role: 'heading' })}><Glyph name="heading" /></button>
               <button type="button" aria-label="Make a keyword" title="Make a keyword" onClick={() => openConnect({ role: 'keyword' })}><Glyph name="tag" /></button>
@@ -686,7 +713,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
           {zoom !== 100 && <button type="button" className="nt-chip" onClick={() => engine?.fit()} aria-label="Fit the page to the window">{zoom}%</button>}
           {sync === 'offline' && <span className="nt-chip is-quiet" title="Saved here. It’ll go up when there’s a connection."><Icon name="offline" /></span>}
           {undoState.paste && !selection && <button type="button" className="nt-chip" onClick={pasteHere}><Icon name="paste" /> Paste</button>}
-          {here?.questions?.map((link) => (
+          {here?.questions?.filter((link) => untitled.includes(link.id)).map((link) => (
             <a key={link.id} className="nt-chip is-question" href={questionHref(link)} target="_blank" rel="noopener" title="Open the daily question"><Icon name="tests" /> {link.title}</a>
           ))}
           <button type="button" className="nt-chip" onClick={() => setPanel('pages')} aria-label={`Page ${pageIndex + 1} of ${totalPages}. Open pages.`}>{pageIndex + 1} / {totalPages}</button>
@@ -701,6 +728,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
           <ConnectDialog
             request={connect}
             ink={connectInk}
+            text={connectText}
             notebook={notebook}
             onCancel={() => setConnect(null)}
             onConvert={(text) => { engine?.convertSelectionToText(text); setConnect(null); }}
