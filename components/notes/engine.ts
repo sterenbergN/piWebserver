@@ -1202,7 +1202,12 @@ export class NoteCanvas {
       const log = this.strokeLog;
       if (log.start) {
         if (log.lastFrameAt) log.slowestFrame = Math.max(log.slowestFrame, at - log.lastFrameAt);
-        if (log.lastFrameAt && at - log.lastFrameAt > 24) log.longFrames += 1;
+        if (log.lastFrameAt && at - log.lastFrameAt > 24) {
+          log.longFrames += 1;
+          // Late because no pencil update came in time, rather than because the screen fell behind.
+          if (log.pendingSince - log.lastFrameAt > 16) log.quietFrames += 1;
+        }
+        log.pendingSince = 0;
         log.lastFrameAt = at;
         log.paints += 1;
       }
@@ -1242,6 +1247,10 @@ export class NoteCanvas {
     if (events.length > 1) log.coalesced = true;
     log.slowestGap = Math.max(log.slowestGap, nowAt - log.lastEventAt);
     log.lastEventAt = nowAt;
+    if (!log.pendingSince) log.pendingSince = nowAt;
+    // How long the update waited before the app got to it: long means the page was busy.
+    const waited = nowAt - e.timeStamp;
+    if (waited >= 0 && waited < 1000) log.inputDelay = Math.max(log.inputDelay, waited);
     for (const event of events.length ? events : [e]) {
       const { x, y } = this.position(event);
       const [px, py] = this.toPage(rect, x, y);
@@ -1293,8 +1302,8 @@ export class NoteCanvas {
 
   /** How the last stroke went, for the pencil check in Settings. */
   private stats = { upAt: 0, commitMs: 0 };
-  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, drawMs: 0 };
-  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; predictions: boolean; slowestGap: number; slowestFrame: number; longFrames: number; drawMs: number; paints: number; commitMs: number }[] = [];
+  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
+  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; predictions: boolean; slowestGap: number; slowestFrame: number; longFrames: number; quietFrames: number; inputDelay: number; drawMs: number; paints: number; commitMs: number }[] = [];
 
   /** The last strokes, measured: how often the pencil reported, and how long the screen took. */
   pencilCheck() {
@@ -1302,7 +1311,7 @@ export class NoteCanvas {
   }
 
   private noteStrokeStart(at: number) {
-    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, drawMs: 0 };
+    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
   }
 
   private noteStrokeEnd() {
@@ -1310,7 +1319,7 @@ export class NoteCanvas {
     if (!log.start) return;
     this.recentStrokes.push({
       ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced, predictions: log.predictions,
-      slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), longFrames: log.longFrames, drawMs: Math.round(log.drawMs * 10) / 10,
+      slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), longFrames: log.longFrames, quietFrames: log.quietFrames, inputDelay: Math.round(log.inputDelay), drawMs: Math.round(log.drawMs * 10) / 10,
       paints: log.paints, commitMs: Math.round(this.stats.commitMs * 10) / 10,
     });
     if (this.recentStrokes.length > 12) this.recentStrokes.shift();

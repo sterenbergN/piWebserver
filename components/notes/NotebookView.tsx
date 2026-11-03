@@ -868,6 +868,8 @@ function PencilCheck({ engine, drawAhead }: { engine: NoteCanvas | null; drawAhe
     ['Longest wait for the pencil', `${Math.max(...strokes.map((s) => s.slowestGap))} ms`],
     ['Longest frame while writing', `${Math.max(...strokes.map((s) => s.slowestFrame))} ms`],
     ['Frames over 24 ms', String(strokes.reduce((total, s) => total + (s.longFrames ?? 0), 0))],
+    ['…because no pencil update came', String(strokes.reduce((total, s) => total + (s.quietFrames ?? 0), 0))],
+    ['Longest a pencil update waited for the app', `${Math.max(...strokes.map((s) => s.inputDelay ?? 0))} ms`],
     ['Drawing the ink, slowest frame', `${Math.max(...strokes.map((s) => s.drawMs ?? 0))} ms`],
     ['Saving a finished stroke', `${Math.max(...strokes.map((s) => s.commitMs))} ms`],
   ];
