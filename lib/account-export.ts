@@ -8,6 +8,7 @@ import { folder as privatePostsFolder } from '@/lib/journal/private-posts';
 import { householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
 import { libraryFile as readerLibraryFile, notesFolder as readerNotesFolder, progressFile as readerProgressFile } from '@/lib/reader/store';
 import { notesFolder } from '@/lib/notes/store';
+import { golfUserFile, listRoundSummaries, roundFile } from '@/lib/golf/store';
 import { studyFolder } from '@/lib/study/store';
 import { getWorkoutData } from '@/lib/workout/data';
 import { isPhotoId, photoPath } from '@/lib/workout/photos';
@@ -116,6 +117,9 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     .filter((file) => !file.endsWith('.tmp'))
     .map((file) => ({ entry: `notes/${path.relative(notebookRoot, file).split(path.sep).join('/')}`, file }));
 
+  // Golf: the rounds this account played in (shared rounds come whole, guests and all) and its bag.
+  const golfRounds = (await listRoundSummaries(userId)).map((r) => ({ entry: `golf/rounds/${r.id}.json`, file: roundFile(r.id) }));
+
   // Read-only: signing in to download shouldn't make a household or move a kitchen.
   const household = await findHousehold(userId);
 
@@ -138,6 +142,8 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'reader/progress.json', file: readerProgressFile(userId) },
     ...readerNotes,
     ...notebooks,
+    { entry: 'golf/bag-and-settings.json', file: golfUserFile(userId) },
+    ...golfRounds,
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },

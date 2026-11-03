@@ -8,7 +8,8 @@ import path from 'path';
 
 const locks = new Map<string, Promise<unknown>>();
 
-async function withLock<R>(file: string, fn: () => Promise<R>): Promise<R> {
+/** Run `fn` while holding the lock for `file`, for changes updateJson can't make (like deleting it). */
+export async function withLock<R>(file: string, fn: () => Promise<R>): Promise<R> {
   const previous = locks.get(file) || Promise.resolve();
   const run = previous.catch(() => {}).then(fn);
   const tail = run.catch(() => {});

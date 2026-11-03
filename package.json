@@ -19,6 +19,7 @@
     "adm-zip": "^0.5.17",
     "fflate": "^0.8.3",
     "katex": "^0.16.47",
+    "leaflet": "^1.9.4",
     "next": "16.2.2",
     "onnxruntime-node": "^1.31.1",
     "pdf-lib": "^1.17.1",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
+    "@types/leaflet": "^1.9.20",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",

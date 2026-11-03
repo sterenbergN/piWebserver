@@ -8,7 +8,8 @@
 // code that page uses, which the page lists for us each time it runs (see
 // components/reader/offline.ts). Books and notes are in the page's own database.
 // The Notes app gets the same treatment with a cache of its own, so an update to one
-// never takes the other down with it.
+// never takes the other down with it, and so does the golf tracker (rounds are scored
+// where there's no signal; its data is in the page's own storage).
 const VERSION = 'v6';
 const STATIC_CACHE = `static-${VERSION}`;
 const PAGE_CACHE = `pages-${VERSION}`;
@@ -16,6 +17,8 @@ const READER_CACHE = 'reader-v1';
 const READER_PAGE = '/reader';
 const NOTES_CACHE = 'notes-v1';
 const NOTES_PAGE = '/notes';
+const GOLF_CACHE = 'golf-v1';
+const GOLF_PAGE = '/golf';
 const READER_ASSETS = '/reader-assets/';
 const READER_PAGE_WAIT_MS = 2500;
 const PRECACHE_PAGES = ['/workout', '/workout/active', '/workout/config', '/today', '/recipes'];
@@ -35,7 +38,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => ![STATIC_CACHE, PAGE_CACHE, READER_CACHE, NOTES_CACHE].includes(key)).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => ![STATIC_CACHE, PAGE_CACHE, READER_CACHE, NOTES_CACHE, GOLF_CACHE].includes(key)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -68,6 +71,9 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'notes-offline') {
     event.waitUntil(keepApp(NOTES_CACHE, NOTES_PAGE, event.data.code || [], event.data.assets || []));
   }
+  if (event.data && event.data.type === 'golf-offline') {
+    event.waitUntil(keepApp(GOLF_CACHE, GOLF_PAGE, event.data.code || [], event.data.assets || []));
+  }
 });
 
 /** The network if it answers soon, since a Pi on a bad connection can hang. Otherwise what's kept. */
@@ -97,6 +103,11 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate' && url.pathname === NOTES_PAGE) {
     event.respondWith(appPage(event, NOTES_CACHE, NOTES_PAGE));
+    return;
+  }
+
+  if (request.mode === 'navigate' && url.pathname === GOLF_PAGE) {
+    event.respondWith(appPage(event, GOLF_CACHE, GOLF_PAGE));
     return;
   }
 

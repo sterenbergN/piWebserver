@@ -1,0 +1,236 @@
+/* ─── Golf & disc golf ─────────────────────────────────────────────────────── */
+
+/* Map colours, per theme. Each mark also has a shape or label, so colour is never the only cue. */
+:root, [data-theme="dark"] {
+  --golf-tee: #ebcb8b; --golf-target: #bf616a; --golf-shot: #88c0d0; --golf-old: #d8dee9;
+  --golf-center: #ebcb8b; --golf-hole: #eceff4; --golf-aim: #ebcb8b; --golf-me: #5e9df0;
+  --golf-likely: #ebcb8b; --golf-possible: #d08770;
+}
+[data-theme="light"] {
+  --golf-tee: #b8860b; --golf-target: #b23a46; --golf-shot: #1f6fb2; --golf-old: #ffffff;
+  --golf-center: #b8860b; --golf-hole: #ffffff; --golf-aim: #ffd166; --golf-me: #1a5fd0;
+  --golf-likely: #ffd166; --golf-possible: #f08a4b;
+}
+
+.golf { max-width: 720px; margin: 0 auto; padding: 1rem 1rem 6rem; }
+.golf h1, .golf h2, .golf p { margin: 0; }
+.golf h1 { font-size: 1.5rem; line-height: 1.2; }
+.golf h2 { font-size: 1.05rem; }
+.golf-screen { display: flex; flex-direction: column; gap: 0.9rem; }
+.golf-muted { color: var(--muted); }
+.golf-hint { color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+.golf-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.golf-head p { margin-top: 0.25rem; }
+.golf-back { background: none; border: 0; padding: 0.25rem 0; margin-bottom: 0.25rem; color: var(--accent-light); font: inherit; font-size: 0.9rem; cursor: pointer; }
+
+.golf-card { display: flex; flex-direction: column; gap: 0.65rem; padding: 1rem; border: 1px solid var(--surface-border); border-radius: 16px; background: var(--surface-glass); }
+.golf-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.7rem 0.9rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); font-size: 0.9rem; }
+.golf-banner > span { flex: 1 1 14rem; }
+.golf-banner.is-error { border-color: rgba(var(--danger-rgb), 0.6); background: rgba(var(--danger-rgb), 0.1); }
+.golf-inline { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.golf-inline select { font: inherit; }
+
+.golf-chip { align-self: center; padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--surface-border); font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.golf-chip.is-ok { color: var(--success); border-color: rgba(var(--success-rgb), 0.5); }
+.golf-chip.is-warn { color: var(--warning); border-color: var(--warning); }
+
+/* Buttons and inputs: big enough for a thumb outdoors. */
+.golf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; min-height: 44px; padding: 0.55rem 1rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); color: var(--foreground); font: inherit; font-weight: 600; cursor: pointer; text-align: center; }
+.golf-btn:hover:not(:disabled) { background: var(--surface-hover); }
+.golf-btn:disabled { opacity: 0.5; cursor: default; }
+.golf-btn.is-primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.golf-btn.is-primary:hover:not(:disabled) { background: var(--primary-bg-hover); }
+.golf-btn.is-quiet { background: none; border-color: transparent; color: var(--accent-light); }
+.golf-btn.is-danger { color: var(--danger); border-color: rgba(var(--danger-rgb), 0.5); background: none; }
+.golf-btn.is-small { min-height: 36px; padding: 0.35rem 0.75rem; font-size: 0.88rem; }
+.golf-btn.is-wide { width: 100%; }
+.golf-btn[aria-pressed="true"] { border-color: var(--accent-light); box-shadow: inset 0 0 0 1px var(--accent-light); }
+.golf-icon-btn { display: grid; place-items: center; min-width: 40px; min-height: 40px; border: 0; border-radius: 10px; background: none; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
+.golf-icon-btn:hover { background: var(--surface-hover); color: var(--foreground); }
+.golf-input { width: 100%; min-height: 44px; padding: 0.5rem 0.75rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; }
+.golf-input.is-small { min-height: 38px; width: auto; max-width: 100%; }
+.golf-input.is-title { font-size: 1.3rem; font-weight: 700; }
+.golf-input.is-cell { min-height: 34px; width: 3.6rem; padding: 0.25rem 0.4rem; text-align: center; }
+.golf-field { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+.golf-field > .golf-input, .golf-field > .golf-seg, .golf-field > .golf-row-actions { color: var(--foreground); font-size: 1rem; }
+.golf-field.is-num .golf-input { text-align: center; }
+.golf-check { display: flex; align-items: center; gap: 0.55rem; min-height: 40px; cursor: pointer; }
+.golf-check input { width: 1.2rem; height: 1.2rem; }
+.golf-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.golf-row-actions > .golf-input { flex: 1 1 10rem; width: auto; }
+
+.golf-seg { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); }
+.golf-seg button { flex: 1 1 auto; min-height: 38px; padding: 0.3rem 0.7rem; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.golf-seg button[aria-pressed="true"] { background: var(--card-bg); color: var(--foreground); box-shadow: 0 0 0 1px var(--surface-border); }
+
+/* Lists of rounds, courses and choices */
+.golf-row { display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.6rem 0.5rem; border: 0; border-top: 1px solid var(--surface-border); background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.golf-card h2 + .golf-row { border-top: 0; }
+.golf-row:hover { background: var(--surface-hover); }
+.golf-row-icon { font-size: 1.3rem; }
+.golf-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.golf-row-main small, .golf-row-score small { color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.golf-row-score { display: flex; flex-direction: column; align-items: flex-end; }
+.golf-row-score strong { font-size: 1.15rem; }
+.golf-pick-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.golf-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; padding: 0.65rem 0.8rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.golf-pick small { color: var(--muted); }
+.golf-pick[aria-pressed="true"] { border-color: var(--accent-light); box-shadow: inset 0 0 0 1px var(--accent-light); }
+.golf-pick:disabled { opacity: 0.55; cursor: default; }
+.golf-pick.is-out { opacity: 0.65; }
+
+.golf-start { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.golf-start-btn { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; padding: 1.1rem 0.5rem; border-radius: 16px; border: 1px solid var(--primary-bg); background: rgba(var(--accent-rgb), 0.12); color: var(--foreground); font: inherit; font-weight: 700; cursor: pointer; }
+.golf-start-btn span { font-size: 1.8rem; }
+.golf-start-btn:hover { background: rgba(var(--accent-rgb), 0.2); }
+.golf-links { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+.golf-link { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.7rem 0.3rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.golf-link span { font-size: 1.3rem; }
+
+/* Steppers */
+.golf-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--surface-border); border-radius: 12px; overflow: hidden; background: var(--input-bg); }
+.golf-stepper button { min-width: 40px; min-height: 40px; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 1.15rem; font-weight: 700; cursor: pointer; }
+.golf-stepper button:disabled { opacity: 0.35; }
+.golf-stepper button:active:not(:disabled) { background: var(--surface-hover); }
+.golf-stepper-value { min-width: 46px; border-left: 1px solid var(--surface-border) !important; border-right: 1px solid var(--surface-border) !important; }
+.golf-stepper-value.is-empty { color: var(--muted); }
+.golf-stepper.is-big button { min-width: 54px; min-height: 54px; font-size: 1.5rem; }
+.golf-stepper.is-big .golf-stepper-value { min-width: 62px; font-size: 1.7rem; }
+
+/* Round */
+.golf-round-head { display: flex; align-items: center; gap: 0.5rem; }
+.golf-round-head .golf-back { margin: 0; white-space: nowrap; }
+.golf-round-title { flex: 1; min-width: 0; }
+.golf-round-title h1 { font-size: 1.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.golf-round-title small { color: var(--muted); font-size: 0.8rem; }
+.golf-tabs { display: flex; gap: 0.3rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); position: sticky; top: 0.5rem; z-index: 5; }
+.golf-tabs button { flex: 1; min-height: 40px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-weight: 700; cursor: pointer; }
+.golf-tabs button[aria-selected="true"] { background: var(--card-bg); color: var(--foreground); box-shadow: 0 0 0 1px var(--surface-border); }
+
+.golf-hole { display: flex; flex-direction: column; gap: 0.75rem; }
+.golf-hole-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.golf-hole-head h2 { font-size: 1.6rem; }
+.golf-par { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-weight: 600; }
+.golf-range { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; padding: 0.75rem 1rem; border-radius: 14px; background: rgba(var(--accent-rgb), 0.12); border: 1px solid rgba(var(--accent-rgb), 0.35); }
+.golf-range strong { font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.golf-players { display: flex; flex-direction: column; gap: 0.5rem; }
+.golf-player { padding: 0.75rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.golf-player-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.golf-player-name { display: flex; flex-direction: column; min-width: 0; }
+.golf-player-name small { color: var(--muted); font-size: 0.82rem; }
+.golf-player-score { display: flex; align-items: center; gap: 0.5rem; }
+.golf-badge { padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-transform: capitalize; border: 1px solid var(--surface-border); color: var(--muted); }
+.golf-badge.is-ace, .golf-badge.is-albatross, .golf-badge.is-eagle, .golf-badge.is-birdie { color: var(--success); border-color: rgba(var(--success-rgb), 0.6); }
+.golf-badge.is-bogey { color: var(--warning); border-color: var(--warning); }
+.golf-badge.is-double, .golf-badge.is-worse { color: var(--danger); border-color: rgba(var(--danger-rgb), 0.6); }
+.golf-details { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.65rem; padding-top: 0.65rem; border-top: 1px dashed var(--surface-border); }
+.golf-detail { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; font-size: 0.9rem; color: var(--muted); }
+.golf-detail .golf-seg { flex: 1 1 16rem; }
+.golf-putts { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.golf-putts label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; }
+
+.golf-shots { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; border-radius: 14px; border: 1px solid var(--surface-border); }
+.golf-open-shot { display: flex; flex-direction: column; gap: 0.5rem; }
+.golf-shot { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0; border-top: 1px solid var(--surface-border); font-size: 0.92rem; }
+.golf-shot span { flex: 1; }
+.golf-shot small { color: var(--muted); }
+.golf-hole-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.golf-hole-nav.is-top { grid-template-columns: auto 1fr auto; align-items: center; text-align: center; }
+
+.golf-card-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.golf-scorecard { border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+.golf-scorecard th, .golf-scorecard td { padding: 0.2rem; text-align: center; border-bottom: 1px solid var(--surface-border); min-width: 2.1rem; }
+.golf-scorecard th[scope="row"] { position: sticky; left: 0; background: var(--background); text-align: left; padding-right: 0.6rem; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.golf-scorecard .is-par td, .golf-scorecard .is-par th { color: var(--muted); }
+.golf-scorecard .is-sum { font-weight: 700; background: rgba(var(--accent-rgb), 0.08); }
+.golf-scorecard tr.is-me th { color: var(--accent-light); }
+.golf-cell { width: 2rem; height: 2rem; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--foreground); font: inherit; cursor: pointer; }
+.golf-cell.is-birdie, .golf-cell.is-eagle, .golf-cell.is-albatross, .golf-cell.is-ace { border-color: var(--success); border-radius: 50%; }
+.golf-cell.is-eagle, .golf-cell.is-albatross, .golf-cell.is-ace { box-shadow: 0 0 0 2px var(--background), 0 0 0 3px var(--success); }
+.golf-cell.is-bogey { border-color: var(--warning); }
+.golf-cell.is-double, .golf-cell.is-worse { border-color: var(--danger); box-shadow: 0 0 0 2px var(--background), 0 0 0 3px var(--danger); }
+.golf-totals { list-style: none; padding: 0; margin: 0.75rem 0 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.golf-totals li { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 0 0.6rem; padding: 0.45rem 0.6rem; border-radius: 10px; background: var(--card-bg); }
+.golf-totals li.is-me { box-shadow: inset 0 0 0 1px var(--accent-light); }
+.golf-totals strong { font-size: 1.2rem; }
+.golf-totals small { grid-column: 1 / -1; color: var(--muted); font-size: 0.8rem; }
+.is-under { color: var(--success); }
+.is-over { color: var(--warning); }
+.is-even { color: var(--foreground); }
+
+.golf-hole-map { display: flex; flex-direction: column; gap: 0.6rem; }
+.golf-qr { align-self: center; border-radius: 12px; background: #fff; padding: 6px; }
+.golf-code { text-align: center; font-size: 2rem; font-weight: 800; letter-spacing: 0.25em; font-variant-numeric: tabular-nums; }
+.golf-players-edit { border: 1px solid var(--surface-border); border-radius: 12px; padding: 0.5rem 0.75rem; }
+.golf-players-edit summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.golf-players-edit[open] { display: flex; flex-direction: column; gap: 0.4rem; }
+
+/* Map */
+.golf-map { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.golf-map-canvas { height: 300px; width: 100%; }
+.golf-map.is-tall .golf-map-canvas { height: min(62vh, 520px); }
+.golf-map-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 0.9rem; pointer-events: none; }
+.golf-map-switch { position: absolute; top: 10px; right: 10px; z-index: 500; min-height: 34px; padding: 0.3rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.golf-map .leaflet-container { font: inherit; background: var(--input-bg); }
+.golf-pin { display: grid; place-items: center; border-radius: 50%; border: 2px solid #fff; color: #1d2a33; font-size: 0.78rem; font-weight: 800; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
+.golf-pin.is-tee { background: var(--golf-tee); }
+.golf-pin.is-target { background: var(--golf-target); color: #fff; }
+
+/* Stats */
+.golf-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.golf-filters .golf-seg { flex: 1 1 16rem; }
+.golf-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }
+.golf-tile { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.75rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.golf-tiles.is-small .golf-tile { background: var(--card-bg); }
+.golf-tile small { color: var(--muted); font-size: 0.8rem; }
+.golf-tile strong { font-size: 1.6rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.golf-tile span { color: var(--muted); font-size: 0.78rem; }
+.golf-chart { height: 200px; }
+.golf-bars { display: flex; flex-direction: column; gap: 0.35rem; }
+.golf-bar-row { display: grid; grid-template-columns: 8rem 1fr 3rem; align-items: center; gap: 0.5rem; font-size: 0.88rem; }
+.golf-bar-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+.golf-bar { height: 10px; border-radius: 999px; background: var(--input-bg); overflow: hidden; }
+.golf-bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent-light); }
+.golf-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.golf-table th, .golf-table td { padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--surface-border); text-align: right; }
+.golf-table th:first-child, .golf-table thead th:first-child { text-align: left; }
+.golf-table thead th { color: var(--muted); font-weight: 600; font-size: 0.8rem; }
+.golf-table.is-holes th, .golf-table.is-holes td { text-align: center; }
+.golf-layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.5rem; }
+
+/* Bag */
+.golf-flight-edit { display: flex; gap: 0.75rem; align-items: center; }
+.golf-flight-nums { flex: 1; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+.golf-flight { width: 96px; height: 168px; flex-shrink: 0; }
+.golf-flight-aim { stroke: var(--surface-border); stroke-width: 1; stroke-dasharray: 4 4; }
+.golf-flight-path { fill: none; stroke: var(--accent-light); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.golf-flight-start { fill: var(--golf-tee); }
+.golf-clubs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.golf-clubs li { display: flex; align-items: center; gap: 0.1rem; padding: 0.1rem 0.1rem 0.1rem 0.7rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--card-bg); font-size: 0.88rem; }
+.golf-clubs .golf-icon-btn { min-width: 32px; min-height: 32px; font-size: 0.85rem; }
+
+.golf-find-guide { font-size: 1.05rem; }
+
+/* Sheets and toasts */
+.golf-sheet-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, 0.5); }
+.golf-sheet { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: var(--background); border: 1px solid var(--surface-border); border-bottom: 0; }
+.golf-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.golf-sheet-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+.golf-toast { position: fixed; left: 50%; bottom: calc(1rem + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 1001; display: flex; align-items: center; gap: 0.5rem; max-width: calc(100% - 2rem); padding: 0.5rem 0.5rem 0.5rem 0.9rem; border-radius: 12px; background: var(--card-bg); border: 1px solid var(--surface-border); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); font-size: 0.9rem; }
+
+/* Sunlight: black on white, heavier text and borders, for reading in direct sun. */
+.golf.is-sunlight {
+  --background: #ffffff; --foreground: #000000; --muted: #222222; --surface-glass: #ffffff; --card-bg: #ffffff;
+  --input-bg: #ffffff; --surface-border: #000000; --surface-hover: #e8e8e8; --accent-light: #003c8f;
+  --primary-bg: #000000; --primary-bg-hover: #222222; --primary-fg: #ffffff;
+  background: #fff; color: #000; font-weight: 500;
+}
+.golf.is-sunlight .golf-player, .golf.is-sunlight .golf-card, .golf.is-sunlight .golf-stepper { border-width: 2px; }
+.golf.is-sunlight .is-under { color: #0a5a00; }
+.golf.is-sunlight .is-over { color: #8a3300; }
+
+@media (max-width: 420px) {
+  .golf { padding-left: 0.75rem; padding-right: 0.75rem; }
+  .golf-stepper.is-big button { min-width: 48px; }
+  .golf-bar-row { grid-template-columns: 6.5rem 1fr 2.6rem; }
+}

@@ -152,6 +152,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/workout/health', label: 'Health & plan', icon: '❤️', short: 'Health', blurb: 'Weight, sleep and your plan', keywords: 'body weight sleep nutrition', account: true },
         { href: '/workout/analytics', label: 'Progress & coach', icon: '📈', short: 'Progress', blurb: 'Charts and what to do next', keywords: 'analytics charts coach', account: true },
         { href: '/workout/calculators', label: 'Lifting calculators', icon: '🧮', short: 'Calc', blurb: 'One-rep max, plates and more', keywords: 'one rep max 1rm plates' },
+        { href: '/golf', label: 'Golf & disc golf', icon: '⛳', short: 'Golf', blurb: 'Score rounds, measure shots, see your numbers', keywords: 'golf disc golf scorecard handicap gps distance basket frisbee lost disc' },
       ],
       corners: [{
         label: 'Tucked inside',
@@ -202,7 +203,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       items: [
         { href: '/tools#movies', label: 'Movie picker', icon: '🎬', short: 'Movies', blurb: 'What to watch tonight', keywords: 'film random' },
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️', short: 'Eat', blurb: 'Pick a restaurant for you', keywords: 'restaurant dinner' },
-        { href: '/tools#golf', label: 'Golf scores', icon: '⛳', short: 'Golf', blurb: 'Keep a scorecard', keywords: 'scorecard' },
       ],
     },
     {

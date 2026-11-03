@@ -25,8 +25,8 @@ test('pages sharing a path are told apart by query or hash', () => {
   assert.ok(!current('/recipes', '/recipes', '', 'view=list'));
   assert.ok(current('/recipes?view=week', '/recipes', '', 'recipe=stew&view=week'));
   assert.ok(current('/tools#calculators', '/tools'));
-  assert.ok(current('/tools#golf', '/tools', 'golf'));
-  assert.ok(!current('/tools#calculators', '/tools', 'golf'));
+  assert.ok(current('/tools#movies', '/tools', 'movies'));
+  assert.ok(!current('/tools#calculators', '/tools', 'movies'));
 });
 
 test('every page is listed once, and the buried ones can be found by name', () => {

@@ -4,25 +4,25 @@ import { useEffect, useState } from 'react';
 import CalculatorTool from '@/components/tools/CalculatorTool';
 import MoviePickerTool from '@/components/tools/MoviePickerTool';
 import RestaurantPickerTool from '@/components/tools/RestaurantPickerTool';
-import GolfTrackerTool from '@/components/tools/GolfTrackerTool';
 import './tools.css';
 
 const TOOLS = [
   { id: 'calculators', icon: '🧮', label: 'Calculators' },
   { id: 'movies', icon: '🎬', label: 'Movie picker' },
   { id: 'food', icon: '🍽️', label: 'Where to eat' },
-  { id: 'golf', icon: '⛳', label: 'Golf scores' },
 ] as const;
 type ToolId = (typeof TOOLS)[number]['id'];
 
 export default function ToolsPage() {
   const [tool, setTool] = useState<ToolId>('calculators');
 
-  // The open tool lives in the URL (#golf) so it survives a refresh and can be linked,
+  // The open tool lives in the URL (#movies) so it survives a refresh and can be linked,
   // and the navbar's tool links can switch it while this page is open.
   useEffect(() => {
     const fromHash = () => {
       const id = window.location.hash.slice(1);
+      // The golf scorecard grew into its own page; old links and bookmarks go there.
+      if (id === 'golf') { window.location.replace('/golf'); return; }
       if (TOOLS.some(t => t.id === id)) setTool(id as ToolId);
     };
     fromHash();
@@ -55,7 +55,6 @@ export default function ToolsPage() {
         {tool === 'calculators' && <CalculatorTool />}
         {tool === 'movies' && <MoviePickerTool />}
         {tool === 'food' && <RestaurantPickerTool />}
-        {tool === 'golf' && <GolfTrackerTool />}
       </div>
     </div>
   );

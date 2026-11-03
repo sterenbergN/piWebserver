@@ -114,6 +114,6 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Unit converter', url: '/tools#calculators', subtitle: 'Tools', body: 'calculator convert length weight temperature' },
   { kind: 'page', title: 'Movie picker', url: '/tools#movies', subtitle: 'Tools', body: 'film watch random' },
   { kind: 'page', title: 'Restaurant finder', url: '/tools#food', subtitle: 'Tools', body: 'food eat dinner' },
-  { kind: 'page', title: 'Golf score tracker', url: '/tools#golf', subtitle: 'Tools', body: 'golf scorecard' },
+  { kind: 'page', title: 'Golf & disc golf', url: '/golf', subtitle: 'Score rounds, measure shots with GPS, see your stats', body: 'golf disc golf scorecard handicap gps distance basket lost disc' },
   { kind: 'page', title: 'System stats', url: '/stats', subtitle: 'Raspberry Pi temperature, memory and storage', body: 'server pi cpu' },
 ];

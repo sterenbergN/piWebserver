@@ -1,0 +1,12 @@
+import type { Metadata } from 'next';
+import 'leaflet/dist/leaflet.css';
+import './golf.css';
+
+export const metadata: Metadata = {
+  title: 'Golf & disc golf',
+  description: 'Score golf and disc golf rounds with friends, measure shots with GPS on a satellite map, and see your numbers over time.',
+};
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return children;
+}
