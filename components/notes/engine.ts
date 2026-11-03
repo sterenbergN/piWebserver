@@ -53,8 +53,6 @@ export type EngineSettings = {
   fingerDraws: 'auto' | 'on' | 'off';
   gestures: Record<GestureName, GestureAction>;
   snapShapes: boolean;
-  /** Draw a little way along where the browser expects the pencil to go next. */
-  drawAhead: boolean;
 };
 
 export type SelectionInfo = { count: number; rect: Box; hasImage: boolean; hasText: boolean; hasStroke: boolean; mark: MarkElement | null };
@@ -94,8 +92,6 @@ const HOLD_MS = 550;
 const SETTLE_AFTER = 48;
 const KEEP_WET = 20;
 const OVERLAP = 4;
-/** How far ahead of the pencil the browser's guess may be drawn, in screen pixels: further is likely wrong. */
-const AHEAD_PIXELS = 18;
 const HOLD_FINGER_MS = 500;
 const DOUBLE_TAP_MS = 280;
 const HOLD_STILL_PIXELS = 3;
@@ -125,8 +121,6 @@ type Wet = {
   isFinger: boolean;
   /** How many points are already drawn for good on the settled layer: only the rest is redrawn each frame. */
   settledPoints: number;
-  /** Where the browser expects the pencil next, when drawing ahead is on. Drawn, never saved. */
-  predicted: number[];
 };
 
 type Selection = {
@@ -815,7 +809,7 @@ export class NoteCanvas {
       this.settledDirty = true;
     }
     const tailFrom = pen ? Math.max(0, wet.settledPoints - OVERLAP) : 0;
-    const tail = wet.snapped ?? (tailFrom || wet.predicted.length ? wet.pts.slice(tailFrom * 3).concat(wet.predicted) : wet.pts);
+    const tail = wet.snapped ?? (tailFrom ? wet.pts.slice(tailFrom * 3) : wet.pts);
     const box = boundsOf(tail, wet.width * 2);
     const dpr = this.dpr;
     const area = rect ? {
@@ -1183,7 +1177,7 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0, predicted: [],
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0,
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
@@ -1238,9 +1232,7 @@ export class NoteCanvas {
     const rect = this.rectOf(wet.page.id);
     if (!rect) return;
     const events = e.getCoalescedEvents?.() ?? [];
-    const guesses = e.getPredictedEvents?.() ?? [];
     const log = this.strokeLog;
-    if (guesses.length) log.predictions = true;
     const nowAt = performance.now();
     log.events += 1;
     log.points += Math.max(1, events.length);
@@ -1280,30 +1272,13 @@ export class NoteCanvas {
         this.clearSettled();
       }
     }
-    // Drawing ahead, only when asked for, and only a little: the guess is drawn, never saved.
-    wet.predicted = [];
-    if (this.settings.drawAhead && !wet.snapped && guesses.length) {
-      let lastX = wet.pts[wet.pts.length - 3];
-      let lastY = wet.pts[wet.pts.length - 2];
-      const lastPressure = wet.pts[wet.pts.length - 1];
-      for (const guess of guesses.slice(0, 2)) {
-        const { x, y } = this.position(guess);
-        const [px, py] = this.toPage(rect, x, y);
-        const step = Math.hypot(px - lastX, py - lastY) * this.z;
-        if (step > AHEAD_PIXELS) break;
-        if (step < MIN_POINT_PIXELS) continue;
-        wet.predicted.push(px, py, guess.pressure ? pressureOf(guess) : lastPressure);
-        lastX = px;
-        lastY = py;
-      }
-    }
     this.requestLive();
   }
 
   /** How the last stroke went, for the pencil check in Settings. */
   private stats = { upAt: 0, commitMs: 0 };
-  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
-  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; predictions: boolean; slowestGap: number; slowestFrame: number; longFrames: number; quietFrames: number; inputDelay: number; drawMs: number; paints: number; commitMs: number }[] = [];
+  private strokeLog = { start: 0, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: 0, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
+  private recentStrokes: { ms: number; events: number; points: number; coalesced: boolean; slowestGap: number; slowestFrame: number; longFrames: number; quietFrames: number; inputDelay: number; drawMs: number; paints: number; commitMs: number }[] = [];
 
   /** The last strokes, measured: how often the pencil reported, and how long the screen took. */
   pencilCheck() {
@@ -1311,14 +1286,14 @@ export class NoteCanvas {
   }
 
   private noteStrokeStart(at: number) {
-    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, predictions: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
+    this.strokeLog = { start: at, events: 0, points: 0, coalesced: false, slowestGap: 0, lastEventAt: at, slowestFrame: 0, lastFrameAt: 0, paints: 0, longFrames: 0, quietFrames: 0, pendingSince: 0, inputDelay: 0, drawMs: 0 };
   }
 
   private noteStrokeEnd() {
     const log = this.strokeLog;
     if (!log.start) return;
     this.recentStrokes.push({
-      ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced, predictions: log.predictions,
+      ms: Math.round(performance.now() - log.start), events: log.events, points: log.points, coalesced: log.coalesced,
       slowestGap: Math.round(log.slowestGap), slowestFrame: Math.round(log.slowestFrame), longFrames: log.longFrames, quietFrames: log.quietFrames, inputDelay: Math.round(log.inputDelay), drawMs: Math.round(log.drawMs * 10) / 10,
       paints: log.paints, commitMs: Math.round(this.stats.commitMs * 10) / 10,
     });

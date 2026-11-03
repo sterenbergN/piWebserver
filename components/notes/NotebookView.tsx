@@ -59,7 +59,7 @@ const DEFAULT_TOOLS: Tools = {
 };
 
 const DEFAULT_GESTURES: EngineSettings['gestures'] = { twoFingerTap: 'eraser', twoFingerDoubleTap: 'none', threeFingerTap: 'undo', fingerHold: 'none' };
-const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', gestures: DEFAULT_GESTURES, snapShapes: true, drawAhead: false };
+const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', gestures: DEFAULT_GESTURES, snapShapes: true };
 
 const GESTURE_LABELS: Record<GestureName, string> = {
   twoFingerTap: 'Two-finger tap',
@@ -781,10 +781,6 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                     <span><strong>Hold to straighten</strong>Hold the pencil still at the end of a stroke, and it snaps to a straight line, circle, box or triangle.</span>
                   </label>
                   <label className="nt-check">
-                    <input type="checkbox" checked={settings.drawAhead} onChange={(e) => applySettings({ ...settings, drawAhead: e.target.checked })} />
-                    <span><strong>Draw ahead of the pencil</strong>Draws a few pixels along where the iPad expects the pencil to go next, so the ink keeps closer to the tip. Try it on and off, and keep whichever feels better.</span>
-                  </label>
-                  <label className="nt-check">
                     <input type="checkbox" checked={night} onChange={(e) => { setNight(e.target.checked); try { localStorage.setItem(NIGHT_KEY, e.target.checked ? 'yes' : 'no'); } catch { /* For now, then. */ } }} />
                     <span><strong>Night view</strong>Shows every page in reverse, for reading in the dark. Only how it looks here: what’s saved and exported stays as it is.</span>
                   </label>
@@ -793,7 +789,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                     <span><strong>Light toolbar</strong>The app’s bars and panels in the light theme.</span>
                   </label>
                   <ReadingStatus />
-                  <PencilCheck engine={engine} drawAhead={settings.drawAhead} />
+                  <PencilCheck engine={engine} />
                   <div className="nt-label">Quick gestures</div>
                   <ul className="nt-gestures">
                     <li><strong>Apple Pencil</strong><span>Always writes. Your palm can rest on the screen.</span></li>
@@ -842,7 +838,7 @@ function TextOptions({ style, onChange }: { style: TextStyle; onChange: (style: 
  * How the pencil and the screen did on the last few strokes, measured on this device. A browser
  * can't be timed from outside, so this is how a slow pencil on a real iPad can be looked into.
  */
-function PencilCheck({ engine, drawAhead }: { engine: NoteCanvas | null; drawAhead: boolean }) {
+function PencilCheck({ engine }: { engine: NoteCanvas | null }) {
   const [copied, setCopied] = useState(false);
   const strokes = engine?.pencilCheck() ?? [];
   if (!strokes.length) {
@@ -862,8 +858,6 @@ function PencilCheck({ engine, drawAhead }: { engine: NoteCanvas | null; drawAhe
     ['Pencil points a second', String(rate((s) => s.points))],
     ['Updates a second', String(rate((s) => s.events))],
     ['Extra points between updates', strokes.some((s) => s.coalesced) ? 'yes' : 'no'],
-    ['Pencil predictions from the iPad', strokes.some((s) => s.predictions) ? 'yes' : 'no'],
-    ['Draw ahead', drawAhead ? 'on' : 'off'],
     ['Screen redraws a second', String(rate((s) => s.paints))],
     ['Longest wait for the pencil', `${Math.max(...strokes.map((s) => s.slowestGap))} ms`],
     ['Longest frame while writing', `${Math.max(...strokes.map((s) => s.slowestFrame))} ms`],
