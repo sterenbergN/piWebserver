@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { selectAccount } from './db';
 import Library from './Library';
+import { pageForQuestion } from './daily';
 import NotebookView, { type Place } from './NotebookView';
 import { prepareOffline } from './offline';
 import { fetchAccount, NotesSignedOut, syncNow, USER_KEY, watchSync } from './sync';
@@ -18,6 +19,14 @@ type Phase = 'starting' | 'signed-out' | 'offline-new' | 'ready';
 function rememberedUser() {
   try { return localStorage.getItem(USER_KEY); } catch { return null; }
 }
+
+/** ?work=<question>&date=<day>&title=<title>, from a daily question's "Work it out in Notes". */
+const workAsked = () => {
+  const params = new URLSearchParams(window.location.search);
+  const question = params.get('work');
+  const date = params.get('date');
+  return question && date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { question, date, title: params.get('title') ?? '' } : null;
+};
 
 const addressed = () => {
   const params = new URLSearchParams(window.location.search);
@@ -89,6 +98,22 @@ export default function NotesApp() {
     };
   }, [refresh]);
 
+  // Sent from a daily question: find or make its page, then open it.
+  const [working, setWorking] = useState(false);
+  const workStarted = useRef(false);
+  useEffect(() => {
+    const work = phase === 'ready' && !workStarted.current ? workAsked() : null;
+    if (!work) return;
+    workStarted.current = true;
+    setWorking(true);
+    void pageForQuestion(work.question, work.date, work.title).then(({ notebook, page }) => {
+      window.history.replaceState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}&page=${encodeURIComponent(page)}`);
+      setOpen({ notebook, page });
+    }).catch(() => {
+      window.history.replaceState(null, '', '/notes');
+    }).finally(() => setWorking(false));
+  }, [phase]);
+
   /** `from` is where a link was followed from, so the notebook can offer the way back. */
   const openNotebook = useCallback((notebook: string, page: string | null = null, from: Place | null = null) => {
     window.history.pushState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}${page ? `&page=${encodeURIComponent(page)}` : ''}`);
@@ -125,7 +150,8 @@ export default function NotesApp() {
 
   return (
     <div className="notes-space">
-      {phase === 'ready' && (
+      {working && <div className="nt-status"><p>Getting the page ready…</p></div>}
+      {phase === 'ready' && !working && (
         open ? (
           <NotebookView key={open.notebook} notebook={open.notebook} startPage={open.page} returnTo={open.from ?? null} onExit={closeNotebook} onOpen={openNotebook} />
         ) : (

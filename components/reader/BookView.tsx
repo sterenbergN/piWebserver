@@ -659,7 +659,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
 
       {chrome && !drawMode && (
         <header className="rd-bar rd-top">
-          <button type="button" className="rd-icon-btn" onClick={onExit} aria-label="Back to your books"><Icon name="left" /></button>
+          <button type="button" className="rd-back" onClick={onExit} aria-label="Back to your books"><Icon name="chevron" className="is-flipped" /><span>Books</span></button>
           <div className="rd-bar-title">
             <strong>{book.title}</strong>
             {here?.chapter && <span>{here.chapter}</span>}

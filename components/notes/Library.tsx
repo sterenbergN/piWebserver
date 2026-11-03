@@ -171,7 +171,7 @@ function NewNotebookDialog({ folder, onCreate, onCancel }: { folder: string | nu
   );
 }
 
-const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag' };
+const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag', question: ' · daily question' };
 
 /** Every tag in every notebook: pick one to see its pages. */
 function TagsView({ onOpen }: { onOpen: (notebook: string, page?: string | null) => void }) {
@@ -366,7 +366,7 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
     >
       <header className="nt-lib-head">
         <div className="nt-lib-title">
-          <Link className="nt-site-link" href="/"><Icon name="left" size="0.9em" /> Site</Link>
+          <Link className="nt-home" href="/today"><Icon name="chevron" className="is-flipped" /> Noah Stuf</Link>
           <h1>{title}</h1>
         </div>
         <span className="nt-grow" />

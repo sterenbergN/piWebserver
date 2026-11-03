@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { localToday, type DateKey } from '@/lib/habits/dates';
+import { localToday, type DateKey, isDateKey } from '@/lib/habits/dates';
 import { attemptXp, questionStats, scoreAll, type Attempt, type ScoredAttempt } from '@/lib/daily/progress';
 import type { PartResult, PublicDay } from '@/lib/daily/grade';
 import type { Analysis } from '@/lib/daily/analysis';
@@ -142,7 +142,11 @@ export function useDaily() {
     }
   }, [loadProgress]);
 
-  useEffect(() => { load(null); }, [load]);
+  useEffect(() => {
+    // ?date= opens that day: how a notes page tied to a question links back to it.
+    const asked = new URLSearchParams(window.location.search).get('date');
+    load(isDateKey(asked) ? asked : null);
+  }, [load]);
 
   const open = useCallback((d: DateKey) => { setError(''); load(d); }, [load]);
 

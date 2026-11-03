@@ -355,3 +355,36 @@ test('the swash on a capital and the dot of an i stay with their line', async ()
   const lines = findLines(strokes);
   assert.equal(lines.length, 1, JSON.stringify(lines.map((l) => l.ids)));
 });
+
+test('a question’s maths becomes text a text box can show', async () => {
+  const { mathToPlain } = await import('./plain-math');
+  assert.equal(mathToPlain('Find $V = IR$ when $R = 4\\,\\Omega$.'), 'Find V = IR when R = 4 Ω.');
+  assert.equal(mathToPlain('$\\frac{1}{2} m v^{2}$'), '1/2 m v^2');
+  assert.equal(mathToPlain('$\\frac{a+b}{c}$ and $\\sqrt{x}$'), '(a+b)/c and √(x)');
+  assert.equal(mathToPlain('$30^{\\circ}$ at $\\theta \\le \\pi$'), '30° at θ ≤ π');
+  assert.equal(mathToPlain('**Given** $F_{net} = \\text{ma}$'), 'Given F_(net) = ma');
+});
+
+test('a page’s daily questions are checked, and only one of each is kept', async () => {
+  const { cleanQuestions } = await import('./items');
+  const ok = { id: 'equilibrium', date: '2026-11-02', title: 'Beam in equilibrium' };
+  assert.deepEqual(cleanQuestions([ok, ok]), [ok]);
+  assert.deepEqual(cleanQuestions([{ ...ok, id: '../x' }, { ...ok, date: 'yesterday' }]), []);
+  assert.equal(cleanQuestions([{ ...ok, title: '' }])[0].title, 'Daily question');
+  assert.deepEqual(cleanQuestions('nope'), []);
+});
+
+test('the daily questions can find the pages tied to them, and nobody else’s', async () => {
+  const { pagesTiedTo } = await import('./store');
+  await syncLibrary('gus', 0, [notebook('nb', 10, { title: 'Engineering questions', daily: true })], NOW);
+  await syncBook('gus', 'nb', 0, [
+    { ...page('p1'), order: 2000, questions: [{ id: 'equilibrium', date: '2026-11-02', title: 'Beam' }] },
+    { ...page('p0'), order: 1000 },
+  ], NOW);
+  const found = await pagesTiedTo('gus', ['equilibrium', 'other']);
+  assert.deepEqual(found.map((f) => [f.question, f.page, f.pageNumber, f.notebookTitle]), [['equilibrium', 'p1', 2, 'Engineering questions']]);
+  assert.deepEqual(await pagesTiedTo('hal', ['equilibrium']), []);
+  // In the trash, it stops being offered.
+  await syncLibrary('gus', 0, [notebook('nb', 20, { title: 'Engineering questions', daily: true, trashedAt: NOW })], NOW);
+  assert.deepEqual(await pagesTiedTo('gus', ['equilibrium']), []);
+});

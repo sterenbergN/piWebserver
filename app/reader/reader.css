@@ -108,7 +108,6 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 
 .rd-lib-head { display: flex; align-items: flex-end; gap: 0.75rem; margin-bottom: 1.1rem; }
 .rd-lib-head h1 { margin: 0.1rem 0 0; font-family: 'Newsreader Variable', Georgia, serif; font-size: 2.2rem; font-weight: 500; letter-spacing: -0.01em; line-height: 1.1; color: var(--rd-fg); background: none; -webkit-text-fill-color: currentColor; }
-.rd-site-link { display: inline-flex; align-items: center; gap: 0.2rem; min-height: 28px; font-size: 0.85rem; color: var(--rd-muted); text-decoration: none; }
 
 .rd-lib-stats { margin: 0.2rem 0 0; font-size: 0.82rem; color: var(--rd-muted); }
 
@@ -334,3 +333,20 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-notes-results strong { font-size: 0.92rem; font-weight: 600; }
 .rd-notes-results small { font-size: 0.78rem; color: var(--rd-muted); }
 .rd-notes-results span { font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* ─── Ways back ──────────────────────────────────────────────────────────── */
+
+.reader-space .is-flipped { transform: scaleX(-1); }
+/* Out to the rest of the site: a small pill above the title. */
+.rd-home {
+  display: inline-flex; align-items: center; gap: 0.2rem; min-height: 34px; margin-bottom: 0.35rem; padding: 0 0.85rem 0 0.5rem; border-radius: 17px;
+  background: var(--rd-surface); box-shadow: 0 0 0 1px var(--rd-line); color: var(--rd-fg); font-size: 0.85rem; font-weight: 600; text-decoration: none;
+}
+.rd-home:hover { background: var(--rd-raised); }
+/* From a book to the shelf. */
+.rd-back {
+  display: inline-flex; align-items: center; gap: 0.1rem; flex: none; height: 36px; margin: 0 0.3rem 0 0.15rem; padding: 0 0.75rem 0 0.4rem; border: 0; border-radius: 18px;
+  background: var(--rd-raised); color: var(--rd-fg); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+}
+.rd-back svg { font-size: 1.15rem; }
+.rd-home:focus-visible, .rd-back:focus-visible { outline: 2px solid var(--rd-accent); outline-offset: 2px; }

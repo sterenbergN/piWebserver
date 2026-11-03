@@ -18,6 +18,9 @@ type Synced = { id: string; createdAt: number; updatedAt: number; deleted?: bool
 
 export type Folder = Synced & { kind: 'folder'; name: string; parent?: string };
 
+/** A daily question, by its id, with what's needed to show it and get back to it. */
+export type QuestionLink = { id: string; date: string; title: string };
+
 export type Notebook = Synced & {
   kind: 'notebook';
   title: string;
@@ -33,6 +36,8 @@ export type Notebook = Synced & {
   template?: TemplateId;
   paper?: string;
   size?: { w: number; h: number };
+  /** Where working for the daily questions goes, made the first time it's needed. */
+  daily?: boolean;
 };
 
 export type LibraryRecord = Folder | Notebook;
@@ -55,6 +60,8 @@ export type PageRecord = Synced & {
   starred?: boolean;
   /** Words to find the page by, across every notebook. */
   tags?: string[];
+  /** The engineering questions of the day this page is the working for. */
+  questions?: QuestionLink[];
   /** A page of a PDF underneath everything. `page` counts from 0. */
   pdf?: { file: string; page: number };
 };
@@ -189,7 +196,22 @@ export function cleanLibraryRecord(raw: unknown, now: number): LibraryRecord | n
     ...(TEMPLATE_IDS.includes(r.template as TemplateId) ? { template: r.template as TemplateId } : {}),
     ...(isColor(r.paper) ? { paper: r.paper } : {}),
     ...(size ? { size } : {}),
+    ...(r.daily === true ? { daily: true } : {}),
   };
+}
+
+export const MAX_QUESTION_LINKS = 10;
+
+export function cleanQuestions(raw: unknown): QuestionLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: QuestionLink[] = [];
+  for (const value of raw) {
+    const q = value as { id?: unknown; date?: unknown; title?: unknown } | null;
+    if (!q || !isId(q.id) || typeof q.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(q.date) || out.some((held) => held.id === q.id)) continue;
+    out.push({ id: q.id, date: q.date, title: cleanName(q.title) || 'Daily question' });
+    if (out.length >= MAX_QUESTION_LINKS) break;
+  }
+  return out;
 }
 
 export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
@@ -207,6 +229,7 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
   if (!size) return null;
   const pdf = r.pdf as { file?: unknown; page?: unknown } | undefined;
   const tags = cleanTags(r.tags);
+  const questions = cleanQuestions(r.questions);
   return {
     ...common,
     kind: 'page',
@@ -217,6 +240,7 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
     ...(cleanName(r.title) ? { title: cleanName(r.title) } : {}),
     ...(r.starred === true ? { starred: true } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(questions.length ? { questions } : {}),
     ...(pdf && isId(pdf.file) && finite(pdf.page) && pdf.page >= 0 ? { pdf: { file: pdf.file, page: Math.floor(pdf.page) } } : {}),
   };
 }

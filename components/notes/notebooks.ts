@@ -319,7 +319,7 @@ export function notebookThumb(notebook: Notebook): Promise<Blob | null> {
 
 export type SearchHit = {
   notebook: string; title: string; page: string | null; pageNumber: number;
-  where: 'title' | 'page' | 'text' | 'pdf' | 'ink' | 'mark' | 'tag';
+  where: 'title' | 'page' | 'text' | 'pdf' | 'ink' | 'mark' | 'tag' | 'question';
   snippet: string;
   /** Where on the page, to point it out when you get there. */
   box?: { x: number; y: number; w: number; h: number };
@@ -357,6 +357,8 @@ export async function searchNotebook(notebook: string, title: string, query: str
   for (const page of pages) {
     const tag = page.tags?.find((t) => t.toLowerCase().includes(needle.replace(/^#/, '')));
     if (tag) hits.push({ notebook, title, page: page.id, pageNumber: number.get(page.id)!, where: 'tag', snippet: `#${tag}` });
+    const question = page.questions?.find((q) => q.title.toLowerCase().includes(needle));
+    if (question) hits.push({ notebook, title, page: page.id, pageNumber: number.get(page.id)!, where: 'question', snippet: question.title });
   }
   for (const element of await getNotebookText(notebook)) {
     if (element.kind !== 'text' || element.deleted || !number.has(element.page)) continue;

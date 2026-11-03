@@ -131,7 +131,6 @@ body:has(.notes-space) header:not(.nt-bar):not(.nt-lib-head) { display: none !im
 .nt-lib-head { display: flex; align-items: flex-end; gap: 0.5rem; margin-bottom: 0.9rem; }
 .nt-lib-title { min-width: 0; }
 .nt-lib-head h1 { margin: 0.1rem 0 0; font-family: 'Newsreader Variable', Georgia, serif; font-size: 2.1rem; font-weight: 500; letter-spacing: -0.01em; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nt-site-link { display: inline-flex; align-items: center; gap: 0.2rem; min-height: 28px; font-size: 0.85rem; color: var(--nt-muted); text-decoration: none; }
 .nt-sync { display: inline-flex; align-items: center; gap: 0.3rem; align-self: center; font-size: 0.8rem; color: var(--nt-muted); white-space: nowrap; }
 
 .nt-search { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.8rem; padding: 0 0.8rem; min-height: 44px; border-radius: 12px; background: var(--nt-surface); box-shadow: 0 0 0 1px var(--nt-line); color: var(--nt-muted); }
@@ -335,3 +334,34 @@ label.nt-menu-title .nt-input { margin-top: 0.45rem; font-weight: 400; }
 .nt-pencil-check > div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.3rem 0; border-bottom: 1px solid var(--nt-line); }
 .nt-pencil-check dt { color: var(--nt-muted); }
 .nt-pencil-check dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.nt-gesture-picks { display: grid; gap: 0.35rem; }
+.nt-gesture-picks label { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; min-height: 44px; font-size: 0.92rem; }
+.nt-gesture-picks select { max-width: 60%; }
+
+/* ─── Ways back ──────────────────────────────────────────────────────────── */
+
+.notes-space .is-flipped { transform: scaleX(-1); }
+/* Out to the rest of the site: a small pill above the title. */
+.nt-home {
+  display: inline-flex; align-items: center; gap: 0.2rem; min-height: 34px; margin-bottom: 0.35rem; padding: 0 0.85rem 0 0.5rem; border-radius: 17px;
+  background: var(--nt-surface); box-shadow: 0 0 0 1px var(--nt-line); color: var(--nt-fg); font-size: 0.85rem; font-weight: 600; text-decoration: none;
+}
+.nt-home:hover { background: var(--nt-raised); }
+.nt-home:focus-visible, .nt-back:focus-visible { outline: 2px solid var(--nt-accent); outline-offset: 2px; }
+/* From a notebook to the library: says where it goes, when there's room to. */
+.nt-back {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.1rem; flex: none; height: 36px; min-width: 40px; margin: 0 0.2rem 0 0.1rem; padding: 0 0.7rem 0 0.4rem; border: 0; border-radius: 18px;
+  background: var(--nt-raised); color: var(--nt-fg); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+}
+.nt-back svg { font-size: 1.15rem; }
+@media (max-width: 1000px) {
+  .nt-back { padding: 0; width: 38px; }
+  .nt-back span { display: none; }
+}
+
+.nt-chip.is-question { text-decoration: none; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; justify-content: flex-start; }
+.nt-question-tie .nt-menu-list { margin-top: 0.4rem; }
+.nt-question-tie .nt-menu-list > button.is-on { background: var(--nt-raised); }
+.nt-question-tie .nt-menu-list small { margin-left: 0.2rem; font-size: 0.78rem; }
+.nt-label.nt-inline { margin: 0; }

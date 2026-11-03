@@ -356,7 +356,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     >
       <header className="rd-lib-head">
         <div>
-          <a className="rd-site-link" href="/today"><Icon name="left" size="0.9em" /> Noah Stuf</a>
+          <a className="rd-home" href="/today"><Icon name="chevron" className="is-flipped" /> Noah Stuf</a>
           <h1>Reader</h1>
           {books.length > 0 && (
             <p className="rd-lib-stats">{[`${reading.length} reading`, `${finishedCount} finished`, `${notesTotal} note${notesTotal === 1 ? '' : 's'}`].join(' · ')}</p>

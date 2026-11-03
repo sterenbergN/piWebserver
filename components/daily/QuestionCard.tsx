@@ -62,9 +62,11 @@ type Props = {
   onAnswer: (responses: Record<string, PartResponse>, hints: number) => Promise<unknown>;
   onReveal: (hints: number) => Promise<unknown>;
   onFeedback: (patch: Partial<Feedback>) => Promise<void>;
+  /** Working in Notes: where to start a page for this question, and the pages already tied to it. */
+  notes?: { start: string; pages: { href: string; label: string }[] };
 };
 
-export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback }: Props) {
+export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback, notes }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [hintsShown, setHintsShown] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -225,6 +227,20 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
 
           {signedIn && answered.feedback && <FeedbackBox feedback={answered.feedback} level={q.difficulty} onChange={onFeedback} />}
         </>
+      )}
+
+      {notes && (
+        <footer className="dq-notes">
+          {notes.pages.length > 0 && (
+            <div className="dq-notes-pages">
+              <span>Your working</span>
+              {notes.pages.map((page) => <a key={page.href} href={page.href}>{page.label}</a>)}
+            </div>
+          )}
+          {!notes.pages.length && (
+            <a className="dq-notes-start" href={notes.start}>✏️ Work it out in Notes</a>
+          )}
+        </footer>
       )}
     </article>
   );

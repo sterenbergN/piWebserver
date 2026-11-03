@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { readJson, updateJson } from '@/lib/json-store';
 import {
-  cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, isId, MAX_FILE_BYTES, mergeChanges, recordsSince, sniffFile, type BookRecord, type InkText, type LibraryRecord, type PageElement, type RecordFile,
+  cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, isId, MAX_FILE_BYTES, mergeChanges, recordsSince, sniffFile, type BookRecord, type InkText, type PageRecord, type LibraryRecord, type PageElement, type RecordFile,
   type StrokeElement,
 } from './items';
 
@@ -98,6 +98,28 @@ export async function syncInkText(userId: string, notebook: string, cursor: numb
   // The keys say which strokes each line came from, and only matter here.
   const items = Object.values(file.items).filter((record) => (record.seq ?? 0) > cursor).map(({ keys: _keys, ...record }) => record);
   return { cursor: file.seq, items };
+}
+
+export type TiedPage = { question: string; notebook: string; notebookTitle: string; page: string; pageNumber: number; title?: string };
+
+/** The pages tied to these daily questions, in every notebook not in the trash. */
+export async function pagesTiedTo(userId: string, questions: string[]) {
+  const wanted = new Set(questions);
+  const library = await readLibrary(userId);
+  const out: TiedPage[] = [];
+  for (const record of Object.values(library.items)) {
+    if (record.kind !== 'notebook' || record.deleted || record.trashedAt) continue;
+    const book = await readJson<Partial<BookFile>>(bookPath(userId, record.id), {});
+    const pages = Object.values(book.items ?? {})
+      .filter((item): item is PageRecord => item.kind === 'page' && !item.deleted)
+      .sort((a, b) => a.order - b.order);
+    pages.forEach((page, i) => {
+      for (const link of page.questions ?? []) {
+        if (wanted.has(link.id)) out.push({ question: link.id, notebook: record.id, notebookTitle: record.title, page: page.id, pageNumber: i + 1, ...(page.title ? { title: page.title } : {}) });
+      }
+    });
+  }
+  return out;
 }
 
 export type PageInk = { strokes: { id: string; p: number[]; width: number; updatedAt: number }[]; seq: number };

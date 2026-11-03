@@ -42,10 +42,16 @@ export type Tools = {
   text: TextStyle;
 };
 
+/** The touches that can be given a job, and the jobs they can be given. */
+export const GESTURES = ['twoFingerTap', 'twoFingerDoubleTap', 'threeFingerTap', 'fingerHold'] as const;
+export type GestureName = (typeof GESTURES)[number];
+export const GESTURE_ACTIONS = ['none', 'undo', 'redo', 'eraser', 'lasso', 'marker', 'shape', 'text', 'tape', 'hand', 'previous', 'fit', 'toolbar'] as const;
+export type GestureAction = (typeof GESTURE_ACTIONS)[number];
+
 export type EngineSettings = {
   direction: 'vertical' | 'horizontal';
   fingerDraws: 'auto' | 'on' | 'off';
-  twoFingerTap: 'eraser' | 'undo';
+  gestures: Record<GestureName, GestureAction>;
   snapShapes: boolean;
 };
 
@@ -57,6 +63,8 @@ export type EngineEvents = {
   onZoom: (percent: number) => void;
   onEnd: (atEnd: boolean) => void;
   onTool: (tool: ToolName) => void;
+  /** A touch given a job in Settings: what to do is up to the screen around the canvas. */
+  onGesture: (action: GestureAction, gesture: GestureName) => void;
   onSay: (text: string) => void;
   onEditing: (style: TextStyle | null) => void;
   onInkTap: (stroke: StrokeElement) => void;
@@ -80,6 +88,8 @@ const QUICK_TAP_MOVE_PIXELS = 18;
 const PEN_QUIET_MS = 450;
 const SETTLE_MS = 140;
 const HOLD_MS = 550;
+const HOLD_FINGER_MS = 500;
+const DOUBLE_TAP_MS = 280;
 const HOLD_STILL_PIXELS = 3;
 const MIN_POINT_PIXELS = 0.6;
 const HANDLE_PIXELS = 26;
@@ -217,6 +227,8 @@ export class NoteCanvas {
     if (this.pinchFrame) cancelAnimationFrame(this.pinchFrame);
     if (this.settleTimer) clearTimeout(this.settleTimer);
     if (this.holdTimer) clearTimeout(this.holdTimer);
+    if (this.twoTapTimer) clearTimeout(this.twoTapTimer);
+    this.cancelFingerHold();
     this.view.remove();
     this.live.remove();
     this.assets.destroy();
@@ -1034,6 +1046,7 @@ export class NoteCanvas {
 
     this.touches.set(e.pointerId, { x, y, startX: x, startY: y, at: Date.now() });
     if (this.touches.size >= 2) {
+      this.cancelFingerHold();
       // A second finger means a pinch, so the first one's mark was a false start.
       if (this.wet?.isFinger || this.erasing || this.lasso) this.cancelMark();
       if (this.selection?.drag) this.endSelectionDrag();
@@ -1050,6 +1063,7 @@ export class NoteCanvas {
       return;
     }
     this.samples = [{ x, y, at: performance.now() }];
+    this.armFingerHold(e.pointerId);
   };
 
   private tool() {
@@ -1388,6 +1402,7 @@ export class NoteCanvas {
       return;
     }
     if (!touch) return;
+    if (this.fingerHold?.pointer === e.pointerId && Math.hypot(touch.x - touch.startX, touch.y - touch.startY) > TAP_PIXELS) this.cancelFingerHold();
     if (this.pinch && this.touches.size >= 2) {
       if (!this.pinchFrame) this.pinchFrame = requestAnimationFrame(() => this.applyPinch());
       return;
@@ -1427,6 +1442,7 @@ export class NoteCanvas {
 
   private onUp = (e: PointerEvent) => {
     this.palms.delete(e.pointerId);
+    if (this.fingerHold?.pointer === e.pointerId) this.cancelFingerHold();
     const cancelled = e.type === 'pointercancel';
     if (e.pointerType === 'pen') this.lastPenAt = Date.now();
 
@@ -1523,18 +1539,61 @@ export class NoteCanvas {
     this.settle();
   };
 
+  private gesture(name: GestureName) {
+    const action = this.settings.gestures[name];
+    if (action && action !== 'none') this.events.onGesture(action, name);
+  }
+
+  private twoTapTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * A tap with two or three fingers. A two-finger tap waits a moment to see if a second one
+   * follows, but only when the double tap has a job: otherwise it acts straight away.
+   */
   private fingerTap(fingers: number) {
     if (fingers >= 3) {
-      this.undo();
-      this.events.onSay('Undo');
+      this.gesture('threeFingerTap');
       return;
     }
-    if (this.settings.twoFingerTap === 'undo') {
-      this.undo();
-      this.events.onSay('Undo');
+    if (this.settings.gestures.twoFingerDoubleTap === 'none') {
+      this.gesture('twoFingerTap');
       return;
     }
-    this.events.onTool(this.tool() === 'eraser' ? 'pen' : 'eraser');
+    if (this.twoTapTimer) {
+      clearTimeout(this.twoTapTimer);
+      this.twoTapTimer = null;
+      this.gesture('twoFingerDoubleTap');
+      return;
+    }
+    this.twoTapTimer = setTimeout(() => {
+      this.twoTapTimer = null;
+      this.gesture('twoFingerTap');
+    }, DOUBLE_TAP_MS);
+  }
+
+  /** A finger held still on the page, when fingers don't write. */
+  private fingerHold: { pointer: number; timer: ReturnType<typeof setTimeout> } | null = null;
+
+  private armFingerHold(pointer: number) {
+    this.cancelFingerHold();
+    if (this.settings.gestures.fingerHold === 'none') return;
+    this.fingerHold = {
+      pointer,
+      timer: setTimeout(() => {
+        const touch = this.touches.get(pointer);
+        this.fingerHold = null;
+        if (!touch || this.touches.size !== 1 || Math.hypot(touch.x - touch.startX, touch.y - touch.startY) > TAP_PIXELS) return;
+        // Used up: lifting this finger isn't a tap, and moving it doesn't move the page.
+        this.touches.delete(pointer);
+        this.samples = [];
+        this.gesture('fingerHold');
+      }, HOLD_FINGER_MS),
+    };
+  }
+
+  private cancelFingerHold() {
+    if (this.fingerHold) clearTimeout(this.fingerHold.timer);
+    this.fingerHold = null;
   }
 
   private handleTap(x: number, y: number) {

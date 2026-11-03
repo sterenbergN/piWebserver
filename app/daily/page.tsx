@@ -103,6 +103,26 @@ export default function DailyPage() {
   }, [solvedCount, d.date]);
 
   const isPast = !!d.date && d.date < d.today;
+
+  // Notes pages tied to today's questions, so each card can link to its working.
+  const [tied, setTied] = useState<{ question: string; notebook: string; notebookTitle: string; page: string; pageNumber: number }[]>([]);
+  const dayIds = d.day ? [d.day.core.id, ...d.day.bonus.map((q) => q.id)].join(',') : '';
+  useEffect(() => {
+    if (!d.signedIn || !dayIds) { setTied([]); return; }
+    let live = true;
+    void fetch(`/api/notes/tied?questions=${encodeURIComponent(dayIds)}`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => { if (live && body?.success) setTied(body.pages); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [d.signedIn, dayIds]);
+  const notesFor = (q: { id: string; title: string }) => (d.signedIn && d.date ? {
+    start: `/notes?work=${encodeURIComponent(q.id)}&date=${d.date}&title=${encodeURIComponent(q.title)}`,
+    pages: tied.filter((t) => t.question === q.id).map((t) => ({
+      href: `/notes?notebook=${encodeURIComponent(t.notebook)}&page=${encodeURIComponent(t.page)}`,
+      label: `${t.notebookTitle}, page ${t.pageNumber}`,
+    })),
+  } : undefined);
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));
   const openDay = (date: DateKey) => { d.open(date); chooseTab('today'); window.scrollTo({ top: 0 }); };
   const statusFor = (date: DateKey) => d.progress?.stats.coreByDay[date];
@@ -202,7 +222,7 @@ export default function DailyPage() {
                   <QuestionCard key={d.day.core.id} q={d.day.core} kind="core" boss={!!d.day.boss} late={isPast} answered={d.answered[d.day.core.id]} tries={d.tries[d.day.core.id]}
                     formulas={d.day.formulas} signedIn={d.signedIn}
                     onAnswer={(r, h) => answer(d.day!.core.id, r, h, true)} onReveal={(h) => answer(d.day!.core.id, null, h, true)}
-                    onFeedback={(p) => d.feedback(d.day!.core.id, p)} />
+                    onFeedback={(p) => d.feedback(d.day!.core.id, p)} notes={notesFor(d.day.core)} />
                   {d.day.bonus.length > 0 && (
                     <>
                       <h2 className="dq-section">Bonus questions <span className="dq-hint">optional, for extra XP</span></h2>
@@ -210,7 +230,7 @@ export default function DailyPage() {
                         <QuestionCard key={q.id} q={q} kind="bonus" boss={false} late={isPast} answered={d.answered[q.id]} tries={d.tries[q.id]}
                           formulas={d.day!.formulas} signedIn={d.signedIn}
                           onAnswer={(r, h) => answer(q.id, r, h, false)} onReveal={(h) => answer(q.id, null, h, false)}
-                          onFeedback={(p) => d.feedback(q.id, p)} />
+                          onFeedback={(p) => d.feedback(q.id, p)} notes={notesFor(q)} />
                       ))}
                     </>
                   )}

@@ -8,9 +8,10 @@ import type { ShapeKind } from '@/lib/notes/geometry';
 import { isDark, TEXT_FONTS, type MarkElement, type MarkRole, type Notebook, type PageRecord, type StrokeElement, type TextFont } from '@/lib/notes/items';
 import { getKv, getLibraryRecord, placeKey, putKv } from './db';
 import { NotebookDoc } from './doc';
-import { NoteCanvas, noteClipboard, type EngineSettings, type SelectionInfo, type TextStyle, type ToolName, type Tools } from './engine';
+import { GESTURE_ACTIONS, GESTURES, NoteCanvas, noteClipboard, type EngineSettings, type GestureAction, type GestureName, type SelectionInfo, type TextStyle, type ToolName, type Tools } from './engine';
 import { exportPdf, exportPng, parsePageRange, safeFileName, shareOrSave } from './export';
 import { ConnectDialog, Glyph, type ConnectRequest } from './Connect';
+import { questionHref } from './daily';
 import { addPdfToNotebook, bringFilesAcross, linksTo, preparePicture, searchNotebook, type PagePlace, type SearchHit } from './notebooks';
 import PagesPanel from './PagesPanel';
 import { RecordingBar, RecordingsPanel, useRecorder } from './Recorder';
@@ -57,7 +58,39 @@ const DEFAULT_TOOLS: Tools = {
   text: { size: 14, color: PEN_COLORS[0], font: 'sans', bold: false, italic: false, align: 'left' },
 };
 
-const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', twoFingerTap: 'eraser', snapShapes: true };
+const DEFAULT_GESTURES: EngineSettings['gestures'] = { twoFingerTap: 'eraser', twoFingerDoubleTap: 'none', threeFingerTap: 'undo', fingerHold: 'none' };
+const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', gestures: DEFAULT_GESTURES, snapShapes: true };
+
+const GESTURE_LABELS: Record<GestureName, string> = {
+  twoFingerTap: 'Two-finger tap',
+  twoFingerDoubleTap: 'Two-finger double tap',
+  threeFingerTap: 'Three-finger tap',
+  fingerHold: 'Hold a finger still',
+};
+const ACTION_LABELS: Record<GestureAction, string> = {
+  none: 'Nothing',
+  undo: 'Undo',
+  redo: 'Redo',
+  eraser: 'Pen and eraser',
+  lasso: 'Lasso, and back',
+  marker: 'Highlighter, and back',
+  shape: 'Shapes, and back',
+  text: 'Text, and back',
+  tape: 'Tape, and back',
+  hand: 'Just move around, and back',
+  previous: 'The tool before',
+  fit: 'Fit the page',
+  toolbar: 'Hide or show the toolbar',
+};
+
+/** Settings saved before gestures could be chosen had only the two-finger tap. */
+function loadSettings(): EngineSettings {
+  const saved = loadStored<EngineSettings & { twoFingerTap?: 'eraser' | 'undo' }>(SETTINGS_KEY, DEFAULT_SETTINGS);
+  const gestures = { ...DEFAULT_GESTURES, ...(saved.gestures ?? {}) };
+  if (saved.twoFingerTap && !(saved.gestures && 'twoFingerTap' in saved.gestures)) gestures.twoFingerTap = saved.twoFingerTap;
+  const { twoFingerTap: _old, ...rest } = saved;
+  return { ...rest, gestures };
+}
 
 function loadStored<T extends object>(key: string, fallback: T): T {
   try {
@@ -177,6 +210,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
   }, [doc]);
 
   const applyTools = useCallback((next: Tools) => {
+    if (next.tool !== toolsRef.current.tool) previousTool.current = toolsRef.current.tool;
     toolsRef.current = next;
     setTools(next);
     engineRef.current?.setTools(next);
@@ -184,6 +218,9 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
   }, []);
 
   const lastInk = useRef<ToolName>('pen');
+  /** The tool before this one, for gestures that go to a tool and back. */
+  const previousTool = useRef<ToolName>('pen');
+  const gestureRef = useRef<(action: GestureAction) => void>(() => {});
   const chooseTool = useCallback((tool: ToolName) => {
     const current = toolsRef.current;
     if (tool === current.tool) {
@@ -200,7 +237,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
   useEffect(() => {
     let live = true;
     const savedTools = loadStored(TOOLS_KEY, DEFAULT_TOOLS);
-    const savedSettings = loadStored(SETTINGS_KEY, DEFAULT_SETTINGS);
+    const savedSettings = loadSettings();
     toolsRef.current = savedTools;
     setTools(savedTools);
     setSettings(savedSettings);
@@ -244,6 +281,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
             say(tool === 'eraser' ? 'Eraser' : tool === 'pen' ? 'Pen' : TOOL_BUTTONS.find((b) => b.tool === tool)?.label.split(':')[0] ?? '');
           }
         },
+        onGesture: (action) => gestureRef.current(action),
         onSay: say,
         onEditing: setEditing,
         onInkTap: (stroke: StrokeElement) => recorderRef.current.seekToStroke(stroke),
@@ -331,6 +369,25 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
     if (next.penColor !== now.penColor || next.shapeColor !== now.shapeColor || next.text.color !== now.text.color) applyTools(next);
   }, [onDarkPaper, applyTools]);
   const bookmarked = !!here?.starred;
+
+  /** What a gesture does, as chosen in Settings. */
+  const runGesture = (action: GestureAction) => {
+    const now = toolsRef.current.tool;
+    if (action === 'undo') { engine?.undo(); say('Undo'); return; }
+    if (action === 'redo') { engine?.redo(); say('Redo'); return; }
+    if (action === 'fit') { engine?.fit(); return; }
+    if (action === 'toolbar') { setChrome((on) => !on); return; }
+    const pick = (tool: ToolName) => {
+      if (tool === now) return;
+      setOptionsOpen(false);
+      applyTools({ ...toolsRef.current, tool });
+      say(tool === 'pen' ? 'Pen' : TOOL_BUTTONS.find((b) => b.tool === tool)?.label.split(':')[0] ?? '');
+    };
+    if (action === 'previous') { pick(previousTool.current); return; }
+    if (action === 'eraser') { pick(now === 'eraser' ? (lastInk.current === 'eraser' ? 'pen' : lastInk.current) : 'eraser'); return; }
+    if (action !== 'none') pick(now === action ? previousTool.current : action);
+  };
+  useEffect(() => { gestureRef.current = runGesture; });
 
   const goTo = (place: Place) => {
     if (place.notebook !== notebook) { onOpen(place.notebook, place.page, { notebook, page: here?.id ?? '' }); return; }
@@ -488,7 +545,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
       {chrome && (
         <header className="nt-bar" ref={barRef} role="toolbar" aria-label="Notebook tools">
           <div className="nt-bar-side">
-            <button type="button" className="nt-icon-btn" aria-label="Back to your notes" onClick={onExit}><Icon name="left" /></button>
+            <button type="button" className="nt-back" aria-label="Back to your notes" onClick={onExit}><Icon name="chevron" className="is-flipped" /><span>Notes</span></button>
             <button type="button" className="nt-icon-btn" aria-label="Pages" onClick={() => setPanel('pages')}><Icon name="pages" /></button>
             <button type="button" className="nt-icon-btn" aria-label="Search this notebook" onClick={() => setPanel('search')}><Icon name="search" /></button>
             <button type="button" className={`nt-icon-btn${bookmarked ? ' is-marked' : ''}`} aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark this page'} aria-pressed={bookmarked} onClick={toggleBookmark}><Icon name="bookmark" /></button>
@@ -623,6 +680,9 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
           {zoom !== 100 && <button type="button" className="nt-chip" onClick={() => engine?.fit()} aria-label="Fit the page to the window">{zoom}%</button>}
           {sync === 'offline' && <span className="nt-chip is-quiet" title="Saved here. It’ll go up when there’s a connection."><Icon name="offline" /></span>}
           {undoState.paste && !selection && <button type="button" className="nt-chip" onClick={pasteHere}><Icon name="paste" /> Paste</button>}
+          {here?.questions?.map((link) => (
+            <a key={link.id} className="nt-chip is-question" href={questionHref(link)} target="_blank" rel="noopener" title="Open the daily question"><Icon name="tests" /> {link.title}</a>
+          ))}
           <button type="button" className="nt-chip" onClick={() => setPanel('pages')} aria-label={`Page ${pageIndex + 1} of ${totalPages}. Open pages.`}>{pageIndex + 1} / {totalPages}</button>
           <button type="button" className="nt-chip" aria-label={chrome ? 'Hide the toolbar' : 'Show the toolbar'} aria-pressed={!chrome} onClick={() => setChrome((on) => !on)}><Icon name={chrome ? 'expand' : 'shrink'} /></button>
         </div>
@@ -704,12 +764,18 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                       <button key={value} type="button" className={settings.fingerDraws === value ? 'is-on' : ''} aria-pressed={settings.fingerDraws === value} onClick={() => applySettings({ ...settings, fingerDraws: value })}>{label}</button>
                     ))}
                   </div>
-                  <div className="nt-label">Two-finger tap</div>
-                  <div className="nt-tabs is-wide">
-                    {([['eraser', 'Pen and eraser'], ['undo', 'Undo']] as const).map(([value, label]) => (
-                      <button key={value} type="button" className={settings.twoFingerTap === value ? 'is-on' : ''} aria-pressed={settings.twoFingerTap === value} onClick={() => applySettings({ ...settings, twoFingerTap: value })}>{label}</button>
+                  <div className="nt-label">Gestures</div>
+                  <div className="nt-gesture-picks">
+                    {GESTURES.map((name) => (
+                      <label key={name}>
+                        <span>{GESTURE_LABELS[name]}</span>
+                        <select className="nt-select is-small" value={settings.gestures[name]} onChange={(e) => applySettings({ ...settings, gestures: { ...settings.gestures, [name]: e.target.value as GestureAction } })}>
+                          {GESTURE_ACTIONS.map((action) => <option key={action} value={action}>{ACTION_LABELS[action]}</option>)}
+                        </select>
+                      </label>
                     ))}
                   </div>
+                  <p className="nt-hint">“And back” means the gesture goes to that tool, and doing it again goes back to the one you had. Holding a finger still only works when fingers don’t write.</p>
                   <label className="nt-check">
                     <input type="checkbox" checked={settings.snapShapes} onChange={(e) => applySettings({ ...settings, snapShapes: e.target.checked })} />
                     <span><strong>Hold to straighten</strong>Hold the pencil still at the end of a stroke, and it snaps to a straight line, circle, box or triangle.</span>
@@ -729,8 +795,9 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                     <li><strong>Apple Pencil</strong><span>Always writes. Your palm can rest on the screen.</span></li>
                     <li><strong>One finger</strong><span>Moves the page, once a pencil has been used here.</span></li>
                     <li><strong>Two fingers</strong><span>Pinch to zoom, or drag to move. Double-tap to zoom in and back out.</span></li>
-                    <li><strong>Two-finger tap</strong><span>{settings.twoFingerTap === 'undo' ? 'Undo.' : 'Between the pen and the eraser.'}</span></li>
-                    <li><strong>Three-finger tap</strong><span>Undo.</span></li>
+                    {GESTURES.filter((name) => settings.gestures[name] !== 'none').map((name) => (
+                      <li key={name}><strong>{GESTURE_LABELS[name]}</strong><span>{ACTION_LABELS[settings.gestures[name]]}.</span></li>
+                    ))}
                     <li><strong>Hold at the end of a stroke</strong><span>Straightens it.</span></li>
                   </ul>
                 </div>
@@ -828,7 +895,7 @@ function ReadingStatus() {
   );
 }
 
-const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag' };
+const WHERE: Record<SearchHit['where'], string> = { title: '', page: ' · page title', text: '', pdf: ' · in the PDF', ink: ' · handwriting', mark: ' · link, heading or keyword', tag: ' · tag', question: ' · daily question' };
 
 function SearchPanel({ notebook, title, onGo, onClose }: { notebook: string; title: string; onGo: (page: string, box?: SearchHit['box']) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');

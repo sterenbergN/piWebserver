@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import type { Notebook, PageRecord, TemplateId } from '@/lib/notes/items';
+import type { Notebook, PageRecord, QuestionLink, TemplateId } from '@/lib/notes/items';
+import { dailyChoices } from './daily';
 import { listLibrary } from './db';
 import type { NotebookDoc } from './doc';
 import { Glyph, TagEditor } from './Connect';
@@ -58,6 +59,53 @@ function Thumb({ doc, page, assets }: { doc: NotebookDoc; page: PageRecord; asse
   return <canvas ref={ref} className="nt-thumb" style={{ aspectRatio: `${page.w} / ${page.h}` }} />;
 }
 
+/** Pick daily questions, a day at a time, and see the ones already tied. */
+function QuestionTie({ links, onChange }: { links: QuestionLink[]; onChange: (links: QuestionLink[]) => void }) {
+  const [day, setDay] = useState<Awaited<ReturnType<typeof dailyChoices>> | null>(null);
+  const [problem, setProblem] = useState('');
+  const load = (date?: string) => {
+    setProblem('');
+    dailyChoices(date).then(setDay).catch((error) => setProblem(error instanceof Error ? error.message : 'They couldn’t be reached.'));
+  };
+  useEffect(() => { load(); }, []);
+  return (
+    <div className="nt-question-tie">
+      {links.length > 0 && (
+        <div className="nt-swatches">
+          {links.map((link) => (
+            <span key={link.id} className="nt-tag">{link.title}<button type="button" aria-label={`Untie ${link.title}`} onClick={() => onChange(links.filter((l) => l.id !== link.id))}><Icon name="x" size="0.9em" /></button></span>
+          ))}
+        </div>
+      )}
+      {problem && <p className="nt-hint is-error">{problem}</p>}
+      {day && (
+        <>
+          <div className="nt-row is-wrap">
+            <span className="nt-label nt-inline">Questions from</span>
+            <select className="nt-select is-small" aria-label="Which day" value={day.date} onChange={(e) => load(e.target.value)}>
+              {[...new Set([day.date, ...day.archive.map((a) => a.date)])].map((date) => (
+                <option key={date} value={date}>{new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</option>
+              ))}
+            </select>
+          </div>
+          <div className="nt-menu-list">
+            {!day.choices.length && <p className="nt-empty">No questions that day.</p>}
+            {day.choices.map((choice) => {
+              const tied = links.some((l) => l.id === choice.id);
+              return (
+                <button type="button" key={choice.id} className={tied ? 'is-on' : ''} aria-pressed={tied}
+                  onClick={() => onChange(tied ? links.filter((l) => l.id !== choice.id) : [...links, { id: choice.id, date: choice.date, title: choice.title }])}>
+                  <Icon name={tied ? 'check' : 'plus'} /> {choice.title}<small className="nt-muted">{choice.core ? ' · the question of the day' : ' · bonus'}</small>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSay }: {
   doc: NotebookDoc;
   notebook: string;
@@ -71,7 +119,7 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
   const [outline, setOutline] = useState<OutlineEntry[]>([]);
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [menu, setMenu] = useState<PageRecord | null>(null);
-  const [mode, setMode] = useState<'menu' | 'title' | 'paper' | 'copy' | 'tags'>('menu');
+  const [mode, setMode] = useState<'menu' | 'title' | 'paper' | 'copy' | 'tags' | 'questions'>('menu');
   const [title, setTitle] = useState('');
   const [others, setOthers] = useState<Notebook[]>([]);
   const [drag, setDrag] = useState<{ id: string; over: number; x: number; y: number } | null>(null);
@@ -219,6 +267,7 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
               <>
                 <p className="nt-menu-title">Page {pages.findIndex((p) => p.id === menu.id) + 1}{menu.title ? `: ${menu.title}` : ''}</p>
                 <button type="button" onClick={() => setMode('title')}><Icon name="text" /> {menu.title ? 'Change title' : 'Give it a title'}</button>
+                <button type="button" onClick={() => setMode('questions')}><Icon name="tests" /> {menu.questions?.length ? `Daily question: ${menu.questions.map((q) => q.title).join(', ')}` : 'Tie to a daily question'}</button>
                 <button type="button" onClick={() => setMode('tags')}><Glyph name="tag" /> {menu.tags?.length ? `Tags: ${menu.tags.map((t) => `#${t}`).join(' ')}` : 'Add tags'}</button>
                 <button type="button" onClick={() => toggleBookmark(menu)}><Icon name="bookmark" /> {menu.starred ? 'Remove bookmark' : 'Bookmark'}</button>
                 {!menu.pdf && <button type="button" onClick={() => setMode('paper')}><Icon name="grid" /> Change paper</button>}
@@ -240,6 +289,24 @@ export default function PagesPanel({ doc, notebook, current, onGo, onClose, onSa
                   <button type="button" className="nt-btn" onClick={closeMenu}>Cancel</button>
                   <span className="nt-grow" />
                   <button type="button" className="nt-btn is-primary" onClick={() => saveTitle(menu)}>Save</button>
+                </div>
+              </>
+            )}
+            {mode === 'questions' && (
+              <>
+                <p className="nt-menu-title">Daily questions<small>Tie this page to the questions it’s the working for. Each question then links here, and the page links back.</small></p>
+                <QuestionTie
+                  links={menu.questions ?? []}
+                  onChange={(questions) => {
+                    const { questions: _old, ...rest } = menu;
+                    const after = { ...rest, ...(questions.length ? { questions } : {}), updatedAt: Date.now() };
+                    doc.apply([{ type: 'book', before: menu, after }]);
+                    setMenu(after);
+                  }}
+                />
+                <div className="nt-row">
+                  <span className="nt-grow" />
+                  <button type="button" className="nt-btn is-primary" onClick={closeMenu}>Done</button>
                 </div>
               </>
             )}

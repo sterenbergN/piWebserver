@@ -416,3 +416,12 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-report-link:hover { background: rgba(var(--accent-rgb), 0.2); }
 .dq-report-link span { display: flex; flex-direction: column; gap: 0.1rem; }
 .dq-report-link small { color: var(--muted); }
+
+/* Working a question out in Notes, and getting back to it. */
+.dq-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--surface-border); font-size: 0.9rem; }
+.dq-notes-start { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 40px; padding: 0 0.95rem; border-radius: 20px; background: rgba(var(--accent-rgb), 0.14); color: var(--foreground); font-weight: 600; text-decoration: none; }
+.dq-notes-start:hover { background: rgba(var(--accent-rgb), 0.24); }
+.dq-notes-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.7rem; }
+.dq-notes-pages span { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.03em; color: var(--muted); }
+.dq-notes-pages a { color: var(--accent-light); font-weight: 600; text-decoration: none; }
+.dq-notes-pages a:hover { text-decoration: underline; }
