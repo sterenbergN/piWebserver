@@ -56,11 +56,12 @@ export default function NewRound({ golf, me, go, sport: initialSport }: ScreenPr
       const fix = here || (await gps.best(3000));
       const res = await fetch(`/api/golf/courses/osm?sport=${sport}&lat=${fix.lat}&lon=${fix.lon}`);
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.message || 'Lookup failed');
+      // No message means something in between answered (a proxy's error page, or no connection).
+      if (!res.ok) throw new Error(body.message || (res.status === 401 ? 'Sign in again to look courses up.' : 'The lookup didn\'t get through. Try again in a few minutes, or start the course anyway: each hole fills in as you play it.'));
       setOsm(body.courses);
       if (!body.courses.length) setOsmError('Nothing mapped here. Add the holes as you play: your first drive on each hole marks its tee.');
     } catch (e) {
-      setOsmError((e as Error).message);
+      setOsmError(e instanceof TypeError ? 'No connection. Start the course anyway: each hole fills in as you play it.' : (e as Error).message);
     } finally {
       setOsmBusy(false);
     }

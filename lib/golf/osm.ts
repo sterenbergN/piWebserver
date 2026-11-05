@@ -6,7 +6,15 @@
 import { distance } from './geo';
 import type { CourseHole, LatLon, Sport } from './types';
 
-export const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+/**
+ * Public Overpass servers, tried in this order. They're free and shared, and any of
+ * them can be full or down for a while (the main one answers "at capacity" with a 502).
+ */
+export const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
 export const SEARCH_RADIUS_M = 1500;
 
 export function overpassQuery(sport: Sport, at: LatLon, radius = SEARCH_RADIUS_M) {

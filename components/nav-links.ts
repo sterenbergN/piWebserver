@@ -152,7 +152,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/workout/health', label: 'Health & plan', icon: '❤️', short: 'Health', blurb: 'Weight, sleep and your plan', keywords: 'body weight sleep nutrition', account: true },
         { href: '/workout/analytics', label: 'Progress & coach', icon: '📈', short: 'Progress', blurb: 'Charts and what to do next', keywords: 'analytics charts coach', account: true },
         { href: '/workout/calculators', label: 'Lifting calculators', icon: '🧮', short: 'Calc', blurb: 'One-rep max, plates and more', keywords: 'one rep max 1rm plates' },
-        { href: '/golf', label: 'Golf & disc golf', icon: '⛳', short: 'Golf', blurb: 'Score rounds, measure shots, see your numbers', keywords: 'golf disc golf scorecard handicap gps distance basket frisbee lost disc' },
       ],
       corners: [{
         label: 'Tucked inside',
@@ -195,12 +194,15 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       ] }] } : {}),
     },
     {
+      // Time off, in or out: a round of golf, a film, somewhere to eat. The id is still
+      // 'night' from when this was "Night off"; ROOM_ORDER below goes by it.
       id: 'night',
-      label: 'Night off',
-      icon: '🍿',
-      question: 'Can’t decide what to do?',
+      label: 'Free time',
+      icon: '🌤️',
+      question: 'Got a free afternoon?',
       color: 'var(--habit-5)',
       items: [
+        { href: '/golf', label: 'Golf & disc golf', icon: '⛳', short: 'Golf', blurb: 'Score rounds, measure shots, see your numbers', keywords: 'golf disc golf scorecard handicap gps distance basket frisbee lost disc' },
         { href: '/tools#movies', label: 'Movie picker', icon: '🎬', short: 'Movies', blurb: 'What to watch tonight', keywords: 'film random' },
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️', short: 'Eat', blurb: 'Pick a restaurant for you', keywords: 'restaurant dinner' },
       ],

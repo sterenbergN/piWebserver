@@ -220,7 +220,7 @@ APIs under `/api/golf/`: `rounds` (+ `[id]` for changes, `[id]/join`), `courses`
 (+ `[id]`, `osm`), `me` (bag and settings), `import` (old and signed-out rounds)
 and `map` (tile settings). The phone's side of syncing is `lib/golf/sync.ts`.
 
-Nav: **Golf & disc golf** in the Gym group next to Workout; old `/tools#golf`
+Nav: **Golf & disc golf** in the Free time group, with the movie picker and where to eat; old `/tools#golf`
 links and the search entry go to `/golf`. Golf goes into "Download my data"
 (`lib/account-export.ts`): rounds the account is in, and its bag.
 
