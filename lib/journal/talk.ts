@@ -1,63 +1,129 @@
 import type { DateKey } from '@/lib/habits/dates';
 
-// Talking a day through with an AI, usually while driving. No API and no key: the
-// page hands over a prompt for whichever AI app you use (its voice mode does the
-// listening and speaking), and you paste back what it writes when you're parked.
-// Its summary joins that day's entry; the conversation is kept with the day.
+// Talking something through with an AI, usually while driving: exploring a subject,
+// being debated, weighing a decision, brainstorming or looking back on the day. No API
+// and no key: the page hands over a prompt for whichever AI app you use (its voice mode
+// does the listening and speaking), and you paste back what it writes when you're
+// parked. Its summary joins that day's entry; the conversation is kept with the day.
 
 export const MAX_TOPIC = 300;
 export const MAX_TRANSCRIPT = 100_000;
-/** What the AI is asked to fill in; a line it didn't get to is left out. */
-export const SUMMARY_LINES = ['What happened', 'How I felt', 'What I was assuming', 'The other side', 'Where I landed'] as const;
 
-/** Openers to pick from, besides writing your own. */
-export const TALK_TOPICS = [
-  'How today went',
-  'Something that’s bothering me',
-  'A decision I’m stuck on',
-  'A conversation that didn’t go well',
-  'What I’m worried about',
-  'Something that went well, and why',
-] as const;
+export type TalkMode = 'explore' | 'debate' | 'decide' | 'brainstorm' | 'reflect';
+
+type ModeInfo = {
+  label: string;
+  /** Heads the summary in the entry: "Debated: remote work". */
+  verb: string;
+  blurb: string;
+  /** Openers to pick from, besides writing your own. */
+  topics: string[];
+  placeholder: string;
+  /** Who the AI is in this kind of talk. */
+  role: string;
+  /** How it opens with no topic given. */
+  open: string;
+  /** What the summary covers; a heading it didn't get to is left out. */
+  summary: string[];
+};
+
+export const TALK_MODES: Record<TalkMode, ModeInfo> = {
+  explore: {
+    label: 'Explore a subject',
+    verb: 'Explored',
+    blurb: 'Dig into something: what you know, what you don’t, and angles you hadn’t thought of.',
+    topics: ['Something I read or heard lately', 'How something works', 'An idea I keep coming back to', 'Something I’ve changed my mind about'],
+    placeholder: 'e.g. Why bridges don’t fall down',
+    role: `Be a curious, well-read partner helping me explore a subject. Find out what I already know and why I think it, then take it further: bring in facts, examples, history and angles I may not have considered, and say how sure you are when you add a fact. Point out gaps in my understanding, and follow whichever thread looks most interesting.`,
+    open: 'Open by asking what I’d like to explore today.',
+    summary: ['What we covered', 'What I think now', 'What I’m still unsure of', 'Worth looking into'],
+  },
+  debate: {
+    label: 'Debate me',
+    verb: 'Debated',
+    blurb: 'It argues the other side, properly, and makes you defend your view.',
+    topics: ['Something I believe strongly', 'A take I had today', 'A plan I’m confident in', 'Something most people get wrong'],
+    placeholder: 'e.g. Remote work is better than the office',
+    role: `Debate me. Take the strongest side against my position and argue it the way a sharp, fair opponent would, never a straw man. Make one point at a time and ask me to answer it. Use evidence and reasoning, not just assertion, and call out weak arguments on my side, including appeals to feelings, anecdotes and what “everyone knows”. When I make a good point, concede it plainly and move to your next strongest argument. Don’t drift into agreeing with me to be nice; only switch sides if I ask.`,
+    open: 'Open by asking what position I want to defend.',
+    summary: ['My position', 'The best case against it', 'Where my argument held up', 'Where I gave ground', 'Where I landed'],
+  },
+  decide: {
+    label: 'Make a decision',
+    verb: 'Decided',
+    blurb: 'Lay out the options, what matters most, and what would change your mind.',
+    topics: ['A decision I’m stuck on', 'Whether to start something', 'Whether to stop something', 'Which of two options'],
+    placeholder: 'e.g. Whether to buy or keep renting',
+    role: `Help me think through a decision. Get every option on the table, including ones I haven’t mentioned, ask what matters most to me and why, and test each option against that. Ask what I’d need to know to be sure, what would change my mind, and what each option costs in time, money and effort. Don’t decide for me.`,
+    open: 'Open by asking what I’m trying to decide.',
+    summary: ['The decision', 'The options', 'What matters most', 'What I was assuming', 'Where I landed'],
+  },
+  brainstorm: {
+    label: 'Brainstorm',
+    verb: 'Brainstormed',
+    blurb: 'Ideas back and forth, building on each other’s, then picking what to try.',
+    topics: ['A project idea', 'A problem at work', 'Something to build or make', 'A better way to do something'],
+    placeholder: 'e.g. A weekend project with the kids',
+    role: `Brainstorm with me. Build on my ideas and add your own, one or two at a time, mixing practical ones with unexpected ones. Hold off judging until we have a handful, then help me pick by asking what each would take and what could go wrong.`,
+    open: 'Open by asking what we’re brainstorming.',
+    summary: ['What we were solving', 'The best ideas', 'What could go wrong', 'What to try first'],
+  },
+  reflect: {
+    label: 'Look back on the day',
+    verb: 'Looked back on',
+    blurb: 'What happened, what you made of it, and whether that holds up.',
+    topics: ['How today went', 'Something that went well', 'Something I’d do differently', 'A conversation I keep thinking about'],
+    placeholder: 'e.g. The meeting this morning',
+    role: `Help me look back on my day, the way a friend who asks good questions would. Ask what happened and what I made of it. When someone else is involved, ask how they would tell it. Separate what happened from what I decided it meant.`,
+    open: 'Open by asking how the day went.',
+    summary: ['What happened', 'What I made of it', 'What I was assuming', 'Another way to see it', 'Where I landed'],
+  },
+};
+
+export const isTalkMode = (value: unknown): value is TalkMode => typeof value === 'string' && value in TALK_MODES;
 
 const fmtDate = (d: DateKey) => new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
 /**
  * The conversation partner. It's heard, not read, so replies are short and plain.
- * It isn't a cheerleader and isn't contrary for the sake of it: it pushes for the
- * other side, names assumptions and separates what happened from what it meant.
+ * Whatever the kind of talk, it doesn't flatter and it keeps things objective: facts
+ * apart from opinions, guesses named as guesses, the other side brought up.
  */
-export function buildTalkPrompt({ date, topic, written = '' }: { date: DateKey; topic: string; written?: string }) {
-  const start = topic.trim()
-    ? `I want to talk through: ${topic.trim().slice(0, MAX_TOPIC)}. Open with one short question about it.`
-    : 'Open by asking what’s on my mind, in one short question.';
+export function buildTalkPrompt({ date, mode, topic, written = '' }: { date: DateKey; mode: TalkMode; topic: string; written?: string }) {
+  const m = TALK_MODES[mode];
+  const start = topic.trim() ? `The subject: ${topic.trim().slice(0, MAX_TOPIC)}. Open with one short question about it.` : m.open;
   const today = written.trim() ? `\nWhat I’ve already written in my journal today, for context (don’t repeat it back to me):\n"""\n${written.trim()}\n"""\n` : '';
+  const pushback = mode === 'debate'
+    ? ''
+    : '- Don’t be contrary for the sake of it either. Push back because of something I actually said, and if the facts are on my side, say so plainly and move on.\n';
 
-  return `Be my journaling partner for a spoken conversation. I’m usually driving, so I’m listening, not reading. It’s ${fmtDate(date)}.
+  return `This is a spoken conversation for my journal. I’m usually driving, so I’m listening, not reading. It’s ${fmtDate(date)}.
+
+${m.role}
 
 ${start}
 ${today}
 How to talk with me:
+- Talk like a sharp, honest friend, not a therapist, coach or teacher. Ask, don’t lecture.
 - Keep every reply to one to three short sentences, usually ending in one question. Plain speech only: no lists, headings, emoji or formatting, since it’s read aloud.
-- One question at a time. Let me do most of the talking. If I say “hold on” or go quiet, just say “Sure.” and wait.
-- Don’t be a cheerleader. No praise or agreement for its own sake (“great point”, “that makes total sense”, “you’re right”). Don’t repeat back what I just said, and don’t tell me how I feel.
-- Don’t be contrary either. Push back only because of something I actually said, and if the facts are on my side, say so plainly and move on.
-- Help me see it straight:
-  - When someone else is involved, ask how they would tell it, or what might explain what they did.
-  - When I treat a guess as a fact (“they don’t care”, “it’s going to fail”), point out that it’s a guess and ask what I actually know.
-  - Separate what happened from how I felt about it and what I decided it meant.
-  - Notice words like always, never, everyone and can’t, and ask if they’re true.
-  - If I’m only seeing one option, ask what else I could do, or what I’d tell a friend in my place.
-- Ask, don’t lecture. Don’t give advice unless I ask; then give one or two options, each with its downside. No therapy talk or diagnoses. If something sounds like real danger to me or someone else, say so directly and point me to real help.
+- One question or point at a time, and let me do a good share of the talking. If I say “hold on” or go quiet, just say “Sure.” and wait.
+- Don’t flatter me. No praise or agreement for its own sake (“great point”, “that makes total sense”, “you’re right”), and don’t repeat back what I just said.
+${pushback}- Keep it objective:
+  - Separate facts from opinions, and say which is which, including your own.
+  - When I treat a guess as a fact, point it out and ask what I actually know.
+  - Bring up viewpoints and evidence I haven’t considered, especially ones that cut against what I’m saying.
+  - Notice words like always, never, everyone and obviously, and ask if they hold.
+  - If you’re not sure of a fact, say so rather than guess.
+- Only give advice if I ask, and then give one or two options, each with its downside.
 - Never ask me to read, look at or type anything until we’ve wrapped up.
 
 Wrapping up:
 - When I say “wrap up” (or “that’s it”, or “let’s stop”), say in one sentence the main thing I seemed to land on, then tell me to type “summary” when I’m parked. Don’t read a summary aloud.
-- When I send “summary”, reply with only the block below, with nothing before or after it. Write the summary as my own journal note: first person, my words where you can, concrete and concise. Make it as long as the conversation needs and no longer: a short talk might need a line under each heading, a long one several. Each line says one thing, without filler or repeating itself. Leave out any heading we didn’t get to, and add a short bullet under a heading for each separate point. Then write out the whole conversation turn by turn, close to the words we used, tidying false starts and filler but adding nothing.
+- When I send “summary”, reply with only the block below, with nothing before or after it. Write the summary as my own journal note: first person, my words where you can, concrete and concise. Make it as long as the conversation needs and no longer: a short talk might need a line under each heading, a long one several. Each line says one thing, without filler or repeating itself. Leave out any heading we didn’t get to, and for a heading with several points, put each on its own indented bullet under it. Then write out the whole conversation turn by turn, close to the words we used, tidying false starts and filler but adding nothing.
 
 TOPIC: a few words naming what we talked about
 SUMMARY:
-${SUMMARY_LINES.map((l) => `- ${l}: …`).join('\n')}
+${m.summary.map((l) => `- ${l}: …`).join('\n')}
 CONVERSATION:
 Me: …
 You: …`;
@@ -75,7 +141,8 @@ function plain(text: string) {
     .split('\n')
     .map((line) => line
       .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => a ?? b)
-      .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '• ')
+      // A point under a heading stays indented under it.
+      .replace(/^(\s*)(?:[-*•◦]|\d+[.)])\s+/, (_, indent: string) => (indent.length ? '   ◦ ' : '• '))
       .trimEnd())
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -110,8 +177,8 @@ export function parseTalkReply(raw: string, fallbackTopic = ''): TalkReply {
 }
 
 /** The summary as it goes into the day's entry, after whatever is written there already. */
-export function appendTalkSummary(entry: string, reply: Pick<TalkReply, 'topic' | 'summary'>) {
-  const block = `🎙 Talked through${reply.topic ? `: ${reply.topic}` : ''}\n${reply.summary}`;
+export function appendTalkSummary(entry: string, reply: Pick<TalkReply, 'topic' | 'summary'>, mode: TalkMode) {
+  const block = `🎙 ${TALK_MODES[mode].verb}${reply.topic ? `: ${reply.topic}` : ''}\n${reply.summary}`;
   const before = entry.replace(/\s+$/, '');
   return before ? `${before}\n\n${block}` : block;
 }

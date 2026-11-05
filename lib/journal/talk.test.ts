@@ -1,25 +1,37 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { addTalk, emptyJournal, JournalInputError, listEntries, normalizeJournal, removeTalk, saveEntry } from './journal';
-import { appendTalkSummary, buildTalkPrompt, parseTalkReply, TalkReplyError, transcriptTurns } from './talk';
+import { appendTalkSummary, buildTalkPrompt, parseTalkReply, TalkReplyError, TALK_MODES, transcriptTurns, type TalkMode } from './talk';
 
 const TODAY = '2026-11-04';
 const NOW = '2026-11-04T18:00:00.000Z';
 
-test('prompt: starts from the topic, asks for short spoken replies and pushback without contrarianism', () => {
-  const p = buildTalkPrompt({ date: TODAY, topic: 'A decision I’m stuck on' });
-  assert.match(p, /Wednesday, November 4, 2026/);
-  assert.match(p, /I want to talk through: A decision I’m stuck on\./);
-  assert.match(p, /one to three short sentences/);
-  assert.match(p, /Don’t be a cheerleader/);
-  assert.match(p, /Don’t be contrary either/);
-  assert.match(p, /how they would tell it/);
-  assert.match(p, /TOPIC:[\s\S]*SUMMARY:[\s\S]*CONVERSATION:/);
-  assert.doesNotMatch(p, /already written/);
+test('prompt: each kind of talk has its own role and summary, with the same objective rules', () => {
+  for (const mode of Object.keys(TALK_MODES) as TalkMode[]) {
+    const p = buildTalkPrompt({ date: TODAY, mode, topic: '' });
+    assert.ok(p.includes(TALK_MODES[mode].role), mode);
+    assert.ok(p.includes(TALK_MODES[mode].open), mode);
+    for (const heading of TALK_MODES[mode].summary) assert.ok(p.includes(`- ${heading}: …`), `${mode}: ${heading}`);
+    assert.match(p, /Wednesday, November 4, 2026/);
+    assert.match(p, /one to three short sentences/);
+    assert.match(p, /Don’t flatter me/);
+    assert.match(p, /Separate facts from opinions/);
+    assert.match(p, /not a therapist/);
+    assert.match(p, /TOPIC:[\s\S]*SUMMARY:[\s\S]*CONVERSATION:/);
+    assert.doesNotMatch(p, /How I felt|therapy talk/);
+  }
+});
 
-  const open = buildTalkPrompt({ date: TODAY, topic: '  ', written: 'Long day at work.' });
-  assert.match(open, /asking what’s on my mind/);
-  assert.match(open, /"""\nLong day at work\.\n"""/);
+test('prompt: a debate argues the other side; the rest don’t argue for the sake of it', () => {
+  const debate = buildTalkPrompt({ date: TODAY, mode: 'debate', topic: 'Remote work is better' });
+  assert.match(debate, /The subject: Remote work is better\. Open with one short question about it\./);
+  assert.match(debate, /strongest side against my position/);
+  assert.doesNotMatch(debate, /contrary for the sake of it/);
+  assert.match(buildTalkPrompt({ date: TODAY, mode: 'explore', topic: 'Bridges' }), /contrary for the sake of it/);
+
+  const withEntry = buildTalkPrompt({ date: TODAY, mode: 'reflect', topic: '', written: 'Long day at work.' });
+  assert.match(withEntry, /"""\nLong day at work\.\n"""/);
+  assert.doesNotMatch(buildTalkPrompt({ date: TODAY, mode: 'reflect', topic: '' }), /already written/);
 });
 
 const REPLY = `TOPIC: Friction with Sam over the move
@@ -53,6 +65,10 @@ test('reply: copes with code fences, bold headings and a bare summary', () => {
   assert.equal(fenced.summary, '• Where I landed: talk to my boss.');
   assert.equal(fenced.transcript, 'Me: hi');
 
+  // Several points under one heading stay indented under it.
+  const nested = parseTalkReply('SUMMARY:\n- The best ideas:\n  - A treehouse\n  * A go-kart\n- What to try first: the go-kart');
+  assert.equal(nested.summary, '• The best ideas:\n   ◦ A treehouse\n   ◦ A go-kart\n• What to try first: the go-kart');
+
   const bare = parseTalkReply('I realised I was tired, not angry.', 'How today went');
   assert.equal(bare.topic, 'How today went');
   assert.equal(bare.summary, 'I realised I was tired, not angry.');
@@ -64,8 +80,8 @@ test('reply: copes with code fences, bold headings and a bare summary', () => {
 
 test('summary is appended under a heading after what is written', () => {
   const reply = { topic: 'Work', summary: '• Where I landed: rest.' };
-  assert.equal(appendTalkSummary('', reply), '🎙 Talked through: Work\n• Where I landed: rest.');
-  assert.equal(appendTalkSummary('Morning was fine.\n\n', reply), 'Morning was fine.\n\n🎙 Talked through: Work\n• Where I landed: rest.');
+  assert.equal(appendTalkSummary('', reply, 'reflect'), '🎙 Looked back on: Work\n• Where I landed: rest.');
+  assert.equal(appendTalkSummary('Morning was fine.\n\n', reply, 'debate'), 'Morning was fine.\n\n🎙 Debated: Work\n• Where I landed: rest.');
 });
 
 test('conversations are kept with the day and survive saving the text', () => {

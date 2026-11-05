@@ -1,13 +1,17 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import HabitSheet from '@/components/habits/HabitSheet';
 import type { DateKey } from '@/lib/habits/dates';
-import { buildTalkPrompt, parseTalkReply, TalkReplyError, TALK_TOPICS, transcriptTurns, type TalkReply } from '@/lib/journal/talk';
+import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 
-// Talk a day through with your own AI, hands-free in its voice mode, then bring
+// Talk something through with your own AI, hands-free in its voice mode, then bring
 // back what it wrote. Copying happens before the drive and pasting after, often
-// with the sheet closed in between, so both steps are always on the page.
+// with the sheet closed in between, so both steps are always on the page, and the
+// kind of talk is remembered on this device for when the reply comes back.
+
+const MODE_KEY = 'journal:talk-mode';
+const MODES = Object.keys(TALK_MODES) as TalkMode[];
 
 export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
   day: DateKey;
@@ -16,8 +20,9 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
   /** What's written in the day's entry so far, offered to the AI as context. */
   written: string;
   onClose: () => void;
-  onAdd: (reply: TalkReply, keepConversation: boolean) => Promise<boolean>;
+  onAdd: (reply: TalkReply, keepConversation: boolean, mode: TalkMode) => Promise<boolean>;
 }) {
+  const [mode, setModeState] = useState<TalkMode>('explore');
   const [picked, setPicked] = useState<string>('');
   const [own, setOwn] = useState('');
   const [share, setShare] = useState(false);
@@ -33,8 +38,25 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MODE_KEY);
+      if (isTalkMode(saved)) setModeState(saved);
+    } catch {
+      // No storage (private window): start from Explore.
+    }
+  }, []);
+
+  const setMode = (next: TalkMode) => {
+    setModeState(next);
+    setPicked('');
+    setCopied('idle');
+    try { localStorage.setItem(MODE_KEY, next); } catch { /* not remembered, that's all */ }
+  };
+
+  const info = TALK_MODES[mode];
   const topic = own.trim() || picked;
-  const prompt = useMemo(() => buildTalkPrompt({ date: day, topic, written: share ? written : '' }), [day, topic, share, written]);
+  const prompt = useMemo(() => buildTalkPrompt({ date: day, mode, topic, written: share ? written : '' }), [day, mode, topic, share, written]);
   const turns = useMemo(() => (reply ? transcriptTurns(reply.transcript).length : 0), [reply]);
 
   const copy = async () => {
@@ -73,7 +95,7 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
     if (!reply) return;
     setSaving(true);
     setError('');
-    const ok = await onAdd(reply, keep && !!reply.transcript);
+    const ok = await onAdd(reply, keep && !!reply.transcript, mode);
     setSaving(false);
     if (ok) onClose();
     else setError('Couldn’t save it. Check your connection and try again.');
@@ -101,6 +123,10 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
 
       {reply ? (
         <div className="jr-talk-check">
+          <label className="hb-label" htmlFor="jr-talk-mode">Kind of talk</label>
+          <select id="jr-talk-mode" className="jr-talk-input" value={mode} onChange={(e) => setMode(e.target.value as TalkMode)}>
+            {MODES.map((m) => <option key={m} value={m}>{TALK_MODES[m].label}</option>)}
+          </select>
           <label className="hb-label" htmlFor="jr-talk-topic">Topic</label>
           <input id="jr-talk-topic" className="jr-talk-input" value={reply.topic} maxLength={300} onChange={(e) => setReply({ ...reply, topic: e.target.value })} />
           <label className="hb-label" htmlFor="jr-talk-summary">Summary, added to the end of the entry</label>
@@ -117,17 +143,24 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
         </div>
       ) : (
         <>
-          <p className="jr-hint">Hold the conversation in your own AI app’s voice mode, hands-free. It’s told not to agree for the sake of it: it asks about the other side, points out guesses and keeps replies short.</p>
+          <p className="jr-hint">Hold the conversation in your own AI app’s voice mode, hands-free. It won’t just agree with you: it keeps facts apart from opinions, brings up the other side and keeps replies short.</p>
 
           <section className={`jr-talk-step${copied === 'copied' ? ' is-done' : ''}`}>
-            <h3><span className="jr-talk-num">{copied === 'copied' ? '✓' : 1}</span> Pick where to start</h3>
-            <div className="hb-chips" role="group" aria-label="Opening topic">
-              <button type="button" className="hb-chip" aria-pressed={!own.trim() && picked === ''} onClick={() => pick('')}>Whatever’s on my mind</button>
-              {TALK_TOPICS.map((t) => (
+            <h3><span className="jr-talk-num">{copied === 'copied' ? '✓' : 1}</span> Pick the kind of talk</h3>
+            <div className="hb-chips" role="group" aria-label="Kind of talk">
+              {MODES.map((m) => (
+                <button key={m} type="button" className="hb-chip" aria-pressed={mode === m} onClick={() => setMode(m)}>{TALK_MODES[m].label}</button>
+              ))}
+            </div>
+            <p className="jr-hint">{info.blurb}</p>
+            <h4 className="jr-talk-sub">What about?</h4>
+            <div className="hb-chips" role="group" aria-label="Topic">
+              <button type="button" className="hb-chip" aria-pressed={!own.trim() && picked === ''} onClick={() => pick('')}>Let it ask me</button>
+              {info.topics.map((t) => (
                 <button key={t} type="button" className="hb-chip" aria-pressed={!own.trim() && picked === t} onClick={() => pick(t)}>{t}</button>
               ))}
             </div>
-            <input className="jr-talk-input" value={own} maxLength={300} placeholder="Or say it in your own words" aria-label="Opening topic in your own words" onChange={(e) => { setOwn(e.target.value); setCopied('idle'); }} />
+            <input className="jr-talk-input" value={own} maxLength={300} placeholder={`Or in your own words. ${info.placeholder}`} aria-label="Topic in your own words" onChange={(e) => { setOwn(e.target.value); setCopied('idle'); }} />
             {written.trim() && (
               <label className="jr-talk-toggle">
                 <input type="checkbox" checked={share} onChange={(e) => { setShare(e.target.checked); setCopied('idle'); }} />

@@ -7,7 +7,7 @@ import SignInPrompt from '@/components/journal/SignInPrompt';
 import TalkSheet from '@/components/journal/TalkSheet';
 import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
 import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
-import { appendTalkSummary, transcriptTurns, type TalkReply } from '@/lib/journal/talk';
+import { appendTalkSummary, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 import '../habits/habits.css';
 import './journal.css';
 
@@ -195,9 +195,9 @@ export default function JournalPage() {
   }, [query]);
 
   /** A talked-through conversation's summary joins the entry; the conversation is kept with the day. */
-  const addTalk = async (reply: TalkReply, keep: boolean) => {
+  const addTalk = async (reply: TalkReply, keep: boolean, mode: TalkMode) => {
     const date = draft.current.day;
-    edit({ text: appendTalkSummary(draft.current.text, reply) });
+    edit({ text: appendTalkSummary(draft.current.text, reply, mode) });
     await flush();
     const d = draft.current;
     if (d.day !== date || d.version !== d.savedVersion) return false;

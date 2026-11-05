@@ -112,3 +112,5 @@
 .jr-turns b { display: block; font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
 .jr-turns .is-me b { color: var(--accent-light); }
 .jr-talk > .jr-delete { margin: 0 0.8rem 0.7rem; }
+.jr-talk-sub { margin: 0.9rem 0 0.5rem; font-size: 0.85rem; color: var(--muted); }
+select.jr-talk-input { margin-bottom: 0.2rem; }
