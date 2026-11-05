@@ -4,8 +4,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useSitePopup } from '@/components/SitePopup';
 import JournalTabs from '@/components/journal/JournalTabs';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import TalkSheet from '@/components/journal/TalkSheet';
 import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
-import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
+import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
+import { appendTalkSummary, transcriptTurns, type TalkReply } from '@/lib/journal/talk';
 import '../habits/habits.css';
 import './journal.css';
 
@@ -35,6 +37,8 @@ export default function JournalPage() {
   const [save, setSave] = useState<SaveState>('loading');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<JournalSummary[] | null>(null);
+  const [talks, setTalks] = useState<JournalTalk[]>([]);
+  const [talking, setTalking] = useState(false);
 
   // What the editor holds, for saves that run after a re-render.
   const draft = useRef({ day, text, mood, version: 0, savedVersion: 0 });
@@ -89,7 +93,7 @@ export default function JournalPage() {
     await flush();
     const d = draft.current;
     d.day = date; d.text = ''; d.mood = null; d.version = 0; d.savedVersion = 0;
-    setDay(date); setText(''); setMood(null); setSave('loading');
+    setDay(date); setText(''); setMood(null); setTalks([]); setSave('loading');
     try {
       const res = await fetch(`/api/journal?date=${date}`, { cache: 'no-store' });
       const json = await res.json();
@@ -97,7 +101,7 @@ export default function JournalPage() {
       if (draft.current.day !== date || draft.current.version) return; // moved on, or already typing
       const entry = json.entry as JournalEntry | null;
       d.text = entry?.text ?? ''; d.mood = entry?.mood ?? null;
-      setText(d.text); setMood(d.mood); setSave('idle');
+      setText(d.text); setMood(d.mood); setTalks(entry?.talks ?? []); setSave('idle');
     } catch {
       if (draft.current.day === date) setSave('error');
     }
@@ -190,13 +194,48 @@ export default function JournalPage() {
     return () => { clearTimeout(t); ctrl.abort(); };
   }, [query]);
 
+  /** A talked-through conversation's summary joins the entry; the conversation is kept with the day. */
+  const addTalk = async (reply: TalkReply, keep: boolean) => {
+    const date = draft.current.day;
+    edit({ text: appendTalkSummary(draft.current.text, reply) });
+    await flush();
+    const d = draft.current;
+    if (d.day !== date || d.version !== d.savedVersion) return false;
+    if (!keep) return true;
+    try {
+      const res = await fetch('/api/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, topic: reply.topic, transcript: reply.transcript, today: localToday() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!json.success) throw new Error(json.message);
+      if (draft.current.day === date) setTalks((list) => [...list, json.talk]);
+      putSummary(date, json.summary);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const removeTalk = async (talk: JournalTalk) => {
+    const ok = await confirm({ title: 'Delete this conversation?', message: 'The conversation is removed for good. Its summary stays in the entry.', confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    const date = day;
+    const res = await fetch(`/api/journal?date=${date}&talk=${encodeURIComponent(talk.id)}`, { method: 'DELETE' }).catch(() => null);
+    const json = await res?.json().catch(() => ({}));
+    if (!json?.success) { setSave('error'); return; }
+    if (draft.current.day === date) setTalks((list) => list.filter((t) => t.id !== talk.id));
+    putSummary(date, json.summary);
+  };
+
   const remove = async () => {
-    const ok = await confirm({ title: `Delete ${day === today ? 'today’s' : 'this'} entry?`, message: 'The entry is removed for good.', confirmLabel: 'Delete', danger: true });
+    const ok = await confirm({ title: `Delete ${day === today ? 'today’s' : 'this'} entry?`, message: talks.length ? 'The entry and its kept conversations are removed for good.' : 'The entry is removed for good.', confirmLabel: 'Delete', danger: true });
     if (!ok) return;
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     const d = draft.current;
     d.text = ''; d.mood = null; d.savedVersion = ++d.version;
-    setText(''); setMood(null);
+    setText(''); setMood(null); setTalks([]);
     await queue.current;
     const res = await fetch(`/api/journal?date=${day}`, { method: 'DELETE' }).catch(() => null);
     if (res?.ok) { putSummary(day, null); setSave('idle'); } else setSave('error');
@@ -206,11 +245,13 @@ export default function JournalPage() {
   const streak = writingStreak(written, today);
   const monthWords = entries.filter((s) => s.date.startsWith(today.slice(0, 7))).reduce((n, s) => n + s.words, 0);
   const shown = results ?? entries;
-  const hasEntry = written.has(day) || !!text.trim() || !!mood;
+  const hasEntry = written.has(day) || !!text.trim() || !!mood || talks.length > 0;
+  const entryName = day === today ? 'today’s entry' : day === addDays(today, -1) ? 'yesterday’s entry' : 'this day’s entry';
 
   return (
     <div className="jr animate-fade-in">
       {popup}
+      {talking && <TalkSheet day={day} entryName={entryName} written={text} onClose={() => setTalking(false)} onAdd={addTalk} />}
       <header className="jr-head">
         <div>
           <h1>Journal</h1>
@@ -259,6 +300,10 @@ export default function JournalPage() {
               })}
             </div>
 
+            <div className="jr-tools">
+              <button type="button" className="hb-small-btn" disabled={save === 'loading'} onClick={() => setTalking(true)}><span aria-hidden>🎙</span> Talk it through</button>
+            </div>
+
             <div className="jr-grow">
               <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
               <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
@@ -278,6 +323,26 @@ export default function JournalPage() {
               {save === 'error' && <button type="button" className="hb-small-btn" onClick={() => { draft.current.version++; flush(); }}>Retry</button>}
               {hasEntry && save !== 'loading' && <button type="button" className="hb-text-btn jr-delete" onClick={remove}>Delete entry</button>}
             </div>
+
+            {talks.length > 0 && (
+              <section className="jr-talks" aria-label="Kept conversations">
+                {talks.map((t) => (
+                  <details key={t.id} className="jr-talk">
+                    <summary>
+                      <span aria-hidden>🎙</span> <strong>{t.topic || 'A conversation'}</strong>
+                      {t.createdAt && <small>{new Date(t.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</small>}
+                      <span className="jr-talk-show">Show the conversation</span>
+                    </summary>
+                    <ol className="jr-turns">
+                      {transcriptTurns(t.transcript).map((turn, i) => (
+                        <li key={i} className={`is-${turn.who}`}><b>{turn.who === 'me' ? 'Me' : 'AI'}</b>{turn.text}</li>
+                      ))}
+                    </ol>
+                    <button type="button" className="hb-text-btn jr-delete" onClick={() => removeTalk(t)}>Delete conversation</button>
+                  </details>
+                ))}
+              </section>
+            )}
           </section>
 
           <aside className="jr-list" aria-label="Past entries">
@@ -291,9 +356,12 @@ export default function JournalPage() {
                     <button type="button" className="jr-item" aria-current={s.date === day ? 'date' : undefined} onClick={() => openDay(s.date)}>
                       <span className="jr-item-head">
                         <strong>{fmtDay(s.date, { weekday: 'short', month: 'short', day: 'numeric', ...(s.date.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}) })}</strong>
-                        {s.mood && <span aria-label={`Mood ${s.mood} of 5`}>{MOODS[s.mood - 1]}</span>}
+                        <span>
+                          {s.talks ? <span aria-label={`${s.talks} kept ${s.talks === 1 ? 'conversation' : 'conversations'}`}>🎙</span> : null}
+                          {s.mood && <span aria-label={`Mood ${s.mood} of 5`}>{MOODS[s.mood - 1]}</span>}
+                        </span>
                       </span>
-                      <span className="jr-item-preview">{s.preview || <em>No words, just a mood.</em>}</span>
+                      <span className="jr-item-preview">{s.preview || <em>{s.talks ? 'A kept conversation.' : 'No words, just a mood.'}</em>}</span>
                     </button>
                   </li>
                 ))}
