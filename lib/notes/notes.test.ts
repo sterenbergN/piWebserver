@@ -11,6 +11,8 @@ import {
 } from './items';
 import { appendUpload, finishUpload, NotebookGone, openStoredFile, readLibrary, syncBook, syncLibrary, syncPage, UploadRefused } from './store';
 import { PAGE_SIZES, TEMPLATES, templateMarks } from './templates';
+import { getStrokePoints } from 'perfect-freehand';
+import { smoothLine, startSmoothing } from './smooth';
 
 const NOW = 1_800_000_000_000;
 const original = process.cwd();
@@ -30,6 +32,28 @@ const stroke = (id: string, updatedAt: number, pts = [10, 10, 0.5, 20, 20, 0.5])
 const notebook = (id: string, updatedAt = 10, extra = {}) => ({ id, kind: 'notebook' as const, title: 'Anatomy', createdAt: 1, updatedAt, ...extra });
 const page = (id: string, updatedAt = 10) => ({ id, kind: 'page' as const, order: 1000, w: 612, h: 792, template: 'ruled' as const, paper: '#ffffff', createdAt: 1, updatedAt });
 const stream = (bytes: Uint8Array | string) => new Blob([bytes as BlobPart]).stream() as ReadableStream<Uint8Array>;
+
+test('the line being written is smoothed exactly as the saved line will be, however it grows', () => {
+  // A wobbly line with pauses (repeated points) and pressure changes, smoothed a point at a time.
+  let seed = 7;
+  const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (const [streamline, size] of [[0.32, 1.8], [0.38, 2.4], [0.42, 6], [0.32, 0.6]]) {
+    const pts: number[] = [];
+    const state = startSmoothing(streamline, size);
+    let x = 50;
+    let y = 50;
+    for (let i = 0; i < 400; i++) {
+      if (random() > 0.1) { x += (random() - 0.3) * 2; y += Math.sin(i / 9) * 1.5 + (random() - 0.5); }
+      pts.push(x, y, 0.2 + random() * 0.7);
+      const mine = smoothLine(state, pts);
+      const theirs = getStrokePoints(Array.from({ length: pts.length / 3 }, (_, j) => [pts[j * 3], pts[j * 3 + 1], pts[j * 3 + 2]]), { streamline, size, last: false });
+      assert.deepEqual(mine, theirs, `differs at point ${i + 1} (streamline ${streamline}, size ${size})`);
+    }
+    // A long line carried on as a new one starts its smoothing over.
+    const carried = pts.slice(-3);
+    assert.deepEqual(smoothLine(state, carried), getStrokePoints([[carried[0], carried[1], carried[2]]], { streamline, size, last: false }));
+  }
+});
 
 test('points come back from storage where they were, near enough to never see', () => {
   const pts = [100.123, 200.456, 0.37, 101.5, 199.25, 0.42, 100, 200, 1];

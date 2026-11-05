@@ -1,6 +1,6 @@
 'use client';
 
-import { getStroke } from 'perfect-freehand';
+import { getStroke, getStrokeOutlinePoints, type StrokePoint } from 'perfect-freehand';
 import { boundsOf, turnedBounds, unpackPoints, type Box } from '@/lib/notes/geometry';
 import type { ImageElement, MarkElement, MarkRole, PageElement, StrokeElement, StrokeStyle, TextElement, TextFont } from '@/lib/notes/items';
 
@@ -79,8 +79,12 @@ export function outlineOf(pts: ArrayLike<number>, style: StrokeStyle, width: num
 }
 
 function filledPath(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends?: Ends) {
+  return outlinePath(outlineOf(pts, style, width, finished, ends));
+}
+
+function outlinePath(outline: number[][]) {
   const path = new Path2D();
-  for (const command of outlineCommands(outlineOf(pts, style, width, finished, ends))) {
+  for (const command of outlineCommands(outline)) {
     if (command[0] === 'M') path.moveTo(command[1], command[2]);
     else if (command[0] === 'L') path.lineTo(command[1], command[2]);
     else if (command[0] === 'Q') path.quadraticCurveTo(command[1], command[2], command[3], command[4]);
@@ -134,6 +138,19 @@ export function drawStroke(ctx: CanvasRenderingContext2D, stroke: StrokeElement,
   const held = cached(stroke);
   if (!held.path) held.path = stroke.style === 'shape' ? linePath(held.pts) : filledPath(held.pts, stroke.style, stroke.width, true);
   paintPath(ctx, held.path, stroke.style, stroke.color, stroke.width, darkPaper, revealed);
+}
+
+/**
+ * One stretch of a line being written, from its smoothed points. Distances along the line are
+ * counted from its real start, so a taper lands where it would on the whole line. A stretch that
+ * isn't the line's end gets a plain round end, for the next stretch to carry on over.
+ */
+export function drawWetStretch(ctx: CanvasRenderingContext2D, points: StrokePoint[], style: 'ball' | 'fountain' | 'brush', color: string, width: number, isEnd: boolean) {
+  if (!points.length) return;
+  const options = STROKE_OPTIONS[style];
+  const outline = getStrokeOutlinePoints(points, { ...options, size: width, last: false, ...(isEnd ? {} : { end: PLAIN_END }) });
+  ctx.fillStyle = color;
+  ctx.fill(outlinePath(outline));
 }
 
 /** The line still being drawn. `flat` is for one that's been snapped to a clean shape. */

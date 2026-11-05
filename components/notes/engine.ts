@@ -1,5 +1,7 @@
 'use client';
 
+import type { StrokePoint } from 'perfect-freehand';
+import { smoothLine, startSmoothing, type Smoothing } from '@/lib/notes/smooth';
 import {
   boundsOf, boxesTouch, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoint, movePoints, NO_MOVE, packPoints, pointInBox, recognizeShape, shapeFromDrag, strokeTouches, unionBoxes,
   type Box, type Move, type ShapeKind,
@@ -7,7 +9,7 @@ import {
 import { isDark, MAX_STROKE_POINTS, type ImageElement, type MarkElement, type MarkRole, type MarkTarget, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
 import { newId, tombstone, type NotebookDoc, type Step } from './doc';
 import { setWriting } from './sync';
-import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight, textBox } from './ink';
+import { drawStroke, drawWet, elementBox, markBox, FONT_STACKS, strokeBox, strokePoints, TEXT_LINE_HEIGHT, textFont, textHeight, textBox, drawWetStretch, STROKE_OPTIONS } from './ink';
 import { Assets, drawElement, drawElements, drawPaper, sortForDrawing } from './paper';
 
 // The notebook on screen. Everything is drawn in screen space on two canvases the size of the
@@ -95,7 +97,8 @@ const HOLD_MS = 550;
 /** Points written before the oldest of them are drawn for good, how many stay redrawn each frame, and how far the two overlap. */
 const SETTLE_AFTER = 48;
 const KEEP_WET = 20;
-const OVERLAP = 4;
+/** How far, along the page, each stretch of a line being written runs back over the one before. */
+const STRETCH_OVERLAP = 6;
 const HOLD_FINGER_MS = 500;
 const DOUBLE_TAP_MS = 280;
 const HOLD_STILL_PIXELS = 3;
@@ -125,6 +128,8 @@ type Wet = {
   isFinger: boolean;
   /** How many points are already drawn for good on the settled layer: only the rest is redrawn each frame. */
   settledPoints: number;
+  /** The pen line smoothed so far, carried on as points come in rather than done again each frame. */
+  smoothing: Smoothing | null;
 };
 
 type Selection = {
@@ -862,16 +867,20 @@ export class NoteCanvas {
     if (this.settledDirty && (!pen || camera !== this.settledCamera)) this.clearSettled();
     if (!this.settledDirty) wet.settledPoints = 0;
     this.settledCamera = camera;
-    const count = wet.pts.length / 3;
-    if (rect && pen && count - wet.settledPoints > SETTLE_AFTER) {
-      const upTo = count - KEEP_WET;
-      const from = Math.max(0, wet.settledPoints - OVERLAP);
-      this.drawPiece(this.settledCtx, rect, wet, wet.pts.slice(from * 3, upTo * 3), { start: from === 0, end: false });
+    // A pen line is smoothed once, end to end, and drawn in stretches of that: stretches
+    // smoothed on their own meet with a kink, which shows once you're zoomed in.
+    if (pen && !wet.smoothing) wet.smoothing = startSmoothing(STROKE_OPTIONS[wet.style as 'ball' | 'fountain' | 'brush']?.streamline ?? 0.5, wet.width);
+    const smooth = pen ? smoothLine(wet.smoothing!, wet.pts) : null;
+    if (rect && smooth && smooth.length - wet.settledPoints > SETTLE_AFTER) {
+      const upTo = smooth.length - KEEP_WET;
+      const from = wet.settledPoints ? this.stretchStart(smooth, wet.settledPoints, wet.width) : 0;
+      this.drawStretch(this.settledCtx, rect, wet, smooth.slice(from, upTo), false);
       wet.settledPoints = upTo;
       this.settledDirty = true;
     }
-    const tailFrom = pen ? Math.max(0, wet.settledPoints - OVERLAP) : 0;
-    const tail = wet.snapped ?? (tailFrom ? wet.pts.slice(tailFrom * 3) : wet.pts);
+    const tailFrom = smooth && wet.settledPoints ? this.stretchStart(smooth, wet.settledPoints, wet.width) : 0;
+    const tailPoints = smooth?.slice(tailFrom) ?? null;
+    const tail = wet.snapped ?? (tailPoints ? tailPoints.flatMap((point) => [point.point[0], point.point[1], 0]) : wet.pts);
     const box = boundsOf(tail, wet.width * 2);
     const dpr = this.dpr;
     const area = rect ? {
@@ -883,8 +892,32 @@ export class NoteCanvas {
     if (this.wetArea) ctx.clearRect(this.wetArea.x, this.wetArea.y, this.wetArea.w, this.wetArea.h);
     if (area) ctx.clearRect(area.x, area.y, area.w, area.h);
     this.wetArea = area;
-    if (rect) this.drawPiece(ctx, rect, wet, tail, { start: tailFrom === 0, end: true });
+    if (rect && tailPoints) this.drawStretch(ctx, rect, wet, tailPoints, true);
+    else if (rect) this.drawPiece(ctx, rect, wet, tail, { start: true, end: true });
     this.strokeLog.drawMs = Math.max(this.strokeLog.drawMs, performance.now() - started);
+  }
+
+  /**
+   * Where the next stretch starts: back far enough over the last one that its end, which is cut
+   * short and rounded off, is drawn over. Measured along the page, not in points, because zoomed
+   * in the pencil's points come far closer together on the page.
+   */
+  private stretchStart(points: StrokePoint[], settled: number, width: number) {
+    const back = Math.max(STRETCH_OVERLAP, width * 3);
+    const reach = points[settled - 1].runningLength - back;
+    let i = Math.max(0, settled - 4);
+    while (i > 0 && points[i].runningLength > reach) i -= 1;
+    return i;
+  }
+
+  private drawStretch(ctx: CanvasRenderingContext2D, rect: PageRect, wet: Wet, points: StrokePoint[], isEnd: boolean) {
+    this.pageTransform(ctx, rect);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, rect.page.w, rect.page.h);
+    ctx.clip();
+    drawWetStretch(ctx, points, wet.style as 'ball' | 'fountain' | 'brush', wet.color, wet.width, isEnd);
+    ctx.restore();
   }
 
   private drawPiece(ctx: CanvasRenderingContext2D, rect: PageRect, wet: Wet, pts: number[], ends: { start: boolean; end: boolean }) {
@@ -1239,7 +1272,7 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0,
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0, smoothing: null,
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
