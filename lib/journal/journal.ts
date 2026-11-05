@@ -141,17 +141,21 @@ export function writingStreak(dates: Iterable<DateKey>, today: DateKey) {
   return streak;
 }
 
+// Things to think about on paper (ideas, opinions, decisions, what you learned),
+// in the same spirit as talking it through: curious, not a counselling session.
 const PROMPTS = [
-  'What’s on your mind?',
-  'What went well today?',
-  'What’s one thing you’d do differently?',
-  'What are you looking forward to?',
-  'What took most of your energy today?',
-  'What did you learn today?',
-  'Who made today better?',
-  'What’s been bothering you lately?',
-  'What would make tomorrow good?',
-  'What are you grateful for right now?',
+  'What did you learn today, and how sure are you it’s true?',
+  'What’s something you’ve changed your mind about?',
+  'Pick something you believe. What’s the best argument against it?',
+  'What problem are you chewing on, and what haven’t you tried yet?',
+  'What decision is coming up, and what would make it easy?',
+  'What did you make, fix or figure out today?',
+  'What surprised you today?',
+  'What’s an idea worth trying this week?',
+  'What’s a question you’d like answered?',
+  'What did you read or hear lately that stuck with you?',
+  'What’s an opinion you hold that most people around you don’t?',
+  'What happened today that’s worth remembering?',
 ];
 
 /** A writing prompt for the empty page, the same all day. */
