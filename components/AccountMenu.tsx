@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { announceAccountChange, signOut } from './account-session';
+import { useHomeScreen } from './AddToHomeScreen';
 
 export type NavUser = { username: string; /** Starts on PA Today, not the main site. */ studyHome?: boolean } | null;
 
@@ -17,6 +18,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
   const [dialogOpen, setDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const homeScreen = useHomeScreen();
 
   // Close the signed-in menu on an outside click or Escape.
   useEffect(() => {
@@ -80,6 +82,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
                 <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
                 <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
                 <a href="/api/account/export" download onClick={() => setMenuOpen(false)}><span aria-hidden>📦</span>Download my data</a>
+                {!homeScreen.installed && <button type="button" onClick={() => { setMenuOpen(false); homeScreen.add(); }}><span aria-hidden>📲</span>Add this page to home screen</button>}
               </>
             ) : (
               <button type="button" onClick={() => { setMenuOpen(false); setDialogOpen(true); }}><span aria-hidden>👤</span>Sign in to your account</button>
@@ -90,6 +93,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
         </div>
       )}
       {dialogOpen && <SignInDialog onClose={() => setDialogOpen(false)} />}
+      {homeScreen.dialog}
     </div>
   );
 }

@@ -12,7 +12,8 @@
     "daily:validate": "tsx scripts/daily-pack.ts validate",
     "daily": "tsx scripts/daily-pack.ts",
     "daily:build": "node scripts/daily-generator/build.mjs",
-    "looplab:compare": "tsx scripts/loop-lab-compare.ts"
+    "looplab:compare": "tsx scripts/loop-lab-compare.ts",
+    "icons:apps": "tsx scripts/generate-app-icons.ts"
   },
   "dependencies": {
     "@fontsource-variable/newsreader": "^5.3.0",

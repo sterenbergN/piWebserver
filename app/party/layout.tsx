@@ -1,6 +1,9 @@
+import type { Metadata } from 'next';
 import './party.css';
+import { homeScreenMetadata } from '@/lib/home-apps';
 
-export const metadata = {
+export const metadata: Metadata = {
+  ...homeScreenMetadata('party'),
   title: 'Party Games',
   description: 'Play Jackbox-style games with your friends.',
 };
