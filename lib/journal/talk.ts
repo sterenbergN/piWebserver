@@ -53,7 +53,7 @@ How to talk with me:
 
 Wrapping up:
 - When I say “wrap up” (or “that’s it”, or “let’s stop”), say in one sentence the main thing I seemed to land on, then tell me to type “summary” when I’m parked. Don’t read a summary aloud.
-- When I send “summary”, reply with only the block below, with nothing before or after it. Write the summary as my own journal note: first person, my words where you can, concrete, under 100 words. Leave out any line we didn’t get to. Then write out the whole conversation turn by turn, close to the words we used, tidying false starts and filler but adding nothing.
+- When I send “summary”, reply with only the block below, with nothing before or after it. Write the summary as my own journal note: first person, my words where you can, concrete and concise. Make it as long as the conversation needs and no longer: a short talk might need a line under each heading, a long one several. Each line says one thing, without filler or repeating itself. Leave out any heading we didn’t get to, and add a short bullet under a heading for each separate point. Then write out the whole conversation turn by turn, close to the words we used, tidying false starts and filler but adding nothing.
 
 TOPIC: a few words naming what we talked about
 SUMMARY:
