@@ -103,6 +103,8 @@ ${m.role}
 
 ${start}
 ${today}
+Keep track of the whole conversation as we go: when we wrap up, I’ll ask you to write all of it out for my journal, so none of it can be lost.
+
 How to talk with me:
 - Talk like a sharp, honest friend, not a therapist, coach or teacher. Ask, don’t lecture.
 - Keep every reply to one to three short sentences, usually ending in one question. Plain speech only: no lists, headings, emoji or formatting, since it’s read aloud.
@@ -119,11 +121,16 @@ ${pushback}- Keep it objective:
 
 Wrapping up:
 - When I say “wrap up” (or “that’s it”, or “let’s stop”), say in one sentence the main thing I seemed to land on, then tell me to type “summary” when I’m parked. Don’t read a summary aloud.
-- When I send “summary”, reply with only the block below, with nothing before or after it. Write the summary as my own journal note: first person, my words where you can, concrete and concise. Make it as long as the conversation needs and no longer: a short talk might need a line under each heading, a long one several. Each line says one thing, without filler or repeating itself. Leave out any heading we didn’t get to, and for a heading with several points, put each on its own indented bullet under it. Then write out the whole conversation turn by turn, close to the words we used, tidying false starts and filler but adding nothing.
+- When I send “summary”, reply with only the block below, nothing before or after it, and not inside a code block. Keep the three labels (TOPIC:, SUMMARY:, CONVERSATION:) exactly as they are, each at the start of its own line.
+- The summary is my own journal note: first person, my words where you can, concrete and concise. Make it as long as the conversation needs and no longer: a short talk might need one bullet per heading, a long one several. Each bullet says one thing, without filler or repeating itself. Leave out any heading we didn’t get to.
+- Format the summary in Markdown, like the template: each heading is a bullet starting with the heading in bold, and any further points go on their own bullets indented two spaces under it. Put the few words that matter most in **bold**. Nothing fancier: no tables, headings or emoji.
+- Under CONVERSATION, write out the whole conversation: every turn, from the very first to the last, in order. Start each turn on a new line with “Me:” or “You:”. Keep what I said in my own words (drop only ums, repeats and false starts) and what you said as you said it. Never summarize, shorten, merge or skip turns, and never put “…” or “[continues]” in place of something that was said. If the voice transcription garbled something I said, keep it as it came through, with [unclear] where words are missing.
+- If it won’t all fit in one reply, stop at the end of a turn and put MORE on a line of its own at the very end. When I send “more”, carry on from the next turn with no labels and nothing repeated, and keep going the same way until the whole conversation is written out.
 
 TOPIC: a few words naming what we talked about
 SUMMARY:
-${m.summary.map((l) => `- ${l}: …`).join('\n')}
+${m.summary.map((l) => `- **${l}:** …`).join('\n')}
+  - another point under the same heading, if there is one
 CONVERSATION:
 Me: …
 You: …`;
@@ -135,19 +142,31 @@ export type TalkReply = { topic: string; summary: string; transcript: string };
 
 const HEADING = /^[ \t>#*_]*(topic|summary|conversation|transcript)[ \t*_]*:[ \t*_]*(.*)$/gim;
 
-/** Tidy markdown the AI may add, so the summary reads cleanly in a plain-text entry. */
-function plain(text: string) {
+/**
+ * The summary as tidy Markdown for the entry: every bullet a "- ", points under a heading
+ * indented two spaces under it, and a heading's label in bold even when the AI forgot.
+ */
+export function tidySummary(text: string) {
   return text
     .split('\n')
-    .map((line) => line
-      .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => a ?? b)
-      // A point under a heading stays indented under it.
-      .replace(/^(\s*)(?:[-*•◦]|\d+[.)])\s+/, (_, indent: string) => (indent.length ? '   ◦ ' : '• '))
-      .trimEnd())
+    .map((line) => {
+      const m = line.match(/^(\s*)(?:[-*+•◦▪]|(\d+[.)]))\s+(.*)$/);
+      if (!m) return line.trimEnd();
+      const [, indent, number, rest] = m;
+      const nested = indent.replace(/\t/g, '  ').length > 0;
+      // "- What happened: …" → "- **What happened:** …"
+      const body = !nested && !number ? rest.replace(/^([^*:\n]{2,48}):(\s+(?=\S)|\s*$)/, (_, label: string, after: string) => `**${label}:**${after ? ' ' : ''}`) : rest;
+      return `${nested ? '  ' : ''}${number ?? '-'} ${body.trimEnd()}`;
+    })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+const plainLine = (line: string) => line.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => a ?? b).replace(/^[-*_•\s]+|[*_\s]+$/g, '');
+
+/** "MORE" and "(continued)" lines left where a long conversation was split across replies. */
+const CONTINUED = /^[ \t*_#]*(?:conversation[ \t]*)?(?:more|\(?cont(?:inued)?\.?\)?)[ \t*_.:]*$/gim;
 
 /**
  * Read what the AI wrote back: TOPIC, SUMMARY and CONVERSATION sections. Code
@@ -158,19 +177,26 @@ export function parseTalkReply(raw: string, fallbackTopic = ''): TalkReply {
   const text = raw.replace(/\r\n?/g, '\n').replace(/^\s*```[\w-]*\s*$/gm, '').trim();
   if (!text) throw new TalkReplyError('Paste what your AI wrote first.');
 
-  const marks = [...text.matchAll(HEADING)].map((m) => ({ kind: m[1].toLowerCase(), rest: m[2], at: m.index!, end: m.index! + m[0].length }));
+  const marks = [...text.matchAll(HEADING)].map((m) => ({ kind: m[1].toLowerCase() === 'transcript' ? 'conversation' : m[1].toLowerCase(), rest: m[2], at: m.index!, end: m.index! + m[0].length }));
+  /** Every part under this label, joined: a long conversation can come back in more than one reply. */
   const section = (kind: string) => {
-    const i = marks.findIndex((m) => m.kind === kind || (kind === 'conversation' && m.kind === 'transcript'));
-    if (i < 0) return null;
-    const m = marks[i];
-    const next = marks.slice(i + 1).find((n) => n.at > m.at);
-    return `${m.rest}\n${text.slice(m.end, next ? next.at : text.length)}`.trim();
+    const parts = marks.flatMap((m, i) => {
+      if (m.kind !== kind) return [];
+      const next = marks[i + 1];
+      return [`${m.rest}\n${text.slice(m.end, next ? next.at : text.length)}`.trim()];
+    });
+    return parts.length ? parts.join('\n') : null;
   };
 
   const topicSection = section('topic');
-  const topic = plain((topicSection ?? '').split('\n')[0] || fallbackTopic).replace(/^•\s*/, '').replace(/[.\s]+$/, '').slice(0, MAX_TOPIC);
-  const summary = plain(marks.length ? section('summary') ?? '' : text);
-  const transcript = (section('conversation') ?? '').replace(/\*\*(Me|You):\*\*/g, '$1:').trim().slice(0, MAX_TRANSCRIPT);
+  const topic = plainLine((topicSection ?? '').split('\n')[0] || fallbackTopic).replace(/[.\s]+$/, '').slice(0, MAX_TOPIC);
+  const summary = tidySummary((marks.length ? section('summary') ?? '' : text).replace(CONTINUED, ''));
+  const transcript = (section('conversation') ?? '')
+    .replace(CONTINUED, '')
+    .replace(/\*\*(Me|You):\*\*/g, '$1:')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, MAX_TRANSCRIPT);
 
   if (!summary) throw new TalkReplyError('I couldn’t find the summary in that. Ask your AI for the “summary” block again and paste all of it.');
   return { topic, summary, transcript };
@@ -178,7 +204,7 @@ export function parseTalkReply(raw: string, fallbackTopic = ''): TalkReply {
 
 /** The summary as it goes into the day's entry, after whatever is written there already. */
 export function appendTalkSummary(entry: string, reply: Pick<TalkReply, 'topic' | 'summary'>, mode: TalkMode) {
-  const block = `🎙 ${TALK_MODES[mode].verb}${reply.topic ? `: ${reply.topic}` : ''}\n${reply.summary}`;
+  const block = `### 🎙 ${TALK_MODES[mode].verb}${reply.topic ? `: ${reply.topic}` : ''}\n\n${reply.summary.trim()}`;
   const before = entry.replace(/\s+$/, '');
   return before ? `${before}\n\n${block}` : block;
 }

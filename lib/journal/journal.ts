@@ -49,8 +49,24 @@ export function normalizeJournal(raw: unknown): JournalData {
   return data;
 }
 
+/** Words written, not counting Markdown's marks (list bullets, "#", ">", "1."). */
 export function wordCount(text: string) {
-  return text.trim() ? text.trim().split(/\s+/).length : 0;
+  return text.split(/\s+/).filter((w) => w && !/^(?:[-*+#>_[\]]+|\d+[.)]|\[[xX]\])$/.test(w)).length;
+}
+
+/**
+ * An entry's Markdown as plain text, for one-line previews: no "**", "#", "> " or list
+ * bullets, and links as their words.
+ */
+export function markdownToPlain(md: string) {
+  return md
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)/gm, '')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/(^|[^\w*])[*_]([^*_\n]+)[*_](?=[^\w*]|$)/g, '$1$2')
+    .replace(/~~(.+?)~~/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
 }
 
 export function summarize(date: DateKey, entry: JournalEntry, preview = entry.text): JournalSummary {
@@ -59,7 +75,7 @@ export function summarize(date: DateKey, entry: JournalEntry, preview = entry.te
     ...(entry.mood ? { mood: entry.mood } : {}),
     words: wordCount(entry.text),
     ...(entry.talks?.length ? { talks: entry.talks.length } : {}),
-    preview: preview.replace(/\s+/g, ' ').trim().slice(0, 160),
+    preview: markdownToPlain(preview).replace(/\s+/g, ' ').trim().slice(0, 160),
     updatedAt: entry.updatedAt,
   };
 }

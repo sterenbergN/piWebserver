@@ -6,7 +6,7 @@ import Plate from '@/components/study/Plate';
 import { usePlan } from '@/components/study/usePlan';
 import { useKitchen } from '../recipes/useKitchen';
 import type { DateKey } from '@/lib/habits/dates';
-import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
+import { markdownToPlain, MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
 import { booksInProgress, progressText, readingState, type BookMeta, type Progress } from '@/lib/reader/items';
 import { groceriesLeft, mealsToday, missingIngredients, recipesFor } from '@/lib/recipes/kitchen';
 import type { Recipe } from '@/lib/recipes/recipes';
@@ -151,7 +151,7 @@ export function JournalCard({ today, onWritten }: { today: DateKey; onWritten: (
           </div>
           {words > 0 ? (
             <>
-              <p className="td-journal-preview">{entry?.text}</p>
+              <p className="td-journal-preview">{markdownToPlain(entry?.text ?? '')}</p>
               <Link className="btn btn-secondary" href="/journal">Keep writing · {words.toLocaleString()} word{words === 1 ? '' : 's'}</Link>
             </>
           ) : (

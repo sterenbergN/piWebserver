@@ -114,3 +114,35 @@
 .jr-talk > .jr-delete { margin: 0 0.8rem 0.7rem; }
 .jr-talk-sub { margin: 0.9rem 0 0.5rem; font-size: 0.85rem; color: var(--muted); }
 select.jr-talk-input { margin-bottom: 0.2rem; }
+
+/* An entry as it reads (Markdown), and the formatting bar while writing */
+.jr-tools { align-items: center; gap: 0.5rem; }
+.jr-tools > .hb-small-btn:first-child { margin-right: auto; }
+.jr-format { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-right: auto; }
+.jr-format button { min-width: 2.2rem; height: 2.2rem; padding: 0 0.5rem; border: 1px solid var(--surface-border); border-radius: 8px; background: var(--background); color: var(--foreground); font: inherit; font-size: 0.9rem; cursor: pointer; }
+.jr-format button:hover:not(:disabled) { background: var(--surface-hover); }
+.jr-format .jr-format-bold { font-weight: 800; }
+.jr-format .jr-format-italic { font-style: italic; font-family: Georgia, serif; }
+
+.jr-read { min-height: 280px; padding: 0.9rem 1rem; border: 1px solid var(--surface-border); border-radius: 12px; background: var(--input-bg); cursor: text; overflow-wrap: anywhere; }
+.jr-md { font-size: 1.02rem; line-height: 1.7; color: var(--foreground); }
+.jr-md > :first-child { margin-top: 0; }
+.jr-md > :last-child { margin-bottom: 0; }
+/* A journal is written line by line: keep single line breaks. */
+.jr-md p, .jr-md li { white-space: pre-line; }
+.jr-md p { margin: 0 0 0.8rem; }
+.jr-md h1, .jr-md h2, .jr-md h3, .jr-md h4 { margin: 1.1rem 0 0.4rem; font-size: 1.08rem; line-height: 1.4; }
+.jr-md h1 { font-size: 1.3rem; }
+.jr-md h2 { font-size: 1.18rem; }
+.jr-md ul, .jr-md ol { margin: 0 0 0.8rem; padding-left: 1.4rem; }
+.jr-md li > ul, .jr-md li > ol { margin: 0.15rem 0 0.2rem; }
+.jr-md li::marker { color: var(--muted); }
+.jr-md li > p { margin: 0; }
+.jr-md blockquote { margin: 0 0 0.8rem; padding-left: 0.9rem; border-left: 3px solid var(--accent-light); color: var(--muted); }
+.jr-md a { color: var(--accent-light); }
+.jr-md code { padding: 0.1rem 0.35rem; border-radius: 4px; background: var(--surface-glass); font-size: 0.9em; }
+.jr-md hr { border: none; border-top: 1px solid var(--surface-border); margin: 1rem 0; }
+.jr-md input[type="checkbox"] { margin-right: 0.4rem; }
+.jr-md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.2rem; }
+.jr-talk-preview { margin-top: 0.5rem; padding: 0.7rem 0.85rem; border: 1px dashed var(--surface-border); border-radius: 10px; }
+.jr-talk-preview .jr-md { font-size: 0.92rem; line-height: 1.55; }

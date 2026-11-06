@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import HabitSheet from '@/components/habits/HabitSheet';
+import JournalMarkdown from '@/components/journal/JournalMarkdown';
 import type { DateKey } from '@/lib/habits/dates';
 import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 
@@ -75,7 +76,8 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
     try {
       const text = await navigator.clipboard.readText();
       setPasteFailed(false);
-      if (text) { setReplyText(text); setError(''); }
+      // A long conversation comes back in parts: each paste goes after the last.
+      if (text) { setReplyText((now) => (now.trim() ? `${now.trimEnd()}\n${text}` : text)); setError(''); }
     } catch {
       setPasteFailed(true);
       replyBox.current?.focus();
@@ -131,6 +133,9 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
           <input id="jr-talk-topic" className="jr-talk-input" value={reply.topic} maxLength={300} onChange={(e) => setReply({ ...reply, topic: e.target.value })} />
           <label className="hb-label" htmlFor="jr-talk-summary">Summary, added to the end of the entry</label>
           <textarea id="jr-talk-summary" className="jr-talk-input" rows={Math.min(12, reply.summary.split('\n').length + 2)} value={reply.summary} onChange={(e) => setReply({ ...reply, summary: e.target.value })} />
+          <div className="jr-talk-preview" aria-label="How it will read">
+            <JournalMarkdown text={reply.summary} />
+          </div>
           {reply.transcript ? (
             <label className="jr-talk-toggle">
               <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
@@ -181,7 +186,7 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
               <h3><span className="jr-talk-num">2</span> Once you’re parked</h3>
               <button type="button" className="hb-small-btn" onClick={paste}>Paste</button>
             </div>
-            <p className="jr-hint">Type <strong>summary</strong> in the same chat, copy its whole reply and paste it here.</p>
+            <p className="jr-hint">Type <strong>summary</strong> in the same chat, copy its whole reply and paste it here. If it ends with <strong>MORE</strong>, send “more”, then paste that reply too: each paste goes after the last.</p>
             <textarea ref={replyBox} className="jr-talk-input" rows={replyText ? 6 : 3} value={replyText} placeholder="Paste the whole reply here" aria-label="The AI’s reply"
               onChange={(e) => { setReplyText(e.target.value); setError(''); }} />
             {pasteFailed && <p className="jr-hint">This browser wants you to paste by hand. Hold or right-click in the box.</p>}

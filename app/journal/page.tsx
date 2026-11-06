@@ -4,9 +4,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useSitePopup } from '@/components/SitePopup';
 import JournalTabs from '@/components/journal/JournalTabs';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import JournalMarkdown from '@/components/journal/JournalMarkdown';
 import TalkSheet from '@/components/journal/TalkSheet';
+import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
 import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
 import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
+import { continueList } from '@/lib/journal/markdown';
 import { appendTalkSummary, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 import '../habits/habits.css';
 import './journal.css';
@@ -18,6 +21,14 @@ type Mode = 'loading' | 'account' | 'signed-out' | 'error';
 type SaveState = 'idle' | 'loading' | 'unsaved' | 'saving' | 'saved' | 'error';
 
 const SAVE_DELAY = 900;
+const TOOLS: { action: FormatAction; label: string; title: string }[] = [
+  { action: 'bold', label: 'B', title: 'Bold (Ctrl+B)' },
+  { action: 'italic', label: 'I', title: 'Italic (Ctrl+I)' },
+  { action: 'h3', label: 'H', title: 'Heading' },
+  { action: 'ul', label: '•', title: 'Bulleted list' },
+  { action: 'ol', label: '1.', title: 'Numbered list' },
+  { action: 'quote', label: '❝', title: 'Quote' },
+];
 const fmtDay = (d: DateKey, opts: Intl.DateTimeFormatOptions) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, opts);
 
 function dayTitle(day: DateKey, today: DateKey) {
@@ -39,6 +50,9 @@ export default function JournalPage() {
   const [results, setResults] = useState<JournalSummary[] | null>(null);
   const [talks, setTalks] = useState<JournalTalk[]>([]);
   const [talking, setTalking] = useState(false);
+  // Written in Markdown, read formatted: the entry shows as it reads until you tap into it.
+  const [editing, setEditing] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // What the editor holds, for saves that run after a re-render.
   const draft = useRef({ day, text, mood, version: 0, savedVersion: 0 });
@@ -93,7 +107,7 @@ export default function JournalPage() {
     await flush();
     const d = draft.current;
     d.day = date; d.text = ''; d.mood = null; d.version = 0; d.savedVersion = 0;
-    setDay(date); setText(''); setMood(null); setTalks([]); setSave('loading');
+    setDay(date); setText(''); setMood(null); setTalks([]); setEditing(false); setSave('loading');
     try {
       const res = await fetch(`/api/journal?date=${date}`, { cache: 'no-store' });
       const json = await res.json();
@@ -168,9 +182,11 @@ export default function JournalPage() {
     if (el.scrollTop !== 0) el.scrollTop = 0;
   }, []);
 
+  const reading = !editing && !!text.trim() && save !== 'loading';
+
   useLayoutEffect(() => {
     syncHeight();
-  }, [text, mode, syncHeight]);
+  }, [text, mode, reading, syncHeight]);
 
   useEffect(() => {
     const el = area.current;
@@ -178,7 +194,62 @@ export default function JournalPage() {
     const ro = new ResizeObserver(() => syncHeight());
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mode, syncHeight]);
+  }, [mode, reading, syncHeight]);
+
+  /** Open the entry for writing, with the caret at the end (where most writing goes). */
+  const startEditing = () => {
+    setEditing(true);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
+
+  const keepEditing = () => {
+    if (blurTimer.current) { clearTimeout(blurTimer.current); blurTimer.current = null; }
+  };
+
+  // Where the caret goes after a formatting change, set as soon as React has put the
+  // new text in (not a frame later, when a quick next keystroke could already have landed).
+  const pendingSelection = useRef<[number, number] | null>(null);
+  useLayoutEffect(() => {
+    const el = area.current;
+    const sel = pendingSelection.current;
+    if (!el || !sel) return;
+    pendingSelection.current = null;
+    if (document.activeElement !== el) el.focus({ preventScroll: true });
+    el.setSelectionRange(sel[0], sel[1]);
+  }, [text]);
+
+  /** Put the textarea's text and selection back after a formatting change. */
+  const applyEdit = (next: { text: string; selStart: number; selEnd: number }) => {
+    keepEditing();
+    pendingSelection.current = [next.selStart, next.selEnd];
+    edit({ text: next.text });
+  };
+
+  const format = (action: FormatAction) => {
+    const el = area.current;
+    if (!el) return;
+    const { selectionStart: start, selectionEnd: end } = el;
+    const next = applyFormat(el.value, start, end, action);
+    // A list or heading started with nothing selected: carry on typing at the end of the line.
+    const lineAction = action !== 'bold' && action !== 'italic';
+    applyEdit(lineAction && start === end ? { ...next, selStart: next.selEnd } : next);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'i')) {
+      e.preventDefault();
+      format(e.key === 'b' ? 'bold' : 'italic');
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && el.selectionStart === el.selectionEnd) {
+      const next = continueList(el.value, el.selectionStart);
+      if (next) { e.preventDefault(); applyEdit(next); }
+    }
+  };
 
   // Search runs on the server, so the list never needs every entry's full text.
   useEffect(() => {
@@ -301,19 +372,48 @@ export default function JournalPage() {
             </div>
 
             <div className="jr-tools">
+              {reading ? (
+                <button type="button" className="hb-small-btn" onClick={startEditing}><span aria-hidden>✏️</span> Edit</button>
+              ) : (
+                <div className="jr-format" role="toolbar" aria-label="Formatting">
+                  {TOOLS.map((t) => (
+                    <button key={t.action} type="button" className={`jr-format-${t.action}`} title={t.title} aria-label={t.title} disabled={save === 'loading'}
+                      onMouseDown={(e) => e.preventDefault()} onPointerDown={keepEditing} onClick={() => format(t.action)}>{t.label}</button>
+                  ))}
+                </div>
+              )}
               <button type="button" className="hb-small-btn" disabled={save === 'loading'} onClick={() => setTalking(true)}><span aria-hidden>🎙</span> Talk it through</button>
             </div>
 
-            <div className="jr-grow">
-              <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
-              <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
-                disabled={save === 'loading'} onChange={(e) => {
-                  const el = e.currentTarget;
-                  if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
-                  if (el.scrollTop !== 0) el.scrollTop = 0;
-                  edit({ text: el.value });
-                }} onBlur={() => { flush(); }} spellCheck />
-            </div>
+            {reading ? (
+              // Tapping the words opens them for writing; links in them still open.
+              <div className="jr-read" onClick={(e) => { if (!(e.target as HTMLElement).closest('a, input')) startEditing(); }}>
+                <JournalMarkdown text={text} />
+              </div>
+            ) : (
+              <div className="jr-grow">
+                <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
+                <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
+                  disabled={save === 'loading'} onChange={(e) => {
+                    const el = e.currentTarget;
+                    if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+                    if (el.scrollTop !== 0) el.scrollTop = 0;
+                    // Typing means writing, even if focus came back without a focus event.
+                    keepEditing();
+                    if (!editing) setEditing(true);
+                    edit({ text: el.value });
+                  }}
+                  onKeyDown={onKeyDown}
+                  onFocus={() => { keepEditing(); setEditing(true); }}
+                  onBlur={() => {
+                    flush();
+                    // A moment's grace, so a tap on the formatting bar doesn't close the editor.
+                    keepEditing();
+                    blurTimer.current = setTimeout(() => { blurTimer.current = null; setEditing(false); }, 250);
+                  }}
+                  spellCheck />
+              </div>
+            )}
 
             <div className="jr-foot">
               <span>{wordCount(text).toLocaleString()} words</span>
