@@ -106,7 +106,8 @@ export async function everyShare(): Promise<{ ownerId: string; share: Share }[]>
   const root = path.join(process.cwd(), '.data', 'study');
   const folders = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const owners = folders.filter((f) => f.isDirectory() && /^[\w-]{1,64}$/.test(f.name)).map((f) => f.name);
-  const lists = await Promise.all(owners.map(async (ownerId) => (await readShares(ownerId)).shares.map((share) => ({ ownerId, share }))));
+  // One account's damaged file (already logged by the read) mustn't take the shared list down for everyone.
+  const lists = await Promise.all(owners.map(async (ownerId) => (await readShares(ownerId).catch(() => emptyShares())).shares.map((share) => ({ ownerId, share }))));
   return lists.flat();
 }
 
@@ -149,7 +150,8 @@ export async function updateSession<R>(token: string, mutate: (session: PartnerS
 async function allSessions() {
   const names = await fs.readdir(sessionsFolder()).catch(() => [] as string[]);
   const tokens = names.flatMap((name) => (name.endsWith('.json') && isToken(name.slice(0, -5)) ? [name.slice(0, -5)] : []));
-  return Promise.all(tokens.map(async (token) => ({ token, session: await readJson<PartnerSession | null>(sessionFile(token), null) })));
+  // A damaged link counts as none: they only last a day, and this is how run-out ones get cleaned up.
+  return Promise.all(tokens.map(async (token) => ({ token, session: await readJson<PartnerSession | null>(sessionFile(token), null).catch(() => null) })));
 }
 
 /** One link per account at a time: opening a new one, or ending it, closes the old. Run-out ones anyone left behind get cleaned up too. */

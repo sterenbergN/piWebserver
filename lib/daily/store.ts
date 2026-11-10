@@ -52,7 +52,9 @@ export function questionIndex() {
   holder[INDEX_KEY] ??= (async () => {
     const index = new Map<string, IndexedQuestion>();
     for (const date of await listDates()) {
-      const day = await readDay(date);
+      // A damaged day (already logged by the read) is left out, so the other days
+      // still work and it can be replaced by uploading that day again.
+      const day = await readDay(date).catch(() => null);
       if (!day) continue;
       index.set(day.core.id, { question: day.core, date, core: true, boss: !!day.boss });
       for (const q of day.bonus) index.set(q.id, { question: q, date, core: false, boss: false });
@@ -87,11 +89,16 @@ const practiceHolder = globalThis as PracticeHolder;
 
 /** Every practice-only question, with the formulas they use. */
 export function practiceSet() {
-  practiceHolder[PRACTICE_KEY] ??= readJson<PracticeSet>(practiceFile(), { formulas: [], questions: [] }).then((set) => ({
-    formulas: Array.isArray(set?.formulas) ? set.formulas : [],
-    questions: Array.isArray(set?.questions) ? set.questions : [],
-    added: set?.added && typeof set.added === 'object' ? set.added : {},
-  }));
+  if (!practiceHolder[PRACTICE_KEY]) {
+    const loading = readJson<PracticeSet>(practiceFile(), { formulas: [], questions: [] }).then((set) => ({
+      formulas: Array.isArray(set?.formulas) ? set.formulas : [],
+      questions: Array.isArray(set?.questions) ? set.questions : [],
+      added: set?.added && typeof set.added === 'object' ? set.added : {},
+    }));
+    practiceHolder[PRACTICE_KEY] = loading;
+    // A failed read isn't kept, so it's tried again once the file is repaired.
+    loading.catch(() => { if (practiceHolder[PRACTICE_KEY] === loading) practiceHolder[PRACTICE_KEY] = null; });
+  }
   return practiceHolder[PRACTICE_KEY]!;
 }
 

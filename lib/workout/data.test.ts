@@ -41,6 +41,9 @@ test('a corrupt data file is never silently replaced with defaults', async () =>
       updateWorkoutData('broken.json', { history: [] as any[] }, (data) => { data.history.push({ id: 2 }); })
     );
     assert.equal(await fs.readFile(file, 'utf-8'), '{"history": [ {"id": 1}');
+    // A copy is kept beside it for recovery.
+    const copies = (await fs.readdir(path.dirname(file))).filter((name) => name.startsWith('broken.json.corrupt-'));
+    assert.equal(copies.length, 1);
   } finally {
     process.chdir(originalCwd);
     await fs.rm(tmp, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { readJson, updateJson, withLock, writeJsonAtomic } from '../json-store';
 
 const privateDir = () => path.join(process.cwd(), '.data', 'workouts');
 const legacyDir = () => path.join(process.cwd(), 'public', 'uploads', 'workouts');
@@ -58,72 +59,24 @@ function resolveDataPath(filename: string) {
   return path.join(getDir(), filename);
 }
 
-// ─── Per-file write lock ───────────────────────────────────────────────────────
-// Every mutation is read → modify → write. Without serialization two concurrent
-// requests (e.g. both partners in a shared session) read the same snapshot and
-// the second write silently discards the first.
-
-const fileLocks = new Map<string, Promise<unknown>>();
-
-async function withFileLock<R>(filename: string, fn: () => Promise<R>): Promise<R> {
-  const previous = fileLocks.get(filename) || Promise.resolve();
-  const run = previous.catch(() => {}).then(fn);
-  const tail = run.catch(() => {});
-  fileLocks.set(filename, tail);
-  try {
-    return await run;
-  } finally {
-    if (fileLocks.get(filename) === tail) fileLocks.delete(filename);
-  }
-}
-
-async function readJsonFile<T>(filename: string, defaultData: T): Promise<T> {
-  await ensureWorkoutDir();
-  const filePath = resolveDataPath(filename);
-  let raw: string;
-  try {
-    raw = await fs.readFile(filePath, 'utf-8');
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') return structuredClone(defaultData);
-    throw error;
-  }
-
-  if (!raw.trim()) return structuredClone(defaultData);
-
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    // Never fall back to the default here: the caller would then save the empty
-    // default over the user's real (if damaged) data. Keep a copy and fail loudly.
-    const backupPath = `${filePath}.corrupt-${Date.now()}`;
-    await fs.copyFile(filePath, backupPath).catch(() => {});
-    console.error(`Workout data file ${filename} is not valid JSON; a copy was saved to ${backupPath}`);
-    throw error;
-  }
-}
-
-async function writeJsonFileAtomic<T>(filename: string, data: T) {
-  await ensureWorkoutDir();
-  const filePath = resolveDataPath(filename);
-  // Write to a temp file then rename so a crash or power loss mid-write (not
-  // unusual on a Raspberry Pi) can never leave a truncated JSON file behind.
-  const tmpPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  try {
-    await fs.writeFile(tmpPath, JSON.stringify(data, null, 2));
-    await fs.rename(tmpPath, filePath);
-  } catch (error) {
-    await fs.unlink(tmpPath).catch(() => {});
-    throw error;
-  }
-}
+// ─── Reading and writing ───────────────────────────────────────────────────────
+// The shared store (lib/json-store.ts) does the work: a per-file lock, because
+// every mutation is read → modify → write and two concurrent requests (e.g. both
+// partners in a shared session) would otherwise drop each other's changes; atomic
+// writes; and reads that fail loudly on a damaged file instead of handing back
+// the default, which the caller would then save over the user's real data.
 
 export async function getWorkoutData<T>(filename: string, defaultData: T): Promise<T> {
-  return readJsonFile(filename, defaultData);
+  await ensureWorkoutDir();
+  // A copy, so a caller that changes what it gets back can't change the default.
+  return readJson(resolveDataPath(filename), structuredClone(defaultData));
 }
 
 export async function saveWorkoutData<T>(filename: string, data: T): Promise<boolean> {
   try {
-    await withFileLock(filename, () => writeJsonFileAtomic(filename, data));
+    await ensureWorkoutDir();
+    const file = resolveDataPath(filename);
+    await withLock(file, () => writeJsonAtomic(file, data, true));
     return true;
   } catch (error) {
     console.error(`Error writing ${filename}:`, error);
@@ -143,14 +96,8 @@ export async function updateWorkoutData<T, R = void>(
   defaultData: T,
   mutator: (data: T) => R | Promise<R>,
 ): Promise<R> {
-  return withFileLock(filename, async () => {
-    const data = await readJsonFile(filename, defaultData);
-    const result = await mutator(data);
-    if ((result as unknown) !== false) {
-      await writeJsonFileAtomic(filename, data);
-    }
-    return result;
-  });
+  await ensureWorkoutDir();
+  return updateJson(resolveDataPath(filename), structuredClone(defaultData), mutator, true);
 }
 
 /** Short random id for new records. */

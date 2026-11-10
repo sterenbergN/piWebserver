@@ -40,16 +40,21 @@ export async function GET(request: Request) {
     const households = new Map<string, ChoresData>();
     const rows = [];
     for (const id of ids) {
-      const data = await readUserDaily(id);
-      if (!data.leaderboard || !names.get(id)) continue;
-      const stats = questionStats(scoreAll(data.attempts, questions), today);
-      const [habits, chores, study] = await Promise.all([habitsFor(id, today), choresFor(id, today, households), readStudyXp(id)]);
-      const total = stats.total.xp + habits.xp + chores.xp + study;
-      const level = levelFromXp(total);
-      rows.push({
-        name: names.get(id)!, me: id === me, xp: stats.total.xp, week: stats.xpThisWeek, streak: stats.streak.current, solved: stats.total.solved,
-        habits, chores, total, level: level.level, title: level.title,
-      });
+      try {
+        const data = await readUserDaily(id);
+        if (!data.leaderboard || !names.get(id)) continue;
+        const stats = questionStats(scoreAll(data.attempts, questions), today);
+        const [habits, chores, study] = await Promise.all([habitsFor(id, today), choresFor(id, today, households), readStudyXp(id)]);
+        const total = stats.total.xp + habits.xp + chores.xp + study;
+        const level = levelFromXp(total);
+        rows.push({
+          name: names.get(id)!, me: id === me, xp: stats.total.xp, week: stats.xpThisWeek, streak: stats.streak.current, solved: stats.total.solved,
+          habits, chores, total, level: level.level, title: level.title,
+        });
+      } catch (error) {
+        // One account's unreadable file leaves that row out; it mustn't take the board down for everyone.
+        console.error(`Leaderboard: left out account ${id}:`, error);
+      }
     }
     rows.sort((a, b) => b.week - a.week || b.xp - a.xp);
     return NextResponse.json({ success: true, rows }, { headers: { 'Cache-Control': 'no-store' } });
