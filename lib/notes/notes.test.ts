@@ -11,8 +11,8 @@ import {
 } from './items';
 import { appendUpload, finishUpload, NotebookGone, openStoredFile, readLibrary, syncBook, syncLibrary, syncPage, UploadRefused } from './store';
 import { PAGE_SIZES, TEMPLATES, templateMarks } from './templates';
-import { getStrokePoints } from 'perfect-freehand';
-import { smoothLine, startSmoothing } from './smooth';
+import { getStroke, getStrokePoints } from 'perfect-freehand';
+import { detailAt, outlineFromPoints, outlineOfLine, smoothLine, startSmoothing } from './smooth';
 
 const NOW = 1_800_000_000_000;
 const original = process.cwd();
@@ -37,9 +37,10 @@ test('the line being written is smoothed exactly as the saved line will be, howe
   // A wobbly line with pauses (repeated points) and pressure changes, smoothed a point at a time.
   let seed = 7;
   const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  for (const [streamline, size] of [[0.32, 1.8], [0.38, 2.4], [0.42, 6], [0.32, 0.6]]) {
+  for (const [streamline, width, detail] of [[0.32, 1.8, 1], [0.38, 2.4, 1], [0.42, 6, 1], [0.32, 0.6, 1], [0.38, 2.4, 3], [0.42, 6, 8]]) {
     const pts: number[] = [];
-    const state = startSmoothing(streamline, size);
+    const state = startSmoothing(streamline, width, detail);
+    const size = width / detail;
     let x = 50;
     let y = 50;
     for (let i = 0; i < 400; i++) {
@@ -53,6 +54,61 @@ test('the line being written is smoothed exactly as the saved line will be, howe
     const carried = pts.slice(-3);
     assert.deepEqual(smoothLine(state, carried), getStrokePoints([[carried[0], carried[1], carried[2]]], { streamline, size, last: false }));
   }
+});
+
+test('a line written at the page’s fit is drawn exactly as it always was', () => {
+  const pts: number[] = [];
+  for (let i = 0; i < 120; i++) pts.push(80 + i * 0.7 + Math.sin(i / 5) * 4, 90 + Math.cos(i / 7) * 9, 0.3 + 0.4 * Math.abs(Math.sin(i / 11)));
+  const triples = Array.from({ length: pts.length / 3 }, (_, j) => [pts[j * 3], pts[j * 3 + 1], pts[j * 3 + 2]]);
+  for (const options of [{ thinning: 0.68, smoothing: 0.62, streamline: 0.38, simulatePressure: false }, { thinning: 0.92, smoothing: 0.7, streamline: 0.42, simulatePressure: false, start: { taper: 16 }, end: { taper: 22 } }]) {
+    for (const finished of [true, false]) {
+      const asked = { ...options, size: 2.4, last: finished };
+      assert.deepEqual(outlineOfLine(pts, options, 2.4, finished), getStroke(triples, asked));
+      // The finer way of working it out, asked for no finer, comes to the same line.
+      assert.deepEqual(outlineFromPoints(getStrokePoints(triples, asked), options, 2.4, finished, 1), getStroke(triples, asked));
+    }
+  }
+});
+
+test('a line written zoomed in keeps the detail the zoom showed', () => {
+  // The same hand on the glass, three times zoomed in: a small loop, a third the size on the page.
+  const loop = (scale: number) => {
+    const pts: number[] = [];
+    for (let i = 0; i <= 60; i++) pts.push(100 + (Math.cos(i / 9.5) * 14) / scale, 100 + (Math.sin(i / 9.5) * 14) / scale, 0.5);
+    return pts;
+  };
+  const options = { thinning: 0.68, smoothing: 0.62, streamline: 0.38, simulatePressure: false };
+  const atFit = outlineOfLine(loop(1), options, 2.4, true);
+  const coarse = outlineOfLine(loop(3), options, 2.4, true);
+  const fine = outlineOfLine(loop(3), options, 2.4, true, 3);
+  // Worked out as the page's fit would, the small loop has far fewer points to its outline: corners.
+  assert.ok(coarse.length < atFit.length * 0.7, `${coarse.length} against ${atFit.length}`);
+  // With its detail, about as many as the big one drawn at the fit.
+  assert.ok(fine.length > atFit.length * 0.8, `${fine.length} against ${atFit.length}`);
+  // And it's still the same loop, in the same place.
+  const box = (outline: number[][]) => [Math.min(...outline.map((q) => q[0])), Math.max(...outline.map((q) => q[0])), Math.min(...outline.map((q) => q[1])), Math.max(...outline.map((q) => q[1]))];
+  box(fine).forEach((edge, i) => assert.ok(Math.abs(edge - box(coarse)[i]) < 1.5, `edge ${i}: ${edge} against ${box(coarse)[i]}`));
+
+  assert.equal(detailAt(1.32), 1, 'a page fitting an iPad is where it was tuned');
+  assert.equal(detailAt(0.5), 1);
+  assert.equal(detailAt(3.9), 3);
+  assert.equal(detailAt(99), 8);
+});
+
+test('a line written zoomed in is stored that much more exactly, and reads back the same way', () => {
+  const pts = [100.123, 200.456, 0.37, 100.131, 200.449, 0.42, 100.14, 200.44, 1];
+  const off = (detail: number) => Math.max(...unpackPoints(packPoints(pts, detail)).map((value, i) => (i % 3 === 2 ? 0 : Math.abs(value - pts[i]))));
+  assert.ok(off(1) <= 0.025 + 1e-9);
+  assert.ok(off(8) <= 0.025 / 8 + 1e-9, String(off(8)));
+  assert.ok(off(3) <= 0.025 / 4 + 1e-9);
+  // Whole numbers still, at the page's fit.
+  assert.ok(packPoints(pts).every(Number.isInteger));
+
+  const kept = cleanElement({ ...stroke('a', 5), k: 2.987654 }, NOW) as { k?: number };
+  assert.equal(kept.k, 2.99);
+  assert.equal((cleanElement({ ...stroke('a', 5), k: 0.4 }, NOW) as { k?: number }).k, undefined);
+  assert.equal((cleanElement({ ...stroke('a', 5), k: 'lots' }, NOW) as { k?: number }).k, undefined);
+  assert.equal((cleanElement({ ...stroke('a', 5), k: 500 }, NOW) as { k?: number }).k, 8);
 });
 
 test('points come back from storage where they were, near enough to never see', () => {

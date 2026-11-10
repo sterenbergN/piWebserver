@@ -6,15 +6,21 @@
 const POSITION = 20;
 const PRESSURE = 100;
 
-/** Absolute x, y, pressure triples into the stored form: integers, each one the difference from the last. */
-export function packPoints(pts: ArrayLike<number>) {
+/**
+ * Absolute x, y, pressure triples into the stored form: whole numbers, each one the difference
+ * from the last. A line written zoomed in (`detail` above 1) keeps halves, quarters or eighths
+ * of those twentieths, so its points are as close to where the pencil was, on the glass, as a
+ * line's written at the page's fit. They read back the same way either way.
+ */
+export function packPoints(pts: ArrayLike<number>, detail = 1) {
+  const fine = detail > 4 ? 8 : detail > 2 ? 4 : detail > 1 ? 2 : 1;
   const out = new Array<number>(pts.length);
   let lastX = 0;
   let lastY = 0;
   let lastP = 0;
   for (let i = 0; i < pts.length; i += 3) {
-    const x = Math.round(pts[i] * POSITION);
-    const y = Math.round(pts[i + 1] * POSITION);
+    const x = Math.round(pts[i] * POSITION * fine) / fine;
+    const y = Math.round(pts[i + 1] * POSITION * fine) / fine;
     const p = Math.round(pts[i + 2] * PRESSURE);
     out[i] = x - lastX;
     out[i + 1] = y - lastY;

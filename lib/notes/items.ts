@@ -10,6 +10,7 @@
 // to be rewritten because of one stroke, which is what the Reader's one file per book does.
 
 import { isId } from '@/lib/reader/items';
+import { cleanDetail } from './smooth';
 
 export { isId };
 
@@ -79,7 +80,11 @@ export type StrokeStyle = (typeof PEN_STYLES)[number] | 'marker' | 'tape' | 'sha
  * first three are absolute and the rest are differences, so a page of handwriting takes about
  * half the room. Positions are in twentieths of a point, and `width` is in points.
  */
-export type StrokeElement = Synced & { kind: 'stroke'; style: StrokeStyle; color: string; width: number; p: number[] };
+export type StrokeElement = Synced & {
+  kind: 'stroke'; style: StrokeStyle; color: string; width: number; p: number[];
+  /** How far zoomed in it was written, when it was: its shape is worked out that much finer (see smooth.ts). */
+  k?: number;
+};
 
 export const TEXT_FONTS = ['sans', 'serif', 'mono', 'hand'] as const;
 export type TextFont = (typeof TEXT_FONTS)[number];
@@ -258,7 +263,8 @@ export function cleanElement(raw: unknown, now: number): PageElement | null {
     if (common.deleted) return { ...common, kind: 'stroke', style: 'ball', color: '#000000', width: 1, p: [] };
     if (!STROKE_STYLES.includes(r.style as StrokeStyle) || !isColor(r.color) || !finite(r.width) || r.width <= 0 || r.width > 200) return null;
     if (!Array.isArray(r.p) || r.p.length < 3 || r.p.length % 3 !== 0 || r.p.length > MAX_STROKE_POINTS * 3 || !r.p.every(finite)) return null;
-    return { ...common, kind: 'stroke', style: r.style as StrokeStyle, color: r.color, width: r.width, p: r.p as number[] };
+    const k = cleanDetail(r.k);
+    return { ...common, kind: 'stroke', style: r.style as StrokeStyle, color: r.color, width: r.width, p: r.p as number[], ...(k > 1 ? { k } : {}) };
   }
   if (r.kind !== 'text' && r.kind !== 'image' && r.kind !== 'mark') return null;
   const box = { x: r.x, y: r.y, w: r.w, h: r.h, rot: r.rot ?? 0 };

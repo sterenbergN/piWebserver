@@ -124,7 +124,7 @@ export async function exportPdf(notebook: string, title: string, pages: PageReco
       target.drawSvgPath(path, { ...place, borderColor: ink, borderWidth: stroke.width, borderLineCap: LineCapStyle.Round });
       return;
     }
-    const path = svgPath(outlineOf(strokePoints(stroke), stroke.style, stroke.width, true));
+    const path = svgPath(outlineOf(strokePoints(stroke), stroke.style, stroke.width, true, undefined, stroke.k));
     if (stroke.style === 'marker') {
       target.drawSvgPath(path, { ...place, color: ink, borderWidth: 0, ...(darkPaper ? { opacity: MARKER_ALPHA } : { blendMode: BlendMode.Multiply }) });
     } else {

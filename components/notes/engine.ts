@@ -1,7 +1,7 @@
 'use client';
 
 import type { StrokePoint } from 'perfect-freehand';
-import { smoothLine, startSmoothing, type Smoothing } from '@/lib/notes/smooth';
+import { detailAt, smoothLine, startSmoothing, type Smoothing } from '@/lib/notes/smooth';
 import {
   boundsOf, boxesTouch, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoint, movePoints, NO_MOVE, packPoints, pointInBox, recognizeShape, shapeFromDrag, strokeTouches, unionBoxes,
   type Box, type Move, type ShapeKind,
@@ -130,6 +130,8 @@ type Wet = {
   settledPoints: number;
   /** The pen line smoothed so far, carried on as points come in rather than done again each frame. */
   smoothing: Smoothing | null;
+  /** How far zoomed in it's being written: its smoothing is that much finer, so it's the same on the glass. */
+  detail: number;
 };
 
 type Selection = {
@@ -869,7 +871,7 @@ export class NoteCanvas {
     this.settledCamera = camera;
     // A pen line is smoothed once, end to end, and drawn in stretches of that: stretches
     // smoothed on their own meet with a kink, which shows once you're zoomed in.
-    if (pen && !wet.smoothing) wet.smoothing = startSmoothing(STROKE_OPTIONS[wet.style as 'ball' | 'fountain' | 'brush']?.streamline ?? 0.5, wet.width);
+    if (pen && !wet.smoothing) wet.smoothing = startSmoothing(STROKE_OPTIONS[wet.style as 'ball' | 'fountain' | 'brush']?.streamline ?? 0.5, wet.width, wet.detail);
     const smooth = pen ? smoothLine(wet.smoothing!, wet.pts) : null;
     if (rect && smooth && smooth.length - wet.settledPoints > SETTLE_AFTER) {
       const upTo = smooth.length - KEEP_WET;
@@ -916,7 +918,7 @@ export class NoteCanvas {
     ctx.beginPath();
     ctx.rect(0, 0, rect.page.w, rect.page.h);
     ctx.clip();
-    drawWetStretch(ctx, points, wet.style as 'ball' | 'fountain' | 'brush', wet.color, wet.width, isEnd);
+    drawWetStretch(ctx, points, wet.style as 'ball' | 'fountain' | 'brush', wet.color, wet.width, isEnd, wet.detail);
     ctx.restore();
   }
 
@@ -927,7 +929,7 @@ export class NoteCanvas {
     ctx.rect(0, 0, rect.page.w, rect.page.h);
     ctx.clip();
     if (wet.style === 'marker' && isDark(rect.page.paper)) ctx.globalAlpha = 0.42;
-    drawWet(ctx, pts, wet.style, wet.color, wet.width, !!wet.snapped, ends);
+    drawWet(ctx, pts, wet.style, wet.color, wet.width, !!wet.snapped, ends, wet.detail);
     ctx.restore();
   }
 
@@ -973,7 +975,7 @@ export class NoteCanvas {
         ctx.clip();
         const alpha = this.wet.style === 'marker' && isDark(rect.page.paper);
         if (alpha) ctx.globalAlpha = 0.42;
-        drawWet(ctx, this.wet.snapped ?? this.wet.pts, this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped);
+        drawWet(ctx, this.wet.snapped ?? this.wet.pts, this.wet.style, this.wet.color, this.wet.width, !!this.wet.snapped, undefined, this.wet.detail);
         ctx.restore();
       }
     }
@@ -1272,7 +1274,7 @@ export class NoteCanvas {
             : { style: t.penStyle, color: t.penColor, width: t.penWidth };
     this.wet = {
       pointer: e.pointerId, page: rect.page, pts: [px, py, pressureOf(e)], ...look,
-      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0, smoothing: null,
+      snapped: null, snappedKind: null, startedAt: Date.now(), anchorX: x, anchorY: y, isFinger: e.pointerType === 'touch', settledPoints: 0, smoothing: null, detail: detailAt(this.z),
     };
     if (tool === 'shape' && t.shapeKind !== 'auto') {
       this.wet.snapped = shapeFromDrag(t.shapeKind, px, py, px, py, t.shapeWidth);
@@ -1419,7 +1421,9 @@ export class NoteCanvas {
       return;
     }
     const now = Date.now();
-    const element: StrokeElement = { id: newId(), kind: 'stroke', style, color: wet.color, width: wet.width, p: packPoints(pts), createdAt: wet.startedAt, updatedAt: now };
+    // A clean shape is drawn as plain lines: only freehand ink has smoothing to be finer.
+    const detail = style === 'shape' ? 1 : wet.detail;
+    const element: StrokeElement = { id: newId(), kind: 'stroke', style, color: wet.color, width: wet.width, p: packPoints(pts, detail), ...(detail > 1 ? { k: detail } : {}), createdAt: wet.startedAt, updatedAt: now };
     this.addToCache(wet.page.id, element);
     const drawnOnView = this.addToView(wet.page.id, element);
     this.doc.apply([{ type: 'element', page: wet.page.id, before: null, after: element }]);
@@ -1507,7 +1511,7 @@ export class NoteCanvas {
         for (const run of runs) {
           if (run.length < 6) continue;
           const { seq: _seq, ...fields } = element;
-          steps.push({ type: 'element', page, before: null, after: { ...fields, id: newId(), p: packPoints(run), updatedAt: now } });
+          steps.push({ type: 'element', page, before: null, after: { ...fields, id: newId(), p: packPoints(run, fields.k), updatedAt: now } });
         }
       } else {
         const hit = strokeTouches(strokePoints(element), px, py, reachWithThickness) || strokeTouches(strokePoints(element), erasing.lastX, erasing.lastY, reachWithThickness);
@@ -2195,7 +2199,7 @@ export class NoteCanvas {
           pts[i] += shiftX;
           pts[i + 1] += shiftY;
         }
-        moved = { ...element, p: packPoints(pts), width: element.width * move.scale, updatedAt: now };
+        moved = { ...element, p: packPoints(pts, element.k), width: element.width * move.scale, updatedAt: now };
       } else {
         const placed = moveBox(element, move);
         placed.x += shiftX;
@@ -2276,7 +2280,7 @@ export class NoteCanvas {
       ids.push(id);
       let copy: PageElement;
       if (element.kind === 'stroke') {
-        copy = { ...fields, id, p: packPoints(movePoints(strokePoints(element), { ...NO_MOVE, dx, dy })), createdAt: now, updatedAt: now } as PageElement;
+        copy = { ...fields, id, p: packPoints(movePoints(strokePoints(element), { ...NO_MOVE, dx, dy }), element.k), createdAt: now, updatedAt: now } as PageElement;
       } else {
         copy = { ...fields, id, x: element.x + dx, y: element.y + dy, createdAt: now, updatedAt: now } as PageElement;
       }

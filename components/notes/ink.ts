@@ -1,6 +1,7 @@
 'use client';
 
-import { getStroke, getStrokeOutlinePoints, type StrokePoint } from 'perfect-freehand';
+import type { getStroke, StrokePoint } from 'perfect-freehand';
+import { outlineFromPoints, outlineOfLine, type Ends } from '@/lib/notes/smooth';
 import { boundsOf, turnedBounds, unpackPoints, type Box } from '@/lib/notes/geometry';
 import type { ImageElement, MarkElement, MarkRole, PageElement, StrokeElement, StrokeStyle, TextElement, TextFont } from '@/lib/notes/items';
 
@@ -44,13 +45,6 @@ export function elementBox(element: PageElement): Box {
   return element.kind === 'stroke' ? strokeBox(element) : turnedBounds(element);
 }
 
-/** A flat list of x, y, pressure as the triples perfect-freehand takes. */
-function triples(pts: ArrayLike<number>) {
-  const out: [number, number, number][] = [];
-  for (let i = 0; i < pts.length; i += 3) out.push([pts[i], pts[i + 1], pts[i + 2]]);
-  return out;
-}
-
 /** An outline as a path, with its corners smoothed through their midpoints. */
 export function outlineCommands(outline: number[][]) {
   const commands: (['M' | 'L', number, number] | ['Q', number, number, number, number] | ['Z'])[] = [];
@@ -65,21 +59,14 @@ export function outlineCommands(outline: number[][]) {
   return commands;
 }
 
-/** Which ends of a piece of a line are the line's real ends: a middle piece has plain round ends, so pieces join without a seam. */
-export type Ends = { start: boolean; end: boolean };
-const PLAIN_END = { cap: true, taper: 0 };
+export type { Ends };
 
-export function outlineOf(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends: Ends = { start: true, end: true }) {
-  const options = STROKE_OPTIONS[style === 'shape' ? 'ball' : style];
-  return getStroke(triples(pts), {
-    ...options, size: width, last: finished,
-    ...(ends.start ? {} : { start: PLAIN_END }),
-    ...(ends.end ? {} : { end: PLAIN_END }),
-  }) as number[][];
+export function outlineOf(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends?: Ends, detail = 1) {
+  return outlineOfLine(pts, STROKE_OPTIONS[style === 'shape' ? 'ball' : style]!, width, finished, detail, ends);
 }
 
-function filledPath(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends?: Ends) {
-  return outlinePath(outlineOf(pts, style, width, finished, ends));
+function filledPath(pts: ArrayLike<number>, style: StrokeStyle, width: number, finished: boolean, ends?: Ends, detail = 1) {
+  return outlinePath(outlineOf(pts, style, width, finished, ends, detail));
 }
 
 function outlinePath(outline: number[][]) {
@@ -136,7 +123,7 @@ function paintPath(ctx: CanvasRenderingContext2D, path: Path2D, style: StrokeSty
 
 export function drawStroke(ctx: CanvasRenderingContext2D, stroke: StrokeElement, darkPaper: boolean, revealed = false) {
   const held = cached(stroke);
-  if (!held.path) held.path = stroke.style === 'shape' ? linePath(held.pts) : filledPath(held.pts, stroke.style, stroke.width, true);
+  if (!held.path) held.path = stroke.style === 'shape' ? linePath(held.pts) : filledPath(held.pts, stroke.style, stroke.width, true, undefined, stroke.k);
   paintPath(ctx, held.path, stroke.style, stroke.color, stroke.width, darkPaper, revealed);
 }
 
@@ -145,16 +132,14 @@ export function drawStroke(ctx: CanvasRenderingContext2D, stroke: StrokeElement,
  * counted from its real start, so a taper lands where it would on the whole line. A stretch that
  * isn't the line's end gets a plain round end, for the next stretch to carry on over.
  */
-export function drawWetStretch(ctx: CanvasRenderingContext2D, points: StrokePoint[], style: 'ball' | 'fountain' | 'brush', color: string, width: number, isEnd: boolean) {
+export function drawWetStretch(ctx: CanvasRenderingContext2D, points: StrokePoint[], style: 'ball' | 'fountain' | 'brush', color: string, width: number, isEnd: boolean, detail = 1) {
   if (!points.length) return;
-  const options = STROKE_OPTIONS[style];
-  const outline = getStrokeOutlinePoints(points, { ...options, size: width, last: false, ...(isEnd ? {} : { end: PLAIN_END }) });
   ctx.fillStyle = color;
-  ctx.fill(outlinePath(outline));
+  ctx.fill(outlinePath(outlineFromPoints(points, STROKE_OPTIONS[style]!, width, false, detail, { start: true, end: isEnd })));
 }
 
 /** The line still being drawn. `flat` is for one that's been snapped to a clean shape. */
-export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, style: StrokeStyle, color: string, width: number, flat: boolean, ends?: Ends) {
+export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, style: StrokeStyle, color: string, width: number, flat: boolean, ends?: Ends, detail = 1) {
   // On the live layer, which is blended by CSS, so a marker needs no blending of its own.
   if (flat || style === 'shape') {
     ctx.strokeStyle = color;
@@ -165,7 +150,7 @@ export function drawWet(ctx: CanvasRenderingContext2D, pts: ArrayLike<number>, s
     return;
   }
   ctx.fillStyle = color;
-  ctx.fill(filledPath(pts, style, width, false, ends));
+  ctx.fill(filledPath(pts, style, width, false, ends, detail));
 }
 
 // ── Text ─────────────────────────────────────────────────────────────────────────
