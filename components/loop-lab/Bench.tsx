@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { describeController } from '@/lib/loop-lab/controllers';
 import { getProcess, isProcessId } from '@/lib/loop-lab/processes';
 import { decodeExperiment, defaultExperiment, encodeExperiment, type Experiment, type NotebookEntry } from '@/lib/loop-lab/setup';
@@ -58,8 +58,12 @@ export default function Bench() {
   // Import is only there for the identified plant; anywhere else, show the results.
   const shown: TabId = tab === 'identify' && !ownData ? 'tests' : tab;
 
+  // The undo/redo handlers read the latest state from here, so they can stay stable.
+  // It's synced after each commit, before any input can reach a handler.
   const stateRef = useRef({ exp, past, future });
-  stateRef.current = { exp, past, future };
+  useLayoutEffect(() => {
+    stateRef.current = { exp, past, future };
+  }, [exp, past, future]);
 
   const updateExp = useCallback((next: Experiment | ((prev: Experiment) => Experiment)) => {
     const { exp: cur } = stateRef.current;

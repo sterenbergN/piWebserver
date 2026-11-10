@@ -138,7 +138,7 @@ export default function Chart({
     // No data yet (or a single point): show an empty range rather than NaN.
     if (!Number.isFinite(a) || !Number.isFinite(b)) [a, b] = x.log ? [1, 10] : [0, 1];
     if (b <= a) b = x.log ? a * 10 : a + 1;
-    let min = finiteOr(x.min, a);
+    const min = finiteOr(x.min, a);
     let max = finiteOr(x.max, b);
     if (!(max > min)) max = min + 1;
     return [min, max];
@@ -156,7 +156,7 @@ export default function Chart({
       [a, b] = niceDomain(a, b);
     }
     const pad = (b - a) * yPad;
-    let min = finiteOr(y.min, a - pad);
+    const min = finiteOr(y.min, a - pad);
     let max = finiteOr(y.max, b + pad);
     if (!(max > min)) max = min + 1;
     return [min, max];
