@@ -105,9 +105,16 @@ export default function CaseStudy({ id }: { id: string }) {
             <div className="ll-crumbs"><Link href="/loop-lab/cases">Case studies</Link></div>
             <h1>{study.title}</h1>
             <p>{study.question}</p>
-            <div className="ll-title-meta">
+            <div className="ll-title-meta" style={{ gap: '0.5rem 0.85rem' }}>
+              <Link className="ll-badge" href={`/loop-lab/processes/${proc.id}`} style={{ textDecoration: 'none', color: 'var(--foreground)' }}>
+                <span>{proc.icon}</span> <strong>{proc.name}</strong>
+              </Link>
               <span className={`ll-badge${study.family === 'pid-wins' ? ' is-good' : ' is-warn'}`}>{study.family === 'pid-wins' ? 'PID is the answer' : 'PID falls short'}</span>
-              <Link className="ll-small" href={`/loop-lab/processes/${proc.id}`}>About the {proc.name.toLowerCase()}</Link>
+              <span className="ll-badge">{study.steps.length} guided steps</span>
+            </div>
+            <div className="ll-actions">
+              {baseline && <Link className="ll-btn is-primary is-small" href={benchLink(toExperiment(proc, baseline))}>Open Baseline on Bench</Link>}
+              <Link className="ll-btn is-small" href="/loop-lab/builder">🧩 Block Studio</Link>
             </div>
           </header>
 
@@ -115,7 +122,10 @@ export default function CaseStudy({ id }: { id: string }) {
             const last = i === study.steps.length - 1;
             const text = (
               <>
-                {(!last || !/^verdict$/i.test(step.title)) && <div className="ll-step-num">{last ? 'Verdict' : `Step ${i + 1}`}</div>}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                  <div className="ll-step-num">{last ? 'Verdict' : `Step ${i + 1}`}</div>
+                  <span className="ll-badge" style={{ fontSize: '0.72rem', padding: '0.05rem 0.45rem' }}>Step {i + 1} of {study.steps.length}</span>
+                </div>
                 <h2>{step.title}</h2>
                 <MathText className="ll-prose">{step.body}</MathText>
               </>
@@ -129,7 +139,22 @@ export default function CaseStudy({ id }: { id: string }) {
                 {step.show?.includes('operating-points') && baseline && (
                   <div className="ll-card"><OperatingPointSteps proc={proc} exp={toExperiment(proc, baseline)} /></div>
                 )}
-                {step.presets && step.scenarios && <CaseRuns proc={proc} presets={step.presets} scenarios={step.scenarios} colorOf={colorOf} />}
+                {step.presets && (
+                  <>
+                    {step.presets.length > 1 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap', margin: '0.9rem 0 0.35rem', fontSize: '0.78rem' }}>
+                        <span className="ll-muted">Comparing in this step:</span>
+                        {step.presets.map((p) => (
+                          <span key={p.label} className="ll-chip" style={{ fontSize: '0.74rem', padding: '0.05rem 0.45rem' }}>
+                            <span className="ll-swatch" style={{ background: colorOf(p.label) }} />
+                            <strong>{p.label}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {step.scenarios && <CaseRuns proc={proc} presets={step.presets} scenarios={step.scenarios} colorOf={colorOf} />}
+                  </>
+                )}
                 {last && allPresets.length > 1 && (
                   <>
                     <h3 style={{ fontSize: '1rem', fontWeight: 650, margin: '1.5rem 0 0.6rem' }}>Everything in this case, through every test</h3>

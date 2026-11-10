@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { describeController } from '@/lib/loop-lab/controllers';
 import { getProcess, isProcessId } from '@/lib/loop-lab/processes';
 import { decodeExperiment, defaultExperiment, encodeExperiment, type Experiment, type NotebookEntry } from '@/lib/loop-lab/setup';
@@ -36,6 +36,8 @@ const short = (s: string, n = 46) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 
 export default function Bench() {
   const [exp, setExp] = useState<Experiment>(() => defaultExperiment('flow'));
+  const [past, setPast] = useState<Experiment[]>([]);
+  const [future, setFuture] = useState<Experiment[]>([]);
   const [tab, setTab] = useState<TabId>('tests');
   // On a phone the setup and the views take turns; on a wide screen they sit side by side.
   const [phonePane, setPhonePane] = useState<'setup' | 'view'>('view');
@@ -56,13 +58,69 @@ export default function Bench() {
   // Import is only there for the identified plant; anywhere else, show the results.
   const shown: TabId = tab === 'identify' && !ownData ? 'tests' : tab;
 
+  const stateRef = useRef({ exp, past, future });
+  stateRef.current = { exp, past, future };
+
+  const updateExp = useCallback((next: Experiment | ((prev: Experiment) => Experiment)) => {
+    const { exp: cur } = stateRef.current;
+    const resolved = typeof next === 'function' ? next(cur) : next;
+    if (JSON.stringify(resolved) === JSON.stringify(cur)) return;
+    setPast((p) => [...p.slice(-29), cur]);
+    setFuture([]);
+    setExp(resolved);
+  }, []);
+
+  const undo = useCallback(() => {
+    const { exp: cur, past: curPast } = stateRef.current;
+    if (curPast.length === 0) return;
+    const prev = curPast[curPast.length - 1];
+    setPast(curPast.slice(0, -1));
+    setFuture((f) => [cur, ...f].slice(0, 30));
+    setExp(prev);
+  }, []);
+
+  const redo = useCallback(() => {
+    const { exp: cur, future: curFuture } = stateRef.current;
+    if (curFuture.length === 0) return;
+    const next = curFuture[0];
+    setFuture(curFuture.slice(1));
+    setPast((p) => [...p.slice(-29), cur]);
+    setExp(next);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) {
+        return;
+      }
+      const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (!mod) return;
+
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.key.toLowerCase() === 'y' && !e.shiftKey) || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undo, redo]);
+
   // Setup from a shared link or a process page, and the view from the hash.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const raw = q.get('setup');
     const process = q.get('process');
     const fromLink = raw ? decodeExperiment(raw) : process && isProcessId(process) ? defaultExperiment(process) : null;
-    if (fromLink) setExp(fromLink);
+    if (fromLink) {
+      setExp(fromLink);
+      setPast([]);
+      setFuture([]);
+    }
     const h = window.location.hash.slice(1);
     if (TABS.some((t) => t.id === h)) setTab(h as TabId);
   }, []);
@@ -91,8 +149,16 @@ export default function Bench() {
   /** Start over on a setup (a different process, a loaded notebook entry, an identified plant). */
   const startFrom = (e: Experiment) => {
     setExp(e);
+    setPast([]);
+    setFuture([]);
     setPinned([]);
     setView(0);
+  };
+  /** Reset to default experiment for this process and clear undo/redo stack. */
+  const resetExp = () => {
+    setExp(defaultExperiment(exp.process));
+    setPast([]);
+    setFuture([]);
   };
   /** Switch to the identified plant and open its import. */
   const openOwnData = () => {
@@ -150,8 +216,8 @@ export default function Bench() {
 
           <section className="ll-panel-part">
             <div className="ll-panel-label"><h2>Controller</h2><Link href={`/loop-lab/controllers/${exp.controller.kind}`}>Theory</Link></div>
-            <ControllerPicker proc={proc} config={exp.controller} onChange={(controller) => setExp({ ...exp, controller })} />
-            <ControllerEditor proc={proc} params={exp.params} config={exp.controller} onChange={(controller) => setExp({ ...exp, controller })} />
+            <ControllerPicker proc={proc} config={exp.controller} onChange={(controller) => updateExp({ ...exp, controller })} />
+            <ControllerEditor proc={proc} params={exp.params} config={exp.controller} onChange={(controller) => updateExp({ ...exp, controller })} />
           </section>
 
           <section className="ll-panel-part">
@@ -174,7 +240,7 @@ export default function Bench() {
           </section>
         </div>
 
-        <footer className="ll-panel-foot">
+        <footer className="ll-panel-foot ll-bench-bar">
           {naming !== null ? (
             <form className="ll-name-form" onSubmit={(e) => { e.preventDefault(); saveToNotebook(naming); }}>
               <input type="text" value={naming} onChange={(e) => setNaming(e.target.value)} aria-label="Name for this setup" autoFocus />
@@ -185,9 +251,12 @@ export default function Bench() {
             <p className="ll-small" role="status">Saved “{short(saved, 26)}”. <button className="ll-link" onClick={() => chooseTab('notebook')}>Open the notebook</button></p>
           ) : (
             <>
+              <button className="ll-btn is-small" onClick={undo} disabled={past.length === 0} title="Undo (Ctrl+Z)">↶ Undo</button>
+              <button className="ll-btn is-small" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Y)">↷ Redo</button>
               <button className="ll-btn is-small" onClick={() => setNaming(describeController(proc, exp.controller))} disabled={!current}>Save</button>
-              <button className="ll-btn is-small" onClick={copyLink}>{copied ? 'Copied' : 'Copy link'}</button>
-              <button className="ll-btn is-small is-quiet" onClick={() => setExp(defaultExperiment(exp.process))}>Reset</button>
+              <button className="ll-btn is-small" onClick={copyLink} title="Share link to this experiment">{copied ? 'Copied' : 'Share'}</button>
+              <Link className="ll-btn is-small" href="/loop-lab/builder" title="Build custom controllers and plants with Simulink-style blocks">🧩 Block Studio</Link>
+              <button className="ll-btn is-small is-quiet" onClick={resetExp}>Reset</button>
             </>
           )}
         </footer>
@@ -224,14 +293,14 @@ export default function Bench() {
                       <span key={p.id} className="ll-chip" title={p.label}>
                         <span className="ll-swatch" style={{ background: PALETTE[(i + 1) % PALETTE.length] }} />
                         <span className="ll-chip-text">{p.label}</span>
-                        <button className="ll-link" onClick={() => setExp(p.exp)} title="Go back to this setup">Use</button>
+                        <button className="ll-link" onClick={() => updateExp(p.exp)} title="Go back to this setup">Use</button>
                         <button className="ll-chip-x" aria-label={`Stop comparing with ${p.label}`} onClick={() => setPinned(pinned.filter((x) => x.id !== p.id))}>×</button>
                       </span>
                     ))}
                     <button className="ll-btn is-small" onClick={keepForComparison} disabled={pinned.length >= 4}>Keep to compare</button>
                     {pinned.length === 0 && <span className="ll-small ll-compare-hint">then change something and see both</span>}
                   </div>
-                  <TrendPanel proc={proc} height={235} entries={(results ?? []).map((r, i) => ({ label: labels[i], color: PALETTE[i % PALETTE.length], run: r.runs[viewIdx] })).filter((e) => e.run)} />
+                  <TrendPanel proc={proc} params={exp.params} height={235} entries={(results ?? []).map((r, i) => ({ label: labels[i], color: PALETTE[i % PALETTE.length], run: r.runs[viewIdx] })).filter((e) => e.run)} />
                   <details className="ll-more">
                     <summary>Every setpoint step and upset in this test</summary>
                     <TestDetail proc={proc} test={current.score.tests[viewIdx]} />
@@ -253,9 +322,20 @@ export default function Bench() {
             </div>
           )}
 
-          {shown === 'compare' && <ComparePanel proc={proc} params={exp.params} plantChanges={plantChanges} onUse={(controller, plant) => { setExp({ ...exp, controller, params: { ...exp.params, ...plant } }); chooseTab('tests'); }} />}
-          {shown === 'live' && <LivePanel proc={proc} exp={exp} />}
-          {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} onParams={(params) => setExp({ ...exp, params })} />}
+          {shown === 'compare' && (
+            <ComparePanel
+              proc={proc}
+              params={exp.params}
+              plantChanges={plantChanges}
+              onUse={(controller, plant) => {
+                setPinned((ps) => [...ps, { id: newEntryId(), label: short(describeController(proc, exp.controller), 34), exp }].slice(-4));
+                updateExp({ ...exp, controller, params: { ...exp.params, ...plant } });
+                chooseTab('tests');
+              }}
+            />
+          )}
+          {shown === 'live' && <LivePanel key={proc.id} proc={proc} exp={exp} />}
+          {shown === 'mechanical' && <MechanicalView proc={proc} exp={exp} onParams={(params) => updateExp({ ...exp, params })} />}
           {shown === 'control' && <ControlView proc={proc} exp={exp} runs={current?.runs} />}
           {shown === 'automation' && <AutomationView proc={proc} exp={exp} />}
           {shown === 'identify' && <IdentifyPanel onUse={(e) => { startFrom(e); chooseTab('tests'); }} />}

@@ -22,7 +22,7 @@ function heat(T: number) {
   return `rgba(${mix(79, 224)}, ${mix(143, 112)}, ${mix(214, 122)}, 0.45)`;
 }
 
-export function StirredSchematic({ p, d, valve, Tj, T }: { p: Params; d: Params; valve: number; Tj: number; T: number }) {
+export function StirredSchematic({ p, d, valve = 50, Tj = 20, T = 20 }: { p: Params; d: Params; valve: number; Tj: number; T: number }) {
   const q = p.Qmax * valveCharacteristic(p.valveChar, valve / 100);
   return (
     <svg className="ll-drawing" viewBox="0 0 520 300" role="img" aria-label={`Stirred tank at ${T.toFixed(1)} °C`}>
@@ -57,7 +57,7 @@ export function StirredSchematic({ p, d, valve, Tj, T }: { p: Params; d: Params;
   );
 }
 
-export function HxSchematic({ p, d, valve, T, Tw }: { p: Params; d: Params; valve: number; T: number; Tw: number }) {
+export function HxSchematic({ p, d, valve = 50, T = 20, Tw = 20 }: { p: Params; d: Params; valve: number; T: number; Tw: number }) {
   const ms = steamFlow(valveCharacteristic(p.valveChar, valve / 100), d.Ps, p);
   return (
     <svg className="ll-drawing" viewBox="0 0 600 270" role="img" aria-label={`Heat exchanger: outlet ${T.toFixed(1)} °C, steam ${Math.round(ms)} kg/h`}>
@@ -93,7 +93,7 @@ export function HxSchematic({ p, d, valve, T, Tw }: { p: Params; d: Params; valv
   );
 }
 
-export function SurgeSchematic({ p, level, valve, qIn }: { p: Params; level: number; valve: number; qIn: number }) {
+export function SurgeSchematic({ p, level = 0, valve = 50, qIn = 50 }: { p: Params; level: number; valve: number; qIn: number }) {
   const qOut = p.Qmax * valveCharacteristic(p.valveChar, valve / 100);
   const top = 40, bottom = 230, x0 = 160, x1 = 340;
   const yl = bottom - (Math.min(Math.max(level, 0), p.H) / p.H) * (bottom - top);
@@ -126,7 +126,7 @@ export function SurgeSchematic({ p, level, valve, qIn }: { p: Params; level: num
   );
 }
 
-export function FeederSchematic({ p, d, speed, atScrew, reading }: { p: Params; d: Params; speed: number; atScrew: number; reading: number }) {
+export function FeederSchematic({ p, d, speed = 50, atScrew = 0, reading = 0 }: { p: Params; d: Params; speed: number; atScrew: number; reading: number }) {
   const beltY = 170;
   return (
     <svg className="ll-drawing" viewBox="0 0 600 250" role="img" aria-label={`Belt feeder: screw at ${f1(speed)} %, ${f1(atScrew)} t/h leaving the screw`}>
@@ -162,7 +162,7 @@ export function FeederSchematic({ p, d, speed, atScrew, reading }: { p: Params; 
   );
 }
 
-export function DrumSchematic({ p, d, valve, level, swell }: { p: Params; d: Params; valve: number; level: number; swell: number }) {
+export function DrumSchematic({ p, d, valve = 50, level = 0, swell = 0 }: { p: Params; d: Params; valve: number; level: number; swell: number }) {
   const qfw = p.Qmax * valveCharacteristic(p.valveChar, valve / 100) * (d.Pfw / 100);
   const cy = 120, half = 60, x0 = 170, x1 = 430;
   const yl = cy - (Math.min(Math.max(level, -300), 300) / 300) * half * 0.9;
@@ -204,7 +204,7 @@ export function DrumSchematic({ p, d, valve, level, swell }: { p: Params; d: Par
   );
 }
 
-export function JacketSchematic({ p, d, signal, Tj, T }: { p: Params; d: Params; signal: number; Tj: number; T: number }) {
+export function JacketSchematic({ p, d, signal = 50, Tj = 20, T = 20 }: { p: Params; d: Params; signal: number; Tj: number; T: number }) {
   const { cool, heat: hot } = splitValves(signal / 100, p);
   const qh = p.Qhmax * hot, qc = p.Kcw * cool * Math.max(0, Tj - d.Tcw);
   return (
@@ -242,7 +242,7 @@ export function JacketSchematic({ p, d, signal, Tj, T }: { p: Params; d: Params;
   );
 }
 
-export function BlendSchematic({ p, d, valve, c, reading }: { p: Params; d: Params; valve: number; c: number; reading: number }) {
+export function BlendSchematic({ p, d, valve = 50, c = 0, reading = 0 }: { p: Params; d: Params; valve: number; c: number; reading: number }) {
   const FB = p.FBmax * valveCharacteristic(p.valveChar, valve / 100) * (d.Pb / 100);
   return (
     <svg className="ll-drawing" viewBox="0 0 600 250" role="img" aria-label={`Blending: ${f1(d.FA)} m³/h diluent, ${f1(FB)} m³/h concentrate, product ${c.toFixed(2)} %`}>
@@ -275,7 +275,7 @@ export function BlendSchematic({ p, d, valve, c, reading }: { p: Params; d: Para
   );
 }
 
-export function CraneSchematic({ p, d, xt, v, th, valve }: { p: Params; d: Params; xt: number; v: number; th: number; valve: number }) {
+export function CraneSchematic({ p, d, xt = 0, v = 0, th = 0, valve = 50 }: { p: Params; d: Params; xt: number; v: number; th: number; valve: number }) {
   const x0 = 30, x1 = 530, k = (x1 - x0) / 40;
   const tx = x0 + Math.min(40, Math.max(0, xt)) * k;
   const rope = Math.min(170, p.L * 13);
@@ -305,7 +305,7 @@ export function CraneSchematic({ p, d, xt, v, th, valve }: { p: Params; d: Param
   );
 }
 
-export function ServoSchematic({ p, d, wm, wl, phi, valve }: { p: Params; d: Params; wm: number; wl: number; phi: number; valve: number }) {
+export function ServoSchematic({ p, d, wm = 0, wl = 0, phi = 0, valve = 50 }: { p: Params; d: Params; wm: number; wl: number; phi: number; valve: number }) {
   const rpm = 60 / (2 * Math.PI);
   const torque = ((2 * valve) / 100 - 1) * p.Tmax;
   // The shaft drawn as a spring whose wiggle shows the twist (exaggerated).
@@ -330,7 +330,7 @@ export function ServoSchematic({ p, d, wm, wl, phi, valve }: { p: Params; d: Par
   );
 }
 
-export function MaglevSchematic({ p, d, gap, valve }: { p: Params; d: Params; gap: number; valve: number }) {
+export function MaglevSchematic({ p, d, gap = 10, valve = 50 }: { p: Params; d: Params; gap: number; valve: number }) {
   const top = 70, k = 6;
   const y = top + Math.min(30, Math.max(0, gap)) * k;
   const i = (valve / 100) * p.Imax;
@@ -397,7 +397,7 @@ function MotionPAndId({ proc, config }: { proc: ProcessDef; config: ControllerCo
   );
 }
 
-export function MixingSchematic({ p, d, valve, h, T, v2 }: { p: Params; d: Params; valve: number; h: number; T: number; v2: number }) {
+export function MixingSchematic({ p, d, valve = 50, h = 1, T = 45, v2 = 50 }: { p: Params; d: Params; valve: number; h: number; T: number; v2: number }) {
   const Fh = p.Fhmax * (valve / 100), Fc = p.Fcmax * (v2 / 100), Fout = p.Kout * (d.dOut / 100) * Math.sqrt(Math.max(h, 0));
   const top = 60, bottom = 240, x0 = 200, x1 = 380;
   const yl = bottom - (Math.min(Math.max(h, 0), 2) / 2) * (bottom - top);
@@ -487,7 +487,7 @@ function MixingPAndId({ config }: { config: ControllerConfig }) {
   );
 }
 
-export function BatchSchematic({ p, d, valve, c, T, Tj }: { p: Params; d: Params; valve: number; c: number; T: number; Tj: number }) {
+export function BatchSchematic({ p, d, valve = 50, c = 1, T = 70, Tj = 65 }: { p: Params; d: Params; valve: number; c: number; T: number; Tj: number }) {
   const Qr = reactionHeat(T, c, p, d);
   const left = Math.max(0, Math.min(1, c / Math.max(d.charge, 1e-6)));
   return (
@@ -566,25 +566,28 @@ export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: 
 
 /** Draw any process from its full state vector [valve, ...process states, reading(s)]. */
 export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params; d: Params; x: number[] }) {
-  const valve = x[0];
-  const flow = valveCharacteristic(p.valveChar, valve / 100);
-  if (proc.id === 'flow') return <FlowSchematic p={p} valve={valve} flow={flowAt(flow, d.P0, p)} P0={d.P0} />;
+  const valve = Number.isFinite(x[0]) ? x[0] : 50;
+  const x1 = Number.isFinite(x[1]) ? x[1] : 0;
+  const x2 = Number.isFinite(x[2]) ? x[2] : 0;
+  const x3 = Number.isFinite(x[3]) ? x[3] : 0;
+  const flow = valveCharacteristic(p.valveChar ?? 0, valve / 100);
+  if (proc.id === 'flow') return <FlowSchematic p={p} valve={valve} flow={flowAt(flow, d.P0 ?? 5, p)} P0={d.P0 ?? 5} />;
   if (proc.id === 'tank') {
-    const h = x[1];
-    return <TankSchematic p={p} level={h} valve={valve} dOut={d.dOut} qIn={p.Qmax * flow * (d.supply / 100)} qOut={p.Kout * (d.dOut / 100) * Math.sqrt(Math.max(0, h))} />;
+    const h = x1;
+    return <TankSchematic p={p} level={h} valve={valve} dOut={d.dOut ?? 50} qIn={(p.Qmax ?? 20) * flow * ((d.supply ?? 100) / 100)} qOut={(p.Kout ?? 10) * ((d.dOut ?? 50) / 100) * Math.sqrt(Math.max(0, h))} />;
   }
-  if (proc.id === 'stirred') return <StirredSchematic p={p} d={d} valve={valve} Tj={x[1]} T={x[2]} />;
-  if (proc.id === 'hx') return <HxSchematic p={p} d={d} valve={valve} Tw={x[1]} T={x[2]} />;
-  if (proc.id === 'surge') return <SurgeSchematic p={p} level={x[1]} valve={valve} qIn={d.Qin} />;
-  if (proc.id === 'feeder') return <FeederSchematic p={p} d={d} speed={valve} atScrew={x[1]} reading={x[2]} />;
-  if (proc.id === 'jacket') return <JacketSchematic p={p} d={d} signal={valve} Tj={x[1]} T={x[2]} />;
-  if (proc.id === 'blend') return <BlendSchematic p={p} d={d} valve={valve} c={x[1]} reading={x[2]} />;
-  if (proc.id === 'drum') return <DrumSchematic p={p} d={d} valve={valve} level={x[1] + x[2] - x[3]} swell={x[2]} />;
-  if (proc.id === 'crane') return <CraneSchematic p={p} d={d} xt={x[1]} v={x[2]} th={x[3]} valve={valve} />;
-  if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x[1]} wl={x[2]} phi={x[3]} valve={valve} />;
-  if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x[1]} valve={valve} />;
-  if (proc.id === 'batch') return <BatchSchematic p={p} d={d} valve={valve} c={x[1]} T={x[2]} Tj={x[3]} />;
-  if (proc.id === 'mixing') return <MixingSchematic p={p} d={d} valve={valve} h={x[1]} T={x[2]} v2={x[3]} />;
+  if (proc.id === 'stirred') return <StirredSchematic p={p} d={d} valve={valve} Tj={x1} T={x2} />;
+  if (proc.id === 'hx') return <HxSchematic p={p} d={d} valve={valve} Tw={x1} T={x2} />;
+  if (proc.id === 'surge') return <SurgeSchematic p={p} level={x1} valve={valve} qIn={d.Qin ?? 50} />;
+  if (proc.id === 'feeder') return <FeederSchematic p={p} d={d} speed={valve} atScrew={x1} reading={x2} />;
+  if (proc.id === 'jacket') return <JacketSchematic p={p} d={d} signal={valve} Tj={x1} T={x2} />;
+  if (proc.id === 'blend') return <BlendSchematic p={p} d={d} valve={valve} c={x1} reading={x2} />;
+  if (proc.id === 'drum') return <DrumSchematic p={p} d={d} valve={valve} level={x1 + x2 - x3} swell={x2} />;
+  if (proc.id === 'crane') return <CraneSchematic p={p} d={d} xt={x1} v={x2} th={x3} valve={valve} />;
+  if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x1} wl={x2} phi={x3} valve={valve} />;
+  if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x1} valve={valve} />;
+  if (proc.id === 'batch') return <BatchSchematic p={p} d={d} valve={valve} c={x1} T={x2} Tj={x3} />;
+  if (proc.id === 'mixing') return <MixingSchematic p={p} d={d} valve={valve} h={x1} T={x2} v2={x3} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }
 

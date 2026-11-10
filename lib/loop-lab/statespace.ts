@@ -1,7 +1,7 @@
 import type { ControllerConfig } from './controllers';
 import { linearizePlant, type PlantModel } from './linear';
 import { c2d, cabs, eig, inverse, matMul, polyFromRoots, solve, transpose, zeros, type Complex, type Mat } from './linalg';
-import { toPct, toPct2, type Params, type ProcessDef } from './model';
+import { cleanParams, toPct, toPct2, type Params, type ProcessDef } from './model';
 import { findSteady } from './sim';
 
 // State feedback with an observer: the design numerics. The controller's model
@@ -261,17 +261,21 @@ export type StateFbDesign = {
   disc: { Phi: Mat; Gamma: Mat };
 };
 
-const cache = new Map<string, StateFbDesign>();
+const stateFbCache = new Map<string, StateFbDesign>();
 
 /** The design at the controller's design point, from the setup's parameters (cached). */
-export function designStateFb(proc: ProcessDef, config: StateFbConfig, model: Params): StateFbDesign {
-  const key = `${proc.id}|${JSON.stringify(config)}|${JSON.stringify(model)}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
-  const d = computeDesign(proc, config, model);
-  if (cache.size > 200) cache.clear();
-  cache.set(key, d);
-  return d;
+export function designStateFb(proc: ProcessDef, config: StateFbConfig, setupParams: Params): StateFbDesign {
+  const model = cleanParams(proc, setupParams);
+  const anyCfg = config as any;
+  const key = `${proc.id}|${anyCfg.speed}|${anyCfg.observerSpeed}|${JSON.stringify(config)}|${proc.params.map((s) => `${s.key}:${model[s.key]}`).join(',')}`;
+  const cached = stateFbCache.get(key);
+  if (cached) return cached;
+  const res = computeDesign(proc, config, model);
+  if (stateFbCache.size > 64) {
+    stateFbCache.delete(stateFbCache.keys().next().value!);
+  }
+  stateFbCache.set(key, res);
+  return res;
 }
 
 /**

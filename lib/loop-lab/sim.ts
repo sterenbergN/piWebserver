@@ -213,7 +213,7 @@ export class Loop {
     let cv2 = NaN;
     if (mimo) {
       const out2 = this.auto ? this.ctrl.out2?.() : undefined;
-      cv2 = clamp(out2 ?? (this.auto ? this.d[mimo.input] : this.manualOut2), 0, 100);
+      cv2 = clamp(out2 ?? this.manualOut2, 0, 100);
       this.d[mimo.input] = cv2;
     }
     // Deadband: the stem only follows once the signal has moved past the slack.

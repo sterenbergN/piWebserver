@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 // A small SVG line chart for Loop Lab: linear or log axes, several series,
 // guide lines and markers, and a hover readout. Long traces are thinned to
@@ -18,9 +18,19 @@ export type Series = {
   quiet?: boolean;
 };
 
-export type Axis = { label?: string; hideLabel?: boolean; log?: boolean; min?: number; max?: number; unit?: string };
+export type Axis = { label?: string; hideLabel?: boolean; log?: boolean; min?: number; max?: number; unit?: string; decimals?: number };
 export type Guide = { at: number; label?: string; color?: string; dash?: string };
+export type Band = { lo: number; hi: number; color?: string };
 export type Marker = { x: number; y: number; color: string; shape?: 'x' | 'o' | 'dot'; label?: string };
+
+export function niceDomain(lo: number, hi: number): [number, number] {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1];
+  if (hi - lo < 1e-9) {
+    const d = Math.max(Math.abs(lo) * 0.1, 2);
+    return [lo - d, hi + d];
+  }
+  return [lo, hi];
+}
 
 export const fmt = (v: number, sig = 3) => {
   if (!Number.isFinite(v)) return v > 0 ? '∞' : v < 0 ? '−∞' : '—';
@@ -30,27 +40,44 @@ export const fmt = (v: number, sig = 3) => {
   return s.replace('-', '−');
 };
 
-function niceTicks(min: number, max: number, count: number) {
+function niceTicks(min: number, max: number, count = 5) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
   if (!(max > min)) return [min];
   const raw = (max - min) / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
+  if (!Number.isFinite(step) || !(step > 0) || step <= Math.max(Math.abs(min), Math.abs(max)) * 1e-12) return [min, max];
   const out: number[] = [];
-  for (let v = Math.ceil(min / step - 1e-9) * step; v <= max + step * 1e-9; v += step) {
+  const start = Math.ceil(min / step - 1e-9) * step;
+  for (let v = start, iter = 0; v <= max + step * 1e-9 && iter < 64; v += step, iter++) {
     out.push(Math.abs(v) < step * 1e-6 ? 0 : Number(v.toPrecision(12)));
   }
   return out;
 }
 
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(560);
-  useEffect(() => {
+  useIsoLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setWidth(Math.max(200, Math.round(e.contentRect.width))));
+    const measure = () => {
+      const w = Math.round(el.getBoundingClientRect().width || el.clientWidth);
+      if (w >= 200) setWidth(w);
+    };
+    measure();
+    const ro = new ResizeObserver(([e]) => {
+      const w = Math.round(e.contentRect.width || el.getBoundingClientRect().width);
+      if (w >= 200) setWidth(w);
+    });
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, []);
   return [ref, width] as const;
 }
@@ -60,8 +87,9 @@ function extent(series: Series[], key: 'x' | 'y', log: boolean) {
   for (const s of series) for (let i = 0; i < s[key].length; i++) {
     const v = s[key][i];
     if (!Number.isFinite(v) || (log && v <= 0)) continue;
-    if (v < lo) lo = v;
-    if (v > hi) hi = v;
+    const vc = Math.max(-1e9, Math.min(1e9, v));
+    if (vc < lo) lo = vc;
+    if (vc > hi) hi = vc;
   }
   return [lo, hi];
 }
@@ -80,44 +108,58 @@ function lowerBound(x: ArrayLike<number>, v: number) {
 /** Data → pixel mappings for a plot area. */
 function makeScale(left: number, top: number, w: number, h: number, xmin: number, xmax: number, ymin: number, ymax: number, log: boolean) {
   const lx = (v: number) => (log ? Math.log10(v) : v);
-  const px = (v: number) => left + ((lx(v) - lx(xmin)) / (lx(xmax) - lx(xmin) || 1)) * w;
-  const py = (v: number) => top + (1 - (v - ymin) / (ymax - ymin || 1)) * h;
+  const px = (v: number) => Math.round((left + ((lx(v) - lx(xmin)) / (lx(xmax) - lx(xmin) || 1)) * w) * 100) / 100;
+  const py = (v: number) => Math.round((top + (1 - (v - ymin) / (ymax - ymin || 1)) * h) * 100) / 100;
   const clampY = (v: number) => Math.min(top + h + 40, Math.max(top - 40, py(v)));
   return { lx, px, py, clampY };
 }
 
 export default function Chart({
-  series, x, y, height = 200, hGuides = [], vGuides = [], markers = [], legend = true, label, yPad = 0.06, sync,
+  series, x, y, height = 200, hGuides = [], vGuides = [], bands = [], markers = [], legend = true, label, yPad = 0.06, sync,
 }: {
-  series: Series[]; x: Axis; y: Axis; height?: number; hGuides?: Guide[]; vGuides?: Guide[]; markers?: Marker[];
+  series: Series[]; x: Axis; y: Axis; height?: number; hGuides?: Guide[]; vGuides?: Guide[]; bands?: Band[]; markers?: Marker[];
   legend?: boolean; label: string; yPad?: number;
   /** Charts sharing an x axis share their hover position. */
-  sync?: { value: number | null; set: (v: number | null) => void };
+  sync?: { value?: number | null; x?: number | null; set: (v: number | null) => void };
 }) {
   const [ref, width] = useWidth();
   const clip = `ll-clip${useId().replace(/[^\w-]/g, '')}`;
   const [ownHover, setOwnHover] = useState<number | null>(null);
-  const hover = sync ? sync.value : ownHover;
+  const hover = sync ? (sync.x !== undefined ? sync.x : sync.value ?? null) : ownHover;
   const setHover = sync ? sync.set : setOwnHover;
   const m = { l: 52, r: 12, t: 10, b: x.label && !x.hideLabel ? 34 : 22 };
   const w = Math.max(60, width - m.l - m.r);
   const h = height - m.t - m.b;
+
+  const finiteOr = (v: number | undefined, fb: number) => (v !== undefined && Number.isFinite(v) ? v : fb);
 
   const [xmin, xmax] = useMemo(() => {
     let [a, b] = extent(series, 'x', !!x.log);
     // No data yet (or a single point): show an empty range rather than NaN.
     if (!Number.isFinite(a) || !Number.isFinite(b)) [a, b] = x.log ? [1, 10] : [0, 1];
     if (b <= a) b = x.log ? a * 10 : a + 1;
-    return [x.min ?? a, x.max ?? b];
+    let min = finiteOr(x.min, a);
+    let max = finiteOr(x.max, b);
+    if (!(max > min)) max = min + 1;
+    return [min, max];
   }, [series, x.min, x.max, x.log]);
   const [ymin, ymax] = useMemo(() => {
     let [a, b] = extent(series, 'y', !!y.log);
-    for (const mk of markers) { a = Math.min(a, mk.y); b = Math.max(b, mk.y); }
-    for (const g of hGuides) { a = Math.min(a, g.at); b = Math.max(b, g.at); }
-    if (!Number.isFinite(a)) { a = 0; b = 1; }
-    if (b - a < 1e-12) { a -= 1; b += 1; }
+    for (const mk of markers) {
+      if (Number.isFinite(mk.y)) { a = Math.min(a, mk.y); b = Math.max(b, mk.y); }
+    }
+    for (const g of hGuides) {
+      if (Number.isFinite(g.at)) { a = Math.min(a, g.at); b = Math.max(b, g.at); }
+    }
+    if (!Number.isFinite(a) || !Number.isFinite(b)) { a = 0; b = 1; }
+    if (b - a < 1e-9) {
+      [a, b] = niceDomain(a, b);
+    }
     const pad = (b - a) * yPad;
-    return [y.min ?? a - pad, y.max ?? b + pad];
+    let min = finiteOr(y.min, a - pad);
+    let max = finiteOr(y.max, b + pad);
+    if (!(max > min)) max = min + 1;
+    return [min, max];
   }, [series, markers, hGuides, y.min, y.max, y.log, yPad]);
 
   const { lx, px, py, clampY } = useMemo(() => makeScale(m.l, m.t, w, h, xmin, xmax, ymin, ymax, !!x.log), [m.l, m.t, w, h, xmin, xmax, ymin, ymax, x.log]);
@@ -126,7 +168,12 @@ export default function Chart({
     const n = Math.min(s.x.length, s.y.length);
     const parts: string[] = [];
     const buckets = Math.max(1, Math.floor(w * 2));
-    if (n <= buckets * 2) {
+    // Parametric curves (e.g. Nyquist circles) have non-monotonic x and shouldn't be x-bucket-thinned.
+    let monotonic = true;
+    for (let i = 1; i < n; i++) {
+      if (s.x[i] < s.x[i - 1]) { monotonic = false; break; }
+    }
+    if (n <= buckets * 2 || !monotonic) {
       let pen = false;
       for (let i = 0; i < n; i++) {
         const xv = s.x[i], yv = s.y[i];
@@ -151,10 +198,16 @@ export default function Chart({
     return parts.join('');
   }), [series, w, px, clampY, x.log]);
 
+  const logLen = Math.floor(Math.log10(xmax)) - Math.ceil(Math.log10(xmin)) + 1;
   const xTicks = x.log
-    ? Array.from({ length: Math.floor(Math.log10(xmax)) - Math.ceil(Math.log10(xmin)) + 1 }, (_, i) => 10 ** (Math.ceil(Math.log10(xmin)) + i))
+    ? (Number.isFinite(logLen) && logLen > 0
+        ? Array.from({ length: Math.min(30, logLen) }, (_, i) => 10 ** (Math.ceil(Math.log10(xmin)) + i))
+        : [xmin, xmax])
     : niceTicks(xmin, xmax, Math.max(3, Math.round(w / 80)));
   const yTicks = niceTicks(ymin, ymax, Math.max(3, Math.round(h / 40)));
+  const yStep = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : 1;
+  const yDec = Math.max(y.decimals ?? 0, yStep < 0.01 ? 3 : yStep < 0.1 ? 2 : yStep < 1 ? 1 : 0);
+  const formatYTick = (v: number) => (y.decimals !== undefined || yStep < 1 ? v.toFixed(yDec) : fmt(v)).replace('-', '−');
 
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -163,9 +216,11 @@ export default function Chart({
     const f = (cx - m.l) / w;
     setHover(x.log ? 10 ** (lx(xmin) + f * (lx(xmax) - lx(xmin))) : xmin + f * (xmax - xmin));
   };
-  const readout = hover === null ? [] : series.filter((s) => !s.quiet && s.x.length).map((s) => {
+  const readout = hover === null ? [] : series.filter((s) => !s.quiet && s.x.length).flatMap((s) => {
+    // Only show hover readout for monotonic x series.
+    if (s.x.length > 2 && s.x[s.x.length - 1] < s.x[0]) return [];
     const i = Math.min(s.x.length - 1, lowerBound(s.x, hover));
-    return { s, x: s.x[i], y: s.y[i] };
+    return [{ s, x: s.x[i], y: s.y[i] }];
   });
 
   return (
@@ -186,11 +241,16 @@ export default function Chart({
         </g>
         <g className="ll-ticks">
           {xTicks.map((t) => <text key={`x${t}`} x={px(t)} y={m.t + h + 14} textAnchor="middle">{fmt(t, 3)}</text>)}
-          {yTicks.map((t) => <text key={`y${t}`} x={m.l - 6} y={py(t) + 4} textAnchor="end">{fmt(t, 3)}</text>)}
+          {yTicks.map((t, idx) => <text key={`y${t}-${idx}`} x={m.l - 6} y={py(t) + 4} textAnchor="end">{formatYTick(t)}</text>)}
           {x.label && !x.hideLabel && <text className="ll-axis" x={m.l + w / 2} y={height - 4} textAnchor="middle">{x.label}</text>}
           {y.label && <text className="ll-axis" transform={`translate(12 ${m.t + h / 2}) rotate(-90)`} textAnchor="middle">{y.label}</text>}
         </g>
         <g clipPath={`url(#${clip})`}>
+          {bands.map((b, i) => {
+            const yTop = py(Math.max(b.lo, b.hi));
+            const yBot = py(Math.min(b.lo, b.hi));
+            return <rect key={`b${i}`} x={m.l} y={yTop} width={w} height={Math.max(0, yBot - yTop)} fill={b.color ?? 'rgba(16, 185, 129, 0.12)'} />;
+          })}
           {hGuides.map((g, i) => <line key={`h${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={m.l} x2={m.l + w} y1={py(g.at)} y2={py(g.at)} />)}
           {vGuides.filter((g) => g.at >= xmin && g.at <= xmax).map((g, i) => <line key={`v${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={px(g.at)} x2={px(g.at)} y1={m.t} y2={m.t + h} />)}
           {paths.map((d, i) => (

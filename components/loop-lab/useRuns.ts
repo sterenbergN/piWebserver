@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { getProcess } from '@/lib/loop-lab/processes';
 import { runAll, type Run } from '@/lib/loop-lab/sim';
 import { scorecard, type Scorecard } from '@/lib/loop-lab/score';
@@ -24,22 +24,40 @@ export function computeRuns(exp: Experiment, scenarioIds?: string[], robust = tr
   return result;
 }
 
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
 /** Several experiments through the same tests (for comparisons and case studies). */
-export function useRunsMany(exps: Experiment[], scenarioIds?: string[], robust = true, delay = 250) {
+export function useRunsMany(exps: Experiment[], scenarioIds?: string[], robust = true, delay = 180) {
   const key = JSON.stringify([exps, scenarioIds ?? null, robust]);
-  const [state, setState] = useState<{ key: string; results: RunSet[] }>({ key: '', results: [] });
+  const procId = exps[0]?.process ?? '';
+  const [state, setState] = useState<{ key: string; procId: string; results: RunSet[] }>({ key: '', procId: '', results: [] });
+  useIsoLayoutEffect(() => {
+    if (state.results.length === 0 || state.procId !== procId) {
+      try {
+        setState({ key, procId, results: exps.map((e) => computeRuns(e, scenarioIds, robust)) });
+      } catch (err) {
+        console.error('computeRuns error:', err);
+        setState({ key, procId, results: [] });
+      }
+    }
+  }, [key, procId, state.procId, state.results.length]);
   useEffect(() => {
+    if (state.key === key) return;
     const cached = exps.every((e) => cache.has(JSON.stringify([e, scenarioIds ?? null, robust])));
     const id = window.setTimeout(() => {
       try {
-        setState({ key, results: exps.map((e) => computeRuns(e, scenarioIds, robust)) });
-      } catch {
-        setState({ key, results: [] });
+        setState({ key, procId, results: exps.map((e) => computeRuns(e, scenarioIds, robust)) });
+      } catch (err) {
+        console.error('computeRuns error:', err);
+        setState({ key, procId, results: [] });
       }
     }, cached ? 0 : delay);
     return () => window.clearTimeout(id);
-  }, [key, delay]);
-  return { results: state.key === key ? state.results : null, busy: state.key !== key };
+  }, [key, procId, delay, state.key]);
+  const results = state.key === key
+    ? state.results
+    : (state.procId === procId && state.results.length > 0 ? state.results : null);
+  return { results, busy: state.key !== key };
 }
 
 /**

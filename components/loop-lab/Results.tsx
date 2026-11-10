@@ -3,10 +3,11 @@
 import { Fragment, useMemo, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import { MEASURES, SPREAD_NOTE } from '@/lib/loop-lab/measures';
-import type { ProcessDef } from '@/lib/loop-lab/model';
-import type { Run } from '@/lib/loop-lab/sim';
+import { cleanParams, nominalDisturbances, type ProcessDef } from '@/lib/loop-lab/model';
+import { findSteady, steadyState, type Run, type Sample } from '@/lib/loop-lab/sim';
 import { BETTER, type Scorecard, type TestScore } from '@/lib/loop-lab/score';
 import Chart, { fmt, type Series } from './Chart';
+import { ProcessDrawing as SchematicsDrawing } from './Schematics';
 
 export const PALETTE = ['var(--habit-1)', 'var(--habit-2)', 'var(--habit-3)', 'var(--habit-7)', 'var(--habit-5)', 'var(--habit-4)'];
 
@@ -14,6 +15,54 @@ export const dur = (s: number | null) => {
   if (s === null || !Number.isFinite(s)) return 'never';
   return s < 120 ? `${fmt(s, 3)} s` : `${fmt(s / 60, 3)} min`;
 };
+
+/** A compact schematic of the process reflecting the scrubbed sample state. */
+export function ProcessDrawing({ proc, params, sample, dist }: { proc: ProcessDef; params?: Record<string, number>; sample: Sample; dist: Record<string, number> }) {
+  const p = cleanParams(proc, params ?? {});
+  const d = { ...nominalDisturbances(proc), ...dist };
+  const pvVal = Number.isFinite(sample.pvTrue) ? sample.pvTrue : (Number.isFinite(sample.pv) ? sample.pv : proc.nominalPv);
+  const pv2Fallback = proc.mimo ? proc.mimo.nominal2 : pvVal;
+  const pv2Val = Number.isFinite(sample.pv2True) ? sample.pv2True : (Number.isFinite(sample.pv2) ? sample.pv2 : pv2Fallback);
+
+  const st = findSteady(proc, p, d, pvVal, Number.isFinite(pv2Val) ? pv2Val : undefined);
+  const x = steadyState(proc, st);
+  x[0] = sample.valve;
+
+  if (proc.id === 'flow') {
+    x[1] = sample.pv;
+  } else if (proc.id === 'tank' || proc.id === 'surge' || proc.id === 'drum') {
+    x[1] = pvVal;
+  } else if (proc.id === 'stirred' || proc.id === 'jacket' || proc.id === 'hx') {
+    x[2] = pvVal;
+  } else if (proc.id === 'maglev') {
+    x[1] = pvVal;
+    x[2] = 0;
+  } else if (proc.id === 'blend') {
+    x[1] = pvVal;
+  } else if (proc.id === 'feeder' || proc.id === 'batch') {
+    x[2] = pvVal;
+  } else if (proc.id === 'mixing') {
+    const u2 = 'u2' in st ? (st as { u2?: number }).u2 : undefined;
+    const v2 = Number.isFinite(sample.valve2) ? sample.valve2 : undefined;
+    x[1] = pv2Val;
+    x[2] = pvVal;
+    x[3] = v2 ?? u2 ?? d.v2 ?? 50;
+  } else if (proc.id === 'crane') {
+    x[1] = pvVal;
+    x[2] = 0;
+    x[3] = ((sample.pv2 ?? 0) * Math.PI) / 180;
+    x[4] = 0;
+  } else if (proc.id === 'servo') {
+    const wRad = (pvVal * 2 * Math.PI) / 60;
+    x[1] = wRad;
+    x[2] = 0;
+    x[3] = wRad;
+  } else if ((proc.id as string) === 'pfr' || proc.id === 'custom') {
+    x[x.length - 2] = pvVal;
+  }
+
+  return <SchematicsDrawing proc={proc} p={p} d={d} x={x} />;
+}
 
 /** Time axis in minutes for long runs. */
 function useTime(run: Run | undefined) {
@@ -28,15 +77,84 @@ function useTime(run: Run | undefined) {
 export type TrendEntry = { label: string; color: string; run: Run };
 
 /** Process value and controller output over a test, one or more controllers overlaid. */
-export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }: { proc: ProcessDef; entries: TrendEntry[]; showMeasured?: boolean; height?: number }) {
+export function TrendPanel({ proc, params, entries, showMeasured = true, height = 210 }: { proc: ProcessDef; params?: Record<string, number>; entries: TrendEntry[]; showMeasured?: boolean; height?: number }) {
   const first = entries[0]?.run;
   const { t, unit, scale } = useTime(first);
   // The charts share a time axis: hover one and all of them read out the same moment. Only the bottom one labels it.
   const [hover, setHover] = useState<number | null>(null);
   const sync = { value: hover, set: setHover };
+
+  const single = entries.length === 1;
+  const [showSchematic, setShowSchematic] = useState<boolean>(single);
+  const [showPID, setShowPID] = useState<boolean>(false);
+  const [showDist, setShowDist] = useState<boolean>(false);
+  const [showBands, setShowBands] = useState<boolean>(true);
+
   if (!first) return <div className="ll-empty">No run yet.</div>;
   const times = entries.map((e) => (e.run === first ? t : e.run.trace.t.map((v) => v * scale)));
-  const single = entries.length === 1;
+
+  // Hover time in seconds for scrubbing and settling bands
+  const hoverX = hover !== null ? hover / scale : null;
+  const scrubIdx = hoverX !== null
+    ? Math.min(first.trace.t.length - 1, Math.max(0, Math.round(hoverX / first.Ts)))
+    : 0;
+
+  const scrubSample: Sample = {
+    t: first.trace.t[scrubIdx] ?? 0,
+    sp: first.trace.sp[scrubIdx] ?? 0,
+    pv: first.trace.pv[scrubIdx] ?? 0,
+    pvTrue: first.trace.pvTrue[scrubIdx] ?? 0,
+    cv: first.trace.cv[scrubIdx] ?? 0,
+    valve: first.trace.valve[scrubIdx] ?? 0,
+    P: first.trace.P[scrubIdx] ?? 0,
+    I: first.trace.I[scrubIdx] ?? 0,
+    D: first.trace.D[scrubIdx] ?? 0,
+    Kc: first.trace.Kc[scrubIdx] ?? 0,
+    pv2: first.trace.pv2[scrubIdx] ?? NaN,
+    sp2: first.trace.sp2[scrubIdx] ?? NaN,
+    ff: first.trace.ff[scrubIdx] ?? 0,
+    pred: first.trace.pred[scrubIdx] ?? NaN,
+    alt: first.trace.alt[scrubIdx] ?? NaN,
+    pv2True: first.trace.pv2True[scrubIdx] ?? NaN,
+    cv2: first.trace.cv2[scrubIdx] ?? NaN,
+    valve2: first.trace.valve2[scrubIdx] ?? NaN,
+  };
+
+  const scrubDist: Record<string, number> = {};
+  for (const [k, arr] of Object.entries(first.trace.dist)) {
+    scrubDist[k] = arr[scrubIdx] ?? 0;
+  }
+
+  // ±2% Settling band calculation around active / last setpoint step
+  const spEvents = first.scenario.events.filter((ev) => ev.kind === 'sp');
+  const span = proc.pv.hi - proc.pv.lo;
+  let activeSp = first.trace.sp[0] ?? proc.nominalPv;
+  let stepSize = span;
+
+  if (spEvents.length > 0) {
+    if (hoverX !== null) {
+      const past = spEvents.filter((ev) => ev.t <= hoverX);
+      if (past.length > 0) {
+        const curr = past[past.length - 1];
+        activeSp = curr.value;
+        const prevIdx = spEvents.indexOf(curr) - 1;
+        const prevVal = prevIdx >= 0 ? spEvents[prevIdx].value : (first.trace.sp[0] ?? proc.nominalPv);
+        stepSize = Math.max(Math.abs(activeSp - prevVal), span * 0.05);
+      } else {
+        activeSp = first.trace.sp[0] ?? proc.nominalPv;
+        stepSize = Math.max(Math.abs(spEvents[0].value - activeSp), span * 0.05);
+      }
+    } else {
+      const last = spEvents[spEvents.length - 1];
+      activeSp = last.value;
+      const prevVal = spEvents.length > 1 ? spEvents[spEvents.length - 2].value : (first.trace.sp[0] ?? proc.nominalPv);
+      stepSize = Math.max(Math.abs(activeSp - prevVal), span * 0.05);
+    }
+  }
+
+  const tol = Math.max(0.02 * stepSize, 0.005 * span);
+  const settlingBands = showBands ? [{ lo: activeSp - tol, hi: activeSp + tol, color: 'rgba(16, 185, 129, 0.12)' }] : undefined;
+
   const pv: Series[] = [
     { label: 'Setpoint', color: 'var(--ll-sp)', x: t, y: first.trace.sp, dash: '5 4', width: 1.4 },
     ...(single && showMeasured ? [{ label: 'Measured', color: 'var(--muted)', x: t, y: first.trace.pv, width: 1 }] : []),
@@ -44,6 +162,7 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
       ? [{ label: first.trace.Kc.every((v) => v === 0) ? 'Observer estimate' : 'Predicted (what the PID sees)', color: 'var(--habit-7)', x: t, y: first.trace.pred, dash: '3 3', width: 1.3 }] : []),
     ...entries.map((e, i) => ({ label: single ? `${proc.pv.label} (true)` : e.label, color: e.color, x: times[i], y: e.run.trace.pvTrue, width: 2 })),
   ];
+
   const cv: Series[] = entries.flatMap((e, i) => single
     ? [
         { label: 'Controller output', color: 'var(--ll-cv)', x: times[i], y: e.run.trace.cv, width: 1.2 },
@@ -57,6 +176,36 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
   if (single && Array.from(first.trace.alt).some(Number.isFinite)) {
     cv.push({ label: 'Override controller (its own output)', color: 'var(--habit-6)', x: t, y: first.trace.alt, dash: '4 3', width: 1.2 });
   }
+
+  // P / I / D / FF Breakdown
+  const pidSeries: Series[] = entries.flatMap((e, i) => {
+    const tr = e.run.trace;
+    const time = times[i];
+    const prefix = single ? '' : `${e.label} `;
+    const dash = single ? undefined : i === 0 ? undefined : i === 1 ? '4 3' : '2 2';
+    const hasFF = Array.from(tr.ff).some((v) => Math.abs(v) > 1e-6);
+    return [
+      { label: `${prefix}P`, color: '#3b82f6', x: time, y: tr.P, dash, width: 1.5 },
+      { label: `${prefix}I`, color: '#10b981', x: time, y: tr.I, dash, width: 1.5 },
+      { label: `${prefix}D`, color: '#f59e0b', x: time, y: tr.D, dash, width: 1.5 },
+      ...(hasFF ? [{ label: `${prefix}FF`, color: '#a855f7', x: time, y: tr.ff, dash, width: 1.5 }] : []),
+    ];
+  });
+
+  // Disturbances breakdown
+  const distColors = ['var(--habit-4)', 'var(--habit-5)', 'var(--habit-6)', 'var(--habit-2)', 'var(--habit-1)', 'var(--habit-7)'];
+  const distSeries: Series[] = proc.disturbances.flatMap((d, di) => {
+    const tr = first.trace.dist[d.key];
+    if (!tr) return [];
+    return [{
+      label: `${d.label} (${d.unit})`,
+      color: distColors[di % distColors.length],
+      x: t,
+      y: tr,
+      width: 1.6,
+    }];
+  });
+
   const sec = proc.secondary;
   const inner = single && sec && !proc.mimo && Array.from(first.trace.sp2).some(Number.isFinite);
   // A 2×2 process: the second controlled variable gets its own chart, every run on it.
@@ -64,21 +213,155 @@ export function TrendPanel({ proc, entries, showMeasured = true, height = 210 }:
     { label: 'Setpoint', color: 'var(--ll-sp)', x: t, y: first.trace.sp2, dash: '5 4', width: 1.4 },
     ...entries.map((e, i) => ({ label: single ? `${sec.label} (true)` : e.label, color: single ? 'var(--habit-3)' : e.color, x: times[i], y: e.run.trace.pv2True, width: 2 })),
   ] : null;
+
   const events = first.scenario.events.filter((ev) => (ev.kind === 'dist' || ev.kind === 'freeze')).map((ev) => ({ at: ev.t * scale, label: ev.kind === 'dist' ? `${proc.disturbances.find((d) => d.key === ev.key)?.label ?? ev.key} → ${ev.value}` : 'sensor freeze' }));
+
+  const pvHGuides = showBands
+    ? [
+        { at: activeSp + tol, label: '+2%', color: 'rgba(16, 185, 129, 0.65)', dash: '3 3' },
+        { at: activeSp - tol, label: '−2%', color: 'rgba(16, 185, 129, 0.65)', dash: '3 3' },
+      ]
+    : [];
+
+  const hasDistChart = showDist && proc.disturbances.length > 0 && distSeries.length > 0;
+  const hasPIDChart = showPID;
+  const lastChart = hasDistChart ? 'dist' : hasPIDChart ? 'pid' : 'valve';
+
   return (
     <div>
-      <Chart sync={sync} label={`${proc.pv.label} during ${first.scenario.name}`} series={pv} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} vGuides={events} height={height} />
+      {/* Chart toolbar */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem 0.8rem', marginBottom: '0.65rem' }}>
+        <div className="ll-seg is-small" role="toolbar" aria-label="Chart view options">
+          <button type="button" aria-pressed={showSchematic} onClick={() => setShowSchematic((v) => !v)}>
+            Show schematic
+          </button>
+          <button type="button" aria-pressed={showPID} onClick={() => setShowPID((v) => !v)}>
+            Show P / I / D terms
+          </button>
+          {proc.disturbances.length > 0 && (
+            <button type="button" aria-pressed={showDist} onClick={() => setShowDist((v) => !v)}>
+              Show disturbances
+            </button>
+          )}
+          <button type="button" aria-pressed={showBands} onClick={() => setShowBands((v) => !v)}>
+            Show ±2% settling bands
+          </button>
+        </div>
+      </div>
+
+      {/* Scrubbable schematic card */}
+      {showSchematic && (
+        <div className="ll-card" style={{ padding: '0.65rem 0.85rem', marginBottom: '0.85rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem 0.8rem', marginBottom: '0.5rem', fontSize: '0.78rem' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.45rem' }}>
+              <strong style={{ color: 'var(--foreground)' }}>At t = {fmt(scrubSample.t, 2)} s</strong>
+              <span style={{ color: 'var(--muted)', fontSize: '0.73rem' }}>(hover chart to scrub)</span>
+            </div>
+            {first.scenario.events.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem' }}>
+                <button
+                  type="button"
+                  className="ll-btn is-small"
+                  style={{ padding: '0.1rem 0.45rem', minHeight: '22px', fontSize: '0.72rem' }}
+                  onClick={() => setHover(0)}
+                  title="Jump to t = 0 s"
+                >
+                  Start (0 s)
+                </button>
+                {first.scenario.events.map((ev, i) => {
+                  const evLabel = ev.kind === 'sp'
+                    ? `SP → ${fmt(ev.value, 3)}`
+                    : ev.kind === 'dist'
+                    ? `${proc.disturbances.find((d) => d.key === ev.key)?.label ?? ev.key} → ${fmt(ev.value, 3)}`
+                    : 'Freeze';
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className="ll-btn is-small"
+                      style={{ padding: '0.1rem 0.45rem', minHeight: '22px', fontSize: '0.72rem' }}
+                      onClick={() => setHover(ev.t * scale)}
+                      title={`Jump to t = ${fmt(ev.t, 2)} s (${evLabel})`}
+                    >
+                      {evLabel} ({fmt(ev.t, 1)}s)
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <ProcessDrawing proc={proc} params={params} sample={scrubSample} dist={scrubDist} />
+        </div>
+      )}
+
+      <Chart
+        sync={sync}
+        label={`${proc.pv.label} during ${first.scenario.name}`}
+        series={pv}
+        x={{ label: `Time (${unit})`, hideLabel: true }}
+        y={{ label: `${proc.pv.label} (${proc.pv.unit})` }}
+        vGuides={events}
+        hGuides={pvHGuides}
+        bands={settlingBands}
+        height={height}
+      />
       {inner && (
-        <Chart sync={sync} label={`${sec.label} during the test`} height={Math.round(height * 0.62)} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${sec.label} (${sec.unit})` }}
+        <Chart
+          sync={sync}
+          label={`${sec.label} during the test`}
+          height={Math.round(height * 0.62)}
+          x={{ label: `Time (${unit})`, hideLabel: true }}
+          y={{ label: `${sec.label} (${sec.unit})` }}
           series={[
             { label: `${sec.loopTag} setpoint`, color: 'var(--ll-sp)', x: t, y: first.trace.sp2, dash: '5 4', width: 1.3 },
             { label: `${sec.label} (measured)`, color: 'var(--habit-7)', x: t, y: first.trace.pv2, width: 1.5 },
-          ]} />
+          ]}
+        />
       )}
       {second && sec && (
-        <Chart sync={sync} label={`${sec.label} during ${first.scenario.name}`} height={Math.round(height * 0.7)} x={{ label: `Time (${unit})`, hideLabel: true }} y={{ label: `${sec.label} (${sec.unit})` }} series={second} />
+        <Chart
+          sync={sync}
+          label={`${sec.label} during ${first.scenario.name}`}
+          height={Math.round(height * 0.7)}
+          x={{ label: `Time (${unit})`, hideLabel: true }}
+          y={{ label: `${sec.label} (${sec.unit})` }}
+          series={second}
+        />
       )}
-      <Chart sync={sync} label="Valve during the test" series={cv} x={{ label: `Time (${unit})` }} y={{ label: single ? 'Output (%)' : 'Valve stem (%)', min: -2, max: 102 }} height={Math.round(height * 0.62)} legend />
+      <Chart
+        sync={sync}
+        label="Valve during the test"
+        series={cv}
+        x={{ label: `Time (${unit})`, hideLabel: lastChart !== 'valve' }}
+        y={{ label: single ? 'Output (%)' : 'Valve stem (%)', min: -2, max: 102 }}
+        height={Math.round(height * 0.62)}
+        legend
+      />
+      {showPID && (
+        <Chart
+          sync={sync}
+          label="Controller terms (P, I, D)"
+          height={145}
+          series={pidSeries}
+          x={{ label: `Time (${unit})`, min: 0, max: first.scenario.duration * scale, hideLabel: lastChart !== 'pid' }}
+          y={{ label: 'Term (%)', decimals: 1 }}
+          hGuides={[{ at: 0 }]}
+          vGuides={events}
+          legend
+        />
+      )}
+      {hasDistChart && (
+        <Chart
+          sync={sync}
+          label="Disturbances during the test"
+          height={130}
+          series={distSeries}
+          x={{ label: `Time (${unit})`, min: 0, max: first.scenario.duration * scale, hideLabel: lastChart !== 'dist' }}
+          y={{ label: 'Disturbance' }}
+          vGuides={events}
+          legend
+        />
+      )}
     </div>
   );
 }
@@ -157,6 +440,32 @@ function MeasureExplain({ id, proc }: { id: string; proc?: ProcessDef }) {
   );
 }
 
+function DeltaBadge({ nowVal, baseVal, better }: { nowVal: number; baseVal: number; better?: 'low' | 'high' }) {
+  if (!Number.isFinite(nowVal) || !Number.isFinite(baseVal) || baseVal <= 0) return null;
+  const diff = nowVal - baseVal;
+  const pct = (diff / baseVal) * 100;
+  if (Math.abs(pct) < 0.5) return null;
+  const isBetter = better === 'high' ? pct > 0 : pct < 0;
+  const sign = pct > 0 ? '+' : '−';
+  const label = `${sign}${Math.abs(Math.round(pct))}%`;
+  return (
+    <span
+      className={`ll-delta ${isBetter ? 'is-good' : 'is-warn'}`}
+      style={{
+        fontSize: '0.72rem',
+        marginLeft: '0.35rem',
+        opacity: 0.85,
+        fontWeight: 600,
+        color: isBetter ? 'var(--success, #10b981)' : 'var(--warning, #f59e0b)',
+        whiteSpace: 'nowrap',
+      }}
+      title={`${pct > 0 ? '+' : ''}${fmt(pct, 2)}% relative vs baseline`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export function ScorecardTable({ entries, compact = false, proc }: { entries: ScoreEntry[]; compact?: boolean; proc?: ProcessDef }) {
   const [open, setOpen] = useState<string | null>(null);
   if (!entries.length) return <div className="ll-empty">Run the tests to see a scorecard.</div>;
@@ -178,6 +487,10 @@ export function ScorecardTable({ entries, compact = false, proc }: { entries: Sc
         { group: 'Cost of complexity', rows: complexityRows },
       ];
   const compare = entries.length > 1;
+  const nowIdx = entries.findIndex((e) => e.label === 'Now');
+  const targetNowIdx = nowIdx >= 0 ? nowIdx : (compare ? 1 : -1);
+  const baselineIdx = targetNowIdx === 0 ? 1 : 0;
+
   const cls = (row: Row, v: number, all: number[]) => {
     const better = row.better ?? BETTER[row.key as string];
     if (!compare || !better) return '';
@@ -213,9 +526,20 @@ export function ScorecardTable({ entries, compact = false, proc }: { entries: Sc
                           <span className="ll-measure-label">{row.label}<svg className={`ll-measure-caret${isOpen ? ' is-open' : ''}`} width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M2 3.5 5 6.5l3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
                         </button>
                       </td>
-                      {entries.map((e, i) => (
-                        <td key={i} className={row.rank ? cls(row.rank, vals[i], vals) : ''} style={row.key === 'needsModel' ? { maxWidth: '14rem' } : undefined}>{row.cell(e.score)}</td>
-                      ))}
+                      {entries.map((e, i) => {
+                        const isTarget = compare && i === targetNowIdx;
+                        const nowVal = isTarget && row.rank ? vals[targetNowIdx] : NaN;
+                        const baseVal = isTarget && row.rank ? vals[baselineIdx] : NaN;
+                        const better = row.rank?.better ?? (row.rank ? BETTER[row.rank.key as string] : undefined);
+                        return (
+                          <td key={i} className={row.rank ? cls(row.rank, vals[i], vals) : ''} style={row.key === 'needsModel' ? { maxWidth: '14rem' } : undefined}>
+                            {row.cell(e.score)}
+                            {isTarget && row.rank && (
+                              <DeltaBadge nowVal={nowVal} baseVal={baseVal} better={better} />
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                     {isOpen && (
                       <tr className="ll-measure-row">

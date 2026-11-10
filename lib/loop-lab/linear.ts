@@ -245,10 +245,10 @@ function smithGrid(base: number[], theta: number) {
 }
 
 /** Bode data with a continuous (unwrapped) phase in degrees; the delay's phase is added exactly. */
-export function bode(ws: number[], rational: (w: number) => Complex, delay: number): BodePoint[] {
+export function bode(ws: number[], rational: (w: number, i: number) => Complex, delay: number): BodePoint[] {
   let prev = 0, offset = 0;
   return ws.map((w, i) => {
-    const v = rational(w);
+    const v = rational(w, i);
     let ph = carg(v);
     if (i > 0) {
       while (ph + offset - prev > Math.PI) offset -= 2 * Math.PI;
@@ -290,25 +290,38 @@ export type LoopAnalysis = {
   inner?: { loop: BodePoint[]; plantBode: BodePoint[]; margins: Margins };
 };
 
+const ssFreqCache = new WeakMap<object, { rates: number[]; byW: Map<number, { c1: Complex[]; c2: Complex[] }> }>();
+
 /** Open loop at an operating point, its Bode data and stability margins (both loops in cascade). */
-export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: ControllerConfig, pv: number, plantParams?: Params): LoopAnalysis | null {
+export function analyzeLoop(
+  proc: ProcessDef,
+  setupParams: Params,
+  config: ControllerConfig,
+  pv: number,
+  plantParams?: Params,
+  opts?: { ctrl?: LinearController; gridCount?: number; ws?: number[] }
+): LoopAnalysis | null {
   const model = cleanParams(proc, setupParams);
   const m = linearizePlant(proc, plantParams ?? model, pv);
-  const ctrl = linearControllerAt(proc, config, model, pv, m.valve);
+  const ctrl = opts?.ctrl ?? linearControllerAt(proc, config, model, pv, m.valve);
   if (!ctrl) return null;
   const sample = model.Ts / 2;
   const delay = m.theta + sample;
   const G1 = (w: number) => ssResponse(m.A, m.B, m.C, w);
+  const gridCount = opts?.gridCount ?? 500;
+
   if (ctrl.kind === 'single') {
-    const ws = frequencyGrid(m, [ctrl.pid], delay);
-    const loop = bode(ws, (w) => cmul(pidResponse(ctrl.pid, w), G1(w)), delay);
-    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop) };
+    const ws = frequencyGrid(m, [ctrl.pid], delay, gridCount);
+    const g1 = ws.map(G1);
+    const loop = bode(ws, (w, i) => cmul(pidResponse(ctrl.pid, w), g1[i]), delay);
+    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, (_, i) => g1[i], m.theta), margins: margins(loop) };
   }
   if (ctrl.kind === 'smith') {
     // The predictor makes the controller C/(1 + C·Gm(1 − e^{−θm·s})). Its delay term ripples
     // with frequency, so the grid gets a fine linear part where the loop still has gain.
     const { K, tau, theta } = ctrl.model;
-    const ws = smithGrid(frequencyGrid(m, [ctrl.pid], delay), theta);
+    const ws = smithGrid(frequencyGrid(m, [ctrl.pid], delay, gridCount), theta);
+    const g1 = ws.map(G1);
     const eff = (w: number) => {
       const c = pidResponse(ctrl.pid, w);
       const gm = cdiv(cx(K), { re: 1, im: w * tau });
@@ -316,32 +329,63 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
       const cg = cmul(c, pred);
       return cdiv(c, { re: 1 + cg.re, im: cg.im });
     };
-    const loop = bode(ws, (w) => cmul(eff(w), G1(w)), delay);
-    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop, true) };
+    const loop = bode(ws, (w, i) => cmul(eff(w), g1[i]), delay);
+    return { plant: m, ctrl, pid: ctrl.pid, delay, loop, plantBode: bode(ws, (_, i) => g1[i], m.theta), margins: margins(loop, true) };
   }
   if (ctrl.kind === 'ss') {
     // Broken at the valve: L = −Σ C_y,k(jω)·G_k(jω), the main measurement behind its transport delay,
     // the whole loop behind half a cycle of hold.
     // On a 2×2 process the second valve's loop stays closed: L = −(T₁₁ + T₁₂T₂₁/(1 − T₂₂)), T = C_y·G.
     const { ss, inputs, out2 } = ctrl;
-    const ws = frequencyGrid(m, [], delay, 600, eig(ss.A).map((p) => Math.hypot(p.re, p.im)));
+    let memo = ssFreqCache.get(ctrl);
+    if (!memo) {
+      memo = { rates: eig(ss.A).map((p) => Math.hypot(p.re, p.im)), byW: new Map() };
+      ssFreqCache.set(ctrl, memo);
+    }
+    const ws = opts?.ws ?? frequencyGrid(m, [], delay, opts?.gridCount ?? 300, memo.rates);
     const B2 = ctrl.u2Key ? m.Bd[ctrl.u2Key] : null;
-    const plantTo = (key: 'pv' | 'pv2', col: number[], w: number) => {
-      const g = ssResponse(m.A, col, key === 'pv' ? m.C : (m.C2 ?? m.C), w);
-      return key === 'pv' ? cmul(g, cexpj(-w * m.theta)) : g;
+    const byCols = inputs.map((_, k) => ss.By.map((r) => r[k]));
+    const dot = (row: number[], x: Complex[]): Complex => {
+      let re = 0, im = 0;
+      for (let i = 0; i < x.length; i++) if (row[i]) { re += row[i] * x[i].re; im += row[i] * x[i].im; }
+      return { re, im };
     };
-    const ctrlFrom = (C: number[], Dy: number[] | undefined, k: number, w: number) => {
-      const c = ss.A.length ? ssResponse(ss.A, ss.By.map((r) => r[k]), C, w) : cx(0);
-      return { re: c.re + (Dy?.[k] ?? 0), im: c.im };
-    };
-    const L = (w: number) => {
-      const T = (C: number[], Dy: number[] | undefined, col: number[]) => inputs.reduce((acc, key, k) => {
-        const v = cmul(ctrlFrom(C, Dy, k, w), plantTo(key, col, w));
-        return { re: acc.re + v.re, im: acc.im + v.im };
-      }, cx(0));
-      const t11 = T(ss.C, ss.Dy, m.B);
+    const g1: Complex[] = new Array(ws.length);
+    const L = (w: number, idx: number) => {
+      const xB1 = solveShifted(m.A, w, m.B);
+      const g1Raw = dot(m.C, xB1);
+      g1[idx] = g1Raw;
+      const dly = cexpj(-w * m.theta);
+      const pB1 = inputs.map((key) => key === 'pv' ? cmul(g1Raw, dly) : dot(m.C2 ?? m.C, xB1));
+      let cw = memo!.byW.get(w);
+      if (!cw) {
+        const xCtrl = inputs.map((_, k) => ss.A.length ? solveShifted(ss.A, w, byCols[k]) : []);
+        const c1 = inputs.map((_, k) => {
+          const c = ss.A.length ? dot(ss.C, xCtrl[k]) : cx(0);
+          return { re: c.re + (ss.Dy?.[k] ?? 0), im: c.im };
+        });
+        const c2 = out2 ? inputs.map((_, k) => {
+          const c = ss.A.length ? dot(out2.C, xCtrl[k]) : cx(0);
+          return { re: c.re + (out2.Dy?.[k] ?? 0), im: c.im };
+        }) : [];
+        cw = { c1, c2 };
+        memo!.byW.set(w, cw);
+      }
+      const { c1, c2 } = cw;
+      let t11 = cx(0);
+      for (let k = 0; k < inputs.length; k++) {
+        const v = cmul(c1[k], pB1[k]);
+        t11 = { re: t11.re + v.re, im: t11.im + v.im };
+      }
       if (!out2 || !B2) return { re: -t11.re, im: -t11.im };
-      const t12 = T(ss.C, ss.Dy, B2), t21 = T(out2.C, out2.Dy, m.B), t22 = T(out2.C, out2.Dy, B2);
+      const xB2 = solveShifted(m.A, w, B2);
+      const pB2 = inputs.map((key) => key === 'pv' ? cmul(dot(m.C, xB2), dly) : dot(m.C2 ?? m.C, xB2));
+      let t12 = cx(0), t21 = cx(0), t22 = cx(0);
+      for (let k = 0; k < inputs.length; k++) {
+        const v12 = cmul(c1[k], pB2[k]); t12 = { re: t12.re + v12.re, im: t12.im + v12.im };
+        const v21 = cmul(c2[k], pB1[k]); t21 = { re: t21.re + v21.re, im: t21.im + v21.im };
+        const v22 = cmul(c2[k], pB2[k]); t22 = { re: t22.re + v22.re, im: t22.im + v22.im };
+      }
       const x = cdiv(cmul(t12, t21), { re: 1 - t22.re, im: -t22.im });
       return { re: -(t11.re + x.re), im: -(t11.im + x.im) };
     };
@@ -349,23 +393,34 @@ export function analyzeLoop(proc: ProcessDef, setupParams: Params, config: Contr
     const pid: LinearPid = { Kc: 0, Ti: 0, Td: 0, b: 1, c: 0, a: 0.1, antiWindup: 'clamp', outLo: 0, outHi: 100, invert: false, slope: 1 };
     // A state-feedback loop's phase can wind round the origin (integrators and resonances on both sides), so
     // the phase margin is the angle from L to −1, as for the Smith predictor.
-    return { plant: m, ctrl, pid, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop, true) };
+    return { plant: m, ctrl, pid, delay, loop, plantBode: bode(ws, (_, i) => g1[i], m.theta), margins: margins(loop, true) };
   }
   // Cascade: the inner loop sees the sampling delay; the outer loop sees the inner one closed, plus the transport delay.
   const C2 = m.C2!;
-  const G2 = (w: number) => ssResponse(m.A, m.B, C2, w);
-  const ws = frequencyGrid(m, [ctrl.outer, ctrl.inner], delay);
-  const Li = (w: number) => cmul(cmul(pidResponse(ctrl.inner, w), G2(w)), cexpj(-w * sample));
-  const innerLoop = bode(ws, (w) => cmul(pidResponse(ctrl.inner, w), G2(w)), sample);
-  const outer = (w: number) => {
-    const li = Li(w);
+  const ws = frequencyGrid(m, [ctrl.outer, ctrl.inner], delay, gridCount);
+  const dot = (row: number[], x: Complex[]): Complex => {
+    let re = 0, im = 0;
+    for (let i = 0; i < x.length; i++) if (row[i]) { re += row[i] * x[i].re; im += row[i] * x[i].im; }
+    return { re, im };
+  };
+  const g1: Complex[] = new Array(ws.length);
+  const g2: Complex[] = new Array(ws.length);
+  for (let i = 0; i < ws.length; i++) {
+    const xB1 = solveShifted(m.A, ws[i], m.B);
+    g1[i] = dot(m.C, xB1);
+    g2[i] = dot(C2, xB1);
+  }
+  const Li = (w: number, i: number) => cmul(cmul(pidResponse(ctrl.inner, w), g2[i]), cexpj(-w * sample));
+  const innerLoop = bode(ws, (w, i) => cmul(pidResponse(ctrl.inner, w), g2[i]), sample);
+  const outer = (w: number, i: number) => {
+    const li = Li(w, i);
     const ti = cdiv(cmul(pidResponse(ctrl.inner, w), cexpj(-w * sample)), { re: 1 + li.re, im: li.im });
-    return cmul(cmul(pidResponse(ctrl.outer, w), ti), G1(w));
+    return cmul(cmul(pidResponse(ctrl.outer, w), ti), g1[i]);
   };
   const loop = bode(ws, outer, m.theta);
   return {
-    plant: m, ctrl, pid: ctrl.outer, delay, loop, plantBode: bode(ws, G1, m.theta), margins: margins(loop),
-    inner: { loop: innerLoop, plantBode: bode(ws, G2, 0), margins: margins(innerLoop) },
+    plant: m, ctrl, pid: ctrl.outer, delay, loop, plantBode: bode(ws, (_, i) => g1[i], m.theta), margins: margins(loop),
+    inner: { loop: innerLoop, plantBode: bode(ws, (_, i) => g2[i], 0), margins: margins(innerLoop) },
   };
 }
 
@@ -574,8 +629,18 @@ export function stepResponse(cl: ClosedLoop, input: 0 | 1 | 2, horizon: number, 
   const t: number[] = [], y: number[] = [], u: number[] = [];
   for (let k = 0; k <= points; k++) {
     t.push(k * h);
-    y.push(cl.C[0].reduce((s, c, i) => s + c * x[i], 0) + cl.D[0][input]);
-    u.push(cl.C[1].reduce((s, c, i) => s + c * x[i], 0) + cl.D[1][input]);
+    let yk = cl.C[0].reduce((s, c, i) => s + c * x[i], 0) + cl.D[0][input];
+    let uk = cl.C[1].reduce((s, c, i) => s + c * x[i], 0) + cl.D[1][input];
+    if (Math.abs(yk) > 1e5 || !Number.isFinite(yk)) {
+      yk = Math.max(-1e5, Math.min(1e5, Number.isFinite(yk) ? yk : 1e5));
+      x = x.map((v) => (Number.isFinite(v) ? Math.max(-1e5, Math.min(1e5, v)) : 0));
+    }
+    if (Math.abs(uk) > 1e5 || !Number.isFinite(uk)) {
+      uk = Math.max(-1e5, Math.min(1e5, Number.isFinite(uk) ? uk : 1e5));
+      x = x.map((v) => (Number.isFinite(v) ? Math.max(-1e5, Math.min(1e5, v)) : 0));
+    }
+    y.push(yk);
+    u.push(uk);
     x = Phi.map((row, i) => row.reduce((s, v, j) => s + v * x[j], 0) + Gamma[i][0]);
   }
   return { t, y, u };
@@ -589,7 +654,12 @@ export function openLoopStep(A: Mat, col: number[], row: number[], direct: numbe
   const t: number[] = [], y: number[] = [];
   for (let k = 0; k <= points; k++) {
     t.push(k * h);
-    y.push(row.reduce((s, c, i) => s + c * x[i], 0) + direct);
+    let yk = row.reduce((s, c, i) => s + c * x[i], 0) + direct;
+    if (Math.abs(yk) > 1e5 || !Number.isFinite(yk)) {
+      yk = Math.max(-1e5, Math.min(1e5, Number.isFinite(yk) ? yk : 1e5));
+      x = x.map((v) => (Number.isFinite(v) ? Math.max(-1e5, Math.min(1e5, v)) : 0));
+    }
+    y.push(yk);
     x = Phi.map((r, i) => r.reduce((s, v, j) => s + v * x[j], 0) + Gamma[i][0]);
   }
   return { t, y };
@@ -613,7 +683,7 @@ export type RobustPoint = { pv: number; nominal: Margins | null; worst: Margins 
  * spread of the uncertain plant parameters (the controller keeps its tuning).
  * In cascade both loops count.
  */
-export function robustness(proc: ProcessDef, setupParams: Params, config: ControllerConfig, samples = 20): RobustPoint[] {
+export function robustness(proc: ProcessDef, setupParams: Params, config: ControllerConfig, samples = 8): RobustPoint[] {
   const model = cleanParams(proc, setupParams);
   const r = rng(7);
   return proc.opPoints.map((pv) => {
@@ -622,10 +692,11 @@ export function robustness(proc: ProcessDef, setupParams: Params, config: Contro
     const nominal = worseMargins(a0.margins, a0.inner?.margins);
     let worst: Margins = { ...nominal };
     let stableAll = isStable(closedLoop(a0.plant, a0.ctrl, a0.delay).poles);
+    const ws0 = a0.ctrl.kind === 'ss' ? a0.loop.map((p) => p.w) : undefined;
     for (let i = 0; i < samples; i++) {
       const plant = { ...model };
       for (const u of proc.uncertain) plant[u.key] = model[u.key] * (1 + u.spread * (2 * r.next() - 1));
-      const a = analyzeLoop(proc, model, config, pv, plant);
+      const a = analyzeLoop(proc, model, config, pv, plant, { ctrl: a0.ctrl, ws: ws0 });
       if (!a) continue;
       if (!isStable(closedLoop(a.plant, a.ctrl, a.delay).poles)) stableAll = false;
       worst = worseMargins(worst, worseMargins(a.margins, a.inner?.margins));

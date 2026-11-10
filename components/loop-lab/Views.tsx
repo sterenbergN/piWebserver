@@ -8,7 +8,7 @@ import { exportCode, exportReference, pidCompactParams } from '@/lib/loop-lab/ex
 import { texNum } from './format';
 import {
   analyzeLoop, closedLoop, isStable, linearizePlant, openLoopStep, pathModel, settleHorizon, stepResponse, timeConstants, approximate, worseMargins,
-  type BodePoint, type LoopAnalysis, type PlantModel,
+  type BodePoint, type LoopAnalysis, type Margins, type PlantModel,
 } from '@/lib/loop-lab/linear';
 import { cleanParams, nominalDisturbances, valveCharacteristic, VALVE_CHARS, type Params, type ProcessDef } from '@/lib/loop-lab/model';
 import { flowAt } from '@/lib/loop-lab/processes/flow';
@@ -21,7 +21,7 @@ import { mimoModel, rga11, steadyGains } from '@/lib/loop-lab/multivar';
 import { tankArea, tankVolume } from '@/lib/loop-lab/processes/tank';
 import { findSteady, steadyState, type Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
-import Chart, { fmt, type Series } from './Chart';
+import Chart, { fmt, type Marker, type Series } from './Chart';
 import { BlockDiagram, type ProbeKey } from './Drawings';
 import PlantEditor from './PlantEditor';
 import { PAndIdFor, ProcessDrawing } from './Schematics';
@@ -482,6 +482,7 @@ export function ControlView({ proc, exp, runs }: { proc: ProcessDef; exp: Experi
             <BodeCharts proc={proc} exp={exp} pv={pv} all={allPoints} ops={ops} />
             {here.inner && <InnerBode inner={here.inner} />}
             <label className="ll-check"><input type="checkbox" checked={allPoints} onChange={(e) => setAllPoints(e.target.checked)} /> Overlay the loop at all three operating points</label>
+            <NyquistPlot loop={here.loop} margins={here.margins} />
             {cl && <PoleMap cl={cl} plant={here.plant} zoom={zoom} setZoom={setZoom} />}
           </>
         )}
@@ -606,13 +607,18 @@ function BodeCharts({ proc, exp, pv, all, ops }: { proc: ProcessDef; exp: Experi
     ...(Number.isFinite(m.wc) ? [{ at: m.wc, label: `ωc ${fmt(m.wc, 2)}` }] : []),
     ...(Number.isFinite(m.w180) ? [{ at: m.w180, label: `ω180 ${fmt(m.w180, 2)}` }] : []),
   ];
+  const allMags = mag.flatMap((s) => Array.from(s.y)).filter(Number.isFinite);
+  const yMinMag = allMags.length ? Math.max(-80, Math.min(...allMags) - 5) : -60;
+  const allPhases = phase.flatMap((ps) => Array.from(ps.y)).filter(Number.isFinite);
+  const yMinPhase = allPhases.length ? Math.max(-540, Math.min(...allPhases) - 10) : -180;
+  const yMaxPhase = allPhases.length ? Math.max(0, Math.max(...allPhases) + 10) : 0;
   return (
     <div>
       <div className="ll-chart-title">Bode: open loop L = C·G (selected point bold)</div>
-      <Chart label="Bode magnitude" series={mag} x={{ log: true, label: 'Frequency (rad/s)' }} y={{ label: 'Magnitude (dB)', min: Math.max(-120, Math.min(...mag.flatMap((s) => Array.from(s.y))) - 5) }}
+      <Chart label="Bode magnitude" series={mag} x={{ log: true, label: 'Frequency (rad/s)' }} y={{ label: 'Gain (dB)', min: yMinMag, max: 40 }}
         hGuides={[{ at: 0, label: '0 dB' }]} vGuides={v} height={200} />
       <Chart label="Bode phase" series={phase} legend={false} x={{ log: true, label: 'Frequency (rad/s)' }}
-        y={{ label: 'Phase (°)', min: Math.max(-540, Math.min(...phase.flatMap((ps) => Array.from(ps.y))) - 10), max: Math.max(0, ...phase.flatMap((ps) => Array.from(ps.y))) + 10 }}
+        y={{ label: 'Phase (°)', min: yMinPhase, max: yMaxPhase }}
         hGuides={[{ at: -180, label: '−180°' }]} vGuides={v} height={170} />
     </div>
   );
@@ -631,6 +637,96 @@ function InnerBode({ inner }: { inner: NonNullable<LoopAnalysis['inner']> }) {
           { label: 'Slave L', color: PALETTE[3], x: ws(inner.loop), y: inner.loop.map((q) => q.mag), width: 2 },
           { label: 'Valve → inner measurement', color: 'var(--muted)', x: ws(inner.plantBode), y: inner.plantBode.map((q) => q.mag), dash: '4 4', width: 1.2 },
         ]} />
+    </div>
+  );
+}
+
+/** Nyquist and Peak Sensitivity (Ms) plot: L(jω) relative to the critical point -1 + j0. */
+export function NyquistPlot({ loop, margins }: { loop: BodePoint[]; margins: Margins }) {
+  const [zoom, setZoom] = useState<'zoom' | 'wide'>('zoom');
+
+  const pts = useMemo(() => {
+    return loop.map((p) => {
+      const r = 10 ** (p.mag / 20);
+      const rad = (p.phase * Math.PI) / 180;
+      return { w: p.w, re: r * Math.cos(rad), im: r * Math.sin(rad) };
+    });
+  }, [loop]);
+
+  const closest = useMemo(() => {
+    let minDist = Infinity;
+    let pt = { re: -1 + (Number.isFinite(margins.ms) && margins.ms > 0 ? 1 / margins.ms : 1), im: 0, w: 0 };
+    for (const p of pts) {
+      if (!Number.isFinite(p.re) || !Number.isFinite(p.im)) continue;
+      const d = Math.hypot(p.re + 1, p.im);
+      if (d < minDist) {
+        minDist = d;
+        pt = p;
+      }
+    }
+    return { ...pt, dist: minDist };
+  }, [pts, margins.ms]);
+
+  const circles = useMemo(() => {
+    const makeCircle = (cx: number, cy: number, r: number, n = 90) => {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (let i = 0; i <= n; i++) {
+        const a = (i * 2 * Math.PI) / n;
+        xs.push(cx + r * Math.cos(a));
+        ys.push(cy + r * Math.sin(a));
+      }
+      return { x: xs, y: ys };
+    };
+    return {
+      unit: makeCircle(0, 0, 1, 90),
+      ms14: makeCircle(-1, 0, 1 / 1.4, 90),
+      ms20: makeCircle(-1, 0, 0.5, 90),
+    };
+  }, []);
+
+  const maxR = zoom === 'wide' ? 10 : 6;
+  const loopX = pts.map((p) => (Math.hypot(p.re, p.im) <= maxR ? p.re : NaN));
+  const loopY = pts.map((p) => (Math.hypot(p.re, p.im) <= maxR ? p.im : NaN));
+
+  const series: Series[] = [
+    { label: 'L(jω)', color: PALETTE[0], x: loopX, y: loopY, width: 2.2 },
+    { label: 'Unit circle (0 dB)', color: 'var(--muted)', dash: '3 3', width: 1, x: circles.unit.x, y: circles.unit.y },
+    { label: 'Ms = 1.4 (robust)', color: 'var(--habit-1, #10b981)', dash: '4 3', width: 1, x: circles.ms14.x, y: circles.ms14.y },
+    { label: 'Ms = 2.0 (fragile)', color: 'var(--ll-bad, #e5484d)', dash: '3 3', width: 1, x: circles.ms20.x, y: circles.ms20.y },
+    { label: '1/Ms distance', color: 'var(--habit-2, #f59e0b)', dash: '2 2', width: 1.5, x: [-1, closest.re], y: [0, closest.im] },
+  ];
+
+  const markers: Marker[] = [
+    { x: -1, y: 0, color: 'var(--ll-bad, #e5484d)', shape: 'x', label: '−1 + j0' },
+    { x: closest.re, y: closest.im, color: PALETTE[0], shape: 'o', label: `Closest (d = ${fmt(closest.dist, 3)})` },
+  ];
+
+  const xBounds = zoom === 'zoom' ? { min: -2.5, max: 1.5 } : { min: -5.0, max: 3.0 };
+  const yBounds = zoom === 'zoom' ? { min: -2.0, max: 2.0 } : { min: -4.0, max: 4.0 };
+
+  return (
+    <div style={{ marginTop: '0.8rem' }}>
+      <div className="ll-card-head">
+        <div className="ll-chart-title">Nyquist &amp; Peak Sensitivity (Ms): L(jω) relative to −1</div>
+        <div className="ll-seg is-small" role="group" aria-label="Nyquist zoom">
+          <button aria-pressed={zoom === 'zoom'} onClick={() => setZoom('zoom')}>Zoom (-2.5..1.5)</button>
+          <button aria-pressed={zoom === 'wide'} onClick={() => setZoom('wide')}>Wide (-5..3)</button>
+        </div>
+      </div>
+      <Chart
+        label="Nyquist and peak sensitivity"
+        series={series}
+        markers={markers}
+        x={{ label: 'Real L(jω)', min: xBounds.min, max: xBounds.max }}
+        y={{ label: 'Imag L(jω)', min: yBounds.min, max: yBounds.max }}
+        vGuides={[{ at: 0 }]}
+        hGuides={[{ at: 0 }]}
+        height={220}
+      />
+      <p className="ll-note">
+        Critical point −1 + j0: the shortest distance from L(jω) to −1 is 1/Ms = {fmt(1 / margins.ms, 3)} (Ms = {fmt(margins.ms, 3)}). Staying outside the green circle keeps Ms ≤ 1.4; crossing inside the red circle means Ms &gt; 2.
+      </p>
     </div>
   );
 }
