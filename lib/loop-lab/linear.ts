@@ -683,7 +683,7 @@ export type RobustPoint = { pv: number; nominal: Margins | null; worst: Margins 
  * spread of the uncertain plant parameters (the controller keeps its tuning).
  * In cascade both loops count.
  */
-export function robustness(proc: ProcessDef, setupParams: Params, config: ControllerConfig, samples = 8): RobustPoint[] {
+export function robustness(proc: ProcessDef, setupParams: Params, config: ControllerConfig, samples = 20): RobustPoint[] {
   const model = cleanParams(proc, setupParams);
   const r = rng(7);
   return proc.opPoints.map((pv) => {

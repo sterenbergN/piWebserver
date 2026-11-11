@@ -10,7 +10,7 @@ import {
   getNodeInputPorts,
   getNodeOutputPorts,
   simulateBlockDiagram,
-  exportToBenchUrl,
+  benchExport,
   type BlockCategory,
   type BlockDiagramModel,
   type BlockKind,
@@ -617,8 +617,8 @@ export default function BlockBuilder() {
     return { width: Math.max(1280, maxX), height: Math.max(460, maxY) };
   }, [model.nodes]);
 
-  // Bench export URL
-  const benchUrl = useMemo(() => exportToBenchUrl(model), [model]);
+  // The loop as the bench can run it, or why it can't.
+  const bench = useMemo(() => benchExport(model), [model]);
 
   return (
     <div className="ll ll-builder" style={{ paddingBottom: '3rem' }}>
@@ -670,12 +670,27 @@ export default function BlockBuilder() {
             ↺ Reset
           </button>
 
-          <Link href={benchUrl} className="ll-btn is-primary is-small" style={{ fontWeight: 650, gap: '0.4rem' }}>
-            <span>🚀 Open in Bench</span>
-            <span style={{ opacity: 0.8 }}>→</span>
-          </Link>
+          {bench.url ? (
+            <Link href={bench.url} className="ll-btn is-primary is-small" style={{ fontWeight: 650, gap: '0.4rem' }}
+              title={bench.notes.length ? `Runs this loop on the bench. ${bench.notes.join(' ')}` : 'Runs this loop on the bench'}>
+              <span>🚀 Open in Bench</span>
+              <span style={{ opacity: 0.8 }}>→</span>
+            </Link>
+          ) : (
+            <button className="ll-btn is-small" disabled title={`The bench can't run this diagram as drawn. ${bench.reason}`}>
+              🚀 Open in Bench
+            </button>
+          )}
         </div>
       </div>
+
+      {(!bench.url || bench.notes.length > 0) && (
+        <p className="ll-small" role="status" style={{ margin: '0 0 0.75rem' }}>
+          {bench.url
+            ? <><strong>On the bench:</strong> {bench.notes.join(' ')}</>
+            : <><strong>Open in Bench is off:</strong> the bench can&apos;t run this diagram as drawn. {bench.reason}</>}
+        </p>
+      )}
 
       {/* ── Top Control Bar (Templates, Sim Settings, Wiring Mode, Zoom, Clear) ── */}
       <div
@@ -1902,17 +1917,23 @@ export default function BlockBuilder() {
                 </div>
                 <div>
                   <span style={{ color: 'var(--muted)' }}>Plant Gain (K):</span>
-                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.effectiveK}</div>
+                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.plant ? `${Number(simResult.summary.plant.K.toFixed(3))}${simResult.summary.plant.integrating ? ' /s' : ''}` : '—'}</div>
                 </div>
                 <div>
                   <span style={{ color: 'var(--muted)' }}>Time Lag (τ₁):</span>
-                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.effectiveTau1} s</div>
+                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.plant ? (simResult.summary.plant.integrating ? 'integrating' : `${Number(simResult.summary.plant.tau1.toFixed(2))} s`) : '—'}</div>
                 </div>
                 <div>
                   <span style={{ color: 'var(--muted)' }}>Dead Time (θ):</span>
-                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.effectiveTheta} s</div>
+                  <div style={{ fontWeight: 650, fontFamily: 'ui-monospace, monospace' }}>{simResult.summary.plant ? `${Number(simResult.summary.plant.theta.toFixed(2))} s` : '—'}</div>
                 </div>
               </div>
+
+              <p className="ll-small" style={{ margin: '0 0 1rem' }}>
+                {simResult.summary.plant
+                  ? 'Everything in series round the controller\'s loop, multiplied out.'
+                  : 'The controller\'s loop doesn\'t come down to one gain, lag and dead time.'}
+              </p>
 
               {/* Guided Experiments */}
               <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' }}>

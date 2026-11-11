@@ -15,6 +15,7 @@ import { scorecard } from './score';
 import { TUNING_RULES } from './tuning';
 import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
+import { BLOCK_TEMPLATES, benchExport, readLoop, type BlockDiagramModel } from './block-sim';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
 const pid = (o: Partial<typeof DEFAULT_PID>): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, ...o } });
@@ -998,4 +999,121 @@ test('auto-tune on the tests: stable on a dead-time plant, no chatter on a noisy
   const pid = await tuneOnTests(getProcess('stirred'), defaultParams(getProcess('stirred')), { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1, Ti: 100, Td: 5 } });
   assert.ok(pid.config.kind === 'pid' && pid.config.pid.Td > 0, 'a PID stays a PID');
   assert.ok(pid.tried > 1);
+});
+
+test('2×2: swapping a two-loop controller for one PID in auto leaves the second valve where it is', () => {
+  const proc = getProcess('mixing'), params = defaultParams(proc);
+  const two = new Loop(proc, { params, controller: defaultController('multiloop', proc), seed: 1 }, { sp: proc.nominalPv });
+  two.sp2 = 1.4;
+  let s = two.step();
+  for (let i = 0; i < 600; i++) s = two.step();
+  // The level loop has moved the cold valve well away from where it started.
+  assert.ok(Math.abs(s.cv2 - two.manualOut2) > 5, `cv2 ${s.cv2} vs ${two.manualOut2}`);
+  const one = new Loop(proc, { params, controller: defaultController('pid', proc), seed: 1 }, { sp: proc.nominalPv });
+  one.adopt(two);
+  assert.ok(Math.abs(one.step().cv2 - s.cv2) < 1e-9);
+  // A hand value set in manual still carries over.
+  two.setMode(false);
+  two.manualOut2 = 30;
+  const hand = new Loop(proc, { params, controller: defaultController('pid', proc), seed: 1 }, { sp: proc.nominalPv });
+  hand.adopt(two);
+  assert.equal(hand.step().cv2, 30);
+});
+
+test('block diagram → bench: the plant and controller are the ones wired round the loop', () => {
+  const template = (id: string) => BLOCK_TEMPLATES.find((t) => t.id === id)!;
+  const sent = (m: BlockDiagramModel) => {
+    const e = benchExport(m);
+    assert.ok(e.url, e.reason);
+    const exp = decodeExperiment(decodeURIComponent(e.url.split('setup=')[1].split('#')[0]))!;
+    return { exp, p: exp.params, notes: e.notes };
+  };
+
+  // One PID round one first-order plant.
+  const basic = sent(template('fopdt-pid'));
+  assert.deepEqual([basic.p.K, basic.p.tau1, basic.p.tau2, basic.p.txDelay, basic.p.integrating], [1.2, 15, 0, 3, 0]);
+  assert.ok(basic.exp.controller.kind === 'pid' && basic.exp.controller.pid.Kc === 1.8 && basic.exp.controller.pid.Ti === 14);
+  // At rest in the middle of the range.
+  assert.ok(Math.abs(basic.p.bias + basic.p.K * 50 - 50) < 1e-9);
+  assert.ok(basic.notes.some((n) => /Actuator Limits/.test(n)));
+
+  // Smith predictor: the real plant's dead time, counted once; the model is the predictor's own.
+  const smith = sent(template('smith-predictor'));
+  assert.deepEqual([smith.p.K, smith.p.tau1, smith.p.txDelay], [1, 10, 12]);
+  assert.ok(smith.exp.controller.kind === 'smith');
+  assert.deepEqual(smith.exp.controller.model, { K: 1, tau: 10, theta: 12 });
+  assert.equal(smith.exp.controller.pid.Kc, 2.5);
+
+  // A gain as the controller is proportional-only, and the delay in the feedback path counts.
+  const second = sent(template('custom-plant'));
+  assert.deepEqual([second.p.K, second.p.tau1, second.p.tau2, second.p.txDelay], [1, 12, 5, 4]);
+  assert.ok(second.exp.controller.kind === 'pid');
+  assert.deepEqual([second.exp.controller.pid.Kc, second.exp.controller.pid.Ti, second.exp.controller.pid.Td], [2, 0, 0]);
+
+  // Feedforward: the feedback loop goes across, and what is left out is said.
+  const ff = sent(template('feedforward-disturbance'));
+  assert.deepEqual([ff.p.K, ff.p.tau1, ff.p.txDelay], [1.2, 15, 2.5]);
+  assert.equal(ff.notes.filter((n) => /left out/.test(n)).length, 2);
+
+  // Two controllers on a one-measurement plant: refused, with the reason, not approximated.
+  const cascade = benchExport(template('cascade-loop'));
+  assert.equal(cascade.url, null);
+  assert.match(cascade.reason, /2 PID controllers/);
+
+  // Blocks that aren't in the loop don't leak into it, wherever they sit in the list.
+  const base = template('fopdt-pid');
+  const stray: BlockDiagramModel = {
+    ...base,
+    nodes: [
+      { id: 'x1', kind: 'integrator', label: 'Unwired integrator', x: 0, y: 0, params: { K: 3 } },
+      { id: 'x2', kind: 'deadtime', label: 'Unwired delay', x: 0, y: 0, params: { theta: 40 } },
+      ...base.nodes,
+    ],
+  };
+  assert.deepEqual(readLoop(stray).plant, readLoop(base).plant);
+
+  // An integrating loop, a gain in series, and a valve.
+  const integ: BlockDiagramModel = {
+    ...base,
+    nodes: [
+      ...base.nodes.filter((n) => n.id !== 'plant'),
+      { id: 'v', kind: 'valve', label: 'Valve', x: 0, y: 0, params: { tau: 2, rateLimit: 20, deadband: 0.5, char: 0 } },
+      { id: 'g', kind: 'gain', label: 'Gain', x: 0, y: 0, params: { K: 4 } },
+      { id: 'plant', kind: 'integrator', label: 'Level', x: 0, y: 0, params: { K: 0.05 } },
+    ],
+    wires: [
+      ...base.wires.filter((w) => w.id !== 'w4'),
+      { id: 'a', fromBlock: 'sat', fromPort: 0, toBlock: 'v', toPort: 0 },
+      { id: 'b', fromBlock: 'v', fromPort: 0, toBlock: 'g', toPort: 0 },
+      { id: 'c', fromBlock: 'g', fromPort: 0, toBlock: 'plant', toPort: 0 },
+    ],
+  };
+  const lvl = sent(integ);
+  assert.equal(lvl.p.integrating, 1);
+  assert.ok(Math.abs(lvl.p.K / lvl.p.tau1 - 0.2) < 1e-12);
+  assert.deepEqual([lvl.p.valveTau, lvl.p.valveRate, lvl.p.valveDeadband], [2, 20, 0.5]);
+
+  // Refusals: a nonlinear block, positive feedback, an open loop.
+  const withKind = (kind: 'nonlin_tank' | 'fopdt', K: number): BlockDiagramModel => ({
+    ...base, nodes: base.nodes.map((n) => (n.id === 'plant' ? { ...n, kind, params: { ...n.params, K } } : n)),
+  });
+  assert.match(benchExport(withKind('nonlin_tank', 1)).reason, /no equivalent/);
+  assert.match(benchExport(withKind('fopdt', -1.2)).reason, /positive/);
+  const open = readLoop({ ...base, wires: base.wires.filter((w) => w.id !== 'w5') });
+  assert.equal(open.plant, null);
+  assert.equal(open.loopClosed, false);
+});
+
+test('block diagram → bench: the bench loop behaves like the diagram', () => {
+  // Same loop both ways: the closed-loop poles don't depend on the units, so the overshoot of a
+  // setpoint step should agree (the bench adds half a cycle of sampling and its instrument lags).
+  const m = BLOCK_TEMPLATES.find((t) => t.id === 'fopdt-pid')!;
+  const exp = decodeExperiment(decodeURIComponent(benchExport(m).url!.split('setup=')[1].split('#')[0]))!;
+  const proc = getProcess('custom');
+  const run = runScenario(proc, { params: exp.params, controller: exp.controller, seed: 1 }, { id: 't', name: 't', purpose: '', duration: 8, initialSp: 50, events: [{ t: 0.1, kind: 'sp', value: 60 }] });
+  const peak = Math.max(...run.trace.pvTrue);
+  const end = run.trace.pvTrue[run.trace.pvTrue.length - 1];
+  assert.ok(Math.abs(end - 60) < 0.2, `settles at ${end}`);
+  const overshoot = ((peak - 60) / 10) * 100;
+  assert.ok(overshoot > 0 && overshoot < 8, `overshoot ${overshoot} % (the diagram's is 2.9 %)`);
 });

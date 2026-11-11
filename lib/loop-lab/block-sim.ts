@@ -1,5 +1,5 @@
 import { encodeExperiment, type Experiment } from './setup';
-import { DEFAULT_PID, type PidParams } from './controllers';
+import { DEFAULT_PID, type ControllerConfig, type PidParams } from './controllers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,17 +86,8 @@ export type BlockSimResult = {
     xLabel: string;
     yLabel: string;
   }[];
-  summary: {
-    effectiveK: number;
-    effectiveTau1: number;
-    effectiveTau2: number;
-    effectiveTheta: number;
-    integrating: boolean;
-    controllerKc: number;
-    controllerTi: number;
-    controllerTd: number;
-    loopClosed: boolean;
-  };
+  /** What the wiring says about the loop (see readLoop). */
+  summary: { loopClosed: boolean; plant: LoopPlant | null };
 };
 
 export type ParamSpec = {
@@ -1131,148 +1122,222 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
     }
   }
 
-  // ─── Diagram Architecture Summary ──────────────────────────────────────────
+  const { loopClosed, plant } = readLoop(model);
+  return { t, nodeOutputs, scopeSeries, xyPlots, summary: { loopClosed, plant } };
+}
 
-  let effectiveK = 1.0;
-  let effectiveTau1 = 15.0;
-  let effectiveTau2 = 0.0;
-  let effectiveTheta = 0.0;
-  let integrating = false;
+// ─── Reading the loop off the wiring ─────────────────────────────────────────
 
-  const fopdtNode = model.nodes.find((n) => n.kind === 'fopdt');
-  const sopdtNode = model.nodes.find((n) => n.kind === 'sopdt');
-  const integratorNode = model.nodes.find((n) => n.kind === 'integrator');
-  const deadtimeNode = model.nodes.find((n) => n.kind === 'deadtime');
+/** A plant the bench's identified model can hold: gain, up to two lags, dead time, or an integrator. */
+export type LoopPlant = { K: number; tau1: number; tau2: number; theta: number; integrating: boolean };
 
-  if (integratorNode) {
-    integrating = true;
-    effectiveK = integratorNode.params.K ?? 0.2;
-    effectiveTau1 = 1.0;
-  } else if (sopdtNode) {
-    effectiveK = sopdtNode.params.K ?? 1.0;
-    effectiveTau1 = sopdtNode.params.tau1 ?? 12.0;
-    effectiveTau2 = sopdtNode.params.tau2 ?? 5.0;
-    effectiveTheta += sopdtNode.params.theta ?? 2.0;
-  } else if (fopdtNode) {
-    effectiveK = fopdtNode.params.K ?? 1.2;
-    effectiveTau1 = fopdtNode.params.tau ?? 15.0;
-    effectiveTheta += fopdtNode.params.theta ?? 3.0;
-  }
+export type LoopReading = {
+  /** Some signal path leads back to where it started. */
+  loopClosed: boolean;
+  /** Everything in series round the controller's loop, when it reduces to a LoopPlant. */
+  plant: LoopPlant | null;
+  controller: { Kc: number; Ti: number; Td: number; N: number } | null;
+  /** The model inside a Smith predictor, when the feedback is wired as one. */
+  smith: { K: number; tau: number; theta: number } | null;
+  valve: { tau: number; rateLimit: number; deadband: number; char: number } | null;
+  /** Why the loop doesn't reduce ('' when it does). */
+  reason: string;
+  /** What the reduction leaves out. */
+  notes: string[];
+};
 
-  if (deadtimeNode) {
-    effectiveTheta += deadtimeNode.params.theta ?? 5.0;
-  }
+/**
+ * Follow the wires from the controller round to its error junction and multiply out what is in
+ * series on the way. Only the wiring decides: which blocks exist elsewhere in the diagram, and
+ * what the diagram is called, don't come into it.
+ */
+export function readLoop(model: BlockDiagramModel): LoopReading {
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
+  const wires = model.wires.filter((w) => byId.has(w.fromBlock) && byId.has(w.toBlock));
+  const into = (id: string, port?: number) => wires.filter((w) => w.toBlock === id && (port === undefined || w.toPort === port));
+  const outOf = (id: string) => wires.filter((w) => w.fromBlock === id);
+  const isSink = (id: string) => BLOCK_CATALOG[byId.get(id)!.kind].category === 'sinks';
+  const name = (n: BlockNode) => n.label || BLOCK_CATALOG[n.kind].name;
+  const signsOf = (n: BlockNode) => (n.signs || '+-').split('');
 
-  const pidNode = model.nodes.find((n) => n.kind === 'pid');
-  const controllerKc = pidNode ? pidNode.params.Kc ?? 2.0 : 1.0;
-  const controllerTi = pidNode ? pidNode.params.Ti ?? 12.0 : 10.0;
-  const controllerTd = pidNode ? pidNode.params.Td ?? 0.0 : 0.0;
+  /** Can a signal leaving `from` arrive at `to` without passing through any of `skip`? */
+  const reaches = (from: string, to: string, skip: Set<string>) => {
+    const seen = new Set<string>(), stack = [from];
+    while (stack.length) {
+      for (const w of outOf(stack.pop()!)) {
+        if (w.toBlock === to) return true;
+        if (seen.has(w.toBlock) || skip.has(w.toBlock) || isSink(w.toBlock)) continue;
+        seen.add(w.toBlock);
+        stack.push(w.toBlock);
+      }
+    }
+    return false;
+  };
+  const loopClosed = model.nodes.some((n) => reaches(n.id, n.id, new Set()));
+  const none = (reason: string): LoopReading => ({ loopClosed, plant: null, controller: null, smith: null, valve: null, reason, notes: [] });
 
-  // Check if feedback loop is closed
-  let loopClosed = false;
-  for (const wire of model.wires) {
-    const toNode = model.nodes.find((n) => n.id === wire.toBlock);
-    const fromNode = model.nodes.find((n) => n.id === wire.fromBlock);
-    if (
-      toNode?.kind === 'sum' &&
-      (BLOCK_CATALOG[fromNode?.kind || 'step']?.category === 'dynamics' ||
-        fromNode?.kind === 'scope' ||
-        wire.label?.toLowerCase().includes('fb') ||
-        wire.label?.toLowerCase().includes('pred') ||
-        wire.label?.toLowerCase().includes('feedback'))
-    ) {
-      loopClosed = true;
+  // The controller: the PID block, or a gain fed by an error junction (proportional only).
+  const pids = model.nodes.filter((n) => n.kind === 'pid');
+  if (pids.length > 1) return none(`It has ${pids.length} PID controllers, and the bench's identified plant has one measurement: it runs one loop.`);
+  /** The junction a block's input comes from, and the block its minus input is fed by. */
+  const errorOf = (c: BlockNode) => {
+    const src = into(c.id, 0);
+    if (src.length !== 1) return null;
+    const sum = byId.get(src[0].fromBlock)!;
+    if (sum.kind !== 'sum') return null;
+    const minus = signsOf(sum).flatMap((s, i) => (s === '-' ? into(sum.id, i) : []));
+    return minus.length === 1 ? { sum, feedback: minus[0].fromBlock } : null;
+  };
+  const ctrl = pids[0] ?? model.nodes.find((n) => n.kind === 'gain' && errorOf(n));
+  if (!ctrl) return none('It has no controller: a PID block, or a gain, fed by a setpoint-minus-feedback junction.');
+  const err = errorOf(ctrl);
+  if (!err) return none(`${name(ctrl)} is not fed by a setpoint-minus-feedback junction.`);
+
+  // A Smith predictor feeds back (plant − delayed model) + undelayed model, the model driven by the
+  // controller's own output. The loop to reduce is then the one through the real plant.
+  let target = err.feedback;
+  let smith: LoopReading['smith'] = null;
+  const skip = new Set([err.sum.id]);
+  const fb = byId.get(err.feedback)!;
+  if (fb.kind === 'sum' && signsOf(fb).join('') === '++') {
+    const a = into(fb.id, 0), b = into(fb.id, 1);
+    const pairs = a.length === 1 && b.length === 1 ? [[a[0].fromBlock, b[0].fromBlock], [b[0].fromBlock, a[0].fromBlock]] : [];
+    for (const [mismatchId, fastId] of pairs) {
+      const mismatch = byId.get(mismatchId)!, fast = byId.get(fastId)!;
+      if (mismatch.kind !== 'sum' || signsOf(mismatch).join('') !== '+-' || fast.kind !== 'fopdt') continue;
+      const y = into(mismatch.id, 0), delayed = into(mismatch.id, 1), fastIn = into(fast.id, 0);
+      if (y.length !== 1 || delayed.length !== 1 || fastIn.length !== 1 || fastIn[0].fromBlock !== ctrl.id) continue;
+      const delay = byId.get(delayed[0].fromBlock)!, delayIn = into(delay.id, 0);
+      if (delay.kind !== 'deadtime' || delayIn.length !== 1 || delayIn[0].fromBlock !== fast.id) continue;
+      smith = { K: fast.params.K ?? 1.2, tau: Math.max(0.01, fast.params.tau ?? 15), theta: Math.max(0, fast.params.theta ?? 0) + Math.max(0, delay.params.theta ?? 5) };
+      target = y[0].fromBlock;
+      for (const id of [fb.id, mismatch.id, fast.id, delay.id]) skip.add(id);
       break;
     }
   }
 
+  // Walk from the controller to where the feedback is taken.
+  const path: { node: BlockNode; port: number }[] = [];
+  for (let cur = ctrl.id; cur !== target;) {
+    const on = outOf(cur).filter((w) => !isSink(w.toBlock) && !skip.has(w.toBlock) && (w.toBlock === target || reaches(w.toBlock, target, skip)));
+    if (on.length === 0) return none(`The output of ${name(ctrl)} never comes back to its error junction: the loop is open.`);
+    if (on.length > 1) return none(`The signal splits after ${name(byId.get(cur)!)} and comes back along more than one path.`);
+    if (path.length > model.nodes.length) return none('The loop goes round inside itself.');
+    path.push({ node: byId.get(on[0].toBlock)!, port: on[0].toPort });
+    cur = on[0].toBlock;
+  }
+  if (!path.length) return none(`${name(ctrl)} feeds straight back into its own error junction: there is no plant.`);
+  const inner = [ctrl, ...path.map((s) => s.node)].find((n) => reaches(n.id, n.id, skip));
+  if (inner) return none(`There is a second feedback loop inside the main one, round ${name(inner)}.`);
+
+  // Multiply out what is in series.
+  let K = 1, theta = 0, integrators = 0;
+  const lags: number[] = [];
+  const notes: string[] = [];
+  let valve: LoopReading['valve'] = null;
+  for (const { node, port } of path) {
+    const p = node.params;
+    if (node.kind === 'sum') {
+      if (signsOf(node)[port] === '-') K = -K;
+      if (into(node.id).length > 1) notes.push(`What else is added at ${name(node)} is left out: the bench has its own load upset.`);
+    } else if (node.kind === 'gain') K *= p.K ?? 1.5;
+    else if (node.kind === 'saturation') notes.push(`${name(node)} is left out: the bench limits the output to 0–100 %.`);
+    else if (node.kind === 'fopdt') {
+      K *= p.K ?? 1.2;
+      lags.push(Math.max(0.01, p.tau ?? 15));
+      theta += Math.max(0, p.theta ?? 0);
+    } else if (node.kind === 'sopdt') {
+      K *= p.K ?? 1;
+      lags.push(Math.max(0.01, p.tau1 ?? 12), Math.max(0.01, p.tau2 ?? 5));
+      theta += Math.max(0, p.theta ?? 0);
+    } else if (node.kind === 'deadtime') theta += Math.max(0, p.theta ?? 5);
+    else if (node.kind === 'integrator') {
+      integrators++;
+      K *= p.K ?? 0.2;
+      notes.push(`The clamps on ${name(node)} are left out.`);
+    } else if (node.kind === 'valve' && !valve) {
+      valve = { tau: Math.max(0.01, p.tau ?? 0.8), rateLimit: Math.max(1, p.rateLimit ?? 50), deadband: Math.max(0, p.deadband ?? 0), char: p.char === 1 ? 1 : 0 };
+    } else {
+      return none(`${name(node)} (${BLOCK_CATALOG[node.kind].name}) has no equivalent in the bench's identified plant.`);
+    }
+  }
+  if (K === 0) return none('The gain round the loop is zero.');
+  if (integrators > 1) return none("It has two integrators in series, and the bench's identified plant has one.");
+  if (lags.length > (integrators ? 1 : 2)) {
+    return none(`It has ${integrators ? 'an integrator and ' : ''}${lags.length} lags in series, more than the bench's identified plant holds (${integrators ? 'an integrator and one lag' : 'two lags'}).`);
+  }
+  lags.sort((x, y) => y - x);
+
+  const pid = ctrl.kind === 'pid';
+  const Kc = pid ? ctrl.params.Kc ?? 2 : ctrl.params.K ?? 1.5;
+  if (Kc === 0) return none(`${name(ctrl)} has no gain.`);
+  if (Kc * K < 0) return none('The feedback is positive: the controller pushes the same way as the error grows.');
   return {
-    t,
-    nodeOutputs,
-    scopeSeries,
-    xyPlots,
-    summary: {
-      effectiveK: Number(effectiveK.toFixed(2)),
-      effectiveTau1: Number(effectiveTau1.toFixed(1)),
-      effectiveTau2: Number(effectiveTau2.toFixed(1)),
-      effectiveTheta: Number(effectiveTheta.toFixed(1)),
-      integrating,
-      controllerKc: Number(controllerKc.toFixed(2)),
-      controllerTi: Number(controllerTi.toFixed(1)),
-      controllerTd: Number(controllerTd.toFixed(2)),
-      loopClosed,
-    },
+    loopClosed: true,
+    // An integrator's gain is its ramp rate; the bench writes that as K/τ1.
+    plant: integrators ? { K, tau1: 1, tau2: lags[0] ?? 0, theta, integrating: true } : { K, tau1: lags[0] ?? 0, tau2: lags[1] ?? 0, theta, integrating: false },
+    controller: { Kc, Ti: pid ? Math.max(0, ctrl.params.Ti ?? 12) : 0, Td: pid ? Math.max(0, ctrl.params.Td ?? 0) : 0, N: Math.max(1, ctrl.params.N ?? 10) },
+    smith, valve, reason: '', notes,
   };
 }
 
 // ─── Bench Export ────────────────────────────────────────────────────────────
 
-export function exportToBenchUrl(model: BlockDiagramModel): string {
-  const res = simulateBlockDiagram(model);
-  const { summary } = res;
+export type BenchExport = {
+  /** The bench link, or null when the bench can't run this diagram as it is drawn. */
+  url: string | null;
+  /** Why not. */
+  reason: string;
+  /** What the bench runs differently from the diagram. */
+  notes: string[];
+};
 
-  const K = Math.max(-50, Math.min(50, summary.effectiveK || 1.0));
-  const tau1 = Math.max(0.1, Math.min(1000, summary.effectiveTau1 || 15.0));
-  const tau2 = Math.max(0, Math.min(1000, summary.effectiveTau2 || 0.0));
-  const txDelay = Math.max(0, Math.min(100, summary.effectiveTheta || 2.0));
-  const integrating = summary.integrating ? 1 : 0;
-
-  const customParams = {
-    integrating,
+/**
+ * The diagram's loop as a bench setup on the identified plant, in the bench's own terms: signals
+ * in 0–100 %, the loop at rest at 50 % in and 50 % out. Anything the bench can't hold is said,
+ * never approximated quietly.
+ */
+export function benchExport(model: BlockDiagramModel): BenchExport {
+  const r = readLoop(model);
+  if (!r.plant || !r.controller) return { url: null, reason: r.reason, notes: [] };
+  const notes = [...r.notes];
+  const within = (v: number, lo: number, hi: number, what: string) => {
+    const c = Math.min(hi, Math.max(lo, v));
+    if (c !== v) notes.push(`${what} is ${Number(v.toPrecision(4))} in the diagram and ${Number(c.toPrecision(4))} on the bench, which is as far as it goes.`);
+    return c;
+  };
+  const { plant, controller, valve } = r;
+  const K = Math.sign(plant.K) * within(Math.abs(plant.K), 0.01, 50, 'The plant gain');
+  if (!plant.integrating && plant.tau1 <= 0) notes.push('The loop has no lag of its own; the bench gives it the shortest it has, 0.1 s.');
+  const params: Experiment['params'] = {
+    integrating: plant.integrating ? 1 : 0,
     K,
-    tau1,
-    tau2,
-    bias: 0,
+    tau1: plant.integrating ? 1 : plant.tau1 <= 0 ? 0.1 : within(plant.tau1, 0.1, 1e5, 'The time constant'),
+    tau2: plant.tau2,
+    // At rest in the middle: 50 % out gives 50 %.
+    bias: Math.min(1000, Math.max(-1000, 50 * (1 - K))),
     u0: 50,
-    txDelay,
-    txNoise: 0.2,
-    Ts: 0.5,
-    valveTau: 0.1,
-    valveRate: 1000,
-    valveChar: 0,
-    txTau: 0.1,
+    txDelay: within(plant.theta, 0, 120, 'The dead time'),
+    txNoise: 0,
+    txTau: 0.05,
+    Ts: Math.min(10, Math.max(0.01, Number(model.dt) || 0.1)),
+    valveTau: valve ? within(valve.tau, 0.05, 60, 'The valve lag') : 0.05,
+    valveRate: valve ? within(valve.rateLimit, 0.5, 200, 'The valve rate limit') : 200,
+    valveDeadband: valve ? within(valve.deadband, 0, 5, 'The valve deadband') : 0,
+    valveChar: valve?.char ?? 0,
   };
-
-  const pidParams: PidParams = {
+  const pid: PidParams = {
     ...DEFAULT_PID,
-    Kc: Math.max(0.01, Math.min(50, summary.controllerKc || 1.8)),
-    Ti: Math.max(0, Math.min(500, summary.controllerTi || 14.0)),
-    Td: Math.max(0, Math.min(100, summary.controllerTd || 0.0)),
+    Kc: Math.abs(controller.Kc), Ti: controller.Ti, Td: controller.Td,
+    a: Math.min(1, Math.max(0.01, 1 / controller.N)),
+    invert: K < 0,
   };
-
-  type BenchmarkController =
-    | { kind: 'pid'; pid: PidParams }
-    | { kind: 'cascade'; outer: PidParams; inner: PidParams; ff: [] }
-    | { kind: 'smith'; pid: PidParams; model: { K: number; tau: number; theta: number } };
-
-  let controller: BenchmarkController;
-  if (model.id === 'cascade-loop' || model.name.toLowerCase().includes('cascade')) {
-    controller = {
-      kind: 'cascade',
-      outer: pidParams,
-      inner: { ...DEFAULT_PID, Kc: 2.2, Ti: 4, Td: 0 },
-      ff: [],
-    };
-  } else if (model.id === 'smith-predictor' || model.name.toLowerCase().includes('smith')) {
-    controller = {
-      kind: 'smith',
-      pid: pidParams,
-      model: { K, tau: tau1, theta: txDelay },
-    };
-  } else {
-    controller = {
-      kind: 'pid',
-      pid: pidParams,
-    };
-  }
-
-  const experiment: Experiment = {
-    process: 'custom',
-    params: customParams as any,
-    controller: controller as any,
-  };
-
-  return `/loop-lab/bench?setup=${encodeExperiment(experiment)}#tests`;
+  const smith = r.smith;
+  const config: ControllerConfig = smith
+    ? { kind: 'smith', pid, model: { K: smith.K, tau: smith.tau, theta: within(smith.theta, 0, 120, 'The dead time in the Smith model') } }
+    : { kind: 'pid', pid };
+  const experiment: Experiment = { process: 'custom', params, controller: config };
+  return { url: `/loop-lab/bench?setup=${encodeExperiment(experiment)}#tests`, reason: '', notes };
 }
 
 // ─── 5 Pre-Built System Templates ───────────────────────────────────────────

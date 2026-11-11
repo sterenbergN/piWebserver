@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   compileCustom, defaultController, defaultCustomCode, defaultInnerFeedforward, isAvailable,
   type ControllerConfig, type ControllerKind, type FeedforwardTerm, type PidParams, type SchedulePoint, type SmithModel,
@@ -52,11 +52,11 @@ export function ControllerPicker({ proc, config, onChange }: { proc: ProcessDef;
   const switchKind = (kind: ControllerKind) => {
     if (kind === config.kind || !isAvailable(proc, kind)) return;
     const next = defaultController(kind, proc);
-    // Carry the PID settings across where both have them
-    const singlePidKinds = new Set(['pid', 'pi', 'p', 'feedforward', 'smith', 'ratio']);
-    if (singlePidKinds.has(config.kind) && singlePidKinds.has(next.kind) && 'pid' in config && 'pid' in next) {
-      next.pid = { ...config.pid };
-    }
+    // Carry the PID settings across where both have them (a cascade master is tuned in other units, and a
+    // Smith predictor's PID for a process without dead time, so those keep their own).
+    const prev = config.kind === 'onoff' || config.kind === 'cascade' || config.kind === 'ratio' || config.kind === 'smith' || config.kind === 'statefb' || config.kind === 'mpc' || config.kind === 'adrc' || config.kind === 'custom' ? null : config.pid;
+    if (prev && next.kind !== 'onoff' && next.kind !== 'cascade' && next.kind !== 'ratio' && next.kind !== 'smith' && next.kind !== 'statefb' && next.kind !== 'mpc' && next.kind !== 'adrc' && next.kind !== 'custom') next.pid = { ...prev };
+    if (prev && next.kind === 'schedule') next.points = next.points.map((p) => ({ ...p, Kc: prev.Kc, Ti: prev.Ti, Td: prev.Td }));
     onChange(next);
   };
   const groups = CONTROLLER_GROUPS.map((g) => ({
@@ -64,6 +64,77 @@ export function ControllerPicker({ proc, config, onChange }: { proc: ProcessDef;
     items: g.kinds.filter((k) => isAvailable(proc, k)).map((k) => ({ id: k, title: metaOf(k).name, hint: KIND_HINT[k] })),
   }));
   return <Picker label="Controller" value={config.kind} groups={groups} onChange={(id) => switchKind(id as ControllerKind)} />;
+}
+
+/**
+ * The slider and nudge buttons under one of the gains. The scale reaches a few times the value it
+ * starts from (logarithmic above `lo`, linear from 0 when `lo` is 0), and stays as it is from the
+ * moment the slider is grabbed until it is let go: a scale that followed the value would move
+ * under the thumb, and holding the thumb at the end would multiply the gain on every event.
+ */
+function TuneSlider({ name, value, onChange, lo, reach, grow = 3, floor, start, offAtZero = false }: {
+  name: string; value: number; onChange: (v: number) => void;
+  /** Bottom of the scale, and the least its top can be; the top is `grow` times the value when that is more. */
+  lo: number; reach: number; grow?: number;
+  /** The least "−20%" goes to, and what "+25%" gives from zero. */
+  floor: number; start: number;
+  /** The far left is 0 (the term switched off), with the scale on the rest. */
+  offAtZero?: boolean;
+}) {
+  const [held, setHeld] = useState<number | null>(null);
+  // The same value for the change handler, which can run before the grab has rendered.
+  const heldRef = useRef<number | null>(null);
+  const release = () => { heldRef.current = null; setHeld(null); };
+  const grab = () => {
+    if (heldRef.current !== null) return;
+    heldRef.current = value;
+    setHeld(value);
+  };
+  const topOf = (base: number) => Math.max(reach, grow * base);
+  const first = offAtZero ? 1 : 0;
+  const toPos = (v: number, top: number) => {
+    if (offAtZero && v <= 0) return 0;
+    const f = lo > 0 ? Math.log(Math.max(lo, v) / lo) / Math.log(top / lo) : v / top;
+    return Math.round(first + Math.min(1, Math.max(0, f)) * (100 - first));
+  };
+  const toValue = (pos: number, top: number) => {
+    if (offAtZero && pos <= 0) return 0;
+    const f = (pos - first) / (100 - first);
+    return Number((lo > 0 ? lo * (top / lo) ** f : f * top).toPrecision(3));
+  };
+  const nudge = { minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+      <input
+        type="range"
+        aria-label={`${name} range slider`}
+        min={0}
+        max={100}
+        step={1}
+        value={toPos(value, topOf(held ?? value))}
+        onPointerDown={() => {
+          grab();
+          window.addEventListener('pointerup', release, { once: true });
+          window.addEventListener('pointercancel', release, { once: true });
+        }}
+        onKeyDown={grab}
+        onKeyUp={release}
+        onBlur={release}
+        onChange={(e) => onChange(toValue(Number(e.target.value), topOf(heldRef.current ?? value)))}
+        style={{ height: '14px', margin: '0' }}
+      />
+      <div style={{ display: 'flex', gap: '2px' }}>
+        <button type="button" className="ll-btn is-small" style={nudge} disabled={value <= 0} title={`${name} −20%`}
+          onClick={() => onChange(Math.max(floor, Number((value * 0.8).toPrecision(3))))}>
+          −20%
+        </button>
+        <button type="button" className="ll-btn is-small" style={nudge} title={`${name} +25%`}
+          onClick={() => onChange(value <= 0 ? start : Number((value * 1.25).toPrecision(3)))}>
+          +25%
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: (p: PidParams) => void; gains?: boolean }) {
@@ -78,150 +149,9 @@ function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: 
             <NumField label="Td" unit="s" value={pid.Td} min={0} onChange={set('Td')} title="Derivative time (0 = off)" />
           </div>
           <div className="ll-fields is-3" style={{ marginTop: '0.2rem', gap: '0.25rem 0.6rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-              <input
-                type="range"
-                aria-label="Kc range slider"
-                min={0}
-                max={100}
-                step={1}
-                value={(() => {
-                  const currentKc = Math.max(0.05, pid.Kc);
-                  const maxKc = Math.max(20, pid.Kc * 3);
-                  const logMin = Math.log10(0.05);
-                  const logMax = Math.log10(maxKc);
-                  return Math.round(((Math.log10(currentKc) - logMin) / (logMax - logMin)) * 100);
-                })()}
-                onChange={(e) => {
-                  const maxKc = Math.max(20, pid.Kc * 3);
-                  const logMin = Math.log10(0.05);
-                  const logMax = Math.log10(maxKc);
-                  const frac = Number(e.target.value) / 100;
-                  const val = 10 ** (logMin + frac * (logMax - logMin));
-                  set('Kc')(Number(val.toPrecision(3)));
-                }}
-                style={{ height: '14px', margin: '0' }}
-              />
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => set('Kc')(Math.max(0.01, Number((pid.Kc * 0.8).toPrecision(3))))}
-                  title="Kc −20%"
-                >
-                  −20%
-                </button>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => set('Kc')(Number((Math.max(0.01, pid.Kc) * 1.25).toPrecision(3)))}
-                  title="Kc +25%"
-                >
-                  +25%
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-              <input
-                type="range"
-                aria-label="Ti range slider"
-                min={0}
-                max={100}
-                step={1}
-                value={(() => {
-                  if (pid.Ti <= 0) return 0;
-                  const maxTi = Math.max(200, pid.Ti * 3);
-                  const logMin = Math.log10(0.1);
-                  const logMax = Math.log10(maxTi);
-                  const frac = (Math.log10(Math.max(0.1, pid.Ti)) - logMin) / (logMax - logMin);
-                  return Math.round(1 + Math.min(1, Math.max(0, frac)) * 99);
-                })()}
-                onChange={(e) => {
-                  const stepVal = Number(e.target.value);
-                  if (stepVal === 0) {
-                    set('Ti')(0);
-                    return;
-                  }
-                  const maxTi = Math.max(200, (pid.Ti || 1) * 3);
-                  const logMin = Math.log10(0.1);
-                  const logMax = Math.log10(maxTi);
-                  const frac = (stepVal - 1) / 99;
-                  const val = 10 ** (logMin + frac * (logMax - logMin));
-                  set('Ti')(Number(val.toPrecision(3)));
-                }}
-                style={{ height: '14px', margin: '0' }}
-              />
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => {
-                    if (pid.Ti > 0) set('Ti')(Math.max(0.1, Number((pid.Ti * 0.8).toPrecision(3))));
-                  }}
-                  disabled={pid.Ti <= 0}
-                  title="Ti −20%"
-                >
-                  −20%
-                </button>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => set('Ti')(pid.Ti <= 0 ? 1 : Number((pid.Ti * 1.25).toPrecision(3)))}
-                  title="Ti +25%"
-                >
-                  +25%
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-              <input
-                type="range"
-                aria-label="Td range slider"
-                min={0}
-                max={100}
-                step={1}
-                value={(() => {
-                  const maxTd = Math.max(20, (pid.Td || 1) * 4);
-                  return Math.round((Math.min(maxTd, Math.max(0, pid.Td)) / maxTd) * 100);
-                })()}
-                onChange={(e) => {
-                  const maxTd = Math.max(20, (pid.Td || 1) * 4);
-                  const frac = Number(e.target.value) / 100;
-                  const val = frac * maxTd;
-                  set('Td')(val < 0.01 ? 0 : Number(val.toPrecision(3)));
-                }}
-                style={{ height: '14px', margin: '0' }}
-              />
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => {
-                    if (pid.Td > 0) set('Td')(Math.max(0, Number((pid.Td * 0.8).toPrecision(3))));
-                  }}
-                  disabled={pid.Td <= 0}
-                  title="Td −20%"
-                >
-                  −20%
-                </button>
-                <button
-                  type="button"
-                  className="ll-btn is-small"
-                  style={{ minHeight: '20px', padding: '0 3px', fontSize: '0.68rem', flex: 1, lineHeight: 1 }}
-                  onClick={() => set('Td')(pid.Td <= 0 ? 0.5 : Number((pid.Td * 1.25).toPrecision(3)))}
-                  title="Td +25%"
-                >
-                  +25%
-                </button>
-              </div>
-            </div>
+            <TuneSlider name="Kc" value={pid.Kc} onChange={set('Kc')} lo={0.05} reach={20} floor={0.01} start={0.0125} />
+            <TuneSlider name="Ti" value={pid.Ti} onChange={set('Ti')} lo={0.1} reach={200} floor={0.1} start={1} offAtZero />
+            <TuneSlider name="Td" value={pid.Td} onChange={set('Td')} lo={0} reach={20} grow={4} floor={0} start={0.5} />
           </div>
         </>
       )}

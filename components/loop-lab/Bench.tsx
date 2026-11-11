@@ -32,6 +32,9 @@ type TabId = (typeof TABS)[number]['id'];
 
 type Pinned = { id: string; label: string; exp: Experiment };
 
+/** Changes closer together than this are one undo step (a slider drag, a number being typed). */
+const UNDO_RUN_MS = 600;
+
 const short = (s: string, n = 46) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 export default function Bench() {
@@ -65,11 +68,15 @@ export default function Bench() {
     stateRef.current = { exp, past, future };
   }, [exp, past, future]);
 
+  // When the setup last changed: undo takes a whole run of changes back in one step.
+  const lastEdit = useRef(0);
   const updateExp = useCallback((next: Experiment | ((prev: Experiment) => Experiment)) => {
     const { exp: cur } = stateRef.current;
     const resolved = typeof next === 'function' ? next(cur) : next;
     if (JSON.stringify(resolved) === JSON.stringify(cur)) return;
-    setPast((p) => [...p.slice(-29), cur]);
+    const now = performance.now();
+    if (now - lastEdit.current > UNDO_RUN_MS) setPast((p) => [...p.slice(-29), cur]);
+    lastEdit.current = now;
     setFuture([]);
     setExp(resolved);
   }, []);
@@ -77,6 +84,7 @@ export default function Bench() {
   const undo = useCallback(() => {
     const { exp: cur, past: curPast } = stateRef.current;
     if (curPast.length === 0) return;
+    lastEdit.current = 0;
     const prev = curPast[curPast.length - 1];
     setPast(curPast.slice(0, -1));
     setFuture((f) => [cur, ...f].slice(0, 30));
@@ -86,6 +94,7 @@ export default function Bench() {
   const redo = useCallback(() => {
     const { exp: cur, future: curFuture } = stateRef.current;
     if (curFuture.length === 0) return;
+    lastEdit.current = 0;
     const next = curFuture[0];
     setFuture(curFuture.slice(1));
     setPast((p) => [...p.slice(-29), cur]);
@@ -94,10 +103,11 @@ export default function Bench() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) {
-        return;
-      }
+      // Where text is being typed, Ctrl+Z belongs to the field. A slider or a checkbox has no undo of its own.
+      const el = e.target as HTMLElement | null;
+      const typing = el?.tagName === 'TEXTAREA' || el?.isContentEditable
+        || (el?.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes((el as HTMLInputElement).type));
+      if (typing) return;
       const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
       const mod = isMac ? e.metaKey : e.ctrlKey;
       if (!mod) return;
@@ -152,6 +162,7 @@ export default function Bench() {
   };
   /** Start over on a setup (a different process, a loaded notebook entry, an identified plant). */
   const startFrom = (e: Experiment) => {
+    lastEdit.current = 0;
     setExp(e);
     setPast([]);
     setFuture([]);
@@ -160,6 +171,7 @@ export default function Bench() {
   };
   /** Reset to default experiment for this process and clear undo/redo stack. */
   const resetExp = () => {
+    lastEdit.current = 0;
     setExp(defaultExperiment(exp.process));
     setPast([]);
     setFuture([]);

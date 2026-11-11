@@ -151,8 +151,12 @@ export class Loop {
     this.t = prev.t;
     this.sp = prev.sp;
     this.sp2 = prev.sp2;
-    this.manualOut2 = prev.manualOut2;
     this.d = { ...prev.d };
+    // The second valve stays where it is: at the old controller's second output if it was driving it,
+    // at the hand value otherwise.
+    const mimo = this.proc.mimo;
+    const drove = prev.auto && prev.ctrl.out2?.() !== undefined;
+    this.manualOut2 = mimo && drove ? prev.d[mimo.input] : prev.manualOut2;
     this.auto = prev.auto;
     this.manualOut = prev.manualOut;
     this.lastCv = prev.lastCv;
