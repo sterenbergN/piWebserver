@@ -450,6 +450,11 @@ test('a question’s maths becomes text a text box can show', async () => {
   const { mathToPlain } = await import('./plain-math');
   assert.equal(mathToPlain('Find $V = IR$ when $R = 4\\,\\Omega$.'), 'Find V = IR when R = 4 Ω.');
   assert.equal(mathToPlain('$\\frac{1}{2} m v^{2}$'), '1/2 m v^2');
+  // Accents become the marks over the letter: Ṫ, ṁ, F⃗, x̄.
+  assert.equal(mathToPlain('$\\dot{T}_{heat}$'), 'Ṫ_(heat)');
+  assert.equal(mathToPlain('$\\dot m c_p$'), 'ṁ c_p');
+  assert.equal(mathToPlain('$\\vec{F} = m\\bar{x}$'), 'F⃗ = mx̄');
+  assert.equal(mathToPlain('$\\hat{\\theta}$'), 'θ̂');
   assert.equal(mathToPlain('$\\frac{a+b}{c}$ and $\\sqrt{x}$'), '(a+b)/c and √(x)');
   assert.equal(mathToPlain('$30^{\\circ}$ at $\\theta \\le \\pi$'), '30° at θ ≤ π');
   assert.equal(mathToPlain('**Given** $F_{net} = \\text{ma}$'), 'Given F_(net) = ma');

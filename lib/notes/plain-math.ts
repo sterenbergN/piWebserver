@@ -11,6 +11,9 @@ const SYMBOLS: Record<string, string> = {
   sqrt: '√', angle: '∠', perp: '⊥', parallel: '∥', propto: '∝', cdots: '…', ldots: '…', dots: '…', quad: ' ', qquad: '  ', ',': ' ', ';': ' ', '!': '',
 };
 
+/** Accents, as the combining marks that draw them over a letter. */
+const ACCENTS: Record<string, string> = { dot: '̇', ddot: '̈', hat: '̂', bar: '̄', vec: '⃗', tilde: '̃' };
+
 /** One {group} after a command, with what's left after it. */
 function group(text: string, at: number): [string, number] | null {
   if (text[at] !== '{') return null;
@@ -51,7 +54,19 @@ function plainLatex(latex: string): string {
           continue;
         }
       }
-      if (['text', 'mathrm', 'mathbf', 'mathit', 'operatorname', 'textbf', 'textit', 'mathsf', 'boldsymbol', 'vec', 'hat', 'bar', 'overline'].includes(name)) {
+      if (name in ACCENTS) {
+        let at = i;
+        while (latex[at] === ' ') at += 1; // \dot m, without braces
+        const inside = group(latex, at) ?? (latex[at] ? [latex[at], at + 1] as [string, number] : null);
+        if (inside) {
+          // Ṫ for \dot{T}: a combining mark on one letter; longer things just lose the accent.
+          const body = plainLatex(inside[0]);
+          out += [...body].length === 1 ? `${body}${ACCENTS[name]}` : body;
+          i = inside[1];
+          continue;
+        }
+      }
+      if (['text', 'mathrm', 'mathbf', 'mathit', 'operatorname', 'textbf', 'textit', 'mathsf', 'boldsymbol', 'overline'].includes(name)) {
         const inside = group(latex, i);
         if (inside) {
           out += plainLatex(inside[0]);

@@ -2,11 +2,11 @@
 
 import { orderBetween, type MarkElement, type Notebook, type PageElement, type PageRecord, type QuestionLink, type TextElement } from '@/lib/notes/items';
 import { localToday } from '@/lib/habits/dates';
-import { mathToPlain } from '@/lib/notes/plain-math';
+import { layoutQuestionSheet, OPEN_QUESTION, svgSize, type SheetFormula, type SheetQuestion } from '@/lib/notes/question-sheet';
 import { listBook, listLibrary, livePages, putBook, putElements, putLibrary, type StoredBook, type StoredElement, type StoredLibrary } from './db';
 import { newId } from './doc';
 import { layoutText, textBox, TEXT_LINE_HEIGHT } from './ink';
-import { scheduleSync, syncNow } from './sync';
+import { keepNewFile, scheduleSync, syncNow } from './sync';
 
 // Doing the engineering question of the day in Notes. A question opens a page of its own in one
 // notebook kept for them, with the problem written at the top, and the page is tied to the
@@ -14,8 +14,12 @@ import { scheduleSync, syncNow } from './sync';
 // back to the question.
 
 export type DailyChoice = QuestionLink & { core: boolean };
-type PublicQuestion = { id: string; title: string; prompt: string };
-type DailyAnswer = { success: boolean; date: string; day: { core: PublicQuestion; bonus: PublicQuestion[] } | null; archive: { date: string; title: string }[] };
+type PublicQuestion = SheetQuestion & { id: string; figure?: string; formulas?: string[] };
+type DailyAnswer = {
+  success: boolean; date: string;
+  day: { core: PublicQuestion; bonus: PublicQuestion[]; formulas: (SheetFormula & { id: string })[] } | null;
+  archive: { date: string; title: string }[];
+};
 
 const NOTEBOOK_TITLE = 'Engineering questions';
 
@@ -28,8 +32,8 @@ async function fetchDay(date?: string) {
 
 async function fetchPractice(question: string) {
   const res = await fetch(`/api/daily/practice?today=${localToday()}&id=${encodeURIComponent(question)}`, { cache: 'no-store' });
-  const body = await res.json().catch(() => null) as { success: boolean; question?: PublicQuestion } | null;
-  return res.ok && body?.success && body.question ? body.question : null;
+  const body = await res.json().catch(() => null) as { success: boolean; question?: PublicQuestion; formulas?: SheetFormula[] } | null;
+  return res.ok && body?.success && body.question ? { question: body.question, formulas: body.formulas ?? [] } : null;
 }
 
 /** A day's questions, to tie a page to. */
@@ -76,12 +80,36 @@ function titleLink(heading: TextElement, link: QuestionLink): MarkElement {
  */
 export function missingTitleLinks(page: PageRecord, elements: PageElement[]) {
   const out: MarkElement[] = [];
+  const text = (element: PageElement): element is TextElement => element.kind === 'text' && !element.deleted;
   for (const link of page.questions ?? []) {
     if (elements.some((element) => linksToQuestion(element, link.id))) continue;
-    const heading = elements.find((element): element is TextElement => element.kind === 'text' && !element.deleted && element.text.startsWith(link.title));
+    const heading = elements.find((element) => text(element) && element.text.startsWith(link.title)) as TextElement | undefined;
     if (heading) out.push(titleLink(heading, link));
+    // Pages made on the server also have a visible "open this question" line to link.
+    const open = elements.find((element) => text(element) && element.text === OPEN_QUESTION) as TextElement | undefined;
+    if (open) out.push(titleLink(open, link));
   }
   return out;
+}
+
+/** A question's SVG figure as a PNG (Notes keeps only PNG and JPEG pictures), at twice its size to stay sharp. */
+async function figurePicture(svg: string) {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await img.decode();
+  const natural = svgSize(svg);
+  const w = img.naturalWidth || natural.w;
+  const h = img.naturalHeight || natural.h;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(w * 2);
+  canvas.height = Math.round(h * 2);
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('The figure wouldn’t draw.');
+  return { blob, w, h };
 }
 
 /** The pages, anywhere, already tied to a question. */
@@ -115,17 +143,21 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   if (already) return already;
 
   let title = fallbackTitle || 'Daily question';
-  let prompt = '';
+  let asked: PublicQuestion | null = null;
+  let formulas: SheetFormula[] = [];
   try {
     const { day } = await fetchDay(date);
     const found = day && [day.core, ...day.bonus].find((q) => q.id === question);
-    // Not one of the day's: a practice question, which Practice can open by itself.
-    const practice = found ? null : await fetchPractice(question);
-    const asked = found ?? practice;
-    if (asked) {
-      title = asked.title;
-      prompt = mathToPlain(asked.prompt);
+    if (found) {
+      asked = found;
+      const used = new Set(found.formulas ?? []);
+      formulas = day.formulas.filter((f) => used.has(f.id));
+    } else {
+      // Not one of the day's: a practice question, which Practice can open by itself.
+      const practice = await fetchPractice(question);
+      if (practice) ({ question: asked, formulas } = practice);
     }
+    if (asked) title = asked.title;
   } catch { /* Offline: the page still gets made, with the title it was given. */ }
 
   const notebook = await dailyNotebook();
@@ -139,18 +171,29 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   } as StoredBook;
   await putBook([page]);
 
-  const heading = { text: `${title}  ·  ${new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`, size: 13, bold: true };
-  const body = { text: prompt, size: 10.5, bold: false };
+  const dateLabel = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const sheet: SheetQuestion = asked ?? { title, prompt: '', parts: [] };
+  let picture: { file: string; w: number; h: number } | null = null;
+  if (asked?.figure) {
+    try {
+      const { blob, w, h } = await figurePicture(asked.figure);
+      picture = { file: newId(), w, h };
+      await keepNewFile(notebook, picture.file, blob);
+    } catch { picture = null; /* The page is still worth having without it. */ }
+  }
+  const measure = ({ text, w, size, bold }: { text: string; w: number; size: number; bold?: boolean }) =>
+    layoutText({ text, w, size, font: 'sans', bold }).length * size * TEXT_LINE_HEIGHT;
+  const link = { id: question, date, title };
   const elements: StoredElement[] = [];
-  let y = 40;
-  for (const part of [heading, body]) {
-    if (!part.text) continue;
-    const element = { id: newId(), kind: 'text', x: 40, y, w: 532, h: 0, rot: 0, text: part.text, size: part.size, color: '#1d1f27', font: 'sans', ...(part.bold ? { bold: true } : {}), createdAt: now, updatedAt: now } as PageElement & { kind: 'text' };
-    element.h = layoutText(element).length * element.size * TEXT_LINE_HEIGHT;
+  for (const box of layoutQuestionSheet(sheet, formulas, dateLabel, measure, picture ?? undefined)) {
+    if (box.kind === 'figure') {
+      elements.push({ id: newId(), kind: 'image', x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, file: picture!.file, createdAt: now, updatedAt: now, notebook, page: page.id, dirty: true } as StoredElement);
+      continue;
+    }
+    const element = { id: newId(), kind: 'text', x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, text: box.text, size: box.size, color: box.color, font: 'sans', ...(box.bold ? { bold: true } : {}), createdAt: now, updatedAt: now } as TextElement;
     elements.push({ ...element, notebook, page: page.id, dirty: true } as StoredElement);
-    // The title is the way back to the question.
-    if (part === heading) elements.push({ ...titleLink(element, { id: question, date, title }), notebook, page: page.id, dirty: true } as StoredElement);
-    y += element.h + 10;
+    // The title and the "open this question" line are the ways back to the question.
+    if (box.role === 'heading' || box.role === 'open') elements.push({ ...titleLink(element, link), notebook, page: page.id, dirty: true } as StoredElement);
   }
   if (elements.length) await putElements(elements);
   scheduleSync(500);
