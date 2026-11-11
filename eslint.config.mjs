@@ -28,6 +28,7 @@ const eslintConfig = defineConfig([
     ".next-build-*/**",
     "out/**",
     "build/**",
+    "public/reader-assets/**",
     "next-env.d.ts",
   ]),
 ]);

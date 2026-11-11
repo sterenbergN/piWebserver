@@ -10,7 +10,7 @@
 // The Notes app gets the same treatment with a cache of its own, so an update to one
 // never takes the other down with it, and so does the golf tracker (rounds are scored
 // where there's no signal; its data is in the page's own storage).
-const VERSION = 'v6';
+const VERSION = 'v7';
 const STATIC_CACHE = `static-${VERSION}`;
 const PAGE_CACHE = `pages-${VERSION}`;
 const READER_CACHE = 'reader-v1';

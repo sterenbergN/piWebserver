@@ -10,6 +10,7 @@ import { libraryFile as readerLibraryFile, notesFolder as readerNotesFolder, pro
 import { notesFolder } from '@/lib/notes/store';
 import { golfUserFile, listRoundSummaries, roundFile } from '@/lib/golf/store';
 import { studyFolder } from '@/lib/study/store';
+import { userMovieFile } from '@/lib/tools/movies-store';
 import { getWorkoutData } from '@/lib/workout/data';
 import { isPhotoId, photoPath } from '@/lib/workout/photos';
 import { SESSIONS_FILE, type SharedSession } from '@/lib/workout/shared-session';
@@ -144,6 +145,7 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     ...notebooks,
     { entry: 'golf/bag-and-settings.json', file: golfUserFile(userId) },
     ...golfRounds,
+    { entry: 'movies.json', file: userMovieFile(userId) },
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },
