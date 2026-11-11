@@ -1,6 +1,6 @@
 import { createController, type ControllerConfig, type ControllerInstance } from './controllers';
 import { rng } from './linalg';
-import { cleanParams, nominalDisturbances, pvSpan, valveCharacteristic, type Params, type ProcessDef, type Scenario } from './model';
+import { cleanParams, nominalDisturbances, pvSpan, valveCharacteristic, type Params, type ProcessDef, type ProcessId, type Scenario } from './model';
 
 // Time simulation of a closed loop. The plant (valve stem, process, transmitter
 // filter) is integrated with RK4 in small steps; the controller runs once per
@@ -56,6 +56,51 @@ export function findSteady(proc: ProcessDef, p: Params, d: Params, pv: number, p
 /** The full plant state at a steady state: [valve, ...process, reading, (secondary reading)]. */
 export function steadyState(proc: ProcessDef, s: ReturnType<typeof findSteady>) {
   return proc.secondary ? [s.valve, ...s.x, s.pv, s.pv2] : [s.valve, ...s.x, s.pv];
+}
+
+/** The state that is the PV itself, on the processes that have one. */
+const PV_STATE: Partial<Record<ProcessId, string>> = {
+  tank: 'h', surge: 'h', blend: 'c', feeder: 'F', maglev: 'x', stirred: 'T', jacket: 'T', hx: 'T', batch: 'T',
+};
+
+/**
+ * The plant's full state at a recorded moment, for drawing it. A run keeps the valve, the PV and
+ * the second measurement: the states those pin down are set from them, and the rest are taken as
+ * settled at that PV. Whatever it returns reproduces the recorded PV.
+ */
+export function stateAtSample(
+  proc: ProcessDef, p: Params, d: Params,
+  s: { pv: number; pvTrue: number; valve: number; pv2: number; pv2True: number; valve2: number },
+): number[] {
+  const ok = Number.isFinite;
+  const pv = ok(s.pvTrue) ? s.pvTrue : ok(s.pv) ? s.pv : proc.nominalPv;
+  const pv2 = ok(s.pv2True) ? s.pv2True : s.pv2;
+  const x = steadyState(proc, findSteady(proc, p, d, pv, ok(pv2) ? pv2 : undefined));
+  const n = proc.states.length;
+  const at = (key: string) => 1 + proc.states.findIndex((k) => k.key === key);
+  const set = (key: string, v: number) => { if (at(key) > 0 && ok(v)) x[at(key)] = v; };
+  if (ok(s.valve)) x[0] = s.valve;
+  if (ok(s.pv)) x[n + 1] = s.pv;
+  if (proc.secondary && ok(s.pv2)) x[n + 2] = s.pv2;
+  const own = PV_STATE[proc.id];
+  if (own) set(own, pv);
+  if (proc.id === 'mixing') {
+    set('T', pv);
+    set('h', pv2);
+    set('v2', s.valve2);
+  } else if (proc.id === 'servo') {
+    // Both speeds are measured, in rpm; the shaft's twist stays at its settled value.
+    set('wl', (pv * 2 * Math.PI) / 60);
+    set('wm', (pv2 * 2 * Math.PI) / 60);
+  } else if (proc.id === 'crane') {
+    // The PV is where the load is: the trolley is that less the swing.
+    const th = ok(pv2) ? (pv2 * Math.PI) / 180 : x[at('th')];
+    set('th', th);
+    set('x', pv - p.L * Math.sin(th));
+    set('v', 0);
+    set('om', 0);
+  }
+  return x;
 }
 
 /** Derivatives of the whole plant (valve + process + transmitter) for a valve signal. */

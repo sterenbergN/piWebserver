@@ -115,17 +115,22 @@ function makeScale(left: number, top: number, w: number, h: number, xmin: number
 }
 
 export default function Chart({
-  series, x, y, height = 200, hGuides = [], vGuides = [], bands = [], markers = [], legend = true, label, yPad = 0.06, sync,
+  series, x, y, height = 200, hGuides = [], vGuides = [], bands = [], markers = [], legend = true, label, yPad = 0.06, sync, parametric = false,
 }: {
   series: Series[]; x: Axis; y: Axis; height?: number; hGuides?: Guide[]; vGuides?: Guide[]; bands?: Band[]; markers?: Marker[];
   legend?: boolean; label: string; yPad?: number;
+  /**
+   * A curve in the plane (a Nyquist plot), not values along x: drawn to the same scale both ways,
+   * so a circle comes out round, and with no readout along x, which would mean nothing.
+   */
+  parametric?: boolean;
   /** Charts sharing an x axis share their hover position. */
   sync?: { value?: number | null; x?: number | null; set: (v: number | null) => void };
 }) {
   const [ref, width] = useWidth();
   const clip = `ll-clip${useId().replace(/[^\w-]/g, '')}`;
   const [ownHover, setOwnHover] = useState<number | null>(null);
-  const hover = sync ? (sync.x !== undefined ? sync.x : sync.value ?? null) : ownHover;
+  const hover = parametric ? null : sync ? (sync.x !== undefined ? sync.x : sync.value ?? null) : ownHover;
   const setHover = sync ? sync.set : setOwnHover;
   const m = { l: 52, r: 12, t: 10, b: x.label && !x.hideLabel ? 34 : 22 };
   const w = Math.max(60, width - m.l - m.r);
@@ -133,7 +138,7 @@ export default function Chart({
 
   const finiteOr = (v: number | undefined, fb: number) => (v !== undefined && Number.isFinite(v) ? v : fb);
 
-  const [xmin, xmax] = useMemo(() => {
+  const [xlo, xhi] = useMemo(() => {
     let [a, b] = extent(series, 'x', !!x.log);
     // No data yet (or a single point): show an empty range rather than NaN.
     if (!Number.isFinite(a) || !Number.isFinite(b)) [a, b] = x.log ? [1, 10] : [0, 1];
@@ -143,7 +148,7 @@ export default function Chart({
     if (!(max > min)) max = min + 1;
     return [min, max];
   }, [series, x.min, x.max, x.log]);
-  const [ymin, ymax] = useMemo(() => {
+  const [ylo, yhi] = useMemo(() => {
     let [a, b] = extent(series, 'y', !!y.log);
     for (const mk of markers) {
       if (Number.isFinite(mk.y)) { a = Math.min(a, mk.y); b = Math.max(b, mk.y); }
@@ -161,6 +166,19 @@ export default function Chart({
     if (!(max > min)) max = min + 1;
     return [min, max];
   }, [series, markers, hGuides, y.min, y.max, y.log, yPad]);
+
+  // Same scale both ways: whichever axis has room to spare is widened about its middle.
+  let xmin = xlo, xmax = xhi, ymin = ylo, ymax = yhi;
+  if (parametric && !x.log) {
+    const perX = w / (xhi - xlo), perY = h / (yhi - ylo);
+    if (perX > perY) {
+      const half = w / perY / 2, mid = (xlo + xhi) / 2;
+      [xmin, xmax] = [mid - half, mid + half];
+    } else {
+      const half = h / perX / 2, mid = (ylo + yhi) / 2;
+      [ymin, ymax] = [mid - half, mid + half];
+    }
+  }
 
   const { lx, px, py, clampY } = useMemo(() => makeScale(m.l, m.t, w, h, xmin, xmax, ymin, ymax, !!x.log), [m.l, m.t, w, h, xmin, xmax, ymin, ymax, x.log]);
 
@@ -233,7 +251,7 @@ export default function Chart({
         </div>
       )}
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}
-        onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+        onPointerMove={parametric ? undefined : onMove} onPointerLeave={() => setHover(null)}>
         <defs><clipPath id={clip}><rect x={m.l} y={m.t} width={w} height={h} /></clipPath></defs>
         <g className="ll-grid">
           {xTicks.map((t) => <line key={`x${t}`} x1={px(t)} x2={px(t)} y1={m.t} y2={m.t + h} />)}

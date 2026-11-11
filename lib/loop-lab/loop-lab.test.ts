@@ -8,7 +8,7 @@ import { PROCESSES, getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
 import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
 import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
-import { Loop, runAll, runScenario } from './sim';
+import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
@@ -1116,4 +1116,27 @@ test('block diagram → bench: the bench loop behaves like the diagram', () => {
   assert.ok(Math.abs(end - 60) < 0.2, `settles at ${end}`);
   const overshoot = ((peak - 60) / 10) * 100;
   assert.ok(overshoot > 0 && overshoot < 8, `overshoot ${overshoot} % (the diagram's is 2.9 %)`);
+});
+
+test('the state drawn for a moment of a run reproduces what was recorded there', () => {
+  for (const proc of PROCESSES) {
+    const params = defaultParams(proc);
+    // A test that leaves the plant as the setup describes it, so the drawing's parameters are the run's.
+    const scenario = proc.scenarios.find((sc) => !sc.events.some((e) => e.kind === 'param'))!;
+    const run = runScenario(proc, { params, controller: defaultController('pid', proc), seed: 1 }, scenario);
+    const tr = run.trace, n = proc.states.length, span = proc.pv.hi - proc.pv.lo;
+    for (const frac of [0.1, 0.35, 0.6, 0.9]) {
+      const i = Math.floor(frac * (tr.t.length - 1));
+      const d = Object.fromEntries(Object.entries(tr.dist).map(([k, v]) => [k, v[i]]));
+      const x = stateAtSample(proc, params, d, { pv: tr.pv[i], pvTrue: tr.pvTrue[i], valve: tr.valve[i], pv2: tr.pv2[i], pv2True: tr.pv2True[i], valve2: tr.valve2[i] });
+      const flow = valveCharacteristic(params.valveChar, x[0] / 100), states = x.slice(1, 1 + n);
+      assert.ok(x.every(Number.isFinite), `${proc.id}: ${x}`);
+      assert.ok(Math.abs(proc.pvOf(states, flow, d, params) - tr.pvTrue[i]) < 1e-6 * span, `${proc.id} at ${tr.t[i]} s: drawn ${proc.pvOf(states, flow, d, params)}, recorded ${tr.pvTrue[i]}`);
+      // Where the second measurement is a state of its own, that is drawn as recorded too.
+      if (proc.id === 'servo' || proc.id === 'crane' || proc.id === 'mixing') {
+        const sec = proc.secondary!, was = proc.mimo ? tr.pv2True[i] : tr.pv2[i];
+        assert.ok(Math.abs(sec.of(states, flow, d, params) - was) < 1e-6 * (sec.hi - sec.lo), `${proc.id}: ${sec.label} drawn ${sec.of(states, flow, d, params)}, recorded ${was}`);
+      }
+    }
+  }
 });

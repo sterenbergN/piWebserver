@@ -615,7 +615,7 @@ function BodeCharts({ proc, exp, pv, all, ops }: { proc: ProcessDef; exp: Experi
   return (
     <div>
       <div className="ll-chart-title">Bode: open loop L = C·G (selected point bold)</div>
-      <Chart label="Bode magnitude" series={mag} x={{ log: true, label: 'Frequency (rad/s)' }} y={{ label: 'Gain (dB)', min: yMinMag, max: 40 }}
+      <Chart label="Bode magnitude" series={mag} x={{ log: true, label: 'Frequency (rad/s)' }} y={{ label: 'Gain (dB)', min: yMinMag }}
         hGuides={[{ at: 0, label: '0 dB' }]} vGuides={v} height={200} />
       <Chart label="Bode phase" series={phase} legend={false} x={{ log: true, label: 'Frequency (rad/s)' }}
         y={{ label: 'Phase (°)', min: yMinPhase, max: yMaxPhase }}
@@ -710,8 +710,8 @@ export function NyquistPlot({ loop, margins }: { loop: BodePoint[]; margins: Mar
       <div className="ll-card-head">
         <div className="ll-chart-title">Nyquist &amp; Peak Sensitivity (Ms): L(jω) relative to −1</div>
         <div className="ll-seg is-small" role="group" aria-label="Nyquist zoom">
-          <button aria-pressed={zoom === 'zoom'} onClick={() => setZoom('zoom')}>Zoom (-2.5..1.5)</button>
-          <button aria-pressed={zoom === 'wide'} onClick={() => setZoom('wide')}>Wide (-5..3)</button>
+          <button aria-pressed={zoom === 'zoom'} onClick={() => setZoom('zoom')}>Near −1</button>
+          <button aria-pressed={zoom === 'wide'} onClick={() => setZoom('wide')}>Wide</button>
         </div>
       </div>
       <Chart
@@ -722,7 +722,8 @@ export function NyquistPlot({ loop, margins }: { loop: BodePoint[]; margins: Mar
         y={{ label: 'Imag L(jω)', min: yBounds.min, max: yBounds.max }}
         vGuides={[{ at: 0 }]}
         hGuides={[{ at: 0 }]}
-        height={220}
+        height={300}
+        parametric
       />
       <p className="ll-note">
         Critical point −1 + j0: the shortest distance from L(jω) to −1 is 1/Ms = {fmt(1 / margins.ms, 3)} (Ms = {fmt(margins.ms, 3)}). Staying outside the green circle keeps Ms ≤ 1.4; crossing inside the red circle means Ms &gt; 2.

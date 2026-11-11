@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import { MEASURES, SPREAD_NOTE } from '@/lib/loop-lab/measures';
 import { cleanParams, nominalDisturbances, type ProcessDef } from '@/lib/loop-lab/model';
-import { findSteady, steadyState, type Run, type Sample } from '@/lib/loop-lab/sim';
+import { stateAtSample, type Run, type Sample } from '@/lib/loop-lab/sim';
 import { BETTER, type Scorecard, type TestScore } from '@/lib/loop-lab/score';
 import Chart, { fmt, type Series } from './Chart';
 import { ProcessDrawing as SchematicsDrawing } from './Schematics';
@@ -16,52 +16,11 @@ export const dur = (s: number | null) => {
   return s < 120 ? `${fmt(s, 3)} s` : `${fmt(s / 60, 3)} min`;
 };
 
-/** A compact schematic of the process reflecting the scrubbed sample state. */
+/** The process drawn as it was at one moment of a run. */
 export function ProcessDrawing({ proc, params, sample, dist }: { proc: ProcessDef; params?: Record<string, number>; sample: Sample; dist: Record<string, number> }) {
   const p = cleanParams(proc, params ?? {});
   const d = { ...nominalDisturbances(proc), ...dist };
-  const pvVal = Number.isFinite(sample.pvTrue) ? sample.pvTrue : (Number.isFinite(sample.pv) ? sample.pv : proc.nominalPv);
-  const pv2Fallback = proc.mimo ? proc.mimo.nominal2 : pvVal;
-  const pv2Val = Number.isFinite(sample.pv2True) ? sample.pv2True : (Number.isFinite(sample.pv2) ? sample.pv2 : pv2Fallback);
-
-  const st = findSteady(proc, p, d, pvVal, Number.isFinite(pv2Val) ? pv2Val : undefined);
-  const x = steadyState(proc, st);
-  x[0] = sample.valve;
-
-  if (proc.id === 'flow') {
-    x[1] = sample.pv;
-  } else if (proc.id === 'tank' || proc.id === 'surge' || proc.id === 'drum') {
-    x[1] = pvVal;
-  } else if (proc.id === 'stirred' || proc.id === 'jacket' || proc.id === 'hx') {
-    x[2] = pvVal;
-  } else if (proc.id === 'maglev') {
-    x[1] = pvVal;
-    x[2] = 0;
-  } else if (proc.id === 'blend') {
-    x[1] = pvVal;
-  } else if (proc.id === 'feeder' || proc.id === 'batch') {
-    x[2] = pvVal;
-  } else if (proc.id === 'mixing') {
-    const u2 = 'u2' in st ? (st as { u2?: number }).u2 : undefined;
-    const v2 = Number.isFinite(sample.valve2) ? sample.valve2 : undefined;
-    x[1] = pv2Val;
-    x[2] = pvVal;
-    x[3] = v2 ?? u2 ?? d.v2 ?? 50;
-  } else if (proc.id === 'crane') {
-    x[1] = pvVal;
-    x[2] = 0;
-    x[3] = ((sample.pv2 ?? 0) * Math.PI) / 180;
-    x[4] = 0;
-  } else if (proc.id === 'servo') {
-    const wRad = (pvVal * 2 * Math.PI) / 60;
-    x[1] = wRad;
-    x[2] = 0;
-    x[3] = wRad;
-  } else if ((proc.id as string) === 'pfr' || proc.id === 'custom') {
-    x[x.length - 2] = pvVal;
-  }
-
-  return <SchematicsDrawing proc={proc} p={p} d={d} x={x} />;
+  return <SchematicsDrawing proc={proc} p={p} d={d} x={stateAtSample(proc, p, d, sample)} />;
 }
 
 /** Time axis in minutes for long runs. */
