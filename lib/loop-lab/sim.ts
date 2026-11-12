@@ -221,7 +221,8 @@ export class Loop {
 
   /** What controllers see besides SP and PV: the inner measurement and the disturbances. */
   private aux() {
-    return { pv2: this.lastMeas2, d: this.d, sp2: this.sp2 };
+    const m = this.proc.measuredParams;
+    return { pv2: this.lastMeas2, d: this.d, sp2: this.sp2, ...(m ? { p: Object.fromEntries(m.map((q) => [q.key, this.p[q.key]])) } : {}) };
   }
 
   freeze(duration: number) { this.frozenUntil = this.t + duration; }

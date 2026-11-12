@@ -144,6 +144,10 @@ export type ControllerConfig =
   | {
     kind: 'statefb'; design: 'poles' | 'lqr'; wn: number; zeta: number; qy: number; q2: number; qi: number;
     observer: 'poles' | 'kalman'; obsSpeed: number; qw: number; measure: 'pv' | 'pv2' | 'both'; integral: 'none' | 'error' | 'dist';
+    /** The PV transmitter's dead time in the observer's model (a second-order Padé), so it estimates the plant now. Missing: not modelled. */
+    delayModel?: boolean;
+    /** A measured plant parameter (ProcessDef.measuredParams) the design is redone for whenever it moves. Missing: designed once. */
+    scheduleOn?: string;
   }
   /**
    * Two loops on a 2×2 process: a PID on the PV and one on the second
@@ -189,7 +193,9 @@ export type ControllerInternals = {
 };
 
 /** Signals besides SP and PV: the inner measurement, the (measured) disturbances and, on a 2×2 process, the second setpoint. */
-export type ControllerAux = { pv2: number; d: Params; sp2?: number };
+export type ControllerAux = { pv2: number; d: Params; sp2?: number;
+  /** The plant parameters its instruments measure (ProcessDef.measuredParams), as they are now. */
+  p?: Params };
 
 export interface ControllerInstance {
   /** One cycle: setpoint and measurement (engineering units) → valve signal (%). */
@@ -339,6 +345,10 @@ export const BASELINE_ADRC: Partial<Record<ProcessId, Partial<Omit<Extract<Contr
 };
 
 export const BASELINE_STATEFB: Partial<Record<ProcessId, Partial<StateFbSettings>>> = {
+  // Long dead times: the observer carries the dead time and estimates the upset, so it predicts like a Smith
+  // predictor and corrects what reaches the scale (without the dead time in its model it does neither well).
+  feeder: { integral: 'dist', delayModel: true },
+  blend: { integral: 'dist', delayModel: true },
   crane: { design: 'poles', wn: 0.5, zeta: 0.8, qy: 100, q2: 100, integral: 'dist', observer: 'kalman', qw: 1, obsSpeed: 2, measure: 'both' },
   servo: { design: 'poles', wn: 40, zeta: 0.7, qy: 100, q2: 0, integral: 'dist', observer: 'kalman', qw: 3, obsSpeed: 2, measure: 'both' },
   maglev: { design: 'poles', wn: 60, zeta: 0.8, qy: 1000, integral: 'dist', observer: 'kalman', qw: 3, obsSpeed: 2, measure: 'pv' },
@@ -786,10 +796,23 @@ function createRatio(proc: ProcessDef, config: Extract<ControllerConfig, { kind:
  * design point, in %.
  */
 function createStateFb(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'statefb' }>, model: Params): ControllerInstance {
-  const des = designStateFb(proc, config, model);
-  const { n, integral } = des;
-  const extra = des.mode !== 'none';
+  let des = designStateFb(proc, config, model);
+  let { n, integral } = des;
+  let extra = des.mode !== 'none';
   let xc = new Array(n + (extra ? 1 : 0)).fill(0);
+  // Scheduled: the design for the measured parameter as it is now, redone when it moves more than 1 %. The new
+  // design's estimate starts settled at the present measurement, holding the output (as switching to auto does).
+  const key = config.scheduleOn;
+  let at = key ? model[key] : NaN;
+  const reschedule = (sp: number, pv: number, aux: ControllerAux) => {
+    const v = key ? aux.p?.[key] : undefined;
+    if (v === undefined || !Number.isFinite(v) || Math.abs(v - at) <= 0.01 * Math.abs(at)) return;
+    at = v;
+    des = designStateFb(proc, config, { ...model, [key!]: v });
+    ({ n, integral } = des);
+    extra = des.mode !== 'none';
+    settle(uPrev, sp, pv);
+  };
   let uPrev = des.u0;
   const sec = proc.secondary;
   const meas = (pv: number, aux: ControllerAux) => des.inputs.map((k) => (k === 'pv' ? toPct(proc, pv) - des.y0 : toPct2(sec!, aux.pv2) - des.y20));
@@ -802,8 +825,17 @@ function createStateFb(proc: ProcessDef, config: Extract<ControllerConfig, { kin
   const report = (r: number, pv: number) => {
     last = { ...blank, P: feedback(), I: intPart(), ff: des.Nr * r, e: r + des.y0 - toPct(proc, pv), pred: estimate() };
   };
+  /** Start from the steady state that matches the measurement, with the integral (or the disturbance estimate) holding the valve where it is. */
+  function settle(valve: number, sp: number, pv: number) {
+    const r = toPct(proc, sp) - des.y0, dy = toPct(proc, pv) - des.y0;
+    xc = [...des.Nx.map((v) => v * dy), ...(extra ? [0] : [])];
+    if (extra && des.ctrl.C[n]) xc[n] = (valve - des.u0 - feedback() - des.Nr * r) / des.ctrl.C[n];
+    uPrev = valve;
+    report(r, pv);
+  }
   return {
     step(sp, pv, aux) {
+      reschedule(sp, pv, aux);
       if (!des.ok) return uPrev;
       const r = toPct(proc, sp) - des.y0;
       const w = [uPrev - des.u0, ...meas(pv, aux), r];
@@ -820,14 +852,9 @@ function createStateFb(proc: ProcessDef, config: Extract<ControllerConfig, { kin
       report(r, pv);
       return uPrev;
     },
-    track(valve, sp, pv) {
-      // Start from the steady state that matches the measurement, with the integral (or the
-      // disturbance estimate) holding the valve where it is.
-      const r = toPct(proc, sp) - des.y0, dy = toPct(proc, pv) - des.y0;
-      xc = [...des.Nx.map((v) => v * dy), ...(extra ? [0] : [])];
-      if (extra && des.ctrl.C[n]) xc[n] = (valve - des.u0 - feedback() - des.Nr * r) / des.ctrl.C[n];
-      uPrev = valve;
-      report(r, pv);
+    track(valve, sp, pv, aux) {
+      reschedule(sp, pv, aux);
+      settle(valve, sp, pv);
     },
     internals: () => last,
   };
@@ -1486,6 +1513,8 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
       observer: r.observer === 'poles' || r.observer === 'kalman' ? r.observer : base.observer,
       obsSpeed: num(r.obsSpeed, 1, 20, base.obsSpeed), qw: num(r.qw, 1e-4, 1e4, base.qw), measure,
       integral: r.integral === 'none' || r.integral === 'error' || r.integral === 'dist' ? r.integral : base.integral,
+      ...(r.delayModel === true || (r.delayModel === undefined && base.delayModel) ? { delayModel: true } : {}),
+      ...(typeof r.scheduleOn === 'string' && proc.measuredParams?.some((q) => q.key === r.scheduleOn) ? { scheduleOn: r.scheduleOn } : {}),
     };
   }
   if (base.kind === 'smith') {

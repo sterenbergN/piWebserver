@@ -12,6 +12,7 @@ import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
 import { identifiedCurve, identifiedSetup } from './identified';
 import { diagnoseOscillation, steadyStretch } from './oscillation';
+import { SAVED_MAX, cleanSavedList, mergeSaved, withSaved } from './saved-diagrams';
 import { autoTune, feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { driftedPlants, runDrifted, worstOf } from './drift';
@@ -954,7 +955,8 @@ test('comparison: the verdicts agree with the engineering', () => {
   const overall = (id: string) => { const w = overallWinner(data[id])!; return [w.best.id, w.simplest.id]; };
   assert.equal(overall('flow')[1], 'pi', 'a flow loop needs nothing more than PI');
   assert.equal(overall('hx')[0], 'cascade-ff', 'three upsets on three paths');
-  assert.equal(overall('feeder')[0], 'smith', 'dead time');
+  assert.equal(overall('feeder')[0], 'statefb', 'dead time: a model that knows it (the observer carries the belt)');
+  assert.ok(overallOf(data.feeder, data.feeder.rows.find((r) => r.id === 'smith')!) < overallOf(data.feeder, data.feeder.rows.find((r) => r.id === 'pi')!), 'and the Smith predictor beats the PI');
   assert.equal(overall('mixing')[0], 'mpc', 'two interacting loops');
   assert.equal(overall('crane')[0], 'statefb', 'a swinging load');
   assert.equal(overall('maglev')[1], 'pid', 'unstable, but PID does it');
@@ -966,8 +968,6 @@ test('comparison: the verdicts agree with the engineering', () => {
   assert.equal(overall('tank')[1], 'pi', 'but a PI tuned for the top gets close');
   assert.equal(overall('batch')[0], 'statefb');
   assert.equal(overall('surge')[0], 'override', 'a slow PI that can run looser with the limit protected');
-  // Failing a test has a price: state feedback's rate changes don't make up for never correcting density upsets.
-  assert.equal(overall('feeder')[0], 'smith');
   // The steam allowance is a limit: only the override keeps to it.
   const hx = data.hx, limited = hx.tests.findIndex((t) => t.limit);
   assert.ok(limited >= 0);
@@ -1579,4 +1579,41 @@ test('compressor: a pressure PI surges on a trip; the anti-surge override with f
   assert.match(t.note, /tuned on the machine/);
   // The surge approach is a limit, not something an inner loop could set.
   assert.equal(isAvailable(proc, 'cascade'), false);
+});
+
+test('crane: state feedback scheduled on the rope length keeps the swing down where a fixed design lets it ring', () => {
+  const proc = getProcess('crane');
+  const params = defaultParams(proc);
+  const sf = defaultController('statefb', proc);
+  assert.ok(sf.kind === 'statefb');
+  const sched = cleanController({ ...sf, scheduleOn: 'L' }, proc);
+  assert.ok(sched.kind === 'statefb' && sched.scheduleOn === 'L');
+  // Not a parameter the crane measures: dropped.
+  const bogus = cleanController({ ...sf, scheduleOn: 'm' }, proc);
+  assert.ok(bogus.kind === 'statefb' && !('scheduleOn' in bogus));
+  const swingLeft = (c: ControllerConfig) => {
+    const r = runScenario(proc, { params, controller: c }, proc.scenarios.find((s) => s.id === 'very-long-rope')!);
+    return Math.max(...Array.from(r.trace.pv2).filter((_, i) => r.trace.t[i] > 90 && r.trace.t[i] < 118).map(Math.abs));
+  };
+  const fixed = swingLeft(sf), scheduled = swingLeft(sched);
+  assert.ok(fixed > 0.5 && scheduled < 0.2, `${fixed} vs ${scheduled}`);
+  // At the rope length it was set up for, scheduling changes nothing.
+  const at = (c: ControllerConfig) => Array.from(runScenario(proc, { params, controller: c }, proc.scenarios.find((s) => s.id === 'moves')!).trace.pvTrue);
+  assert.deepEqual(at(sched), at(sf));
+  assert.match(exportCode(proc, sched, params, 'scl'), /Scheduled on the rope length/);
+});
+
+test('saved diagrams: one per id, newest first, at most 30; a browser list merges into the account without duplicates', () => {
+  const m = BLOCK_TEMPLATES[0];
+  const e = (id: string, savedAt: number) => ({ id, name: id, savedAt, model: m });
+  const list = cleanSavedList([e('a', 1), e('b', 3), e('a', 2), { id: 'bad id!', name: 'x', savedAt: 1, model: m }, { id: 'c', name: 'c', model: { nodes: 'no' } }]);
+  assert.deepEqual(list.map((x) => x.id), ['b', 'a']);
+  assert.equal(list[1].savedAt, 1, 'the first of a repeated id is kept');
+  const many = cleanSavedList(Array.from({ length: 40 }, (_, i) => e(`d${i}`, i)));
+  assert.equal(many.length, SAVED_MAX);
+  assert.equal(many[0].id, 'd39');
+  // Saving over one replaces it and brings it to the top.
+  assert.deepEqual(withSaved(list, e('a', 9)).map((x) => [x.id, x.savedAt]), [['a', 9], ['b', 3]]);
+  // A browser's list brought into the account: what the account lacks, nothing twice.
+  assert.deepEqual(mergeSaved(list, [e('b', 100), e('z', 5)]).map((x) => x.id), ['z', 'b', 'a']);
 });

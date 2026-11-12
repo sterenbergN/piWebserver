@@ -1,5 +1,5 @@
 import type { ControllerConfig } from './controllers';
-import { linearizePlant, type PlantModel } from './linear';
+import { linearizePlant, pade2, type PlantModel } from './linear';
 import { c2d, cabs, eig, inverse, matMul, polyFromRoots, solve, transpose, zeros, type Complex, type Mat } from './linalg';
 import { cleanParams, toPct, toPct2, type Params, type ProcessDef } from './model';
 import { findSteady } from './sim';
@@ -353,16 +353,34 @@ function computeDesign(proc: ProcessDef, config: StateFbConfig, model: Params): 
   const Kfull = integral ? [...K, Kz] : K;
   const poles = eig(Afull.map((r, i) => r.map((v, j) => v - Bfull[i] * Kfull[j])));
 
-  // Observer, on the plant model plus the disturbance state if it estimates one.
-  const no = n + (dist ? 1 : 0);
-  const Ao: Mat = dist ? [...m.A.map((r, i) => [...r, bd![i]]), new Array(no).fill(0)] : m.A;
-  const Bo = dist ? [...m.B, 0] : m.B;
-  const Co = Cm.map((c) => (dist ? [...c, 0] : c));
+  // The transport delay is in the reading, not the plant. The observer's model carries it, as a second-order
+  // Padé on the PV reading, so it estimates the plant as it is now rather than as the transmitter shows it
+  // θ seconds late, and the regulator acts on that. (The secondary reading has no delay.)
+  const theta = config.delayModel && inputs.includes('pv') ? Math.max(0, model.txDelay ?? 0) : 0;
+  const nq = theta > 0 ? 2 : 0;
+  const pq = nq ? pade2(theta) : null;
+  const N = n + nq;
+  const pad = (row: number[]) => [...row, ...new Array(nq).fill(0)];
+  const Am: Mat = pq ? [...m.A.map(pad), ...[0, 1].map((k) => [...m.C.map((c) => pq.B[k] * c), ...pq.A[k]])] : m.A;
+  const Bm = pad(m.B);
+  /** The PV reading now, undelayed: what the estimate predicts. */
+  const Cnow = pad(m.C);
+  const Cmeas = inputs.map((k) => (k === 'pv' ? (pq ? [...m.C.map((c) => pq.D * c), ...pq.C] : m.C) : pad(m.C2!)));
+  const bdm = bd ? pad(bd) : null;
+  const Kfb = pad(K);
+
+  // Observer, on that model plus the disturbance state if it estimates one.
+  const no = N + (dist ? 1 : 0);
+  const Ao: Mat = dist ? [...Am.map((r, i) => [...r, bdm![i]]), new Array(no).fill(0)] : Am;
+  const Bo = dist ? [...Bm, 0] : Bm;
+  const Co = Cmeas.map((c) => (dist ? [...c, 0] : c));
   let L: Mat | null = null;
   if (config.observer === 'poles') {
     const sorted = [...poles].sort((a, b) => cabs(a) - cabs(b));
     let target = (integral ? sorted.slice(1) : sorted).map((p) => ({ re: p.re * config.obsSpeed, im: p.im * config.obsSpeed }));
     if (dist) target = [{ re: -cabs(sorted[0] ?? { re: 1, im: 0 }) * config.obsSpeed, im: 0 }, ...target];
+    // The delay model's own poles stay where they are: nothing faster can be seen through the delay.
+    if (pq) target = [...target, ...eig(pq.A)];
     // The dual problem: poles of A − L·C are those of Aᵀ − Cᵀ·Lᵀ.
     const Kd = placeMulti(transpose(Ao), transpose(Co), fixPairs(target));
     if (Kd) L = transpose(Kd);
@@ -374,10 +392,10 @@ function computeDesign(proc: ProcessDef, config: StateFbConfig, model: Params): 
     // disturbance drifting by qw % of its range per √s. The ratio sets how fast the estimate follows: about ω.
     const w = Math.max(1e-6, Math.min(...poles.filter((p) => p.re < 0).map(cabs)));
     const v = m.keep.indexOf(0);
-    const atValve = v >= 0 ? m.A.map((r, i) => (i === v ? 0 : r[v])) : m.B;
-    const dirs = [dist ? [...atValve, 0] : atValve, ...(dist ? [[...bd!, 0]] : [])];
+    const atValve = pad(v >= 0 ? m.A.map((r, i) => (i === v ? 0 : r[v])) : m.B);
+    const dirs = [dist ? [...atValve, 0] : atValve, ...(dist ? [[...bdm!, 0]] : [])];
     const Qw = Bo.map((_, i) => Bo.map((__, j) => config.qw * config.qw * dirs.reduce((acc, g) => acc + g[i] * g[j], 0) / (w * w) + (i === j ? 1e-9 : 0)));
-    if (dist) Qw[n][n] += config.qw * config.qw;
+    if (dist) Qw[N][N] += config.qw * config.qw;
     const X = care(transpose(Ao), transpose(Co), Qw, Rv);
     const Rvi = inverse(Rv);
     if (X && Rvi) L = matMul(matMul(X, transpose(Co)), Rvi.inv);
@@ -387,20 +405,20 @@ function computeDesign(proc: ProcessDef, config: StateFbConfig, model: Params): 
 
   // Reference (and disturbance) feedforward: the steady state and valve signal that hold the PV at r against
   // d̂, so a setpoint change doesn't wait for the integral and an estimated upset is cancelled.
-  const big = [...m.A.map((r, i) => [...r, m.B[i]]), [...m.C, 0]];
+  const big = [...Am.map((r, i) => [...r, Bm[i]]), [...Cnow, 0]];
   const sol = inverse(big);
-  const Nx = sol ? sol.inv.slice(0, n).map((r) => r[n]) : new Array(n).fill(0);
-  const Nu = sol ? sol.inv[n][n] : 0;
-  const Nr = Nu + K.reduce((acc, k, i) => acc + k * Nx[i], 0);
+  const Nx = sol ? sol.inv.slice(0, N).map((r) => r[N]) : new Array(N).fill(0);
+  const Nu = sol ? sol.inv[N][N] : 0;
+  const Nr = Nu + Kfb.reduce((acc, k, i) => acc + k * Nx[i], 0);
   let Nd = 0;
   if (dist && sol) {
     // x_ss and u_ss with −B_d·d̂ on the right-hand side.
-    const col = sol.inv.map((r) => -r.slice(0, n).reduce((acc, v, j) => acc + v * bd![j], 0));
-    Nd = col[n] + K.reduce((acc, k, i) => acc + k * col[i], 0);
+    const col = sol.inv.map((r) => -r.slice(0, N).reduce((acc, v, j) => acc + v * bdm![j], 0));
+    Nd = col[N] + Kfb.reduce((acc, k, i) => acc + k * col[i], 0);
   }
 
   // The controller as one linear system. States [x̂, (z or d̂)], inputs [applied output, measurements, setpoint].
-  const nc = n + (mode === 'none' ? 0 : 1), my = inputs.length;
+  const nc = N + (mode === 'none' ? 0 : 1), my = inputs.length;
   const pvIdx = inputs.indexOf('pv');
   const Aimp = zeros(nc), Bimp = zeros(nc, 1 + my + 1);
   for (let i = 0; i < no; i++) {
@@ -409,17 +427,18 @@ function computeDesign(proc: ProcessDef, config: StateFbConfig, model: Params): 
     Bimp[i][0] = Bo[i];
   }
   if (integral) {
-    if (pvIdx >= 0) Bimp[n][1 + pvIdx] = -1;
-    else for (let j = 0; j < n; j++) Aimp[n][j] = -m.C[j];
-    Bimp[n][1 + my] = 1;
+    if (pvIdx >= 0) Bimp[N][1 + pvIdx] = -1;
+    else for (let j = 0; j < N; j++) Aimp[N][j] = -Cnow[j];
+    Bimp[N][1 + my] = 1;
   }
-  const C = [...K.map((v) => -v), ...(integral ? [-Kz] : dist ? [Nd] : [])];
+  const C = [...Kfb.map((v) => -v), ...(integral ? [-Kz] : dist ? [Nd] : [])];
   // Closing u = C·xc + N_r·r round the observer's input gives the analysis form.
   const A = Aimp.map((r, i) => r.map((v, j) => v + Bimp[i][0] * C[j]));
   const By = Bimp.map((r) => r.slice(1, 1 + my));
   const Br = Bimp.map((r) => r[1 + my] + r[0] * Nr);
   const disc = c2d(Aimp, Bimp, model.Ts);
-  return { ...base, ok: true, open, poles, obsPoles, K, Kz, Nx, Nr, L, ctrl: { A, By, Br, C, Dr: Nr }, disc };
+  const delayStates = pq ? { states: [...base.states.slice(0, n), `${proc.tags.transmitter} dead time (model, 1)`, `${proc.tags.transmitter} dead time (model, 2)`, ...base.states.slice(n)], units: [...base.units.slice(0, n), '%', '%', ...base.units.slice(n)] } : {};
+  return { ...base, ...delayStates, n: N, Cpv: Cnow, ok: true, open, poles, obsPoles, K: Kfb, Kz, Nx, Nr, L, ctrl: { A, By, Br, C, Dr: Nr }, disc };
 }
 
 /** A pole list scaled from a conjugate-symmetric one stays symmetric; tidy rounding so polyFromRoots stays real. */

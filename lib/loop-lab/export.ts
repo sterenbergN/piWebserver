@@ -1268,7 +1268,15 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
     const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : config.kind === 'override' ? config.ff ?? [] : [];
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
-    if (config.kind === 'statefb') parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
+    if (config.kind === 'statefb') {
+      const q = config.scheduleOn ? proc.measuredParams?.find((x) => x.key === config.scheduleOn) : undefined;
+      if (q) {
+        parts.push(`// Scheduled on the ${q.label.toLowerCase()} (${q.tag}): this block holds the design at ${real(p[q.key])}. Export the setup at a handful of
+// ${q.label.toLowerCase()}s across the range and interpolate Phi, Gamma, Cout, Nx and Nr between them on ${q.tag} each cycle
+// (re-settling the estimate, as in manual, when it moves far): solving the design online is too much for a PLC cycle.`);
+      }
+      parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
+    }
     else if (config.kind === 'mpc') parts.push(mpcBlock(dialect, proc, designMpc(proc, config, p), 200));
     else if (config.kind === 'adrc') parts.push(adrcBlock(dialect, proc, config, designAdrc(config, p.Ts)));
     else if (config.kind === 'custom') parts.push(customBlock(dialect, config.code));

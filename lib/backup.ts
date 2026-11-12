@@ -153,7 +153,7 @@ const AREAS: [string, string[]][] = [
   ['Notebooks', ['.data/notes/']],
   ['Notebook PDFs, pictures & recordings', ['.data/notes-files/']],
   ['Recipes, meal plans & grocery lists', ['.data/recipes/', 'public/uploads/recipes/']],
-  ['Loop Lab notebooks', ['.data/loop-lab/']],
+  ['Loop Lab notebooks and saved diagrams', ['.data/loop-lab/']],
   ['Golf & disc golf rounds, courses and bags', ['.data/golf/', '.data/golf-saved-games']],
   ['Watched movies', ['.data/movies-watched']],
   ['Home page & resume', ['public/content/']],

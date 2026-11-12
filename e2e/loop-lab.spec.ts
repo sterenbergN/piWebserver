@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 // Loop Lab in a real browser. Each test says which setups it is for; the layout checks run in all.
 
-const PAGES = ['/loop-lab', '/loop-lab/bench', '/loop-lab/builder', '/loop-lab/cases', '/loop-lab/processes', '/loop-lab/controllers'];
+const PAGES = ['/loop-lab', '/loop-lab/bench', '/loop-lab/builder', '/loop-lab/cases', '/loop-lab/processes', '/loop-lab/controllers', '/loop-lab/cases/flow-stiction', '/loop-lab/cases/compressor-surge', '/loop-lab/bench?process=compressor'];
 const SECTIONS = ['Bench', 'Block Studio', 'Case Studies', 'Processes', 'Controllers'];
 
 /** Wait for the page's client code to have run (the nav is rendered by it). */
@@ -83,6 +83,14 @@ test.describe('bench', () => {
     await expect(undo).toBeDisabled();
   });
 
+  test('a cycling loop is diagnosed, and halving the gain tells stiction from tuning', async ({ page }) => {
+    await page.getByRole('tab', { name: /Sticky valve, steady running/ }).click();
+    await page.getByText('Is it cycling? Why?').click();
+    await expect(page.locator('.ll-osc .ll-verdict-line').first()).toContainText('sticky valve');
+    await page.getByRole('button', { name: 'Halve the gain and run this test again' }).click();
+    await expect(page.getByText(/still stiction, only slower|the stiction signature/)).toBeVisible();
+  });
+
   test('a test runs on drifted plants and says how they did', async ({ page }) => {
     await page.getByText('This test on drifted plants').click();
     await page.getByRole('button', { name: /Run on 8 drifted plants/ }).click();
@@ -154,6 +162,12 @@ test.describe('Block Studio', () => {
     expect(port.width).toBeGreaterThanOrEqual(26);
   });
 
+  test('the notch and the rate limiter are in the palette and run', async ({ page }, info) => {
+    test.skip(info.project.name !== 'desktop');
+    await freshStudio(page);
+    for (const name of ['Notch Filter', 'Rate Limiter']) await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
+  });
+
   test('saved diagrams and a shared link', async ({ page, context }, info) => {
     test.skip(info.project.name !== 'desktop');
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -163,6 +177,8 @@ test.describe('Block Studio', () => {
     await page.getByLabel('Save this diagram as').fill('Test cascade');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByText('Test cascade', { exact: true })).toBeVisible();
+    // Signed out here: they stay in this browser, and it says so.
+    await expect(page.getByText(/Saved in this browser/)).toBeVisible();
     await page.getByRole('button', { name: /Share/ }).click();
     await expect(page.getByText('Link copied')).toBeVisible();
     const link = await page.evaluate(() => navigator.clipboard.readText());

@@ -65,6 +65,7 @@ export const CRANE: ProcessDef = {
     return { valve: 50, x: [pv - p.L * Math.sin(th), 0, th, 0] };
   },
   fastest: (p) => Math.min(p.tauD, 0.2 * Math.sqrt(p.L / G)),
+  measuredParams: [{ key: 'L', label: 'Rope length', tag: 'ZT-702 (hoist encoder)' }],
   opPoints: [5, 20, 35],
   nominalPv: 20,
   uncertain: [
@@ -92,6 +93,11 @@ export const CRANE: ProcessDef = {
       id: 'long-rope', name: 'Load lowered further (model mismatch)', duration: 120, initialSp: 5,
       purpose: 'The same moves with the load hanging 13 m down instead of 8 m: the sway is 27 % slower than the controller was set up for.',
       events: [{ t: 0, kind: 'param', key: 'L', value: 13 }, { t: 2, kind: 'sp', value: 25 }, { t: 62, kind: 'sp', value: 10 }],
+    },
+    {
+      id: 'very-long-rope', name: 'Load lowered to 24 m', duration: 120, initialSp: 5,
+      purpose: 'The same moves with the load three times as far down as the controller was set up for: the swing takes 1.7 times as long. The hoist encoder reads the rope length; does the controller use it?',
+      events: [{ t: 0, kind: 'param', key: 'L', value: 24 }, { t: 2, kind: 'sp', value: 25 }, { t: 62, kind: 'sp', value: 10 }],
     },
     {
       id: 'noisy', name: 'Shaky sway camera', duration: 60, initialSp: 20,

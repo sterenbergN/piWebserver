@@ -325,7 +325,7 @@ If the model is right, the delayed model output cancels the real measurement's r
       'Then the Smith predictor: model from the bump test, PI tuned for the lag alone but no faster than about θ/2.',
       'Test with the belt slowed by 20 %: if the loop rings, make the PI inside the predictor slower, or tie the model dead time to the belt speed.',
     ],
-    verdict: String.raw`**A PI tuned with $\tau_c \approx \theta$ is the honest baseline. A Smith predictor roughly halves the IAE**, mostly on setpoint changes: it settles in about 55 s instead of 90 s. It does little for density upsets, which nothing can see until they reach the scale. State feedback does better still on rate changes, but as tuned on these tests it never finishes correcting a density upset.
+    verdict: String.raw`**A PI tuned with $\tau_c \approx \theta$ is the honest baseline. A Smith predictor roughly halves the IAE**, mostly on setpoint changes: it settles in about 55 s instead of 90 s. It does little for density upsets, which nothing can see until they reach the scale. State feedback whose observer carries the belt's dead time and estimates the upset does better again: a third of the Smith predictor's setpoint error, a quarter of its screw travel and better margins (Ms 1.8 against 2.0), though it recovers from density upsets more slowly (about 128 s against 94).
 
 It is worth it when rate changes are frequent and the dead time is known and stable. Tie the model's dead time to the belt speed if the belt can change speed. Tune the PI inside the predictor no faster than about half the dead time, or a slowed belt will make it ring.`,
   },
@@ -2048,10 +2048,28 @@ The robustness rows show it before you ever run the test: Ms 2.4 against 2.0.`,
         scenarios: ['mismatch', 'sp-steps'],
       },
       {
+        title: 'State feedback that knows the dead time',
+        body: String.raw`The Smith predictor is one way to give a controller the dead time. An observer is another: a model of the screw and belt, with the 30 s of belt in it as a dead time, kept in step with the scale reading. It estimates the feed rate as it is now, at the screw, and the density upset under way, and the controller acts on those (LQR on the PV, the upset cancelled where it acts).
+
+**Result.**
+- Rate changes settle in about 47 s, with a third of the Smith predictor's setpoint error (IAE 4.4 against 12.8).
+- The screw moves a quarter as much (valve travel 3.9 against 15.7), and the margins are better (Ms 1.8 against 2.0).
+- On the slowed belt it does better than the Smith predictor too (IAE 5.4 against 9.5).
+- Density upsets are where it gives ground: it recovers in about 128 s against the Smith predictor's 94.
+
+Without the dead time in its model the same observer does neither job: it waits for the scale like a PI, and estimating the upset makes it worse, not better. The switch is **Dead time in the model**, in the state feedback settings.`,
+        presets: [
+          { label: 'Smith (τc = θ/2)', controller: { kind: 'smith', pid: { ...DEFAULT_PID, Kc: 0.41, Ti: 5.5 }, model: { K: 0.8, tau: 5.5, theta: 32.8 } } },
+          { label: 'State feedback, dead time in the observer', controller: SF('feeder', { qy: 1, qi: 0.00107, qw: 0.1, measure: 'pv' }) },
+        ],
+        scenarios: ['sp-steps', 'density', 'mismatch'],
+      },
+      {
         title: 'Verdict',
-        body: String.raw`**A Smith predictor roughly halves the IAE on this loop, if the dead time is known.**
-- Calculate the model's dead time from the belt speed if the belt can change speed.
-- Tune the PI inside it for robustness ($\tau_c$ around half the dead time), not for the lag alone.
+        body: String.raw`**A model-based predictor: a Smith predictor, or state feedback whose observer knows the dead time.**
+- A Smith predictor roughly halves the PI's error, if the dead time is known. Tune the PI inside it for robustness ($\tau_c$ around half the dead time), not for the lag alone.
+- State feedback with the dead time in its observer does better again on rate changes and model error, and more gently, at the price of a full model and someone who can keep it.
+- Calculate the model's dead time from the belt speed if the belt can change speed. Both depend on it.
 - Keep the plain PI ($\tau_c = \theta$) as the fallback.
 
 If rate changes are rare and the material varies more than the rate does, the PI alone is nearly as good, and anyone can maintain it.`,
@@ -2442,11 +2460,21 @@ An observer is a model: what it doesn't know about, it explains with the wrong s
       },
       {
         title: 'A longer rope, and a missing camera',
-        body: String.raw`**The rope.** Lower the load to 13 m and the swing is 27 % slower than the controller was designed for. The moves still settle in 22 s without overshoot: pole placement with a well-damped target leaves room. Further than that, real systems schedule the design on the hoist encoder.
+        body: String.raw`**The rope.** Lower the load to 13 m and the swing is 27 % slower than the controller was designed for. The moves still settle in 22 s without overshoot: pole placement with a well-damped target leaves room. Further than that, it needs to know the length: the next step.
 
 **The camera.** Take it away (measure the load position only) and the wind can't be estimated at all: at rest, a wind with the trolley a little upwind looks exactly like no wind with the trolley where it should be. The design says so (choose "ZT-601 only" with "estimating the upset"). With an integral of the error instead it runs, but it overshoots 60 % on small moves. Observability is a property of the sensors, not of the controller.`,
         presets: [{ label: 'State feedback', controller: SF('crane') }, { label: 'Load position only, integral', controller: SF('crane', { integral: 'error', measure: 'pv' }) }],
         scenarios: ['long-rope', 'inching'],
+      },
+      {
+        title: 'Schedule the design on the rope length',
+        body: String.raw`Lower the load to 24 m, three times what the design assumed, and the margin runs out. The moves overshoot 4 %, take 29 s to settle, and the load is still swinging about 1° when it gets there.
+
+The hoist encoder (ZT-702) measures the rope length, so the controller doesn't have to assume it. Scheduled on it, the design is redone for the length as it is, the observer's model and the regulator's poles with it: 0.3 % overshoot, 23 s, and under 0.15° of swing left, as good as at the rope length it was set up for. The price is a busier drive (about 40 % more travel), because a long rope's slow swing needs more trolley motion to cancel.
+
+On the bench this is **Redesign for the rope length** in the state feedback settings. In a PLC, work out the designs offline at a handful of lengths and interpolate the gains between them: an LQR and a Kalman filter are too much to solve every cycle.`,
+        presets: [{ label: 'State feedback', controller: SF('crane') }, { label: 'Scheduled on the rope length', controller: SF('crane', { scheduleOn: 'L' }) }],
+        scenarios: ['very-long-rope', 'long-rope'],
       },
       {
         title: 'Verdict',

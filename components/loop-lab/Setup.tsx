@@ -523,6 +523,26 @@ function StateFbFields({ proc, params, config, onChange }: { proc: ProcessDef; p
           ? <NumField label="Upsets" value={config.qw} min={1e-4} onChange={set('qw')} title="How much the filter expects the plant to be pushed around, against the transmitter noise: bigger trusts the measurement more, follows faster and passes more noise" />
           : <NumField label="Speed" unit="× regulator" value={config.obsSpeed} min={1} max={20} step={0.5} onChange={set('obsSpeed')} title="Observer poles at this multiple of the regulator's" />}
       </div>
+      {cleanParams(proc, params).txDelay > 0 && config.measure !== 'pv2' && (
+        <label className="ll-check" style={{ marginTop: '0.4rem' }}>
+          <input type="checkbox" checked={!!config.delayModel} onChange={(e) => {
+            const next: typeof config = { ...config };
+            if (e.target.checked) next.delayModel = true; else delete next.delayModel;
+            onChange(next);
+          }} />
+          Dead time in the model: the observer carries the {fmt(cleanParams(proc, params).txDelay, 3)} s before {proc.tags.transmitter} reads, so it estimates the plant as it is now (a predictor, like a Smith predictor&apos;s). Pairs best with estimating the upset.
+        </label>
+      )}
+      {proc.measuredParams?.map((q) => (
+        <label key={q.key} className="ll-check" style={{ marginTop: '0.4rem' }}>
+          <input type="checkbox" checked={config.scheduleOn === q.key} onChange={(e) => {
+            const next: typeof config = { ...config };
+            if (e.target.checked) next.scheduleOn = q.key; else delete next.scheduleOn;
+            onChange(next);
+          }} />
+          Redesign for the {q.label.toLowerCase()}: read it from {q.tag} and redo the design whenever it moves. The table below is the design at the setup&apos;s value.
+        </label>
+      ))}
       <div className="ll-sub">What came out</div>
       {des.ok ? (
         <>

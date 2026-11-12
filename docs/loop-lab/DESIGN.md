@@ -666,3 +666,43 @@ Redone after the first version got crowded and hard to find your way around.
 - **Page tests** (`e2e/`, `npm run test:e2e`, Playwright 1.64.1 on desktop Chrome, a phone-sized touch Chrome and WebKit
   as an iPad): no Loop Lab page scrolls sideways, the nav, titles, the gain sliders, undo, drifted plants, dragging by mouse
   and touch, wiring by tap, saved diagrams and the share link. A real iPad is still the only proof for touch.
+
+## 22. Later additions (2026-11-12)
+
+- **Why a loop cycles** (`oscillation.ts`, "Is it cycling? Why?" under each test on the bench, on a CSV in Identify, and
+  in the case study `flow-stiction`): from the PV and the output alone. A cycle is a regular autocorrelation (Thornhill's
+  regularity, on the PV smoothed to see through noise) bigger than the noise. Stiction is two signs: the shapes (a PV that
+  spends more of each half-cycle near its peak than a sine, an output that spends less: flat-topped against ramping) and
+  the phase (Horch: the output-PV cross-correlation odd, a quarter-cycle apart). Both: a sticky valve; neither: a linear
+  cycle; one: mixed. An output creeping steadily against a still PV reads as stuck. Integral-dominated tuning cycles also
+  read odd on phase, which is why the shapes count too; on integrating loops only the phase is used. The bench adds the
+  field test, halve the gain and run again. The flow loop got a "sticky valve, steady running" test.
+- **An identified plant that follows several fits**: the custom process's hidden `curveN`/`cU…`/`cY…`/`cK…`/`cT…`
+  parameters hold up to five fits; the steady curve is a Hermite cubic through each fit's operating point with its gain as
+  the slope (Fritsch–Carlson eased where the gains disagree with the steps between the points), the time constant
+  interpolated on the PV. K and τ1 scale the curve about the middle fit, so drift tests and "model wrong" still apply.
+- **IMC-PID** tuning rule (Rivera, Morari and Skogestad), PI and PID. The IMC structure itself is the Smith predictor.
+- **Notch filter** on the PID (`notchHz`, `notchDepth`; width ζ 0.35), on the errors (so setpoint and measurement both):
+  Tustin with the centre prewarped in the controller, the continuous form in the analysis, in both PLC exports. The
+  flexible shaft's case study has the step: six times the roll PI's gain behind a notch at 11.6 Hz. Block Studio has
+  **Notch Filter** and **Rate Limiter** blocks; a notch in the loop goes to the bench as the PID's notch.
+- **Compressor near surge** (`compressor`): fixed speed, a recycle valve holding the discharge pressure, a curve that ends
+  in a surge line past which the flow reverses. The surge approach is a `limitOnly` secondary (no cascade on it). Overrides
+  can carry feedforward on the normal controller's output (`override.ff`). Auto-tune leaves an override on a `limitOnly`
+  measurement as commissioned: near the surge line the plant's gain changes several times over and a linear tuning cycles
+  there. In the comparison feedforward has the smallest errors overall but crosses the surge line in the setpoint test;
+  the scoring treats a broken limit as no better than the worst result, not as disqualifying.
+- **Dead time in a state-feedback observer** (`delayModel`): a second-order Padé on the PV reading in the observer's model.
+  On its own (with an integral of the error) it gains nothing; with the upset estimated it is what makes that mode work
+  with dead time. The feeder and the blend use it by default now: the feeder's state feedback beats its Smith predictor
+  (IAE 37 against 45, Ms 1.8 against 2.0), so the feeder's verdict changed.
+- **State feedback scheduled on a measured parameter** (`scheduleOn`, `ProcessDef.measuredParams`; the crane's rope length
+  from the hoist encoder): the design is redone when it moves more than 1 %, the estimate settled at the present
+  measurement. At 24 m (a new crane test) it leaves 0.1° of swing where the fixed design leaves 1°. The export holds one
+  design and says to interpolate designs at several lengths. Not built: scheduling the levitation gap on the setpoint, which
+  would mean switching designs at every step change.
+- **Drifted plants run in a Web Worker** (`drift.worker.ts`), with 24 plants as an option and a Stop button.
+- **Block Studio's saved diagrams follow the account** (`/api/loop-lab/diagrams`, `.data/loop-lab/diagrams/`), in the
+  browser when signed out, moved into the account at the first signed-in visit.
+- **A pre-commit hook** (`.githooks/pre-commit`, on with `git config core.hooksPath .githooks`): typecheck, lint of the
+  changed files, unit tests.

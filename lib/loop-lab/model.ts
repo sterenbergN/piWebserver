@@ -180,6 +180,11 @@ export type ProcessDef = {
    * held constant in the linear model, so it describes the plant at one stage of the run.
    */
   frozen?: number[];
+  /**
+   * Plant parameters a controller can read from an instrument and adapt to (a crane's rope length, from
+   * the hoist encoder): the controller sees their present value, not the one it was set up with.
+   */
+  measuredParams?: { key: string; label: string; tag: string }[];
   /** Operating points (PV values) to linearize and test at: low, nominal, high. */
   opPoints: number[];
   nominalPv: number;

@@ -23,6 +23,7 @@ import {
   type BlockWire,
   type ParamSpec,
 } from '@/lib/loop-lab/block-sim';
+import { SAVED_MAX, cleanSavedList, withSaved, type SavedDiagram } from '@/lib/loop-lab/saved-diagrams';
 
 const BLOCK_WIDTH = 152;
 const BLOCK_HEIGHT = 92;
@@ -30,25 +31,19 @@ const BLOCK_HEIGHT = 92;
 const UNDO_RUN_MS = 600;
 /** The diagram is kept in this browser between visits. */
 const STORAGE_KEY = 'loop-lab:block-studio';
-/** Diagrams kept under a name, in this browser. */
+/** Diagrams kept under a name: in the account when signed in, else in this browser (under this key). */
 const SAVED_KEY = 'loop-lab:block-studio:saved';
-const SAVED_MAX = 30;
-type SavedDiagram = { id: string; name: string; savedAt: number; model: BlockDiagramModel };
 
 function readSaved(): SavedDiagram[] {
   try {
-    const raw = JSON.parse(window.localStorage.getItem(SAVED_KEY) ?? '[]');
-    if (!Array.isArray(raw)) return [];
-    return raw.flatMap((e: unknown) => {
-      const o = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
-      const model = cleanDiagram(o.model);
-      if (!model || typeof o.id !== 'string' || typeof o.name !== 'string') return [];
-      return [{ id: o.id, name: o.name.slice(0, 80), savedAt: typeof o.savedAt === 'number' ? o.savedAt : 0, model }];
-    });
+    return cleanSavedList(JSON.parse(window.localStorage.getItem(SAVED_KEY) ?? '[]'));
   } catch {
     return [];
   }
 }
+
+/** Where the saved diagrams live: the signed-in account, or (signed out, or the server out of reach) this browser. */
+type SavedMode = 'loading' | 'account' | 'device' | 'error';
 
 const CATEGORY_COLORS: Record<BlockCategory, { border: string; bg: string; badge: string; text: string; lightBg: string }> = {
   sources: { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)', badge: '#0891b2', text: 'var(--ll-cat-sources)', lightBg: 'rgba(6, 182, 212, 0.06)' },
@@ -470,15 +465,72 @@ export default function BlockBuilder() {
   // then it just isn't kept.)
   const [restored, setRestored] = useState(false);
   const [savedList, setSavedList] = useState<SavedDiagram[]>([]);
+  const [savedMode, setSavedMode] = useState<SavedMode>('loading');
+  const savedModeRef = useRef<SavedMode>('loading');
   const [notice, setNotice] = useState('');
-  const writeSaved = useCallback((list: SavedDiagram[]) => {
-    setSavedList(list);
+  const writeDevice = useCallback((list: SavedDiagram[]) => {
     try {
       window.localStorage.setItem(SAVED_KEY, JSON.stringify(list));
     } catch {
       setNotice('This browser wouldn’t keep the saved diagrams (storage full or not allowed).');
     }
   }, []);
+  /** Send one change to the account; the list comes back as the server has it. */
+  const postSaved = useCallback(async (action: Record<string, unknown>) => {
+    try {
+      const res = await fetch('/api/loop-lab/diagrams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action) });
+      const body = await res.json();
+      if (!body.success) throw new Error(body.message || 'Save failed');
+      setSavedList(cleanSavedList(body.diagrams));
+      return true;
+    } catch (e) {
+      setNotice(`Couldn’t save to your account (${e instanceof Error ? e.message : 'no connection'}). Try again in a moment.`);
+      return false;
+    }
+  }, []);
+  /** Keep a diagram under its name, wherever the list lives. */
+  const keepSaved = useCallback((entry: SavedDiagram) => {
+    setSavedList((list) => withSaved(list, entry));
+    if (savedModeRef.current === 'account') void postSaved({ action: 'save', entry });
+    else writeDevice(withSaved(readSaved(), entry));
+  }, [postSaved, writeDevice]);
+  const dropSaved = useCallback((id: string) => {
+    setSavedList((list) => list.filter((x) => x.id !== id));
+    if (savedModeRef.current === 'account') void postSaved({ action: 'delete', id });
+    else writeDevice(readSaved().filter((x) => x.id !== id));
+  }, [postSaved, writeDevice]);
+  // Signed in: the account's list, with anything this browser kept while signed out moved into it.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/loop-lab/diagrams', { cache: 'no-store' });
+        if (!alive) return;
+        if (res.status === 401) {
+          savedModeRef.current = 'device';
+          setSavedMode('device');
+          setSavedList(readSaved());
+          return;
+        }
+        const body = await res.json();
+        if (!body.success) throw new Error(body.message);
+        savedModeRef.current = 'account';
+        setSavedMode('account');
+        const here = readSaved();
+        setSavedList(cleanSavedList(body.diagrams));
+        if (here.length && (await postSaved({ action: 'merge', entries: here }))) {
+          try { window.localStorage.removeItem(SAVED_KEY); } catch { /* not allowed: they stay here as well */ }
+          if (alive) setNotice(`Moved ${here.length} saved diagram${here.length > 1 ? 's' : ''} from this browser into your account.`);
+        }
+      } catch {
+        if (!alive) return;
+        savedModeRef.current = 'error';
+        setSavedMode('error');
+        setSavedList(readSaved());
+      }
+    })();
+    return () => { alive = false; };
+  }, [postSaved]);
   useEffect(() => {
     let left: BlockDiagramModel | null = null;
     try {
@@ -487,8 +539,6 @@ export default function BlockBuilder() {
     } catch {
       // Unreadable or not allowed: start from the template.
     }
-    const list = readSaved();
-    setSavedList(list);
     const code = new URLSearchParams(window.location.search).get('d');
     const shared = code ? decodeDiagram(code) : null;
     if (code) {
@@ -499,7 +549,7 @@ export default function BlockBuilder() {
       // What was being worked on here isn't lost to the link: it goes in the saved list first.
       if (left && JSON.stringify(left) !== JSON.stringify(shared) && JSON.stringify(left) !== JSON.stringify(BLOCK_TEMPLATES[0])) {
         const keep: SavedDiagram = { id: `s_${Date.now().toString(36)}`, name: `Before the shared link (${new Date().toLocaleString()})`, savedAt: Date.now(), model: left };
-        writeSaved([keep, ...list].slice(0, SAVED_MAX));
+        keepSaved(keep);
         setNotice('Opened the diagram from the link. What you had here is in Saved diagrams, as “Before the shared link”.');
       } else setNotice('Opened the diagram from the link.');
       modelRef.current = shared;
@@ -512,7 +562,7 @@ export default function BlockBuilder() {
       }
     }
     setRestored(true);
-  }, [writeSaved]);
+  }, [keepSaved]);
 
   // Sharing: a link that opens this diagram as it is now.
   const [shareUrl, setShareUrl] = useState('');
@@ -535,11 +585,11 @@ export default function BlockBuilder() {
     const name = saveName.trim() || model.name;
     const existing = savedList.find((e) => e.name === name);
     const entry: SavedDiagram = { id: existing?.id ?? `s_${Date.now().toString(36)}`, name, savedAt: Date.now(), model: { ...modelRef.current, name } };
-    const rest = savedList.filter((e) => e.id !== entry.id);
-    const list = [entry, ...rest];
-    writeSaved(list.slice(0, SAVED_MAX));
+    const full = !existing && savedList.length >= SAVED_MAX;
+    keepSaved(entry);
     setSaveName('');
-    setNotice(existing ? `Saved over “${name}”.` : list.length > SAVED_MAX ? `Saved “${name}”; the oldest saved diagram made room for it (${SAVED_MAX} at most).` : `Saved “${name}”.`);
+    const where = savedModeRef.current === 'account' ? ' to your account' : '';
+    setNotice(existing ? `Saved over “${name}”${where}.` : full ? `Saved “${name}”${where}; the oldest saved diagram made room for it (${SAVED_MAX} at most).` : `Saved “${name}”${where}.`);
   };
   const openSaved = (e: SavedDiagram) => {
     setModel(JSON.parse(JSON.stringify(e.model)), { step: true });
@@ -549,7 +599,7 @@ export default function BlockBuilder() {
   };
   const deleteSaved = (e: SavedDiagram) => {
     if (!window.confirm(`Delete the saved diagram “${e.name}”? This can’t be undone.`)) return;
-    writeSaved(savedList.filter((x) => x.id !== e.id));
+    dropSaved(e.id);
   };
   useEffect(() => {
     if (!restored) return;
@@ -953,8 +1003,14 @@ export default function BlockBuilder() {
             </label>
             <button type="submit" className="ll-btn is-small is-primary">Save</button>
           </form>
+          <p className="ll-small" style={{ margin: '0.5rem 0 0' }}>
+            {savedMode === 'account' && 'Saved to your account: they are here on any device you sign in on.'}
+            {savedMode === 'device' && <>Saved in this browser. <button className="ll-link" onClick={() => window.dispatchEvent(new Event('site:sign-in'))}>Sign in</button> to keep them in your account; what is here moves across when you do.</>}
+            {savedMode === 'error' && 'Couldn’t reach the server: showing (and saving to) what this browser has.'}
+            {savedMode === 'loading' && 'Loading…'}
+          </p>
           {savedList.length === 0 ? (
-            <p className="ll-small" style={{ margin: '0.6rem 0 0' }}>Nothing saved yet. Saved diagrams stay in this browser.</p>
+            <p className="ll-small" style={{ margin: '0.4rem 0 0' }}>Nothing saved yet.</p>
           ) : (
             <ul style={{ listStyle: 'none', margin: '0.6rem 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
               {savedList.map((e) => (
