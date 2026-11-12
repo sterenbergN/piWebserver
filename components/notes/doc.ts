@@ -287,7 +287,15 @@ export class NotebookDoc {
   }
 
   renameRecording(recording: RecordingRecord, title: string) {
-    this.apply([{ type: 'book', before: recording, after: { ...recording, title, updatedAt: Date.now() } }], false);
+    this.updateRecording(recording, { title });
+  }
+
+  /** Change a recording's name or summary, starting from the copy held now, not one from earlier. */
+  updateRecording(recording: RecordingRecord, changes: Partial<Pick<RecordingRecord, 'title' | 'summary'>>) {
+    const held = this.recordings.find((r) => r.id === recording.id) ?? recording;
+    const after: RecordingRecord = { ...held, ...changes, updatedAt: Date.now() };
+    if (!after.summary) delete after.summary;
+    this.apply([{ type: 'book', before: held, after }], false);
   }
 
   deleteRecording(recording: RecordingRecord) {

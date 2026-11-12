@@ -253,6 +253,17 @@ test('records from a device are checked before they are kept', () => {
   assert.equal(cleanElement(stroke('a', NOW + 99_999), NOW)?.updatedAt, NOW, 'a clock in the future does not win forever');
 });
 
+test('a recording keeps its page and summary, and drops ones that are not real', () => {
+  const recording = { id: 'r', kind: 'recording', file: 'f1', startedAt: 1, duration: 5000, title: 'Lecture', mime: 'audio/mp4', createdAt: 1, updatedAt: 2 };
+  const kept = cleanBookRecord({ ...recording, page: 'p1', summary: '  Key points  ' }, NOW) as { page?: string; summary?: string };
+  assert.equal(kept.page, 'p1');
+  assert.equal(kept.summary, 'Key points');
+  const dropped = cleanBookRecord({ ...recording, page: '../p', summary: '   ' }, NOW) as { page?: string; summary?: string };
+  assert.equal(dropped.page, undefined);
+  assert.equal(dropped.summary, undefined);
+  assert.equal((cleanBookRecord({ ...recording, summary: 'x'.repeat(60_000) }, NOW) as { summary?: string }).summary?.length, 50_000);
+});
+
 test('a deleted record loses its content but keeps its place in the history', () => {
   const gone = cleanElement({ ...stroke('a', 5), deleted: true, color: undefined }, NOW);
   assert.equal(gone?.deleted, true);

@@ -269,11 +269,32 @@ label.nt-menu-title .nt-input { margin-top: 0.45rem; font-weight: 400; }
 .nt-rec-dot { flex: none; width: 10px; height: 10px; margin-left: 0.25rem; border-radius: 50%; background: #f05a4f; animation: nt-pulse 1.4s ease-in-out infinite; }
 @keyframes nt-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .nt-rec-dot { animation: none; } }
+.nt-player.is-cut { padding-left: 0.75rem; }
+.nt-player.is-cut .nt-player-time { flex: 1; min-width: 0; white-space: normal; text-align: left; line-height: 1.3; cursor: pointer; }
 
 .nt-recordings { list-style: none; margin: 0.9rem 0 0; padding: 0; }
 .nt-recordings li { display: flex; align-items: center; gap: 0.25rem; min-height: 52px; border-bottom: 1px solid var(--nt-line); }
 .nt-recordings strong { display: block; font-size: 0.92rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nt-recordings small { font-size: 0.78rem; color: var(--nt-muted); font-variant-numeric: tabular-nums; }
+.nt-recordings { margin-top: 0.2rem; }
+.nt-label.nt-rec-day { margin: 1.2rem 0 0; }
+.nt-rec-open { flex: 1; min-width: 0; padding: 0.4rem 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.nt-rec-head { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-rec-section { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--nt-line); }
+.nt-text-link { padding: 0; border: 0; background: none; color: var(--nt-accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.nt-hint.nt-tight { margin-top: 0.3rem; }
+.nt-progress { width: 100%; height: 8px; accent-color: var(--nt-accent); }
+.nt-summary { margin: 0.8rem 0 1rem; padding: 0.8rem; border-radius: 12px; background: var(--nt-surface); box-shadow: 0 0 0 1px var(--nt-line); }
+.nt-summary-text { margin-top: 0.5rem; font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nt-row.nt-tight-row { margin-top: 0; }
+.nt-steps { margin: 0.6rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.9rem; font-size: 0.9rem; }
+.nt-steps li::marker { color: var(--nt-muted); font-weight: 600; }
+.nt-inline-hint { display: block; margin-top: 0.35rem; }
+.nt-transcript summary { cursor: pointer; font-weight: 600; font-size: 0.92rem; min-height: 36px; display: flex; align-items: center; }
+.nt-lines { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.6rem; }
+.nt-lines li { display: flex; align-items: flex-start; gap: 0.55rem; }
+.nt-lines .nt-chip { flex: none; min-height: 28px; padding: 0 0.5rem; font-size: 0.75rem; }
+.nt-lines p { margin: 0.15rem 0 0; font-size: 0.9rem; line-height: 1.5; overflow-wrap: anywhere; }
 
 .nt-gestures { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; font-size: 0.9rem; line-height: 1.35; }
 .nt-gestures strong { display: block; font-weight: 600; }

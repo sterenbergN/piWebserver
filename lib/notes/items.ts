@@ -68,7 +68,13 @@ export type PageRecord = Synced & {
 };
 
 /** Sound recorded while writing. Ink carries the time it was written, which is what links the two. */
-export type RecordingRecord = Synced & { kind: 'recording'; file: string; startedAt: number; duration: number; title: string; mime: string };
+export type RecordingRecord = Synced & {
+  kind: 'recording'; file: string; startedAt: number; duration: number; title: string; mime: string;
+  /** The page that was open when it started, to find a notebook's recordings by page. */
+  page?: string;
+  /** A summary of what was said, pasted back from the AI it was copied into. */
+  summary?: string;
+};
 
 export type BookRecord = PageRecord | RecordingRecord;
 
@@ -227,7 +233,11 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
   if (r.kind === 'recording') {
     if (common.deleted) return { ...common, kind: 'recording', file: '', startedAt: 0, duration: 0, title: '', mime: '' };
     if (!isId(r.file) || !finite(r.startedAt) || !finite(r.duration) || r.duration < 0) return null;
-    return { ...common, kind: 'recording', file: r.file, startedAt: r.startedAt, duration: r.duration, title: cleanName(r.title) || 'Recording', mime: cleanName(r.mime, 80) };
+    return {
+      ...common, kind: 'recording', file: r.file, startedAt: r.startedAt, duration: r.duration, title: cleanName(r.title) || 'Recording', mime: cleanName(r.mime, 80),
+      ...(isId(r.page) ? { page: r.page } : {}),
+      ...(typeof r.summary === 'string' && r.summary.trim() ? { summary: r.summary.trim().slice(0, MAX_TEXT_CHARS) } : {}),
+    };
   }
   // A deleted page is only a tombstone, with no place or size, and it still has to reach the other devices.
   if (r.kind === 'page' && common.deleted) return { ...common, kind: 'page', order: 0, w: 612, h: 792, template: 'blank', paper: '#ffffff' };

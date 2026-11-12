@@ -1,8 +1,8 @@
-import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { findLines, lineSvg, type InkLine, type InkStroke } from './handwriting';
+import { ensureModelFiles } from './model-files';
 
 // Reading handwriting on the server, with Microsoft's TrOCR model (the small one trained on
 // handwritten lines), run by ONNX Runtime. Nothing leaves the Pi. The model is fetched once, from
@@ -39,30 +39,8 @@ let queue: Promise<unknown> = Promise.resolve();
 
 export const readerStatus = () => ({ state, problem });
 
-async function sha256(file: string) {
-  return crypto.createHash('sha256').update(await fs.readFile(file)).digest('hex');
-}
-
 /** The model's files, fetched if they aren't here, and refused if they aren't exactly the expected ones. */
-async function ensureFiles() {
-  const folder = modelFolder();
-  for (const [name, hash] of Object.entries(FILES)) {
-    const target = path.join(folder, name);
-    if (await fs.stat(target).then((s) => s.size > 0, () => false)) continue;
-    state = 'downloading';
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    const res = await fetch(`https://huggingface.co/${REPO}/resolve/${REVISION}/${name}`);
-    if (!res.ok) throw new Error(`The handwriting model wouldn't download (${res.status}).`);
-    const temp = `${target}.download`;
-    await fs.writeFile(temp, Buffer.from(await res.arrayBuffer()));
-    if (hash && (await sha256(temp)) !== hash) {
-      await fs.rm(temp, { force: true });
-      throw new Error('The handwriting model that downloaded isn’t the expected one, so it wasn’t used.');
-    }
-    await fs.rename(temp, target);
-  }
-  return folder;
-}
+const ensureFiles = () => ensureModelFiles(REPO, REVISION, FILES, modelFolder(), 'handwriting', () => { state = 'downloading'; });
 
 function load() {
   if (!loading) {

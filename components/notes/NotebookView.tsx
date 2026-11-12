@@ -196,7 +196,7 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
 
   useWakeLock(phase === 'ready');
 
-  const recorder = useRecorder(notebook, doc, say);
+  const recorder = useRecorder(notebook, doc, say, () => doc.pages[pageIndex]?.id);
   const recorderRef = useRef(recorder);
   useEffect(() => { recorderRef.current = recorder; });
 
@@ -773,7 +773,17 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
               </>
             )}
             {panel === 'export' && <ExportPanel doc={doc} notebook={notebook} title={title} current={here} onClose={() => setPanel(null)} />}
-            {panel === 'recordings' && <RecordingsPanel doc={doc} notebook={notebook} recorder={recorder} onClose={() => setPanel(null)} />}
+            {panel === 'recordings' && (
+              <RecordingsPanel
+                doc={doc}
+                notebook={notebook}
+                title={title}
+                recorder={recorder}
+                currentPage={here?.id}
+                onGoToPage={(page) => { setPanel(null); engine?.goToPageId(page); }}
+                onClose={() => setPanel(null)}
+              />
+            )}
             {panel === 'add-page' && (
               <AddPagePanel
                 current={here}

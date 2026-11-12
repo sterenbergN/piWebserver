@@ -6,7 +6,7 @@ import { pipeline } from 'stream/promises';
 import { readJson, updateJson } from '@/lib/json-store';
 import {
   cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, isId, MAX_FILE_BYTES, mergeChanges, recordsSince, sniffFile, type BookRecord, type InkText, type PageRecord, type LibraryRecord, type PageElement, type RecordFile,
-  type StrokeElement,
+  type RecordingRecord, type StrokeElement,
 } from './items';
 
 // One folder per account, and inside it one file for the library, one for each notebook's
@@ -35,7 +35,9 @@ const bookPath = (userId: string, notebook: string) => path.join(bookFolder(user
 /** What was read in each page's handwriting. Written only here, never by a device. */
 const inkTextPath = (userId: string, notebook: string) => path.join(bookFolder(userId, notebook), 'inktext.json');
 const pagePath = (userId: string, notebook: string, page: string) => path.join(bookFolder(userId, notebook), 'pages', `${safe(page, 'page')}.json`);
-const storedFile = (userId: string, notebook: string, file: string) => path.join(filesFolder(userId), safe(notebook, 'notebook'), safe(file, 'file'));
+/** What was heard in each recording. Written only here, never by a device. */
+export const transcriptsPath = (userId: string, notebook: string) => path.join(bookFolder(userId, notebook), 'transcripts.json');
+export const storedFile = (userId: string, notebook: string, file: string) => path.join(filesFolder(userId), safe(notebook, 'notebook'), safe(file, 'file'));
 const incomingFile = (userId: string, notebook: string, file: string) => `${storedFile(userId, notebook, file)}.incoming`;
 
 const emptyLibrary = (): LibraryFile => ({ ...emptyFile<LibraryRecord>(), revs: {} });
@@ -100,7 +102,14 @@ export async function syncInkText(userId: string, notebook: string, cursor: numb
   return { cursor: file.seq, items };
 }
 
-export type TiedPage = { question: string; notebook: string; notebookTitle: string; page: string; pageNumber: number; title?: string };
+/** A recording in a notebook that's still here, or null. */
+export async function findRecording(userId: string, notebook: string, id: string): Promise<RecordingRecord | null> {
+  if (!(await hasNotebook(userId, notebook))) return null;
+  const record = (await readJson<Partial<BookFile>>(bookPath(userId, notebook), {})).items?.[id];
+  return record?.kind === 'recording' && !record.deleted ? record : null;
+}
+
+export type TiedPage ={ question: string; notebook: string; notebookTitle: string; page: string; pageNumber: number; title?: string };
 
 /** The pages tied to these daily questions, in every notebook not in the trash. */
 export async function pagesTiedTo(userId: string, questions: string[]) {

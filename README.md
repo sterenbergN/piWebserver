@@ -84,6 +84,16 @@ reports `aarch64`. `deploy.sh` checks Node's architecture and refuses to install
 on a 32-bit system. Everything else runs over SSH or from the admin page, so no
 screen or desktop is needed on the Pi.
 
+Notes turns recordings into text on the Pi, and needs ffmpeg to read them (iPad
+recordings are AAC, Chrome's are Opus). It isn't on Pi OS Lite by default:
+
+```sh
+sudo apt install ffmpeg
+```
+
+Without it, "Turn into text" says so and nothing else is affected. Set
+`FFMPEG_PATH` in `shared/env` to use an ffmpeg somewhere other than the PATH.
+
 ### Layout on the site USB
 
 ```
