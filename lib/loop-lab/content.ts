@@ -771,6 +771,62 @@ And, honestly: a slower heat-up, or dosing, which shrinks the problem itself.`,
 
 **No controller can cool harder than the jacket can.** A fast enough loop can hold a reactor that would run away on its own, but it then depends entirely on that loop and on cooling to spare. Once the reaction makes more heat than full cooling removes, the temperature goes, whatever the loop does. That is fixed in the recipe (dosing, slower heat-up, a cleaner jacket) and guarded by the safety system, not in the loop.`,
   },
+  compressor: {
+    mechanical: String.raw`A centrifugal compressor at fixed speed pushes gas into a discharge header, and the users downstream take what they need. A recycle line runs from the discharge, through a cooler, back to suction. **UV-1101** on that line spills back whatever the users don't take.
+
+**The curve.** At its speed the machine delivers less flow the higher the pressure ratio it works against. Near the top the curve is nearly flat: a little more pressure costs a lot of flow.
+
+$$Q_{map}(R) = Q_s + (Q_{max} - Q_s)\sqrt{\frac{R_{pk} - R}{R_{pk} - R_{ch}}}$$
+
+**Surge.** Past the peak ratio $R_{pk}$ there is no flow the machine can deliver. The flow collapses and reverses, the header empties back through it, the pressure drops, the machine picks up again, and it does it all again a few seconds later. Each surge cycle slams the thrust bearing and heats the gas; a few of them can wreck the machine. The surge line is a limit, not a target.
+
+**The header.**
+
+$$\tau_c\frac{dQ}{dt} = Q_{map}(P_d/P_s) - Q, \qquad C\frac{dP_d}{dt} = Q - F_{rec} - Q_d, \qquad F_{rec} = K_{rec}\,f\,\sqrt{P_d - P_s}$$
+
+With 60 kNm³/h·s per bar of header capacity, a user tripping 40 kNm³/h raises the pressure about 0.7 bar a second. At 6 bar the machine sits 0.6 bar below its peak.
+
+**What is measured.**
+- **PT-1101:** discharge pressure.
+- **FT-1101** on the compressor suction, giving the surge approach $S = Q_s/Q$ (100 % is the surge line), calculated as **UY-1101**.
+- **FT-1102:** the users' flow.`,
+    control: String.raw`**One valve, two jobs.** The recycle valve holds the discharge pressure (performance control, PIC-1101) and keeps the flow through the machine above surge (anti-surge, UIC-1101). Both open the valve when they need to, so a **high selector** gives it to whichever wants it more open.
+
+**The pressure loop** is ordinary: at 6 bar, valve to pressure has a gain of about −0.6 % of span per % and a lag of about 2.4 s. A PI with $K_c = 1.1$ and $T_i = 4.3$ s holds it smoothly, at the right speed for the users.
+
+**Why that isn't enough.** When a user trips, the pressure has to rise before the pressure loop does anything, and on the flat top of the curve the flow falls fast while the pressure barely moves. The machine reaches its surge line 1.4 s after the trip. A pressure loop fast enough to stop that would be far too fast for normal running.
+
+**The anti-surge controller** works on the surge approach, with its setpoint on a control line short of the surge line (80 % here). It sits idle, pinned shut, until the approach passes the line, then wins the selector and opens the valve fast ($K_c = 8$, $T_i = 1$ s). Tracking (external reset) keeps the idle controller ready, as in any override.
+
+**Why that isn't enough either.** The approach only rises once the flow has fallen, near the top of the curve, which leaves almost no time. It catches a slow drift (a setpoint pushed too high) but not a trip.
+
+**Feedforward.** FT-1102 sees a trip the instant it happens. Every kNm³/h the users stop taking has to go round the recycle: 0.75 % of valve per kNm³/h at 6 bar, the same gain **Design from model** finds. Added to the pressure controller's output before the selector, it opens the valve as the trip happens, not two seconds later.`,
+    automation: String.raw`**Tags.**
+- Performance: PT-1101 → PIC-1101.
+- Anti-surge: FT-1101 → UY-1101 (surge approach) → UIC-1101.
+- The higher of the two outputs → UV-1101; feedforward from FT-1102 into PIC-1101's output.
+
+**Siemens.** Two PID instances (the exported LL_PID, or **PID_Compact**), a MAX on their outputs, and the external-reset inputs so the controller not selected follows the valve. Calculate the surge approach in SCL from FT-1101 (corrected for suction pressure and temperature in a real installation). Call everything from a fast cyclic interrupt: 100 ms or less. Anti-surge needs a fast valve too: a full stroke in a second or two, with a positioner and a booster.
+
+**In practice.** Dedicated anti-surge controllers add what a plain PI doesn't have: a recycle trip line past the control line where the valve steps open without waiting for the PI, a faster opening than closing rate, and surge counting. They are often in their own controller or safety PLC, beside the process PLC rather than in it.
+
+**Operator view.** Show the operating point on the compressor map: the surge line, the control line, and where the machine is now. Show which controller has the valve.`,
+    commissioning: [
+      'Get the surge line from the vendor\'s map, then check it with a careful surge test at a few speeds (slowly closing the recycle until the first sign of surge, with the vendor present).',
+      'Stroke UV-1101: full travel in a second or two, both ways, and no overshoot. A slow anti-surge valve makes everything else pointless.',
+      'Set the control line with margin for the flow measurement\'s error and the valve\'s delay (8–15 % in flow is typical).',
+      'Tune the pressure loop with the recycle in its normal range, then the anti-surge controller by stepping its setpoint towards the operating point.',
+      'Commission the feedforward from FT-1102 with a deliberate drop in the users\' flow: the pressure should barely move.',
+      'Test a user trip from full load before handing over, with a surge detector watching.',
+    ],
+    verdict: String.raw`**An anti-surge override on the surge approach, plus feedforward from the users' flow, on top of an ordinary pressure PI.**
+- A pressure PI alone walks the machine into surge both on a trip and when its setpoint is pushed past the curve.
+- The override holds a setpoint past the curve short of the surge line, but reacts too late to a trip on the flat top of the curve.
+- Feedforward catches the trip (the approach peaks well short of the line) but does nothing for a setpoint that is simply too high.
+- Together they keep the machine out of surge in every test. That is the shape of real anti-surge systems: a control line, a fast controller, and something that acts before the flow falls.
+
+On **Compare controllers**, feedforward has the smallest errors overall, but it crosses the surge line when the setpoint is pushed too high. Only the override keeps to the line in every test. Here the line matters more than the error.`,
+  },
   custom: {
     mechanical: String.raw`This process has no physics behind it: it is a model identified from a trend of your own loop (the **Identify** tab).
 
@@ -1525,6 +1581,15 @@ const ML = (extra: Partial<Extract<ControllerConfig, { kind: 'multiloop' }>> = {
 /** The mixing tank's MPC, with changes. */
 const MPC = (extra: Partial<Extract<ControllerConfig, { kind: 'mpc' }>> = {}): ControllerConfig => ({ ...(defaultController('mpc', getProcess('mixing')) as Extract<ControllerConfig, { kind: 'mpc' }>), ...extra });
 /** The process's checked state-feedback design, with changes. */
+/** The compressor's pressure PI, with feedforward from the users' flow, and the anti-surge override with or without it. */
+const CMP_PI: ControllerConfig = { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1.1, Ti: 4.3, invert: true } };
+const CMP_FF: ControllerConfig = { kind: 'feedforward', pid: { ...DEFAULT_PID, Kc: 1.1, Ti: 4.3, invert: true }, ff: [{ from: 'Qd', gain: -0.75, lead: 0, lag: 0 }] };
+const CMP_OVR = (ff: boolean): ControllerConfig => {
+  const c = defaultController('override', getProcess('compressor')) as Extract<ControllerConfig, { kind: 'override' }>;
+  const rest = { ...c };
+  delete rest.ff;
+  return ff ? c : rest;
+};
 const SF = (id: ProcessId, extra: Partial<Extract<ControllerConfig, { kind: 'statefb' }>> = {}): ControllerConfig => ({ ...(defaultController('statefb', getProcess(id)) as Extract<ControllerConfig, { kind: 'statefb' }>), ...extra });
 
 export const CASES: CaseStudy[] = [
@@ -2067,6 +2132,59 @@ The same pattern fits any level with inverse response or a dominant measured flo
     ],
   },
   {
+    id: 'compressor-surge',
+    process: 'compressor',
+    title: 'The compressor: a limit you must never cross',
+    question: 'One recycle valve holds the discharge pressure and keeps the compressor out of surge. What does it take to do both, when a user can trip at any moment?',
+    family: 'escalation',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`A fixed-speed compressor feeds a header at 6 bar. The users take about 45 kNm³/h; the recycle valve UV-1101 spills back the rest of the 55 the machine delivers at that pressure. The **mechanical view** has the curve: the higher the pressure, the less flow, and past 6.6 bar none at all. There the machine surges, with the flow reversing and the bearings taking a beating every few seconds. The surge approach (surge flow over actual flow) is 54 % at 6 bar. At 100 % the machine is on its surge line.`,
+      },
+      {
+        title: 'Baseline: a pressure PI',
+        body: String.raw`A PI on the discharge pressure ($K_c = 1.1$, $T_i = 4.3$ s, more valve → less pressure, so it acts in reverse). Setpoint changes and ordinary demand changes are fine. Then the biggest user trips: 40 kNm³/h less taken in an instant. The pressure climbs 0.7 bar a second, and on the flat top of the curve the flow falls away. 1.4 s after the trip the machine is past its surge line (the approach reaches 204 %), and it surges again before the pressure loop has caught up.`,
+        presets: [{ label: 'Pressure PI', controller: CMP_PI }],
+        scenarios: ['demand', 'user-trip'],
+      },
+      {
+        title: 'Tune the pressure loop harder?',
+        body: String.raw`Four times the gain and half the integral time keep this trip out of surge (the approach peaks at 70 %), but the loop is now far too lively for the users: a 0.9 bar setpoint step down undershoots to 5.1 bar. And it does nothing for the other way to surge. When demand is low and someone asks for more pressure than the machine can make, the PI closes the recycle and walks the machine onto its surge line at any speed.`,
+        presets: [{ label: 'Pressure PI', controller: CMP_PI }, { label: 'Pressure PI, tuned hard', controller: { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 5, Ti: 2, invert: true } } }],
+        scenarios: ['sp-steps', 'user-trip', 'sp-into-surge'],
+      },
+      {
+        title: 'An anti-surge override',
+        body: String.raw`Add a second controller, UIC-1101, on the surge approach, with its setpoint on a control line at 80 % and fast tuning ($K_c = 8$, $T_i = 1$ s). Normally it is pinned shut and the pressure PI has the valve; a high selector hands the valve to whichever wants it more open. With the setpoint ramped up to 6.8 bar, the pressure PI closes the recycle, the approach reaches the control line, and the override takes over: the approach peaks at 87 % and the pressure settles at 6.59 bar, where the machine is safe, short of what was asked.
+
+The trip still surges (190 %). The approach only rises once the flow has fallen, on the flat top of the curve, which leaves a fraction of a second. A wider margin only buys a little: the measurement is always late.`,
+        presets: [{ label: 'Pressure PI', controller: CMP_PI }, { label: 'Anti-surge override', controller: CMP_OVR(false) }],
+        scenarios: ['sp-into-surge', 'user-trip'],
+      },
+      {
+        title: 'Feedforward from the users\' flow',
+        body: String.raw`FT-1102 measures the users' flow, so the trip is known the moment it happens. Every kNm³/h the users stop taking has to go round the recycle: 0.75 % of valve per kNm³/h at 6 bar. **Design from model** finds the same gain, with a lead and lag that nearly cancel. Added to the pressure PI's output, it opens the valve as the trip happens. The pressure barely moves (6.2 bar at most) and the approach peaks at 58 %. But a setpoint past the curve still surges: feedforward knows about the users, not about the curve.`,
+        presets: [{ label: 'Pressure PI', controller: CMP_PI }, { label: 'Pressure PI + feedforward', controller: CMP_FF }],
+        scenarios: ['user-trip', 'sp-into-surge'],
+      },
+      {
+        title: 'Both together',
+        body: String.raw`The override with the feedforward on the pressure controller's output: the trip is caught as it happens, and the control line holds against anything slower. No surge in any test: the approach peaks at 58 % on the trip and at 87 % with the setpoint pushed too high.`,
+        presets: [{ label: 'Anti-surge override', controller: CMP_OVR(false) }, { label: 'Override + feedforward', controller: CMP_OVR(true) }],
+        scenarios: ['user-trip', 'sp-into-surge'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**An ordinary pressure PI, an anti-surge controller on a control line through a high selector, and feedforward for the upsets you can measure.**
+- The pressure loop is tuned for the users. Tuning it to protect the machine makes it worse at its job and still misses half the cases.
+- The override guards the limit against anything slow enough for a measurement to catch.
+- Feedforward handles the trip, which no feedback on this machine is fast enough for.
+- Real anti-surge systems add a recycle trip line (a step open past the control line), faster opening than closing, and a fast valve. The principle is the one here: act before the flow falls.`,
+      },
+    ],
+  },
+  {
     id: 'hx-steam-limit',
     process: 'hx',
     title: 'The heat exchanger: a steam limit, and why trackers matter',
@@ -2362,6 +2480,14 @@ The cost is real: a model (rope length, drive response), a sway camera, a design
         scenarios: ['speed-steps'],
       },
       {
+        title: 'A notch filter on the PI',
+        body: String.raw`If the PI is all you can change, cut its gain at the resonance and nowhere else: a notch at 11.6 Hz, 20 dB deep and about an octave wide, on what the PI sees. The peak the PI had to stay under is gone, and the roll PI takes six times the gain ($K_c = 5$, $T_i = 0.2$ s) with a gain margin of 12.9 dB (8.1 dB before). The load step now costs 1.9 % instead of 9.8 %, and the roll is back within 0.4 s.
+
+The costs: the notch adds phase lag below its centre, so the speed steps overshoot by 15 % (4 % before). And it is tuned to one frequency. With the roll twice as heavy the resonance moves down to 10.8 Hz, still inside the notch, and the loop holds (17 % overshoot); a resonance that moves further walks out of it. The notch is in the PID's settings on the bench, under "Weights, filters, limits, anti-windup".`,
+        presets: [{ label: 'PI on the roll', controller: PI(0.8, 1) }, { label: 'PI ×6 behind a notch', controller: PI(5, 0.2, { notchHz: 11.6, notchDepth: 20 }) }],
+        scenarios: ['speed-steps', 'load-torque', 'heavy-roll'],
+      },
+      {
         title: 'What drives do: cascade on the motor speed',
         body: String.raw`Close a fast PI on the **motor** encoder ($K_c = 5$, $T_i = 0.05$ s), and the roll loop around it. Seen from the motor the phase never drops below −180°, so the inner loop can be fast. Speed changes now settle in about a second and the load step costs 0.7 %. That is the standard answer, and with a notch filter at the resonance on the torque reference it is usually enough.
 
@@ -2380,7 +2506,7 @@ Speed changes settle in 0.35 s, three times faster than this cascade, with the s
       {
         title: 'Verdict',
         body: String.raw`**A cascade on the motor speed, plus a notch filter if it rings, for most machines. State feedback with an observer where the torque has to stay smooth.**
-- The PI on the roll alone is hopeless: the resonance caps it at 1.5 rad/s.
+- The PI on the roll alone is hopeless: the resonance caps it at 1.5 rad/s. A notch at the resonance buys six times the gain, at the cost of overshoot and a resonance that mustn't move far.
 - The cascade is what every drive offers: robust, understood, tuned by technicians.
 - State feedback is three times faster than the cascade above, but that cascade is gently tuned: tuned as hard, it settles just as fast (see **Compare controllers**) with more than twice the torque activity. State feedback's edge is smoother torque, and it needs the drive train's model (both inertias, the stiffness) and someone who can maintain it. Drives that offer observer-based "active damping" have packaged exactly this.`,
       },

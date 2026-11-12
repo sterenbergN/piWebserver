@@ -33,7 +33,58 @@ export type PidParams = {
   outHi: number;
   /** Reverse the control direction (for a process where more output lowers the PV). */
   invert: boolean;
+  /**
+   * A notch filter on what the PID sees (setpoint and measurement alike), centred on a
+   * mechanical resonance, Hz. Missing or 0: none.
+   */
+  notchHz?: number;
+  /** How deep the notch cuts at its centre, dB (default 20). */
+  notchDepth?: number;
 };
+
+/** The notch's width: damping of its poles (about an octave wide at 3 dB). */
+export const NOTCH_WIDTH = 0.35;
+/** The notch's zeros' damping: the poles' less the depth. */
+export const notchZeta = (depthDb: number) => NOTCH_WIDTH * 10 ** (-Math.max(0, depthDb) / 20);
+export const hasNotch = (p: { notchHz?: number }) => (p.notchHz ?? 0) > 0;
+
+/**
+ * A notch on a signal: (s² + 2ζ_z ω s + ω²)/(s² + 2ζ_p ω s + ω²), by Tustin with the centre
+ * frequency prewarped, so the cut lands where it is meant to. Passes steady values unchanged.
+ */
+export class NotchFilter {
+  private b: number[];
+  private a: number[];
+  private x1 = 0; private x2 = 0; private y1 = 0; private y2 = 0;
+  private started = false;
+  /** Off when the centre is at or past the Nyquist frequency of the controller cycle. */
+  readonly active: boolean;
+  constructor(hz: number, depthDb: number, Ts: number) {
+    const w = 2 * Math.PI * hz;
+    this.active = w > 0 && (w * Ts) / 2 < Math.PI / 2 * 0.98;
+    const K = this.active ? w / Math.tan((w * Ts) / 2) : 1;
+    const zz = notchZeta(depthDb), zp = NOTCH_WIDTH;
+    const a0 = K * K + 2 * zp * w * K + w * w;
+    this.b = [K * K + 2 * zz * w * K + w * w, 2 * (w * w - K * K), K * K - 2 * zz * w * K + w * w].map((v) => v / a0);
+    this.a = [1, 2 * (w * w - K * K) / a0, (K * K - 2 * zp * w * K + w * w) / a0];
+  }
+  step(x: number) {
+    if (!this.active) return x;
+    if (!this.started) this.reset(x);
+    const y = this.b[0] * x + this.b[1] * this.x1 + this.b[2] * this.x2 - this.a[1] * this.y1 - this.a[2] * this.y2;
+    this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y;
+    return y;
+  }
+  /** Settle at a steady value. */
+  reset(x: number) {
+    this.x1 = this.x2 = this.y1 = this.y2 = x;
+    this.started = true;
+  }
+  /** Settle at whatever comes next (bumpless). */
+  restart() {
+    this.started = false;
+  }
+}
 
 export type SchedulePoint = { at: number; Kc: number; Ti: number; Td: number };
 
@@ -71,7 +122,9 @@ export type ControllerConfig =
    * tracking, the controller not in charge follows the one that is (external
    * reset feedback), so it can take over without unwinding first.
    */
-  | { kind: 'override'; pid: PidParams; ovr: PidParams; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min'; tracking: boolean }
+  | { kind: 'override'; pid: PidParams; ovr: PidParams; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min'; tracking: boolean;
+      /** Feedforward added to the normal controller's output, before the selector (missing: none). */
+      ff?: FeedforwardTerm[] }
   /**
    * Ratio: the controlled flow's setpoint is R × the wild flow. R is fixed, or
    * set by an outer (trim) controller on the main PV over [rLo, rHi].
@@ -195,7 +248,7 @@ export function isAvailable(proc: ProcessDef, kind: ControllerKind) {
   if (kind === 'multiloop' || kind === 'mpc') return false;
   if (kind === 'characterized') return proc.characterizations.length > 0;
   if (kind === 'feedforward') return measuredDisturbances(proc).length > 0;
-  if (kind === 'cascade') return !!proc.secondary && !proc.secondary.measureOnly;
+  if (kind === 'cascade') return !!proc.secondary && !proc.secondary.measureOnly && !proc.secondary.limitOnly;
   if (kind === 'ratio') return !!proc.secondary && !!proc.ratio;
   return true;
 }
@@ -225,6 +278,7 @@ export const BASELINE_PI: Record<ProcessId, Pick<PidParams, 'Kc' | 'Ti' | 'Td'> 
   mixing: { Kc: 3.26, Ti: 360, Td: 0 },
   // Commissioned on a quiet batch (most of the reactant gone): SIMC there. Fine late in a batch, fragile early.
   batch: { Kc: 0.88, Ti: 252, Td: 0 },
+  compressor: { Kc: 1.1, Ti: 4.3, Td: 0, invert: true },
   custom: { Kc: 1.2, Ti: 20, Td: 0 },
 };
 
@@ -243,6 +297,8 @@ export const BASELINE_FF: Partial<Record<ProcessId, { valve: FeedforwardTerm[]; 
   drum: { valve: [{ from: 'qs', gain: 1, lead: 0, lag: 0 }], inner: [{ from: 'qs', gain: 0.833, lead: 0, lag: 0 }] },
   // Diluent flow into concentrate: the ratio 0.25 (1 % of the valve, 1 % of FT-802's 0–25 m³/h, per m³/h).
   blend: { valve: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }], inner: [{ from: 'FA', gain: 1, lead: 0, lag: 0 }] },
+  // Users' flow into the recycle valve: 1 kNm³/h less taken, 0.75 % more recycle (at 6 bar).
+  compressor: { valve: [{ from: 'Qd', gain: -0.75, lead: 0, lag: 0 }], inner: [] },
 };
 
 /** Starting Smith predictors: the model from the plant's step response, the PI tuned for the undelayed part. */
@@ -251,10 +307,13 @@ export const BASELINE_SMITH: Partial<Record<ProcessId, { pid: Pick<PidParams, 'K
 };
 
 /** Starting overrides: a high-level limit on the surge tank, tight, above the averaging controller. */
-export const BASELINE_OVERRIDE: Partial<Record<ProcessId, { pid: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; ovr: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min' }>> = {
+export const BASELINE_OVERRIDE: Partial<Record<ProcessId, { pid: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; ovr: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> & Partial<PidParams>; on: 'pv' | 'pv2'; limit: number; select: 'max' | 'min'; ff?: FeedforwardTerm[] }>> = {
   surge: { pid: { Kc: 0.73, Ti: 3920, Td: 0, invert: true }, ovr: { Kc: 6, Ti: 450, Td: 0, invert: true }, on: 'pv', limit: 2.4, select: 'max' },
   // The boiler can spare 1000 kg/h: a steam flow limiter under the temperature controller.
   hx: { pid: { Kc: 1.5, Ti: 29, Td: 0 }, ovr: { Kc: 1.8, Ti: 2.25, Td: 0 }, on: 'pv2', limit: 1000, select: 'min' },
+  // Anti-surge: a fast controller on the surge approach, high-selected over the pressure controller, which
+  // also opens the recycle the moment the users' flow falls (feedforward from FT-1102).
+  compressor: { pid: { Kc: 1.1, Ti: 4.3, Td: 0, invert: true }, ovr: { Kc: 8, Ti: 1, Td: 0, invert: true }, on: 'pv2', limit: 80, select: 'max', ff: [{ from: 'Qd', gain: -0.75, lead: 0, lag: 0 }] },
 };
 /** Starting ratio loops: the flow slave, and a slow trim on the analyzer. */
 export const BASELINE_RATIO: Partial<Record<ProcessId, { inner: Pick<PidParams, 'Kc' | 'Ti' | 'Td'>; outer: Pick<PidParams, 'Kc' | 'Ti' | 'Td'> }>> = {
@@ -311,6 +370,7 @@ export function defaultController(kind: ControllerKind, proc: ProcessDef): Contr
     return {
       kind, pid: { ...pid, ...b?.pid }, ovr: { ...pid, ...(b?.ovr ?? { Kc: pid.Kc * 3, Ti: pid.Ti }) }, on: b?.on ?? 'pv',
       limit: b?.limit ?? Math.min(proc.pv.hi, proc.nominalPv + 0.3 * span), select: b?.select ?? (pid.invert ? 'max' : 'min'), tracking: true,
+      ...(b?.ff ? { ff: b.ff } : {}),
     };
   }
   if (kind === 'ratio') {
@@ -400,10 +460,15 @@ class PidCore {
   I = 0;
   D = 0;
   private prevEd: number | null = null;
-  constructor(private pid: PidParams, private Ts: number) {}
+  /** The notch on each error (they are made of the setpoint and measurement, so it filters both). */
+  private notches: NotchFilter[] | null;
+  constructor(private pid: PidParams, private Ts: number) {
+    this.notches = hasNotch(pid) ? [0, 1, 2].map(() => new NotchFilter(pid.notchHz!, pid.notchDepth ?? 20, Ts)) : null;
+  }
 
-  run(e: number, eP: number, eD: number, g: { Kc: number; Ti: number; Td: number }, bias: number, hold = 0) {
+  run(e0: number, eP0: number, eD0: number, g: { Kc: number; Ti: number; Td: number }, bias: number, hold = 0) {
     const { pid, Ts } = this;
+    const [e, eP, eD] = this.notches ? [e0, eP0, eD0].map((v, i) => this.notches![i].step(v)) : [e0, eP0, eD0];
     const P = g.Kc * eP;
     if (g.Td > 0 && this.prevEd !== null) {
       const Tf = Math.max(pid.a * g.Td, 1e-6);
@@ -427,6 +492,7 @@ class PidCore {
 
   /** Preload so the output equals `u` right now. */
   track(u: number, eP: number, eD: number, Kc: number, bias: number) {
+    this.notches?.forEach((f) => f.restart());
     this.D = 0;
     this.prevEd = eD;
     this.I = clamp(u, this.pid.outLo, this.pid.outHi) - Kc * eP - bias;
@@ -625,6 +691,7 @@ function createSmith(proc: ProcessDef, config: Extract<ControllerConfig, { kind:
  */
 function createOverride(proc: ProcessDef, config: Extract<ControllerConfig, { kind: 'override' }>, Ts: number): ControllerInstance {
   const main = new PidCore(config.pid, Ts), ovr = new PidCore(config.ovr, Ts);
+  const ffs = (config.ff ?? []).map((t) => new FeedforwardCore(t, Ts));
   const gM = { Kc: config.pid.Kc, Ti: config.pid.Ti, Td: config.pid.Td };
   const gO = { Kc: config.ovr.Kc, Ti: config.ovr.Ti, Td: config.ovr.Td };
   let last: ControllerInternals = { P: 0, I: 0, D: 0, ...gM, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
@@ -639,19 +706,22 @@ function createOverride(proc: ProcessDef, config: Extract<ControllerConfig, { ki
     step(sp, pv, aux) {
       const y = toPct(proc, pv);
       const a = errorsOf(config.pid, toPct(proc, sp), y), b = ovrErrors(pv, aux);
-      const ra = main.run(a.e, a.eP, a.eD, gM, 0), rb = ovr.run(b.e, b.eP, b.eD, gO, 0);
+      const ff = ffs.reduce((s, f) => s + f.step(aux.d), 0);
+      const ra = main.run(a.e, a.eP, a.eD, gM, ff), rb = ovr.run(b.e, b.eP, b.eD, gO, 0);
       const u = pick(ra.u, rb.u);
       const overridden = u !== ra.u;
       if (config.tracking) {
-        const idle = overridden ? main : ovr, Ti = overridden ? gM.Ti : gO.Ti;
-        idle.I += (Ts / Math.max(Ti > 0 ? Ti : Ts, Ts)) * (u - idle.I);
+        // The idle controller's output follows the valve: its integral, less any feedforward it adds.
+        const idle = overridden ? main : ovr, Ti = overridden ? gM.Ti : gO.Ti, bias = overridden ? ff : 0;
+        idle.I += (Ts / Math.max(Ti > 0 ? Ti : Ts, Ts)) * (u - bias - idle.I);
       }
-      last = { P: ra.P, I: main.I, D: main.D, ...gM, e: a.e, sp2: NaN, ff: 0, pred: NaN, alt: rb.u };
+      last = { P: ra.P, I: main.I, D: main.D, ...gM, e: a.e, sp2: NaN, ff, pred: NaN, alt: rb.u };
       return u;
     },
     track(valve, sp, pv, aux) {
       const y = toPct(proc, pv);
       const a = errorsOf(config.pid, toPct(proc, sp), y), b = ovrErrors(pv, aux);
+      ffs.forEach((f) => f.reset(aux.d));
       main.track(valve, a.eP, a.eD, gM.Kc, 0);
       // The override starts wherever it would be in auto: its integral on the valve signal if it tracks, else pinned at its far limit.
       ovr.track(config.select === 'max' ? config.ovr.outLo : config.ovr.outHi, b.eP, b.eD, gO.Kc, 0);
@@ -1162,7 +1232,7 @@ export function linearControllerAt(proc: ProcessDef, config: ControllerConfig, m
   if (config.kind === 'adaptive') return { kind: 'single', pid: adaptiveAt(proc, config, model, pv), ff: [] };
   if (config.kind === 'cascade') return { kind: 'cascade', outer: { ...config.outer, slope: 1 }, inner: { ...config.inner, slope: 1 }, ff: config.ff };
   if (config.kind === 'smith') return { kind: 'smith', pid: { ...config.pid, slope: 1 }, model: config.model, ff: [] };
-  if (config.kind === 'override') return { kind: 'single', pid: { ...config.pid, slope: 1 }, ff: [] };
+  if (config.kind === 'override') return { kind: 'single', pid: { ...config.pid, slope: 1 }, ff: config.ff ?? [] };
   if (config.kind === 'ratio') {
     // Linearized, R × F_A is a cascade: the trim's output scaled by F_A, plus feedforward R₀ from F_A.
     const r = ratioAt(proc, config, model, valve);
@@ -1328,7 +1398,15 @@ function cleanPid(raw: unknown, fallback: PidParams): PidParams {
     outLo,
     outHi: num(r.outHi, outLo + 1, 200, Math.max(fallback.outHi, outLo + 1)),
     invert: typeof r.invert === 'boolean' ? r.invert : fallback.invert,
+    ...notchOf(r),
   };
+}
+
+/** The notch settings, only when there is one (so setups without one stay as they were). */
+function notchOf(r: Record<string, unknown>) {
+  const hz = num(r.notchHz, 0, 1e4, 0);
+  if (!(hz > 0)) return {};
+  return { notchHz: hz, notchDepth: num(r.notchDepth, 3, 60, 20) };
 }
 
 function cleanFeedforward(raw: unknown, proc: ProcessDef): FeedforwardTerm[] {
@@ -1361,6 +1439,7 @@ export function cleanController(raw: unknown, proc: ProcessDef): ControllerConfi
       kind: 'override', pid: pidC, ovr: cleanPid(r.ovr, base.ovr), on,
       limit: num(r.limit, range.lo, range.hi, on === base.on ? base.limit : (range.lo + range.hi) / 2), select: r.select === 'min' || r.select === 'max' ? r.select : base.select,
       tracking: typeof r.tracking === 'boolean' ? r.tracking : base.tracking,
+      ...(() => { const ff = cleanFeedforward(r.ff, proc); return ff.length ? { ff } : {}; })(),
     };
   }
   if (base.kind === 'ratio') {
@@ -1449,7 +1528,7 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
   if (config.kind === 'feedforward') return `PID ${pidText(config.pid)}${config.ff.length ? ` + ${ffText(config.ff)}` : ''}`;
   if (config.kind === 'override') {
     const on = config.on === 'pv2' && proc.secondary ? proc.secondary : proc.pv;
-    return `Override: ${pidText(config.pid)}; ${config.select === 'max' ? 'high' : 'low'} select with a ${on.label.toLowerCase()} limit at ${fmt(config.limit)} ${on.unit} (${pidText(config.ovr)})${config.tracking ? ', tracking' : ', no tracking'}`;
+    return `Override: ${pidText(config.pid)}${config.ff?.length ? ` + ${ffText(config.ff)}` : ''}; ${config.select === 'max' ? 'high' : 'low'} select with a ${on.label.toLowerCase()} limit at ${fmt(config.limit)} ${on.unit} (${pidText(config.ovr)})${config.tracking ? ', tracking' : ', no tracking'}`;
   }
   if (config.kind === 'ratio') {
     return `Ratio ${proc.secondary?.label.toLowerCase() ?? 'flow'} / ${proc.disturbances.find((d) => d.key === proc.ratio?.from)?.label.toLowerCase() ?? 'wild flow'}: ${config.trim ? `trimmed over ${fmt(config.rLo)}–${fmt(config.rHi)} (${pidText(config.outer)})` : `fixed at ${fmt(config.ratio)}`}; flow loop ${pidText(config.inner)}`;

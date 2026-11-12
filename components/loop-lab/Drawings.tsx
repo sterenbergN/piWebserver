@@ -155,7 +155,7 @@ export type ProbeKey = 'sp' | 'cv' | 'valve' | 'pvTrue' | 'pv' | 'P' | 'I' | 'D'
 const PROCESS_SUB: Record<string, string> = {
   flow: 'Q = K_v f √Δp', tank: 'A(h)·ḣ = Qᵢₙ − Qₒᵤₜ', stirred: 'jacket → vessel', hx: 'wall → fluid',
   surge: 'A·ḣ = Qᵢₙ − Qₒᵤₜ', feeder: 'screw, then belt', drum: 'inventory + swell − shrink', jacket: 'split: cool | heat', blend: 'V·ċ = F_B·c_B − F·c',
-  mixing: 'A·ḣ = F_h + F_c − F_out', batch: 'A → B + heat', crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', custom: 'K e^(−θs)/(τs + 1)',
+  mixing: 'A·ḣ = F_h + F_c − F_out', batch: 'A → B + heat', crane: 'trolley + pendulum', servo: 'two masses, a spring', maglev: 'mẍ = mg − F(i, x)', compressor: 'C·Ṗ = Q − F_rec − Q_d', custom: 'K e^(−θs)/(τs + 1)',
 };
 
 export function Block({ x, y, w, h, title, sub, ctrl }: { x: number; y: number; w: number; h: number; title: string; sub?: string; ctrl?: boolean }) {

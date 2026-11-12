@@ -291,6 +291,10 @@ function getBlockMathNotation(node: BlockNode): string {
       return 'u₁ × u₂';
     case 'saturation':
       return `[${node.params.lo ?? 0}, ${node.params.hi ?? 100}]`;
+    case 'notch':
+      return `Notch at ${node.params.f ?? 0.5} Hz`;
+    case 'ratelimit':
+      return `|dy/dt| ≤ rate`;
     case 'selector':
       return node.params.mode === 1 ? 'MAX(u₁, u₂)' : 'MIN(u₁, u₂)';
     case 'scope':
@@ -329,6 +333,10 @@ function getBlockParamPills(node: BlockNode): string[] {
       return [`amp=${p.amp ?? 5}`, `ω=${p.freq ?? 0.5}`];
     case 'saturation':
       return [`[${p.lo ?? 0}, ${p.hi ?? 100}]`];
+    case 'notch':
+      return [`f=${p.f ?? 0.5}Hz`, `−${p.depth ?? 20}dB`];
+    case 'ratelimit':
+      return [`↑${p.rise ?? 10}/s`, `↓${p.fall ?? 10}/s`];
     case 'nonlin_tank':
       return [`A=${p.A ?? 2.5}`, `Cv=${p.Cv ?? 1.2}`];
     default:

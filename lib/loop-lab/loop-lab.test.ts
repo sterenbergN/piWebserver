@@ -6,13 +6,13 @@ import { metricOf, outOfTheRunning, overallOf, overallWinner, testWinner, tuneOn
 import { defaultParams, nominalDisturbances, toPct, valveCharacteristic, valveCharacteristicInverse } from './model';
 import { PROCESSES, getProcess } from './processes';
 import { tankArea, tankVolume } from './processes/tank';
-import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, stepResponse } from './linear';
-import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
+import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, margins, pidResponse, stepResponse } from './linear';
+import { DEFAULT_PID, NotchFilter, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
 import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
 import { identifiedCurve, identifiedSetup } from './identified';
 import { diagnoseOscillation, steadyStretch } from './oscillation';
-import { feedforwardDesign, tuningModel } from './tuning';
+import { autoTune, feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { driftedPlants, runDrifted, worstOf } from './drift';
 import { TUNING_RULES } from './tuning';
@@ -1464,4 +1464,119 @@ test('IMC-PID tuning: the Rivera–Morari–Skogestad settings, and a loop that 
   const t = rule.tune(f, 'PID', 2 * f.theta)!;
   const a = analyzeLoop(proc, p, { kind: 'pid', pid: { ...DEFAULT_PID, ...t } }, proc.nominalPv);
   assert.ok(a && a.margins.ms < 2, JSON.stringify(a?.margins));
+});
+
+test('notch filter: passes steady values, cuts its centre by its depth, and lets the servo PI take six times the gain', () => {
+  const Ts = 0.002, hz = 11.6;
+  const amp = (f: number) => {
+    const n = new NotchFilter(hz, 20, Ts);
+    let peak = 0;
+    for (let i = 0; i < 20000; i++) {
+      const y = n.step(Math.sin(2 * Math.PI * f * i * Ts));
+      if (i > 15000) peak = Math.max(peak, Math.abs(y));
+    }
+    return peak;
+  };
+  const steady = new NotchFilter(hz, 20, Ts);
+  for (let i = 0; i < 100; i++) close(steady.step(3), 3, 1e-9);
+  close(amp(hz), 0.1, 0.01, 'at the centre');
+  assert.ok(amp(hz * 10) > 0.97 && amp(hz / 10) > 0.97);
+  // Past the Nyquist frequency of the cycle it stands aside.
+  assert.equal(new NotchFilter(400, 20, Ts).active, false);
+  // The frequency response the analysis uses cuts the same.
+  const pid = { ...DEFAULT_PID, Kc: 1, Ti: 0, slope: 1 };
+  const at = (w: number, withNotch: boolean) => Math.hypot(...Object.values(pidResponse({ ...pid, ...(withNotch ? { notchHz: hz, notchDepth: 20 } : {}) }, w)) as [number, number]);
+  close(at(2 * Math.PI * hz, true) / at(2 * Math.PI * hz, false), 0.1, 1e-9);
+
+  // The servo: six times the gain is unstable without the notch, stable with it.
+  const proc = getProcess('servo');
+  const params = defaultParams(proc);
+  const hot = { kind: 'pid' as const, pid: { ...DEFAULT_PID, Kc: 5, Ti: 0.2 } };
+  const notched = { kind: 'pid' as const, pid: { ...hot.pid, notchHz: hz, notchDepth: 20 } };
+  assert.ok(analyzeLoop(proc, params, hot, proc.nominalPv)!.margins.pm < 0);
+  const a = analyzeLoop(proc, params, notched, proc.nominalPv)!;
+  assert.ok(a.margins.pm > 40 && a.margins.gm > 10, JSON.stringify(a.margins));
+  const runs = runAll(proc, { params, controller: notched }, ['load-torque']);
+  const plain = runAll(proc, { params, controller: { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 0.8, Ti: 1 } } }, ['load-torque']);
+  const peak = (r: typeof runs) => scorecard(proc, params, notched, r, false).worstPeak;
+  assert.ok(peak(runs) < 0.3 * peak(plain), `${peak(runs)} vs ${peak(plain)}`);
+
+  // Kept by a setup, dropped at 0; exported in both dialects and the reference.
+  const kept = cleanController({ kind: 'pid', pid: { ...DEFAULT_PID, notchHz: 11.6, notchDepth: 25 } }, proc);
+  assert.ok(kept.kind === 'pid' && kept.pid.notchHz === 11.6 && kept.pid.notchDepth === 25);
+  const none = cleanController({ kind: 'pid', pid: { ...DEFAULT_PID, notchHz: 0 } }, proc);
+  assert.ok(none.kind === 'pid' && !('notchHz' in none.pid));
+  const scl = exportCode(proc, notched, params, 'scl');
+  assert.match(scl, /NotchHz : Real := 11\.6;/);
+  assert.match(scl, /TAN\(#nw \* #Cycle \/ 2\.0\)/);
+  assert.doesNotMatch(exportCode(proc, notched, params, 'st'), /#\w/);
+  assert.match(exportReference(notched, params.Ts), /function notch\(/);
+  assert.doesNotMatch(exportCode(proc, hot, params, 'scl'), /Notch/);
+});
+
+test('block diagram: a notch cuts its centre and passes the rest, a rate limiter caps the slope, and the notch goes to the bench', () => {
+  const run = (src: BlockDiagramModel['nodes'][number], mid: BlockDiagramModel['nodes'][number], duration = 100, dt = 0.01) => simulateBlockDiagram({
+    id: 't', name: 't', description: '', duration, dt,
+    nodes: [src, mid, { id: 'scope', kind: 'scope', label: 'S', x: 0, y: 0, params: {} }],
+    wires: [
+      { id: 'a', fromBlock: src.id, fromPort: 0, toBlock: mid.id, toPort: 0 },
+      { id: 'b', fromBlock: mid.id, fromPort: 0, toBlock: 'scope', toPort: 1 },
+    ],
+  }).nodeOutputs[mid.id];
+  const notch = (f: number) => ({ id: 'n', kind: 'notch' as const, label: 'N', x: 0, y: 0, params: { f: 0.2, depth: 20, zeta: 0.35 }, _f: f });
+  const sine = (hz: number) => ({ id: 's', kind: 'sine' as const, label: 'S', x: 0, y: 0, params: { amp: 1, freq: 2 * Math.PI * hz, bias: 5 } });
+  const swing = (y: number[]) => { const tail = y.slice(-3000); return (Math.max(...tail) - Math.min(...tail)) / 2; };
+  close(swing(run(sine(0.2), notch(0.2))), 0.1, 0.015, 'at the centre');
+  assert.ok(swing(run(sine(2), notch(2))) > 0.95, 'a decade above');
+  assert.ok(swing(run(sine(0.02), notch(0.02), 400)) > 0.95, 'a decade below');
+  // A steady input passes unchanged, from the first step.
+  const steady = run({ id: 's', kind: 'constant', label: 'C', x: 0, y: 0, params: { value: 7 } }, notch(0));
+  assert.ok(steady.every((v) => Math.abs(v - 7) < 1e-9));
+  // The rate limiter: a step of 10 at 2/s rising, 5/s falling.
+  const lim = { id: 'r', kind: 'ratelimit' as const, label: 'R', x: 0, y: 0, params: { rise: 2, fall: 5 } };
+  const up = run({ id: 's', kind: 'step', label: 'S', x: 0, y: 0, params: { y0: 0, y1: 10, tStep: 1 } }, lim, 10, 0.1);
+  // It moves from the sample the step lands on: 21 samples of 0.2 by t = 3 s.
+  close(up[Math.round(3 / 0.1)], 4.2, 1e-6);
+  close(up[up.length - 1], 10, 1e-9);
+  const down = run({ id: 's', kind: 'step', label: 'S', x: 0, y: 0, params: { y0: 10, y1: 0, tStep: 1 } }, lim, 10, 0.1);
+  close(down[Math.round(2 / 0.1)], 10 - 11 * 0.5, 1e-6);
+
+  // To the bench: a notch after the PID becomes the PID's notch; a rate limiter is said to be left out.
+  const base = BLOCK_TEMPLATES.find((t) => t.id === 'fopdt-pid')!;
+  const withNotch: BlockDiagramModel = { ...base, nodes: base.nodes.map((n) => (n.id === 'sat' ? { ...n, kind: 'notch', params: { f: 0.05, depth: 25, zeta: 0.35 } } : n)) };
+  const e = benchExport(withNotch);
+  const exp = decodeExperiment(decodeURIComponent(e.url!.split('setup=')[1].split('#')[0]))!;
+  assert.ok(exp.controller.kind === 'pid' && exp.controller.pid.notchHz === 0.05 && exp.controller.pid.notchDepth === 25, JSON.stringify(exp.controller));
+  const withLimiter: BlockDiagramModel = { ...base, nodes: base.nodes.map((n) => (n.id === 'sat' ? { ...n, kind: 'ratelimit', params: { rise: 5, fall: 5 } } : n)) };
+  assert.ok(benchExport(withLimiter).notes.some((n) => /stroking speed/.test(n)));
+});
+
+test('compressor: a pressure PI surges on a trip; the anti-surge override with feedforward keeps off the line', () => {
+  const proc = getProcess('compressor');
+  const params = defaultParams(proc);
+  // Steady at 6 bar: 55 kNm³/h through the machine, the users' 45, the rest round the recycle.
+  const s = proc.steadyAt!(6, nominalDisturbances(proc), params)!;
+  close(s.x[1], 30 + 70 * Math.sqrt(0.6 / 4.6), 1e-9);
+  const back = proc.steady(s.valve / 100, nominalDisturbances(proc), params)!;
+  close(back[0], 6, 1e-6);
+  const peak = (c: ControllerConfig, id: string) => {
+    const r = runScenario(proc, { params, controller: c }, proc.scenarios.find((x) => x.id === id)!);
+    return Math.max(...Array.from(r.trace.pv2).filter(Number.isFinite));
+  };
+  const pi = defaultController('pid', proc);
+  assert.ok(peak(pi, 'user-trip') > 150, 'a pressure PI lets a trip surge it');
+  assert.ok(peak(pi, 'sp-into-surge') > 105);
+  const ovr = defaultController('override', proc);
+  assert.ok(ovr.kind === 'override' && ovr.ff?.length === 1 && ovr.select === 'max' && ovr.on === 'pv2');
+  assert.ok(peak(ovr, 'user-trip') < 80 && peak(ovr, 'sp-into-surge') < 100);
+  // Without its feedforward the override is too late for a trip.
+  const bare = { ...ovr };
+  delete (bare as { ff?: unknown }).ff;
+  assert.ok(peak(bare, 'user-trip') > 100);
+  // Auto-tune leaves an anti-surge override as commissioned (only its feedforward is designed), and says why.
+  const t = autoTune(proc, params, ovr)!;
+  assert.ok(t.config.kind === 'override' && t.config.ovr.Kc === 8 && t.config.pid.Kc === 1.1, JSON.stringify(t.config));
+  assert.match(t.note, /tuned on the machine/);
+  // The surge approach is a limit, not something an inner loop could set.
+  assert.equal(isAvailable(proc, 'cascade'), false);
 });

@@ -156,7 +156,7 @@ function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: 
         </>
       )}
       <details className="ll-more">
-        <summary>Weights, filter, limits, anti-windup</summary>
+        <summary>Weights, filters, limits, anti-windup</summary>
         <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
           <NumField label="b" value={pid.b} min={0} max={1} step={0.1} onChange={set('b')} title="Setpoint weight on P (PWeighting)" />
           <NumField label="c" value={pid.c} min={0} max={1} step={0.1} onChange={set('c')} title="Setpoint weight on D (DWeighting)" />
@@ -171,6 +171,19 @@ function PidFields({ pid, onChange, gains = true }: { pid: PidParams; onChange: 
               <option value="none">None</option>
             </select>
           </label>
+        </div>
+        <div className="ll-fields is-3" style={{ marginTop: '0.5rem' }}>
+          <NumField label="Notch at" unit="Hz" value={pid.notchHz ?? 0} min={0} onChange={(v) => {
+            if (!(v > 0)) {
+              const rest = { ...pid };
+              delete rest.notchHz;
+              delete rest.notchDepth;
+              onChange(rest);
+            } else onChange({ ...pid, notchHz: v, notchDepth: pid.notchDepth ?? 20 });
+          }} title="A notch filter on what the PID sees, centred on a mechanical resonance (0 = none). About an octave wide." />
+          {(pid.notchHz ?? 0) > 0 && (
+            <NumField label="Notch depth" unit="dB" value={pid.notchDepth ?? 20} min={3} max={60} onChange={set('notchDepth')} title="How far the notch cuts the gain at its centre" />
+          )}
         </div>
         <label className="ll-check" style={{ marginTop: '0.4rem' }}>
           <input type="checkbox" checked={pid.invert} onChange={(e) => onChange({ ...pid, invert: e.target.checked })} />
@@ -253,7 +266,7 @@ export function ControllerEditor({ proc, params, config, onChange }: {
             <SmithModelEditor proc={proc} params={params} model={config.model} pid={config.pid} onChange={(model) => onChange({ ...config, model })} />
           </>
         )}
-        {config.kind === 'override' && <OverrideFields proc={proc} config={config} onChange={onChange} />}
+        {config.kind === 'override' && <OverrideFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'ratio' && <RatioFields proc={proc} config={config} onChange={onChange} />}
         {config.kind === 'statefb' && <StateFbFields proc={proc} params={params} config={config} onChange={onChange} />}
         {config.kind === 'multiloop' && <MultiloopFields proc={proc} params={params} config={config} onChange={onChange} />}
@@ -364,12 +377,19 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
 }
 
 /** Override: the normal controller, then the limit controller, its measurement, limit and selector. */
-function OverrideFields({ proc, config, onChange }: { proc: ProcessDef; config: Extract<ControllerConfig, { kind: 'override' }>; onChange: (c: ControllerConfig) => void }) {
+function OverrideFields({ proc, params, config, onChange }: { proc: ProcessDef; params: Params; config: Extract<ControllerConfig, { kind: 'override' }>; onChange: (c: ControllerConfig) => void }) {
   const on = config.on === 'pv2' && proc.secondary ? proc.secondary : proc.pv;
   return (
     <>
       <div className="ll-sub">Normal: {proc.tags.loop} ({proc.pv.label.toLowerCase()})</div>
       <PidFields pid={config.pid} onChange={(pid) => onChange({ ...config, pid })} />
+      {proc.disturbances.some((x) => x.measured) && (
+        <>
+          <div className="ll-sub">Feedforward to the normal controller&apos;s output (before the selector)</div>
+          <FeedforwardEditor proc={proc} params={params} config={config} terms={config.ff ?? []} target="the valve output"
+            onChange={(ff) => { const next: typeof config = { ...config }; if (ff.length) next.ff = ff; else delete next.ff; onChange(next); }} />
+        </>
+      )}
       <div className="ll-sub">Override: the limit</div>
       <div className="ll-fields is-3">
         {proc.secondary && (

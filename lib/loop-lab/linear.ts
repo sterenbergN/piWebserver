@@ -1,4 +1,4 @@
-import { linearControllerAt, type ControllerConfig, type FeedforwardTerm, type LinearController, type LinearPid } from './controllers';
+import { NOTCH_WIDTH, hasNotch, linearControllerAt, notchZeta, type ControllerConfig, type FeedforwardTerm, type LinearController, type LinearPid } from './controllers';
 import { c2d, cabs, carg, cdiv, cexpj, cmul, cx, eig, rng, solve, solveShifted, zeros, type Complex, type Mat } from './linalg';
 import { cleanParams, nominalDisturbances, pvSpan, type Params, type ProcessDef } from './model';
 import { findSteady, plantDerivatives, steadyState, truePv } from './sim';
@@ -213,6 +213,12 @@ export function pidResponse(c: LinearPid, w: number): Complex {
     r = { re: r.re + d.re, im: r.im + d.im };
   }
   const k = sign * c.Kc * c.slope;
+  if (hasNotch(c)) {
+    const w0 = 2 * Math.PI * c.notchHz!;
+    const num = { re: w0 * w0 - w * w, im: 2 * notchZeta(c.notchDepth ?? 20) * w0 * w };
+    const den = { re: w0 * w0 - w * w, im: 2 * NOTCH_WIDTH * w0 * w };
+    r = cmul(r, cdiv(num, den));
+  }
   return { re: k * r.re, im: k * r.im };
 }
 
@@ -222,6 +228,7 @@ export type BodePoint = { w: number; mag: number; phase: number };
 export function frequencyGrid(m: PlantModel, pids: (LinearPid | null)[], delay: number, count = 500, extra: number[] = []) {
   const rates = [...m.poles, ...extra.map((w) => cx(w))].map((p) => Math.hypot(p.re, p.im)).filter((v) => v > 1e-9);
   for (const c of pids) {
+    if (c && hasNotch(c)) rates.push(2 * Math.PI * c.notchHz!);
     if (c?.Ti) rates.push(1 / c.Ti);
     if (c?.Td) rates.push(1 / (c.a * c.Td));
   }
@@ -515,7 +522,7 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   const ffTerms: FeedforwardTerm[] = (ctrl.ff ?? []).filter((t) => t.from === dKey);
   const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) + ((t.delay ?? 0) > 0 ? 2 : 0));
   const pids = ctrl.kind === 'cascade' ? [ctrl.outer, ctrl.inner] : ctrl.kind === 'ss' ? [] : [ctrl.pid];
-  const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0));
+  const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0) + (hasNotch(p) ? 4 : 0));
   const smith = ctrl.kind === 'smith' ? ctrl.model : null;
   const smithStates = smith ? 1 + (smith.theta > 0 ? 2 : 0) : 0;
   const ssStates = ctrl.kind === 'ss' ? ctrl.ss.A.length : 0;
@@ -551,7 +558,17 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
     v = add(v, w, t.gain);
   });
 
-  const pidBlock = (p: LinearPid, rS: Sig, yS: Sig) => {
+  // A notch, (s² + 2ζ_z ω s + ω²)/(s² + 2ζ_p ω s + ω²) = 1 + 2(ζ_z − ζ_p)ω s/(s² + 2ζ_p ω s + ω²).
+  const notch = (p: LinearPid, x: Sig) => {
+    const w = 2 * Math.PI * p.notchHz!, i = next, j = next + 1;
+    next += 2;
+    deriv[i] = unit(n, j);
+    deriv[j] = add(add(scale(unit(n, i), -w * w), unit(n, j), -2 * NOTCH_WIDTH * w), x);
+    return add(x, unit(n, j), 2 * (notchZeta(p.notchDepth ?? 20) - NOTCH_WIDTH) * w);
+  };
+  const pidBlock = (p: LinearPid, r0: Sig, y0: Sig) => {
+    // The notch filters both the setpoint and the measurement the PID sees.
+    const rS = hasNotch(p) ? notch(p, r0) : r0, yS = hasNotch(p) ? notch(p, y0) : y0;
     const k = (p.invert ? -1 : 1) * p.Kc * p.slope;
     const e = add(rS, yS, -1), eP = add(scale(rS, p.b), yS, -1), eD = add(scale(rS, p.c), yS, -1);
     let out = scale(eP, k);

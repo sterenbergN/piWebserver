@@ -319,15 +319,31 @@ function autoTuneRules(proc: ProcessDef, params: Params, config: ControllerConfi
     return { ...cfg, ff };
   };
   const where = `${round3(pv)} ${proc.pv.unit}`;
+  // An override's feedforward (on the normal controller's output), designed like any other.
+  const withFfOverride = (cfg: Extract<ControllerConfig, { kind: 'override' }>) => {
+    if (!cfg.ff?.length) return {};
+    const designed = withFf({ kind: 'feedforward', pid: cfg.pid, ff: cfg.ff });
+    return designed.kind === 'feedforward' ? { ff: designed.ff } : {};
+  };
 
   if (config.kind === 'override') {
     // The normal controller as if it were alone; the override tight (SIMC) at its limit, acting the same way.
+    // A limit measured on its own (a compressor's surge approach) is tuned on the machine, by trip tests, with
+    // the normal controller: near the limit the plant's gain changes several times over, which a linear model at
+    // the operating point can't see. Both keep their tuning; only the feedforward is designed.
+    if (config.on === 'pv2' && proc.secondary?.limitOnly) {
+      return {
+        config: { ...config, ...withFfOverride(config) },
+        note: `Both controllers keep their tuning (${proc.tags.loop} Kc ${config.pid.Kc}, Ti ${config.pid.Ti} s; ${proc.secondary.loopTag} Kc ${config.ovr.Kc}, Ti ${config.ovr.Ti} s). A ${proc.secondary.label.toLowerCase()} limit is tuned on the machine, by trip tests: near it the plant's gain changes several times over, and a tuning from a linear model at the operating point can cycle there.`,
+      };
+    }
     const normal = slow === 1 ? autoTune(proc, params, { kind: 'pid', pid: config.pid }) : autoTuneRules(proc, params, { kind: 'pid', pid: config.pid }, slow);
+    if (!normal || normal.config.kind !== 'pid') return null;
     const o = config.on === 'pv2' ? at(config, 'inner', typeOf(config.ovr)) : at(config, 'main', typeOf(config.ovr), config.limit);
-    if (!normal || normal.config.kind !== 'pid' || !o) return null;
+    if (!o) return null;
     const ovr = { ...config.ovr, ...o.t, invert: o.m.negative };
     return {
-      config: { ...config, pid: normal.config.pid, ovr },
+      config: { ...config, pid: normal.config.pid, ovr, ...withFfOverride(config) },
       note: `Normal controller: ${normal.note} Override at its limit (${round3(config.limit)} ${config.on === 'pv2' ? proc.secondary?.unit : proc.pv.unit}): SIMC Kc ${o.t.Kc}, Ti ${o.t.Ti} s, much tighter, because once it is in charge its job is to hold the limit.`,
     };
   }

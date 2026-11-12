@@ -7,6 +7,7 @@ import { flowAt } from '@/lib/loop-lab/processes/flow';
 import { steamFlow } from '@/lib/loop-lab/processes/hx';
 import { splitValves } from '@/lib/loop-lab/processes/jacket';
 import { jacketSetpoint, reactionHeat } from '@/lib/loop-lab/processes/batch';
+import { mapFlow, recycleAt, surgeApproach } from '@/lib/loop-lab/processes/compressor';
 import { arrowHead, Bubble, ControlValve, f1, FlowSchematic, flowAnim, PAndId, TankSchematic } from './Drawings';
 
 // Process drawings for the stirred tank, the heat exchanger, the surge tank,
@@ -544,6 +545,52 @@ function BatchPAndId({ config }: { config: ControllerConfig }) {
   );
 }
 
+/** The compressor, its header and recycle, and its curve with the surge line and where it is now. */
+export function CompressorSchematic({ p, d, valve, Pd, Q }: { p: Params; d: Params; valve: number; Pd: number; Q: number }) {
+  const rec = recycleAt(valve, Pd, p), S = surgeApproach(Q, p), surging = S >= 100;
+  // The map: flow across, pressure up, the curve from choke to its peak, the surge line through the peak.
+  const mx = 330, my = 30, mw = 210, mh = 150;
+  const Rmax = p.Rpk * 1.08, Qmax = p.Qmax * 1.05;
+  const X = (q: number) => mx + (Math.max(0, q) / Qmax) * mw, Y = (r: number) => my + mh - (Math.min(r, Rmax) / Rmax) * mh;
+  const curve = Array.from({ length: 41 }, (_, i) => {
+    const r = p.Rch + ((p.Rpk - p.Rch) * i) / 40;
+    return `${i ? 'L' : 'M'}${X(mapFlow(r, p)).toFixed(1)} ${Y(r).toFixed(1)}`;
+  }).join('');
+  const R = Pd / Math.max(0.1, p.Ps);
+  // Surge lines run roughly as R ∝ Q² (constant head coefficient), through the peak.
+  const surgeLine = Array.from({ length: 21 }, (_, i) => {
+    const q = p.Qs * (0.55 + (0.5 * i) / 20);
+    return `${i ? 'L' : 'M'}${X(q).toFixed(1)} ${Y(p.Rpk * (q / p.Qs) ** 2).toFixed(1)}`;
+  }).join('');
+  return (
+    <svg className="ll-drawing" viewBox="0 0 560 260" role="img" aria-label={`Compressor: ${f1(Pd)} bar, ${f1(Q)} kNm³/h through it, surge approach ${Math.round(S)} %${surging ? ', surging' : ''}`}>
+      {/* Suction, machine, discharge header to the users */}
+      <path className="ll-pipe" d="M20 150H70" />
+      <path className="ll-steel" strokeWidth={2.5} d="M70 125L130 105V195L70 175Z" />
+      <text x={100} y={92} textAnchor="middle" fontWeight={700}>K-1101</text>
+      <path className="ll-pipe" d="M130 150H300" />
+      {Q > 0.5 && <path className="ll-flowline" style={flowAnim(Q / 40)} d="M134 150H296" />}
+      <text x={150} y={140}>{f1(Pd)} bar · {f1(Q)} kNm³/h</text>
+      <text className="is-muted" x={200} y={172}>to users · {f1(d.Qd ?? 0)}</text>
+      {/* Recycle: from the discharge, through the cooler and UV-1101, back to suction */}
+      <path className="ll-pipe" d="M250 150V225H40V150" />
+      {rec > 0.5 && <path className="ll-flowline" style={flowAnim(rec / 40)} d="M250 154V225H40V154" />}
+      <ControlValve x={160} y={225} open={valve} tag="" label={false} />
+      <text x={130} y={252}>UV-1101 · {f1(valve)} % · {f1(rec)} back</text>
+      <rect className="ll-block" x={60} y={213} width={40} height={24} rx={3} />
+      <text className="is-muted" x={80} y={229} textAnchor="middle" fontSize={10}>cooler</text>
+      {/* The map */}
+      <rect className="ll-guide" x={mx} y={my} width={mw} height={mh} fill="none" />
+      <path className="ll-line" strokeWidth={2} fill="none" d={curve} />
+      <path d={surgeLine} fill="none" stroke="var(--danger)" strokeWidth={1.5} strokeDasharray="5 4" />
+      <text x={X(p.Qs) - 6} y={Y(p.Rpk) - 6} textAnchor="end" fill="var(--danger)" fontSize={11}>surge line</text>
+      <circle cx={X(Q)} cy={Y(R)} r={6} fill={surging ? 'var(--danger)' : 'var(--accent)'} stroke="var(--background)" strokeWidth={1.5} />
+      <text className="is-muted" x={mx + mw / 2} y={my + mh + 16} textAnchor="middle" fontSize={11}>flow → · pressure ↑</text>
+      <text x={mx + mw / 2} y={my + mh + 34} textAnchor="middle" fontWeight={700}>{surging ? 'SURGING' : `surge approach ${Math.round(S)} %`}</text>
+    </svg>
+  );
+}
+
 export function GenericSchematic({ proc, p, valve, pv }: { proc: ProcessDef; p: Params; valve: number; pv: number }) {
   const model = p.integrating
     ? `k′ = ${(p.K / p.tau1).toPrecision(3)} %/s per %, θ = ${f1(p.txDelay)} s`
@@ -587,6 +634,7 @@ export function ProcessDrawing({ proc, p, d, x }: { proc: ProcessDef; p: Params;
   if (proc.id === 'servo') return <ServoSchematic p={p} d={d} wm={x1} wl={x2} phi={x3} valve={valve} />;
   if (proc.id === 'maglev') return <MaglevSchematic p={p} d={d} gap={x1} valve={valve} />;
   if (proc.id === 'batch') return <BatchSchematic p={p} d={d} valve={valve} c={x1} T={x2} Tj={x3} />;
+  if (proc.id === 'compressor') return <CompressorSchematic p={p} d={d} valve={valve} Pd={x1} Q={x2} />;
   if (proc.id === 'mixing') return <MixingSchematic p={p} d={d} valve={valve} h={x1} T={x2} v2={x3} />;
   return <GenericSchematic proc={proc} p={p} valve={valve} pv={proc.pvOf(x.slice(1, 1 + proc.states.length), flow, d, p)} />;
 }

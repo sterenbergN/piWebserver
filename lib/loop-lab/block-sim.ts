@@ -1,6 +1,6 @@
 import { encodeExperiment, type Experiment } from './setup';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
-import { DEFAULT_PID, type ControllerConfig, type PidParams } from './controllers';
+import { DEFAULT_PID, NOTCH_WIDTH, type ControllerConfig, type PidParams } from './controllers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,8 @@ export type BlockKind =
   | 'sum'
   | 'product'
   | 'saturation'
+  | 'ratelimit'
+  | 'notch'
   | 'selector'
   | 'scope'
   | 'xy';
@@ -286,6 +288,45 @@ export const BLOCK_CATALOG: Record<BlockKind, BlockCatalogEntry> = {
       { key: 'K', label: 'Compensator gain (K)', unit: '', min: -10, max: 10, step: 0.05, default: 1.0, hint: 'Static feedforward or filter gain' },
       { key: 'Tlead', label: 'Lead time (Tlead)', unit: 's', min: 0, max: 60, step: 0.5, default: 8, hint: 'Numerator time constant (anticipation)' },
       { key: 'Tlag', label: 'Lag time (Tlag)', unit: 's', min: 0.1, max: 60, step: 0.5, default: 15, hint: 'Denominator time constant (smoothing)' },
+    ],
+  },
+
+  notch: {
+    kind: 'notch',
+    category: 'controllers',
+    name: 'Notch Filter',
+    shortSymbol: 'Notch',
+    latex: (node) => {
+      const { f = 0.5, depth = 20, zeta = 0.35 } = node.params;
+      return `G_{\\text{N}}(s) = \\frac{s^2 + 2\\zeta_z\\omega_0 s + \\omega_0^2}{s^2 + 2\\cdot${zeta}\\,\\omega_0 s + \\omega_0^2},\\quad \\omega_0 = 2\\pi\\cdot${f},\\ \\zeta_z = ${zeta}\\cdot 10^{-${depth}/20}`;
+    },
+    description: 'Cuts one frequency and passes the rest: a deep, narrow dip in gain at its centre, unity gain well away from it.',
+    intuition: 'Put it after a controller to take its gain away at a mechanical resonance, so the loop can be tuned faster without ringing the resonance. Tuned to one frequency: if the resonance moves, it walks out of the notch.',
+    inputs: ['in'],
+    outputs: ['out'],
+    paramSpecs: [
+      { key: 'f', label: 'Centre frequency', unit: 'Hz', min: 0.001, max: 50, step: 0.01, default: 0.5, hint: 'The resonance to cut (below half the sample rate)' },
+      { key: 'depth', label: 'Depth', unit: 'dB', min: 3, max: 60, step: 1, default: 20, hint: 'How far the gain dips at the centre' },
+      { key: 'zeta', label: 'Width (ζ)', unit: '', min: 0.05, max: 1, step: 0.05, default: 0.35, hint: 'Damping of the poles: 0.35 is about an octave wide' },
+    ],
+  },
+
+  ratelimit: {
+    kind: 'ratelimit',
+    category: 'math',
+    name: 'Rate Limiter',
+    shortSymbol: 'd/dt ≤',
+    latex: (node) => {
+      const { rise = 10, fall = 10 } = node.params;
+      return `-${fall} \\le \\frac{dy}{dt} \\le ${rise},\\quad y \\to u(t)`;
+    },
+    description: 'Follows its input, but no faster than a set rate up and a set rate down.',
+    intuition: 'A valve that strokes at a limited speed, a setpoint ramp, a drive’s acceleration limit. A fast loop behind one turns into a slow ramp, and the integral winds up while it waits.',
+    inputs: ['in'],
+    outputs: ['out'],
+    paramSpecs: [
+      { key: 'rise', label: 'Rising rate', unit: '/s', min: 0.01, max: 1000, step: 0.5, default: 10, hint: 'Fastest the output may rise, per second' },
+      { key: 'fall', label: 'Falling rate', unit: '/s', min: 0.01, max: 1000, step: 0.5, default: 10, hint: 'Fastest the output may fall, per second' },
     ],
   },
 
@@ -628,7 +669,8 @@ export function cleanDiagram(raw: unknown): BlockDiagramModel | null {
 /** Does this block's output follow its input within the same instant? (The rest answer from their state.) */
 function passesThrough(node: BlockNode): boolean {
   if (node.kind === 'leadlag') return (node.params.Tlead ?? 8) !== 0;
-  return node.kind === 'sum' || node.kind === 'gain' || node.kind === 'product' || node.kind === 'saturation' || node.kind === 'selector' || node.kind === 'pid';
+  return node.kind === 'sum' || node.kind === 'gain' || node.kind === 'product' || node.kind === 'saturation' || node.kind === 'selector' || node.kind === 'pid'
+    || node.kind === 'notch' || node.kind === 'ratelimit';
 }
 
 type EvalGroup = {
@@ -748,6 +790,11 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
     valveTarget: number;
     // Tank
     tankH: number;
+    // Notch: s² + 2ζω s + ω² on x1, x2 = x1′
+    notchX1: number;
+    notchX2: number;
+    // Rate limiter: its last output (NaN until it has one)
+    rateY: number;
     // Noise PRNG
     prng?: () => number;
   };
@@ -768,6 +815,9 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
       valvePos: 0,
       valveTarget: 0,
       tankH: Math.max(0, Number(node.params.h0 ?? 1)),
+      notchX1: NaN,
+      notchX2: 0,
+      rateY: NaN,
       prng: node.kind === 'noise' ? makePrng(node.params.seed ?? 42) : undefined,
     };
   }
@@ -964,6 +1014,20 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
         return K * (ratio * u + (1 - ratio) * st.leadlagX);
       }
 
+      case 'notch': {
+        // 1 + 2(ζz − ζp)ω s/(s² + 2ζp ω s + ω²): the input, less what the resonant pair takes out.
+        const u = getInput(node.id, 0, 0);
+        if (!Number.isFinite(st.notchX1)) return u;
+        const w = 2 * Math.PI * Math.max(1e-3, p.f ?? 0.5), zp = p.zeta ?? 0.35, zz = zp * 10 ** (-(p.depth ?? 20) / 20);
+        return u + 2 * (zz - zp) * w * st.notchX2;
+      }
+
+      case 'ratelimit': {
+        const u = getInput(node.id, 0, 0);
+        if (!Number.isFinite(st.rateY)) return u;
+        return st.rateY + Math.max(-(p.fall ?? 10) * dt, Math.min((p.rise ?? 10) * dt, u - st.rateY));
+      }
+
     }
       return 0;
     };
@@ -1137,6 +1201,30 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
           break;
         }
 
+        case 'notch': {
+          const w = 2 * Math.PI * Math.max(1e-3, p.f ?? 0.5), zp = p.zeta ?? 0.35;
+          // It starts settled on its first input.
+          if (!Number.isFinite(st.notchX1)) { st.notchX1 = inVal / (w * w); st.notchX2 = 0; }
+          // RK4 in steps short enough for the resonant pair, the input held over the step.
+          const n = Math.max(1, Math.ceil((w * dt) / 0.1));
+          const h = dt / n;
+          const f = (x1: number, x2: number) => [x2, inVal - w * w * x1 - 2 * zp * w * x2];
+          for (let i = 0; i < n; i++) {
+            const [a1, b1] = f(st.notchX1, st.notchX2);
+            const [a2, b2] = f(st.notchX1 + (h / 2) * a1, st.notchX2 + (h / 2) * b1);
+            const [a3, b3] = f(st.notchX1 + (h / 2) * a2, st.notchX2 + (h / 2) * b2);
+            const [a4, b4] = f(st.notchX1 + h * a3, st.notchX2 + h * b3);
+            st.notchX1 += (h / 6) * (a1 + 2 * a2 + 2 * a3 + a4);
+            st.notchX2 += (h / 6) * (b1 + 2 * b2 + 2 * b3 + b4);
+          }
+          break;
+        }
+
+        case 'ratelimit': {
+          st.rateY = curOutputs[node.id];
+          break;
+        }
+
         case 'derivative': {
           const Td = p.Td ?? 2.0;
           const alpha = Math.max(0.01, p.alpha ?? 0.1);
@@ -1293,6 +1381,8 @@ export type LoopReading = {
   /** The model inside a Smith predictor, when the feedback is wired as one. */
   smith: { K: number; tau: number; theta: number } | null;
   valve: { tau: number; rateLimit: number; deadband: number; char: number } | null;
+  /** A notch in the loop: the bench's PID carries it. */
+  notch: { hz: number; depth: number; zeta: number } | null;
   /** Why the loop doesn't reduce ('' when it does). */
   reason: string;
   /** What the reduction leaves out. */
@@ -1327,7 +1417,7 @@ export function readLoop(model: BlockDiagramModel): LoopReading {
     return false;
   };
   const loopClosed = model.nodes.some((n) => reaches(n.id, n.id, new Set()));
-  const none = (reason: string): LoopReading => ({ loopClosed, plant: null, controller: null, smith: null, valve: null, reason, notes: [] });
+  const none = (reason: string): LoopReading => ({ loopClosed, plant: null, controller: null, smith: null, valve: null, notch: null, reason, notes: [] });
 
   // The controller: the PID block, or a gain fed by an error junction (proportional only).
   const pids = model.nodes.filter((n) => n.kind === 'pid');
@@ -1388,6 +1478,7 @@ export function readLoop(model: BlockDiagramModel): LoopReading {
   const lags: number[] = [];
   const notes: string[] = [];
   let valve: LoopReading['valve'] = null;
+  let notch: LoopReading['notch'] = null;
   for (const { node, port } of path) {
     const p = node.params;
     if (node.kind === 'sum') {
@@ -1395,6 +1486,8 @@ export function readLoop(model: BlockDiagramModel): LoopReading {
       if (into(node.id).length > 1) notes.push(`What else is added at ${name(node)} is left out: the bench has its own load upset.`);
     } else if (node.kind === 'gain') K *= p.K ?? 1.5;
     else if (node.kind === 'saturation') notes.push(`${name(node)} is left out: the bench limits the output to 0–100 %.`);
+    else if (node.kind === 'ratelimit') notes.push(`${name(node)} is left out: on the bench the valve's stroking speed limit does that job.`);
+    else if (node.kind === 'notch' && !notch) notch = { hz: Math.max(1e-3, p.f ?? 0.5), depth: p.depth ?? 20, zeta: p.zeta ?? 0.35 };
     else if (node.kind === 'fopdt') {
       K *= p.K ?? 1.2;
       lags.push(Math.max(0.01, p.tau ?? 15));
@@ -1430,7 +1523,7 @@ export function readLoop(model: BlockDiagramModel): LoopReading {
     // An integrator's gain is its ramp rate; the bench writes that as K/τ1.
     plant: integrators ? { K, tau1: 1, tau2: lags[0] ?? 0, theta, integrating: true } : { K, tau1: lags[0] ?? 0, tau2: lags[1] ?? 0, theta, integrating: false },
     controller: { Kc, Ti: pid ? Math.max(0, ctrl.params.Ti ?? 12) : 0, Td: pid ? Math.max(0, ctrl.params.Td ?? 0) : 0, N: Math.max(1, ctrl.params.N ?? 10) },
-    smith, valve, reason: '', notes,
+    smith, valve, notch, reason: '', notes,
   };
 }
 
@@ -1486,6 +1579,13 @@ export function benchExport(model: BlockDiagramModel): BenchExport {
     a: Math.min(1, Math.max(0.01, 1 / controller.N)),
     invert: K < 0,
   };
+  if (r.notch) {
+    // On the bench the notch is part of the PID: on what it sees rather than after it, the same round the loop.
+    pid.notchHz = r.notch.hz;
+    pid.notchDepth = within(r.notch.depth, 3, 60, 'The notch depth');
+    if (Math.abs(r.notch.zeta - NOTCH_WIDTH) > 1e-9) notes.push(`The notch is ${r.notch.zeta} wide (ζ) in the diagram and ${NOTCH_WIDTH} on the bench, the only width it has.`);
+    if (2 * Math.PI * r.notch.hz * params.Ts >= Math.PI * 0.98) notes.push(`The notch at ${r.notch.hz} Hz is past half the bench's sample rate, so the bench's PID can't place it.`);
+  }
   const smith = r.smith;
   const config: ControllerConfig = smith
     ? { kind: 'smith', pid, model: { K: smith.K, tau: smith.tau, theta: within(smith.theta, 0, 120, 'The dead time in the Smith model') } }

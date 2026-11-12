@@ -1,4 +1,4 @@
-import { findCharacterization, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
+import { NOTCH_WIDTH, findCharacterization, hasNotch, type ControllerConfig, type FeedforwardTerm, type PidParams, type SmithModel } from './controllers';
 import { cleanParams, pvSpan, type Params, type ProcessDef } from './model';
 import { initialArx } from './adaptive';
 import { designAdrc, type AdrcDesign } from './adrc';
@@ -43,6 +43,66 @@ const loc = (d: Dialect) => (name: string) => (d === 'scl' ? `#${name}` : name);
 
 function pidBlock(d: Dialect, pid: PidParams, Ts: number, inLo: number, inHi: number) {
   const v = loc(d);
+  const notch = hasNotch(pid);
+  const notchVars = notch ? `
+      NotchHz : Real := ${real(pid.notchHz!)};   // Hz, centre of the notch on what the PID sees (0 = off)
+      NotchDepth : Real := ${real(pid.notchDepth ?? 20)};  // dB, cut at the centre
+      NotchWidth : Real := ${real(NOTCH_WIDTH)};  // damping of the notch's poles (about an octave wide)
+      NotchX1 : Array[0..2] of Real;   // last two inputs and outputs, for e, eP and eD
+      NotchX2 : Array[0..2] of Real;
+      NotchY1 : Array[0..2] of Real;
+      NotchY2 : Array[0..2] of Real;
+      NotchReady : Bool;` : '';
+  const notchTemps = notch ? `
+      nw : Real;
+      nk : Real;
+      nzz : Real;
+      na0 : Real;
+      nb0 : Real;
+      nb1 : Real;
+      nb2 : Real;
+      na2 : Real;
+      nOut : Real;
+      nIn : Array[0..2] of Real;
+      k : Int;` : '';
+  const a = (name: string, i: string) => `${v(name)}[${v(i)}]`;
+  const notchCode = notch ? `
+
+    // Notch at NotchHz on the errors (so on setpoint and measurement alike): takes the gain away at a
+    // mechanical resonance. Tustin, with the centre prewarped so the cut lands where it is meant to.
+    IF ${v('NotchHz')} > 0.0 AND 6.2831853 * ${v('NotchHz')} * ${v('Cycle')} < 3.07 THEN
+        ${v('nw')} := 6.2831853 * ${v('NotchHz')};
+        ${v('nk')} := ${v('nw')} / TAN(${v('nw')} * ${v('Cycle')} / 2.0);
+        ${v('nzz')} := ${v('NotchWidth')} * EXP(-${v('NotchDepth')} / 20.0 * LN(10.0));
+        ${v('na0')} := ${v('nk')} * ${v('nk')} + 2.0 * ${v('NotchWidth')} * ${v('nw')} * ${v('nk')} + ${v('nw')} * ${v('nw')};
+        ${v('nb0')} := (${v('nk')} * ${v('nk')} + 2.0 * ${v('nzz')} * ${v('nw')} * ${v('nk')} + ${v('nw')} * ${v('nw')}) / ${v('na0')};
+        ${v('nb1')} := 2.0 * (${v('nw')} * ${v('nw')} - ${v('nk')} * ${v('nk')}) / ${v('na0')};
+        ${v('nb2')} := (${v('nk')} * ${v('nk')} - 2.0 * ${v('nzz')} * ${v('nw')} * ${v('nk')} + ${v('nw')} * ${v('nw')}) / ${v('na0')};
+        ${v('na2')} := (${v('nk')} * ${v('nk')} - 2.0 * ${v('NotchWidth')} * ${v('nw')} * ${v('nk')} + ${v('nw')} * ${v('nw')}) / ${v('na0')};
+        ${a('nIn', '0')} := ${v('e')};
+        ${a('nIn', '1')} := ${v('eP')};
+        ${a('nIn', '2')} := ${v('eD')};
+        FOR ${v('k')} := 0 TO 2 DO
+            IF ${v('ManualEnable')} OR NOT ${v('NotchReady')} THEN
+                // Settle on the present value: switching to auto doesn't bump.
+                ${a('NotchX1', 'k')} := ${a('nIn', 'k')};
+                ${a('NotchX2', 'k')} := ${a('nIn', 'k')};
+                ${a('NotchY1', 'k')} := ${a('nIn', 'k')};
+                ${a('NotchY2', 'k')} := ${a('nIn', 'k')};
+            END_IF;
+            ${v('nOut')} := ${v('nb0')} * ${a('nIn', 'k')} + ${v('nb1')} * ${a('NotchX1', 'k')} + ${v('nb2')} * ${a('NotchX2', 'k')}
+                    - ${v('nb1')} * ${a('NotchY1', 'k')} - ${v('na2')} * ${a('NotchY2', 'k')};
+            ${a('NotchX2', 'k')} := ${a('NotchX1', 'k')};
+            ${a('NotchX1', 'k')} := ${a('nIn', 'k')};
+            ${a('NotchY2', 'k')} := ${a('NotchY1', 'k')};
+            ${a('NotchY1', 'k')} := ${v('nOut')};
+            ${a('nIn', 'k')} := ${v('nOut')};
+        END_FOR;
+        ${v('NotchReady')} := NOT ${v('ManualEnable')};
+        ${v('e')} := ${a('nIn', '0')};
+        ${v('eP')} := ${a('nIn', '1')};
+        ${v('eD')} := ${a('nIn', '2')};
+    END_IF;` : '';
   const tt = pid.Td > 0 ? `SQRT(${v('Ti')} * ${v('Td')})` : v('Ti');
   const awLine = pid.antiWindup === 'clamp'
     ? `    // Conditional integration: stop integrating while the output is pinned and the error pushes it further.
@@ -84,7 +144,7 @@ function pidBlock(d: Dialect, pid: PidParams, Ts: number, inLo: number, inHi: nu
       Invert : Bool := ${pid.invert ? 'TRUE' : 'FALSE'};
       Integral : Real;        // integral term, in % output (so gain changes don't bump)
       DTerm : Real;
-      LastED : Real;
+      LastED : Real;${notchVars}
    END_VAR
    VAR_TEMP
       sp : Real;
@@ -97,7 +157,7 @@ function pidBlock(d: Dialect, pid: PidParams, Ts: number, inLo: number, inHi: nu
       tf : Real;
       iNext : Real;
       v : Real;
-      u : Real;
+      u : Real;${notchTemps}
    END_VAR
 ${d === 'scl' ? '\nBEGIN' : ''}
     // Scale to % of span: the gains are then independent of engineering units.
@@ -109,7 +169,7 @@ ${d === 'scl' ? '\nBEGIN' : ''}
     END_IF;
     ${v('e')} := ${v('dir')} * (${v('sp')} - ${v('pv')});
     ${v('eP')} := ${v('dir')} * (${v('PWeighting')} * ${v('sp')} - ${v('pv')});
-    ${v('eD')} := ${v('dir')} * (${v('DWeighting')} * ${v('sp')} - ${v('pv')});
+    ${v('eD')} := ${v('dir')} * (${v('DWeighting')} * ${v('sp')} - ${v('pv')});${notchCode}
     ${v('p')} := ${v('Gain')} * ${v('eP')};
 
     IF ${v('ManualEnable')} THEN
@@ -1128,7 +1188,8 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
       ? `// External reset: whichever controller lost the selection last cycle has its integral follow the valve signal.`
       : `// No tracking: each controller integrates on its own error even when it isn't selected (the windup case).`);
     const er = (who: string) => (config.tracking ? `ExtResetEnable := ${who}, ExtReset := ${tag('Out')}` : 'ExtResetEnable := FALSE, ExtReset := 0.0');
-    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ${er(tag('OvrSelected'))});`);
+    const ovrFf = config.ff?.length ? `, Feedforward := ${ffOf(config.ff)}` : '';
+    lines.push(`${db}(Setpoint := ${tag('SP')}, Input := ${pv}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}${ovrFf}, ${er(tag('OvrSelected'))});`);
     lines.push(`${ovr}(Setpoint := ${real(config.limit)}, Input := ${ovrIn}, ManualEnable := ${tag('Manual')}, ManualValue := ${tag('ManualOut')}, ${er(`NOT ${tag('OvrSelected')}`)});`);
     lines.push(`${tag('Out')} := ${fn}(IN1 := ${db}.Output, IN2 := ${ovr}.Output);`);
     lines.push(`${tag('OvrSelected')} := ${ovr}.Output ${config.select === 'max' ? '>' : '<'} ${db}.Output;  // show it on the faceplate: which controller has the valve`);
@@ -1204,7 +1265,7 @@ export function exportCode(proc: ProcessDef, config: ControllerConfig, rawParams
       if (ch?.id === 'valve-inverse') parts.push(valveInverseFunction(dialect, p.valveChar));
     }
     const [lo, hi] = pidInputRange(proc, config, p);
-    const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+    const ff = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : config.kind === 'override' ? config.ff ?? [] : [];
     if (ff.length) parts.push(leadLagBlock(dialect, p.Ts));
     if (config.kind === 'smith') parts.push(smithBlock(dialect, config.model, p.Ts, lo, hi));
     if (config.kind === 'statefb') parts.push(stateFbBlock(dialect, proc, designStateFb(proc, config, p)));
@@ -1278,7 +1339,7 @@ function onOff(spPct: number, pvPct: number): number {
 // The slave runs the same algorithm with its own gains (Kc ${config.inner.Kc}, Ti ${config.inner.Ti} s).
 // While the slave's output is pinned, hold the master's integral in that direction.`
     : '';
-  const terms = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : [];
+  const terms = config.kind === 'feedforward' || config.kind === 'cascade' ? config.ff : config.kind === 'override' ? config.ff ?? [] : [];
   const smithCode = config.kind === 'smith' ? `
 
 // Smith predictor: a model of the process, K/(tau·s + 1), and the same model n cycles later.
@@ -1315,10 +1376,25 @@ function leadLag(f: { gain: number; lead: number; lag: number; delay: number; x0
 const Ts = ${rawTs};
 let Kc = ${p.Kc}, Ti = ${p.Ti}, Td = ${p.Td};  // ${config.kind === 'schedule' ? 'updated from the schedule each cycle' : 'fixed'}
 const b = ${p.b}, c = ${p.c}, a = ${p.a}, lo = ${p.outLo}, hi = ${p.outHi};
-let I = 0, D = 0, lastED = 0;
+let I = 0, D = 0, lastED = 0;${hasNotch(p) ? `
+
+// Notch at ${p.notchHz} Hz, ${p.notchDepth ?? 20} dB deep, on the errors: (s² + 2ζz·ω·s + ω²)/(s² + 2ζp·ω·s + ω²) by
+// Tustin with the centre prewarped. Each filter keeps its last two inputs and outputs.
+const nw = 2 * Math.PI * ${p.notchHz}, nk = nw / Math.tan((nw * Ts) / 2);
+const zp = ${NOTCH_WIDTH}, zz = zp * 10 ** (-${p.notchDepth ?? 20} / 20);
+const na0 = nk * nk + 2 * zp * nw * nk + nw * nw;
+const nb = [nk * nk + 2 * zz * nw * nk + nw * nw, 2 * (nw * nw - nk * nk), nk * nk - 2 * zz * nw * nk + nw * nw].map((x) => x / na0);
+const na = [(2 * (nw * nw - nk * nk)) / na0, (nk * nk - 2 * zp * nw * nk + nw * nw) / na0];
+const notches = [0, 1, 2].map(() => ({ x1: NaN, x2: 0, y1: 0, y2: 0 }));
+function notch(f: { x1: number; x2: number; y1: number; y2: number }, x: number) {
+  if (Number.isNaN(f.x1)) { f.x1 = f.x2 = f.y1 = f.y2 = x; }   // settle on the first value
+  const y = nb[0] * x + nb[1] * f.x1 + nb[2] * f.x2 - na[0] * f.y1 - na[1] * f.y2;
+  f.x2 = f.x1; f.x1 = x; f.y2 = f.y1; f.y1 = y;
+  return y;
+}` : ''}
 
 function pid(sp: number, pv: number): number {
-  const e = sp - pv, eP = b * sp - pv, eD = c * sp - pv;
+  ${hasNotch(p) ? 'const [e, eP, eD] = [sp - pv, b * sp - pv, c * sp - pv].map((x, i) => notch(notches[i], x));' : 'const e = sp - pv, eP = b * sp - pv, eD = c * sp - pv;'}
   const P = Kc * eP;
   if (Td > 0) {
     const Tf = a * Td;
@@ -1342,7 +1418,8 @@ ${p.antiWindup === 'clamp'
 function track(u: number, sp: number, pv: number) {
   I = u - Kc * (b * sp - pv);
   D = 0;
-  lastED = c * sp - pv;
+  lastED = c * sp - pv;${hasNotch(p) ? `
+  notches.forEach((f) => { f.x1 = NaN; });   // settle again on the next value` : ''}
 }${ffCode}${smithCode}${extra}`;
 }
 

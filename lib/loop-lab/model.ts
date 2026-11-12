@@ -62,6 +62,8 @@ export type SecondarySpec = PvSpec & {
   upset?: string;
   /** A measurement for state feedback only, not something an inner loop could control (a crane's sway angle). */
   measureOnly?: boolean;
+  /** A measurement a limit (override) controller works on, not one an inner loop could set (a compressor's surge approach). */
+  limitOnly?: boolean;
   of(x: number[], flow: number, d: Params, p: Params): number;
 };
 
@@ -108,7 +110,7 @@ export type Characterization = {
   note: string;
 };
 
-export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'mixing' | 'batch' | 'custom';
+export type ProcessId = 'flow' | 'tank' | 'stirred' | 'hx' | 'surge' | 'feeder' | 'drum' | 'jacket' | 'blend' | 'crane' | 'servo' | 'maglev' | 'mixing' | 'batch' | 'compressor' | 'custom';
 
 export type ProcessDef = {
   id: ProcessId;

@@ -559,8 +559,10 @@ function Stat({ title, value, sub, tone }: { title: string; value: string; sub: 
   );
 }
 
-/** How one test went, for its tab. */
-function testTone(t: TestScore): Tone {
+/** How one test went, for its tab. A test with a limit is passed by keeping to it, setpoint or not. */
+function testTone(t: TestScore, limited: boolean): Tone {
+  if (t.overLimit) return 'bad';
+  if (limited) return 'good';
   if (t.steps.some((s) => s.settling === null) || t.upsets.some((u) => u.recovery === null && !u.limited)) return 'bad';
   if (t.steps.some((s) => s.overshoot > 15)) return 'warn';
   return 'good';
@@ -572,10 +574,12 @@ export function TestTabs({ tests, runs, value, onChange }: { tests: TestScore[];
   return (
     <div className="ll-tests" role="tablist" aria-label="Test">
       {runs.map((r, i) => {
-        const tone = tests[i] ? testTone(tests[i]) : '';
+        const limit = r.scenario.limit;
+        const tone = tests[i] ? testTone(tests[i], !!limit) : '';
+        const text = limit && tests[i] ? (tests[i].overLimit ? `went past ${limit.label}` : `kept to ${limit.label}`) : said[tone];
         return (
-          <button key={r.scenario.id} role="tab" aria-selected={value === i} onClick={() => onChange(i)} title={said[tone]}>
-            <span className={`ll-dot is-${tone}`} aria-hidden />{r.scenario.name}<span className="sr-only">: {said[tone]}</span>
+          <button key={r.scenario.id} role="tab" aria-selected={value === i} onClick={() => onChange(i)} title={text}>
+            <span className={`ll-dot is-${tone}`} aria-hidden />{r.scenario.name}<span className="sr-only">: {text}</span>
           </button>
         );
       })}
