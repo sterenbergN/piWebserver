@@ -7,6 +7,8 @@ import { instrumentParams, type ProcessDef } from '../model';
 // transmitter lags are kept tiny because the identified model already has them.
 // Test scripts are written in units of the model's own time scale
 // (τ1 + τ2 + θ), so they fit a 5-second loop and a 2-hour one alike.
+// The inner measurement is the plant after its first lag, for a cascade's inner loop (with a
+// single lag it is the PV itself, ahead of the dead time). It carries the whole gain.
 
 export const CUSTOM: ProcessDef = {
   id: 'custom',
@@ -15,6 +17,10 @@ export const CUSTOM: ProcessDef = {
   summary: 'A model identified from a trend: first or second order plus dead time, or an integrator. No physics, just the input–output behaviour of a real loop, to try strategies on before commissioning.',
   family: 'escalation',
   pv: { label: 'Process value', symbol: 'y', unit: '%', lo: 0, hi: 100, decimals: 2 },
+  secondary: {
+    label: 'Inner measurement', symbol: 'y_1', unit: '%', lo: 0, hi: 100, decimals: 2, tag: 'XT-101', loopTag: 'XIC-101',
+    of: ([x1]) => x1,
+  },
   tags: { loop: 'XIC-100', transmitter: 'XT-100', valve: 'XV-100' },
   states: [{ key: 'x1', label: 'First lag', unit: '%' }, { key: 'x2', label: 'Second lag', unit: '%' }],
   params: [
@@ -29,7 +35,7 @@ export const CUSTOM: ProcessDef = {
       note: 'Self-regulating models: steady PV = bias + K × output.' },
     { key: 'u0', label: 'Balance output', unit: '%', default: 50, min: 0, max: 100, step: 0.1, group: 'process',
       note: 'Integrating models: the output that holds the PV still.' },
-    ...instrumentParams({ valveTau: 0.1, valveRate: 1000, valveChar: 0, txTau: 0.1, txNoise: 0.3, txDelay: 5, Ts: 0.5 }),
+    ...instrumentParams({ valveTau: 0.1, valveRate: 1000, valveChar: 0, txTau: 0.1, txNoise: 0.3, txDelay: 5, Ts: 0.5, tx2Tau: 0.1 }),
   ],
   disturbances: [
     { key: 'load', label: 'Load (at the output)', unit: '% of output', nominal: 0, min: -70, max: 70, note: 'An unmeasured upset, expressed as the output change that would cancel it.' },

@@ -1,4 +1,5 @@
 import { encodeExperiment, type Experiment } from './setup';
+import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
 import { DEFAULT_PID, type ControllerConfig, type PidParams } from './controllers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -1450,6 +1451,7 @@ export type BenchExport = {
  * never approximated quietly.
  */
 export function benchExport(model: BlockDiagramModel): BenchExport {
+  if (model.nodes.filter((n) => n.kind === 'pid').length === 2) return cascadeExport(model);
   const r = readLoop(model);
   if (!r.plant || !r.controller) return { url: null, reason: r.reason, notes: [] };
   const notes = [...r.notes];
@@ -1490,6 +1492,187 @@ export function benchExport(model: BlockDiagramModel): BenchExport {
     : { kind: 'pid', pid };
   const experiment: Experiment = { process: 'custom', params, controller: config };
   return { url: `/loop-lab/bench?setup=${encodeExperiment(experiment)}#tests`, reason: '', notes };
+}
+
+// ─── Cascades ────────────────────────────────────────────────────────────────
+
+type Stage = { K: number; tau: number; theta: number };
+type Gains = { Kc: number; Ti: number; Td: number; N: number };
+
+export type CascadeReading =
+  | { inner: Stage; outer: Stage; master: Gains; slave: Gains; valve: LoopReading['valve']; notes: string[]; reason?: undefined }
+  | { reason: string };
+
+/**
+ * Two PIDs where one sets the other's setpoint: the slave's loop through the inner plant to the
+ * inner measurement, and on from there to what the master measures. Each part has to come down to
+ * a gain, at most one lag and a dead time for the bench's identified plant to hold it.
+ */
+export function readCascade(model: BlockDiagramModel): CascadeReading {
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
+  const wires = model.wires.filter((w) => byId.has(w.fromBlock) && byId.has(w.toBlock));
+  const into = (id: string, port?: number) => wires.filter((w) => w.toBlock === id && (port === undefined || w.toPort === port));
+  const outOf = (id: string) => wires.filter((w) => w.fromBlock === id);
+  const isSink = (id: string) => BLOCK_CATALOG[byId.get(id)!.kind].category === 'sinks';
+  const name = (n: BlockNode) => n.label || BLOCK_CATALOG[n.kind].name;
+  const signsOf = (n: BlockNode) => (n.signs || '+-').split('');
+  const reaches = (from: string, to: string, skip: Set<string>) => {
+    const seen = new Set<string>(), stack = [from];
+    while (stack.length) {
+      for (const w of outOf(stack.pop()!)) {
+        if (w.toBlock === to) return true;
+        if (seen.has(w.toBlock) || skip.has(w.toBlock) || isSink(w.toBlock)) continue;
+        seen.add(w.toBlock);
+        stack.push(w.toBlock);
+      }
+    }
+    return false;
+  };
+
+  const pids = model.nodes.filter((n) => n.kind === 'pid');
+  if (pids.length !== 2) return { reason: 'A cascade has two PID controllers.' };
+  const junction = (c: BlockNode) => {
+    const src = into(c.id, 0);
+    if (src.length !== 1) return null;
+    const sum = byId.get(src[0].fromBlock)!;
+    if (sum.kind !== 'sum') return null;
+    const signs = signsOf(sum);
+    const minus = signs.flatMap((s, i) => (s === '-' ? into(sum.id, i) : []));
+    const plus = signs.flatMap((s, i) => (s === '+' ? into(sum.id, i) : []));
+    return minus.length === 1 && plus.length === 1 ? { sum, feedback: minus[0].fromBlock, setpoint: plus[0].fromBlock } : null;
+  };
+  const [a, b] = pids;
+  const ja = junction(a), jb = junction(b);
+  if (!ja || !jb) return { reason: `${name(!ja ? a : b)} is not fed by a setpoint-minus-feedback junction.` };
+  const pair = jb.setpoint === a.id ? { master: a, slave: b, jm: ja, js: jb } : ja.setpoint === b.id ? { master: b, slave: a, jm: jb, js: ja } : null;
+  if (!pair) return { reason: 'Neither controller sets the other’s setpoint: two loops side by side, not a cascade.' };
+  const { master, slave, jm, js } = pair;
+  if (outOf(master.id).some((w) => !isSink(w.toBlock) && w.toBlock !== js.sum.id)) {
+    return { reason: `${name(master)}’s output goes somewhere besides ${name(slave)}’s setpoint.` };
+  }
+  if (jm.feedback === js.feedback) return { reason: 'Both controllers measure the same signal.' };
+
+  const walk = (from: string, target: string, skip: Set<string>) => {
+    const path: { node: BlockNode; port: number }[] = [];
+    for (let cur = from; cur !== target;) {
+      const on = outOf(cur).filter((w) => !isSink(w.toBlock) && !skip.has(w.toBlock) && (w.toBlock === target || reaches(w.toBlock, target, skip)));
+      if (!on.length) return `The signal from ${name(byId.get(from)!)} never reaches ${name(byId.get(target)!)}.`;
+      if (on.length > 1) return `The signal splits after ${name(byId.get(cur)!)} and comes back along more than one path.`;
+      if (path.length > model.nodes.length) return 'The loop goes round inside itself.';
+      path.push({ node: byId.get(on[0].toBlock)!, port: on[0].toPort });
+      cur = on[0].toBlock;
+    }
+    return path;
+  };
+  const notes: string[] = [];
+  let valve: LoopReading['valve'] = null;
+  const reduce = (path: { node: BlockNode; port: number }[], part: string) => {
+    let K = 1, theta = 0;
+    const lags: number[] = [];
+    for (const { node, port } of path) {
+      const p = node.params;
+      if (node.kind === 'sum') {
+        if (signsOf(node)[port] === '-') K = -K;
+        if (into(node.id).length > 1) notes.push(`What else is added at ${name(node)} is left out: the bench has its own load upset.`);
+      } else if (node.kind === 'gain') K *= p.K ?? 1.5;
+      else if (node.kind === 'saturation') notes.push(`${name(node)} is left out: the bench limits the output to 0–100 %.`);
+      else if (node.kind === 'fopdt') {
+        K *= p.K ?? 1.2;
+        lags.push(Math.max(0.01, p.tau ?? 15));
+        theta += Math.max(0, p.theta ?? 0);
+      } else if (node.kind === 'sopdt') {
+        K *= p.K ?? 1;
+        lags.push(Math.max(0.01, p.tau1 ?? 12), Math.max(0.01, p.tau2 ?? 5));
+        theta += Math.max(0, p.theta ?? 0);
+      } else if (node.kind === 'deadtime') theta += Math.max(0, p.theta ?? 5);
+      else if (node.kind === 'valve' && part === 'inner' && !valve) {
+        valve = { tau: Math.max(0.01, p.tau ?? 0.8), rateLimit: Math.max(1, p.rateLimit ?? 50), deadband: Math.max(0, p.deadband ?? 0), char: p.char === 1 ? 1 : 0 };
+      } else return `${name(node)} (${BLOCK_CATALOG[node.kind].name}) in the ${part} part has no equivalent in the bench’s identified plant.`;
+    }
+    if (lags.length > 1) return `The ${part} part has ${lags.length} lags in series; the bench’s identified plant holds one in each part of a cascade.`;
+    if (K === 0) return `The ${part} part’s gain is zero.`;
+    if (K < 0) return `The ${part} loop’s feedback is positive: its controller pushes the same way as the error grows.`;
+    return { K, tau: lags[0] ?? 0, theta };
+  };
+
+  const ignore = new Set([js.sum.id, jm.sum.id]);
+  const innerPath = walk(slave.id, js.feedback, ignore);
+  if (typeof innerPath === 'string') return { reason: innerPath };
+  const inner = reduce(innerPath, 'inner');
+  if (typeof inner === 'string') return { reason: inner };
+  const outerPath = walk(js.feedback, jm.feedback, new Set([...ignore, slave.id]));
+  if (typeof outerPath === 'string') return { reason: outerPath };
+  const outer = reduce(outerPath, 'outer');
+  if (typeof outer === 'string') return { reason: outer };
+  const gains = (c: BlockNode): Gains => ({ Kc: c.params.Kc ?? 2, Ti: Math.max(0, c.params.Ti ?? 12), Td: Math.max(0, c.params.Td ?? 0), N: Math.max(1, c.params.N ?? 10) });
+  return { inner, outer, master: gains(master), slave: gains(slave), valve, notes };
+}
+
+/** A cascade as a bench setup: the identified plant's inner measurement after its first lag. */
+function cascadeExport(model: BlockDiagramModel): BenchExport {
+  const r = readCascade(model);
+  if (r.reason !== undefined) return { url: null, reason: r.reason, notes: [] };
+  const notes = [...r.notes];
+  const within = (v: number, lo: number, hi: number, what: string) => {
+    const c = Math.min(hi, Math.max(lo, v));
+    if (c !== v) notes.push(`${what} is ${Number(v.toPrecision(4))} in the diagram and ${Number(c.toPrecision(4))} on the bench, which is as far as it goes.`);
+    return c;
+  };
+  const { inner, outer, master, slave, valve } = r;
+  const K = within(inner.K * outer.K, 0.01, 50, 'The plant gain');
+  // On the bench the inner measurement is the plant after its first lag, carrying the whole gain;
+  // in the diagram it carries the inner plant's. Scaling both controllers by the outer gain keeps
+  // every signal in the loop the same.
+  const k2 = K / inner.K;
+  if (Math.abs(k2 - 1) > 1e-9) {
+    notes.push(`The bench’s inner measurement carries the whole plant gain (${Number(K.toPrecision(4))}), not the inner plant’s (${Number(inner.K.toPrecision(4))}): the slave’s gain is divided by ${Number(k2.toPrecision(4))} and the master’s multiplied by it, which is the same loop in the bench’s units.`);
+  }
+  if (inner.theta > 0) {
+    notes.push(`The inner loop’s dead time (${Number(inner.theta.toPrecision(3))} s) is counted on the process value only: the bench’s inner measurement has none, so its inner loop is a little quicker than the diagram’s.`);
+  }
+  if (inner.tau <= 0) notes.push('The inner part has no lag of its own; the bench gives it the shortest it has, 0.1 s.');
+  const params: Experiment['params'] = {
+    integrating: 0,
+    K,
+    tau1: within(Math.max(0.1, inner.tau), 0.1, 1e5, 'The inner time constant'),
+    tau2: within(outer.tau, 0, 1e5, 'The outer time constant'),
+    bias: Math.min(1000, Math.max(-1000, 50 * (1 - K))),
+    u0: 50,
+    txDelay: within(inner.theta + outer.theta, 0, 120, 'The dead time'),
+    txNoise: 0,
+    txTau: 0.05,
+    tx2Tau: 0.05,
+    Ts: Math.min(10, Math.max(0.01, Number(model.dt) || 0.1)),
+    valveTau: valve ? within(valve.tau, 0.05, 60, 'The valve lag') : 0.05,
+    valveRate: valve ? within(valve.rateLimit, 0.5, 200, 'The valve rate limit') : 200,
+    valveDeadband: valve ? within(valve.deadband, 0, 5, 'The valve deadband') : 0,
+    valveChar: valve?.char ?? 0,
+  };
+  const pid = (g: Gains, scale: number): PidParams => ({ ...DEFAULT_PID, Kc: g.Kc * scale, Ti: g.Ti, Td: g.Td, a: Math.min(1, Math.max(0.01, 1 / g.N)) });
+  const config: ControllerConfig = { kind: 'cascade', outer: pid(master, k2), inner: pid(slave, 1 / k2), ff: [] };
+  const experiment: Experiment = { process: 'custom', params, controller: config };
+  return { url: `/loop-lab/bench?setup=${encodeExperiment(experiment)}#tests`, reason: '', notes };
+}
+
+// ─── Sharing ─────────────────────────────────────────────────────────────────
+
+/** A diagram as a short URL-safe string (deflated JSON in base64url). */
+export function encodeDiagram(model: BlockDiagramModel): string {
+  const packed = deflateSync(strToU8(JSON.stringify(model)), { level: 9 });
+  let bin = '';
+  packed.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** The diagram in a shared link, checked like a stored one; null if it isn't one. */
+export function decodeDiagram(s: string): BlockDiagramModel | null {
+  try {
+    const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return cleanDiagram(JSON.parse(strFromU8(inflateSync(bytes))));
+  } catch {
+    return null;
+  }
 }
 
 // ─── 5 Pre-Built System Templates ───────────────────────────────────────────

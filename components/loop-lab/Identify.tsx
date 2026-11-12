@@ -2,12 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import { fitModel, parseTable, type IdentResult, type ModelType, type Table } from '@/lib/loop-lab/ident';
-import { defaultParams } from '@/lib/loop-lab/model';
 import { getProcess } from '@/lib/loop-lab/processes';
 import { sampleTrend } from '@/lib/loop-lab/sample';
 import { defaultController } from '@/lib/loop-lab/controllers';
 import type { Experiment } from '@/lib/loop-lab/setup';
-import { getRule } from '@/lib/loop-lab/tuning';
+import { identifiedSetup } from '@/lib/loop-lab/identified';
 import Chart, { fmt } from './Chart';
 import { PALETTE } from './Results';
 import { NumField } from './Setup';
@@ -18,7 +17,8 @@ const TYPES: { id: ModelType; label: string }[] = [
   { id: 'integrating', label: 'Integrator + dead time' },
 ];
 
-type Kept = { label: string; at: number; r: IdentResult; span: number };
+type Kept = { label: string; at: number; r: IdentResult; span: number; lo: number };
+
 
 /** Pick likely columns: time first, then the one that moves in steps (the output), then the PV. */
 function guessColumns(t: Table) {
@@ -83,32 +83,35 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
   const Kpct = fit ? pct(fit.type === 'integrating' ? fit.kPrime : fit.K) : NaN;
   const experiment = (): Experiment | null => {
     if (!fit || !Number.isFinite(span)) return null;
-    const proc = getProcess('custom');
-    const integ = fit.type === 'integrating';
-    // Integrating: the custom plant ramps at K/τ1, so fix τ1 and put the slope in K.
-    const tau1 = integ ? 100 : Math.max(fit.tau1, 0.1);
-    const K = integ ? Kpct * tau1 : Kpct;
-    const y0 = ((fit.y0 - range.lo) / span) * 100;
-    const params = {
-      ...defaultParams(proc),
-      integrating: integ ? 1 : 0,
-      K: Number(K.toPrecision(4)),
-      tau1: Number(tau1.toPrecision(4)),
-      tau2: integ ? Number(fit.tau1.toPrecision(4)) : Number(fit.tau2.toPrecision(4)),
-      txDelay: Number(fit.theta.toPrecision(3)),
-      bias: Number((y0 - K * fit.u0).toPrecision(4)),
-      u0: Number(fit.u0.toPrecision(4)),
-      txNoise: Number(Math.min(5, pct(fit.noise)).toPrecision(2)),
-      Ts: Math.min(10, Math.max(0.05, Number(fit.dt.toPrecision(2)))),
-    };
-    const exp: Experiment = { process: 'custom', params, controller: defaultController('pid', proc) };
-    // Start from a SIMC PI on the identified model.
-    const lagged = integ ? fit.tau1 : fit.tau2 / 2;
-    const m = { K: Math.abs(integ ? Kpct * 1e4 : Kpct), tau: integ ? 1e4 : fit.tau1 + fit.tau2 / 2, theta: fit.theta + lagged + params.Ts / 2, tau1: fit.tau1, tau2: fit.tau2, theta2: fit.theta, kPrime: Kpct, integrating: integ };
-    const pi = getRule('simc').tune(m, 'PI', 2 * m.theta);
-    if (pi && exp.controller.kind === 'pid') exp.controller = { kind: 'pid', pid: { ...exp.controller.pid, ...pi, invert: Kpct < 0 } };
+    const { params, pi, invert } = identifiedSetup(fit, span, range.lo);
+    const base = defaultController('pid', getProcess('custom'));
+    const exp: Experiment = { process: 'custom', params, controller: base };
+    if (pi && base.kind === 'pid') exp.controller = { kind: 'pid', pid: { ...base.pid, ...pi, invert } };
     return exp;
   };
+
+  // A gain schedule from the kept fits: each point's SIMC PI at its own operating point, on the
+  // plant as fitted nearest the middle of them.
+  const tuned = kept.map((k) => ({ k, s: identifiedSetup(k.r, k.span, k.lo) }));
+  const sameSign = tuned.length > 0 && tuned.every((x) => x.s.invert === tuned[0].s.invert);
+  const canSchedule = tuned.length >= 2 && sameSign && tuned.every((x) => x.s.pi) && new Set(tuned.map((x) => Math.round(x.s.at * 10))).size === tuned.length;
+  const scheduled = (): Experiment | null => {
+    if (!canSchedule) return null;
+    const sorted = [...tuned].sort((x, y) => x.s.at - y.s.at);
+    const middle = sorted[Math.floor((sorted.length - 1) / 2)];
+    const base = defaultController('pid', getProcess('custom'));
+    if (base.kind !== 'pid') return null;
+    return {
+      process: 'custom',
+      params: middle.s.params,
+      controller: {
+        kind: 'schedule', on: 'pv',
+        pid: { ...base.pid, ...middle.s.pi!, invert: middle.s.invert },
+        points: sorted.slice(0, 8).map((x) => ({ at: Number(x.s.at.toPrecision(4)), Kc: x.s.pi!.Kc, Ti: x.s.pi!.Ti, Td: 0 })),
+      },
+    };
+  };
+  const middleLabel = tuned.length ? [...tuned].sort((x, y) => x.s.at - y.s.at)[Math.floor((tuned.length - 1) / 2)].k.label : '';
 
   const gainSpread = kept.length > 1 ? Math.max(...kept.map((k) => Math.abs(k.r.type === 'integrating' ? k.r.kPrime : k.r.K))) / Math.min(...kept.map((k) => Math.abs(k.r.type === 'integrating' ? k.r.kPrime : k.r.K))) : NaN;
 
@@ -201,7 +204,7 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
             <button className="ll-btn is-primary" disabled={!Number.isFinite(span)} onClick={() => { const e = experiment(); if (e) onUse(e); }}>Use as a process in the bench</button>
-            <button className="ll-btn" onClick={() => setKept([...kept, { label: `PV ≈ ${fmt(fit.y0, 3)}`, at: fit.y0, r: fit, span }])}>Keep this fit</button>
+            <button className="ll-btn" disabled={!Number.isFinite(span)} onClick={() => setKept([...kept, { label: `PV ≈ ${fmt(fit.y0, 3)}`, at: fit.y0, r: fit, span, lo: range.lo }])}>Keep this fit</button>
           </div>
         </div>
       )}
@@ -211,13 +214,14 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
           <div className="ll-card-head"><h3>Fits at different operating points</h3><button className="ll-link" onClick={() => setKept([])}>Clear</button></div>
           <div className="ll-table-wrap">
             <table className="ll-table">
-              <thead><tr><th>Operating point</th><th>Gain (% of span per %)</th><th>τ</th><th>θ</th><th>Fit</th></tr></thead>
+              <thead><tr><th>Operating point</th><th>Gain (% of span per %)</th><th>τ</th><th>θ</th><th>Fit</th><th>SIMC PI: Kc</th><th>Ti</th></tr></thead>
               <tbody>
                 {kept.map((k, i) => (
                   <tr key={i}>
                     <td>{k.label}</td>
                     <td>{fmt(((k.r.type === 'integrating' ? k.r.kPrime : k.r.K) / k.span) * 100, 3)}{k.r.type === 'integrating' ? ' /s' : ''}</td>
                     <td>{fmt(k.r.tau1, 3)} s</td><td>{fmt(k.r.theta, 3)} s</td><td>{fmt(k.r.fit, 3)} %</td>
+                    <td>{tuned[i].s.pi ? fmt(tuned[i].s.pi!.Kc, 3) : '—'}</td><td>{tuned[i].s.pi ? `${fmt(tuned[i].s.pi!.Ti, 3)} s` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -228,6 +232,22 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
               The gain varies {fmt(gainSpread, 2)}× across these points.{' '}
               {gainSpread < 2 ? 'Within about 2:1 one PI tuning will do.' : 'Beyond about 2:1, schedule the gains (or characterize, if you know why the gain changes): see the conical tank case study.'}
             </p>
+          )}
+          {tuned.length >= 2 && (
+            <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.5rem' }}>
+                <button className="ll-btn is-primary" disabled={!canSchedule} onClick={() => { const e = scheduled(); if (e) onUse(e); }}>
+                  Use as a gain-scheduled PI in the bench
+                </button>
+              </div>
+              <p className="ll-note">
+                {!sameSign
+                  ? 'The gain changes sign between these fits: no one schedule fits them. Check the columns and the windows.'
+                  : !canSchedule
+                    ? 'Two of these fits are at the same operating point: keep fits from different points.'
+                    : `Breakpoints at each fit's PV (in % of span), each with the SIMC PI for its own model; the gains in between are interpolated. The bench's identified plant is one linear model, the fit at ${middleLabel}, so it shows the schedule at work around that point only: the other breakpoints are for the plant where you measured them. The Automation tab exports the schedule for the PLC.`}
+              </p>
+            </>
           )}
         </div>
       )}

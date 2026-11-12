@@ -10,13 +10,14 @@ import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, m
 import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
 import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
+import { identifiedSetup } from './identified';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { driftedPlants, runDrifted, worstOf } from './drift';
 import { TUNING_RULES } from './tuning';
 import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
-import { BLOCK_TEMPLATES, benchExport, cleanDiagram, clampParam, readLoop, simulateBlockDiagram, type BlockDiagramModel } from './block-sim';
+import { BLOCK_TEMPLATES, benchExport, cleanDiagram, clampParam, decodeDiagram, encodeDiagram, readLoop, simulateBlockDiagram, type BlockDiagramModel } from './block-sim';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
 const pid = (o: Partial<typeof DEFAULT_PID>): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, ...o } });
@@ -1056,10 +1057,21 @@ test('block diagram → bench: the plant and controller are the ones wired round
   assert.deepEqual([ff.p.K, ff.p.tau1, ff.p.txDelay], [1.2, 15, 2.5]);
   assert.equal(ff.notes.filter((n) => /left out/.test(n)).length, 2);
 
-  // Two controllers on a one-measurement plant: refused, with the reason, not approximated.
-  const cascade = benchExport(template('cascade-loop'));
-  assert.equal(cascade.url, null);
-  assert.match(cascade.reason, /2 PID controllers/);
+  // A cascade: the inner plant's lag and the outer's, the gain overall, the controllers scaled so
+  // the loop is the same in the bench's units (its inner measurement carries the whole gain).
+  const cascade = sent(template('cascade-loop'));
+  assert.deepEqual([cascade.p.K, cascade.p.tau1, cascade.p.tau2, cascade.p.txDelay], [1.1, 2.5, 20, 2.3]);
+  assert.ok(cascade.exp.controller.kind === 'cascade');
+  const cc = cascade.exp.controller;
+  assert.ok(Math.abs(cc.outer.Kc - 1.5 * 1.1) < 1e-9 && cc.outer.Ti === 25);
+  assert.ok(Math.abs(cc.inner.Kc - 2.2 / 1.1) < 1e-9 && cc.inner.Ti === 4);
+  assert.ok(cascade.notes.some((n) => /inner loop’s dead time \(0\.3 s\)/.test(n)), cascade.notes.join(' | '));
+  // Two PIDs side by side are not a cascade.
+  const sideBySide: BlockDiagramModel = {
+    ...template('cascade-loop'),
+    wires: template('cascade-loop').wires.map((w) => (w.id === 'cw3' ? { ...w, fromBlock: 'ref' } : w)),
+  };
+  assert.match(benchExport(sideBySide).reason, /side by side/);
 
   // Blocks that aren't in the loop don't leak into it, wherever they sit in the list.
   const base = template('fopdt-pid');
@@ -1293,4 +1305,47 @@ test('drifted plants: drawn within the spread, the same every time, and run as t
   const hot = runDrifted(proc, params, { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1.2, Ti: 1.8 } }, scenario, { Kv: 1.6 });
   const cool = runDrifted(proc, params, { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1.2, Ti: 1.8 } }, scenario, { Kv: 1 });
   assert.ok(worstOf([hot.card]).overshoot > worstOf([cool.card]).overshoot, `${worstOf([hot.card]).overshoot} vs ${worstOf([cool.card]).overshoot}`);
+});
+
+test('identified fits: each becomes the plant in % of span with its own SIMC PI, ready for a schedule', () => {
+  const fit = (K: number, tau: number, theta: number, y0: number) => ({
+    type: 'fopdt' as const, K, kPrime: 0, tau1: tau, tau2: 0, theta, fit: 95, t: [], u: [], y: [], yhat: [], u0: 50, y0, noise: 0.1, dt: 0.5,
+  });
+  // A transmitter 0–200: a gain of 2 units per % is 1 % of span per %.
+  const low = identifiedSetup(fit(2, 30, 5, 50), 200, 0), high = identifiedSetup(fit(6, 30, 5, 150), 200, 0);
+  assert.equal(low.params.K, 1);
+  assert.equal(low.at, 25);
+  assert.equal(high.at, 75);
+  // At steady state the plant gives the PV it was fitted at.
+  assert.ok(Math.abs(low.params.bias + low.params.K * 50 - 25) < 1e-9);
+  // Three times the gain, a third of the controller gain; the same reset.
+  assert.ok(low.pi && high.pi);
+  assert.ok(Math.abs(low.pi!.Kc / high.pi!.Kc - 3) < 1e-9);
+  assert.equal(low.pi!.Ti, high.pi!.Ti);
+  assert.equal(identifiedSetup(fit(-2, 30, 5, 50), 200, 0).invert, true);
+});
+
+test('block diagram → bench: a cascade behaves the same on the bench as in the diagram', () => {
+  const m = BLOCK_TEMPLATES.find((t) => t.id === 'cascade-loop')!;
+  const exp = decodeExperiment(decodeURIComponent(benchExport(m).url!.split('setup=')[1].split('#')[0]))!;
+  const proc = getProcess('custom');
+  // The diagram: master SP 0 → 20 at 2 s. The bench: the same step, 50 → 70 %. (The identified
+  // plant's tests are in units of its time scale, τ1 + τ2 + θ.)
+  const d = simulateBlockDiagram({ ...m, duration: 150 }).nodeOutputs.outer;
+  const k = proc.timeScale!(exp.params);
+  const run = runScenario(proc, { params: exp.params, controller: exp.controller, seed: 1 }, { id: 't', name: 't', purpose: '', duration: 150 / k, initialSp: 50, events: [{ t: 2 / k, kind: 'sp', value: 70 }] });
+  const at = (t: number) => ({ diagram: d[Math.round(t / m.dt)] / 20, bench: (run.trace.pvTrue[Math.round(t / run.Ts)] - 50) / 20 });
+  for (const t of [10, 20, 40, 80, 140]) {
+    const v = at(t);
+    assert.ok(Math.abs(v.bench - v.diagram) < 0.1, `t ${t}: bench ${v.bench.toFixed(3)} vs diagram ${v.diagram.toFixed(3)}`);
+  }
+});
+
+test('block diagram: a shared link carries the whole diagram', () => {
+  for (const t of BLOCK_TEMPLATES) {
+    const code = encodeDiagram(t);
+    assert.match(code, /^[A-Za-z0-9_-]+$/);
+    assert.deepEqual(decodeDiagram(code), t);
+  }
+  assert.equal(decodeDiagram('not a diagram'), null);
 });

@@ -13,6 +13,8 @@ import {
   benchExport,
   cleanDiagram,
   clampParam,
+  decodeDiagram,
+  encodeDiagram,
   type BlockCategory,
   type BlockDiagramModel,
   type BlockKind,
@@ -28,6 +30,25 @@ const BLOCK_HEIGHT = 92;
 const UNDO_RUN_MS = 600;
 /** The diagram is kept in this browser between visits. */
 const STORAGE_KEY = 'loop-lab:block-studio';
+/** Diagrams kept under a name, in this browser. */
+const SAVED_KEY = 'loop-lab:block-studio:saved';
+const SAVED_MAX = 30;
+type SavedDiagram = { id: string; name: string; savedAt: number; model: BlockDiagramModel };
+
+function readSaved(): SavedDiagram[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(SAVED_KEY) ?? '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((e: unknown) => {
+      const o = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
+      const model = cleanDiagram(o.model);
+      if (!model || typeof o.id !== 'string' || typeof o.name !== 'string') return [];
+      return [{ id: o.id, name: o.name.slice(0, 80), savedAt: typeof o.savedAt === 'number' ? o.savedAt : 0, model }];
+    });
+  } catch {
+    return [];
+  }
+}
 
 const CATEGORY_COLORS: Record<BlockCategory, { border: string; bg: string; badge: string; text: string; lightBg: string }> = {
   sources: { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)', badge: '#0891b2', text: 'var(--ll-cat-sources)', lightBg: 'rgba(6, 182, 212, 0.06)' },
@@ -440,19 +461,88 @@ export default function BlockBuilder() {
   // The diagram as it was left in this browser, and kept as it changes. (Storage can be refused:
   // then it just isn't kept.)
   const [restored, setRestored] = useState(false);
+  const [savedList, setSavedList] = useState<SavedDiagram[]>([]);
+  const [notice, setNotice] = useState('');
+  const writeSaved = useCallback((list: SavedDiagram[]) => {
+    setSavedList(list);
+    try {
+      window.localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+    } catch {
+      setNotice('This browser wouldn’t keep the saved diagrams (storage full or not allowed).');
+    }
+  }, []);
   useEffect(() => {
+    let left: BlockDiagramModel | null = null;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      const saved = raw ? cleanDiagram(JSON.parse(raw)) : null;
-      if (saved) {
-        modelRef.current = saved;
-        setModelNow(saved);
-      }
+      left = raw ? cleanDiagram(JSON.parse(raw)) : null;
     } catch {
       // Unreadable or not allowed: start from the template.
     }
+    const list = readSaved();
+    setSavedList(list);
+    const code = new URLSearchParams(window.location.search).get('d');
+    const shared = code ? decodeDiagram(code) : null;
+    if (code) {
+      // The link has done its job: a reload shows the diagram as it is by then.
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+    }
+    if (shared) {
+      // What was being worked on here isn't lost to the link: it goes in the saved list first.
+      if (left && JSON.stringify(left) !== JSON.stringify(shared) && JSON.stringify(left) !== JSON.stringify(BLOCK_TEMPLATES[0])) {
+        const keep: SavedDiagram = { id: `s_${Date.now().toString(36)}`, name: `Before the shared link (${new Date().toLocaleString()})`, savedAt: Date.now(), model: left };
+        writeSaved([keep, ...list].slice(0, SAVED_MAX));
+        setNotice('Opened the diagram from the link. What you had here is in Saved diagrams, as “Before the shared link”.');
+      } else setNotice('Opened the diagram from the link.');
+      modelRef.current = shared;
+      setModelNow(shared);
+    } else {
+      if (code) setNotice('That link doesn’t hold a diagram this page can read.');
+      if (left) {
+        modelRef.current = left;
+        setModelNow(left);
+      }
+    }
     setRestored(true);
-  }, []);
+  }, [writeSaved]);
+
+  // Sharing: a link that opens this diagram as it is now.
+  const [shareUrl, setShareUrl] = useState('');
+  const share = async () => {
+    const url = `${window.location.origin}/loop-lab/builder?d=${encodeDiagram(modelRef.current)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareUrl('');
+      setNotice('Link copied. It opens this diagram as it is now; later changes aren’t in it.');
+    } catch {
+      // No clipboard here: show it to copy by hand.
+      setShareUrl(url);
+    }
+  };
+
+  // Saved diagrams.
+  const [showSaved, setShowSaved] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const saveCurrent = () => {
+    const name = saveName.trim() || model.name;
+    const existing = savedList.find((e) => e.name === name);
+    const entry: SavedDiagram = { id: existing?.id ?? `s_${Date.now().toString(36)}`, name, savedAt: Date.now(), model: { ...modelRef.current, name } };
+    const rest = savedList.filter((e) => e.id !== entry.id);
+    const list = [entry, ...rest];
+    writeSaved(list.slice(0, SAVED_MAX));
+    setSaveName('');
+    setNotice(existing ? `Saved over “${name}”.` : list.length > SAVED_MAX ? `Saved “${name}”; the oldest saved diagram made room for it (${SAVED_MAX} at most).` : `Saved “${name}”.`);
+  };
+  const openSaved = (e: SavedDiagram) => {
+    setModel(JSON.parse(JSON.stringify(e.model)), { step: true });
+    setSelectedBlockId(null);
+    setSelectedWireId(null);
+    setNotice(`Opened “${e.name}”. Undo goes back to what was here.`);
+  };
+  const deleteSaved = (e: SavedDiagram) => {
+    if (!window.confirm(`Delete the saved diagram “${e.name}”? This can’t be undone.`)) return;
+    writeSaved(savedList.filter((x) => x.id !== e.id));
+  };
   useEffect(() => {
     if (!restored) return;
     const id = window.setTimeout(() => {
@@ -775,6 +865,12 @@ export default function BlockBuilder() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button onClick={share} className="ll-btn is-small" title="Copy a link that opens this diagram">
+            🔗 Share
+          </button>
+          <button onClick={() => setShowSaved((v) => !v)} className={`ll-btn is-small${showSaved ? ' is-primary' : ''}`} aria-expanded={showSaved} title="Diagrams kept in this browser">
+            📁 Saved ({savedList.length})
+          </button>
           <button onClick={undo} disabled={histSize.past === 0} className="ll-btn is-small" title="Undo (Ctrl+Z)">
             ↶ Undo
           </button>
@@ -825,6 +921,50 @@ export default function BlockBuilder() {
         </div>
       </div>
 
+      {notice && (
+        <p className="ll-small" role="status" style={{ margin: '0 0 0.75rem' }}>
+          {notice}{' '}
+          <button className="ll-link" onClick={() => setNotice('')}>Dismiss</button>
+        </p>
+      )}
+      {shareUrl && (
+        <div className="ll-card" style={{ padding: '0.6rem 0.8rem', marginBottom: '0.75rem' }}>
+          <label className="ll-field">
+            <span>Copy this link (the browser wouldn’t copy it for you)</span>
+            <input type="text" readOnly value={shareUrl} onFocus={(e) => e.currentTarget.select()} />
+          </label>
+          <button className="ll-link" onClick={() => setShareUrl('')}>Close</button>
+        </div>
+      )}
+      {showSaved && (
+        <div className="ll-card" style={{ padding: '0.75rem 1rem', marginBottom: '0.85rem' }}>
+          <form style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'end' }} onSubmit={(e) => { e.preventDefault(); saveCurrent(); }}>
+            <label className="ll-field" style={{ flex: '1 1 14rem' }}>
+              <span>Save this diagram as</span>
+              <input type="text" value={saveName} placeholder={model.name} maxLength={80} onChange={(e) => setSaveName(e.target.value)} />
+            </label>
+            <button type="submit" className="ll-btn is-small is-primary">Save</button>
+          </form>
+          {savedList.length === 0 ? (
+            <p className="ll-small" style={{ margin: '0.6rem 0 0' }}>Nothing saved yet. Saved diagrams stay in this browser.</p>
+          ) : (
+            <ul style={{ listStyle: 'none', margin: '0.6rem 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {savedList.map((e) => (
+                <li key={e.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem', justifyContent: 'space-between' }}>
+                  <span>
+                    <strong>{e.name}</strong>{' '}
+                    <span className="ll-small">{e.model.nodes.length} blocks · {e.savedAt ? new Date(e.savedAt).toLocaleString() : ''}</span>
+                  </span>
+                  <span style={{ display: 'flex', gap: '0.3rem' }}>
+                    <button className="ll-btn is-small" onClick={() => openSaved(e)}>Open</button>
+                    <button className="ll-btn is-small is-quiet" onClick={() => deleteSaved(e)} aria-label={`Delete ${e.name}`}>Delete</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {(!bench.url || bench.notes.length > 0) && (
         <p className="ll-small" role="status" style={{ margin: '0 0 0.75rem' }}>
           {bench.url
