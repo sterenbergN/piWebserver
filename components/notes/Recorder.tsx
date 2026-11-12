@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import type { RecordingRecord, StrokeElement } from '@/lib/notes/items';
+import type { RecordingPage, RecordingRecord, StrokeElement } from '@/lib/notes/items';
 import { deleteKv, getFile, getKv, kvKeys, putKv, recordingKey } from './db';
 import { newId, type NotebookDoc } from './doc';
 import { RecordingDetail } from './RecordingDetail';
+import { findPagesForOlder, findRecordingPages, recordingPages } from './recording-pages';
 import { listTranscripts, type TranscriptInfo } from './transcripts';
 import { fetchFile, keepNewFile, newFileId } from './sync';
 
@@ -69,7 +70,10 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
     await keepNewFile(notebook, file, blob);
     const now = Date.now();
     const title = new Date(startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    const record: RecordingRecord = { id: newId(), kind: 'recording', file, startedAt, duration, title, mime, createdAt: now, updatedAt: now, ...(page ? { page } : {}) };
+    // The pages written on meanwhile, once the last strokes are put away.
+    await doc.settled();
+    const pages = await findRecordingPages(notebook, { startedAt, duration }).catch(() => []);
+    const record: RecordingRecord = { id: newId(), kind: 'recording', file, startedAt, duration, title, mime, createdAt: now, updatedAt: now, ...(page ? { page } : {}), pages };
     doc.saveRecording(record);
     for (const key of await kvKeys(`${recordingKey(notebook, id)}:`)) await deleteKv(key);
   }, [doc, notebook]);
@@ -339,7 +343,15 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
   const [query, setQuery] = useState('');
   const [onlyHere, setOnlyHere] = useState(false);
   const [texts, setTexts] = useState<Record<string, TranscriptInfo>>({});
+  const [found, setFound] = useState<Record<string, RecordingPage[]>>({});
   useEffect(() => doc.subscribe(() => setTick((t) => t + 1)), [doc]);
+  const count = doc.recordings.length;
+  useEffect(() => {
+    let live = true;
+    void findPagesForOlder(notebook, doc.recordings).then((pages) => { if (live) setFound(pages); }).catch(() => {});
+    return () => { live = false; };
+  }, [doc, notebook, count]);
+  const pagesOf = (record: RecordingRecord) => recordingPages(record, found[record.id]);
   useEffect(() => {
     let live = true;
     void listTranscripts(notebook).then((items) => { if (live) setTexts(items); }).catch(() => {});
@@ -355,7 +367,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
         notebookTitle={title}
         record={opened}
         recorder={recorder}
-        pageNumber={pageNumberOf(doc, opened.page)}
+        pages={numbered(doc, pagesOf(opened))}
         onGoToPage={onGoToPage}
         onBack={() => setOpen(null)}
         onClose={onClose}
@@ -363,10 +375,11 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
     );
   }
 
-  const hereCount = currentPage ? doc.recordings.filter((r) => r.page === currentPage).length : 0;
+  const isHere = (record: RecordingRecord) => !!currentPage && pagesOf(record).some((p) => p.page === currentPage);
+  const hereCount = doc.recordings.filter(isHere).length;
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = [...doc.recordings]
-    .filter((r) => !onlyHere || r.page === currentPage)
+    .filter((r) => !onlyHere || isHere(r))
     .filter((r) => {
       if (!words.length) return true;
       const hay = `${r.title} ${r.summary ?? ''} ${dayLabel(r.startedAt)}`.toLowerCase();
@@ -407,7 +420,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
                 <ul className="nt-recordings">
                   {group.items.map((record) => {
                     const text = texts[record.id];
-                    const page = pageNumberOf(doc, record.page);
+                    const pages = numbered(doc, pagesOf(record)).map((p) => p.number).sort((a, b) => a - b);
                     return (
                       <li key={record.id}>
                         <button type="button" className="nt-icon-btn" aria-label={`Play ${record.title}`} onClick={() => { void recorder.play(record); onClose(); }}><Icon name="play" /></button>
@@ -415,7 +428,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
                           <strong>{record.title}</strong>
                           <small>
                             {new Date(record.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · {fmtDuration(record.duration)}
-                            {page ? ` · page ${page}` : ''}
+                            {pages.length ? ` · ${pageList(pages)}` : ''}
                             {record.summary ? ' · summary' : text?.status === 'done' ? ' · text' : text?.status === 'working' || text?.status === 'waiting' ? ' · turning into text…' : ''}
                           </small>
                         </button>
@@ -434,7 +447,15 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
   );
 }
 
-function pageNumberOf(doc: NotebookDoc, page?: string) {
-  if (!page) return 0;
-  return doc.pages.findIndex((p) => p.id === page) + 1;
+/** Pages with their numbers in the notebook as it is now, leaving out any since deleted. */
+function numbered(doc: NotebookDoc, pages: RecordingPage[]) {
+  const index = new Map(doc.pages.map((p, i) => [p.id, i + 1]));
+  return pages.flatMap((p) => (index.has(p.page) ? [{ ...p, number: index.get(p.page)! }] : []));
+}
+
+/** "page 3", "pages 3, 4, 7", or "pages 3, 4, 7 and 5 more". */
+function pageList(numbers: number[]) {
+  if (numbers.length === 1) return `page ${numbers[0]}`;
+  const shown = numbers.slice(0, 4).join(', ');
+  return numbers.length > 4 ? `pages ${shown} and ${numbers.length - 4} more` : `pages ${shown}`;
 }

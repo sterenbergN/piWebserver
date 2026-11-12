@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import type { RecordingRecord } from '@/lib/notes/items';
+import type { RecordingPage, RecordingRecord } from '@/lib/notes/items';
 import { getFile } from './db';
 import type { NotebookDoc } from './doc';
 import { safeFileName, shareOrSave } from './export';
@@ -16,8 +16,8 @@ import { getTranscript, removeTranscript, startTranscript, summaryPrompt, transc
 
 const POLL_MS = 4000;
 
-export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder, pageNumber, onGoToPage, onBack, onClose }: {
-  doc: NotebookDoc; notebook: string; notebookTitle: string; record: RecordingRecord; recorder: Recorder; pageNumber: number;
+export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder, pages, onGoToPage, onBack, onClose }: {
+  doc: NotebookDoc; notebook: string; notebookTitle: string; record: RecordingRecord; recorder: Recorder; pages: (RecordingPage & { number: number })[];
   onGoToPage: (page: string) => void; onBack: () => void; onClose: () => void;
 }) {
   const [name, setName] = useState(record.title);
@@ -99,10 +99,7 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
           onBlur={saveName}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setName(record.title); }}
         />
-        <p className="nt-hint">
-          {recorded} · {fmtDuration(record.duration)}
-          {pageNumber > 0 && record.page ? <> · <button type="button" className="nt-text-link" onClick={() => onGoToPage(record.page!)}>made on page {pageNumber}</button></> : null}
-        </p>
+        <p className="nt-hint">{recorded} · {fmtDuration(record.duration)}</p>
         <div className="nt-row is-wrap">
           <button type="button" className="nt-btn is-primary" onClick={() => { void recorder.play(record); onClose(); }}><Icon name="play" /> Play</button>
           <button type="button" className="nt-btn" onClick={() => void share()}><Icon name="share" /> Share</button>
@@ -116,6 +113,26 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
             <button type="button" className="nt-icon-btn" aria-label={`Delete ${record.title}`} onClick={() => setConfirming(true)}><Icon name="trash" /></button>
           )}
         </div>
+
+        {pages.length > 0 && (
+          <>
+            <h3 className="nt-label nt-rec-section">{pages.length === 1 ? 'Written on' : `Written on ${pages.length} pages`}</h3>
+            <div className="nt-rec-pages">
+              {pages.map((p) => (
+                <button
+                  type="button"
+                  key={p.page}
+                  className="nt-chip"
+                  aria-label={`Go to page ${p.number} and play from ${fmtDuration(p.at)}`}
+                  onClick={() => { onGoToPage(p.page); void recorder.play(record, Math.max(0, Math.min(p.at, record.duration) - 1500)); }}
+                >
+                  <Icon name="play" /> Page {p.number} <small>{fmtDuration(Math.min(p.at, record.duration))}</small>
+                </button>
+              ))}
+            </div>
+            <p className="nt-hint nt-tight">Opens the page and plays from when the writing there began. While it plays, tap any of the writing to hear what was being said as it was written.</p>
+          </>
+        )}
 
         <h3 className="nt-label nt-rec-section">What was said</h3>
         {!loaded ? (

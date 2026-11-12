@@ -72,11 +72,29 @@ export type RecordingRecord = Synced & {
   kind: 'recording'; file: string; startedAt: number; duration: number; title: string; mime: string;
   /** The page that was open when it started, to find a notebook's recordings by page. */
   page?: string;
+  /** Every page written on while it was going, with how far into it (ms) the writing there began. */
+  pages?: RecordingPage[];
   /** A summary of what was said, pasted back from the AI it was copied into. */
   summary?: string;
 };
 
+export type RecordingPage = { page: string; at: number };
+
 export type BookRecord = PageRecord | RecordingRecord;
+
+export const MAX_RECORDING_PAGES = 200;
+
+function cleanRecordingPages(raw: unknown): RecordingPage[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: RecordingPage[] = [];
+  for (const value of raw) {
+    const entry = value as { page?: unknown; at?: unknown } | null;
+    if (!entry || !isId(entry.page) || typeof entry.at !== 'number' || !Number.isFinite(entry.at) || out.some((held) => held.page === entry.page)) continue;
+    out.push({ page: entry.page, at: Math.max(0, Math.round(entry.at)) });
+    if (out.length >= MAX_RECORDING_PAGES) break;
+  }
+  return out;
+}
 
 export const PEN_STYLES = ['ball', 'fountain', 'brush'] as const;
 export type StrokeStyle = (typeof PEN_STYLES)[number] | 'marker' | 'tape' | 'shape';
@@ -233,9 +251,11 @@ export function cleanBookRecord(raw: unknown, now: number): BookRecord | null {
   if (r.kind === 'recording') {
     if (common.deleted) return { ...common, kind: 'recording', file: '', startedAt: 0, duration: 0, title: '', mime: '' };
     if (!isId(r.file) || !finite(r.startedAt) || !finite(r.duration) || r.duration < 0) return null;
+    const pages = cleanRecordingPages(r.pages);
     return {
       ...common, kind: 'recording', file: r.file, startedAt: r.startedAt, duration: r.duration, title: cleanName(r.title) || 'Recording', mime: cleanName(r.mime, 80),
       ...(isId(r.page) ? { page: r.page } : {}),
+      ...(pages ? { pages } : {}),
       ...(typeof r.summary === 'string' && r.summary.trim() ? { summary: r.summary.trim().slice(0, MAX_TEXT_CHARS) } : {}),
     };
   }

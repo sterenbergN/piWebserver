@@ -9,6 +9,7 @@ import {
 import {
   cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, folderPath, mergeChanges, orderBetween, recordsSince, sniffFile, wouldNest, MAX_STROKE_POINTS, type Folder, type PageElement,
 } from './items';
+import { pagesWrittenDuring } from './recording-pages';
 import { appendUpload, finishUpload, NotebookGone, openStoredFile, readLibrary, syncBook, syncLibrary, syncPage, UploadRefused } from './store';
 import { PAGE_SIZES, TEMPLATES, templateMarks } from './templates';
 import { getStroke, getStrokePoints } from 'perfect-freehand';
@@ -262,6 +263,23 @@ test('a recording keeps its page and summary, and drops ones that are not real',
   assert.equal(dropped.page, undefined);
   assert.equal(dropped.summary, undefined);
   assert.equal((cleanBookRecord({ ...recording, summary: 'x'.repeat(60_000) }, NOW) as { summary?: string }).summary?.length, 50_000);
+  const pages = cleanBookRecord({ ...recording, pages: [{ page: 'p1', at: 0 }, { page: 'p2', at: 4200.6 }, { page: 'p1', at: 9 }, { page: '../x', at: 1 }, { page: 'p3', at: 'soon' }] }, NOW) as { pages?: unknown };
+  assert.deepEqual(pages.pages, [{ page: 'p1', at: 0 }, { page: 'p2', at: 4201 }], 'each page once, real ones only');
+});
+
+test('the pages written on during a recording, each from when the writing there began', () => {
+  const recording = { startedAt: 10_000, duration: 60_000 };
+  const ink = [
+    { page: 'before', createdAt: 9_000 },
+    { page: 'b', createdAt: 40_000 },
+    { page: 'a', createdAt: 12_000 },
+    { page: 'a', createdAt: 11_000 },
+    { page: 'gone', createdAt: 20_000, deleted: true },
+    { page: 'late', createdAt: 73_000 },
+    { page: 'after', createdAt: 90_000 },
+  ];
+  assert.deepEqual(pagesWrittenDuring(ink, recording), [{ page: 'a', at: 1_000 }, { page: 'b', at: 30_000 }, { page: 'late', at: 63_000 }]);
+  assert.deepEqual(pagesWrittenDuring([], recording), []);
 });
 
 test('a deleted record loses its content but keeps its place in the history', () => {

@@ -69,6 +69,7 @@ export const putBook = (records: StoredBook[]) => run('book', 'readwrite', (s) =
 export const getElements = (page: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('page').getAll(page));
 export const getNotebookElements = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebook').getAll(notebook));
 export const getNotebookMarks = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'mark']));
+export const getNotebookStrokes = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'stroke']));
 export const getNotebookText = (notebook: string) => run<StoredElement[]>('elements', 'readonly', (s) => s.index('notebookKind').getAll([notebook, 'text']));
 
 /**
