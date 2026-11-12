@@ -15,7 +15,7 @@ import { scorecard } from './score';
 import { TUNING_RULES } from './tuning';
 import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
-import { BLOCK_TEMPLATES, benchExport, readLoop, type BlockDiagramModel } from './block-sim';
+import { BLOCK_TEMPLATES, benchExport, cleanDiagram, clampParam, readLoop, simulateBlockDiagram, type BlockDiagramModel } from './block-sim';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
 const pid = (o: Partial<typeof DEFAULT_PID>): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, ...o } });
@@ -1139,4 +1139,81 @@ test('the state drawn for a moment of a run reproduces what was recorded there',
       }
     }
   }
+});
+
+test('block diagram: the answer does not depend on the order the blocks were added in', () => {
+  for (const t of BLOCK_TEMPLATES) {
+    const forward = simulateBlockDiagram(t);
+    const backward = simulateBlockDiagram({ ...t, nodes: [...t.nodes].reverse(), wires: [...t.wires].reverse() });
+    for (const n of t.nodes) assert.deepEqual(backward.nodeOutputs[n.id], forward.nodeOutputs[n.id], `${t.id}: ${n.label}`);
+    assert.deepEqual(forward.algebraicLoops, []);
+  }
+});
+
+test('block diagram: a ring with nothing in it that takes time is solved and named, or said to have no answer', () => {
+  const ring = (signs: string, K: number): BlockDiagramModel => ({
+    id: 'ring', name: 'Ring', description: '', duration: 10, dt: 0.1,
+    nodes: [
+      { id: 'g', kind: 'gain', label: 'Gain', x: 0, y: 0, params: { K } },
+      { id: 'ref', kind: 'step', label: 'SP', x: 0, y: 0, params: { y0: 0, y1: 10, tStep: 2 } },
+      { id: 'sum', kind: 'sum', label: 'Sum', x: 0, y: 0, signs, params: {} },
+    ],
+    wires: [
+      { id: 'a', fromBlock: 'ref', fromPort: 0, toBlock: 'sum', toPort: 0 },
+      { id: 'b', fromBlock: 'sum', fromPort: 0, toBlock: 'g', toPort: 0 },
+      { id: 'c', fromBlock: 'g', fromPort: 0, toBlock: 'sum', toPort: 1 },
+    ],
+  });
+  // y = 2(r − y): y = 2r/3, at every instant.
+  const neg = simulateBlockDiagram(ring('+-', 2));
+  assert.equal(neg.algebraicLoops.length, 1);
+  assert.equal(neg.algebraicLoops[0].solved, true);
+  assert.deepEqual([...neg.algebraicLoops[0].blocks].sort(), ['Gain', 'Sum']);
+  assert.ok(Math.abs(neg.nodeOutputs.g[10]) < 1e-9);
+  assert.ok(neg.nodeOutputs.g.slice(25).every((v) => Math.abs(v - 20 / 3) < 1e-6), `${neg.nodeOutputs.g[30]}`);
+  // y = r + y has no answer once r isn't 0: said so, and nothing wild comes out.
+  const none = simulateBlockDiagram(ring('++', 1));
+  assert.equal(none.algebraicLoops[0].solved, false);
+  assert.ok(none.nodeOutputs.g.every((v) => Math.abs(v) < 1e3));
+});
+
+test('block diagram: what is read back from storage is a diagram, or nothing', () => {
+  for (const t of BLOCK_TEMPLATES) assert.deepEqual(cleanDiagram(JSON.parse(JSON.stringify(t))), t);
+  assert.equal(cleanDiagram(null), null);
+  assert.equal(cleanDiagram({ nodes: 'x', wires: [] }), null);
+  const odd = cleanDiagram({
+    id: 7, duration: 'long', dt: null,
+    nodes: [
+      { id: 'a', kind: 'fopdt', label: 'Plant', x: -40, y: 'top', params: { theta: 1e9, K: 'big', tau: 12 } },
+      { id: 'a', kind: 'gain', params: {} },
+      { id: 'b', kind: 'teleporter' },
+      { id: 's', kind: 'sum', signs: 'plus' },
+    ],
+    wires: [
+      { id: 'w1', fromBlock: 'a', fromPort: 0, toBlock: 's', toPort: 1 },
+      { id: 'w2', fromBlock: 'a', fromPort: 0, toBlock: 's', toPort: 5 },
+      { id: 'w3', fromBlock: 'a', fromPort: 0, toBlock: 'gone', toPort: 0 },
+    ],
+  })!;
+  assert.deepEqual(odd.nodes.map((n) => n.id), ['a', 's']);
+  assert.deepEqual(odd.nodes[0], { id: 'a', kind: 'fopdt', label: 'Plant', x: 0, y: 140, params: { theta: 40, tau: 12 } });
+  assert.equal(odd.nodes[1].signs, '+-');
+  assert.deepEqual(odd.wires.map((w) => w.id), ['w1']);
+  assert.deepEqual([odd.id, odd.duration, odd.dt], ['custom-diagram', 60, 0.1]);
+  assert.equal(clampParam('fopdt', 'theta', -3), 0);
+  assert.equal(clampParam('fopdt', 'theta', NaN), 3);
+});
+
+test('block diagram: a filtered differentiator answers a ramp with its slope times Td', () => {
+  const m: BlockDiagramModel = {
+    id: 'd', name: 'D', description: '', duration: 20, dt: 0.1,
+    nodes: [
+      { id: 'r', kind: 'ramp', label: 'Ramp', x: 0, y: 0, params: { slope: 2, tStart: 2, y0: 0 } },
+      { id: 'd', kind: 'derivative', label: 'D', x: 0, y: 0, params: { Td: 1.5, alpha: 0.1 } },
+    ],
+    wires: [{ id: 'a', fromBlock: 'r', fromPort: 0, toBlock: 'd', toPort: 0 }],
+  };
+  const out = simulateBlockDiagram(m).nodeOutputs.d;
+  assert.ok(Math.abs(out[out.length - 1] - 3) < 0.01, `${out[out.length - 1]}`);
+  assert.equal(out[5], 0);
 });

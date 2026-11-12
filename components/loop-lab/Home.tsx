@@ -13,8 +13,9 @@ import {
 import { defaultParams, type ProcessDef, type ProcessId } from '@/lib/loop-lab/model';
 import { getProcess, PROCESSES } from '@/lib/loop-lab/processes';
 import { benchOn, CONTROLLER_GROUPS, KIND_HINT, metaOf } from '@/lib/loop-lab/catalog';
-import { defaultSummary, type PlantSummary } from '@/lib/loop-lab/plant';
+import { defaultSummary } from '@/lib/loop-lab/plant';
 import Chart, { fmt } from './Chart';
+import PlantBadges from './PlantBadges';
 import { computeRuns, type RunSet } from './useRuns';
 
 const STARTERS = ['flow-pi', 'tank-schedule', 'hx-cascade-ff'];
@@ -58,7 +59,7 @@ const SHOWCASES: ShowcaseItem[] = [
   },
   {
     id: 'tank',
-    tabTitle: 'Surge / Conical Tank',
+    tabTitle: 'Conical Tank',
     procId: 'tank',
     title: 'Nonlinear cross-section: gain shifts 7× across level',
     tagline: 'Wide level range — Fixed PI vs Gain Scheduling',
@@ -151,23 +152,6 @@ function HeroChart() {
   );
 }
 
-/** Controllability badge calculated from dead time θ and time constant τ */
-function ControllabilityBadge({ summary }: { summary: PlantSummary | null }) {
-  if (!summary) return null;
-  if (summary.integrating) {
-    return <span className="ll-badge is-warn">Integrating process</span>;
-  }
-  if (summary.tau <= 0) return null;
-  const ratio = summary.theta / summary.tau;
-  if (ratio < 0.2) {
-    return <span className="ll-badge is-good" title="Lag dominant: straightforward for standard PI">Easy (θ/τ = {ratio.toFixed(2)})</span>;
-  }
-  if (ratio <= 0.8) {
-    return <span className="ll-badge" title="Balanced lag and dead time">Moderate (θ/τ = {ratio.toFixed(2)})</span>;
-  }
-  return <span className="ll-badge is-warn" title="Dead-time dominant: difficult for standard PI">Dead-time dominant (θ/τ = {ratio.toFixed(2)})</span>;
-}
-
 export default function Home() {
   const [procFilter, setProcFilter] = useState<'all' | 'pid-wins' | 'escalation'>('all');
 
@@ -206,7 +190,7 @@ export default function Home() {
         <Link className="ll-path" href="/loop-lab/bench">
           <div className="ll-path-icon" aria-hidden>🎛️</div>
           <h2>Test Bench</h2>
-          <p>Put any of 14 controllers on 13 realistic physical plants. Auto-tune, inject disturbances, scrub P&amp;ID schematics, and compare scorecards.</p>
+          <p>{CONTROLLER_KINDS.length} controllers on {PROCESSES.filter((p) => p.id !== 'custom').length} realistic physical plants, or on a model identified from your own data. Auto-tune, inject disturbances, scrub P&amp;ID schematics, and compare scorecards.</p>
           <span className="ll-path-go">Launch Bench</span>
         </Link>
         <Link className="ll-path is-highlight" href="/loop-lab/builder">
@@ -300,7 +284,7 @@ export default function Home() {
                 )}
 
                 <div className="ll-proc-card-foot">
-                  <ControllabilityBadge summary={summary} />
+                  <PlantBadges proc={p} summary={summary} />
                   <div className="ll-proc-actions">
                     <Link className="ll-btn is-small" href={`/loop-lab/processes/${p.id}`}>Inspect →</Link>
                     <Link className="ll-btn is-small is-primary" href={benchOn(p.id)}>🎛️ Bench</Link>
@@ -319,7 +303,7 @@ export default function Home() {
             <h2>The Controller Ladder</h2>
             <p className="ll-small">From on-off to model predictive control: climb only as far as your plant demands.</p>
           </div>
-          <Link href="/loop-lab/controllers">All 14 Controllers →</Link>
+          <Link href="/loop-lab/controllers">All {CONTROLLER_KINDS.length} controllers →</Link>
         </div>
 
         <div className="ll-ladder-tiers">

@@ -59,6 +59,8 @@ export type BlockDiagramModel = {
 };
 
 export type ScopeMetrics = {
+  /** The scope input it was read on: 0 setpoint, 1 process value, 2 output. */
+  channel: number;
   label: string;
   color: string;
   finalValue: number;
@@ -86,6 +88,12 @@ export type BlockSimResult = {
     xLabel: string;
     yLabel: string;
   }[];
+  /**
+   * Rings of blocks with nothing in them that takes time (sum → gain → back to the sum): each
+   * output depends on itself at the same instant. `solved` says whether a value that satisfies
+   * the ring was found at every step.
+   */
+  algebraicLoops: { blocks: string[]; solved: boolean }[];
   /** What the wiring says about the loop (see readLoop). */
   summary: { loopClosed: boolean; plant: LoopPlant | null };
 };
@@ -566,6 +574,125 @@ function gaussianRandom(prng: () => number) {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
+/** The range a parameter's slider covers; a typed value is held to it too. */
+export function clampParam(kind: BlockKind, key: string, value: number): number {
+  const spec = BLOCK_CATALOG[kind]?.paramSpecs.find((sp) => sp.key === key);
+  if (!Number.isFinite(value)) return spec?.default ?? 0;
+  return spec ? Math.min(spec.max, Math.max(spec.min, value)) : value;
+}
+
+/** A diagram read back from storage, or null if it isn't one. What can't be vouched for is dropped. */
+export function cleanDiagram(raw: unknown): BlockDiagramModel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (!Array.isArray(r.nodes) || !Array.isArray(r.wires)) return null;
+  const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+  const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v.slice(0, 200) : fallback);
+  const nodes: BlockNode[] = [];
+  const byId = new Map<string, BlockNode>();
+  for (const item of r.nodes) {
+    const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    if (typeof o.id !== 'string' || byId.has(o.id) || typeof o.kind !== 'string' || !(o.kind in BLOCK_CATALOG)) continue;
+    const kind = o.kind as BlockKind;
+    const params: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o.params && typeof o.params === 'object' ? o.params : {})) {
+      if (typeof v === 'number' && Number.isFinite(v)) params[k] = clampParam(kind, k, v);
+    }
+    const node: BlockNode = { id: o.id, kind, label: str(o.label, BLOCK_CATALOG[kind].name), x: Math.max(0, num(o.x, 60)), y: Math.max(0, num(o.y, 140)), params };
+    if (kind === 'sum') node.signs = typeof o.signs === 'string' && /^[+-]{2,3}$/.test(o.signs) ? o.signs : '+-';
+    nodes.push(node);
+    byId.set(node.id, node);
+  }
+  const wires: BlockWire[] = [];
+  const wireIds = new Set<string>();
+  for (const item of r.wires) {
+    const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    const from = typeof o.fromBlock === 'string' ? byId.get(o.fromBlock) : undefined;
+    const to = typeof o.toBlock === 'string' ? byId.get(o.toBlock) : undefined;
+    if (typeof o.id !== 'string' || wireIds.has(o.id) || !from || !to) continue;
+    const fromPort = num(o.fromPort, -1), toPort = num(o.toPort, -1);
+    if (!Number.isInteger(fromPort) || fromPort < 0 || fromPort >= getNodeOutputPorts(from).length) continue;
+    if (!Number.isInteger(toPort) || toPort < 0 || toPort >= getNodeInputPorts(to).length) continue;
+    const wire: BlockWire = { id: o.id, fromBlock: from.id, fromPort, toBlock: to.id, toPort };
+    if (typeof o.label === 'string' && o.label) wire.label = o.label.slice(0, 80);
+    wires.push(wire);
+    wireIds.add(wire.id);
+  }
+  return {
+    id: str(r.id, 'custom-diagram'), name: str(r.name, 'Custom Diagram'), description: str(r.description, ''),
+    duration: num(r.duration, 60), dt: num(r.dt, 0.1), nodes, wires,
+  };
+}
+
+/** Does this block's output follow its input within the same instant? (The rest answer from their state.) */
+function passesThrough(node: BlockNode): boolean {
+  if (node.kind === 'leadlag') return (node.params.Tlead ?? 8) !== 0;
+  return node.kind === 'sum' || node.kind === 'gain' || node.kind === 'product' || node.kind === 'saturation' || node.kind === 'selector' || node.kind === 'pid';
+}
+
+type EvalGroup = {
+  /** In the order to work them out. In a ring the first is the one whose output is solved for. */
+  nodes: BlockNode[];
+  /** A ring: each of these depends on itself through the others at the same instant. */
+  ring: boolean;
+  /** A ring that opens up when one block's output is taken as known (most do). */
+  single: boolean;
+};
+
+/**
+ * The order to work the pass-through blocks out in: each after everything it reads, whatever
+ * order they were added to the diagram in. Blocks that read each other in a ring come out together.
+ */
+function evaluationPlan(model: BlockDiagramModel): EvalGroup[] {
+  const nodes = model.nodes.filter(passesThrough);
+  const index = new Map(nodes.map((n, i) => [n.id, i]));
+  const feeds: number[][] = nodes.map(() => []);
+  for (const w of model.wires) {
+    const a = index.get(w.fromBlock), b = index.get(w.toBlock);
+    if (a !== undefined && b !== undefined && !feeds[a].includes(b)) feeds[a].push(b);
+  }
+  // Tarjan: strongly connected components, found last-reader first.
+  const order: number[] = nodes.map(() => -1), low: number[] = nodes.map(() => 0), onStack: boolean[] = nodes.map(() => false);
+  const stack: number[] = [], groups: number[][] = [];
+  let counter = 0;
+  const visit = (v: number) => {
+    order[v] = low[v] = counter++;
+    stack.push(v);
+    onStack[v] = true;
+    for (const w of feeds[v]) {
+      if (order[w] < 0) { visit(w); low[v] = Math.min(low[v], low[w]); }
+      else if (onStack[w]) low[v] = Math.min(low[v], order[w]);
+    }
+    if (low[v] === order[v]) {
+      const group: number[] = [];
+      for (let w = -1; w !== v;) { w = stack.pop()!; onStack[w] = false; group.push(w); }
+      groups.push(group.sort((a, b) => a - b));
+    }
+  };
+  for (let v = 0; v < nodes.length; v++) if (order[v] < 0) visit(v);
+  return groups.reverse().map((group) => {
+    if (group.length === 1 && !feeds[group[0]].includes(group[0])) return { nodes: [nodes[group[0]]], ring: false, single: true };
+    // Take the first block's output as known, and order the rest behind it.
+    const [tear, ...rest] = group;
+    const inside = new Set(rest);
+    const waiting = new Map(rest.map((v) => [v, 0]));
+    for (const v of rest) for (const w of feeds[v]) if (inside.has(w) && w !== v) waiting.set(w, waiting.get(w)! + 1);
+    const ordered: number[] = [];
+    const ready = rest.filter((v) => waiting.get(v) === 0);
+    while (ready.length) {
+      const v = ready.shift()!;
+      ordered.push(v);
+      for (const w of feeds[v]) {
+        if (!inside.has(w) || w === v) continue;
+        waiting.set(w, waiting.get(w)! - 1);
+        if (waiting.get(w) === 0) ready.push(w);
+      }
+    }
+    const single = ordered.length === rest.length && !rest.some((v) => feeds[v].includes(v));
+    return { nodes: [tear, ...(single ? ordered : rest)].map((v) => nodes[v]), ring: true, single };
+  });
+}
+
 // ─── Simulation Engine ───────────────────────────────────────────────────────
 
 export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
@@ -650,6 +777,9 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
     if (!incomingWires[wire.toBlock]) incomingWires[wire.toBlock] = [];
     incomingWires[wire.toBlock].push(wire);
   }
+
+  const plan = evaluationPlan(model);
+  const unsolved = new Set<EvalGroup>();
 
   // Step loop
   const curOutputs: Record<string, number> = {};
@@ -737,6 +867,9 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
         case 'nonlin_tank':
           curOutputs[node.id] = st.tankH;
           break;
+        case 'derivative':
+          curOutputs[node.id] = st.derivD;
+          break;
         case 'deadtime': {
           const buf = deadtimeBuffers[node.id];
           if (buf && buf.length > 0) {
@@ -764,86 +897,103 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
       }
     }
 
-    // 3. Algebraic / Controller relaxation passes (2 iterations settle instantaneous feedforward chains)
-    for (let pass = 0; pass < 2; pass++) {
-      for (const node of model.nodes) {
-        const p = node.params;
-        const st = states[node.id];
-
-        switch (node.kind) {
-          case 'sum': {
-            const signs = (node.signs || '+-').split('');
-            let sum = 0;
-            for (let i = 0; i < signs.length; i++) {
-              const u = getInput(node.id, i, 0);
-              sum += (signs[i] === '-' ? -1 : 1) * u;
-            }
-            curOutputs[node.id] = sum;
-            break;
-          }
-
-          case 'gain': {
-            const K = p.K ?? 1.5;
-            curOutputs[node.id] = K * getInput(node.id, 0, 0);
-            break;
-          }
-
-          case 'product': {
-            const u1 = getInput(node.id, 0, 0);
-            const u2 = getInput(node.id, 1, 0);
-            curOutputs[node.id] = u1 * u2;
-            break;
-          }
-
-          case 'saturation': {
-            const lo = p.lo ?? 0;
-            const hi = p.hi ?? 100;
-            const u = getInput(node.id, 0, 0);
-            curOutputs[node.id] = Math.max(lo, Math.min(hi, u));
-            break;
-          }
-
-          case 'selector': {
-            const mode = p.mode ?? 0;
-            const u1 = getInput(node.id, 0, 0);
-            const u2 = getInput(node.id, 1, 0);
-            curOutputs[node.id] = mode === 1 ? Math.max(u1, u2) : Math.min(u1, u2);
-            break;
-          }
-
-          case 'pid': {
-            const Kc = p.Kc ?? 2.0;
-            const Ti = p.Ti ?? 12;
-            const Td = p.Td ?? 0;
-            const N = Math.max(1, p.N ?? 10);
-            const uMin = p.uMin ?? -100;
-            const uMax = p.uMax ?? 100;
-            const bias = p.bias ?? 0;
-
-            const e = getInput(node.id, 0, 0);
-            const P = Kc * e;
-
-            // Proportional + Integral + Derivative
-            const uRaw = bias + P + st.pidI + st.pidD;
-            curOutputs[node.id] = Math.max(uMin, Math.min(uMax, uRaw));
-            break;
-          }
-
-          case 'leadlag': {
-            const K = p.K ?? 1.0;
-            const Tlead = p.Tlead ?? 8;
-            const Tlag = Math.max(0.01, p.Tlag ?? 15);
-            const u = getInput(node.id, 0, 0);
-            const ratio = Tlead / Tlag;
-            curOutputs[node.id] = K * (ratio * u + (1 - ratio) * st.leadlagX);
-            break;
-          }
-
-          case 'derivative': {
-            curOutputs[node.id] = st.derivD;
-            break;
-          }
+    // 3. Blocks that pass their input straight through: each worked out after what it reads.
+    const passThrough = (node: BlockNode): number => {
+      const p = node.params;
+      const st = states[node.id];
+    switch (node.kind) {
+      case 'sum': {
+        const signs = (node.signs || '+-').split('');
+        let sum = 0;
+        for (let i = 0; i < signs.length; i++) {
+          const u = getInput(node.id, i, 0);
+          sum += (signs[i] === '-' ? -1 : 1) * u;
         }
+        return sum;
+      }
+
+      case 'gain': {
+        const K = p.K ?? 1.5;
+        return K * getInput(node.id, 0, 0);
+      }
+
+      case 'product': {
+        const u1 = getInput(node.id, 0, 0);
+        const u2 = getInput(node.id, 1, 0);
+        return u1 * u2;
+      }
+
+      case 'saturation': {
+        const lo = p.lo ?? 0;
+        const hi = p.hi ?? 100;
+        const u = getInput(node.id, 0, 0);
+        return Math.max(lo, Math.min(hi, u));
+      }
+
+      case 'selector': {
+        const mode = p.mode ?? 0;
+        const u1 = getInput(node.id, 0, 0);
+        const u2 = getInput(node.id, 1, 0);
+        return mode === 1 ? Math.max(u1, u2) : Math.min(u1, u2);
+      }
+
+      case 'pid': {
+        const Kc = p.Kc ?? 2.0;
+        const Ti = p.Ti ?? 12;
+        const Td = p.Td ?? 0;
+        const N = Math.max(1, p.N ?? 10);
+        const uMin = p.uMin ?? -100;
+        const uMax = p.uMax ?? 100;
+        const bias = p.bias ?? 0;
+
+        const e = getInput(node.id, 0, 0);
+        const P = Kc * e;
+
+        // Proportional + Integral + Derivative
+        const uRaw = bias + P + st.pidI + st.pidD;
+        return Math.max(uMin, Math.min(uMax, uRaw));
+      }
+
+      case 'leadlag': {
+        const K = p.K ?? 1.0;
+        const Tlead = p.Tlead ?? 8;
+        const Tlag = Math.max(0.01, p.Tlag ?? 15);
+        const u = getInput(node.id, 0, 0);
+        const ratio = Tlead / Tlag;
+        return K * (ratio * u + (1 - ratio) * st.leadlagX);
+      }
+
+    }
+      return 0;
+    };
+    for (const group of plan) {
+      const [first, ...rest] = group.nodes;
+      if (!group.ring) {
+        curOutputs[first.id] = passThrough(first);
+        continue;
+      }
+      // A ring closes on itself at this instant: find the output of its first block that comes
+      // back unchanged. The secant method lands on it in one step when the ring is linear.
+      const miss = (x: number) => {
+        curOutputs[first.id] = x;
+        for (const n of rest) curOutputs[n.id] = passThrough(n);
+        return passThrough(first) - x;
+      };
+      const close = (x: number, g: number) => Math.abs(g) <= 1e-9 * (1 + Math.abs(x));
+      let x0 = Number.isFinite(curOutputs[first.id]) ? curOutputs[first.id] : 0, g0 = miss(x0);
+      let found = close(x0, g0);
+      if (!found && group.single && Number.isFinite(g0)) {
+        let x1 = x0 + g0, g1 = miss(x1);
+        for (let i = 0; i < 40 && !close(x1, g1); i++) {
+          const x2 = x1 - (g1 * (x1 - x0)) / (g1 - g0);
+          if (!Number.isFinite(x2)) break;
+          x0 = x1; g0 = g1; x1 = x2; g1 = miss(x2);
+        }
+        found = close(x1, g1);
+      }
+      if (!found) {
+        unsolved.add(group);
+        for (const n of group.nodes) curOutputs[n.id] = 0;
       }
     }
 
@@ -1014,7 +1164,7 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
   const scopeSeries: BlockSimResult['scopeSeries'] = [];
   const xyPlots: BlockSimResult['xyPlots'] = [];
 
-  const defaultScopeColors = ['#93c5fd', '#10b981', '#f59e0b']; // ch1: SP (light blue), ch2: PV (emerald), ch3: OP (amber)
+  const defaultScopeColors = ['var(--ll-sp)', 'var(--ll-pv)', 'var(--ll-cv)']; // ch1: SP (light blue), ch2: PV (emerald), ch3: OP (amber)
   const defaultScopeLabels = ['Setpoint (ch1)', 'Process Value (ch2)', 'Controller / Actuator (ch3)'];
 
   for (const node of model.nodes) {
@@ -1081,6 +1231,7 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
         }
 
         metricsList.push({
+          channel: ch,
           label,
           color,
           finalValue: Number(finalVal.toFixed(2)),
@@ -1123,7 +1274,8 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
   }
 
   const { loopClosed, plant } = readLoop(model);
-  return { t, nodeOutputs, scopeSeries, xyPlots, summary: { loopClosed, plant } };
+  const algebraicLoops = plan.filter((g) => g.ring).map((g) => ({ blocks: g.nodes.map((n) => n.label || BLOCK_CATALOG[n.kind].name), solved: !unsolved.has(g) }));
+  return { t, nodeOutputs, scopeSeries, xyPlots, algebraicLoops, summary: { loopClosed, plant } };
 }
 
 // ─── Reading the loop off the wiring ─────────────────────────────────────────

@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { benchOn, PROCESS_GROUPS } from '@/lib/loop-lab/catalog';
-import { defaultSummary, type PlantSummary } from '@/lib/loop-lab/plant';
+import { defaultSummary } from '@/lib/loop-lab/plant';
+import PlantBadges from '@/components/loop-lab/PlantBadges';
 
 const fmt = (n: number, sig = 2) => (Number.isFinite(n) ? Number(n.toPrecision(sig)).toString() : '—');
 
@@ -9,36 +10,6 @@ export const metadata: Metadata = {
   title: 'Processes · Loop Lab',
   description: 'The plants in Loop Lab: flow loops, tanks, heat exchangers, reactors, a crane, a flexible drive and more, each with its own quirks.',
 };
-
-function ControllabilityBadge({ summary }: { summary: PlantSummary | null }) {
-  if (!summary) {
-    return <span className="ll-badge">User-defined model</span>;
-  }
-  if (summary.integrating) {
-    return <span className="ll-badge is-warn">Integrating process</span>;
-  }
-  if (summary.tau <= 0) return null;
-  const ratio = summary.theta / summary.tau;
-  if (ratio < 0.2) {
-    return (
-      <span className="ll-badge is-good" title="Lag-dominant: straightforward for standard PI">
-        θ/τ = {ratio.toFixed(2)} (Lag-dominant)
-      </span>
-    );
-  }
-  if (ratio <= 0.8) {
-    return (
-      <span className="ll-badge" title="Balanced lag and dead time">
-        θ/τ = {ratio.toFixed(2)} (Balanced)
-      </span>
-    );
-  }
-  return (
-    <span className="ll-badge is-warn" title="Dead-time dominant: difficult for standard PI">
-      θ/τ = {ratio.toFixed(2)} (Dead-time dominant)
-    </span>
-  );
-}
 
 export default function ProcessesPage() {
   return (
@@ -101,7 +72,7 @@ export default function ProcessesPage() {
                   )}
 
                   <div className="ll-proc-card-foot">
-                    <ControllabilityBadge summary={summary} />
+                    <PlantBadges proc={p} summary={summary} />
                     <div className="ll-proc-actions">
                       <Link className="ll-btn is-small" href={`/loop-lab/processes/${p.id}`}>
                         Read reference →

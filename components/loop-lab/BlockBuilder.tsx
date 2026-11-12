@@ -11,23 +11,30 @@ import {
   getNodeOutputPorts,
   simulateBlockDiagram,
   benchExport,
+  cleanDiagram,
+  clampParam,
   type BlockCategory,
   type BlockDiagramModel,
   type BlockKind,
   type BlockNode,
   type BlockSimResult,
   type BlockWire,
+  type ParamSpec,
 } from '@/lib/loop-lab/block-sim';
 
 const BLOCK_WIDTH = 152;
 const BLOCK_HEIGHT = 92;
+/** Changes closer together than this are one undo step (a drag, a slider being moved). */
+const UNDO_RUN_MS = 600;
+/** The diagram is kept in this browser between visits. */
+const STORAGE_KEY = 'loop-lab:block-studio';
 
 const CATEGORY_COLORS: Record<BlockCategory, { border: string; bg: string; badge: string; text: string; lightBg: string }> = {
-  sources: { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)', badge: '#0891b2', text: '#22d3ee', lightBg: 'rgba(6, 182, 212, 0.06)' },
-  controllers: { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)', badge: '#7c3aed', text: '#a78bfa', lightBg: 'rgba(139, 92, 246, 0.06)' },
-  dynamics: { border: '#10b981', bg: 'rgba(16, 185, 129, 0.12)', badge: '#059669', text: '#34d399', lightBg: 'rgba(16, 185, 129, 0.06)' },
-  math: { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', badge: '#d97706', text: '#fbbf24', lightBg: 'rgba(245, 158, 11, 0.06)' },
-  sinks: { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', badge: '#2563eb', text: '#60a5fa', lightBg: 'rgba(59, 130, 246, 0.06)' },
+  sources: { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)', badge: '#0891b2', text: 'var(--ll-cat-sources)', lightBg: 'rgba(6, 182, 212, 0.06)' },
+  controllers: { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)', badge: '#7c3aed', text: 'var(--ll-cat-controllers)', lightBg: 'rgba(139, 92, 246, 0.06)' },
+  dynamics: { border: '#10b981', bg: 'rgba(16, 185, 129, 0.12)', badge: '#059669', text: 'var(--ll-cat-dynamics)', lightBg: 'rgba(16, 185, 129, 0.06)' },
+  math: { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', badge: '#d97706', text: 'var(--ll-cat-math)', lightBg: 'rgba(245, 158, 11, 0.06)' },
+  sinks: { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', badge: '#2563eb', text: 'var(--ll-cat-sinks)', lightBg: 'rgba(59, 130, 246, 0.06)' },
 };
 
 function getPortCoords(node: BlockNode, type: 'in' | 'out', portIndex: number) {
@@ -337,9 +344,89 @@ function Sparkline({ data, color }: { data: number[] | undefined; color: string 
   );
 }
 
+/** A parameter typed in: taken as soon as it is a number within the slider's range, held to the range when left. */
+function ParamNumber({ spec, value, onChange }: { spec: ParamSpec; value: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState(String(value));
+  const [shown, setShown] = useState(value);
+  if (shown !== value) {
+    setShown(value);
+    setText(String(value));
+  }
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      min={spec.min}
+      max={spec.max}
+      step={spec.step}
+      value={text}
+      aria-label={spec.label}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value.trim() !== '' && Number.isFinite(n) && n >= spec.min && n <= spec.max) {
+          setShown(n);
+          onChange(n);
+        }
+      }}
+      onBlur={() => {
+        const n = Number(text);
+        const v = text.trim() === '' || !Number.isFinite(n) ? value : Math.min(spec.max, Math.max(spec.min, n));
+        setText(String(v));
+        setShown(v);
+        if (v !== value) onChange(v);
+      }}
+      style={{ fontSize: '0.8rem', padding: '0.15rem 0.4rem', minHeight: '26px' }}
+    />
+  );
+}
+
 export default function BlockBuilder() {
-  const [model, setModel] = useState<BlockDiagramModel>(() => JSON.parse(JSON.stringify(BLOCK_TEMPLATES[0])));
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>('pid');
+  const [model, setModelNow] = useState<BlockDiagramModel>(() => JSON.parse(JSON.stringify(BLOCK_TEMPLATES[0])));
+  // The handlers read the diagram and its history from refs, so a run of changes in one event chains.
+  const modelRef = useRef(model);
+  const hist = useRef<{ past: BlockDiagramModel[]; future: BlockDiagramModel[] }>({ past: [], future: [] });
+  const [histSize, setHistSize] = useState({ past: 0, future: 0 });
+  const lastEdit = useRef(0);
+  /** Change the diagram. Changes in quick succession are one undo step; `step` makes this one its own. */
+  const setModel = useCallback((next: BlockDiagramModel | ((prev: BlockDiagramModel) => BlockDiagramModel), opts?: { step?: boolean }) => {
+    const cur = modelRef.current;
+    const resolved = typeof next === 'function' ? next(cur) : next;
+    if (resolved === cur) return;
+    const now = performance.now();
+    if (opts?.step || now - lastEdit.current > UNDO_RUN_MS) hist.current.past = [...hist.current.past.slice(-49), cur];
+    hist.current.future = [];
+    lastEdit.current = opts?.step ? 0 : now;
+    modelRef.current = resolved;
+    setModelNow(resolved);
+    setHistSize({ past: hist.current.past.length, future: 0 });
+  }, []);
+  const undo = useCallback(() => {
+    const h = hist.current;
+    if (!h.past.length) return;
+    const prev = h.past[h.past.length - 1];
+    h.past = h.past.slice(0, -1);
+    h.future = [modelRef.current, ...h.future].slice(0, 50);
+    lastEdit.current = 0;
+    modelRef.current = prev;
+    setModelNow(prev);
+    setConnectingFrom(null);
+    setHistSize({ past: h.past.length, future: h.future.length });
+  }, []);
+  const redo = useCallback(() => {
+    const h = hist.current;
+    if (!h.future.length) return;
+    const next = h.future[0];
+    h.future = h.future.slice(1);
+    h.past = [...h.past.slice(-49), modelRef.current];
+    lastEdit.current = 0;
+    modelRef.current = next;
+    setModelNow(next);
+    setConnectingFrom(null);
+    setHistSize({ past: h.past.length, future: h.future.length });
+  }, []);
+  // Nothing selected to begin with: Delete only ever removes a block that was picked.
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
   const [pinnedResult, setPinnedResult] = useState<BlockSimResult | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{ blockId: string; portIndex: number; x: number; y: number } | null>(null);
@@ -350,6 +437,34 @@ export default function BlockBuilder() {
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
+  // The diagram as it was left in this browser, and kept as it changes. (Storage can be refused:
+  // then it just isn't kept.)
+  const [restored, setRestored] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const saved = raw ? cleanDiagram(JSON.parse(raw)) : null;
+      if (saved) {
+        modelRef.current = saved;
+        setModelNow(saved);
+      }
+    } catch {
+      // Unreadable or not allowed: start from the template.
+    }
+    setRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!restored) return;
+    const id = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(model));
+      } catch {
+        // Full or not allowed.
+      }
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [model, restored]);
+
   // Synchronous, rock-solid simulation execution on every model state update
   const simResult = useMemo(() => simulateBlockDiagram(model), [model]);
 
@@ -357,29 +472,41 @@ export default function BlockBuilder() {
   const selectedNode = useMemo(() => model.nodes.find((n) => n.id === selectedBlockId) || null, [model.nodes, selectedBlockId]);
   const selectedWire = useMemo(() => model.wires.find((w) => w.id === selectedWireId) || null, [model.wires, selectedWireId]);
 
-  // Global Esc key and Delete key listener
+  // Keys: Esc cancels a wire, Delete removes what is selected, Ctrl+Z / Ctrl+Y undo and redo.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const inField = !!el?.closest?.('input, textarea, select, [contenteditable="true"]');
+      const typing = inField && !(el instanceof HTMLInputElement && ['range', 'checkbox', 'radio', 'button'].includes(el.type));
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !typing && ['z', 'y'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        if (e.key.toLowerCase() === 'y' || e.shiftKey) redo();
+        else undo();
+        return;
+      }
       if (e.key === 'Escape') {
         setConnectingFrom(null);
         setSelectedWireId(null);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !inField && !mod) {
         if (selectedWireId) {
-          setModel((prev) => ({ ...prev, wires: prev.wires.filter((w) => w.id !== selectedWireId) }));
+          e.preventDefault();
+          setModel((prev) => ({ ...prev, wires: prev.wires.filter((w) => w.id !== selectedWireId) }), { step: true });
           setSelectedWireId(null);
         } else if (selectedBlockId) {
+          e.preventDefault();
           setModel((prev) => ({
             ...prev,
             nodes: prev.nodes.filter((n) => n.id !== selectedBlockId),
             wires: prev.wires.filter((w) => w.fromBlock !== selectedBlockId && w.toBlock !== selectedBlockId),
-          }));
+          }), { step: true });
           setSelectedBlockId(null);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedWireId, selectedBlockId]);
+  }, [selectedWireId, selectedBlockId, setModel, undo, redo]);
 
   // Mouse move on canvas for rubber-band connecting line & block dragging
   const handleCanvasPointerMove = useCallback(
@@ -390,6 +517,10 @@ export default function BlockBuilder() {
       const y = (e.clientY - rect.top + canvasRef.current.scrollTop) / zoom;
       setMousePos({ x, y });
 
+      if (draggingBlock && e.pointerType === 'mouse' && e.buttons === 0) {
+        setDraggingBlock(null);
+        return;
+      }
       if (draggingBlock) {
         const dx = (e.clientX - draggingBlock.startX) / zoom;
         const dy = (e.clientY - draggingBlock.startY) / zoom;
@@ -410,7 +541,7 @@ export default function BlockBuilder() {
 
   // Template switch
   const loadTemplate = (tmpl: BlockDiagramModel) => {
-    setModel(JSON.parse(JSON.stringify(tmpl)));
+    setModel(JSON.parse(JSON.stringify(tmpl)), { step: true });
     setSelectedBlockId(tmpl.nodes[0]?.id || null);
     setSelectedWireId(null);
     setConnectingFrom(null);
@@ -426,21 +557,24 @@ export default function BlockBuilder() {
   const addBlock = (kind: BlockKind) => {
     const entry = BLOCK_CATALOG[kind];
     if (!entry) return;
-    const id = `${kind}_${Date.now().toString(36).slice(-4)}`;
+    let id = `${kind}_${Date.now().toString(36).slice(-4)}`;
+    while (model.nodes.some((n) => n.id === id)) id += 'x';
     const defaultParams: Record<string, number> = {};
     for (const spec of entry.paramSpecs) {
       defaultParams[spec.key] = spec.default;
     }
 
-    // Place block at a clean non-overlapping spot
-    let x = 60;
-    let y = 140;
-    const occupied = new Set(model.nodes.map((n) => `${Math.round(n.x / 90)},${Math.round(n.y / 90)}`));
-    while (occupied.has(`${Math.round(x / 90)},${Math.round(y / 90)}`)) {
-      x += 90;
-      if (x > 980) {
-        x = 60;
-        y += 110;
+    // The first spot, row by row, with a clear margin round every block already there.
+    const gap = 24;
+    const free = (bx: number, by: number) => model.nodes.every((n) =>
+      bx + BLOCK_WIDTH + gap <= n.x || n.x + BLOCK_WIDTH + gap <= bx || by + BLOCK_HEIGHT + gap <= n.y || n.y + BLOCK_HEIGHT + gap <= by);
+    let x = 40;
+    let y = 40;
+    search: for (let row = 0; row < 200; row++) {
+      for (let col = 0; col < 6; col++) {
+        x = 40 + col * (BLOCK_WIDTH + 2 * gap);
+        y = 40 + row * (BLOCK_HEIGHT + 2 * gap);
+        if (free(x, y)) break search;
       }
     }
 
@@ -465,7 +599,8 @@ export default function BlockBuilder() {
   // Duplicate block
   const duplicateSelectedBlock = () => {
     if (!selectedNode) return;
-    const newId = `${selectedNode.kind}_${Date.now().toString(36).slice(-4)}`;
+    let newId = `${selectedNode.kind}_${Date.now().toString(36).slice(-4)}`;
+    while (model.nodes.some((n) => n.id === newId)) newId += 'x';
     const clone: BlockNode = {
       ...JSON.parse(JSON.stringify(selectedNode)),
       id: newId,
@@ -602,7 +737,7 @@ export default function BlockBuilder() {
     if (!selectedBlockId) return;
     setModel((prev) => ({
       ...prev,
-      nodes: prev.nodes.map((n) => (n.id === selectedBlockId ? { ...n, params: { ...n.params, [key]: val } } : n)),
+      nodes: prev.nodes.map((n) => (n.id === selectedBlockId ? { ...n, params: { ...n.params, [key]: clampParam(n.kind, key, val) } } : n)),
     }));
   };
 
@@ -630,7 +765,7 @@ export default function BlockBuilder() {
           </div>
           <h1 style={{ fontSize: '1.8rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
             <span>Block Diagram Studio</span>
-            <span style={{ fontSize: '0.74rem', fontWeight: 700, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '0.2rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+            <span style={{ fontSize: '0.74rem', fontWeight: 700, background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-light)', padding: '0.2rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
               SYSTEM BUILDER
             </span>
           </h1>
@@ -640,11 +775,17 @@ export default function BlockBuilder() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button onClick={undo} disabled={histSize.past === 0} className="ll-btn is-small" title="Undo (Ctrl+Z)">
+            ↶ Undo
+          </button>
+          <button onClick={redo} disabled={histSize.future === 0} className="ll-btn is-small" title="Redo (Ctrl+Y)">
+            ↷ Redo
+          </button>
           {pinnedResult ? (
             <button
               onClick={() => setPinnedResult(null)}
               className="ll-btn is-small"
-              style={{ background: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#f87171' }}
+              style={{ background: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)', color: 'var(--danger)' }}
               title="Clear pinned reference trace"
             >
               ✕ Clear Pin
@@ -691,6 +832,15 @@ export default function BlockBuilder() {
             : <><strong>Open in Bench is off:</strong> the bench can&apos;t run this diagram as drawn. {bench.reason}</>}
         </p>
       )}
+      {simResult.algebraicLoops.map((ring, i) => (
+        <p key={i} className="ll-small" role="status" style={{ margin: '0 0 0.75rem', color: ring.solved ? undefined : 'var(--danger)' }}>
+          <strong>{ring.solved ? 'Solved at every instant:' : 'No answer:'}</strong>{' '}
+          {ring.blocks.join(' → ')} feed back into {ring.blocks.length === 1 ? 'itself' : 'each other'} with nothing that takes time in between.
+          {ring.solved
+            ? ' Each step finds the value that comes back unchanged.'
+            : ' No value comes back unchanged, so these blocks read 0. Put a lag, a delay or an integrator in the ring.'}
+        </p>
+      ))}
 
       {/* ── Top Control Bar (Templates, Sim Settings, Wiring Mode, Zoom, Clear) ── */}
       <div
@@ -776,19 +926,18 @@ export default function BlockBuilder() {
                   const coords = getPortCoords(node, 'out', 0);
                   setConnectingFrom({ blockId: node.id, portIndex: 0, x: coords.x, y: coords.y });
                 }
-              } else {
-                alert('Click any block output port (right ●) to start wiring!');
               }
             }}
+            disabled={!connectingFrom && !selectedBlockId}
             className="ll-btn is-small"
             style={{
               fontSize: '0.78rem',
               fontWeight: 600,
               borderColor: connectingFrom ? 'var(--warning)' : undefined,
               background: connectingFrom ? 'rgba(245, 158, 11, 0.15)' : undefined,
-              color: connectingFrom ? '#fbbf24' : undefined,
+              color: connectingFrom ? 'var(--warning)' : undefined,
             }}
-            title={connectingFrom ? 'Cancel wire creation (Esc)' : 'Add a new wire connection between blocks'}
+            title={connectingFrom ? 'Cancel wire creation (Esc)' : selectedBlockId ? 'Start a wire from the selected block\'s output' : 'Select a block first, or click any block\'s output ● to start a wire'}
           >
             {connectingFrom ? '✕ Cancel Wire' : '+ Add Wire'}
           </button>
@@ -841,14 +990,14 @@ export default function BlockBuilder() {
           <button
             onClick={() => {
               if (confirm('Clear the diagram canvas?')) {
-                setModel({ id: 'custom-diagram', name: 'Custom Diagram', description: 'Empty canvas diagram', duration: 60, dt: 0.1, nodes: [], wires: [] });
+                setModel({ id: 'custom-diagram', name: 'Custom Diagram', description: 'Empty canvas diagram', duration: 60, dt: 0.1, nodes: [], wires: [] }, { step: true });
                 setSelectedBlockId(null);
                 setSelectedWireId(null);
                 setConnectingFrom(null);
               }
             }}
             className="ll-btn is-small"
-            style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', fontSize: '0.78rem' }}
+            style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)', fontSize: '0.78rem' }}
             title="Clear all blocks and wires"
           >
             Clear
@@ -1001,7 +1150,7 @@ export default function BlockBuilder() {
               borderRadius: '8px',
               background: 'rgba(245, 158, 11, 0.15)',
               border: '1px solid rgba(245, 158, 11, 0.4)',
-              color: '#fbbf24',
+              color: 'var(--warning)',
               fontSize: '0.82rem',
               fontWeight: 600,
               display: 'flex',
@@ -1012,7 +1161,7 @@ export default function BlockBuilder() {
             <span>Wiring active: Click any destination input port ● (left side of target block) to complete connection.</span>
             <button
               onClick={() => setConnectingFrom(null)}
-              style={{ background: 'none', border: 'none', color: '#fbbf24', cursor: 'pointer', fontWeight: 700 }}
+              style={{ background: 'none', border: 'none', color: 'var(--warning)', cursor: 'pointer', fontWeight: 700 }}
             >
               Cancel (Esc)
             </button>
@@ -1023,6 +1172,7 @@ export default function BlockBuilder() {
           ref={canvasRef}
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
+          onPointerCancel={handleCanvasPointerUp}
           onClick={() => {
             setSelectedBlockId(null);
             setSelectedWireId(null);
@@ -1066,7 +1216,7 @@ export default function BlockBuilder() {
                   <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)" />
                 </marker>
                 <marker id="ll-arrow-active" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 1 L 9 5 L 0 9 z" fill="#38bdf8" />
+                  <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent-light)" />
                 </marker>
               </defs>
 
@@ -1108,7 +1258,7 @@ export default function BlockBuilder() {
                       <path
                         d={pathD}
                         fill="none"
-                        stroke="#38bdf8"
+                        stroke="var(--accent-light)"
                         strokeWidth={7}
                         strokeOpacity={0.45}
                         strokeLinecap="round"
@@ -1118,7 +1268,7 @@ export default function BlockBuilder() {
                     <path
                       d={pathD}
                       fill="none"
-                      stroke={isSelected ? '#38bdf8' : 'var(--muted)'}
+                      stroke={isSelected ? 'var(--accent-light)' : 'var(--muted)'}
                       strokeWidth={isSelected ? 2.8 : 2.0}
                       strokeDasharray={isFeedback ? '6 4' : undefined}
                       markerEnd={isSelected ? 'url(#ll-arrow-active)' : 'url(#ll-arrow)'}
@@ -1135,7 +1285,7 @@ export default function BlockBuilder() {
                         cx={geom.branchPoint.x}
                         cy={geom.branchPoint.y}
                         r={3.5}
-                        fill={isSelected ? '#38bdf8' : 'var(--muted)'}
+                        fill={isSelected ? 'var(--accent-light)' : 'var(--muted)'}
                       />
                     )}
                     {/* Wire label badge with crisp pill backing */}
@@ -1156,13 +1306,13 @@ export default function BlockBuilder() {
                           rx={4}
                           fill="var(--background)"
                           fillOpacity={0.9}
-                          stroke={isSelected ? '#38bdf8' : 'var(--surface-border)'}
+                          stroke={isSelected ? 'var(--accent-light)' : 'var(--surface-border)'}
                           strokeWidth={1}
                         />
                         <text
                           x={geom.labelX}
                           y={geom.labelY + 1}
-                          fill={isSelected ? '#38bdf8' : 'var(--foreground)'}
+                          fill={isSelected ? 'var(--accent-light)' : 'var(--foreground)'}
                           fontSize="10.5"
                           fontFamily="ui-sans-serif, system-ui"
                           fontWeight="650"
@@ -1181,7 +1331,7 @@ export default function BlockBuilder() {
                 <path
                   d={computeWirePath(connectingFrom.x, connectingFrom.y, mousePos.x, mousePos.y)}
                   fill="none"
-                  stroke="#fbbf24"
+                  stroke="var(--warning)"
                   strokeWidth={2.5}
                   strokeDasharray="4 4"
                 />
@@ -1233,6 +1383,14 @@ export default function BlockBuilder() {
                   <div
                     onPointerDown={(e) => {
                       e.stopPropagation();
+                      // Moves and the release come here wherever the pointer goes. (A pointer the browser no
+                      // longer counts as down can't be captured; the drag still works without it.)
+                      try {
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                      } catch {
+                        // Not capturable.
+                      }
+                      lastEdit.current = 0;
                       setSelectedBlockId(node.id);
                       setSelectedWireId(null);
                       setDraggingBlock({
@@ -1246,6 +1404,7 @@ export default function BlockBuilder() {
                     style={{
                       height: '26px',
                       cursor: 'grab',
+                      touchAction: 'none',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
@@ -1348,14 +1507,16 @@ export default function BlockBuilder() {
                         onClick={(e) => handlePortClick(e, node, 'in', idx)}
                         style={{
                           position: 'absolute',
-                          left: '-7px',
-                          top: `${relY - 7}px`,
-                          width: '14px',
-                          height: '14px',
+                          left: '-13px',
+                          top: `${relY - 13}px`,
+                          width: '26px',
+                          height: '26px',
                           borderRadius: '50%',
-                          background: isConnectingTarget ? '#fbbf24' : 'var(--background)',
-                          border: `2px solid ${isConnectingTarget ? '#fbbf24' : 'var(--muted)'}`,
-                          boxShadow: isConnectingTarget ? '0 0 10px #fbbf24' : 'none',
+                          border: '6px solid transparent',
+                          backgroundClip: 'padding-box',
+                          background: isConnectingTarget ? 'var(--warning)' : 'var(--background)',
+                          boxShadow: `inset 0 0 0 2px ${isConnectingTarget ? 'var(--warning)' : 'var(--muted)'}${isConnectingTarget ? ', 0 0 10px var(--warning)' : ''}`,
+                          touchAction: 'manipulation',
                           cursor: 'pointer',
                           zIndex: 40,
                           transition: 'transform 0.12s, border-color 0.12s',
@@ -1404,14 +1565,16 @@ export default function BlockBuilder() {
                         onClick={(e) => handlePortClick(e, node, 'out', idx)}
                         style={{
                           position: 'absolute',
-                          right: '-7px',
-                          top: `${relY - 7}px`,
-                          width: '14px',
-                          height: '14px',
+                          right: '-13px',
+                          top: `${relY - 13}px`,
+                          width: '26px',
+                          height: '26px',
                           borderRadius: '50%',
-                          background: isSourceActive ? '#fbbf24' : col.border,
-                          border: '2px solid var(--background)',
-                          boxShadow: isSourceActive ? '0 0 12px #fbbf24' : 'none',
+                          border: '6px solid transparent',
+                          backgroundClip: 'padding-box',
+                          background: isSourceActive ? 'var(--warning)' : col.border,
+                          boxShadow: `inset 0 0 0 2px var(--background)${isSourceActive ? ', 0 0 12px var(--warning)' : ''}`,
+                          touchAction: 'manipulation',
                           cursor: 'pointer',
                           zIndex: 40,
                           transition: 'transform 0.12s',
@@ -1451,7 +1614,7 @@ export default function BlockBuilder() {
       </div>
 
       {/* ── Bottom 2-Column Split: Scopes/Phase Left (1.5fr) vs Inspector Right (1fr) ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(360px, 1fr)', gap: '1.25rem', alignItems: 'start' }}>
+      <div className="ll-builder-split">
         {/* ── Left Column: Multi-Channel Scope Chart, Phase-Plane Plot & Metrics Table ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {/* Scope Visualizers */}
@@ -1480,7 +1643,8 @@ export default function BlockBuilder() {
               }
             }
 
-            const ch0Final = scope.metrics[0]?.finalValue ?? 0;
+            const spMetric = scope.metrics.find((x) => x.channel === 0);
+            const ch0Final = spMetric?.finalValue ?? 0;
 
             return (
               <div key={scope.id} className="ll-card" style={{ padding: '1rem 1.15rem' }}>
@@ -1525,7 +1689,7 @@ export default function BlockBuilder() {
                       </thead>
                       <tbody>
                         {scope.metrics.map((m, idx) => {
-                          const ssErr = idx === 0 ? '0.00' : Math.abs(ch0Final - m.finalValue).toFixed(2);
+                          const ssErr = m.channel === 1 && spMetric ? Math.abs(ch0Final - m.finalValue).toFixed(2) : '—';
                           return (
                             <tr key={idx} style={{ borderBottom: '1px solid var(--surface-border)' }}>
                               <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>
@@ -1535,8 +1699,10 @@ export default function BlockBuilder() {
                                 </div>
                               </td>
                               <td style={{ padding: '0.4rem 0.5rem', fontFamily: 'ui-monospace, monospace' }}>
-                                {m.overshootPct > 0 ? (
-                                  <span style={{ color: m.overshootPct > 25 ? '#ef4444' : '#f59e0b', fontWeight: 600 }}>
+                                {m.channel !== 1 ? (
+                                  <span className="ll-muted" title="Read on the process value (ch2) only">—</span>
+                                ) : m.overshootPct > 0 ? (
+                                  <span style={{ color: m.overshootPct > 25 ? 'var(--danger)' : 'var(--warning)', fontWeight: 600 }}>
                                     {m.overshootPct}%
                                   </span>
                                 ) : (
@@ -1577,7 +1743,7 @@ export default function BlockBuilder() {
                 <h3 style={{ fontSize: '1.02rem', fontWeight: 650, margin: 0 }}>{xy.title}</h3>
               </div>
               <Chart
-                series={[{ label: 'Phase Orbit Trajectory', color: '#38bdf8', x: xy.x, y: xy.y, width: 2.2 }]}
+                series={[{ label: 'Phase Orbit Trajectory', color: 'var(--accent-light)', x: xy.x, y: xy.y, width: 2.2 }]}
                 x={{ label: xy.xLabel }}
                 y={{ label: xy.yLabel }}
                 height={220}
@@ -1608,7 +1774,7 @@ export default function BlockBuilder() {
                   <button
                     onClick={deleteSelectedBlock}
                     className="ll-btn is-small"
-                    style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                    style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
                     title="Delete block (Del)"
                   >
                     🗑️
@@ -1730,15 +1896,7 @@ export default function BlockBuilder() {
                               value={curVal}
                               onChange={(e) => handleParamChange(spec.key, Number(e.target.value))}
                             />
-                            <input
-                              type="number"
-                              min={spec.min}
-                              max={spec.max}
-                              step={spec.step}
-                              value={curVal}
-                              onChange={(e) => handleParamChange(spec.key, Number(e.target.value))}
-                              style={{ fontSize: '0.8rem', padding: '0.15rem 0.4rem', minHeight: '26px' }}
-                            />
+                            <ParamNumber spec={spec} value={curVal} onChange={(v) => handleParamChange(spec.key, v)} />
                           </div>
                           <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{spec.hint}</div>
                         </div>
@@ -1783,7 +1941,7 @@ export default function BlockBuilder() {
                             <button
                               onClick={() => setModel((prev) => ({ ...prev, wires: prev.wires.filter((wire) => wire.id !== w.id) }))}
                               className="ll-btn is-small"
-                              style={{ color: '#ef4444', minHeight: '20px', padding: '0 0.35rem', fontSize: '0.7rem' }}
+                              style={{ color: 'var(--danger)', minHeight: '20px', padding: '0 0.35rem', fontSize: '0.7rem' }}
                               title="Disconnect wire"
                             >
                               ✕
@@ -1813,7 +1971,7 @@ export default function BlockBuilder() {
                             <button
                               onClick={() => setModel((prev) => ({ ...prev, wires: prev.wires.filter((wire) => wire.id !== w.id) }))}
                               className="ll-btn is-small"
-                              style={{ color: '#ef4444', minHeight: '20px', padding: '0 0.35rem', fontSize: '0.7rem' }}
+                              style={{ color: 'var(--danger)', minHeight: '20px', padding: '0 0.35rem', fontSize: '0.7rem' }}
                               title="Disconnect wire"
                             >
                               ✕
@@ -1832,7 +1990,7 @@ export default function BlockBuilder() {
                 className="ll-btn is-small"
                 style={{
                   width: '100%',
-                  color: '#ef4444',
+                  color: 'var(--danger)',
                   borderColor: 'rgba(239, 68, 68, 0.4)',
                   justifyContent: 'center',
                   fontWeight: 650,
@@ -1853,7 +2011,7 @@ export default function BlockBuilder() {
                     setSelectedWireId(null);
                   }}
                   className="ll-btn is-small"
-                  style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                  style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
                 >
                   Delete Wire
                 </button>
@@ -1911,7 +2069,7 @@ export default function BlockBuilder() {
               >
                 <div>
                   <span style={{ color: 'var(--muted)' }}>Loop State:</span>
-                  <div style={{ fontWeight: 650, color: simResult.summary.loopClosed ? '#10b981' : '#f59e0b' }}>
+                  <div style={{ fontWeight: 650, color: simResult.summary.loopClosed ? 'var(--success)' : 'var(--warning)' }}>
                     {simResult.summary.loopClosed ? 'Closed (Feedback)' : 'Open Loop'}
                   </div>
                 </div>

@@ -93,6 +93,18 @@
 .ll-nav-pill:hover { background: var(--surface-hover); border-color: var(--accent-light); transform: translateY(-1px); }
 .ll-nav-pill.is-builder { border-color: rgba(var(--accent-rgb, 96, 165, 250), 0.45); }
 .ll-nav-pill.is-bench { border-color: rgba(var(--success-rgb, 52, 211, 153), 0.45); }
+/* Narrower: the sections get a row of their own (the two shortcuts repeat them, so they go). */
+@media (max-width: 900px) {
+  .ll-nav { flex-wrap: wrap; row-gap: 0.15rem; }
+  .ll-nav-links { order: 3; flex: 1 1 100%; min-width: 0; }
+  .ll-nav-actions { display: none; }
+}
+@media (max-width: 640px) {
+  .ll-nav-tag { display: none; }
+  /* What doesn't fit scrolls sideways; the fade says there is more. */
+  .ll-nav-links { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+}
+.ll-plant-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 
 /* Titles */
 .ll-title { margin-bottom: 1.75rem; }
@@ -253,6 +265,11 @@ a.ll-row:hover strong { color: var(--accent-light); }
 
 /* ─── Bench & Builder ─── */
 .ll-builder { width: var(--ll-wide); max-width: none; margin-left: calc((100% - var(--ll-wide)) / 2); }
+/* Block Studio: category colours readable on either theme, and the lower half stacked on narrow screens. */
+.ll-builder { --ll-cat-sources: #22d3ee; --ll-cat-controllers: #a78bfa; --ll-cat-dynamics: #34d399; --ll-cat-math: #fbbf24; --ll-cat-sinks: #60a5fa; }
+[data-theme="light"] .ll-builder { --ll-cat-sources: #155e75; --ll-cat-controllers: #6d28d9; --ll-cat-dynamics: #065f46; --ll-cat-math: #854d0e; --ll-cat-sinks: #1d4ed8; }
+.ll-builder-split { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 1.25rem; align-items: start; }
+@media (max-width: 900px) { .ll-builder-split { grid-template-columns: minmax(0, 1fr); } }
 .ll-bench { width: var(--ll-wide); max-width: none; margin-left: calc((100% - var(--ll-wide)) / 2); display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 1.75rem; align-items: start; }
 .ll-bench.has-code { grid-template-columns: 500px minmax(0, 1fr); }
 .ll-main { min-width: 0; }
