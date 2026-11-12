@@ -644,3 +644,25 @@ Redone after the first version got crowded and hard to find your way around.
   cascade. "More margin" on maglev only held at one tuning; near the magnet it has less. "Every controller meets reactors
   that run away" on the batch reactor was never tested on state feedback or a strong PID, and both hold every corner of
   the spread within about 3 °C.
+
+## 21. Later additions (2026-11-11)
+
+- **Valve stiction** (`valveStiction`, a valve setting next to deadband, 0 by default): once the stem stops (the signal
+  holds still or turns back) friction holds it where it is, and it breaks free only when the signal is more than the band
+  away, then travels all the way to it. Deadband is backlash. Linear analysis ignores both, as it always did deadband.
+- **Feedforward dead time** (`FeedforwardTerm.delay`): the term waits before acting, for a disturbance that reaches the PV
+  later than the valve does. In the controller, as a Padé in the linear model, filled in by Design from model, and in the
+  exported `LL_LeadLag` (a ring of up to 1000 cycles). No built-in plant needs it: the disturbance is the quicker path on all.
+- **Tests on drifted plants** (`drift.ts`, under the trend on the bench): the selected test on 8 plants drawn within the
+  process's `uncertain` spreads, controller unchanged. The scorecard's margins judge that spread on paper; this runs it.
+- **Gain schedule from several fits** (Identify): a SIMC PI for each kept fit, and a gain-scheduled PI built from them. The
+  bench's identified plant stays one linear model (the middle fit), so it shows the schedule at that point only.
+- **The identified plant has an inner measurement**: the plant after its first lag, carrying the whole gain, so a cascade
+  can be tried on it. Its stored comparison now has one.
+- **Block Studio** keeps the diagram in the browser, has undo, named saved diagrams and a share link (`?d=`, deflated
+  JSON). Open in Bench reads the loop from the wiring (`readLoop`, `readCascade` in `block-sim.ts`) and refuses what the
+  identified plant can't hold, with the reason. A cascade goes across with the slave's gain divided by the outer gain and
+  the master's multiplied by it (the bench's inner measurement carries the whole gain), which is the same loop.
+- **Page tests** (`e2e/`, `npm run test:e2e`, Playwright 1.64.1 on desktop Chrome, a phone-sized touch Chrome and WebKit
+  as an iPad): no Loop Lab page scrolls sideways, the nav, titles, the gain sliders, undo, drifted plants, dragging by mouse
+  and touch, wiring by tap, saved diagrams and the share link. A real iPad is still the only proof for touch.

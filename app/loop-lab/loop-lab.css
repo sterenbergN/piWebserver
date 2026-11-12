@@ -343,7 +343,8 @@ a.ll-row:hover strong { color: var(--accent-light); }
 }
 
 /* The tests */
-.ll-tests { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+/* Positioned, so each tab's screen-reader label scrolls with the row on a phone instead of widening the page. */
+.ll-tests { position: relative; display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .ll-tests button { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 32px; padding: 0.2rem 0.65rem; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 0.83rem; font-weight: 550; cursor: pointer; text-align: left; }
 .ll-tests button:hover { color: var(--foreground); background: var(--surface-hover); }
 .ll-tests button[aria-selected="true"] { color: var(--foreground); font-weight: 600; background: var(--surface-glass); border-color: var(--surface-border); }

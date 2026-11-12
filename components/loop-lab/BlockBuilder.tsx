@@ -1310,6 +1310,8 @@ export default function BlockBuilder() {
 
         <div
           ref={canvasRef}
+          data-canvas
+          aria-label="Block diagram canvas"
           onPointerMove={handleCanvasPointerMove}
           onPointerUp={handleCanvasPointerUp}
           onPointerCancel={handleCanvasPointerUp}
@@ -1492,6 +1494,7 @@ export default function BlockBuilder() {
               return (
                 <div
                   key={node.id}
+                  data-block={node.id}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedBlockId(node.id);
@@ -1521,6 +1524,7 @@ export default function BlockBuilder() {
                 >
                   {/* Colored Header Bar (Drag Handle) */}
                   <div
+                    data-handle
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       // Moves and the release come here wherever the pointer goes. (A pointer the browser no
@@ -1644,6 +1648,7 @@ export default function BlockBuilder() {
                     return (
                       <div
                         key={`in_${idx}`}
+                        data-port={`in:${idx}`}
                         onClick={(e) => handlePortClick(e, node, 'in', idx)}
                         style={{
                           position: 'absolute',
@@ -1702,6 +1707,7 @@ export default function BlockBuilder() {
                     return (
                       <div
                         key={`out_${idx}`}
+                        data-port={`out:${idx}`}
                         onClick={(e) => handlePortClick(e, node, 'out', idx)}
                         style={{
                           position: 'absolute',
