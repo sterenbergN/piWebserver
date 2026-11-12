@@ -1491,7 +1491,7 @@ export type CaseStep = {
   presets?: CasePreset[];
   scenarios?: string[];
   /** Extra panels: the plant linearized across the range, or linear step responses at each operating point. */
-  show?: ('linearization' | 'operating-points')[];
+  show?: ('linearization' | 'operating-points' | 'oscillation')[];
 };
 
 export type CaseStudy = {
@@ -1575,6 +1575,71 @@ export const CASES: CaseStudy[] = [
 - Nothing on the controller ladder buys enough to justify its complexity here.
 - Effort is better spent on the valve: sizing, deadband, positioner.
 - Keep the gain where the valve isn't chasing noise.`,
+      },
+    ],
+  },
+  {
+    id: 'flow-stiction',
+    process: 'flow',
+    title: 'The flow loop that hunts: tuning or the valve?',
+    question: 'A flow loop cycles day and night, and the first instinct is to detune it. How do you tell a sticky valve from a tuning problem, from the trend alone?',
+    family: 'pid-wins',
+    steps: [
+      {
+        title: 'The situation',
+        body: String.raw`The flow loop from the first case study, a few years on. FIC-101 "hunts": the flow swings about a cubic metre an hour, up and down, every twenty seconds or so, whatever the setpoint. Nobody has touched the tuning. The packing on FV-101 has been tightened twice since commissioning.
+
+Stiction (static friction in the packing) makes the stem stick wherever it stops. The positioner signal has to move a certain distance (here 2 % of stroke) before the stem breaks free, and then it jumps. This test holds a steady setpoint for nearly seven minutes after one small header dip, so the cycle has room to show itself.`,
+      },
+      {
+        title: 'The cycle',
+        body: String.raw`The same Lambda PI as before. Look at the two waves on the trend.
+
+- **The flow is flat-topped.** It sits still for most of each half-cycle, then jumps.
+- **The output ramps.** While the flow sits off the setpoint, the integral term ramps the output steadily. When it has moved 2 %, the stem breaks free, the flow jumps past the setpoint, and the ramp turns round.
+- **The two are a quarter-cycle apart.** The output keeps moving while the flow doesn't answer. In a cycle caused by the tuning or by something outside the loop, one follows the other in step or opposite.
+
+The check below reads all three from the PV and output alone, as you would read a plant trend. The same check runs on the bench under every test, and on a CSV from the plant on the Identify tab.`,
+        presets: [{ label: 'PI (Lambda)', controller: PI(0.45, 1.8) }],
+        scenarios: ['sticky-hold'],
+        show: ['oscillation'],
+      },
+      {
+        title: 'Detune it?',
+        body: String.raw`The first instinct. A three times longer integral time slows the ramp, so the output takes longer to build up to a slip. The cycle stretches from about 22 s to about 68 s, but each jump is about as big (1.0 m³/h peak to peak against 1.3), because the stem still has to break free before anything moves. Halving the gain in this run leaves the valve stuck near the setpoint for the whole test, with the output creeping towards a slip that would come later. Detuning trades how often for how long; it can't stop a stiction cycle.
+
+The same is the field test for stiction: halve the gain. A tuning cycle dies away; a stiction cycle slows down and stays about as big. On the bench it's one button, under "Is it cycling? Why?".`,
+        presets: [
+          { label: 'PI (Lambda)', controller: PI(0.45, 1.8) },
+          { label: 'Half the gain', controller: PI(0.225, 1.8) },
+          { label: 'Three times the integral time', controller: PI(0.45, 6) },
+        ],
+        scenarios: ['sticky-hold'],
+        show: ['oscillation'],
+      },
+      {
+        title: 'Push harder?',
+        body: String.raw`The other instinct: more gain, so the output breaks the valve free sooner. With the SIMC tuning (four times the gain) the regular cycle goes: the stem breaks free sooner and more often, in smaller, irregular steps. The flow does hold closer, but the stem moves about twice as often as with the Lambda PI. That is the packing wear that made the valve sticky in the first place.`,
+        presets: [
+          { label: 'PI (Lambda)', controller: PI(0.45, 1.8) },
+          { label: 'PI (SIMC, τc = θ)', controller: PI(1.8, 1.75) },
+        ],
+        scenarios: ['sticky-hold'],
+        show: ['oscillation'],
+      },
+      {
+        title: 'What a tuning cycle looks like',
+        body: String.raw`For contrast, a loop with a good valve and far too short an integral time (0.3 s against the plant's 1.75 s), during the header upsets. The flow and the output are both sine-like: neither sits still. The phase test alone would point at the valve here too, because a cycle driven by the integral term puts the output a quarter-cycle from the PV just as stiction does. That is a known weakness of the phase test, and why the check uses the shapes as well. Mixed signs mean: check the tuning first, then step the valve in manual.`,
+        presets: [{ label: 'PI, integral time far too short', controller: PI(1, 0.3) }],
+        scenarios: ['header-upset'],
+        show: ['oscillation'],
+      },
+      {
+        title: 'Verdict',
+        body: String.raw`**Fix the valve, not the tuning.**
+- A stiction cycle has a flat-topped PV, a ramping output, and the two a quarter-cycle apart. Halving the gain slows it down without making it smaller.
+- To be sure, put the loop in manual and step the output by 0.5 %, then 1 %, then 2 %, each way. A sticky valve doesn't move the flow until the steps add up to its stiction, and then it jumps.
+- The fix is mechanical: repack, replace the positioner, or overhaul the valve. Until then, a P-only controller stops the cycle but leaves an offset (1.5 m³/h in this test). More gain makes the cycle smaller and irregular, at the cost of more wear.`,
       },
     ],
   },

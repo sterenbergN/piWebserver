@@ -143,7 +143,7 @@ export default function PlantEditor({ proc, params, onChange }: { proc: ProcessD
   const now = useMemo(() => plantSummary(proc, params), [proc, params]);
   const effects = useMemo(() => settingEffects(proc, params), [proc, params]);
   const [last, setLast] = useState<{ text: string; undo: Params } | null>(null);
-  const nChanged = proc.params.filter((s) => changed(params[s.key], defaults[s.key])).length;
+  const nChanged = proc.params.filter((s) => (!s.hidden || s.key === 'curveN') && changed(params[s.key], defaults[s.key])).length;
 
   const goal = (id: GoalId) => {
     const r = applyGoal(proc, params, id);
@@ -314,8 +314,18 @@ export default function PlantEditor({ proc, params, onChange }: { proc: ProcessD
         )}
       </div>
 
+      {proc.id === 'custom' && params.curveN >= 2 && !params.integrating && (
+        <div className="ll-card">
+          <p className="ll-small" style={{ margin: 0 }}>
+            This plant follows {Math.round(params.curveN)} fits from Identify: its gain and time constant change with the PV from one fit&apos;s to
+            the next. The gain and time constant below are the reference fit&apos;s; changing them scales the whole curve. Dead time and the
+            second lag are the same everywhere.{' '}
+            <button className="ll-link" onClick={() => onChange({ ...params, curveN: 0 })}>Use the reference fit alone</button>
+          </p>
+        </div>
+      )}
       {GROUPS.map((g) => {
-        const specs = proc.params.filter((s) => s.group === g.id);
+        const specs = proc.params.filter((s) => s.group === g.id && !s.hidden);
         if (!specs.length) return null;
         return (
           <div className="ll-card" key={g.id}>

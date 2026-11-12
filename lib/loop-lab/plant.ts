@@ -56,7 +56,7 @@ export function settingEffects(proc: ProcessDef, raw: Params): Record<string, Ef
   if (!base) return out;
   const gain = (s: PlantSummary) => (s.integrating ? s.kPrime : s.K);
   for (const spec of proc.params) {
-    if (spec.options || (OTHER_EFFECTS[spec.key] && spec.key !== 'Ts')) continue;
+    if (spec.options || spec.hidden || (OTHER_EFFECTS[spec.key] && spec.key !== 'Ts')) continue;
     const v = p[spec.key];
     const up = nudge(spec, v);
     if (up === v) continue;

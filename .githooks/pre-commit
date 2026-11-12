@@ -1,0 +1,26 @@
+#!/bin/sh
+# Before each commit that changes code: typecheck, lint the changed files, run the unit tests.
+# About 25 s. It checks the working tree, so stage everything you mean to commit.
+# Turned on per clone with:  git config core.hooksPath .githooks
+# Skip it once (for a commit that only moves docs, say) with:  git commit --no-verify
+
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+code=$(printf '%s\n' "$files" | grep -E '\.(ts|tsx|js|mjs|cjs|json)$')
+[ -z "$code" ] && exit 0
+
+fail() { echo "pre-commit: $1 failed, nothing committed (git commit --no-verify skips these checks)."; exit 1; }
+
+echo "pre-commit: typecheck"
+npx tsc --noEmit || fail "typecheck"
+
+lint=$(printf '%s\n' "$code" | grep -E '\.(ts|tsx|js|mjs|cjs)$' | while read -r f; do [ -f "$f" ] && echo "$f"; done)
+if [ -n "$lint" ]; then
+  echo "pre-commit: lint"
+  # shellcheck disable=SC2086
+  npx eslint $lint || fail "lint"
+fi
+
+echo "pre-commit: unit tests"
+npm test --silent > .git/pre-commit-tests.log 2>&1 || { tail -40 .git/pre-commit-tests.log; fail "unit tests"; }
+grep -E '^# (pass|fail)' .git/pre-commit-tests.log
+exit 0

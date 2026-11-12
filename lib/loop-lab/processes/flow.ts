@@ -64,6 +64,14 @@ export const FLOW: ProcessDef = {
       ],
     },
     {
+      id: 'sticky-hold', name: 'Sticky valve, steady running', duration: 400, initialSp: 30,
+      purpose: 'The valve has 2 % stiction and the header dips a little at the start. Does the flow settle, or cycle for as long as it runs?',
+      events: [
+        { t: 0, kind: 'param', key: 'valveStiction', value: 2 }, { t: 0, kind: 'param', key: 'txNoise', value: 0.4 },
+        { t: 5, kind: 'dist', key: 'P0', value: 4.6 },
+      ],
+    },
+    {
       id: 'mismatch', name: 'Worn valve (model mismatch)', duration: 125, initialSp: 30,
       purpose: 'The actuator has become 3× slower and the trim has lost a quarter of its capacity since the loop was tuned.',
       events: [

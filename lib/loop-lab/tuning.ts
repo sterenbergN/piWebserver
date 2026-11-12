@@ -146,7 +146,7 @@ function integratingFeedforward(m: PlantModel, p: Params, config: ControllerConf
 // K·e^{-θs}/(τs+1) (or its second-order version). Results are for the ideal
 // (non-interacting) PID form used throughout Loop Lab.
 
-export type TuningRuleId = 'simc' | 'lambda' | 'averaging' | 'zn' | 'cc' | 'amigo';
+export type TuningRuleId = 'simc' | 'lambda' | 'imc' | 'averaging' | 'zn' | 'cc' | 'amigo';
 export type ControlType = 'P' | 'PI' | 'PID';
 export type Tuning = { Kc: number; Ti: number; Td: number };
 
@@ -192,6 +192,16 @@ export const TUNING_RULES: TuningRule[] = [
     assumptions: 'The process-industry favourite: choose λ, the closed-loop time constant, and the setpoint response is first-order with no overshoot. Ti = τ cancels the process pole, which makes load rejection slow on lag-dominant processes. λ = 1–3 × τ is typical for robustness.',
     tune(m, _type, lambda) {
       return ok({ Kc: m.tau / (m.K * (Math.max(lambda, 1e-6) + m.theta)), Ti: m.tau, Td: 0 });
+    },
+  },
+  {
+    id: 'imc', name: 'IMC-PID (Rivera–Morari–Skogestad)', usesSpeed: true, types: ['PI', 'PID'],
+    formula: String.raw`K_c = \frac{2\tau + \theta}{2K\lambda},\quad T_i = \tau + \frac{\theta}{2}\qquad\text{PID: } K_c = \frac{2\tau + \theta}{K(2\lambda + \theta)},\ T_d = \frac{\tau\theta}{2\tau + \theta}`,
+    assumptions: 'Internal model control worked back into a PID (Rivera, Morari and Skogestad, 1986): the controller that makes the loop a first-order λ response, with the dead time replaced by its first-order Padé approximation. That approximation is what gives the derivative, and why Ti = τ + θ/2 rather than τ. Keep λ above about 0.8θ for the PID and 1.7θ for the PI, where the approximation stops holding. Like Lambda, it cancels the process lag, so load upsets on lag-dominant processes recover slowly. The IMC structure itself (the model running beside the plant) is the Smith predictor on the bench.',
+    tune(m, type, lambda) {
+      const lam = Math.max(lambda, 1e-6), { K, tau, theta } = m;
+      if (type === 'PID') return ok({ Kc: (2 * tau + theta) / (K * (2 * lam + theta)), Ti: tau + theta / 2, Td: (tau * theta) / (2 * tau + theta) });
+      return ok({ Kc: (2 * tau + theta) / (2 * K * lam), Ti: tau + theta / 2, Td: 0 });
     },
   },
   {

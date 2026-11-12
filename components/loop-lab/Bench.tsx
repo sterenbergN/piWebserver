@@ -13,6 +13,7 @@ import { ControllerEditor, ControllerPicker, ProcessPicker } from './Setup';
 import { fmt } from './Chart';
 import ComparePanel from './Compare';
 import DriftPanel from './Drift';
+import OscillationPanel from './Oscillation';
 import { plantSummary } from '@/lib/loop-lab/plant';
 import { defaultParams } from '@/lib/loop-lab/model';
 import { useRunsMany } from './useRuns';
@@ -67,7 +68,7 @@ export default function Bench() {
   const plant = useMemo(() => plantSummary(proc, exp.params), [proc, exp.params]);
   const plantChanges = useMemo(() => {
     const d = defaultParams(proc);
-    return proc.params.filter((s) => Math.abs((exp.params[s.key] ?? d[s.key]) - d[s.key]) > 1e-9 * Math.max(1, Math.abs(d[s.key]))).length;
+    return proc.params.filter((s) => (!s.hidden || s.key === 'curveN') && Math.abs((exp.params[s.key] ?? d[s.key]) - d[s.key]) > 1e-9 * Math.max(1, Math.abs(d[s.key]))).length;
   }, [proc, exp.params]);
   // Import is only there for the identified plant; anywhere else, show the results.
   const shown: TabId = tab === 'identify' && !ownData ? 'tests' : tab;
@@ -337,6 +338,7 @@ export default function Bench() {
                     <summary>Every setpoint step and upset in this test</summary>
                     <TestDetail proc={proc} test={current.score.tests[viewIdx]} />
                   </details>
+                  <OscillationPanel proc={proc} exp={exp} run={current.runs[viewIdx]} />
                   <DriftPanel proc={proc} exp={exp} nominal={current.runs[viewIdx]} />
                 </section>
               )}

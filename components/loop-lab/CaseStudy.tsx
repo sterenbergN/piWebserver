@@ -11,6 +11,7 @@ import type { Experiment } from '@/lib/loop-lab/setup';
 import { PALETTE, ScorecardTable, TestTabs, TrendPanel } from './Results';
 import { useRunsMany } from './useRuns';
 import { OperatingPointSteps, RangeTable } from './Views';
+import { OscillationReport, diagnoseRun } from './Oscillation';
 
 const toExperiment = (proc: ProcessDef, preset: CasePreset): Experiment => ({
   process: proc.id,
@@ -19,7 +20,7 @@ const toExperiment = (proc: ProcessDef, preset: CasePreset): Experiment => ({
 });
 
 /** Presets run through some tests: trends overlaid, scorecards side by side. */
-function CaseRuns({ proc, presets, scenarios, colorOf, compact = true }: { proc: ProcessDef; presets: CasePreset[]; scenarios?: string[]; colorOf: (label: string) => string; compact?: boolean }) {
+function CaseRuns({ proc, presets, scenarios, colorOf, compact = true, diagnose = false }: { proc: ProcessDef; presets: CasePreset[]; scenarios?: string[]; colorOf: (label: string) => string; compact?: boolean; diagnose?: boolean }) {
   const exps = useMemo(() => presets.map((p) => toExperiment(proc, p)), [proc, presets]);
   const ids = scenarios ?? proc.scenarios.map((s) => s.id);
   const { results, busy } = useRunsMany(exps, ids, true, 0);
@@ -33,6 +34,12 @@ function CaseRuns({ proc, presets, scenarios, colorOf, compact = true }: { proc:
       <div style={{ marginTop: '0.75rem' }}>
         <TrendPanel proc={proc} entries={results.map((r, i) => ({ label: presets[i].label, color: colorOf(presets[i].label), run: r.runs[idx] }))} />
       </div>
+      {diagnose && (
+        <div className="ll-part">
+          <h3 style={{ fontSize: '0.95rem', margin: '0 0 0.3rem' }}>Is it cycling? Why?</h3>
+          {results.map((r, i) => <OscillationReport key={presets[i].label} label={results.length > 1 ? presets[i].label : undefined} d={diagnoseRun(proc, exps[i], r.runs[idx])} />)}
+        </div>
+      )}
       <div className="ll-part">
         <ScorecardTable compact={compact} proc={proc} entries={results.map((r, i) => ({ label: presets[i].label, color: colorOf(presets[i].label), score: r.score }))} />
       </div>
@@ -152,7 +159,7 @@ export default function CaseStudy({ id }: { id: string }) {
                         ))}
                       </div>
                     )}
-                    {step.scenarios && <CaseRuns proc={proc} presets={step.presets} scenarios={step.scenarios} colorOf={colorOf} />}
+                    {step.scenarios && <CaseRuns proc={proc} presets={step.presets} scenarios={step.scenarios} colorOf={colorOf} diagnose={step.show?.includes('oscillation')} />}
                   </>
                 )}
                 {last && allPresets.length > 1 && (

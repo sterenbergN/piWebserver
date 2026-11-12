@@ -7,10 +7,13 @@ import { scorecard } from '@/lib/loop-lab/score';
 import type { Run } from '@/lib/loop-lab/sim';
 import type { Experiment } from '@/lib/loop-lab/setup';
 import Chart, { fmt, type Series } from './Chart';
+import type { DriftRequest } from './drift.worker';
 import { plainSymbol } from './PlantEditor';
 import { PALETTE, dur } from './Results';
 
 const SAMPLES = 8;
+/** The longer check: the same first eight draws and more. */
+const MORE = 24;
 
 const pct = (v: number) => (Number.isFinite(v) ? `${fmt(v, 3)} %` : '—');
 const time = (v: number) => (Number.isFinite(v) ? dur(v) : 'never');
@@ -22,27 +25,66 @@ const time = (v: number) => (Number.isFinite(v) ? dur(v) : 'never');
 export default function DriftPanel({ proc, exp, nominal }: { proc: ProcessDef; exp: Experiment; nominal: Run }) {
   const scenario = nominal.scenario;
   const key = JSON.stringify([exp, scenario.id]);
-  const [state, setState] = useState<{ key: string; runs: DriftedRun[]; running: boolean }>({ key: '', runs: [], running: false });
+  const [state, setState] = useState<{ key: string; runs: DriftedRun[]; running: boolean; samples: number }>({ key: '', runs: [], running: false, samples: SAMPLES });
   const token = useRef(0);
+  const worker = useRef<Worker | null>(null);
+  const stop = () => {
+    token.current++;
+    worker.current?.terminate();
+    worker.current = null;
+  };
   // A different setup or test: whatever was running is for something else now.
-  useEffect(() => () => { token.current++; }, [key]);
+  useEffect(() => () => {
+    token.current++;
+    worker.current?.terminate();
+    worker.current = null;
+  }, [key]);
 
-  const plants = useMemo(() => driftedPlants(proc, SAMPLES), [proc]);
   const nominalCard = useMemo(() => scorecard(proc, exp.params, exp.controller, [nominal], false), [proc, exp, nominal]);
-  const current = state.key === key ? state : { key, runs: [], running: false };
-  const done = current.runs.length === SAMPLES;
+  const current = state.key === key ? state : { key, runs: [], running: false, samples: SAMPLES };
+  const samplesNow = current.samples;
+  const done = current.runs.length === samplesNow;
+  const total = current.runs.length;
 
-  const start = () => {
-    const mine = ++token.current;
-    setState({ key, runs: [], running: true });
+  const start = (samples: number) => {
+    stop();
+    const mine = token.current;
+    setState({ key, runs: [], running: true, samples });
     const runs: DriftedRun[] = [];
-    // One plant per tick, so the page stays usable while the rest run.
+    const add = (r: DriftedRun) => {
+      runs.push(r);
+      setState({ key, runs: [...runs], running: runs.length < samples, samples });
+    };
+    // Off the page's thread where the browser can, so the page stays responsive while they run.
+    try {
+      const w = new Worker(new URL('./drift.worker.ts', import.meta.url), { type: 'module' });
+      worker.current = w;
+      w.onmessage = (e: MessageEvent<{ i?: number; run?: DriftedRun; done?: boolean; error?: string }>) => {
+        if (token.current !== mine) return;
+        if (e.data.run) add(e.data.run);
+        if (e.data.done || e.data.error) {
+          w.terminate();
+          if (worker.current === w) worker.current = null;
+          if (e.data.error) setState({ key, runs: [...runs], running: false, samples });
+        }
+      };
+      w.onerror = () => {
+        // The worker wouldn't start: run them here instead.
+        w.terminate();
+        if (token.current === mine && runs.length === 0) here(samples, mine, add);
+      };
+      w.postMessage({ process: proc.id, params: exp.params, controller: exp.controller, scenario, samples } satisfies DriftRequest);
+    } catch {
+      here(samples, mine, add);
+    }
+  };
+  // Without a worker: one plant per tick, so the page still answers between them.
+  const here = (samples: number, mine: number, add: (r: DriftedRun) => void) => {
+    const plants = driftedPlants(proc, samples);
     const next = (i: number) => {
       if (token.current !== mine) return;
-      runs.push(runDrifted(proc, exp.params, exp.controller, scenario, plants[i]));
-      const finished = i + 1 >= plants.length;
-      setState({ key, runs: [...runs], running: !finished });
-      if (!finished) window.setTimeout(() => next(i + 1), 0);
+      add(runDrifted(proc, exp.params, exp.controller, scenario, plants[i]));
+      if (i + 1 < plants.length) window.setTimeout(() => next(i + 1), 0);
     };
     window.setTimeout(() => next(0), 0);
   };
@@ -71,26 +113,29 @@ export default function DriftPanel({ proc, exp, nominal }: { proc: ProcessDef; e
     <details className="ll-more" open={current.runs.length > 0 || undefined}>
       <summary>This test on drifted plants</summary>
       <p className="ll-note">
-        The same test on {SAMPLES} plants with {spreadText}, drawn at random within that spread (the same draws every time).
+        The same test on {SAMPLES} (or {MORE}) plants with {spreadText}, drawn at random within that spread (the same draws every time).
         The controller keeps its tuning. The scorecard&apos;s margins judge this spread on the linearized loop; this runs it.
       </p>
       <div className="ll-actions" style={{ margin: '0.5rem 0' }}>
-        <button className="ll-btn is-small" onClick={start} disabled={current.running}>
-          {current.running ? `Running ${current.runs.length + 1} of ${SAMPLES}…` : done ? 'Run again' : `Run on ${SAMPLES} drifted plants`}
+        <button className="ll-btn is-small" onClick={() => start(SAMPLES)} disabled={current.running}>
+          {current.running ? `Running ${current.runs.length + 1} of ${samplesNow}…` : done && samplesNow === SAMPLES ? 'Run again' : `Run on ${SAMPLES} drifted plants`}
         </button>
+        {!current.running && <button className="ll-btn is-small is-quiet" onClick={() => start(MORE)}>{done && samplesNow === MORE ? `Run on ${MORE} again` : `…or on ${MORE}`}</button>}
+        {current.running && <button className="ll-btn is-small is-quiet" onClick={() => { stop(); setState({ ...current, running: false }); }}>Stop</button>}
       </div>
       {current.runs.length > 0 && (
         <>
           <Chart label={`${proc.pv.label} on drifted plants during ${scenario.name}`} height={210} series={series}
             x={{ label: `Time (${long ? 'min' : 's'})` }} y={{ label: `${proc.pv.label} (${proc.pv.unit})` }} />
-          {done && (
-            <p className={`ll-verdict-line is-${worst.failed > nom.failed * SAMPLES ? 'bad' : worst.failed ? 'warn' : 'good'}`} role="status" style={{ fontSize: '0.95rem', margin: '0.6rem 0' }}>
+          {(done || (!current.running && current.runs.length > 0)) && (
+            <p className={`ll-verdict-line is-${worst.failed > nom.failed * total ? 'bad' : worst.failed ? 'warn' : 'good'}`} role="status" style={{ fontSize: '0.95rem', margin: '0.6rem 0' }}>
               <span className="ll-dot" />
               {nom.failed
-                ? `As set up it doesn't settle or recover in this test either; ${worst.failed === SAMPLES ? 'nor do any of' : `${SAMPLES - worst.failed} of`} the ${SAMPLES} drifted plants${worst.failed === SAMPLES ? '' : ' do'}.`
+                ? `As set up it doesn't settle or recover in this test either; ${worst.failed === total ? 'nor do any of' : `${total - worst.failed} of`} the ${total} drifted plants${worst.failed === total ? '' : ' do'}.`
                 : worst.failed
-                  ? `${worst.failed} of ${SAMPLES} drifted plants never settled or recovered in this test.`
-                  : `All ${SAMPLES} drifted plants settled and recovered.`}
+                  ? `${worst.failed} of ${total} drifted plants never settled or recovered in this test.`
+                  : `All ${total} drifted plants settled and recovered.`}
+              {!done && ` (Stopped after ${total} of ${samplesNow}.)`}
               {steps && ` Worst overshoot ${pct(worst.overshoot)} (as set up ${pct(nom.overshoot)}).`}
               {upsets && ` Worst upset peak ${pct(worst.peak)} (as set up ${pct(nom.peak)}).`}
             </p>

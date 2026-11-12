@@ -345,7 +345,7 @@ function MechanicalLayout({ proc, p, d, x, plots, text, editor }: {
           <table className="ll-table">
             <thead><tr><th>Parameter</th><th>Value</th><th style={{ textAlign: 'left' }}>Meaning</th></tr></thead>
             <tbody>
-              {proc.params.map((sp) => (
+              {proc.params.filter((sp) => !sp.hidden).map((sp) => (
                 <tr key={sp.key}>
                   <td>{sp.label}{sp.symbol && <> (<Tex latex={sp.symbol} />)</>}</td>
                   <td>{sp.options ? sp.options.find((o) => o.value === p[sp.key])?.label : `${fmt(p[sp.key], 4)} ${sp.unit}`}</td>

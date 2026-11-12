@@ -10,7 +10,8 @@ import { approximate, analyzeLoop, bode, closedLoop, isStable, linearizePlant, m
 import { DEFAULT_PID, cleanController, createController, defaultController, isAvailable, scheduledGains, type ControllerConfig } from './controllers';
 import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
-import { identifiedSetup } from './identified';
+import { identifiedCurve, identifiedSetup } from './identified';
+import { diagnoseOscillation, steadyStretch } from './oscillation';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
 import { driftedPlants, runDrifted, worstOf } from './drift';
@@ -1325,6 +1326,50 @@ test('identified fits: each becomes the plant in % of span with its own SIMC PI,
   assert.equal(identifiedSetup(fit(-2, 30, 5, 50), 200, 0).invert, true);
 });
 
+test('identified fits at several points make one plant whose gain and time constant follow them', () => {
+  const fit = (u0: number, y0: number, K: number, tau: number, theta = 5) => ({
+    r: { type: 'fopdt' as const, K, kPrime: 0, tau1: tau, tau2: 0, theta, fit: 95, t: [], u: [], y: [], yhat: [], u0, y0, noise: 0.1, dt: 0.5 }, span: 100, lo: 0,
+  });
+  const fits = [fit(70, 60, 1.5, 20), fit(30, 20, 0.5, 40), fit(50, 35, 1, 30)];
+  const c = identifiedCurve(fits);
+  assert.ok('params' in c, JSON.stringify(c));
+  if (!('params' in c)) return;
+  // The middle fit by PV is the reference: K and τ1 are its own.
+  assert.equal(c.mid, 2);
+  assert.deepEqual([c.params.curveN, c.params.K, c.params.tau1], [3, 1, 30]);
+  assert.deepEqual(c.notes, []);
+  const proc = getProcess('custom');
+  for (const f of fits) {
+    // Through each operating point, with that fit's gain and (about) its time constant there.
+    assert.ok(Math.abs(proc.steady(f.r.u0 / 100, { load: 0 }, c.params)![0] - f.r.y0) < 1e-9);
+    const m = linearizePlant(proc, c.params, f.r.y0);
+    assert.ok(Math.abs(m.K - f.r.K) < 0.01 * f.r.K, `K at ${f.r.y0}: ${m.K}`);
+    const a = approximate(m);
+    assert.ok(Math.abs(a.tau - f.r.tau1) < 0.1 * f.r.tau1, `τ at ${f.r.y0}: ${a.tau}`);
+  }
+  // Between the points the gain moves between theirs, and the curve keeps rising.
+  const g = linearizePlant(proc, c.params, 47).K;
+  assert.ok(g > 0.5 && g < 1.5, `${g}`);
+  for (let u = 0; u < 100; u += 2) assert.ok(proc.steady((u + 2) / 100, { load: 0 }, c.params)![0] > proc.steady(u / 100, { load: 0 }, c.params)![0]);
+  // K scales the whole curve about the middle fit (a drift test, "model wrong by 40 %"): the high
+  // fit's point moves from 60 to 35 + 1.4 × 25 = 70, with 1.4 times its gain.
+  assert.ok(Math.abs(proc.steady(0.7, { load: 0 }, { ...c.params, K: 1.4 })![0] - 70) < 1e-9);
+  assert.ok(Math.abs(linearizePlant(proc, { ...c.params, K: 1.4 }, 70).K - 1.4 * 1.5) < 0.03);
+  // And in a run, a change in place is picked up.
+  const run = runScenario(proc, { params: c.params, controller: defaultController('pid', proc), seed: 1 }, {
+    id: 't', name: 't', purpose: '', duration: 3, initialSp: 35, events: [{ t: 0, kind: 'param', key: 'K', factor: 2 }],
+  });
+  assert.ok(run.trace.pvTrue.length > 0);
+
+  // Fits that can't make one curve: refused, with the reason.
+  assert.match((identifiedCurve([fits[0], fit(30, 20, -0.5, 40)]) as { reason: string }).reason, /changes sign/);
+  assert.match((identifiedCurve([fit(30, 60, 1, 20), fit(70, 20, 1, 20)]) as { reason: string }).reason, /don’t line up/);
+  assert.match((identifiedCurve([fit(50, 20, 1, 20), fit(50.2, 21, 1, 20)]) as { reason: string }).reason, /same output/);
+  // Gains far steeper than the step between the points: eased, and said so.
+  const steep = identifiedCurve([fit(30, 20, 5, 20), fit(70, 30, 5, 20)]);
+  assert.ok('params' in steep && steep.notes.some((n) => /eases/.test(n)));
+});
+
 test('block diagram → bench: a cascade behaves the same on the bench as in the diagram', () => {
   const m = BLOCK_TEMPLATES.find((t) => t.id === 'cascade-loop')!;
   const exp = decodeExperiment(decodeURIComponent(benchExport(m).url!.split('setup=')[1].split('#')[0]))!;
@@ -1348,4 +1393,75 @@ test('block diagram: a shared link carries the whole diagram', () => {
     assert.deepEqual(decodeDiagram(code), t);
   }
   assert.equal(decodeDiagram('not a diagram'), null);
+});
+
+test('oscillation check: made-up waves are read the way they are drawn', () => {
+  const r = rng(5);
+  const noise = () => r.gauss() * 0.06;
+  const T = 20, dt = 0.1, n = 3000;
+  const t = Array.from({ length: n }, (_, i) => i * dt);
+  const sine = (k: number, lag = 0) => Math.sin((2 * Math.PI * (k * dt - lag)) / T);
+  // Stick-slip: a square PV and a triangular output, a quarter-cycle apart.
+  const square = t.map((_, i) => Math.sign(sine(i)) + noise());
+  const tri = t.map((_, i) => (2 / Math.PI) * Math.asin(sine(i, T / 4)) * 2 + noise());
+  const s = diagnoseOscillation(square, tri, dt);
+  assert.equal(s.verdict, 'stiction', s.evidence.join(' | '));
+  assert.ok(Math.abs(s.period - T) < 1, `${s.period}`);
+  // A linear cycle: two sines in opposition.
+  const l = diagnoseOscillation(t.map((_, i) => sine(i) + noise()), t.map((_, i) => -3 * sine(i) + noise()), dt);
+  assert.equal(l.verdict, 'linear', l.evidence.join(' | '));
+  assert.ok(l.phase < 0.2);
+  // Noise only: nothing to chase.
+  assert.equal(diagnoseOscillation(t.map(noise), t.map(noise), dt).verdict, 'none');
+  // A steadily creeping output against a still PV: stuck.
+  assert.equal(diagnoseOscillation(t.map(noise), t.map((_, i) => 50 + i * 0.002 + noise()), dt).verdict, 'stuck');
+  // Too short to say.
+  assert.equal(diagnoseOscillation([1, 2, 3], [1, 2, 3], dt).verdict, 'unclear');
+  // The longest steady stretch, less its first fifth.
+  assert.deepEqual(steadyStretch([1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3]), { from: 3, to: 11 });
+});
+
+test('oscillation check: the flow loop with a sticky valve, and what retuning does', () => {
+  const proc = getProcess('flow');
+  const sc = proc.scenarios.find((s) => s.id === 'sticky-hold')!;
+  const read = (Kc: number, Ti: number, id = 'sticky-hold') => {
+    const run = runScenario(proc, { params: defaultParams(proc), controller: { kind: 'pid', pid: { ...DEFAULT_PID, Kc, Ti } } }, proc.scenarios.find((s) => s.id === id)!);
+    const s = steadyStretch(run.trace.sp);
+    return diagnoseOscillation(run.trace.pv.subarray(s.from, s.to), run.trace.cv.subarray(s.from, s.to), run.Ts);
+  };
+  assert.ok(sc.duration >= 300);
+  // The Lambda PI cycles: flat-topped flow, ramping output, a quarter-cycle apart.
+  const lambda = read(0.45, 1.8);
+  assert.equal(lambda.verdict, 'stiction', lambda.evidence.join(' | '));
+  assert.ok(lambda.period > 15 && lambda.period < 30, `${lambda.period}`);
+  // A longer integral time: slower, about as big (what the case study says).
+  const slow = read(0.45, 6);
+  assert.equal(slow.verdict, 'stiction');
+  assert.ok(slow.period > 2.5 * lambda.period && slow.pvSwing > 0.6 * lambda.pvSwing, `${slow.period} ${slow.pvSwing} vs ${lambda.pvSwing}`);
+  // Half the gain: stuck near the setpoint, the output creeping.
+  assert.equal(read(0.225, 1.8).verdict, 'stuck');
+  // Without stiction the Lambda PI doesn't cycle; an integral time far too short does, sine-like.
+  assert.equal(read(0.45, 1.8, 'sp-steps').verdict, 'none');
+  const fast = read(1, 0.3, 'header-upset');
+  assert.notEqual(fast.verdict, 'stiction');
+  assert.ok(fast.pvShape < 0.5 && fast.opShape > 0.36, `${fast.pvShape} ${fast.opShape}`);
+});
+
+test('IMC-PID tuning: the Rivera–Morari–Skogestad settings, and a loop that holds', () => {
+  const rule = TUNING_RULES.find((r) => r.id === 'imc')!;
+  const m = { K: 2, tau: 10, theta: 2, tau1: 10, tau2: 0, theta2: 2, kPrime: 0.2, integrating: false };
+  const pid = rule.tune(m, 'PID', 4)!;
+  close(pid.Kc, 22 / (2 * 10), 1e-12);
+  close(pid.Ti, 11, 1e-12);
+  close(pid.Td, 20 / 22, 1e-12);
+  const pi = rule.tune(m, 'PI', 4)!;
+  close(pi.Kc, 22 / 16, 1e-12);
+  assert.equal(pi.Td, 0);
+  // On the flow loop, at λ = 2θ: stable, with a sensible margin.
+  const proc = getProcess('flow');
+  const p = defaultParams(proc);
+  const f = approximate(linearizePlant(proc, p, proc.nominalPv), p.Ts / 2);
+  const t = rule.tune(f, 'PID', 2 * f.theta)!;
+  const a = analyzeLoop(proc, p, { kind: 'pid', pid: { ...DEFAULT_PID, ...t } }, proc.nominalPv);
+  assert.ok(a && a.margins.ms < 2, JSON.stringify(a?.margins));
 });

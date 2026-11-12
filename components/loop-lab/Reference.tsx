@@ -38,7 +38,7 @@ export function ProcessReference({ id }: { id: ProcessId }) {
   const defaults = useMemo(() => defaultParams(proc), [proc]);
   const now = useMemo(() => plantSummary(proc, params), [proc, params]);
   const was = useMemo(() => defaultSummary(proc), [proc]);
-  const nChanged = proc.params.filter((s) => Math.abs(params[s.key] - defaults[s.key]) > 1e-9 * Math.max(1, Math.abs(defaults[s.key]))).length;
+  const nChanged = proc.params.filter((s) => (!s.hidden || s.key === 'curveN') && Math.abs(params[s.key] - defaults[s.key]) > 1e-9 * Math.max(1, Math.abs(defaults[s.key]))).length;
 
   return (
     <div className="ll">

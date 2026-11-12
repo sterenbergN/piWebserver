@@ -78,6 +78,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Loop Lab processes', url: '/loop-lab/processes', subtitle: 'Flow loops, tanks, heat exchangers, reactors and more', body: 'plant process model' },
   { kind: 'page', title: 'The controller ladder', url: '/loop-lab/controllers', subtitle: 'From on-off and PID to MPC and ADRC', body: 'controller theory cascade feedforward smith state feedback mpc adrc adaptive' },
   { kind: 'page', title: 'Case study: flow loop', url: '/loop-lab/cases/flow-pi', subtitle: 'Loop Lab: when PI is the answer', body: 'pid flow loop tuning lambda valve' },
+  { kind: 'page', title: 'Case study: a flow loop that hunts', url: '/loop-lab/cases/flow-stiction', subtitle: 'Loop Lab: tuning or a sticky valve?', body: 'stiction sticky valve oscillation hunting cycle diagnosis flow loop' },
   { kind: 'page', title: 'Case study: conical tank', url: '/loop-lab/cases/tank-schedule', subtitle: 'Loop Lab: gain scheduling and characterization', body: 'level tank gain scheduling nonlinear pid' },
   { kind: 'page', title: 'Case study: stirred tank', url: '/loop-lab/cases/stirred-pid', subtitle: 'Loop Lab: when derivative earns its keep', body: 'temperature pid derivative filter reactor jacket' },
   { kind: 'page', title: 'Case study: heat exchanger', url: '/loop-lab/cases/hx-cascade-ff', subtitle: 'Loop Lab: cascade and feedforward', body: 'cascade feedforward steam heat exchanger temperature' },

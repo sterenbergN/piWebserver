@@ -6,10 +6,12 @@ import { getProcess } from '@/lib/loop-lab/processes';
 import { sampleTrend } from '@/lib/loop-lab/sample';
 import { defaultController } from '@/lib/loop-lab/controllers';
 import type { Experiment } from '@/lib/loop-lab/setup';
-import { identifiedSetup } from '@/lib/loop-lab/identified';
+import { identifiedCurve, identifiedSetup } from '@/lib/loop-lab/identified';
 import Chart, { fmt } from './Chart';
 import { PALETTE } from './Results';
 import { NumField } from './Setup';
+import { OscillationReport } from './Oscillation';
+import { diagnoseOscillation } from '@/lib/loop-lab/oscillation';
 
 const TYPES: { id: ModelType; label: string }[] = [
   { id: 'fopdt', label: 'First order + dead time' },
@@ -78,6 +80,28 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
     return fitModel(ts.map((t) => t - ts[0]), data.sel.map((p) => p.u), data.sel.map((p) => p.y), type);
   }, [data, type]);
 
+  // Is the loop cycling, and why: the window resampled onto even steps (at the trend's usual
+  // sample interval) and read like the bench's check.
+  const cycling = useMemo(() => {
+    if (!data || data.sel.length < 40) return null;
+    const ts = data.sel.map((p) => p.t);
+    const steps = ts.slice(1).map((t, i) => t - ts[i]).filter((d) => d > 0).sort((a, b) => a - b);
+    const dt = steps[Math.floor(steps.length / 2)];
+    if (!(dt > 0)) return null;
+    const n = Math.min(40000, Math.floor((ts[ts.length - 1] - ts[0]) / dt) + 1);
+    const u: number[] = [], y: number[] = [];
+    let j = 0;
+    for (let i = 0; i < n; i++) {
+      const t = ts[0] + i * dt;
+      while (j < ts.length - 2 && ts[j + 1] < t) j++;
+      const a = data.sel[j], b = data.sel[j + 1];
+      const s = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
+      u.push(a.u + s * (b.u - a.u));
+      y.push(a.y + s * (b.y - a.y));
+    }
+    return diagnoseOscillation(y, u, dt, { integrating: type === 'integrating' });
+  }, [data, type]);
+
   const span = Number.isFinite(range.hi - range.lo) && range.hi > range.lo ? range.hi - range.lo : NaN;
   const pct = (v: number) => (v / span) * 100;
   const Kpct = fit ? pct(fit.type === 'integrating' ? fit.kPrime : fit.K) : NaN;
@@ -90,8 +114,10 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
     return exp;
   };
 
-  // A gain schedule from the kept fits: each point's SIMC PI at its own operating point, on the
-  // plant as fitted nearest the middle of them.
+  // A gain schedule from the kept fits: each point's SIMC PI at its own operating point, on a
+  // plant that follows all the fits (or, when they can't make one curve, the middle fit alone).
+  const curve = kept.length >= 2 ? identifiedCurve(kept) : null;
+  const curved = curve && 'params' in curve ? curve : null;
   const tuned = kept.map((k) => ({ k, s: identifiedSetup(k.r, k.span, k.lo) }));
   const sameSign = tuned.length > 0 && tuned.every((x) => x.s.invert === tuned[0].s.invert);
   const canSchedule = tuned.length >= 2 && sameSign && tuned.every((x) => x.s.pi) && new Set(tuned.map((x) => Math.round(x.s.at * 10))).size === tuned.length;
@@ -103,13 +129,21 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
     if (base.kind !== 'pid') return null;
     return {
       process: 'custom',
-      params: middle.s.params,
+      params: curved?.params ?? middle.s.params,
       controller: {
         kind: 'schedule', on: 'pv',
         pid: { ...base.pid, ...middle.s.pi!, invert: middle.s.invert },
         points: sorted.slice(0, 8).map((x) => ({ at: Number(x.s.at.toPrecision(4)), Kc: x.s.pi!.Kc, Ti: x.s.pi!.Ti, Td: 0 })),
       },
     };
+  };
+  // The same plant with one PI (the middle fit's), to compare the schedule against.
+  const onePi = (): Experiment | null => {
+    if (!curved) return null;
+    const mid = tuned[curved.mid];
+    const base = defaultController('pid', getProcess('custom'));
+    if (base.kind !== 'pid' || !mid.s.pi) return null;
+    return { process: 'custom', params: curved.params, controller: { kind: 'pid', pid: { ...base.pid, ...mid.s.pi, invert: mid.s.invert } } };
   };
   const middleLabel = tuned.length ? [...tuned].sort((x, y) => x.s.at - y.s.at)[Math.floor((tuned.length - 1) / 2)].k.label : '';
 
@@ -209,6 +243,18 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
         </div>
       )}
 
+      {cycling && (
+        <details className="ll-card ll-more" style={{ padding: '0.75rem 1rem' }}>
+          <summary>Is this loop cycling? Why?</summary>
+          <p className="ll-note">
+            For a trend taken with the loop in automatic at a steady setpoint (narrow the window to such a stretch): the shapes of the PV
+            and the output, and how they line up, tell a sticky valve from a tuning or outside cycle. Choose &ldquo;Integrator&rdquo; above for a level.
+            A bump test in manual isn&apos;t a cycle, so this says little about one.
+          </p>
+          <OscillationReport d={cycling} />
+        </details>
+      )}
+
       {kept.length > 0 && (
         <div className="ll-card">
           <div className="ll-card-head"><h3>Fits at different operating points</h3><button className="ll-link" onClick={() => setKept([])}>Clear</button></div>
@@ -239,14 +285,21 @@ export default function IdentifyPanel({ onUse }: { onUse: (e: Experiment) => voi
                 <button className="ll-btn is-primary" disabled={!canSchedule} onClick={() => { const e = scheduled(); if (e) onUse(e); }}>
                   Use as a gain-scheduled PI in the bench
                 </button>
+                <button className="ll-btn" disabled={!curved} onClick={() => { const e = onePi(); if (e) onUse(e); }}
+                  title="The same plant with the middle fit's PI throughout, to compare against the schedule">
+                  …or with one PI, to compare
+                </button>
               </div>
               <p className="ll-note">
                 {!sameSign
                   ? 'The gain changes sign between these fits: no one schedule fits them. Check the columns and the windows.'
                   : !canSchedule
                     ? 'Two of these fits are at the same operating point: keep fits from different points.'
-                    : `Breakpoints at each fit's PV (in % of span), each with the SIMC PI for its own model; the gains in between are interpolated. The bench's identified plant is one linear model, the fit at ${middleLabel}, so it shows the schedule at work around that point only: the other breakpoints are for the plant where you measured them. The Automation tab exports the schedule for the PLC.`}
+                    : curved
+                      ? `Breakpoints at each fit's PV (in % of span), each with the SIMC PI for its own model; the gains in between are interpolated. The bench's plant follows ${Math.min(tuned.length, 5) === 2 ? 'both' : `all ${Math.min(tuned.length, 5)}`} fits: its gain and time constant change with the PV from one fit's to the next, so the tests show the schedule (or one PI) across the range. Dead time and the second lag are the middle fit's (${middleLabel}). The Automation tab exports the schedule for the PLC.`
+                      : `Breakpoints at each fit's PV (in % of span), each with the SIMC PI for its own model; the gains in between are interpolated. ${curve && 'reason' in curve ? `${curve.reason} ` : ''}So the bench's plant is the fit at ${middleLabel} alone, and shows the schedule at work around that point only. The Automation tab exports the schedule for the PLC.`}
               </p>
+              {curved && curved.notes.length > 0 && <ul className="ll-small" style={{ margin: '0.3rem 0 0', paddingLeft: '1.1rem' }}>{curved.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
             </>
           )}
         </div>

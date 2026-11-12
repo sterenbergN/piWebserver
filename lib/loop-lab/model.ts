@@ -18,6 +18,8 @@ export type ParamSpec = {
   note?: string;
   /** A choice rather than a number (stored as the option's value). */
   options?: { value: number; label: string }[];
+  /** Set by a tool rather than typed in (the identified plant's curve): not shown with the other settings. */
+  hidden?: boolean;
 };
 
 export type Params = Record<string, number>;
