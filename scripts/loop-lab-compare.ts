@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { compareProcess, type Comparison } from '../lib/loop-lab/compare';
 import { defaultParams } from '../lib/loop-lab/model';
@@ -18,7 +18,13 @@ async function main() {
   const only = process.argv.slice(2);
   let data: Record<string, Comparison> = {};
   if (only.length) {
-    try { data = (await import(FILE, { with: { type: 'json' } })).default; } catch { /* first run */ }
+    // Keep every other process as it is. If the file can't be read, stop rather than write back
+    // only the ones asked for (it once dropped all the others this way).
+    try {
+      data = JSON.parse(readFileSync(FILE, 'utf-8'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   }
   for (const proc of PROCESSES) {
     if (only.length && !only.includes(proc.id)) continue;
