@@ -43,7 +43,11 @@ export type SchedulePoint = { at: number; Kc: number; Ti: number; Td: number };
  * signal (PID + feedforward) or to the inner setpoint (cascade), in % per unit
  * of the disturbance.
  */
-export type FeedforwardTerm = { from: string; gain: number; lead: number; lag: number };
+export type FeedforwardTerm = {
+  from: string; gain: number; lead: number; lag: number;
+  /** Dead time before the term acts, s (missing or 0: none), for a disturbance that reaches the PV later than the valve does. */
+  delay?: number;
+};
 
 /**
  * The Smith predictor's copy of the process: K·e^{−θs}/(τs + 1), from the
@@ -429,11 +433,13 @@ class PidCore {
   }
 }
 
-/** Discrete lead-lag on a measured disturbance, zero at the value it starts from. */
+/** Discrete lead-lag on a measured disturbance, with its dead time, zero at the value it starts from. */
 class FeedforwardCore {
   private x0: number | null = null;
   private xPrev = 0;
   private y = 0;
+  /** The lead-lag's output over the last `delay` seconds. */
+  private past: number[] = [];
   constructor(private term: FeedforwardTerm, private Ts: number) {}
 
   step(d: Params) {
@@ -445,7 +451,11 @@ class FeedforwardCore {
     // Backward Euler of (lead·s + 1)/(lag·s + 1).
     this.y = (lag / (lag + Ts)) * this.y + ((lead + Ts) / (lag + Ts)) * x - (lead / (lag + Ts)) * this.xPrev;
     this.xPrev = x;
-    return this.term.gain * this.y;
+    const n = Math.round((this.term.delay ?? 0) / Ts);
+    if (n <= 0) return this.term.gain * this.y;
+    this.past.push(this.y);
+    // Nothing has come through yet: the feedforward is still at zero.
+    return this.term.gain * (this.past.length > n ? this.past.shift()! : 0);
   }
 
   /** Restart from the present disturbance values (bumpless). */
@@ -453,6 +463,7 @@ class FeedforwardCore {
     this.x0 = d[this.term.from] ?? null;
     this.xPrev = 0;
     this.y = 0;
+    this.past = [];
   }
 }
 
@@ -1326,7 +1337,8 @@ function cleanFeedforward(raw: unknown, proc: ProcessDef): FeedforwardTerm[] {
   return list.flatMap((t: unknown) => {
     const r = (t && typeof t === 'object' ? t : {}) as Record<string, unknown>;
     if (typeof r.from !== 'string' || !keys.has(r.from)) return [];
-    return [{ from: r.from, gain: num(r.gain, -1e4, 1e4, 0), lead: num(r.lead, 0, 1e5, 0), lag: num(r.lag, 0, 1e5, 0) }];
+    const delay = num(r.delay, 0, 1e4, 0);
+    return [{ from: r.from, gain: num(r.gain, -1e4, 1e4, 0), lead: num(r.lead, 0, 1e5, 0), lag: num(r.lag, 0, 1e5, 0), ...(delay > 0 ? { delay } : {}) }];
   });
 }
 
@@ -1427,7 +1439,7 @@ export function describeController(proc: ProcessDef, config: ControllerConfig) {
     `Kc ${fmt(p.Kc)}${p.Ti > 0 ? `, Ti ${fmt(p.Ti)} s` : ''}${p.Td > 0 ? `, Td ${fmt(p.Td)} s` : ''}`;
   const ffText = (ff: FeedforwardTerm[]) => ff.map((t) => {
     const d = proc.disturbances.find((x) => x.key === t.from);
-    return `FF from ${d?.label.toLowerCase() ?? t.from} ×${fmt(t.gain)}${t.lead || t.lag ? ` (lead ${fmt(t.lead)} s / lag ${fmt(t.lag)} s)` : ''}`;
+    return `FF from ${d?.label.toLowerCase() ?? t.from} ×${fmt(t.gain)}${t.lead || t.lag ? ` (lead ${fmt(t.lead)} s / lag ${fmt(t.lag)} s)` : ''}${t.delay ? `, after ${fmt(t.delay)} s` : ''}`;
   }).join(', ');
   if (config.kind === 'onoff') return `On-off, hysteresis ${fmt(config.hyst)} %`;
   if (config.kind === 'pid') return `${config.pid.Td > 0 ? 'PID' : config.pid.Ti > 0 ? 'PI' : 'P'}: ${pidText(config.pid)}`;

@@ -23,6 +23,13 @@ if (command === 'start') {
   process.env.NEXT_DIST_DIR = '.next-build';
 }
 
+// The dev server writes its route types afresh at each start, and on this drive a file written
+// over a longer one kept the old end: typecheck then failed in .next-dev/dev/types. Starting
+// without them means each is a new file.
+if (command === 'dev') {
+  await rm(path.join(process.cwd(), '.next-dev', 'dev', 'types'), { recursive: true, force: true }).catch(() => {});
+}
+
 if (command === 'build' && process.env.NEXT_DIST_DIR) {
   const targetDir = path.join(process.cwd(), process.env.NEXT_DIST_DIR);
   await rm(targetDir, { recursive: true, force: true }).catch(() => {});

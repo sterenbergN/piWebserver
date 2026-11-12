@@ -513,7 +513,7 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   const np = m.A.length;
   const nq = delay > 0 ? 2 : 0;
   const ffTerms: FeedforwardTerm[] = (ctrl.ff ?? []).filter((t) => t.from === dKey);
-  const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) as number);
+  const ffStates = ffTerms.map((t) => (t.lag > 0 ? 1 : 0) + ((t.delay ?? 0) > 0 ? 2 : 0));
   const pids = ctrl.kind === 'cascade' ? [ctrl.outer, ctrl.inner] : ctrl.kind === 'ss' ? [] : [ctrl.pid];
   const pidStates = pids.map((p) => (p.Ti > 0 ? 1 : 0) + (p.Td > 0 ? 1 : 0));
   const smith = ctrl.kind === 'smith' ? ctrl.model : null;
@@ -531,15 +531,24 @@ export function closedLoop(m: PlantModel, ctrl: LinearController, delay: number,
   const dd: Sig = { ...sig(n), d: 1 };
   const r: Sig = { ...sig(n), r: 1 };
 
-  // Feedforward: gain·(lead·s + 1)/(lag·s + 1) on the disturbance.
+  // Feedforward: gain·(lead·s + 1)/(lag·s + 1)·e^{−delay·s} on the disturbance (the delay as a Padé).
   let v = sig(n);
   ffTerms.forEach((t) => {
+    let w = dd;
     if (t.lag > 0) {
       const i = next++;
       deriv[i] = scale(add(dd, unit(n, i), -1), 1 / t.lag);
       const k = t.lead / t.lag;
-      v = add(v, add(scale(dd, k), unit(n, i), 1 - k), t.gain);
-    } else v = add(v, dd, t.gain);
+      w = add(scale(dd, k), unit(n, i), 1 - k);
+    }
+    if ((t.delay ?? 0) > 0) {
+      const q = pade2(t.delay!);
+      const i = next, j = next + 1;
+      next += 2;
+      for (let k = 0; k < 2; k++) deriv[i + k] = add(add(scale(unit(n, i), q.A[k][0]), unit(n, j), q.A[k][1]), w, q.B[k]);
+      w = add(scale(w, q.D), add(scale(unit(n, i), q.C[0]), unit(n, j), q.C[1]));
+    }
+    v = add(v, w, t.gain);
   });
 
   const pidBlock = (p: LinearPid, rS: Sig, yS: Sig) => {

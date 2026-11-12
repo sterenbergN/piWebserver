@@ -157,6 +157,10 @@ export class Loop {
   lastCv: number;
   private ctrl: ControllerInstance;
   private held: number;
+  /** Stiction: whether the stem is stuck, where, and which way it was last moving. */
+  private stuck = true;
+  private stickAt: number;
+  private slipDir = 0;
   private delay: number[] = [];
   private frozenUntil = -1;
   private lastMeas: number;
@@ -181,6 +185,7 @@ export class Loop {
     this.manualOut = s.valve;
     this.lastCv = s.valve;
     this.held = s.valve;
+    this.stickAt = s.valve;
     this.lastMeas = s.pv;
     this.noise = rng(setup.seed ?? 1);
   }
@@ -206,6 +211,9 @@ export class Loop {
     this.manualOut = prev.manualOut;
     this.lastCv = prev.lastCv;
     this.held = prev.held;
+    this.stuck = prev.stuck;
+    this.stickAt = prev.stickAt;
+    this.slipDir = prev.slipDir;
     this.lastMeas = prev.lastMeas;
     this.lastMeas2 = prev.lastMeas2;
     this.ctrl.track(prev.lastCv, this.sp, prev.lastMeas, this.aux());
@@ -269,6 +277,25 @@ export class Loop {
     const half = this.p.valveDeadband / 2;
     if (cv > this.held + half) this.held = cv - half;
     else if (cv < this.held - half) this.held = cv + half;
+    // Stiction: a moving stem stops where it would have to turn back (the signal has come back past it)
+    // or once it has caught up with a signal that has stopped, and friction holds it there. It breaks
+    // free only when the signal is more than the stiction band away, and then travels all the way to it.
+    const band = this.p.valveStiction ?? 0;
+    let target = this.held;
+    if (band > 0) {
+      if (!this.stuck) {
+        const ahead = this.held - this.x[0];
+        if (Math.sign(ahead) !== this.slipDir || Math.abs(ahead) < 1e-3) {
+          this.stuck = true;
+          this.stickAt = this.x[0];
+        }
+      }
+      if (this.stuck && Math.abs(this.held - this.stickAt) > band) {
+        this.stuck = false;
+        this.slipDir = Math.sign(this.held - this.stickAt);
+      }
+      target = this.stuck ? this.stickAt : this.held;
+    }
 
     const sample: Sample = {
       t: this.t, sp: this.sp, pv, pvTrue: truePv(this.proc, this.p, this.d, this.x), cv, valve: this.x[0],
@@ -281,7 +308,7 @@ export class Loop {
       sample.pv2True = this.proc.secondary!.of(px, valveCharacteristic(this.p.valveChar, this.x[0] / 100), this.d, this.p);
       sample.valve2 = mimo.stem(px);
     }
-    this.integrate(this.Ts, this.held);
+    this.integrate(this.Ts, target);
     this.t += this.Ts;
     return sample;
   }

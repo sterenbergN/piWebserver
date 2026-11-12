@@ -47,9 +47,9 @@ export default function LabNav() {
           <Link
             className="ll-nav-pill is-builder"
             href="/loop-lab/builder"
-            title="Launch Simulink-style Block Canvas"
+            title="Wire blocks into a loop and simulate it"
           >
-            🧩 Simulink Builder
+            🧩 Block Studio
           </Link>
         )}
         {!isBench && (

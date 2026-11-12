@@ -402,6 +402,7 @@ a.ll-row:hover strong { color: var(--accent-light); }
 /* Tables */
 .ll-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .ll-table th, .ll-table td { padding: 0.42rem 0.5rem; text-align: right; border-bottom: 1px solid var(--ll-line); vertical-align: top; }
+.ll-table tr.is-bad td { color: var(--danger); }
 .ll-table th:first-child, .ll-table td:first-child { text-align: left; padding-left: 0; }
 .ll-table th:last-child, .ll-table td:last-child { padding-right: 0; }
 .ll-table th { color: var(--muted); font-weight: 600; font-size: 0.77rem; }

@@ -229,6 +229,8 @@ export function instrumentParams(d: InstrumentDefaults): ParamSpec[] {
       note: 'How quickly the stem follows its signal: positioner, actuator volume and air supply.' },
     { key: 'valveRate', label: 'Stroking speed limit', unit: '%/s', default: d.valveRate, min: 0.5, max: d.fast ? 20000 : 200, step: 0.5, group: 'valve',
       note: 'The fastest the stem can travel, for big moves.' },
+    { key: 'valveStiction', label: 'Stiction (stick-slip)', unit: '%', default: 0, min: 0, max: 5, step: 0.1, group: 'valve',
+      note: 'Static friction in the packing: once the stem stops, the signal has to move this far before it breaks free, and then the stem jumps. With integral action the loop cycles in the sawtooth-and-square-wave pattern of a sticky valve.' },
     { key: 'valveDeadband', label: 'Deadband (backlash)', unit: '%', default: 0, min: 0, max: 5, step: 0.1, group: 'valve',
       note: 'Signal change needed before the stem moves the other way: packing friction, worn linkages. Causes limit cycles with integral action.' },
     { key: 'txTau', label: 'Transmitter damping', symbol: 'τ_m', unit: 's', default: d.txTau, min: 0.05 * f, max: 30, step: 0.05 * f, group: 'transmitter',

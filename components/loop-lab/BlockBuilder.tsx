@@ -770,7 +770,7 @@ export default function BlockBuilder() {
             </span>
           </h1>
           <p className="ll-muted" style={{ fontSize: '0.88rem', marginTop: '0.25rem', maxWidth: '820px' }}>
-            Interactive Simulink-style diagram workspace. Assemble sources, feedback controllers, nonlinearities, and multi-channel scopes with instantaneous numerical simulation and export to the benchmark suite.
+            Wire a loop from blocks and simulate it as you build. Assemble sources, feedback controllers, nonlinearities, and multi-channel scopes with instantaneous numerical simulation and export to the benchmark suite.
           </p>
         </div>
 

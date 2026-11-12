@@ -24,7 +24,7 @@ const SUB: Record<string, string> = {
   0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉',
 };
 /** A symbol like "K_st" as plain text "Kₛₜ" (subscript letters where Unicode has them). */
-const plainSymbol = (sym: string) => sym.replace(/_\{?([A-Za-z0-9]+)\}?/g, (_, sub: string) =>
+export const plainSymbol = (sym: string) => sym.replace(/_\{?([A-Za-z0-9]+)\}?/g, (_, sub: string) =>
   [...sub].every((c) => SUB[c]) ? [...sub].map((c) => SUB[c]).join('') : sub);
 
 const changed = (a: number, b: number) => Math.abs(a - b) > 1e-9 * Math.max(1, Math.abs(b));

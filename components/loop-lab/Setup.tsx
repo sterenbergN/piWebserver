@@ -310,7 +310,8 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
     const round = (v: number) => Number(v.toPrecision(3));
     // A lead and lag this close cancel each other: a plain gain does the same, more simply.
     const cancel = r.lead > 0 && r.lag > 0 && Math.abs(r.lead - r.lag) <= 0.15 * Math.max(r.lead, r.lag);
-    set(i, cancel ? { gain: round(r.gain), lead: 0, lag: 0 } : { gain: round(r.gain), lead: round(r.lead), lag: round(r.lag) });
+    const timing = cancel ? { lead: 0, lag: 0 } : { lead: round(r.lead), lag: round(r.lag) };
+    set(i, { gain: round(r.gain), ...timing, delay: round(r.delay) });
     setNotes({
       ...notes,
       [t.from]: `From the model: valve → PV K ${round(r.u.K)}, τ ${round(r.u.tau)} s, θ ${round(r.u.theta)} s; disturbance → PV K ${round(r.d.K)}, τ ${round(r.d.tau)} s, θ ${round(r.d.theta)} s.`
@@ -339,8 +340,12 @@ function FeedforwardEditor({ proc, params, config, terms, target, onChange, sugg
               <NumField label="Lead" unit="s" value={t.lead} min={0} onChange={(v) => set(i, { lead: v })} />
               <NumField label="Lag" unit="s" value={t.lag} min={0} onChange={(v) => set(i, { lag: v })} />
             </div>
+            <div className="ll-fields is-3" style={{ marginTop: '0.4rem' }}>
+              <NumField label="Delay" unit="s" value={t.delay ?? 0} min={0} onChange={(v) => set(i, { delay: v })}
+                title="Wait this long before acting: for a disturbance that reaches the PV later than the valve does" />
+            </div>
             <p className="ll-note" style={{ marginTop: '0.3rem' }}>
-              {notes[t.from] ?? `Gain: % of ${target} per ${d?.unit}. Lead and lag shape the timing; 0 and 0 is a plain gain.`}
+              {notes[t.from] ?? `Gain: % of ${target} per ${d?.unit}. Lead and lag shape the timing; 0 and 0 is a plain gain. Delay holds it back for a disturbance that is slower than the valve.`}
             </p>
           </div>
         );

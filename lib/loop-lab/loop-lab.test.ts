@@ -12,6 +12,7 @@ import { Loop, runAll, runScenario, stateAtSample } from './sim';
 import { fitModel, parseTable } from './ident';
 import { feedforwardDesign, tuningModel } from './tuning';
 import { scorecard } from './score';
+import { driftedPlants, runDrifted, worstOf } from './drift';
 import { TUNING_RULES } from './tuning';
 import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
@@ -1216,4 +1217,80 @@ test('block diagram: a filtered differentiator answers a ramp with its slope tim
   const out = simulateBlockDiagram(m).nodeOutputs.d;
   assert.ok(Math.abs(out[out.length - 1] - 3) < 0.01, `${out[out.length - 1]}`);
   assert.equal(out[5], 0);
+});
+
+test('valve stiction: off changes nothing; on, the stem sits still and jumps, and the flow cycles wider', () => {
+  const proc = getProcess('flow');
+  const pi = defaultController('pid', proc);
+  const scenario = { id: 's', name: 's', purpose: '', duration: 1200, initialSp: 30, events: [{ t: 5, kind: 'sp' as const, value: 31.5 }] };
+  const run = (extra: Record<string, number>) => runScenario(proc, { params: { ...defaultParams(proc), ...extra }, controller: pi, seed: 3 }, scenario).trace;
+  const off = run({}), zero = run({ valveStiction: 0 });
+  assert.deepEqual(Array.from(zero.pvTrue), Array.from(off.pvTrue));
+  const sticky = run({ valveStiction: 2 });
+  const tail = (a: Float64Array) => Array.from(a.slice(Math.floor(a.length / 2)));
+  const swing = (a: Float64Array) => Math.max(...tail(a)) - Math.min(...tail(a));
+  assert.ok(swing(sticky.pvTrue) > 2 * swing(off.pvTrue), `swing ${swing(sticky.pvTrue)} vs ${swing(off.pvTrue)}`);
+  const stillShare = (a: Float64Array) => {
+    const v = tail(a);
+    let still = 0;
+    for (let i = 1; i < v.length; i++) if (Math.abs(v[i] - v[i - 1]) < 1e-6) still++;
+    return still / v.length;
+  };
+  assert.equal(stillShare(off.valve), 0);
+  assert.ok(stillShare(sticky.valve) > 0.8, `still ${stillShare(sticky.valve)}`);
+});
+
+test('feedforward with dead time: the controller waits, the linear model agrees, and the design fills it in', () => {
+  const proc = getProcess('hx');
+  const params = defaultParams(proc);
+  const base = defaultController('feedforward', proc);
+  assert.ok(base.kind === 'feedforward');
+  const term = base.ff[0];
+  const withDelay: ControllerConfig = { ...base, ff: [{ ...term, delay: 20 }] };
+  // A step in the measured disturbance: the delayed term's output is the plain one 20 s later.
+  const inst = (c: ControllerConfig) => createController(proc, c, params, params.Ts);
+  const a = inst(base), b = inst(withDelay);
+  const d0 = nominalDisturbances(proc), d1 = { ...d0, [term.from]: d0[term.from] + 1 };
+  const outs = (c: ReturnType<typeof inst>) => {
+    const sp = proc.nominalPv, ys: number[] = [];
+    c.track(50, sp, sp, { pv2: NaN, d: d0, sp2: NaN });
+    for (let k = 0; k < 40; k++) ys.push(c.step(sp, sp, { pv2: NaN, d: k < 5 ? d0 : d1, sp2: NaN }));
+    return ys;
+  };
+  const ya = outs(a), yb = outs(b);
+  const shift = Math.round(20 / params.Ts);
+  for (let k = 0; k + shift < 40; k++) assert.ok(Math.abs(yb[k + shift] - ya[k]) < 1e-9, `k ${k}: ${yb[k + shift]} vs ${ya[k]}`);
+  // Cleaned and described with the delay; without one, nothing new appears.
+  const cleaned = cleanController(withDelay, proc);
+  assert.ok(cleaned.kind === 'feedforward' && cleaned.ff[0].delay === 20);
+  assert.equal('delay' in (cleanController(base, proc) as { ff: object[] }).ff[0], false);
+  // The linear closed loop carries the delay as two more states, and stays stable.
+  const lin = (ff: ControllerConfig) => {
+    const a2 = analyzeLoop(proc, params, ff, proc.nominalPv)!;
+    return closedLoop(a2.plant, a2.ctrl, a2.delay, term.from);
+  };
+  assert.equal(lin(withDelay).A.length, lin(base).A.length + 2);
+  assert.ok(isStable(lin(withDelay).poles));
+  // Exported code carries it.
+  const scl = exportCode(proc, withDelay, params, 'scl');
+  assert.match(scl, /Delay := 20\.0/);
+  assert.match(scl, /Past : Array\[0\.\.999\] of Real/);
+});
+
+test('drifted plants: drawn within the spread, the same every time, and run as the plant really is', () => {
+  for (const proc of PROCESSES) {
+    const plants = driftedPlants(proc, 8);
+    assert.deepEqual(plants, driftedPlants(proc, 8));
+    for (const f of plants) for (const u of proc.uncertain) assert.ok(Math.abs(f[u.key] - 1) <= u.spread + 1e-12, `${proc.id} ${u.key} ${f[u.key]}`);
+  }
+  const proc = getProcess('flow'), params = defaultParams(proc), pi = defaultController('pid', proc);
+  const scenario = proc.scenarios[0];
+  const nominal = runScenario(proc, { params, controller: pi }, scenario);
+  const same = runDrifted(proc, params, pi, scenario, Object.fromEntries(proc.uncertain.map((u) => [u.key, 1])));
+  assert.deepEqual(Array.from(same.run.trace.pvTrue), Array.from(nominal.trace.pvTrue));
+  assert.equal(same.run.scenario, scenario);
+  // A much higher plant gain than tuned for: more overshoot than as set up.
+  const hot = runDrifted(proc, params, { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1.2, Ti: 1.8 } }, scenario, { Kv: 1.6 });
+  const cool = runDrifted(proc, params, { kind: 'pid', pid: { ...DEFAULT_PID, Kc: 1.2, Ti: 1.8 } }, scenario, { Kv: 1 });
+  assert.ok(worstOf([hot.card]).overshoot > worstOf([cool.card]).overshoot, `${worstOf([hot.card]).overshoot} vs ${worstOf([cool.card]).overshoot}`);
 });

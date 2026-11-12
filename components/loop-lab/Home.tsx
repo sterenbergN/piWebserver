@@ -195,7 +195,7 @@ export default function Home() {
         </Link>
         <Link className="ll-path is-highlight" href="/loop-lab/builder">
           <div className="ll-path-icon" aria-hidden>🧩</div>
-          <h2>Block Studio (Simulink Mode)</h2>
+          <h2>Block Studio</h2>
           <p>Visually wire transfer functions, PIDs, lead-lag compensators, dead times, nonlinear valves, and scopes on an interactive block canvas.</p>
           <span className="ll-path-go">Launch Block Studio</span>
         </Link>

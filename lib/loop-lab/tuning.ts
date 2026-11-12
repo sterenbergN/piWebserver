@@ -70,6 +70,8 @@ export function tuningModel(proc: ProcessDef, params: Params, config: Controller
 
 export type FeedforwardDesign = {
   gain: number; lead: number; lag: number;
+  /** Dead time to wait before acting, s: how much later the disturbance reaches the PV than the valve does. */
+  delay: number;
   /** The two paths as fitted: valve (or inner setpoint) → PV, and disturbance → PV. */
   u: Fopdt; d: Fopdt;
   /** What the design can't do, in a sentence (null when it can do it all). */
@@ -103,10 +105,13 @@ export function feedforwardDesign(proc: ProcessDef, params: Params, config: Cont
   const gain = -dPath.K / uPath.K;
   const lead = uPath.tau, lag = dPath.tau;
   const dt = dPath.theta - uPath.theta;
+  // The disturbance taking longer than the valve: the feedforward waits that long, so both arrive
+  // together. The other way round there is nothing to wait for, and only part of it can be cancelled.
+  const delay = dt > 0.5 ? Number(dt.toPrecision(3)) : 0;
   const note = dt < -0.5
-    ? `The disturbance reaches the PV ${dt < 0 ? Math.abs(dt).toPrecision(2) : ''} s sooner than the valve can: feedforward can only partly cancel it.`
-    : dt > 0.5 ? `Ideally the feedforward would wait ${dt.toPrecision(2)} s (the disturbance is slower than the valve); the lead-lag alone is a little early.` : null;
-  return { gain, lead, lag, u: uPath, d: dPath, note };
+    ? `The disturbance reaches the PV ${Math.abs(dt).toPrecision(2)} s sooner than the valve can: feedforward can only partly cancel it.`
+    : delay > 0 ? `The disturbance reaches the PV ${delay} s later than the valve does, so the feedforward waits that long before acting.` : null;
+  return { gain, lead, lag, delay, u: uPath, d: dPath, note };
 }
 
 
@@ -132,7 +137,7 @@ function integratingFeedforward(m: PlantModel, p: Params, config: ControllerConf
   if (!ku || !Number.isFinite(ku) || !Number.isFinite(kd)) return null;
   const fit = (k: number): Fopdt => ({ ...plain, K: k * plain.tau, kPrime: k });
   return {
-    gain: -kd / ku, lead: 0, lag: 0, u: fit(ku), d: fit(kd),
+    gain: -kd / ku, lead: 0, lag: 0, delay: 0, u: fit(ku), d: fit(kd),
     note: 'The process integrates, so the feedforward balances the ramp rates (for a level: flow in matches flow out). Inverse response such as swell is left to the feedback.',
   };
 }

@@ -32,7 +32,8 @@ export function plantSummary(proc: ProcessDef, raw: Params): PlantSummary | null
 export const OTHER_EFFECTS: Record<string, string> = {
   valveChar: 'Changes how the gain varies across the valve\'s range, not the speed: see the installed-characteristic plot.',
   valveRate: 'Only limits big, fast moves (a large setpoint step or a saturated valve); small control moves never reach it.',
-  valveDeadband: 'Adds stick-slip: the valve ignores small changes of direction, so a PI loop slowly winds up, jumps and cycles.',
+  valveDeadband: 'Adds backlash: the stem ignores small changes of direction, so a PI loop slowly winds across the gap and cycles.',
+  valveStiction: 'Adds stick-slip: the stem sticks wherever it stops and jumps when the signal has moved far enough, so a PI loop cycles in a sawtooth.',
   txNoise: 'Makes the reading noisier. Doesn\'t change the plant, but the controller passes the noise to the valve: more wear, less gain you can use.',
   Ts: 'How often the controller runs. Each cycle adds about half a cycle of dead time, so a slow cycle eats into the speed you can tune for.',
 };

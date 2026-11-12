@@ -30,6 +30,8 @@ const NAMES = { pid: 'LL_PID', onoff: 'LL_OnOff', schedule: 'LL_Schedule', volum
 
 /** Longest dead time the Smith predictor block can hold, in controller cycles. */
 const SMITH_BUFFER = 1000;
+/** Cycles of dead time the exported feedforward block can hold. */
+const FF_BUFFER = 1000;
 
 function blockHeader(d: Dialect, kind: 'FUNCTION_BLOCK' | 'FUNCTION', name: string, ret?: string) {
   if (d === 'scl') return `${kind} "${name}"${ret ? ` : ${ret}` : ''}\n{ S7_Optimized_Access := 'TRUE' }\nVERSION : 0.1`;
@@ -201,6 +203,7 @@ function leadLagBlock(d: Dialect, Ts: number) {
       Gain : Real;            // % per unit of the disturbance
       Lead : Real;            // s
       Lag : Real;             // s
+      Delay : Real := 0.0;    // s, wait before acting (up to ${FF_BUFFER} cycles)
       Cycle : Real := ${real(Ts)};
    END_VAR
    VAR_OUTPUT
@@ -211,9 +214,13 @@ function leadLagBlock(d: Dialect, Ts: number) {
       X0 : Real;
       XPrev : Real;
       Y : Real;
+      Past : Array[0..${FF_BUFFER - 1}] of Real;   // the lead-lag's output over the last Delay
+      Head : Int;
    END_VAR
    VAR_TEMP
       x : Real;
+      n : Int;
+      i : Int;
    END_VAR
 ${d === 'scl' ? '\nBEGIN' : ''}
     // Deviation from where the loop was switched on, so feedforward starts bumpless.
@@ -221,6 +228,10 @@ ${d === 'scl' ? '\nBEGIN' : ''}
         ${v('X0')} := ${v('In')};
         ${v('XPrev')} := 0.0;
         ${v('Y')} := 0.0;
+        FOR ${v('i')} := 0 TO ${FF_BUFFER - 1} DO
+            ${v('Past')}[${v('i')}] := 0.0;
+        END_FOR;
+        ${v('Head')} := 0;
         ${v('Started')} := TRUE;
     END_IF;
     ${v('x')} := ${v('In')} - ${v('X0')};
@@ -229,7 +240,21 @@ ${d === 'scl' ? '\nBEGIN' : ''}
               + (${v('Lead')} + ${v('Cycle')}) / (${v('Lag')} + ${v('Cycle')}) * ${v('x')}
               - ${v('Lead')} / (${v('Lag')} + ${v('Cycle')}) * ${v('XPrev')};
     ${v('XPrev')} := ${v('x')};
-    ${v('Out')} := ${v('Gain')} * ${v('Y')};
+    // Dead time: the value from Delay ago, out of a ring of the last n cycles.
+    ${v('n')} := REAL_TO_INT(${v('Delay')} / ${v('Cycle')});
+    IF ${v('n')} > ${FF_BUFFER} THEN
+        ${v('n')} := ${FF_BUFFER};
+    END_IF;
+    IF ${v('n')} <= 0 THEN
+        ${v('Out')} := ${v('Gain')} * ${v('Y')};
+    ELSE
+        IF ${v('Head')} >= ${v('n')} THEN
+            ${v('Head')} := 0;
+        END_IF;
+        ${v('Out')} := ${v('Gain')} * ${v('Past')}[${v('Head')}];
+        ${v('Past')}[${v('Head')}] := ${v('Y')};
+        ${v('Head')} := (${v('Head')} + 1) MOD ${v('n')};
+    END_IF;
 END_FUNCTION_BLOCK`;
 }
 
@@ -981,7 +1006,7 @@ function callSite(d: Dialect, proc: ProcessDef, config: ControllerConfig, p: Par
     if (!terms.length) return '0.0';
     for (const t of terms) {
       const ds = proc.disturbances.find((x) => x.key === t.from);
-      lines.push(`${ffInst(t)}(In := ${tag(ds?.measured ?? t.from)}, Reset := ${tag('Manual')}, Gain := ${real(t.gain)}, Lead := ${real(t.lead)}, Lag := ${real(t.lag)});`);
+      lines.push(`${ffInst(t)}(In := ${tag(ds?.measured ?? t.from)}, Reset := ${tag('Manual')}, Gain := ${real(t.gain)}, Lead := ${real(t.lead)}, Lag := ${real(t.lag)}${t.delay ? `, Delay := ${real(t.delay)}` : ''});`);
     }
     return terms.map((t) => `${ffInst(t)}.Out`).join(' + ');
   };
@@ -1272,15 +1297,18 @@ function smith(pvPct: number, lastOutput: number): number {
 // In manual: u0 = the output, ym = 0, ring.fill(0).` : '';
   const ffCode = terms.length ? `
 
-// Feedforward: gain·(lead·s + 1)/(lag·s + 1) on each measured disturbance, added to the output
-// (to the slave's setpoint in cascade). Zero at the value it starts from.
-${terms.map((t) => `const ff_${t.from} = { gain: ${t.gain}, lead: ${t.lead}, lag: ${t.lag}, x0: NaN, xPrev: 0, y: 0 };`).join('\n')}
-function leadLag(f: { gain: number; lead: number; lag: number; x0: number; xPrev: number; y: number }, d: number) {
+// Feedforward: gain·(lead·s + 1)/(lag·s + 1), after its delay, on each measured disturbance, added
+// to the output (to the slave's setpoint in cascade). Zero at the value it starts from.
+${terms.map((t) => `const ff_${t.from} = { gain: ${t.gain}, lead: ${t.lead}, lag: ${t.lag}, delay: ${t.delay ?? 0}, x0: NaN, xPrev: 0, y: 0, past: [] as number[] };`).join('\n')}
+function leadLag(f: { gain: number; lead: number; lag: number; delay: number; x0: number; xPrev: number; y: number; past: number[] }, d: number) {
   if (Number.isNaN(f.x0)) f.x0 = d;
   const x = d - f.x0;
   f.y = (f.lag / (f.lag + Ts)) * f.y + ((f.lead + Ts) / (f.lag + Ts)) * x - (f.lead / (f.lag + Ts)) * f.xPrev;
   f.xPrev = x;
-  return f.gain * f.y;
+  const n = Math.round(f.delay / Ts);
+  if (n <= 0) return f.gain * f.y;
+  f.past.push(f.y);
+  return f.gain * (f.past.length > n ? f.past.shift()! : 0);
 }` : '';
   return `// Ideal PID with setpoint weights, filtered derivative and ${p.antiWindup === 'none' ? 'no' : p.antiWindup === 'clamp' ? 'conditional-integration' : 'back-calculation'} anti-windup.
 // Inputs in % of span, output in %. Called every Ts = ${rawTs} s.

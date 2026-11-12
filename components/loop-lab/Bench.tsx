@@ -12,6 +12,7 @@ import { PALETTE, ResultSummary, ScorecardTable, TestDetail, TestTabs, TrendPane
 import { ControllerEditor, ControllerPicker, ProcessPicker } from './Setup';
 import { fmt } from './Chart';
 import ComparePanel from './Compare';
+import DriftPanel from './Drift';
 import { plantSummary } from '@/lib/loop-lab/plant';
 import { defaultParams } from '@/lib/loop-lab/model';
 import { useRunsMany } from './useRuns';
@@ -32,8 +33,18 @@ type TabId = (typeof TABS)[number]['id'];
 
 type Pinned = { id: string; label: string; exp: Experiment };
 
-/** Changes closer together than this are one undo step (a slider drag, a number being typed). */
+/** Changes to the same setting closer together than this are one undo step (a slider drag, a number being typed). */
 const UNDO_RUN_MS = 600;
+
+/** Which settings differ between two setups ("controller.pid.Kc", "params.K", ...). */
+function changedPaths(a: unknown, b: unknown, at = ''): string[] {
+  if (Object.is(a, b)) return [];
+  if (a && b && typeof a === 'object' && typeof b === 'object' && Array.isArray(a) === Array.isArray(b)) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    return [...keys].flatMap((k) => changedPaths((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], at ? `${at}.${k}` : k));
+  }
+  return [at];
+}
 
 const short = (s: string, n = 46) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
@@ -70,13 +81,18 @@ export default function Bench() {
 
   // When the setup last changed: undo takes a whole run of changes back in one step.
   const lastEdit = useRef(0);
+  const lastWhat = useRef('');
   const updateExp = useCallback((next: Experiment | ((prev: Experiment) => Experiment)) => {
     const { exp: cur } = stateRef.current;
     const resolved = typeof next === 'function' ? next(cur) : next;
     if (JSON.stringify(resolved) === JSON.stringify(cur)) return;
+    // A slider drag or a number being typed changes one setting over and over: one step. Two
+    // quick clicks on different settings are two.
     const now = performance.now();
-    if (now - lastEdit.current > UNDO_RUN_MS) setPast((p) => [...p.slice(-29), cur]);
+    const what = changedPaths(cur, resolved).join('|');
+    if (now - lastEdit.current > UNDO_RUN_MS || what !== lastWhat.current) setPast((p) => [...p.slice(-29), cur]);
     lastEdit.current = now;
+    lastWhat.current = what;
     setFuture([]);
     setExp(resolved);
   }, []);
@@ -271,7 +287,7 @@ export default function Bench() {
               <button className="ll-btn is-small" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Y)">↷ Redo</button>
               <button className="ll-btn is-small" onClick={() => setNaming(describeController(proc, exp.controller))} disabled={!current}>Save</button>
               <button className="ll-btn is-small" onClick={copyLink} title="Share link to this experiment">{copied ? 'Copied' : 'Share'}</button>
-              <Link className="ll-btn is-small" href="/loop-lab/builder" title="Build custom controllers and plants with Simulink-style blocks">🧩 Block Studio</Link>
+              <Link className="ll-btn is-small" href="/loop-lab/builder" title="Wire your own loop from blocks and simulate it">🧩 Block Studio</Link>
               <button className="ll-btn is-small is-quiet" onClick={resetExp}>Reset</button>
             </>
           )}
@@ -321,6 +337,7 @@ export default function Bench() {
                     <summary>Every setpoint step and upset in this test</summary>
                     <TestDetail proc={proc} test={current.score.tests[viewIdx]} />
                   </details>
+                  <DriftPanel proc={proc} exp={exp} nominal={current.runs[viewIdx]} />
                 </section>
               )}
 
