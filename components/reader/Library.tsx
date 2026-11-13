@@ -8,6 +8,8 @@ import { deleteFile, getCover, getItems, getProgress, listFileIds, type StoredPr
 import NotesPanel from './NotesPanel';
 import NotesSearch from './NotesSearch';
 import PublicShelf from './PublicShelf';
+import { useYouTubeJobs, YouTubeForm, YouTubeJobs } from './YouTubeAudio';
+import { spoken } from '@/lib/reader/audio';
 import type { ReaderSettings } from './source';
 import {
   createFolder, deleteBookEverywhere, deleteFolderEverywhere, downloadBook, markFinished, moveBooksEverywhere, ReaderSignedOut, renameBookEverywhere, renameFolderEverywhere, syncBook, uploadBook,
@@ -23,6 +25,7 @@ type View = 'all' | 'reading' | 'finished' | `folder:${string}`;
 type Dialog =
   | { kind: 'add' }
   | { kind: 'import' }
+  | { kind: 'youtube' }
   | { kind: 'new-folder'; moving?: string[] }
   | { kind: 'rename-folder'; folder: Folder }
   | { kind: 'delete-folder'; folder: Folder }
@@ -35,13 +38,13 @@ function fmtDay(ms: number) {
 }
 
 /** When you last read something, the way you'd say it. */
-function fmtLastRead(ms: number, now = Date.now()) {
+function fmtLastRead(ms: number, verb = 'Read', now = Date.now()) {
   const startOf = (t: number) => new Date(t).setHours(0, 0, 0, 0);
   const days = Math.round((startOf(now) - startOf(ms)) / 86_400_000);
-  if (days <= 0) return 'Read today';
-  if (days === 1) return 'Read yesterday';
-  if (days < 14) return `Read ${days} days ago`;
-  return `Read ${fmtDay(ms)}`;
+  if (days <= 0) return `${verb} today`;
+  if (days === 1) return `${verb} yesterday`;
+  if (days < 14) return `${verb} ${days} days ago`;
+  return `${verb} ${fmtDay(ms)}`;
 }
 
 
@@ -171,6 +174,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const [renaming, setRenaming] = useState<{ title: string; author: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
+  // Audio on its way from YouTube; the shelf refreshes as each one lands.
+  const youtube = useYouTubeJobs(online && !signedOut, () => void onChanged());
   const [storage, setStorage] = useState('');
   const [dragging, setDragging] = useState(false);
   const [noteCounts, setNoteCounts] = useState<Record<string, number>>({});
@@ -278,7 +283,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     await refreshLocal();
   };
 
-  const missing = books.filter((book) => !kept.has(book.id));
+  // Audio books are big: each is kept on purpose, from its own menu, never all at once.
+  const missing = books.filter((book) => !kept.has(book.id) && book.format !== 'audio');
   const keepAll = async () => {
     for (const book of missing) await keepHere(book);
   };
@@ -403,6 +409,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
         </ul>
       )}
 
+      <YouTubeJobs jobs={youtube.jobs} onRetry={(id) => void youtube.retry(id).catch((e) => setError(e.message))} onRemove={(id) => void youtube.remove(id).catch((e) => setError(e.message))} />
+
       {!books.length && !uploads.length && (
         <div className="rd-welcome">
           <Icon name="book" size="2.5em" />
@@ -425,9 +433,9 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
                     <Cover book={book} url={covers[book.id]} />
                     <span className="rd-continue-text">
                       <strong>{book.title}</strong>
-                      <span>{progressText(place)}</span>
+                      <span>{progressText(place, book.format)}</span>
                       <span className="rd-meter"><span style={{ width: `${Math.round(place.pct * 100)}%` }} /></span>
-                      <small>{fmtLastRead(place.at)}</small>
+                      <small>{fmtLastRead(place.at, book.format === 'audio' ? 'Listened' : 'Read')}</small>
                     </span>
                   </button>
                 </li>
@@ -502,9 +510,9 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
               <div className="rd-card-meta">
                 <div>
                   <strong>{book.title}</strong>
-                  <span className="rd-card-state">{progressText(place)}</span>
+                  <span className="rd-card-state">{progressText(place, book.format)}</span>
                   <span>
-                    {kept.has(book.id) ? <><Icon name="device" size="0.95em" /> On this device</> : downloading !== undefined ? `Downloading ${Math.round(downloading * 100)}%` : `${book.format.toUpperCase()} · ${fmtSize(book.size)}`}
+                    {kept.has(book.id) ? <><Icon name="device" size="0.95em" /> On this device</> : downloading !== undefined ? `Downloading ${Math.round(downloading * 100)}%` : book.format === 'audio' ? `Audio · ${spoken(book.audio?.duration ?? 0)} · ${fmtSize(book.size)}` : `${book.format.toUpperCase()} · ${fmtSize(book.size)}`}
                   </span>
                   {notes > 0 && <span><Icon name="note" size="0.95em" /> {notes} note{notes === 1 ? '' : 's'}</span>}
                 </div>
@@ -532,7 +540,12 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
                 <p className="rd-menu-title">Add a book{currentFolder && <small>To {currentFolder.name}</small>}</p>
                 <button type="button" onClick={() => { setDialog(null); fileInput.current?.click(); }}><Icon name="device" /> A file from this device</button>
                 <button type="button" onClick={() => setDialog({ kind: 'import' })}><Icon name="book" /> From the Library</button>
+                <button type="button" onClick={() => setDialog({ kind: 'youtube' })}><Icon name="play" /> Audio from YouTube</button>
               </>
+            )}
+            {dialog.kind === 'youtube' && (
+              <YouTubeForm folderName={currentFolder?.name} onCancel={() => setDialog(null)}
+                onAdd={async (url) => { await youtube.add(url, currentFolder?.id); setDialog(null); }} />
             )}
             {dialog.kind === 'new-folder' && (
               <FolderForm

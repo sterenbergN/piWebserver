@@ -64,6 +64,23 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
+/**
+ * Windows won't replace a file while something has it open for reading, and says
+ * EPERM or EBUSY for a moment; Linux (the Pi) never does. A few short retries
+ * ride that out, so development on Windows behaves like the Pi.
+ */
+async function renameRetrying(from: string, to: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fs.rename(from, to);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (attempt >= 6 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 15 * 2 ** attempt));
+    }
+  }
+}
+
 export async function writeJsonAtomic(file: string, data: unknown, pretty = false) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   // Write to a temp file then rename, so a crash or power loss mid-write (not
@@ -71,7 +88,7 @@ export async function writeJsonAtomic(file: string, data: unknown, pretty = fals
   const tmp = `${file}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   try {
     await fs.writeFile(tmp, JSON.stringify(data, null, pretty ? 2 : undefined));
-    await fs.rename(tmp, file);
+    await renameRetrying(tmp, file);
   } catch (error) {
     await fs.unlink(tmp).catch(() => {});
     throw error;

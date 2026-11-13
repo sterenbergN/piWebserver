@@ -350,3 +350,34 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 }
 .rd-back svg { font-size: 1.15rem; }
 .rd-home:focus-visible, .rd-back:focus-visible { outline: 2px solid var(--rd-accent); outline-offset: 2px; }
+
+/* ─── Audio books ─────────────────────────────────────────────────────────── */
+
+.rd-yt-form input[type='url'] { flex: 1; min-width: 0; min-height: 44px; padding: 0 0.7rem; border-radius: 10px; border: 1px solid var(--rd-line); background: var(--rd-raised); color: var(--rd-fg); font: inherit; }
+.rd-yt-problem { margin: 0.6rem 0 0; color: var(--rd-danger); font-size: 0.9rem; }
+.rd-yt-jobs li > span { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.rd-listen { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; overflow-y: auto; background: var(--rd-bg); color: var(--rd-fg); }
+.rd-listen .rd-top { position: sticky; top: 0; display: flex; align-items: center; gap: 0.5rem; padding: calc(var(--rd-top) + 0.4rem) 0.75rem 0.4rem; background: var(--rd-bar); }
+.rd-listen-kept { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--rd-muted); }
+.rd-listen-main { flex: 1; width: min(100%, 520px); margin: 0 auto; padding: 1rem 1rem calc(var(--rd-bottom) + 1.5rem); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0.6rem; }
+.rd-listen-art { width: min(72vw, 320px); aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: var(--rd-raised); display: grid; place-items: center; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25); color: var(--rd-muted); }
+.rd-listen-art img { width: 100%; height: 100%; object-fit: cover; }
+.rd-listen-main h1 { margin: 0.6rem 0 0; font-size: 1.25rem; line-height: 1.3; overflow-wrap: anywhere; }
+.rd-listen-author { margin: 0; color: var(--rd-muted); }
+.rd-listen-chapter { border: 0; background: none; color: var(--rd-accent); font: inherit; font-weight: 600; cursor: pointer; }
+.rd-listen-chapter small { margin-left: 0.4rem; color: var(--rd-muted); font-weight: 400; }
+.rd-listen-scrub { width: 100%; margin-top: 0.4rem; }
+.rd-listen-scrub input { width: 100%; accent-color: var(--rd-accent); }
+.rd-listen-times { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--rd-muted); font-variant-numeric: tabular-nums; }
+.rd-listen-controls { display: flex; align-items: center; justify-content: center; gap: 0.6rem; margin-top: 0.3rem; }
+.rd-listen-controls .rd-icon-btn :is(svg) + svg { margin-left: -0.6em; }
+.rd-listen-skip { min-width: 52px; min-height: 52px; border-radius: 50%; border: 1px solid var(--rd-line); background: var(--rd-surface); color: var(--rd-fg); font: inherit; font-weight: 700; cursor: pointer; }
+.rd-listen-play { width: 72px; height: 72px; border-radius: 50%; border: 0; background: var(--rd-accent); color: var(--rd-accent-fg); display: grid; place-items: center; cursor: pointer; }
+.rd-listen-play:disabled, .rd-listen-skip:disabled { opacity: 0.45; cursor: default; }
+.rd-listen-extras, .rd-listen-panel { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin-top: 0.4rem; }
+.rd-listen-extras a.rd-btn { display: inline-flex; align-items: center; text-decoration: none; }
+.rd-listen-chapters { list-style: none; margin: 0.4rem 0 0; padding: 0; width: 100%; text-align: left; border-top: 1px solid var(--rd-line); }
+.rd-listen-chapters button { display: flex; justify-content: space-between; gap: 0.75rem; width: 100%; min-height: 44px; padding: 0.4rem 0.3rem; border: 0; border-bottom: 1px solid var(--rd-line); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rd-listen-chapters button.is-here { color: var(--rd-accent); font-weight: 600; }
+.rd-listen-chapters small { color: var(--rd-muted); font-variant-numeric: tabular-nums; }

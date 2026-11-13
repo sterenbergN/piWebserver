@@ -6,7 +6,10 @@
 // so writing on the phone and the iPad on the same flight loses nothing. A deleted
 // item stays as a small tombstone, so the delete reaches the other devices too.
 
-export type BookFormat = 'epub' | 'pdf' | 'cbz' | 'txt' | 'md' | 'html';
+import { spoken, type AudioInfo } from './audio';
+
+/** `audio`: a listening book (AAC in an .m4a), made on the server from a YouTube video. */
+export type BookFormat = 'epub' | 'pdf' | 'cbz' | 'txt' | 'md' | 'html' | 'audio';
 
 export type BookMeta = {
   id: string;
@@ -20,6 +23,10 @@ export type BookMeta = {
   folder?: string;
   /** The public Library entry it was copied from. The copy is independent from then on. */
   source?: string;
+  /** An audio book's length and chapters (for `audio` books). */
+  audio?: AudioInfo;
+  /** Where an audio book came from (its YouTube video). */
+  link?: string;
 };
 
 export type Folder = { id: string; name: string };
@@ -86,12 +93,13 @@ export function readingState(progress: Progress | undefined): ReadingState {
   return progress.startedAt || progress.pct > 0 ? 'reading' : 'new';
 }
 
-/** How far through a book you are, in words. */
-export function progressText(progress: Progress | undefined) {
+/** How far through a book you are, in words. An audio book's position is in seconds (its anchor's page). */
+export function progressText(progress: Progress | undefined, format?: BookFormat) {
   const state = readingState(progress);
-  if (state === 'new' || !progress) return 'Not started';
+  if (state === 'new' || !progress) return format === 'audio' ? 'Not started listening' : 'Not started';
   if (state === 'finished') return `Finished ${new Date(progress.finishedAt!).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
   const percent = Math.round(progress.pct * 100);
+  if (format === 'audio') return progress.total ? `${percent}% · ${spoken(Math.max(0, progress.total - progress.anchor.page))} left` : `${percent}%`;
   if (!percent) return 'Just started';
   return progress.total ? `${percent}% · p. ${progress.anchor.page} of ${progress.total}` : `${percent}%`;
 }

@@ -11,7 +11,7 @@ import type { useAct } from './shared';
 // resource up to date (the server does that whenever Skills loads).
 
 type Act = ReturnType<typeof useAct>['act'];
-export type ShelfBook = { id: string; title: string; author: string; state: 'new' | 'reading' | 'finished'; pct: number };
+export type ShelfBook = { id: string; title: string; author: string; audio?: boolean; state: 'new' | 'reading' | 'finished'; pct: number };
 
 /** The Reader's books, fetched once when first needed. */
 export function useShelf(wanted: boolean) {
@@ -28,7 +28,7 @@ export function useShelf(wanted: boolean) {
   return { books, problem };
 }
 
-const stateText = (b: ShelfBook) => (b.state === 'finished' ? 'finished' : b.state === 'reading' ? (b.pct >= 0.01 ? `${Math.round(b.pct * 100)}% read` : 'started') : 'not started');
+const stateText = (b: ShelfBook) => (b.state === 'finished' ? 'finished' : b.state === 'reading' ? (b.pct >= 0.01 ? `${Math.round(b.pct * 100)}% ${b.audio ? 'listened' : 'read'}` : 'started') : 'not started');
 
 /** On a resource card: where it's linked to, or a way to link it. */
 export function ReaderLine({ resource: r, act, busy }: { resource: Resource; act: Act; busy: boolean }) {
@@ -77,7 +77,7 @@ export function AddFromReader({ resources, topics, act, busy }: { resources: Res
 
   async function add() {
     if (!book) return;
-    const ok = await act('add-resource', { kind: 'book', title: book.title, author: book.author, readerBookId: book.id, topicIds });
+    const ok = await act('add-resource', { kind: book.audio ? 'video' : 'book', title: book.title, author: book.author, readerBookId: book.id, topicIds });
     if (ok) { setOpen(false); setBookId(''); setTopicIds([]); }
   }
 

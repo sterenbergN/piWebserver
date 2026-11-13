@@ -31,7 +31,12 @@ const newId = () => crypto.randomBytes(12).toString('hex');
 export async function syncReaderResources(userId: string, data: SkillsData) {
   const linked = data.subjects.flatMap((s) => s.resources.filter((r) => r.readerBookId && r.status !== 'dropped'));
   if (!linked.length) return false;
-  const progress = await readProgressFile(userId).catch(() => ({}) as Awaited<ReturnType<typeof readProgressFile>>);
+  const [progress, library] = await Promise.all([
+    readProgressFile(userId).catch(() => ({}) as Awaited<ReturnType<typeof readProgressFile>>),
+    readReaderLibrary(userId).catch(() => ({ books: [] as { id: string; format: string }[] })),
+  ]);
+  // Audio books count in minutes (their progress is in seconds); everything else in pages.
+  const audio = new Set(library.books.filter((b) => b.format === 'audio').map((b) => b.id));
   let changed = false;
   for (const r of linked) {
     const p = progress[r.readerBookId!];
@@ -39,9 +44,12 @@ export async function syncReaderResources(userId: string, data: SkillsData) {
     if (!p || state === 'new') continue;
     const day = (ms?: number) => (ms ? localDayOf(new Date(ms).toISOString()) ?? undefined : undefined);
     if (p.total && p.total > 0) {
-      const done = state === 'finished' ? p.total : Math.min(p.total, Math.max(0, Math.round(p.pct * p.total)));
-      if (r.progress?.done !== done || r.progress?.total !== p.total || r.progress?.unit !== 'pages') {
-        r.progress = { done, total: p.total, unit: 'pages' };
+      const minutes = audio.has(r.readerBookId!);
+      const total = minutes ? Math.max(1, Math.round(p.total / 60)) : p.total;
+      const unit = minutes ? 'minutes' : 'pages';
+      const done = state === 'finished' ? total : Math.min(total, Math.max(0, Math.round(p.pct * total)));
+      if (r.progress?.done !== done || r.progress?.total !== total || r.progress?.unit !== unit) {
+        r.progress = { done, total, unit };
         changed = true;
       }
     }
@@ -62,7 +70,7 @@ export async function syncReaderResources(userId: string, data: SkillsData) {
 /** The Reader's books, for linking one to a resource. */
 export async function readerShelf(userId: string) {
   const [library, progress] = await Promise.all([readReaderLibrary(userId), readProgressFile(userId)]);
-  return library.books.map((b) => ({ id: b.id, title: b.title, author: b.author, state: readingState(progress[b.id]), pct: progress[b.id]?.pct ?? 0 }));
+  return library.books.map((b) => ({ id: b.id, title: b.title, author: b.author, audio: b.format === 'audio', state: readingState(progress[b.id]), pct: progress[b.id]?.pct ?? 0 }));
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────

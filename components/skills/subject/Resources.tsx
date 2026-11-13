@@ -88,7 +88,7 @@ function ResourceCard({ resource: r, topics, act, busy }: { resource: Resource; 
       {r.detail && <p className="sk-res-detail">{r.detail}</p>}
       {names.length > 0 && <div className="sk-chips" aria-label="Topics it covers">{names.map((n) => <span key={n} className="sk-chip">{n}</span>)}</div>}
       {r.hours ? <p className="sk-hint">About {r.hours} hour{r.hours === 1 ? '' : 's'}</p> : null}
-      {(r.readerBookId || ['book', 'paper', 'article', 'other'].includes(r.kind)) && <ReaderLine resource={r} act={act} busy={busy} />}
+      {(r.readerBookId || ['book', 'paper', 'article', 'video', 'course', 'other'].includes(r.kind)) && <ReaderLine resource={r} act={act} busy={busy} />}
 
       {p && (
         <div className="sk-progress">

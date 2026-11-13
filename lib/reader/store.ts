@@ -155,6 +155,22 @@ export async function addBook(userId: string, uploadId: string, book: BookMeta, 
   });
 }
 
+/** Shelve a book made here on the server (an audio book): its file is moved in from `source`, on the same disk. */
+export async function addMadeBook(userId: string, source: string, book: BookMeta, cover: Buffer | null) {
+  const target = bookPath(userId, book);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.rename(source, target);
+  if (cover) {
+    const file = coverPath(userId, book.id);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, cover);
+  }
+  await updateLibrary(userId, (library) => {
+    if (book.folder && !library.folders.some((f) => f.id === book.folder)) delete book.folder;
+    library.books.push(book);
+  });
+}
+
 const newId = () => crypto.randomBytes(9).toString('base64url');
 
 export class FolderError extends Error {}

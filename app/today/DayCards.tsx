@@ -101,7 +101,7 @@ export function ReaderCard() {
             {current.hasCover && <img src={`/api/reader/file?book=${encodeURIComponent(current.id)}&cover=1`} alt="" />}
             <span>
               <strong>{current.title}</strong>
-              <small>{progressText(place)}</small>
+              <small>{progressText(place, current.format)}</small>
               <span className="td-reader-bar"><span style={{ width: `${Math.round(place.pct * 100)}%` }} /></span>
             </span>
           </Link>

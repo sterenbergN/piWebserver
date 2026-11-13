@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import type { Anchor, BookMeta, Folder } from '@/lib/reader/items';
+import AudioView from './AudioView';
 import BookView from './BookView';
 import { getFolders, listBooks, selectAccount } from './db';
 import Library from './Library';
@@ -163,7 +164,9 @@ export default function ReaderApp() {
   return (
     <div className="reader-space">
       {settings && phase === 'ready' && (
-        openedBook ? (
+        openedBook?.format === 'audio' ? (
+          <AudioView key={openedBook.id} book={openedBook} startAt={open?.at ?? null} settings={settings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
+        ) : openedBook ? (
           <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} onSettings={changeSettings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
         ) : (
           <Library books={books} folders={folders} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} />

@@ -94,6 +94,20 @@ sudo apt install ffmpeg
 Without it, "Turn into text" says so and nothing else is affected. Set
 `FFMPEG_PATH` in `shared/env` to use an ffmpeg somewhere other than the PATH.
 
+The Reader can save a YouTube video's sound as an audio book ("Add a book" →
+"Audio from YouTube"). That needs ffmpeg (above) and yt-dlp. Install yt-dlp's
+own build rather than Pi OS's package, which falls behind YouTube's changes:
+
+```sh
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+```
+
+It needs Python 3, which Pi OS has. When downloads start failing with "YouTube
+turned yt-dlp away", update it with `sudo yt-dlp -U`. Set `YT_DLP_PATH` in
+`shared/env` to use one somewhere other than the PATH. Downloads run one at a
+time, in the background, and are stored with the rest of the Reader's books.
+
 ### Layout on the site USB
 
 ```
