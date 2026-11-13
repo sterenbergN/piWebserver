@@ -111,6 +111,10 @@ export function editSubject(subject: Subject, input: Input, now: string) {
   if (has(input, 'goal')) setText(subject, 'goal', input.goal, 1000);
   if (has(input, 'background')) setText(subject, 'background', input.background, 2000);
   if (has(input, 'roadmap')) setText(subject, 'roadmap', input.roadmap, LIMITS.roadmap);
+  if (has(input, 'autoTopUp')) {
+    if (input.autoTopUp === true) subject.autoTopUp = true;
+    else delete subject.autoTopUp;
+  }
   if (has(input, 'hoursPerWeek')) {
     const hours = intIn(input.hoursPerWeek, 0, 80);
     if (hours) subject.hoursPerWeek = hours;
@@ -308,7 +312,7 @@ export function importPlan(subject: Subject, reply: unknown, input: { topicKeys?
 // ── Questions ────────────────────────────────────────────────────────────────
 
 /** Add the questions from an AI reply that read cleanly (skipping any indexes asked). */
-export function importQuestions(subject: Subject, reply: unknown, input: { skip?: unknown; fallbackTopicId?: unknown }, makeId: () => string, now: string) {
+export function importQuestions(subject: Subject, reply: unknown, input: { skip?: unknown; fallbackTopicId?: unknown }, makeId: () => string, now: string, source: 'ai' | 'weekly' = 'ai') {
   const parsed = parseQuestionsReply(typeof reply === 'string' ? reply : '', subject, { fallbackTopicId: isId(input.fallbackTopicId) ? input.fallbackTopicId : undefined });
   const skip = new Set(Array.isArray(input.skip) ? input.skip : []);
   if (subject.items.length >= 3000) throw new SkillsInputError('This subject has 3000 questions already. Retire or delete some first.');
@@ -316,7 +320,7 @@ export function importQuestions(subject: Subject, reply: unknown, input: { skip?
   parsed.questions.forEach((q, index) => {
     if (!q.ok || skip.has(index)) return;
     const id = makeId();
-    const base = { id, topicId: q.item.topicId, createdAt: now, source: 'ai' as const };
+    const base = { id, topicId: q.item.topicId, createdAt: now, source };
     subject.items.push(q.item.kind === 'graded' ? { ...base, kind: 'graded', question: { ...q.item.question, id } } : { ...base, kind: 'card', difficulty: q.item.difficulty, front: q.item.front, back: q.item.back });
     added++;
   });

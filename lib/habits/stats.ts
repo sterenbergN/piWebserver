@@ -264,6 +264,7 @@ export function habitMeta(habit: Habit, log: HabitLog, day: DateKey, today: Date
   if (habit.link === 'workout') parts.push('auto from workouts');
   if (habit.link === 'daily-question') parts.push('auto from daily questions');
   if (habit.link === 'journal') parts.push('auto from journal');
+  if (habit.link === 'skills') parts.push('auto from Skills reviews');
   return parts.join(' · ');
 }
 

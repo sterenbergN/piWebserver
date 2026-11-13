@@ -5,11 +5,13 @@ import { useEffect, useMemo, useState } from 'react';
 import Plate from '@/components/study/Plate';
 import { usePlan } from '@/components/study/usePlan';
 import { useKitchen } from '../recipes/useKitchen';
-import type { DateKey } from '@/lib/habits/dates';
+import { localToday, type DateKey } from '@/lib/habits/dates';
 import { markdownToPlain, MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type Mood } from '@/lib/journal/journal';
 import { booksInProgress, progressText, readingState, type BookMeta, type Progress } from '@/lib/reader/items';
 import { groceriesLeft, mealsToday, missingIngredients, recipesFor } from '@/lib/recipes/kitchen';
 import type { Recipe } from '@/lib/recipes/recipes';
+import type { BoardSummary } from '@/lib/skills/model';
+import { REVIEW_DAY_ANSWERS } from '@/lib/skills/xp';
 
 const MOOD_NAMES = ['Rough', 'Meh', 'Okay', 'Good', 'Great'];
 
@@ -19,6 +21,53 @@ export function StudyCard() {
   const data = planner.data;
   if (!data || (!data.tests.length && !data.plan.tasks.length && !data.plan.deadlines.length)) return null;
   return <div className="td-study"><Plate planner={planner} compact /></div>;
+}
+
+/**
+ * Skills: what's due for review, a done-for-today mark once enough are answered,
+ * and the one next step that would help most. Out of the way until there's a subject.
+ */
+export function SkillsCard() {
+  const [board, setBoard] = useState<BoardSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/skills?today=${localToday()}`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => { if (!cancelled && body?.success) setBoard(body.board); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!board || !board.subjects.length) return null;
+  const done = board.answeredToday >= REVIEW_DAY_ANSWERS || (board.answeredToday > 0 && board.due === 0);
+  const step = board.nextSteps.find((s) => s.kind !== 'review');
+  const fading = board.subjects.reduce((n, s) => n + s.fading.length, 0);
+  const sme = board.subjects.filter((s) => s.sme).length;
+
+  return (
+    <section className="td-card td-skills">
+      <div className="td-card-head">
+        <h2><span aria-hidden>🎯</span> Skills</h2>
+        {done ? <span className="td-chip is-done">Reviewed</span> : board.due > 0 ? <span className="td-chip">{board.due} due</span> : null}
+      </div>
+      <p className="hb-hint">
+        {board.due > 0 ? `${board.due} question${board.due === 1 ? '' : 's'} waiting across your subjects.` : 'Nothing due. Practise a weak spot to keep it moving.'}
+        {board.streak > 1 ? ` ${board.streak}-day streak.` : ''}
+        {fading ? ` ${fading} topic${fading === 1 ? ' is' : 's are'} fading.` : ''}
+        {sme ? ` SME in ${sme}.` : ''}
+      </p>
+      {step && (
+        <Link className="td-skills-step" href={step.href}>
+          <strong>{step.title}</strong>
+          <small>{step.detail}</small>
+        </Link>
+      )}
+      <Link className={`btn ${done ? 'btn-secondary' : 'btn-primary'}`} href={board.due > 0 ? '/skills/review' : '/skills/review?mode=weak'}>
+        {board.due > 0 ? `Review ${board.due}` : 'Weak spots'}
+      </Link>
+    </section>
+  );
 }
 
 /** What you're reading, a tap from where you left off. */

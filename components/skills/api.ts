@@ -37,7 +37,7 @@ export async function skillsPost<T = Record<string, unknown>>(action: string, pa
 // ── Response shapes ──────────────────────────────────────────────────────────
 
 /** GET /api/skills */
-export type BoardResponse = { board: BoardSummary };
+export type BoardResponse = { board: BoardSummary; xp: number; reviewDays: string[] };
 
 /** A question in a subject's list (no answer). */
 export type ItemRow = {

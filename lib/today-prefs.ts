@@ -1,6 +1,6 @@
 // The cards someone has taken off their Today page, kept on their account.
 
-export const TODAY_CARDS = ['question', 'study', 'reader'] as const;
+export const TODAY_CARDS = ['question', 'study', 'reader', 'skills'] as const;
 export type TodayCard = (typeof TODAY_CARDS)[number];
 
 /** Only cards that exist, once each, whatever was stored or sent. */

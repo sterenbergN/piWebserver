@@ -5,11 +5,12 @@ import { XP_RULES } from '@/lib/daily/progress';
 import { XP as HABIT_XP } from '@/lib/habits/stats';
 import { CHORE_XP } from '@/lib/chores/stats';
 import { STUDY_XP } from '@/lib/study/xp';
+import { REVIEW_DAY_ANSWERS, SKILLS_XP } from '@/lib/skills/xp';
 import './level-info.css';
 
 type Props = {
   /** XP by where it came from. */
-  sources: { questions: number; habits: number; chores: number; study?: number };
+  sources: { questions: number; habits: number; chores: number; study?: number; skills?: number };
   /** Question XP per week, oldest first (the last is this week). */
   weeks?: { week: string; xp: number }[];
   /** Shows a close button (when the panel was opened from a level badge). */
@@ -21,6 +22,7 @@ const SOURCES = [
   { key: 'habits', icon: '✅', label: 'Habits', href: '/habits' },
   { key: 'chores', icon: '🧹', label: 'Chores', href: '/chores' },
   { key: 'study', icon: '🩺', label: 'Study', href: '/study' },
+  { key: 'skills', icon: '🎯', label: 'Skills', href: '/skills' },
 ] as const;
 
 /**
@@ -30,7 +32,8 @@ const SOURCES = [
  */
 export default function LevelInfo({ sources, weeks, onClose }: Props) {
   const study = sources.study ?? 0;
-  const total = sources.questions + sources.habits + sources.chores + study;
+  const skills = sources.skills ?? 0;
+  const total = sources.questions + sources.habits + sources.chores + study + skills;
   const level = levelFromXp(total);
   const title = nextTitle(level.level);
   // Question pace over the last four full weeks (this week isn't over).
@@ -64,7 +67,7 @@ export default function LevelInfo({ sources, weeks, onClose }: Props) {
 
       <h4 className="lv-sub">Where your XP comes from</h4>
       <ul className="lv-sources">
-        {SOURCES.filter((s) => s.key !== 'study' || study > 0).map((s) => {
+        {SOURCES.filter((s) => (s.key !== 'study' || study > 0) && (s.key !== 'skills' || skills > 0)).map((s) => {
           const xp = sources[s.key] ?? 0;
           return (
             <li key={s.key}>
@@ -116,6 +119,15 @@ export default function LevelInfo({ sources, weeks, onClose }: Props) {
               <dd>
                 {STUDY_XP.answered} for each question answered, {STUDY_XP.right} more when you get it right (retakes don’t count twice), {STUDY_XP.reviewRight} for a review you get right, {STUDY_XP.cleared} for clearing a miss.
                 {' '}{STUDY_XP.pancake} per pancake, {STUDY_XP.cleanPlate} for a clean plate. {STUDY_XP.nightShift} for a Night Shift, {STUDY_XP.nightShiftSurvived} more for finishing it. {STUDY_XP.gridSession} for a grid, {STUDY_XP.patientRun} for a mock patient, {STUDY_XP.puzzleSolved} for a Differential you solve.
+              </dd>
+            </>
+          )}
+          {skills > 0 && (
+            <>
+              <dt>🎯 Skills</dt>
+              <dd>
+                {SKILLS_XP.answered} for each question or card you finish, {SKILLS_XP.right} + its difficulty more when you get it (the same question twice in a day counts once).
+                {' '}{SKILLS_XP.reviewDay} for a day with {REVIEW_DAY_ANSWERS} or more answers. Finishing a book or course is {SKILLS_XP.resource.book}, a project {SKILLS_XP.resource.project}, a paper or activity {SKILLS_XP.resource.paper}, anything else {SKILLS_XP.resource.other}.
               </dd>
             </>
           )}

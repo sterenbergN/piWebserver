@@ -236,6 +236,44 @@ Each run, add **8–12 practice questions** to the same source file as
 The build puts them in the pack's `practice` set; uploading adds them (an
 existing id is replaced, which is how corrections go out).
 
+## 6c. Skills questions
+
+People can switch on **Weekly questions** for a subject in Skills (`/skills`,
+the subject's Questions tab). Those subjects get topped up here, after the
+daily days are uploaded (step 7), so a problem in Skills never holds up the
+daily questions.
+
+1. See what's wanted:
+   ```bash
+   npm run daily -- skills
+   ```
+   For each subject it saves the full prompt to
+   `daily-packs/skills/<today>/<user>--<subject>.prompt.md` and an empty
+   `<user>--<subject>.json` to fill, and lists how many questions each topic
+   needs (weakest and most faded first, up to 12 a subject). "No Skills
+   subject needs weekly questions" means skip to step 8.
+2. For each subject, read its `.prompt.md` and follow it exactly: it is the
+   same prompt the site gives the person, with their topics, levels, what
+   they've studied, the questions they already have and how they voted. Write
+   the questions into the `"questions"` list of the matching `.json` (the
+   objects the prompt asks for: `"type": "graded"` or `"type": "card"`, with
+   the exact topic names). Same standards as the daily questions: original,
+   correct, sources, hints, full worked solutions.
+3. **Verify** the graded ones the way step 7.1 does: recompute every numeric
+   answer independently (a script in `daily-packs/checks/skills-<today>.mjs`)
+   and fix or drop anything that doesn't match. These are for real learning at
+   work, so a wrong answer key does real harm.
+4. Check, then upload each file:
+   ```bash
+   npm run daily -- skills-check daily-packs/skills/<today>/<user>--<subject>.json
+   npm run daily -- skills-upload daily-packs/skills/<today>/<user>--<subject>.json
+   ```
+   `skills-upload` checks first and adds nothing unless every question reads
+   cleanly. A 403 means the person switched weekly questions off in the
+   meantime: skip that subject.
+5. Never invent topics, change anything else in someone's Skills, or upload
+   to a subject that wasn't in the list.
+
 ## 7. Verify, build, upload
 
 1. **Check every answer independently.** Write `daily-packs/checks/<first
@@ -263,7 +301,7 @@ existing id is replaced, which is how corrections go out).
 Fetch the current notes into `daily-packs/notes.md`, then edit:
 
 - leave the owner's guidance at the top untouched;
-- under `## Run log`, add a dated entry: days added, reports handled (fixed
+- under `## Run log`, add a dated entry: days added, Skills questions added, reports handled (fixed
   or not, and why), calibration changes, anything to do differently;
 - keep a short `## Calibration` section current (per track/topic: easier,
   harder or as is), so a run doesn't need to re-read every old entry;
@@ -276,6 +314,6 @@ npm run daily -- notes --set daily-packs/notes.md
 
 ## 9. Report
 
-Finish with a short summary: dates added, practice questions added (and which weak topics they target), days ready ahead, reports fixed or
+Finish with a short summary: dates added, practice questions added (and which weak topics they target), Skills questions added (per subject, and any dropped), days ready ahead, reports fixed or
 dismissed, calibration changes, and anything that needs the owner (for
 example a question you dropped and why).

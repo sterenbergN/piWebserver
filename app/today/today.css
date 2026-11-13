@@ -107,3 +107,9 @@
   .td .hb-level { min-width: 0; width: 100%; }
   .td-card { padding: 1rem; }
 }
+
+/* Skills */
+.td-skills .btn { align-self: flex-start; }
+.td-skills-step { display: flex; flex-direction: column; gap: 0.15rem; align-self: stretch; padding: 0.6rem 0.8rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); color: inherit; }
+.td-skills-step:hover { border-color: var(--accent-light); }
+.td-skills-step small { color: var(--muted); font-size: 0.82rem; }

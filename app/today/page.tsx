@@ -17,7 +17,7 @@ import type { DateKey } from '@/lib/habits/dates';
 import type { Habit, HabitLog } from '@/lib/habits/habits';
 import type { Chore, ChoresData } from '@/lib/chores/chores';
 import { levelFromXp } from '@/lib/progress/levels';
-import { studyXpElsewhere } from '@/components/progress/otherXp';
+import { skillsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import LevelInfo from '@/components/progress/LevelInfo';
 import ExamHelpBanner from '@/components/study/ExamHelpBanner';
 import { isOpen as choreOpen } from '@/lib/chores/chores';
@@ -26,7 +26,7 @@ import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insight
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
 import { readTodayHidden, type TodayCard } from '@/lib/today-prefs';
-import { JournalCard, KitchenCard, ReaderCard, StudyCard } from './DayCards';
+import { JournalCard, KitchenCard, ReaderCard, SkillsCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
 import '../study/study.css';
@@ -72,6 +72,7 @@ export default function TodayPage() {
   const showQuestion = !!hidden && !hidden.includes('question');
   const showStudy = signedIn && !!hidden && !hidden.includes('study');
   const showReader = signedIn && !!hidden && !hidden.includes('reader');
+  const showSkills = signedIn && !!hidden && !hidden.includes('skills');
 
   const setCardShown = async (card: TodayCard, shown: boolean) => {
     const before = savedHidden ?? [];
@@ -125,11 +126,12 @@ export default function TodayPage() {
   }, [signedIn]);
 
   const [studyXp, setStudyXp] = useState(0);
-  useEffect(() => { if (signedIn) studyXpElsewhere().then(setStudyXp); }, [signedIn]);
+  const [skillsXp, setSkillsXp] = useState(0);
+  useEffect(() => { if (signedIn) { studyXpElsewhere().then(setStudyXp); skillsXpElsewhere().then(setSkillsXp); } }, [signedIn]);
 
   const frozen = useMemo(() => freezeState(data, today).frozen, [data, today]);
-  const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me), study: studyXp };
-  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study);
+  const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me), study: studyXp, skills: skillsXp };
+  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study + xpSources.skills);
   // Chores due in the next week, overdue first (yours or anyone's).
   const openChores = ch.data.chores.filter(choreOpen);
   const dueChores = byUrgency(openChores.filter((x) => ['overdue', 'today', 'soon'].includes(dueStatus(x, today).status) && (!x.assignee || x.assignee === me)));
@@ -244,6 +246,8 @@ export default function TodayPage() {
           )}
 
           {showStudy && <StudyCard />}
+
+          {showSkills && <SkillsCard />}
 
           <JournalCard today={today} onWritten={setJournalWritten} />
 
@@ -360,6 +364,13 @@ export default function TodayPage() {
             <span>
               <strong>Reading</strong>
               <small>The book you’re partway through. The Reader stays in Explore.</small>
+            </span>
+          </label>
+          <label className="sd-check">
+            <input type="checkbox" checked={showSkills} onChange={(e) => setCardShown('skills', e.target.checked)} />
+            <span>
+              <strong>Skills</strong>
+              <small>Questions due across your subjects and the next step, once you have a subject. Skills stays in Explore.</small>
             </span>
           </label>
           {hiddenError && <p className="sd-warning" role="alert">{hiddenError}</p>}

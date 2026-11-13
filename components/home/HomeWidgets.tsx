@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { deviceProgress, readDeviceAttempts } from '@/components/daily/useDaily';
-import { choresXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
+import { choresXpElsewhere, skillsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import { localToday } from '@/lib/habits/dates';
 import { isActive, normalizeHabitsData, type HabitsData } from '@/lib/habits/habits';
 import { habitXp, isDueOn, isWeekly } from '@/lib/habits/stats';
@@ -34,11 +34,12 @@ async function loadHabits(today: string): Promise<{ data: HabitsData; signedIn: 
 }
 
 async function loadDaily(today: string): Promise<{ daily: DailyState; signedIn: boolean }> {
-  const [{ data: habits, signedIn }, day, chores, study] = await Promise.all([
+  const [{ data: habits, signedIn }, day, chores, study, skills] = await Promise.all([
     loadHabits(today),
     fetch(`/api/daily?today=${today}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
     choresXpElsewhere(),
     studyXpElsewhere(),
+    skillsXpElsewhere(),
   ]);
   const core = day?.day?.core;
   let status: QuestionStatus | null = core ? day.answered?.[core.id]?.status ?? null : null;
@@ -58,7 +59,7 @@ async function loadDaily(today: string): Promise<{ daily: DailyState; signedIn: 
       question: core ? { title: core.title, track: core.track, status } : null,
       streak: progress.streak,
       habits: { due: due.length, done: due.filter((h) => (habits.log[today]?.[h.id] ?? 0) >= h.target).length },
-      level: levelFromXp(progress.xp + habitXp(habits, today) + chores + study),
+      level: levelFromXp(progress.xp + habitXp(habits, today) + chores + study + skills),
     },
   };
 }

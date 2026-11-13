@@ -9,6 +9,8 @@ import {
 } from './model';
 import { parsePlanReply, parseQuestionsReply } from './parse';
 import { buildPlanPrompt, buildQuestionsPrompt } from './prompts';
+import { FRESH_TARGET, WEEKLY_CAP, topUpRequest } from './topup';
+import { SKILLS_XP, reviewDays, skillsXp } from './xp';
 import { emptyProgress, emptySkills, type ProgressData, type SkillsData, type Subject } from './types';
 
 const TODAY = '2026-11-12';
@@ -256,4 +258,47 @@ test('prompts include where I stand', () => {
   assert.ok(questions.includes('"Rocket equation"'));
   assert.ok(questions.includes('Aim for difficulty 3'));
   assert.ok(questions.includes('$\\\\frac{a}{b}$'));
+});
+
+test('XP: once per question per day, review days, finished resources', () => {
+  const { data, progress, subject, basics } = setup();
+  saveCard(subject, { topicId: basics.id, front: 'a', back: 'b', difficulty: 3 }, makeId, NOW);
+  const card = subject.items[0];
+  assert.equal(skillsXp(data, progress), 0);
+  rateCard(subject, card, progress, 'again', makeId, TODAY, NOW);
+  rateCard(subject, card, progress, 'good', makeId, TODAY, NOW);
+  // Twice the same day: the better go counts, once.
+  assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3);
+  assert.deepEqual(reviewDays(progress), []);
+  rateCard(subject, card, progress, 'good', makeId, TODAY, NOW);
+  assert.deepEqual(reviewDays(progress), [TODAY]);
+  assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3 + SKILLS_XP.reviewDay);
+  const project = addResource(subject, { title: 'Thrust stand', kind: 'project' }, makeId, TODAY, NOW);
+  editResource(subject, project, { status: 'done' }, TODAY, NOW);
+  assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3 + SKILLS_XP.reviewDay + SKILLS_XP.resource.project);
+});
+
+test('weekly top-up: only switched-on subjects, low topics first, capped', () => {
+  const { progress, subject, basics, nozzles } = setup();
+  assert.equal(topUpRequest(subject, progress, TODAY), null, 'off by default');
+  subject.autoTopUp = true;
+  const first = topUpRequest(subject, progress, TODAY)!;
+  // Learning, nothing written yet: both early-stage topics want FRESH_TARGET each.
+  assert.deepEqual(first.topics.map((t) => [t.topicId, t.need]), [[basics.id, FRESH_TARGET], [nozzles.id, FRESH_TARGET]]);
+  assert.equal(first.count, 2 * FRESH_TARGET);
+  assert.ok(first.prompt.includes('"Rocket equation"') && first.prompt.includes('How many per topic'));
+
+  // A topic with enough fresh questions drops out; one answered badly comes first.
+  for (let i = 0; i < FRESH_TARGET; i++) saveCard(subject, { topicId: basics.id, front: `f${i}`, back: 'b' }, makeId, NOW);
+  saveCard(subject, { topicId: nozzles.id, front: 'n', back: 'b' }, makeId, NOW);
+  const missed = subject.items.find((i) => i.topicId === nozzles.id)!;
+  rateCard(subject, missed, progress, 'again', makeId, TODAY, NOW);
+  const second = topUpRequest(subject, progress, TODAY)!;
+  assert.deepEqual(second.topics.map((t) => t.topicId), [nozzles.id]);
+
+  // Never more than the weekly cap.
+  for (let i = 0; i < 10; i++) addTopic(subject, { name: `Extra ${i}`, stage: 1 }, makeId, NOW);
+  assert.equal(topUpRequest(subject, progress, TODAY)!.count, WEEKLY_CAP);
+  subject.status = 'paused';
+  assert.equal(topUpRequest(subject, progress, TODAY), null);
 });

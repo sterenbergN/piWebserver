@@ -115,3 +115,9 @@
 .sk-empty-card { align-items: flex-start; }
 .sk-empty-card .btn { text-decoration: none; }
 .sk-subject-head .btn, .sk-q .btn, .sk-card .btn { text-decoration: none; }
+
+/* The weekly questions switch */
+.sk-weekly { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); cursor: pointer; }
+.sk-weekly input { margin-top: 0.2rem; width: auto; min-height: 0; flex: none; }
+.sk-weekly span { display: flex; flex-direction: column; gap: 0.15rem; }
+.sk-weekly small { color: var(--muted); font-size: 0.82rem; line-height: 1.45; }

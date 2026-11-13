@@ -13,6 +13,7 @@ import { choreXp, weekBoard } from '@/lib/chores/stats';
 import { choresFile, findHousehold } from '@/lib/chores/households';
 import { levelFromXp } from '@/lib/progress/levels';
 import { readStudyXp } from '@/lib/study/store';
+import { readSkillsXp } from '@/lib/skills/store';
 
 // Only people who switched the leaderboard on appear here. Each row has their
 // question, habit and chore XP (and study XP counts toward their level), so the page can rank by any of them or by level.
@@ -44,8 +45,8 @@ export async function GET(request: Request) {
         const data = await readUserDaily(id);
         if (!data.leaderboard || !names.get(id)) continue;
         const stats = questionStats(scoreAll(data.attempts, questions), today);
-        const [habits, chores, study] = await Promise.all([habitsFor(id, today), choresFor(id, today, households), readStudyXp(id)]);
-        const total = stats.total.xp + habits.xp + chores.xp + study;
+        const [habits, chores, study, skills] = await Promise.all([habitsFor(id, today), choresFor(id, today, households), readStudyXp(id), readSkillsXp(id)]);
+        const total = stats.total.xp + habits.xp + chores.xp + study + skills;
         const level = levelFromXp(total);
         rows.push({
           name: names.get(id)!, me: id === me, xp: stats.total.xp, week: stats.xpThisWeek, streak: stats.streak.current, solved: stats.total.solved,

@@ -274,7 +274,8 @@ function sameSecret(given: string, expected: string) {
 /**
  * The site admin (signed in), or the weekly generator with the upload token
  * (DAILY_UPLOAD_TOKEN, sent as "Authorization: Bearer …"). The token can manage
- * questions, feedback and notes, nothing else on the site.
+ * questions, feedback and notes, and add questions to Skills subjects whose owner
+ * switched weekly questions on (app/api/skills/weekly), nothing else on the site.
  */
 export async function requireDailyManager(request: Request): Promise<'admin' | 'token'> {
   if (await isAdminAuthenticated()) return 'admin';

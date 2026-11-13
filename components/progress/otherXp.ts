@@ -7,7 +7,7 @@ import { questionStats, scoreAll, type Attempt } from '@/lib/daily/progress';
 import { normalizeChoresData } from '@/lib/chores/chores';
 import { choreXp } from '@/lib/chores/stats';
 
-// The profile level adds up XP from habits, daily questions, chores and studying. Each
+// The profile level adds up XP from habits, daily questions, chores, studying and Skills. Each
 // page works out its own XP and fetches the others' here: from the account when
 // signed in, from this device otherwise.
 
@@ -60,6 +60,18 @@ export async function choresXpElsewhere(): Promise<number> {
     return 0;
   }
   return choreXp(normalizeChoresData(fromStorage('chores:device'), today), null);
+}
+
+/** XP from Skills. Only accounts have any: Skills lives on the account. */
+export async function skillsXpElsewhere(): Promise<number> {
+  try {
+    const res = await fetch('/api/skills/xp', { cache: 'no-store' });
+    if (!res.ok) return 0;
+    const body = await res.json();
+    return body.success ? body.xp : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** XP from studying. Only accounts have any: study lives on the account. */

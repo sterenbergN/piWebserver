@@ -90,7 +90,8 @@ type ItemBase = {
   id: string;
   topicId: string;
   createdAt: string;
-  source: 'ai' | 'manual';
+  /** weekly: added by the weekly question writer. */
+  source: 'ai' | 'manual' | 'weekly';
   /** Reported as wrong: never asked again and not counted toward any level. */
   retired?: boolean;
   /** How it felt and whether it was any good (fed back into the next prompt). */
@@ -117,6 +118,8 @@ export type Subject = {
   /** What I already know coming in (fed into the plan prompt). */
   background?: string;
   hoursPerWeek?: number;
+  /** Let the weekly question writer add questions where this subject runs low. */
+  autoTopUp?: boolean;
   topics: Topic[];
   resources: Resource[];
   items: Item[];

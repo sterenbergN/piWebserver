@@ -1,6 +1,7 @@
 import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
 import { emptyProgress, emptySkills, type ProgressData, type SkillsData } from './types';
+import { skillsXp } from './xp';
 
 // One folder per account in .data/skills (kept by backups): skills.json holds the
 // subjects with their topics, resources and questions; progress.json every answer
@@ -43,6 +44,11 @@ export async function updateSkillsProgress<R>(userId: string, mutate: (data: Pro
     return { result: mutate(stored) };
   });
   return result;
+}
+
+export async function readSkillsXp(userId: string) {
+  const [data, progress] = await Promise.all([readSkills(userId), readSkillsProgress(userId)]);
+  return skillsXp(data, progress);
 }
 
 /** Both files, skills first (the same order everywhere, so two requests can't wait on each other). */

@@ -19,10 +19,11 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
   const [goal, setGoal] = useState(s.goal ?? '');
   const [background, setBackground] = useState(s.background ?? '');
   const [hours, setHours] = useState(s.hoursPerWeek ? String(s.hoursPerWeek) : '');
+  const [weekly, setWeekly] = useState(!!s.autoTopUp);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    const ok = await act('edit-subject', { changes: { name, icon, area, status, target, goal, background, hoursPerWeek: hours } });
+    const ok = await act('edit-subject', { changes: { name, icon, area, status, target, goal, background, hoursPerWeek: hours, autoTopUp: weekly } });
     if (ok) onDone();
   }
 
@@ -50,6 +51,10 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
       <label className="sk-field"><span>Goal</span><textarea rows={2} value={goal} maxLength={1000} onChange={(e) => setGoal(e.target.value)} placeholder="Why you’re learning it" /></label>
       <label className="sk-field"><span>What you already know</span><textarea rows={3} value={background} maxLength={2000} onChange={(e) => setBackground(e.target.value)} placeholder="Helps the AI plan from where you are" /></label>
       <label className="sk-field sk-narrow-field"><span>Hours a week</span><input type="number" min={0} max={80} value={hours} onChange={(e) => setHours(e.target.value)} /></label>
+      <label className="sk-weekly">
+        <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} />
+        <span><strong>Weekly questions</strong><small>Let the weekly question writer add questions where this subject runs low.</small></span>
+      </label>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="sk-actions">
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>

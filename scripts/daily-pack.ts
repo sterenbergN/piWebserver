@@ -11,6 +11,10 @@
 //   npm run daily -- practice                  the practice-only questions already uploaded
 //   npm run daily -- notes                     print the generator notes
 //   npm run daily -- notes --set <file.md>     replace the generator notes
+//   npm run daily -- skills                    Skills subjects that want weekly questions: saves each prompt to
+//                                              daily-packs/skills/<today>/ and lists what each needs
+//   npm run daily -- skills-check <file.json>  check one subject's questions ({ userId, subjectId, questions })
+//   npm run daily -- skills-upload <file.json> check, then add them to that subject
 //
 // Settings (environment, or KEY=value lines in daily-packs/.env, which git ignores):
 //   DAILY_SITE_URL      default https://noahstuf.com
@@ -145,8 +149,41 @@ async function main() {
       }
       return;
     }
+    case 'skills': {
+      const body = await api('/api/skills/weekly');
+      const requests = body.requests as { userId: string; subjectId: string; subjectName: string; count: number; prompt: string; topics: { name: string; state: string; level: number; fresh: number; need: number }[] }[];
+      if (!requests.length) { console.log('No Skills subject needs weekly questions right now.'); return; }
+      const dir = `daily-packs/skills/${today}`;
+      await fs.mkdir(dir, { recursive: true });
+      for (const r of requests) {
+        const base = `${dir}/${r.userId}--${r.subjectId}`;
+        await fs.writeFile(`${base}.prompt.md`, r.prompt);
+        await fs.writeFile(`${base}.json`, `${JSON.stringify({ userId: r.userId, subjectId: r.subjectId, subjectName: r.subjectName, questions: [] }, null, 2)}\n`, { flag: 'wx' }).catch(() => {});
+        console.log(`${r.subjectName} (${r.userId}): ${r.count} questions → ${base}.prompt.md`);
+        for (const t of r.topics) console.log(`  - ${t.name}: ${t.need} (${t.state}, level ${t.level.toFixed(1)}, ${t.fresh} fresh)`);
+      }
+      console.log(`\nWrite each subject's questions into the "questions" list of its .json file, then skills-check and skills-upload it.`);
+      return;
+    }
+    case 'skills-check':
+    case 'skills-upload': {
+      const file = args[0];
+      if (!file) fail(`${command} needs a file, e.g. daily-packs/skills/${today}/<user>--<subject>.json`, 2);
+      let raw: { userId?: string; subjectId?: string; questions?: unknown[] };
+      try { raw = JSON.parse(await fs.readFile(file, 'utf-8')); } catch (error) { fail(`Couldn't read ${file}: ${(error as Error).message}`, 2); }
+      if (!raw.userId || !raw.subjectId || !Array.isArray(raw.questions) || !raw.questions.length) fail(`${file} needs userId, subjectId and a non-empty questions list`, 2);
+      const payload = { userId: raw.userId, subjectId: raw.subjectId, questions: { questions: raw.questions } };
+      const check = await api('/api/skills/weekly', { method: 'POST', body: JSON.stringify({ ...payload, check: true }) });
+      console.log(`${check.ready} of ${raw.questions.length} questions read cleanly.`);
+      for (const p of check.problems as string[]) console.log(`  - ${p}`);
+      if (command === 'skills-check') return;
+      if (check.ready < raw.questions.length) fail('Fix the problems above before uploading (nothing was added).');
+      const body = await api('/api/skills/weekly', { method: 'POST', body: JSON.stringify(payload) });
+      console.log(`Added ${body.added} questions.`);
+      return;
+    }
     default:
-      fail('Commands: validate <pack.json> | status | history [days] | upload <pack.json> | feedback [--since DATE] | weak | practice | notes [--set file.md]', 2);
+      fail('Commands: validate <pack.json> | status | history [days] | upload <pack.json> | feedback [--since DATE] | weak | practice | notes [--set file.md] | skills | skills-check <file> | skills-upload <file>', 2);
   }
 }
 

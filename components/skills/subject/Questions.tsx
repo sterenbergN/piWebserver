@@ -52,6 +52,16 @@ export default function Questions({ data, reload }: TabProps) {
           <Link className="btn btn-primary" href={`/skills/${subject.id}/questions`}>Write questions with AI</Link>
         </div>
         <p className="sk-hint">{stats.liveItems} live, {stats.due} due, {retired} retired. Retired ones are never asked and don’t count toward your level.</p>
+        <label className="sk-weekly">
+          <input type="checkbox" checked={!!subject.autoTopUp} disabled={busy} onChange={(e) => act('edit-subject', { changes: { autoTopUp: e.target.checked } })} />
+          <span>
+            <strong>Weekly questions</strong>
+            <small>
+              Each week, the question writer that makes the daily questions adds a few to topics running low on fresh ones, weakest and most faded first (up to 12 a week).
+              {items.some((i) => i.source === 'weekly') ? ` ${items.filter((i) => i.source === 'weekly').length} so far.` : ''}
+            </small>
+          </span>
+        </label>
         <div className="sk-filters">
           <label className="sk-field"><span>Topic</span>
             <select value={topic} onChange={(e) => setTopic(e.target.value)}>

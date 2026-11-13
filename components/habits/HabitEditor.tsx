@@ -154,6 +154,7 @@ export default function HabitEditor({ habit, onSave, onClose, onManage }: Props)
             <option value="daily-question">On days I do the daily question</option>
             <option value="journal">On days I write in my journal</option>
             <option value="study">On days I take a test or do my reviews</option>
+            <option value="skills">On days I answer 3 or more Skills questions</option>
           </select>
         </>
       )}

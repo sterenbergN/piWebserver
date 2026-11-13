@@ -10,7 +10,7 @@ import { useChores, type Member } from '@/components/chores/useChores';
 import Confetti from '@/components/habits/Confetti';
 import { Plant } from '@/components/habits/Garden';
 import { habitColor } from '@/components/habits/HabitCard';
-import { habitsXpElsewhere, questionsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
+import { habitsXpElsewhere, questionsXpElsewhere, skillsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { applyChoreAction, isOpen, type Chore, type ChoreInput, type ChoresData } from '@/lib/chores/chores';
 import { byUrgency, choreXp, chorePlant, dueStatus, entryXp, recentEntries, weekBoard, type DueStatus } from '@/lib/chores/stats';
@@ -68,12 +68,12 @@ export default function ChoresPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts habits and daily questions.
-  const [otherXp, setOtherXp] = useState<{ habits: number; questions: number; study: number } | null>(null);
+  const [otherXp, setOtherXp] = useState<{ habits: number; questions: number; study: number; skills: number } | null>(null);
   useEffect(() => {
-    if (ready) Promise.all([habitsXpElsewhere(), questionsXpElsewhere(), studyXpElsewhere()]).then(([habits, questions, study]) => setOtherXp({ habits, questions, study }));
+    if (ready) Promise.all([habitsXpElsewhere(), questionsXpElsewhere(), studyXpElsewhere(), skillsXpElsewhere()]).then(([habits, questions, study, skills]) => setOtherXp({ habits, questions, study, skills }));
   }, [ready]);
-  const xpSources = { questions: otherXp?.questions ?? 0, habits: otherXp?.habits ?? 0, chores: choreXp(data, me), study: otherXp?.study ?? 0 };
-  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study);
+  const xpSources = { questions: otherXp?.questions ?? 0, habits: otherXp?.habits ?? 0, chores: choreXp(data, me), study: otherXp?.study ?? 0, skills: otherXp?.skills ?? 0 };
+  const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study + xpSources.skills);
   /** The level panel, opened from the level badge (or /chores#level). */
   const [showLevel, setShowLevel] = useState(false);
   useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);

@@ -10,6 +10,7 @@ import {
   findSubject, findTopic, importPlan, importQuestions, itemFeedback, moveItem, moveTopic, rateCard, rateTopics, removeItem, removeResource,
   removeSubject, removeTopic, resourceOf, retireItem, saveCard,
 } from '@/lib/skills/edit';
+import { reviewDays, skillsXp } from '@/lib/skills/xp';
 import { itemDifficulty, itemTitle, type Item, type ProgressData, type SkillAttempt, type Subject } from '@/lib/skills/types';
 
 // The signed-in account's skills: subjects, their topics, resources and
@@ -88,7 +89,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return ok({ board: boardSummary(data, progress, today) });
+    return ok({ board: boardSummary(data, progress, today), xp: skillsXp(data, progress), reviewDays: reviewDays(progress).slice(-60) });
   } catch (error) {
     if (error instanceof SkillsInputError) return handleApiError(new ApiError(404, error.message));
     return handleApiError(error, 'Load skills failed');

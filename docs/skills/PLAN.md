@@ -125,12 +125,26 @@ Worked out from the numbers, never AI, on the board and each subject:
 - `/skills/[id]/questions` — write questions with AI, or add a card by hand.
 - `/skills/review` — the test session (`?subject=`, `?topic=`, `?mode=weak`).
 
+## Around the site
+
+- **XP**: Skills counts toward the site-wide level. 1 XP per finished question
+  or card, 2 + its difficulty more when you get it (the same question twice in a
+  day counts once), 5 for a day with 3+ answers, and 5–30 for finishing a
+  resource (a project is worth most). Rules in `lib/skills/xp.ts`.
+- **Today**: a Skills card with what's due, a "Reviewed" mark once you've answered
+  3 (or cleared what was due), and the next step. It can be hidden like the others.
+- **Habits**: a habit can tick itself "on days I answer 3 or more Skills questions".
+- **Weekly questions**: switch it on per subject (Questions tab). The weekly
+  Claude Code run that writes the daily questions then tops up topics with
+  fewer than 3 fresh (never answered) questions, weakest and most faded first,
+  up to 12 a subject a week, from the same prompt the site gives you. It goes
+  through `npm run daily -- skills | skills-check | skills-upload` and
+  `/api/skills/weekly`, with the daily upload token, which can only read and
+  add to subjects that have it switched on. Steps in
+  `scripts/daily-generator/INSTRUCTIONS.md` (6c).
+
 ## Phases
 
-1. **Built first**: everything above.
-2. Next: a "Skills review" card on Today and a habit tick for doing a review;
-   XP into the site-wide level; a printable "skills summary" for work reviews.
-3. Later: let the weekly Claude Code question writer
-   (`scripts/daily-generator`) also top up subjects that are low on questions,
-   aimed at weak and fading topics, through a token-scoped upload like the daily
-   packs, so nothing has to be copied and pasted.
+1. Built 2026-11-12: everything above the line "Around the site".
+2. Built 2026-11-12: XP, the Today card, the habit link and weekly questions.
+3. Still open: a printable "skills summary" for work reviews.

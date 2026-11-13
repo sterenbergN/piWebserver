@@ -119,7 +119,7 @@ export function useHabits() {
   }, [today, load]);
 
   // Linked habits tick themselves off: on days you logged a workout, did that
-  // day's question on the day, wrote in your journal, or studied.
+  // day's question on the day, wrote in your journal, studied, or answered 3+ Skills questions.
   const linksKey = data.habits.filter((h) => isActive(h) && h.link).map((h) => `${h.id}:${h.link}`).join(',');
   useEffect(() => {
     if (mode !== 'account' && mode !== 'device') return;
@@ -159,6 +159,11 @@ export function useHabits() {
     if (links.has('study') && mode === 'account') {
       fetch(`/api/study?today=${today}`, { cache: 'no-store' }).then((r) => r.json())
         .then((body) => { if (Array.isArray(body.studyDays)) sync('study', body.studyDays); })
+        .catch(() => { /* try again next visit */ });
+    }
+    if (links.has('skills') && mode === 'account') {
+      fetch(`/api/skills?today=${today}`, { cache: 'no-store' }).then((r) => r.json())
+        .then((body) => { if (Array.isArray(body.reviewDays)) sync('skills', body.reviewDays); })
         .catch(() => { /* try again next visit */ });
     }
     return () => { cancelled = true; };

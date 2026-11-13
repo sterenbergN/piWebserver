@@ -13,7 +13,7 @@ import { addDays, type DateKey } from '@/lib/habits/dates';
 import { isActive, type Habit, type HabitInput } from '@/lib/habits/habits';
 import { dayScore, FREEZE_EVERY, MAX_FREEZES, freezeState, habitMeta, habitStarts, habitXp, isDueOn, isPerfectDay, isWeekly, perfectStreak, XP } from '@/lib/habits/stats';
 import { levelFromXp } from '@/lib/progress/levels';
-import { choresXpElsewhere, questionsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
+import { choresXpElsewhere, questionsXpElsewhere, skillsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import LevelInfo from '@/components/progress/LevelInfo';
 import './habits.css';
 
@@ -55,11 +55,11 @@ export default function HabitsPage() {
   const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
 
   // The profile level also counts XP from daily questions, chores and studying.
-  const [otherXp, setOtherXp] = useState<{ questions: number; chores: number; study: number } | null>(null);
+  const [otherXp, setOtherXp] = useState<{ questions: number; chores: number; study: number; skills: number } | null>(null);
   useEffect(() => {
-    if (h.mode === 'account' || h.mode === 'device') Promise.all([questionsXpElsewhere(), choresXpElsewhere(), studyXpElsewhere()]).then(([questions, chores, study]) => setOtherXp({ questions, chores, study }));
+    if (h.mode === 'account' || h.mode === 'device') Promise.all([questionsXpElsewhere(), choresXpElsewhere(), studyXpElsewhere(), skillsXpElsewhere()]).then(([questions, chores, study, skills]) => setOtherXp({ questions, chores, study, skills }));
   }, [h.mode]);
-  const elsewhereXp = otherXp ? otherXp.questions + otherXp.chores + otherXp.study : null;
+  const elsewhereXp = otherXp ? otherXp.questions + otherXp.chores + otherXp.study + otherXp.skills : null;
   /** The level panel, opened from the level badge (or /habits#level). */
   const [showLevel, setShowLevel] = useState(false);
   useEffect(() => { if (window.location.hash === '#level') setShowLevel(true); }, []);
@@ -140,7 +140,7 @@ export default function HabitsPage() {
       </header>
 
       {showLevel && h.mode !== 'loading' && h.mode !== 'error' && (
-        <LevelInfo sources={{ questions: otherXp?.questions ?? 0, habits: habitXp(data, today), chores: otherXp?.chores ?? 0, study: otherXp?.study ?? 0 }} onClose={() => setShowLevel(false)} />
+        <LevelInfo sources={{ questions: otherXp?.questions ?? 0, habits: habitXp(data, today), chores: otherXp?.chores ?? 0, study: otherXp?.study ?? 0, skills: otherXp?.skills ?? 0 }} onClose={() => setShowLevel(false)} />
       )}
 
       {h.mode === 'device' && (
