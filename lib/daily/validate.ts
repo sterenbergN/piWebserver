@@ -16,7 +16,7 @@ const isIndex = (v: unknown, length: number): v is number => Number.isInteger(v)
 const ID = /^[\w-]{1,80}$/;
 
 /** Every $…$ and $$…$$ in a markdown string must render. */
-function checkMath(text: string, where: string, errors: Errors) {
+export function checkMath(text: string, where: string, errors: Errors) {
   // An escaped \$ is a literal dollar sign (currency), never a math delimiter.
   const pattern = /\$\$([\s\S]+?)\$\$|(?<![\\$])\$(?!\s)((?:\\\$|[^$\n])+?)(?<![\s\\])\$/g;
   for (const match of text.matchAll(pattern)) {
@@ -119,7 +119,7 @@ function checkFormula(raw: any, where: string, errors: Errors): Formula | null {
   return { id: raw.id, name: raw.name, latex: raw.latex, source: raw.source, ...(raw.note ? { note: raw.note } : {}) };
 }
 
-function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors: Errors): Question | null {
+export function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors: Errors): Question | null {
   const before = errors.length;
   const fail = (msg: string) => errors.push(`${where}: ${msg}`);
   if (!ID.test(raw?.id ?? '')) fail('id must be letters, digits, - or _');

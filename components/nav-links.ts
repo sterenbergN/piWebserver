@@ -76,6 +76,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       items: [
         { href: '/today', label: 'Today', icon: '☀️', blurb: 'Everything for today, in one place', keywords: 'dashboard home day' },
         { href: '/daily', label: 'Questions', icon: '🧠', blurb: 'The engineering question of the day', keywords: 'quiz practice streak' },
+        { href: '/skills', label: 'Skills', icon: '🎯', blurb: 'What you know, what you’re learning, and where you’re the expert', keywords: 'learn subjects sme expertise mastery books courses projects plan review spaced repetition skill board', account: true },
         { href: '/habits', label: 'Habits', icon: '✅', blurb: 'Keep your streaks going', keywords: 'routine tracker' },
         { href: '/chores', label: 'Chores', icon: '🧹', blurb: 'What’s due at home', keywords: 'cleaning household tasks' },
         { href: '/journal', label: 'Journal', icon: '📓', blurb: 'A private place to write', keywords: 'diary mood writing', account: true },
@@ -91,6 +92,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
           { href: '/daily#practice', label: 'Practice', icon: '🎲', blurb: 'Questions any time, by topic', keywords: 'quiz' },
           { href: '/daily#archive', label: 'Past questions', icon: '🗂️', blurb: 'Every day so far', keywords: 'archive' },
           { href: '/daily#stats', label: 'Question stats', icon: '📈', blurb: 'How you’re doing by topic' },
+          { href: '/skills/review', label: 'Skills review', icon: '🔁', blurb: 'Questions due across your subjects', keywords: 'test me quiz spaced repetition', account: true },
           { href: '/chores#garden', label: 'Chore garden', icon: '🪴', blurb: 'Every chore grows a plant', keywords: 'plants' },
           { href: '/chores#home', label: 'Household', icon: '🏠', blurb: 'Share chores, meals and groceries', keywords: 'invite family share' },
           { href: '/journal/posts', label: 'Private posts', icon: '🔏', blurb: 'Longer pieces, just for you', keywords: 'writing', account: true },

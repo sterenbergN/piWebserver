@@ -66,9 +66,14 @@ type Props = {
   onFeedback: (patch: Partial<Feedback>) => Promise<void>;
   /** Working in Notes: where to start a page for this question, and the pages already tied to it. */
   notes?: NotesLinks;
+  /**
+   * Asked somewhere other than the daily questions (Skills): a badge in place of
+   * the track, no XP, and its own words for what feedback does.
+   */
+  elsewhere?: { label: string; kindLabel: string; feedbackHint: string };
 };
 
-export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback, notes }: Props) {
+export default function QuestionCard({ q, kind, boss, late, answered, tries = 0, formulas, signedIn, onAnswer, onReveal, onFeedback, notes, elsewhere }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [hintsShown, setHintsShown] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -98,11 +103,11 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
   const usedFormulas = (q.formulas ?? []).map((id) => formulas.find((f) => f.id === id)).filter(Boolean) as Formula[];
 
   return (
-    <article id={`q-${q.id}`} className={`dq-card is-${q.track}${kind === 'core' ? ' is-core' : ''}${answered ? ` is-${answered.status}` : ''}`}>
+    <article id={`q-${q.id}`} className={`dq-card is-${elsewhere ? 'skill' : q.track}${kind === 'core' ? ' is-core' : ''}${answered ? ` is-${answered.status}` : ''}`}>
       <header className="dq-card-head">
         <div className="dq-badges">
-          <span className="dq-badge is-kind">{kind === 'core' ? (boss ? '👹 Boss problem' : '⭐ Today’s question') : kind === 'practice' ? '🎲 Practice' : '🎁 Bonus'}</span>
-          <span className={`dq-badge is-track is-${q.track}`}>{TRACK_LABEL[q.track]}</span>
+          <span className="dq-badge is-kind">{elsewhere ? elsewhere.kindLabel : kind === 'core' ? (boss ? '👹 Boss problem' : '⭐ Today’s question') : kind === 'practice' ? '🎲 Practice' : '🎁 Bonus'}</span>
+          {elsewhere ? <span className="dq-badge is-track">{elsewhere.label}</span> : <span className={`dq-badge is-track is-${q.track}`}>{TRACK_LABEL[q.track]}</span>}
           <span className="dq-badge">{q.topic}</span>
           <span className="dq-difficulty" title={`Difficulty ${q.difficulty} of 5`} aria-label={`Difficulty ${q.difficulty} of 5`}>
             {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < q.difficulty ? 'is-on' : ''} />)}
@@ -164,7 +169,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
               {q.hints.slice(0, hintsShown).map((h, i) => <div key={i} className="dq-hint-box"><strong>Hint {i + 1}:</strong> <MathText className="is-inline">{h}</MathText></div>)}
               {hintsShown < q.hints.length && (
                 <button type="button" className="dq-text-btn" onClick={() => setHintsShown((n) => n + 1)}>
-                  💡 Show a hint ({q.hints.length - hintsShown} left, −{Math.round(XP_RULES.hintCost * 100)}% XP each)
+                  💡 Show a hint ({q.hints.length - hintsShown} left{elsewhere ? ', counts a little less' : `, −${Math.round(XP_RULES.hintCost * 100)}% XP each`})
                 </button>
               )}
             </div>
@@ -177,7 +182,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
               <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setConfirmReveal(true)}>{tries ? 'Give up, show me the work' : 'Just show me the work'}</button>
             ) : (
               <div className="dq-confirm" role="alert">
-                <span>{kind === 'core' ? `This counts for your streak and earns ${studyXp} XP for studying it, and the question locks.` : `This earns ${studyXp} XP for studying it, and the question locks.`}</span>
+                <span>{elsewhere ? 'It counts as a miss for your level, and the question locks.' : kind === 'core' ? `This counts for your streak and earns ${studyXp} XP for studying it, and the question locks.` : `This earns ${studyXp} XP for studying it, and the question locks.`}</span>
                 <button type="button" className="btn btn-secondary" onClick={() => setConfirmReveal(false)}>Back</button>
                 <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(() => onReveal(hintsShown))}>Show it</button>
               </div>
@@ -188,10 +193,10 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
               {lastCheck.correct} of {lastCheck.total} part{lastCheck.total === 1 ? '' : 's'} right. {triesLeft === 1 ? 'Last check left' : `${triesLeft} checks left`} — fix the ✗ and try again, or give up and see the work.
             </p>
           )}
-          <p className="dq-hint dq-worth">
+          {!elsewhere && <p className="dq-hint dq-worth">
             Worth up to <strong>{maxXp} XP</strong>{late ? ' (half, catching up on an earlier day)' : ''}{kind === 'practice' ? ' (half, practice question)' : ''}{kind === 'core' && boss ? ' (×1.5 boss bonus)' : ''}.
             {' '}Up to {XP_RULES.maxTries} checks, −{Math.round(XP_RULES.retryCost * 100)}% XP for each one after the first. Stuck? The worked solution is {studyXp} XP.
-          </p>
+          </p>}
         </>
       )}
 
@@ -202,8 +207,8 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
             <div>
               <strong>{RESULT_TEXT[answered.status].title}</strong>
               <span>
-                {answered.status === 'studied' ? `You read the worked solution · +${answered.xp} XP for studying it.`
-                  : `${answered.correct} of ${answered.total} part${answered.total === 1 ? '' : 's'} right · +${answered.xp} XP${(answered.tries ?? 1) > 1 ? ` · check ${answered.tries}` : ''}${answered.hints ? ` · ${answered.hints} hint${answered.hints === 1 ? '' : 's'}` : ''}${answered.late ? ' · caught up' : ''}`}
+                {answered.status === 'studied' ? (elsewhere ? 'You read the worked solution.' : `You read the worked solution · +${answered.xp} XP for studying it.`)
+                  : `${answered.correct} of ${answered.total} part${answered.total === 1 ? '' : 's'} right${elsewhere ? '' : ` · +${answered.xp} XP`}${(answered.tries ?? 1) > 1 ? ` · check ${answered.tries}` : ''}${answered.hints ? ` · ${answered.hints} hint${answered.hints === 1 ? '' : 's'}` : ''}${answered.late ? ' · caught up' : ''}`}
               </span>
               {answered.regraded && <span className="dq-regraded">🔁 Regraded after the answer key was corrected.</span>}
             </div>
@@ -229,7 +234,7 @@ export default function QuestionCard({ q, kind, boss, late, answered, tries = 0,
             </ul>
           </section>
 
-          {signedIn && answered.feedback && <FeedbackBox feedback={answered.feedback} level={q.difficulty} onChange={onFeedback} />}
+          {signedIn && answered.feedback && <FeedbackBox feedback={answered.feedback} level={q.difficulty} onChange={onFeedback} hint={elsewhere?.feedbackHint} />}
         </>
       )}
 
@@ -243,7 +248,7 @@ const DIFFICULTY_VOTES = [
   { id: 'hard', label: 'Too hard' },
 ] as const;
 
-function FeedbackBox({ feedback, level, onChange }: { feedback: Feedback; level: number; onChange: (patch: Partial<Feedback>) => Promise<void> }) {
+function FeedbackBox({ feedback, level, onChange, hint }: { feedback: Feedback; level: number; onChange: (patch: Partial<Feedback>) => Promise<void>; hint?: string }) {
   const [reporting, setReporting] = useState(false);
   const [kind, setKind] = useState<string>(REPORT_KINDS[0]);
   const [note, setNote] = useState('');
@@ -252,7 +257,7 @@ function FeedbackBox({ feedback, level, onChange }: { feedback: Feedback; level:
   return (
     <section className="dq-feedback">
       <h3>How was this one?</h3>
-      <p className="dq-hint">Two separate questions, both optional. The weekly question writer reads them when it plans the next questions.</p>
+      <p className="dq-hint">{hint ?? 'Two separate questions, both optional. The weekly question writer reads them when it plans the next questions.'}</p>
 
       <div className="dq-feedback-q">
         <strong id={`${id}-difficulty`}>How hard was it for you?</strong>

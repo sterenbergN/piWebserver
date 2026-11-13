@@ -1,0 +1,136 @@
+# Skills: a map of what I know
+
+A place to track every subject I know, am learning or want to learn: plan how to
+master it, keep the books, courses and projects for it, test myself on it again
+and again, and see on one board where I'm an expert and where I'm not. Built for
+work first ("where am I the SME, and how do I get better?"), but any subject fits.
+
+Lives at `/skills`. Signed in only (same accounts as the rest of the site); data
+in `.data/skills/<userId>/` so backups keep it.
+
+## The pieces
+
+- **Subject**: "Rocket propulsion", "PID tuning", "TIA Portal", "Thermodynamics".
+  It has an **area** (groups on the board: Controls, Mechanical, Software, …),
+  a **status** (want to learn → learning → maintaining, or paused), a **goal**
+  (why), a **target level** and an optional **roadmap** (how to get there).
+- **Topic**: the parts of a subject, in four **stages**: Foundations, Core,
+  Applied, Mastery. Core topics count fully toward the subject's level, optional
+  ones half. Each can carry my own **self-rating** (0–5).
+- **Resource**: books, courses, videos, articles, papers, **projects** and
+  activities, each tied to the topics it teaches, with planned / doing / done /
+  dropped, progress (pages, chapters, hours), and takeaways when done.
+- **Question**: two kinds, both tied to a topic.
+  - *Graded* questions use exactly the daily engineering question format
+    (numeric with units and tolerance, choice, multi, order, range, transfer
+    function coefficients), with hints, a worked solution and sources. Same card,
+    same grading, up to three checks.
+  - *Recall cards*: a front and a back, rated Again / Hard / Good / Easy. For the
+    "explain how a turbopump works" kind of knowledge that has no number.
+
+## The scale
+
+Levels follow the Dreyfus model, so they mean something at work:
+
+| Level | Name              | Meaning |
+|------:|-------------------|---------|
+| 0     | Not started       | Haven't looked at it |
+| 1     | Novice            | Know the words, follow rules with help |
+| 2     | Advanced beginner | Can do routine problems with a reference |
+| 3     | Competent         | Work independently on normal problems |
+| 4     | Proficient        | Handle the unusual cases, see the big picture |
+| 5     | Expert            | The go-to person; teach it, judge others' work |
+
+**Topic level** is a rating fitted to my answers, like a chess rating: every
+question has a difficulty 1–5, and the rating moves up when I get one right that
+was expected to be hard for me, and down when I miss one I "should" have got.
+The chance of getting a difficulty-*d* question right at level θ is
+`1 / (1 + e^(-1.7·(θ − d + 0.5)))` (70 % at θ = d). The rating starts at my
+self-rating (or 0) and steps get smaller as evidence builds up. It's worked out
+again from the history every time, so deleting a bad question fixes the past.
+
+**Fading.** Knowledge that isn't used fades. Each topic has a stability (21 days,
+×1.5 for every separate day I got it right, up to 8 such days); retention is
+`e^(−days since last practice / stability)`. The level shown on the board is the
+fitted level × (0.5 + 0.5 × retention), so an untouched skill slowly drops to
+half and says so ("fading"). A finished resource on the topic counts as practice;
+a self-rating counts as two good days, so claims fade too until they're tested.
+
+**Subject level** is the weighted average of its topics' current levels (core 1,
+optional ½), untested topics at 0, so it reflects breadth as well as depth.
+
+**Confidence**: *self-rated* (no answers yet), *some evidence* (under 6 answers in
+the topic) or *verified*.
+
+**SME** is a badge, not a level: subject level ≥ 4, at least 75 % of core topics
+at ≥ 3.5, at least 10 answers in the subject, and tested in the last 90 days.
+Lose freshness and the badge goes until I test again: that's the point.
+
+**Strong / weak / gaps / fading** per subject:
+- strong: level within ½ of target (and ≥ 3), with evidence;
+- weak: tested but more than 1½ below target, or under 50 % right in the last 10;
+- gap: no evidence at all;
+- fading: was ≥ 2 but retention under 50 %.
+
+## Testing, continually
+
+Every question has its own spaced-repetition schedule (SM-2 style: intervals grow
+when I get it right, reset to tomorrow when I don't). **Review** builds a session:
+
+1. due questions, most overdue and weakest topic first, mixed across subjects;
+2. then questions from fading topics (oldest first), so old skills get tested
+   even when nothing is formally due;
+3. then a few new questions (5 a day by default).
+
+It can be narrowed to one subject, one topic, or "weak spots only".
+
+## Planning and writing questions (AI, copy the prompt / paste the reply)
+
+Same pattern as Recipes and PA Study: no API key, any AI app.
+
+- **Plan this subject**: name, goal, my background, target level, hours a week and
+  what I like learning from → topics by stage, books / courses / projects /
+  activities tied to topics, and a roadmap. I tick what to keep. Running it again
+  later includes where I stand, so it adds the next steps instead of repeating.
+- **Write questions**: pick topics (defaults: weak, fading and untested ones),
+  count, style (worked calculations like the daily questions, concept checks,
+  recall cards, mixed, or a *placement test* spanning difficulties 1–5 to find my
+  level fast), and difficulty (default: one above my level per topic). The prompt
+  lists questions I already have so it doesn't repeat them. Every graded question
+  goes through the daily validator (answer keys, math renders, sources).
+- Questions I report as wrong are **retired**: no longer asked, and no longer
+  counted toward my level.
+
+## Next steps ("how do I improve")
+
+Worked out from the numbers, never AI, on the board and each subject:
+- reviews due → review now;
+- weak topic → practise it, or the unfinished resource tied to it;
+- topic with fewer than 3 live questions → write questions for it;
+- fading topic → a quick refresh;
+- finished a resource but never tested the topic → test yourself;
+- topic with nothing tied to it → plan it (find material);
+- subject with no topics → plan it with AI.
+
+## Pages
+
+- `/skills` — the board: expertise summary (SME / proficient / competent /
+  developing / not started), areas → subjects with a level bar against the
+  target, badges, due and fading counts, next steps.
+- `/skills/new` — add a subject (and optionally go straight to planning).
+- `/skills/[id]` — a subject: overview (topic map by stage with levels,
+  strong / weak / fading, level over time, next steps), topics (edit, self-rate),
+  resources, questions.
+- `/skills/[id]/plan` — plan with AI.
+- `/skills/[id]/questions` — write questions with AI, or add a card by hand.
+- `/skills/review` — the test session (`?subject=`, `?topic=`, `?mode=weak`).
+
+## Phases
+
+1. **Built first**: everything above.
+2. Next: a "Skills review" card on Today and a habit tick for doing a review;
+   XP into the site-wide level; a printable "skills summary" for work reviews.
+3. Later: let the weekly Claude Code question writer
+   (`scripts/daily-generator`) also top up subjects that are low on questions,
+   aimed at weak and fading topics, through a token-scoped upload like the daily
+   packs, so nothing has to be copied and pasted.
