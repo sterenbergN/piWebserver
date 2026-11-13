@@ -20,7 +20,14 @@ type Synced = { id: string; createdAt: number; updatedAt: number; deleted?: bool
 export type Folder = Synced & { kind: 'folder'; name: string; parent?: string };
 
 /** A daily question, by its id, with what's needed to show it and get back to it. */
-export type QuestionLink = { id: string; date: string; title: string };
+export type QuestionLink = {
+  id: string; date: string; title: string;
+  /** Where the question lives when it isn't a daily one (a Skills question: /skills/review?item=…). */
+  href?: string;
+};
+
+/** The only other place a question link may point. */
+export const SKILLS_QUESTION_HREF = /^\/skills\/review\?item=[\w-]{1,64}$/;
 
 export type Notebook = Synced & {
   kind: 'notebook';
@@ -235,9 +242,9 @@ export function cleanQuestions(raw: unknown): QuestionLink[] {
   if (!Array.isArray(raw)) return [];
   const out: QuestionLink[] = [];
   for (const value of raw) {
-    const q = value as { id?: unknown; date?: unknown; title?: unknown } | null;
+    const q = value as { id?: unknown; date?: unknown; title?: unknown; href?: unknown } | null;
     if (!q || !isId(q.id) || typeof q.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(q.date) || out.some((held) => held.id === q.id)) continue;
-    out.push({ id: q.id, date: q.date, title: cleanName(q.title) || 'Daily question' });
+    out.push({ id: q.id, date: q.date, title: cleanName(q.title) || 'Daily question', ...(typeof q.href === 'string' && SKILLS_QUESTION_HREF.test(q.href) ? { href: q.href } : {}) });
     if (out.length >= MAX_QUESTION_LINKS) break;
   }
   return out;

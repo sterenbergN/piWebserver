@@ -238,6 +238,10 @@ export function editResource(subject: Subject, resource: Resource, input: Input,
     setText(resource, 'url', url, 600);
   }
   if (has(input, 'topicIds')) resource.topicIds = cleanTopicIds(subject, input.topicIds);
+  if (has(input, 'readerBookId')) {
+    if (isId(input.readerBookId)) resource.readerBookId = input.readerBookId;
+    else delete resource.readerBookId;
+  }
   if (has(input, 'hours')) {
     const hours = intIn(input.hours, 0, 5000);
     if (hours) resource.hours = hours;
@@ -273,6 +277,26 @@ export function removeResource(subject: Subject, resourceId: unknown, now: strin
 }
 
 export const resourceOf = findResource;
+
+// ── Notes pages on topics ────────────────────────────────────────────────────
+
+/** Most pages tied to one topic. */
+export const MAX_TOPIC_PAGES = 30;
+
+export function tiePage(subject: Subject, topic: Topic, ref: { notebook?: unknown; page?: unknown }, now: string) {
+  if (!isId(ref.notebook) || !isId(ref.page)) throw new SkillsInputError('Which page?');
+  const pages = topic.notePages ?? [];
+  if (pages.some((p) => p.page === ref.page)) return;
+  if (pages.length >= MAX_TOPIC_PAGES) throw new SkillsInputError(`A topic can have ${MAX_TOPIC_PAGES} pages tied to it.`);
+  topic.notePages = [...pages, { notebook: ref.notebook, page: ref.page }];
+  touch(subject, now);
+}
+
+export function untiePage(subject: Subject, topic: Topic, page: unknown, now: string) {
+  topic.notePages = (topic.notePages ?? []).filter((p) => p.page !== page);
+  if (!topic.notePages.length) delete topic.notePages;
+  touch(subject, now);
+}
 
 // ── Plans from an AI ─────────────────────────────────────────────────────────
 

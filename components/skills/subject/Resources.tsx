@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { RESOURCE_KINDS, RESOURCE_LABEL, RESOURCE_STATUS_LABEL, RESOURCE_STATUSES, type Resource, type ResourceKind, type ResourceStatus, type Topic } from '@/lib/skills/types';
 import { ErrorNote } from '../Ui';
+import { AddFromReader, ReaderLine } from './ReaderLink';
 import { longDay, useAct, type TabProps } from './shared';
 
 // The resources tab: books, courses and projects grouped by where you are with
@@ -27,6 +28,7 @@ export default function Resources({ data, reload }: TabProps) {
     <>
       {error && <ErrorNote>{error}</ErrorNote>}
       {subject.resources.length === 0 && <p className="sk-empty">No books, courses or projects yet. Add one below, or plan the subject with AI to get a list.</p>}
+      <div className="sk-actions"><AddFromReader resources={subject.resources} topics={subject.topics} act={act} busy={busy} /></div>
       {GROUPS.map((g) => {
         const rows = subject.resources.filter((r) => r.status === g.status);
         if (!rows.length) return null;
@@ -86,13 +88,14 @@ function ResourceCard({ resource: r, topics, act, busy }: { resource: Resource; 
       {r.detail && <p className="sk-res-detail">{r.detail}</p>}
       {names.length > 0 && <div className="sk-chips" aria-label="Topics it covers">{names.map((n) => <span key={n} className="sk-chip">{n}</span>)}</div>}
       {r.hours ? <p className="sk-hint">About {r.hours} hour{r.hours === 1 ? '' : 's'}</p> : null}
+      {(r.readerBookId || ['book', 'paper', 'article', 'other'].includes(r.kind)) && <ReaderLine resource={r} act={act} busy={busy} />}
 
       {p && (
         <div className="sk-progress">
           <div className="sk-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={p.total} aria-valuenow={p.done} aria-label={`${r.title} progress`}>
             <span style={{ width: `${Math.min(100, (p.done / p.total) * 100)}%` }} />
           </div>
-          <div className="sk-progress-controls">
+          {!r.readerBookId && <div className="sk-progress-controls">
             <button type="button" className="sk-small-btn" disabled={busy || p.done <= 0} aria-label="Take 10 off" onClick={() => setDone(p.done - 10)}>−10</button>
             <label className="sk-progress-input">
               <span className="sk-sr">{p.unit} done</span>
@@ -102,7 +105,8 @@ function ResourceCard({ resource: r, topics, act, busy }: { resource: Resource; 
             </label>
             <span className="sk-muted">of {p.total} {p.unit}</span>
             <button type="button" className="sk-small-btn" disabled={busy || p.done >= p.total} aria-label="Add 10" onClick={() => setDone(p.done + 10)}>+10</button>
-          </div>
+          </div>}
+          {r.readerBookId && <p className="sk-hint">{p.done} of {p.total} {p.unit}</p>}
         </div>
       )}
 

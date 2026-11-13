@@ -8,9 +8,10 @@ import { readSkills, readSkillsProgress, updateBoth, updateSkills, updateSkillsP
 import {
   SkillsInputError, addResource, addSubject, addTopic, answerGraded, asDailyQuestion, editResource, editSubject, editTopic, findItem, findItemAnywhere,
   findSubject, findTopic, importPlan, importQuestions, itemFeedback, moveItem, moveTopic, rateCard, rateTopics, removeItem, removeResource,
-  removeSubject, removeTopic, resourceOf, retireItem, saveCard,
+  removeSubject, removeTopic, resourceOf, retireItem, saveCard, tiePage, untiePage,
 } from '@/lib/skills/edit';
 import { reviewDays, skillsXp } from '@/lib/skills/xp';
+import { describePages, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
 import { itemDifficulty, itemTitle, type Item, type ProgressData, type SkillAttempt, type Subject } from '@/lib/skills/types';
 
 // The signed-in account's skills: subjects, their topics, resources and
@@ -56,6 +57,16 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const today = clampToday(params.get('today'));
     const [data, progress] = await Promise.all([readSkills(userId), readSkillsProgress(userId)]);
+    // Books linked to the Reader take their progress from it; only written when something moved.
+    if (await syncReaderResources(userId, data)) await updateSkills(userId, (fresh) => syncReaderResources(userId, fresh));
+
+    if (params.get('shelf') !== null) return ok({ books: await readerShelf(userId) });
+    if (params.get('notesPages') !== null) return ok({ notebooks: await notesPageChoices(userId) });
+    if (params.get('material') !== null) {
+      const subject = findSubject(data, params.get('subject'));
+      const topics = (params.get('topics') ?? '').split(',').filter(Boolean);
+      return ok({ material: await materialFor(userId, subject, topics) });
+    }
 
     const itemId = params.get('item');
     if (itemId !== null) {
@@ -71,7 +82,7 @@ export async function GET(request: Request) {
     if (params.get('review') !== null) {
       const mode = (['due', 'weak', 'all'] as const).find((m) => m === params.get('mode')) as ReviewMode | undefined;
       const limit = Math.min(50, Math.max(1, Number(params.get('limit')) || 20));
-      const queue = buildQueue(data, progress, today, { subjectId: params.get('subject') ?? undefined, topicId: params.get('topic') ?? undefined, mode, limit });
+      const queue = buildQueue(data, progress, today, { subjectId: params.get('subject') ?? undefined, topicId: params.get('topic') ?? undefined, itemId: params.get('one') ?? undefined, mode, limit });
       return ok({ queue: queue.map((e) => ({ ...askable(e.item, e.subject, e.topic.name), reason: e.reason })) });
     }
 
@@ -85,6 +96,7 @@ export async function GET(request: Request) {
         stats,
         nextSteps: nextSteps(subject, stats, today),
         history: levelHistory(subject, progress, today),
+        topicPages: Object.fromEntries(await Promise.all(subject.topics.filter((t) => t.notePages?.length).map(async (t) => [t.id, await describePages(userId, t.notePages!)] as const))),
         areas: [...new Set(data.subjects.map((s) => s.area))].sort(),
       });
     }
@@ -135,6 +147,31 @@ export async function POST(request: Request) {
         return ok();
       case 'remove-topic':
         await updateBoth(userId, (data, progress) => removeTopic(findSubject(data, body.subjectId), progress, body.topicId, now));
+        return ok();
+
+      // ── Notes pages on topics ──
+      case 'topic-notes-new': {
+        const origin = new URL(request.url).origin;
+        const ref = await updateSkills(userId, async (data) => {
+          const subject = findSubject(data, body.subjectId);
+          const topic = findTopic(subject, body.topicId);
+          const made = await newTopicPage(userId, await skillsNotebook(userId, data), subject, topic, origin);
+          tiePage(subject, topic, made, now);
+          return made;
+        });
+        return ok({ page: ref, href: `/notes?notebook=${encodeURIComponent(ref.notebook)}&page=${encodeURIComponent(ref.page)}` });
+      }
+      case 'topic-notes-tie':
+        await updateSkills(userId, (data) => {
+          const subject = findSubject(data, body.subjectId);
+          tiePage(subject, findTopic(subject, body.topicId), body, now);
+        });
+        return ok();
+      case 'topic-notes-untie':
+        await updateSkills(userId, (data) => {
+          const subject = findSubject(data, body.subjectId);
+          untiePage(subject, findTopic(subject, body.topicId), body.page, now);
+        });
         return ok();
 
       // ── Resources ──

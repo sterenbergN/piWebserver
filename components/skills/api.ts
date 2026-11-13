@@ -53,7 +53,14 @@ export type SubjectResponse = {
   nextSteps: NextStep[];
   history: { day: string; level: number; fitted: number }[];
   areas: string[];
+  /** Each topic's Notes pages, by topic id (only topics that have some). */
+  topicPages: Record<string, NotesPageView[]>;
 };
+
+export type NotesPageView = { notebook: string; page: string; label: string; href: string };
+
+/** GET ?material=1&subject=&topics=: your notes on those topics, for the question prompt. */
+export type Material = { id: string; kind: 'book' | 'page'; label: string; text: string };
 
 /** GET /api/skills?item=id: the whole question, answer included. */
 export type ItemResponse = { item: Item; row: ItemRow; attempts: SkillAttempt[] };

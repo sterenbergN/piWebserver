@@ -8,6 +8,8 @@ import type { TopicStats } from '@/lib/skills/model';
 import { fmtLevel } from '../api';
 import { ErrorNote, LevelPicker, LevelScale, StateChip } from '../Ui';
 import { useAct, type TabProps } from './shared';
+import TopicNotes from './TopicNotes';
+import type { NotesPageView } from '../api';
 
 // The topics tab: rate yourself on every topic at once, or work through them by
 // stage (reorder, edit, test, delete), and add new ones.
@@ -42,7 +44,7 @@ export default function Topics({ data, reload }: TabProps) {
                 <h3>{st.name}</h3>
                 <ul className="sk-rows">
                   {rows.map((t) => (
-                    <TopicRow key={t.id} topic={t} stats={stats.topics.find((x) => x.topicId === t.id)} subjectId={subject.id}
+                    <TopicRow key={t.id} topic={t} stats={stats.topics.find((x) => x.topicId === t.id)} subjectId={subject.id} pages={data.topicPages?.[t.id] ?? []}
                       first={subject.topics[0] === t} last={subject.topics[subject.topics.length - 1] === t} act={act} busy={busy} />
                   ))}
                 </ul>
@@ -88,7 +90,7 @@ function RateForm({ data, act, busy, onDone }: { data: TabProps['data']; act: Ac
   );
 }
 
-function TopicRow({ topic, stats, subjectId, first, last, act, busy }: { topic: Topic; stats?: TopicStats; subjectId: string; first: boolean; last: boolean; act: Act; busy: boolean }) {
+function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { topic: Topic; stats?: TopicStats; subjectId: string; pages: NotesPageView[]; first: boolean; last: boolean; act: Act; busy: boolean }) {
   const { confirm, popup } = useSitePopup();
   const [editing, setEditing] = useState(false);
   const live = stats?.liveItems ?? 0;
@@ -119,6 +121,7 @@ function TopicRow({ topic, stats, subjectId, first, last, act, busy }: { topic: 
           <span className="sk-muted">{live} question{live === 1 ? '' : 's'}</span>
           {!!stats?.dueItems && <span className="sk-due">{stats.dueItems} due</span>}
         </div>
+        <TopicNotes topic={topic} pages={pages} act={act} busy={busy} />
       </div>
       <div className="sk-row-actions">
         <button type="button" className="sk-small-btn" disabled={busy || first} aria-label={`Move ${topic.name} up`} onClick={() => act('move-topic', { topicId: topic.id, direction: 'up' })}>↑</button>

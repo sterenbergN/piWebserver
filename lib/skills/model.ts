@@ -249,10 +249,10 @@ export const NEW_PER_DAY = 5;
  * questions from fading topics, then a few new ones. Weak mode keeps to weak,
  * fading and untested topics; all mode is "test me on this", everything in scope.
  */
-export function buildQueue(data: SkillsData, progress: ProgressData, today: DateKey, options: { subjectId?: string; topicId?: string; mode?: ReviewMode; limit?: number; newPerDay?: number } = {}) {
-  const mode = options.mode ?? (options.topicId ? 'all' : 'due');
+export function buildQueue(data: SkillsData, progress: ProgressData, today: DateKey, options: { subjectId?: string; topicId?: string; itemId?: string; mode?: ReviewMode; limit?: number; newPerDay?: number } = {}) {
+  const mode = options.itemId ? 'all' : options.mode ?? (options.topicId ? 'all' : 'due');
   const limit = options.limit ?? 20;
-  const subjects = data.subjects.filter((s) => (options.subjectId ? s.id === options.subjectId : s.status !== 'paused'));
+  const subjects = data.subjects.filter((s) => (options.subjectId ? s.id === options.subjectId : options.itemId ? true : s.status !== 'paused'));
   const answeredToday = new Set(progress.attempts.filter((a) => a.day === today).map((a) => a.itemId));
   const firstSeen = new Map<string, string>();
   for (const a of [...progress.attempts].sort(byTime)) if (!firstSeen.has(a.itemId)) firstSeen.set(a.itemId, a.day);
@@ -264,7 +264,8 @@ export function buildQueue(data: SkillsData, progress: ProgressData, today: Date
   for (const subject of subjects) {
     const stats = subjectStats(subject, progress, today);
     for (const item of subject.items) {
-      if (item.retired || answeredToday.has(item.id)) continue;
+      // One question asked for by name (from its Notes page) comes up even if it was answered today.
+      if (options.itemId) { if (item.id !== options.itemId || item.retired) continue; } else if (item.retired || answeredToday.has(item.id)) continue;
       if (options.topicId && item.topicId !== options.topicId) continue;
       const topic = subject.topics.find((t) => t.id === item.topicId);
       const topicStat = stats.topics.find((t) => t.topicId === item.topicId);

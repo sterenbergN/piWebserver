@@ -16,7 +16,7 @@ const skillsFile = (userId: string) => path.join(skillsFolder(userId), 'skills.j
 const progressFile = (userId: string) => path.join(skillsFolder(userId), 'progress.json');
 
 function normalizeSkills(raw: Partial<SkillsData> | null | undefined): SkillsData {
-  return { subjects: Array.isArray(raw?.subjects) ? raw.subjects : [] };
+  return { subjects: Array.isArray(raw?.subjects) ? raw.subjects : [], ...(typeof raw?.notesNotebook === 'string' ? { notesNotebook: raw.notesNotebook } : {}) };
 }
 
 function normalizeProgress(raw: Partial<ProgressData> | null | undefined): ProgressData {
@@ -29,11 +29,11 @@ function normalizeProgress(raw: Partial<ProgressData> | null | undefined): Progr
 export const readSkills = async (userId: string) => normalizeSkills(await readJson<Partial<SkillsData>>(skillsFile(userId), emptySkills()));
 export const readSkillsProgress = async (userId: string) => normalizeProgress(await readJson<Partial<ProgressData>>(progressFile(userId), emptyProgress()));
 
-/** Always written, whatever the mutator returns. */
-export async function updateSkills<R>(userId: string, mutate: (data: SkillsData) => R): Promise<R> {
-  const { result } = await updateJson<SkillsData, { result: R }>(skillsFile(userId), emptySkills(), (stored) => {
+/** Always written, whatever the mutator returns; an async mutator is waited for first. */
+export async function updateSkills<R>(userId: string, mutate: (data: SkillsData) => R | Promise<R>): Promise<R> {
+  const { result } = await updateJson<SkillsData, { result: R }>(skillsFile(userId), emptySkills(), async (stored) => {
     Object.assign(stored, normalizeSkills(stored));
-    return { result: mutate(stored) };
+    return { result: await mutate(stored) };
   });
   return result;
 }

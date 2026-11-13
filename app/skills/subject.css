@@ -121,3 +121,22 @@
 .sk-weekly input { margin-top: 0.2rem; width: auto; min-height: 0; flex: none; }
 .sk-weekly span { display: flex; flex-direction: column; gap: 0.15rem; }
 .sk-weekly small { color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+
+/* Reader links */
+.sk-reader-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.6rem; margin: 0; font-size: 0.88rem; }
+.sk-reader-line a { color: var(--accent-light); font-weight: 600; }
+.sk-reader-start { align-self: flex-start; }
+.sk-reader-pick { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; }
+.sk-reader-pick .sk-field { flex: 1 1 16rem; }
+.sk-reader-topics { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.sk-reader-topics legend { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
+.sk-reader-topics label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+.sk-reader-topics input { width: auto !important; min-height: 0 !important; }
+
+/* A topic's Notes pages */
+.sk-topic-notes { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
+.sk-topic-pages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.sk-topic-pages li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.75rem; font-size: 0.9rem; }
+.sk-topic-pages a { color: var(--accent-light); overflow-wrap: anywhere; }
+.sk-topic-pick { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; }
+.sk-topic-pick .sk-field { flex: 1 1 12rem; }

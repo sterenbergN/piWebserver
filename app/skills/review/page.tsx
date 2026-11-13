@@ -12,6 +12,8 @@ import { skillsGet, skillsPost, SignedOut, type AnswerResponse, type Ask, type R
 import { ErrorNote, Loading, SignedOutCard } from '@/components/skills/Ui';
 import RecallCard from '@/components/skills/review/RecallCard';
 import SessionSummary, { type Outcome } from '@/components/skills/review/SessionSummary';
+import { notesLinks, useTiedPages } from '@/components/daily/notes-links';
+import { localToday } from '@/lib/habits/dates';
 
 // Review: one question at a time from the server’s queue (due, fading, new),
 // graded questions in the daily card and recall cards in their own. The session
@@ -34,6 +36,8 @@ function Review() {
   const params = useSearchParams();
   const subject = params.get('subject') ?? undefined;
   const topic = params.get('topic') ?? undefined;
+  /** One question by itself (the link on its Notes page comes here). */
+  const one = params.get('item') ?? undefined;
   const rawMode = params.get('mode');
   const mode: Mode = rawMode === 'weak' || rawMode === 'all' || rawMode === 'due' ? rawMode : topic ? 'all' : 'due';
 
@@ -49,7 +53,7 @@ function Review() {
   const load = useCallback(async () => {
     setQueue(null); setError(''); setIndex(0); setOutcomes([]); setTries(0); setAnswered(undefined);
     try {
-      const res = await skillsGet<ReviewResponse>({ review: '1', subject, topic, mode, limit: '20' });
+      const res = await skillsGet<ReviewResponse>({ review: '1', subject, topic, one, mode, limit: '20' });
       setQueue(res.queue);
       const first = res.queue[0];
       if (first) setScope({ subjectName: first.subjectName, subjectIcon: first.subjectIcon, topicName: first.topicName });
@@ -57,10 +61,12 @@ function Review() {
       if (e instanceof SignedOut) setSignedOut(true);
       else setError(e instanceof Error ? e.message : 'Couldn’t load your questions.');
     }
-  }, [subject, topic, mode]);
+  }, [subject, topic, one, mode]);
   useEffect(() => { void load(); }, [load]);
 
   const entry = queue?.[index];
+  // Notes pages already tied to these questions, for "Work it out in Notes".
+  const tied = useTiedPages((queue ?? []).filter((e) => e.kind === 'graded').map((e) => e.id), true);
   const done = !!queue && queue.length > 0 && index >= queue.length;
 
   // A fresh question starts at the top, with no leftover checks.
@@ -122,9 +128,9 @@ function Review() {
       <header className="sk-head">
         <div>
           {scoped ? <Link href={`/skills/${subject}`} className="sk-back">← {scope.subjectIcon} {scope.subjectName}</Link> : <Link href="/skills" className="sk-back">← Skills</Link>}
-          <h1>{topic && scope.topicName ? scope.topicName : 'Review'}</h1>
+          <h1>{one ? 'One question' : topic && scope.topicName ? scope.topicName : 'Review'}</h1>
         </div>
-        {!topic && (
+        {!topic && !one && (
           <div className="sk-modes" role="group" aria-label="What to review">
             {MODES.map(([m, label]) => (
               <button key={m} type="button" className="sk-small-btn" aria-pressed={mode === m} onClick={() => setMode(m)}>{label}</button>
@@ -161,7 +167,7 @@ function Review() {
           {entry.kind === 'graded' ? (
             <>
               <QuestionCard key={entry.id} q={entry.question} kind="practice" boss={false} late={false} formulas={[]} signedIn
-                tries={tries} answered={answered}
+                tries={tries} answered={answered} notes={notesLinks(entry, localToday(), tied)}
                 elsewhere={{ label: `${entry.subjectIcon} ${entry.subjectName}`, kindLabel: REASON[entry.reason], feedbackHint: FEEDBACK_HINT }}
                 onAnswer={(responses, hints) => submit(entry, responses, hints)}
                 onReveal={(hints) => submit(entry, null, hints)}

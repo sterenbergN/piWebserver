@@ -143,8 +143,29 @@ Worked out from the numbers, never AI, on the board and each subject:
   add to subjects that have it switched on. Steps in
   `scripts/daily-generator/INSTRUCTIONS.md` (6c).
 
+## Reader and Notes
+
+- **Reader books**: a resource can be linked to a book in the Reader (Resources
+  tab: link one, or add a book from the shelf). Whenever Skills loads, the
+  resource takes its progress from your reading: opening the book makes it in
+  progress, finishing it makes it done, and the pages so far are its progress.
+  It never goes backwards, and dropped resources are left alone.
+- **Topic pages**: a topic can have Notes pages (Topics tab): a new one is made
+  in a "Skills" notebook with the topic at the top and a link back, or tie a
+  page you already have. Thrown-away pages drop off by themselves.
+- **Work it out in Notes**: graded Skills questions have the same button as the
+  daily questions. The page goes in the Skills notebook, and its link opens
+  that one question again (`/skills/review?item=…`).
+- **Use my notes**: the question writer can put your notes into the prompt:
+  typed and handwritten notes in linked Reader books, and the typed text,
+  read handwriting and recording transcripts on a topic's Notes pages (each
+  ticked in or out, up to about 40,000 characters in all). Code in
+  `lib/skills/links.ts`.
+
 ## Phases
 
 1. Built 2026-11-12: everything above the line "Around the site".
 2. Built 2026-11-12: XP, the Today card, the habit link and weekly questions.
-3. Still open: a printable "skills summary" for work reviews.
+3. Built 2026-11-12: the Reader and Notes ties.
+4. Still open: a printable "skills summary" for work reviews; audiobooks (text to
+   speech for Reader books, and maybe YouTube audio) were discussed, not built.

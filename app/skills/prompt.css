@@ -49,3 +49,12 @@
 .sk-range { display: flex; align-items: center; gap: 0.75rem; }
 .sk-range input[type='range'] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .sk-range strong { min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Use my notes */
+.sk-material { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.sk-material label { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; cursor: pointer; }
+.sk-material input { width: auto !important; min-height: 0 !important; }
+.sk-material small { color: var(--muted); font-size: 0.8rem; }
+.sk-material details { margin: 0.2rem 0 0 1.6rem; font-size: 0.85rem; }
+.sk-material summary { color: var(--accent-light); cursor: pointer; }
+.sk-material pre { max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.4rem 0 0; padding: 0.6rem; border-radius: 10px; background: var(--input-bg); font-size: 0.8rem; }

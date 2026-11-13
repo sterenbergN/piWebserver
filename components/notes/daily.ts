@@ -49,7 +49,7 @@ export async function dailyChoices(date?: string) {
 
 /** Where the daily question lives on the site, to go back to it from its page. */
 /** Back to the question itself: on its day, or in Practice when it isn't one of the day's. */
-export const questionHref = (link: QuestionLink) => `/daily?date=${link.date}&question=${encodeURIComponent(link.id)}`;
+export const questionHref = (link: QuestionLink) => link.href ?? `/daily?date=${link.date}&question=${encodeURIComponent(link.id)}`;
 
 /** The same, as a full address, for a link on the page. */
 const questionUrl = (link: QuestionLink) => new URL(questionHref(link), window.location.origin).href;
@@ -58,7 +58,10 @@ const questionUrl = (link: QuestionLink) => new URL(questionHref(link), window.l
 function questionOf(url: string) {
   try {
     const parsed = new URL(url);
-    return parsed.origin === window.location.origin && parsed.pathname === '/daily' ? parsed.searchParams.get('question') : null;
+    if (parsed.origin !== window.location.origin) return null;
+    // A daily question, or a Skills one (its working links back to it in Skills).
+    if (parsed.pathname === '/daily') return parsed.searchParams.get('question');
+    return parsed.pathname === '/skills/review' ? parsed.searchParams.get('item') : null;
   } catch {
     return null;
   }

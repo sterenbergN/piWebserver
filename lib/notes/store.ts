@@ -131,6 +131,18 @@ export async function pagesTiedTo(userId: string, questions: string[]) {
   return out;
 }
 
+/** A notebook's pages and recordings, just read (sync writes the file back). */
+export async function readBookItems(userId: string, notebook: string): Promise<BookRecord[]> {
+  const file = await readJson<Partial<BookFile>>(bookPath(userId, notebook), {});
+  return Object.values(file.items ?? {}).filter((item) => !item.deleted);
+}
+
+/** What's on a page, just read. */
+export async function readPageElements(userId: string, notebook: string, page: string): Promise<PageElement[]> {
+  const file = await readJson<RecordFile<PageElement>>(pagePath(userId, notebook, page), emptyFile<PageElement>());
+  return Object.values(file.items ?? {}).filter((element) => !element.deleted);
+}
+
 export type PageInk = { strokes: { id: string; p: number[]; width: number; updatedAt: number }[]; seq: number };
 
 /** A page's pen strokes, as stored: the writing to read. Highlighter, tape and shapes aren't writing. */

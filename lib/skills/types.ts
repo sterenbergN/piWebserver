@@ -43,8 +43,12 @@ export type Topic = {
   selfRating?: number;
   selfRatedOn?: string;
   notes?: string;
+  /** Notes pages about this topic (in /notes). */
+  notePages?: NotesPageRef[];
   createdAt: string;
 };
+
+export type NotesPageRef = { notebook: string; page: string };
 
 export const RESOURCE_KINDS = ['book', 'course', 'video', 'article', 'paper', 'project', 'activity', 'other'] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
@@ -80,6 +84,8 @@ export type Resource = {
   startedOn?: string;
   finishedOn?: string;
   takeaways?: string;
+  /** The same book in the Reader: its reading progress keeps this one's up to date. */
+  readerBookId?: string;
   createdAt: string;
 };
 
@@ -127,7 +133,11 @@ export type Subject = {
   updatedAt: string;
 };
 
-export type SkillsData = { subjects: Subject[] };
+export type SkillsData = {
+  subjects: Subject[];
+  /** The Notes notebook that topic pages and question working go in, once made. */
+  notesNotebook?: string;
+};
 
 export const CARD_RATINGS = ['again', 'hard', 'good', 'easy'] as const;
 export type CardRating = (typeof CARD_RATINGS)[number];

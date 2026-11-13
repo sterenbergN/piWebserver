@@ -8,7 +8,8 @@ import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { CopyPrompt, ErrorNote, LevelBar, Loading, PasteReply, SignedOutCard, StateChip } from '@/components/skills/Ui';
-import { SignedOut, skillsGet, skillsPost, type SubjectResponse } from '@/components/skills/api';
+import { SignedOut, skillsGet, skillsPost, type Material, type SubjectResponse } from '@/components/skills/api';
+import MyNotes from '@/components/skills/prompt/MyNotes';
 import { QuestionRow } from '@/components/skills/prompt/QuestionPreview';
 import { QUESTION_STYLES, buildQuestionsPrompt, type QuestionStyle } from '@/lib/skills/prompts';
 import { SkillsInputError, parseQuestionsReply, type ParsedQuestions } from '@/lib/skills/parse';
@@ -68,6 +69,7 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
   const [count, setCount] = useState(10);
   const [difficulty, setDifficulty] = useState<'auto' | number>('auto');
   const [extra, setExtra] = useState('');
+  const [material, setMaterial] = useState<Material[]>([]);
   const [reply, setReply] = useState('');
   const [off, setOff] = useState<Off>({ reply: '', skip: new Set() });
   const [busy, setBusy] = useState(false);
@@ -82,8 +84,8 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
   const prompt = useMemo(() => buildQuestionsPrompt({
     subject: { name: subject.name, resources: subject.resources, items: data.items.map((r) => ({ title: r.title, retired: r.retired, feedback: r.feedback })) },
     topics: selected.map((t) => ({ ...t, description: subject.topics.find((x) => x.id === t.topicId)?.description })),
-    count, style, difficulty, extra: extra.trim() || undefined,
-  }), [subject, data.items, selected, count, style, difficulty, extra]);
+    count, style, difficulty, extra: extra.trim() || undefined, material,
+  }), [subject, data.items, selected, count, style, difficulty, extra, material]);
 
   const parsed = useMemo((): { result?: ParsedQuestions; hint?: string } => {
     if (!reply.trim()) return {};
@@ -241,6 +243,8 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
           <textarea rows={2} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="e.g. use SI units, or focus on troubleshooting" />
         </label>
       </section>
+
+      <MyNotes subjectId={subject.id} topicIds={selected.map((t) => t.topicId)} onChange={setMaterial} />
 
       {selected.length === 0 ? (
         <p className="sk-empty">Pick at least one topic to get a prompt.</p>
