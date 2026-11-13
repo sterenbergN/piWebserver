@@ -39,8 +39,9 @@ export function retentionAfter(days: number, stability: number) {
 /** The level today: the fitted level, sliding toward half of it as it fades. */
 export const fadedLevel = (fitted: number, retention: number) => fitted * (0.5 + 0.5 * retention);
 
+/** Named from the level as shown (one decimal), so 4.97 shown as "5.0" is called Expert, not Proficient. */
 export function levelName(level: number) {
-  return LEVELS[Math.min(MAX_LEVEL, Math.max(0, Math.floor(level + 1e-9)))].name;
+  return LEVELS[Math.min(MAX_LEVEL, Math.max(0, Math.floor(Math.round(level * 10) / 10 + 1e-9)))].name;
 }
 
 /** Graded questions: parts right, less for extra checks and hints; nothing for opening the solution. */
@@ -354,11 +355,13 @@ export function nextSteps(subject: Subject, stats: SubjectStats, today: DateKey)
 export type Tier = 'sme' | 'proficient' | 'competent' | 'developing' | 'not-started';
 export const TIER_LABEL: Record<Tier, string> = { sme: 'Subject-matter expert', proficient: 'Proficient', competent: 'Competent', developing: 'Developing', 'not-started': 'Not started' };
 
+/** The same cut-offs as the level names, so a tier never disagrees with the level shown beside it. */
 export function tierOf(stats: Pick<SubjectStats, 'sme' | 'level'>): Tier {
   if (stats.sme) return 'sme';
-  if (stats.level >= 3.5) return 'proficient';
-  if (stats.level >= 2.5) return 'competent';
-  if (stats.level >= 0.5) return 'developing';
+  const shown = Math.round(stats.level * 10) / 10;
+  if (shown >= 4) return 'proficient';
+  if (shown >= 3) return 'competent';
+  if (shown >= 0.5) return 'developing';
   return 'not-started';
 }
 

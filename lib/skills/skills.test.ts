@@ -137,6 +137,11 @@ test('question replies are validated one by one', () => {
   // With a fallback topic, a stray topic name lands there with a warning.
   const fallback = parseQuestionsReply(GRADED_REPLY, subject, { fallbackTopicId: nozzles.id }).questions[2];
   assert.ok(fallback.ok && fallback.item.topicId === nozzles.id && fallback.warning);
+  // Slips with one sensible reading are forgiven: an empty unit, a percent tolerance, no part id.
+  const slips = parseQuestionsReply(JSON.stringify({ questions: [{ type: 'graded', topic: 'Rocket equation', difficulty: 2, title: 'Ratio', prompt: 'Mass ratio?', parts: [{ answer: { type: 'numeric', value: 2.7, unit: '', tolerance: 2 } }], solution: 'e', sources: [{ title: 'x' }] }] }), subject);
+  const slip = slips.questions[0];
+  assert.ok(slip.ok && slip.item.kind === 'graded', JSON.stringify(slip));
+  assert.deepEqual(slip.item.question.parts[0], { id: 'a', answer: { type: 'numeric', value: 2.7, tolerance: 0.02 } });
   // A missing source is filled in with a warning to double-check, not refused.
   assert.ok(fallback.ok && fallback.item.kind === 'graded' && fallback.item.question.sources[0].title.startsWith('No source'));
 });

@@ -124,6 +124,23 @@ function matchTopic(topics: Topic[], name: string, fallbackId?: string): { topic
   return { topic: fallback, guessed: !!fallback };
 }
 
+/**
+ * Slips AIs often make that have only one sensible reading: an empty unit for a
+ * unitless answer, a tolerance written as a percent (2 for 2 %), a missing part id.
+ */
+function forgivePart(part: unknown, index: number) {
+  if (!isRecord(part)) return part;
+  const out: Record<string, unknown> = { ...part };
+  if (out.id === undefined) out.id = String.fromCharCode(97 + index);
+  if (isRecord(out.answer)) {
+    const answer: Record<string, unknown> = { ...out.answer };
+    if (answer.unit === '' || answer.unit === null) delete answer.unit;
+    if (typeof answer.tolerance === 'number' && answer.tolerance > 0.5 && answer.tolerance <= 50) answer.tolerance /= 100;
+    out.answer = answer;
+  }
+  return out;
+}
+
 export function parseQuestionsReply(raw: string, subject: Pick<Subject, 'topics'>, options: { fallbackTopicId?: string } = {}): ParsedQuestions {
   const { value, cutOff } = reply(raw);
   const list = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.questions) ? value.questions : null;
@@ -155,7 +172,8 @@ export function parseQuestionsReply(raw: string, subject: Pick<Subject, 'topics'
 
     const errors: string[] = [];
     const sources = Array.isArray(rawQ.sources) && rawQ.sources.length ? rawQ.sources : [{ title: 'No source given (written by an AI; double-check it)' }];
-    const checked = checkQuestion({ ...rawQ, id: 'q', track: 'mechanical', topic: topic.name, formulas: undefined, sources, check: undefined }, where, new Set(), errors);
+    const parts = Array.isArray(rawQ.parts) ? rawQ.parts.map(forgivePart) : rawQ.parts;
+    const checked = checkQuestion({ ...rawQ, id: 'q', track: 'mechanical', topic: topic.name, formulas: undefined, sources, parts, check: undefined }, where, new Set(), errors);
     if (!checked) return { ok: false, title, errors: errors.map((e) => e.replace(`${where}: `, '').replace(`${where}.`, '')) };
     const { track: _track, topic: _topic, id: _id, ...question } = checked;
     return { ok: true, title: question.title, topicName: topic.name, ...(warning ? { warning } : {}), item: { kind: 'graded', topicId: topic.id, question: { id: '', ...question } } };
