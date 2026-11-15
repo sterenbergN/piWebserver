@@ -1,8 +1,8 @@
 'use client';
 
 // Plan a subject with AI: tell it about you, copy the prompt, paste the reply,
-// tick what to keep. Nothing is saved until the last button, and the reply is
-// read again on the server then, so the preview here is only a courtesy.
+// tick what to keep (topics, resources, explicit study steps, and roadmap).
+// Nothing is saved until the last button, and the reply is read again on the server.
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -11,10 +11,10 @@ import { CopyPrompt, ErrorNote, Loading, PasteReply, SignedOutCard } from '@/com
 import { SignedOut, skillsGet, skillsPost, type SubjectResponse } from '@/components/skills/api';
 import { PlanPreview, type RoadmapChoice } from '@/components/skills/prompt/PlanPreview';
 import { LEARNING_STYLES, buildPlanPrompt } from '@/lib/skills/prompts';
-import { SkillsInputError, parsePlanReply, type ParsedPlan } from '@/lib/skills/parse';
+import { SkillsInputError, parsePlanReply, sameName, type ParsedPlan } from '@/lib/skills/parse';
 import { LEVELS } from '@/lib/skills/types';
 
-type Done = { topics: number; resources: number; roadmap: boolean };
+type Done = { topics: number; resources: number; steps: number; roadmap: boolean };
 type Off = { reply: string; topics: Set<string>; resources: Set<number> };
 
 export default function PlanPage() {
@@ -57,6 +57,9 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
   const [extra, setExtra] = useState('');
   const [reply, setReply] = useState('');
   const [off, setOff] = useState<Off>({ reply: '', topics: new Set(), resources: new Set() });
+  const [includeSteps, setIncludeSteps] = useState(true);
+  const [replaceSteps, setReplaceSteps] = useState(false);
+  const [linkParents, setLinkParents] = useState(false);
   const [roadmap, setRoadmap] = useState<RoadmapChoice>(subject.roadmap?.trim() ? 'append' : true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -73,14 +76,20 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
     skillsPost('edit-subject', { subjectId: id, changes: { background, hoursPerWeek: hoursValue ?? null } }).catch(() => {});
   }
 
+  const otherSubjects = useMemo(
+    () => (data.allSubjects ?? []).filter((s) => s.id !== id),
+    [data.allSubjects, id],
+  );
+
   const prompt = useMemo(
     () => buildPlanPrompt({
       subject: { ...subject, background: background.trim() || undefined, hoursPerWeek: hoursValue },
       stats: replan ? data.stats : undefined,
       styles,
       extra: extra.trim() || undefined,
+      otherSubjects,
     }),
-    [subject, data.stats, replan, background, hoursValue, styles, extra],
+    [subject, data.stats, replan, background, hoursValue, styles, extra, otherSubjects],
   );
 
   const parsed = useMemo((): { plan?: ParsedPlan; hint?: string } => {
@@ -108,17 +117,41 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
 
   const topicKeys = plan ? plan.topics.filter((t) => !t.existingId && !offTopics.has(t.key)).map((t) => t.key) : [];
   const resourceIndexes = plan ? plan.resources.flatMap((r, i) => (!r.existingId && !offResources.has(i) ? [i] : [])) : [];
+  const stepsCount = plan && includeSteps ? plan.steps.length : 0;
   const roadmapValue: RoadmapChoice = plan?.roadmap ? roadmap : false;
+
+  const matchedParentSubjects = useMemo(() => {
+    if (!plan?.parentSubjects.length) return [];
+    const existing = new Set(subject.parentIds ?? []);
+    return otherSubjects.filter(
+      (s) => !existing.has(s.id) && plan.parentSubjects.some((name) => sameName(s.name, name)),
+    );
+  }, [plan, otherSubjects, subject.parentIds]);
 
   async function add() {
     if (!plan || busy) return;
     setBusy(true);
     setError('');
     try {
-      const res = await skillsPost<{ topics: number; resources: number; roadmap: boolean }>('import-plan', {
-        subjectId: id, reply, topicKeys, resourceIndexes, roadmap: roadmapValue,
+      const res = await skillsPost<{ topics: number; resources: number; roadmap: boolean; steps?: number }>('import-plan', {
+        subjectId: id,
+        reply,
+        topicKeys,
+        resourceIndexes,
+        roadmap: roadmapValue,
+        includeSteps,
+        replaceSteps,
       });
-      setDone({ topics: res.topics, resources: res.resources, roadmap: !!res.roadmap });
+      if (linkParents && matchedParentSubjects.length > 0) {
+        const merged = [...new Set([...(subject.parentIds ?? []), ...matchedParentSubjects.map((s) => s.id)])];
+        await skillsPost('set-parents', { subjectId: id, parentIds: merged });
+      }
+      setDone({
+        topics: res.topics,
+        resources: res.resources,
+        steps: res.steps ?? 0,
+        roadmap: !!res.roadmap,
+      });
       void reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t add the plan. Try again.');
@@ -135,7 +168,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         <p>
           {replan
             ? 'It will see where you stand now, so it adds what’s missing instead of starting over.'
-            : 'Tell an AI about you and it will lay out topics, books, projects and a roadmap. You pick what to keep.'}
+            : 'Tell an AI about you and it will lay out topics, books, projects, explicit steps and a roadmap. You pick what to keep.'}
         </p>
       </div>
     </header>
@@ -145,16 +178,18 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
     const parts = [
       `${done.topics} ${done.topics === 1 ? 'topic' : 'topics'}`,
       `${done.resources} ${done.resources === 1 ? 'resource' : 'resources'}`,
+      ...(done.steps > 0 ? [`${done.steps} ${done.steps === 1 ? 'step' : 'steps'}`] : []),
     ];
     return (
       <main className="sk sk-narrow">
         {header}
         <section className="sk-card sk-done" role="status">
-          <h2>Added {parts.join(' and ')}</h2>
+          <h2>Added {parts.join(', ')}</h2>
           {done.roadmap && <p className="sk-hint">The roadmap is saved on the subject page.</p>}
           <p className="sk-hint">Next, tell it where you really are, so the levels start from something true.</p>
           <div className="sk-actions">
             <Link className="btn btn-primary" href={`/skills/${id}?tab=topics`}>Rate yourself on the topics</Link>
+            {done.steps > 0 && <Link className="btn btn-secondary" href={`/skills/${id}?tab=steps`}>See study steps</Link>}
             <Link className="btn btn-secondary" href={`/skills/${id}/questions?style=placement`}>Take a placement test</Link>
             <Link className="btn btn-secondary" href={`/skills/${id}`}>See the subject</Link>
           </div>
@@ -163,7 +198,12 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
     );
   }
 
-  const count = topicKeys.length + resourceIndexes.length;
+  const count = topicKeys.length + resourceIndexes.length + stepsCount;
+  const buttonSummary = [
+    `${topicKeys.length} ${topicKeys.length === 1 ? 'topic' : 'topics'}`,
+    `${resourceIndexes.length} ${resourceIndexes.length === 1 ? 'resource' : 'resources'}`,
+    ...(stepsCount > 0 ? [`${stepsCount} ${stepsCount === 1 ? 'step' : 'steps'}`] : []),
+  ].join(', ');
 
   return (
     <main className="sk sk-narrow">
@@ -198,13 +238,13 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         </label>
       </section>
 
-        <CopyPrompt title="Copy this into your AI" prompt={prompt}>
-          <p className="sk-hint">
-            {replan
-              ? `It includes your ${subject.topics.length} topics and where you stand on each.`
-              : 'A thinking model picks better books and sets better stages.'}
-          </p>
-        </CopyPrompt>
+      <CopyPrompt title="Copy this into your AI" prompt={prompt}>
+        <p className="sk-hint">
+          {replan
+            ? `It includes your ${subject.topics.length} topics and where you stand on each.`
+            : 'A thinking model picks better books, sets clearer stages, and writes concrete study steps.'}
+        </p>
+      </CopyPrompt>
 
       <PasteReply value={reply} onChange={setReply}>
         {parsed.hint && <p className="sk-hint">{parsed.hint}</p>}
@@ -215,17 +255,35 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
           <PlanPreview
             plan={plan}
             subject={subject}
+            allSubjects={data.allSubjects}
             offTopics={offTopics}
             offResources={offResources}
             onToggleTopic={toggleTopic}
             onToggleResource={toggleResource}
+            includeSteps={includeSteps}
+            onIncludeSteps={setIncludeSteps}
+            replaceSteps={replaceSteps}
+            onReplaceSteps={setReplaceSteps}
             roadmap={roadmap}
             onRoadmap={setRoadmap}
           />
+          {matchedParentSubjects.length > 0 && (
+            <label className="sk-card sk-check">
+              <input
+                type="checkbox"
+                checked={linkParents}
+                onChange={(e) => setLinkParents(e.target.checked)}
+              />
+              <span>
+                Also link matched parent skills:{' '}
+                <strong>{matchedParentSubjects.map((s) => `${s.icon} ${s.name}`).join(', ')}</strong>
+              </span>
+            </label>
+          )}
           {error && <ErrorNote>{error}</ErrorNote>}
           <div className="sk-actions">
-            <button type="button" className="btn btn-primary" disabled={busy || (count === 0 && roadmapValue === false)} onClick={add}>
-              {busy ? 'Adding…' : `Add ${topicKeys.length} ${topicKeys.length === 1 ? 'topic' : 'topics'} and ${resourceIndexes.length} ${resourceIndexes.length === 1 ? 'resource' : 'resources'}`}
+            <button type="button" className="btn btn-primary" disabled={busy || (count === 0 && roadmapValue === false && !linkParents)} onClick={add}>
+              {busy ? 'Adding…' : `Add ${buttonSummary}`}
             </button>
           </div>
         </>

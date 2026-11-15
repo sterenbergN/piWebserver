@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { skillsGet, skillsPost, SignedOut, type BoardResponse } from '@/components/skills/api';
+import { fmtLevel, skillsGet, skillsPost, SignedOut, type BoardResponse } from '@/components/skills/api';
 import { ErrorNote, LevelPicker, LevelScale, Loading, SignedOutCard } from '@/components/skills/Ui';
+import type { SubjectCard } from '@/lib/skills/model';
 import type { SubjectStatus } from '@/lib/skills/types';
 
-// Add a subject: just enough to start (name, area, where you are, where you want
-// to be). Topics and resources come from the AI plan, which this can jump to.
+// Add a subject: just enough to start (name, area, optional parent skills,
+// where you are, where you want to be). Topics, steps and resources come from
+// the AI plan, which this can jump to.
 
 const ICONS = ['🚀', '⚙️', '🎛️', '🔥', '💻', '🧪', '📐', '🔌', '🗣️', '📈'];
 const STATUS_CHOICES: { value: SubjectStatus; title: string; note: string }[] = [
@@ -22,6 +24,7 @@ function NewSubject() {
   const router = useRouter();
   const params = useSearchParams();
   const [areas, setAreas] = useState<string[]>([]);
+  const [existingSubjects, setExistingSubjects] = useState<SubjectCard[]>([]);
   const [signedOut, setSignedOut] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [name, setName] = useState(params.get('name') ?? '');
@@ -32,16 +35,27 @@ function NewSubject() {
   const [goal, setGoal] = useState('');
   const [background, setBackground] = useState('');
   const [hours, setHours] = useState('');
+  const [parentIds, setParentIds] = useState<string[]>(() => {
+    const p = params.get('parent');
+    return p ? [p] : [];
+  });
   const [plan, setPlan] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     skillsGet<BoardResponse>()
-      .then((r) => setAreas(r.board.areas))
+      .then((r) => {
+        setAreas(r.board.areas);
+        setExistingSubjects([...r.board.subjects].sort((a, b) => a.name.localeCompare(b.name)));
+      })
       .catch((e) => { if (e instanceof SignedOut) setSignedOut(true); })
       .finally(() => setLoaded(true));
   }, []);
+
+  function toggleParent(id: string) {
+    setParentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,9 +64,17 @@ function NewSubject() {
     setError('');
     try {
       const hoursPerWeek = hours.trim() ? Number(hours) : undefined;
+      const validParents = parentIds.filter((pid) => existingSubjects.some((s) => s.id === pid));
       const { id } = await skillsPost<{ id: string }>('add-subject', {
-        name: name.trim(), icon: icon.trim() || '🎯', area: area.trim(), status, target, goal, background,
+        name: name.trim(),
+        icon: icon.trim() || '🎯',
+        area: area.trim(),
+        status,
+        target,
+        goal,
+        background,
         hoursPerWeek: hoursPerWeek !== undefined && Number.isFinite(hoursPerWeek) ? hoursPerWeek : undefined,
+        ...(validParents.length ? { parentIds: validParents } : {}),
       });
       router.push(plan ? `/skills/${id}/plan` : `/skills/${id}`);
     } catch (err) {
@@ -130,6 +152,32 @@ function NewSubject() {
           <span>Hours per week</span>
           <input type="number" min={0} max={80} step="0.5" inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value)} />
         </label>
+
+        {existingSubjects.length > 0 && (
+          <fieldset className="sk-parent-pick">
+            <legend>Parent / Prerequisite Skills (optional)</legend>
+            <p className="sk-hint">Connect this skill under existing skills if it is a subskill or builds directly on them.</p>
+            <div className="sk-parent-grid">
+              {existingSubjects.map((s) => {
+                const checked = parentIds.includes(s.id);
+                return (
+                  <label key={s.id} className={`sk-parent-option${checked ? ' is-on' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleParent(s.id)}
+                    />
+                    <span aria-hidden>{s.icon}</span>
+                    <span className="sk-parent-label">
+                      <strong>{s.name}</strong>
+                      <small>{s.area} · {fmtLevel(s.level)}</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
 
         <label className="sk-new-check">
           <input type="checkbox" checked={plan} onChange={(e) => setPlan(e.target.checked)} /> Plan it with AI next

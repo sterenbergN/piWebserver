@@ -1,14 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import KnowledgeVault from '@/components/skills/KnowledgeVault';
+import SchedulePanel from '@/components/skills/SchedulePanel';
 import { skillsGet, SignedOut, type BoardResponse, fmtLevel } from '@/components/skills/api';
 import { ConfidenceChip, ErrorNote, LevelBar, LevelScale, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import { TIER_LABEL, type NextStepKind, type SubjectCard, type Tier } from '@/lib/skills/model';
 import { STATUS_LABEL, SUBJECT_STATUSES, type SubjectStatus } from '@/lib/skills/types';
 
-// The skill board: where I stand (who's the SME), what to do next, and every
-// subject by area. Filter and sort are remembered on this device only.
+// The skill board: schedule queue, where I stand (who's the SME), skill tree
+// interconnections, what to do next, every subject by area, and the Vault graph.
 
 const TIERS: Tier[] = ['sme', 'proficient', 'competent', 'developing', 'not-started'];
 const STEP_ICON: Record<NextStepKind, string> = {
@@ -18,6 +20,8 @@ const EXAMPLES = ['Rocket propulsion', 'PID tuning', 'Thermodynamics', 'TIA Port
 
 type StatusFilter = 'all' | SubjectStatus;
 type SortKey = 'level' | 'gap' | 'name' | 'tested';
+type BoardView = 'board' | 'graph';
+
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'level', label: 'Level' },
   { key: 'gap', label: 'Furthest from target' },
@@ -71,19 +75,31 @@ function Chips({ names, kind }: { names: string[]; kind: 'strong' | 'weak' | 'fa
   );
 }
 
-function Card({ s }: { s: SubjectCard }) {
+function Card({
+  s,
+  parents,
+  subskillCount,
+}: {
+  s: SubjectCard;
+  parents: SubjectCard[];
+  subskillCount: number;
+}) {
   const facts = [
     s.due > 0 ? `${s.due} due` : null,
     `${s.topics} topic${s.topics === 1 ? '' : 's'}`,
+    s.steps.total > 0 ? `${s.steps.done}/${s.steps.total} steps` : null,
     s.resources.total > 0 ? `${s.resources.done}/${s.resources.total} resources done` : null,
     testedText(s.lastTested),
   ].filter(Boolean);
+
   return (
     <li>
-      <Link href={`/skills/${s.id}`} className="sk-board-card">
+      <article className="sk-board-card">
         <span className="sk-board-card-top">
           <span className="sk-board-icon" aria-hidden>{s.icon}</span>
-          <span className="sk-board-name">{s.name}</span>
+          <Link href={`/skills/${s.id}`} className="sk-board-card-link">
+            <span className="sk-board-name">{s.name}</span>
+          </Link>
         </span>
         <span className="sk-board-meta">
           <span className="sk-board-status">{STATUS_LABEL[s.status]}</span>
@@ -95,10 +111,74 @@ function Card({ s }: { s: SubjectCard }) {
           <ConfidenceChip confidence={s.confidence} />
         </span>
         <span className="sk-hint">{facts.join(' · ')}</span>
+        {(parents.length > 0 || subskillCount > 0) && (
+          <div className="sk-board-rel-row">
+            {parents.length > 0 && (
+              <span className="sk-board-rel-group">
+                <span className="sk-muted">Part of:</span>
+                {parents.map((p) => (
+                  <Link key={p.id} href={`/skills/${p.id}`} className="sk-chip sk-rel-chip">
+                    <span aria-hidden>{p.icon}</span> {p.name}
+                  </Link>
+                ))}
+              </span>
+            )}
+            {subskillCount > 0 && (
+              <span className="sk-chip sk-subskill-count">
+                Subskills: {subskillCount}
+              </span>
+            )}
+          </div>
+        )}
         <Chips names={s.strong} kind="strong" />
         <Chips names={s.weak} kind="weak" />
         <Chips names={s.fading} kind="fading" />
-      </Link>
+      </article>
+    </li>
+  );
+}
+
+function HierarchyBranch({
+  node,
+  childrenMap,
+  path,
+}: {
+  node: SubjectCard;
+  childrenMap: Map<string, SubjectCard[]>;
+  path: Set<string>;
+}) {
+  const children = (childrenMap.get(node.id) ?? []).filter((c) => !path.has(c.id));
+  return (
+    <li className="sk-hierarchy-item">
+      <div className="sk-hierarchy-node">
+        <Link href={`/skills/${node.id}`} className="sk-hierarchy-link">
+          <span aria-hidden>{node.icon}</span>
+          <strong>{node.name}</strong>
+        </Link>
+        <span className="sk-chip sk-hierarchy-lvl">
+          {fmtLevel(node.level)} · {node.levelName}
+        </span>
+        <span className="sk-muted">{STATUS_LABEL[node.status]}</span>
+        {node.steps.total > 0 && (
+          <span className="sk-muted">{node.steps.done}/{node.steps.total} steps</span>
+        )}
+      </div>
+      {children.length > 0 && (
+        <ul className="sk-hierarchy-children">
+          {children.map((child) => {
+            const nextPath = new Set(path);
+            nextPath.add(child.id);
+            return (
+              <HierarchyBranch
+                key={child.id}
+                node={child}
+                childrenMap={childrenMap}
+                path={nextPath}
+              />
+            );
+          })}
+        </ul>
+      )}
     </li>
   );
 }
@@ -128,6 +208,7 @@ function Empty() {
       </ol>
       <div className="sk-actions">
         <Link href="/skills/new" className="btn btn-primary">Add your first subject</Link>
+        <Link href="/skills/plan" className="btn btn-secondary">🗓️ Interconnected Plan &amp; Brainstorm</Link>
       </div>
       <p className="sk-hint">Or start from an idea:</p>
       <div className="sk-chips">
@@ -145,22 +226,77 @@ export default function SkillsBoardPage() {
   const [error, setError] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [sort, setSort] = useState<SortKey>('level');
+  const [view, setView] = useState<BoardView>('board');
+
+  const loadBoard = useCallback(async () => {
+    try {
+      const r = await skillsGet<BoardResponse>();
+      setBoard(r.board);
+    } catch (e) {
+      if (e instanceof SignedOut) setSignedOut(true);
+      else setError(e instanceof Error ? e.message : 'Couldn’t load your skills.');
+    }
+  }, []);
 
   useEffect(() => {
     // Restore after mount so server and client markup agree.
     setStatus(remembered<StatusFilter>(FILTER_KEY, ['all', ...SUBJECT_STATUSES], 'all'));
     setSort(remembered<SortKey>(SORT_KEY, SORTS.map((s) => s.key), 'level'));
-    skillsGet<BoardResponse>()
-      .then((r) => setBoard(r.board))
-      .catch((e) => (e instanceof SignedOut ? setSignedOut(true) : setError(e instanceof Error ? e.message : 'Couldn’t load your skills.')));
-  }, []);
+    try {
+      const v = new URLSearchParams(window.location.search).get('view');
+      if (v === 'graph') setView('graph');
+    } catch { /* ignore */ }
+    void loadBoard();
+  }, [loadBoard]);
+
+  function switchView(next: BoardView) {
+    setView(next);
+    try {
+      const url = new URL(window.location.href);
+      if (next === 'graph') url.searchParams.set('view', 'graph');
+      else url.searchParams.delete('view');
+      window.history.replaceState(null, '', url.toString());
+    } catch { /* ignore */ }
+  }
 
   const shown = useMemo(() => (board ? board.subjects.filter((s) => status === 'all' || s.status === status).sort(sorter(sort)) : []), [board, status, sort]);
+
   const byTier = useMemo(() => {
     const map = new Map<Tier, SubjectCard[]>();
     for (const s of board?.subjects ?? []) map.set(s.tier, [...(map.get(s.tier) ?? []), s]);
     for (const list of map.values()) list.sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
     return map;
+  }, [board]);
+
+  const { subjectById, childrenMap, hierarchyRoots, hasInterconnections } = useMemo(() => {
+    const subjects = board?.subjects ?? [];
+    const byId = new Map(subjects.map((s) => [s.id, s]));
+    const children = new Map<string, SubjectCard[]>();
+    let linked = false;
+
+    for (const s of subjects) {
+      for (const pid of s.parentIds ?? []) {
+        if (!byId.has(pid) || pid === s.id) continue;
+        linked = true;
+        const list = children.get(pid);
+        if (list) list.push(s);
+        else children.set(pid, [s]);
+      }
+    }
+    for (const list of children.values()) {
+      list.sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+    }
+
+    const roots = subjects
+      .filter((s) => !(s.parentIds ?? []).some((pid) => byId.has(pid)) && (children.get(s.id)?.length ?? 0) > 0)
+      .sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+
+    return {
+      subjectById: byId,
+      childrenMap: children,
+      hierarchyRoots: roots,
+      hasInterconnections: linked,
+    };
   }, [board]);
 
   if (signedOut) return <main className="sk sk-board"><SignedOutCard /></main>;
@@ -184,17 +320,47 @@ export default function SkillsBoardPage() {
         </div>
         <div className="sk-actions">
           <Link href="/skills/review" className="btn btn-primary">{board.due > 0 ? `Review (${board.due})` : 'Test me'}</Link>
+          <Link href="/skills/plan" className="btn btn-secondary">🗓️ Interconnected Plan &amp; Brainstorm</Link>
           <Link href="/skills/new" className="btn btn-secondary">+ Add a subject</Link>
         </div>
       </header>
 
-      {board.subjects.length === 0 ? <Empty /> : (
+      {board.subjects.length > 0 && (
+        <div className="sk-view-switch" role="tablist" aria-label="Skills workspace view">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'board'}
+            className={`sk-view-btn${view === 'board' ? ' is-active' : ''}`}
+            onClick={() => switchView('board')}
+          >
+            Board &amp; Schedule
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'graph'}
+            className={`sk-view-btn${view === 'graph' ? ' is-active' : ''}`}
+            onClick={() => switchView('graph')}
+          >
+            🕸️ Knowledge Graph
+          </button>
+        </div>
+      )}
+
+      {view === 'graph' && board.subjects.length > 0 ? (
+        <KnowledgeVault />
+      ) : board.subjects.length === 0 ? (
+        <Empty />
+      ) : (
         <>
           <dl className="sk-board-stats">
             {stats.map((s) => (
               <div key={s.label}><dd>{s.value}</dd><dt>{s.label}</dt></div>
             ))}
           </dl>
+
+          <SchedulePanel board={board} onReload={loadBoard} />
 
           <section className="sk-card" aria-labelledby="sk-stand">
             <h2 id="sk-stand">Where you stand</h2>
@@ -214,6 +380,28 @@ export default function SkillsBoardPage() {
               </div>
             ))}
           </section>
+
+          {hasInterconnections && hierarchyRoots.length > 0 && (
+            <section className="sk-card sk-hierarchy-card" aria-labelledby="sk-hierarchy">
+              <div className="sk-card-head">
+                <div>
+                  <h2 id="sk-hierarchy">Interconnected Skill Hierarchy</h2>
+                  <p className="sk-hint">Prerequisite parent skills and the subskills that build on them.</p>
+                </div>
+                <Link href="/skills/plan" className="sk-small-btn">Plan across graph →</Link>
+              </div>
+              <ul className="sk-hierarchy-tree">
+                {hierarchyRoots.map((root) => (
+                  <HierarchyBranch
+                    key={root.id}
+                    node={root}
+                    childrenMap={childrenMap}
+                    path={new Set([root.id])}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
 
           {board.nextSteps.length > 0 && (
             <section className="sk-card" aria-labelledby="sk-next">
@@ -252,7 +440,13 @@ export default function SkillsBoardPage() {
             <section key={area} aria-label={area} className="sk-board-area">
               <h2>{area}</h2>
               <ul className="sk-board-grid">
-                {shown.filter((s) => s.area === area).map((s) => <Card key={s.id} s={s} />)}
+                {shown.filter((s) => s.area === area).map((s) => {
+                  const parents = (s.parentIds ?? [])
+                    .map((pid) => subjectById.get(pid))
+                    .filter((p): p is SubjectCard => !!p);
+                  const subskillCount = childrenMap.get(s.id)?.length ?? 0;
+                  return <Card key={s.id} s={s} parents={parents} subskillCount={subskillCount} />;
+                })}
               </ul>
             </section>
           ))}

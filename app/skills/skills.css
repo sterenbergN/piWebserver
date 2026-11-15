@@ -92,5 +92,60 @@
 
 /* Tabs */
 .sk-tabs { display: flex; gap: 0.25rem; overflow-x: auto; border-bottom: 1px solid var(--surface-border); scrollbar-width: none; }
-.sk-tabs button { flex: none; padding: 0.55rem 0.9rem; border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.sk-tabs button { flex: none; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.55rem 0.9rem; border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
 .sk-tabs button[aria-selected='true'] { color: var(--foreground); border-bottom-color: var(--accent); }
+.sk-tab-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: var(--input-bg); border: 1px solid var(--surface-border); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sk-tabs button[aria-selected='true'] .sk-tab-badge { color: var(--foreground); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* View & mode switcher */
+.sk-view-switch { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.3rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); align-self: flex-start; max-width: 100%; }
+.sk-view-btn { border: 1px solid transparent; border-radius: 10px; padding: 0.45rem 0.95rem; background: transparent; color: var(--muted); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background-color 0.15s, color 0.15s, border-color 0.15s; }
+.sk-view-btn:hover { color: var(--foreground); background: var(--surface-hover); }
+.sk-view-btn.is-active { background: var(--accent); color: var(--primary-fg); border-color: var(--accent); }
+
+/* Schedule & step amount / duration badges */
+.sk-sched-amount { background: color-mix(in srgb, var(--accent) 14%, var(--background)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--foreground); }
+.sk-sched-mins { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Parent / prerequisite skill multi-select picker */
+.sk-parent-pick { margin: 0; padding: 0.75rem 0.9rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.sk-parent-pick legend { padding: 0 0.35rem; font-size: 0.85rem; font-weight: 600; }
+.sk-parent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr)); gap: 0.45rem; max-height: 14rem; overflow-y: auto; }
+.sk-parent-option { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--surface-glass); cursor: pointer; min-width: 0; }
+.sk-parent-option.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--background)); }
+.sk-parent-option.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.sk-parent-option input[type='checkbox'] { flex: none; width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+.sk-parent-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.sk-parent-label strong { font-size: 0.88rem; overflow-wrap: anywhere; }
+.sk-parent-label small { color: var(--muted); font-size: 0.76rem; }
+
+/* Plan preview step rows */
+.sk-pp-parents, .sk-pp-steps { gap: 0.5rem; }
+.sk-pp-step-num { flex: none; min-width: 1.5rem; font-size: 0.84rem; font-weight: 700; color: var(--muted); padding-top: 0.15rem; font-variant-numeric: tabular-nums; }
+.sk-pp-step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.45rem; min-width: 0; }
+.sk-pp-list.is-have { opacity: 0.55; }
+
+/* Interconnected AI Planner & Brainstormer (/skills/plan) */
+.sk-planner-focus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.45rem; }
+.sk-planner-focus-item { display: flex; align-items: center; gap: 0.45rem; padding: 0.45rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); cursor: pointer; min-width: 0; }
+.sk-planner-focus-item:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--background)); }
+.sk-planner-focus-item input[type='checkbox'] { flex: none; width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+.sk-planner-focus-name { flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+.sk-planner-preview { gap: 1rem; }
+.sk-planner-section { display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.5rem; border-top: 1px solid var(--surface-border); }
+.sk-planner-subplans, .sk-planner-timeline { display: flex; flex-direction: column; gap: 0.65rem; }
+.sk-planner-subplan { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.7rem 0.8rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--card-bg); }
+.sk-planner-summary-list { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.94rem; }
+
+.sk-brainstorm-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
+.sk-brainstorm-card { display: flex; flex-direction: column; gap: 0.55rem; padding: 0.85rem 0.95rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--background); }
+.sk-brainstorm-card.is-on { border-color: color-mix(in srgb, var(--accent) 55%, var(--surface-border)); }
+.sk-brainstorm-card.is-off { opacity: 0.65; }
+.sk-brainstorm-head { display: flex; align-items: center; gap: 0.6rem; cursor: pointer; }
+.sk-brainstorm-head input[type='checkbox'] { flex: none; width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
+.sk-brainstorm-icon { font-size: 1.35rem; line-height: 1; }
+.sk-brainstorm-title { display: flex; flex-direction: column; min-width: 0; }
+.sk-brainstorm-title strong { font-size: 1rem; overflow-wrap: anywhere; }
+.sk-brainstorm-why { margin: 0; font-size: 0.9rem; line-height: 1.45; }
+.sk-brainstorm-details { display: flex; flex-direction: column; gap: 0.4rem; }
+.sk-brainstorm-details summary { cursor: pointer; font-size: 0.86rem; font-weight: 600; color: var(--accent-light); }

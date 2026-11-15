@@ -34,14 +34,64 @@
 @media (min-width: 640px) { .sk-board-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 960px) { .sk-board-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .sk-board-grid > li { display: flex; min-width: 0; }
-.sk-board-card { display: flex; flex-direction: column; gap: 0.55rem; width: 100%; min-width: 0; padding: 0.95rem 1rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); text-decoration: none; }
+.sk-board-card { position: relative; display: flex; flex-direction: column; gap: 0.55rem; width: 100%; min-width: 0; padding: 0.95rem 1rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); text-decoration: none; }
 .sk-board-card:hover { border-color: var(--accent-light); }
+.sk-board-card:focus-within { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.sk-board-card-link { color: inherit; text-decoration: none; }
+.sk-board-card-link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.sk-board-card-link:focus-visible { outline: none; }
 .sk-board-card-top { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .sk-board-icon { font-size: 1.4rem; }
 .sk-board-name { font-weight: 700; font-size: 1.02rem; overflow-wrap: anywhere; }
 .sk-board-meta, .sk-board-level { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 0.6rem; }
 .sk-board-status { color: var(--muted); font-size: 0.84rem; }
 .sk-board-topics .sk-chip { white-space: normal; }
+.sk-board-rel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; font-size: 0.8rem; }
+.sk-board-rel-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.sk-rel-chip { position: relative; z-index: 1; text-decoration: none; color: var(--accent-light); background: var(--background); }
+.sk-rel-chip:hover { border-color: var(--accent-light); }
+.sk-subskill-count { color: var(--muted); }
+
+/* Study Schedule & Auto-Shift Queue */
+.sk-sched-panel { gap: 0.85rem; }
+.sk-sched-ai-link { text-decoration: none; color: var(--accent-light); }
+.sk-sched-shift-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1rem; padding: 0.7rem 0.9rem; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--surface-border)); background: color-mix(in srgb, var(--warning) 12%, var(--background)); }
+.sk-sched-shift-banner p { margin: 0; font-size: 0.9rem; line-height: 1.45; color: var(--foreground); flex: 1 1 18rem; }
+.sk-sched-today { display: flex; flex-direction: column; gap: 0.55rem; }
+.sk-sched-subhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.sk-sched-add-form { display: flex; flex-direction: column; gap: 0.65rem; padding: 0.85rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); }
+.sk-sched-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
+.sk-sched-task { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); min-width: 0; }
+.sk-sched-task.is-done { opacity: 0.68; }
+.sk-sched-task.is-done .sk-sched-task-title { text-decoration: line-through; color: var(--muted); }
+.sk-sched-check { display: inline-flex; align-items: center; padding-top: 0.15rem; }
+.sk-sched-check input[type='checkbox'] { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); cursor: pointer; }
+.sk-sched-task-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.sk-sched-task-top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; min-width: 0; }
+.sk-sched-skill { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.82rem; font-weight: 600; color: var(--accent-light); text-decoration: none; }
+.sk-sched-skill:hover { text-decoration: underline; }
+.sk-sched-task-title { font-size: 0.94rem; overflow-wrap: anywhere; }
+.sk-sched-sync-tag { font-size: 0.74rem; color: var(--muted); }
+.sk-sched-detail { margin: 0; font-size: 0.84rem; }
+.sk-sched-del { flex: none; padding: 0.1rem 0.35rem; font-size: 0.85rem; line-height: 1.2; }
+.sk-sched-empty { padding: 1rem; font-size: 0.9rem; }
+.sk-sched-empty a { color: var(--accent-light); }
+.sk-sched-upcoming { border-top: 1px solid var(--surface-border); padding-top: 0.65rem; }
+.sk-sched-upcoming summary { cursor: pointer; font-weight: 600; font-size: 0.92rem; color: var(--accent-light); }
+.sk-sched-upcoming-days { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.75rem; }
+.sk-sched-day-group { display: flex; flex-direction: column; gap: 0.4rem; }
+.sk-sched-day-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.4rem; font-size: 0.88rem; }
+.sk-sched-done-count { font-size: 0.82rem; }
+
+/* Interconnected Skill Hierarchy */
+.sk-hierarchy-card .sk-small-btn { text-decoration: none; }
+.sk-hierarchy-tree, .sk-hierarchy-children { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
+.sk-hierarchy-children { margin-left: 1.25rem; padding-left: 0.85rem; border-left: 2px solid var(--surface-border); margin-top: 0.35rem; }
+.sk-hierarchy-item { display: flex; flex-direction: column; min-width: 0; }
+.sk-hierarchy-node { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; padding: 0.45rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); }
+.sk-hierarchy-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--foreground); text-decoration: none; }
+.sk-hierarchy-link:hover { color: var(--accent-light); }
+.sk-hierarchy-lvl { color: var(--accent-light); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 
 .sk-board-how summary { cursor: pointer; font-weight: 700; }
 .sk-board-how[open] { gap: 0.75rem; }

@@ -1,16 +1,18 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { SUBJECT_STATUSES, STATUS_LABEL, type SubjectStatus } from '@/lib/skills/types';
+import { fmtLevel, skillsPost } from '../api';
 import { ErrorNote, LevelPicker } from '../Ui';
-import { useAct, type TabProps } from './shared';
+import type { TabProps } from './shared';
 
 // The inline editor under the subject's header. One form, one save.
 
 export default function SubjectEditor({ data, reload, onDone }: TabProps & { onDone: () => void }) {
   const s = data.subject;
   const uid = useId();
-  const { act, busy, error } = useAct(data, reload);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const [name, setName] = useState(s.name);
   const [icon, setIcon] = useState(s.icon);
   const [area, setArea] = useState(s.area);
@@ -20,11 +22,59 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
   const [background, setBackground] = useState(s.background ?? '');
   const [hours, setHours] = useState(s.hoursPerWeek ? String(s.hoursPerWeek) : '');
   const [weekly, setWeekly] = useState(!!s.autoTopUp);
+  const [parentIds, setParentIds] = useState<string[]>(() => s.parentIds ?? []);
+
+  const otherSubjects = useMemo(
+    () => (data.allSubjects ?? []).filter((other) => other.id !== s.id).sort((a, b) => a.name.localeCompare(b.name)),
+    [data.allSubjects, s.id],
+  );
+
+  const cycleRiskIds = useMemo(() => {
+    const byId = new Map((data.allSubjects ?? []).map((item) => [item.id, item]));
+    const risky = new Set<string>();
+    for (const candidate of otherSubjects) {
+      const visited = new Set<string>();
+      const stack = [candidate.id];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        if (cur === s.id) {
+          risky.add(candidate.id);
+          break;
+        }
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        for (const pid of byId.get(cur)?.parentIds ?? []) {
+          if (!visited.has(pid)) stack.push(pid);
+        }
+      }
+    }
+    return risky;
+  }, [data.allSubjects, otherSubjects, s.id]);
+
+  function toggleParent(pid: string) {
+    setParentIds((prev) => (prev.includes(pid) ? prev.filter((id) => id !== pid) : [...prev, pid]));
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    const ok = await act('edit-subject', { changes: { name, icon, area, status, target, goal, background, hoursPerWeek: hours, autoTopUp: weekly } });
-    if (ok) onDone();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await skillsPost('edit-subject', {
+        subjectId: s.id,
+        changes: { name, icon, area, status, target, goal, background, hoursPerWeek: hours, autoTopUp: weekly },
+      });
+      if (data.allSubjects !== undefined || parentIds.length > 0 || (s.parentIds?.length ?? 0) > 0) {
+        await skillsPost('set-parents', { subjectId: s.id, parentIds });
+      }
+      await reload();
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -51,6 +101,35 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
       <label className="sk-field"><span>Goal</span><textarea rows={2} value={goal} maxLength={1000} onChange={(e) => setGoal(e.target.value)} placeholder="Why you’re learning it" /></label>
       <label className="sk-field"><span>What you already know</span><textarea rows={3} value={background} maxLength={2000} onChange={(e) => setBackground(e.target.value)} placeholder="Helps the AI plan from where you are" /></label>
       <label className="sk-field sk-narrow-field"><span>Hours a week</span><input type="number" min={0} max={80} value={hours} onChange={(e) => setHours(e.target.value)} /></label>
+
+      {otherSubjects.length > 0 && (
+        <fieldset className="sk-parent-pick">
+          <legend>Parent / Prerequisite Skills</legend>
+          <p className="sk-hint">Select skills this subject builds on. Parent skills are scheduled earlier and linked in the Knowledge Graph.</p>
+          <div className="sk-parent-grid">
+            {otherSubjects.map((other) => {
+              const checked = parentIds.includes(other.id);
+              const cycleRisk = !checked && cycleRiskIds.has(other.id);
+              return (
+                <label key={other.id} className={`sk-parent-option${checked ? ' is-on' : ''}${cycleRisk ? ' is-disabled' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={cycleRisk}
+                    onChange={() => toggleParent(other.id)}
+                  />
+                  <span aria-hidden>{other.icon}</span>
+                  <span className="sk-parent-label">
+                    <strong>{other.name}</strong>
+                    <small>{other.area} · {fmtLevel(other.level)}{cycleRisk ? ' (subskill)' : ''}</small>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+      )}
+
       <label className="sk-weekly">
         <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} />
         <span><strong>Weekly questions</strong><small>Let the weekly question writer add questions where this subject runs low.</small></span>

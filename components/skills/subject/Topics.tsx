@@ -1,20 +1,50 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { STAGES, type Stage, type Topic } from '@/lib/skills/types';
 import type { TopicStats } from '@/lib/skills/model';
-import { fmtLevel } from '../api';
+import { fmtLevel, type NotesPageView } from '../api';
 import { ErrorNote, LevelPicker, LevelScale, StateChip } from '../Ui';
 import { useAct, type TabProps } from './shared';
 import TopicNotes from './TopicNotes';
-import type { NotesPageView } from '../api';
 
 // The topics tab: rate yourself on every topic at once, or work through them by
 // stage (reorder, edit, test, delete), and add new ones.
 
 type Act = ReturnType<typeof useAct>['act'];
+
+function parseObsidianTokens(raw?: string): { wikiLinks: { target: string; label: string }[]; tags: string[] } {
+  if (!raw?.trim()) return { wikiLinks: [], tags: [] };
+  const wikiLinks: { target: string; label: string }[] = [];
+  const seenLinks = new Set<string>();
+  const wikiRe = /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
+  for (const m of raw.matchAll(wikiRe)) {
+    const target = m[1].trim();
+    const label = (m[2] ?? m[1]).trim();
+    const key = target.toLowerCase();
+    if (target && !seenLinks.has(key)) {
+      seenLinks.add(key);
+      wikiLinks.push({ target, label });
+    }
+  }
+
+  const withoutUrls = raw.replace(/https?:\/\/\S+/gi, ' ').replace(/\[\[[^\]]+\]\]/g, ' ');
+  const tags: string[] = [];
+  const seenTags = new Set<string>();
+  const tagRe = /(?:^|[\s(,;])#([a-zA-Z][a-zA-Z0-9_-]{0,40})\b/g;
+  for (const m of withoutUrls.matchAll(tagRe)) {
+    const tag = m[1];
+    if (/^(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(tag)) continue;
+    const key = tag.toLowerCase();
+    if (!seenTags.has(key)) {
+      seenTags.add(key);
+      tags.push(tag);
+    }
+  }
+  return { wikiLinks, tags };
+}
 
 export default function Topics({ data, reload }: TabProps) {
   const { subject, stats } = data;
@@ -44,8 +74,17 @@ export default function Topics({ data, reload }: TabProps) {
                 <h3>{st.name}</h3>
                 <ul className="sk-rows">
                   {rows.map((t) => (
-                    <TopicRow key={t.id} topic={t} stats={stats.topics.find((x) => x.topicId === t.id)} subjectId={subject.id} pages={data.topicPages?.[t.id] ?? []}
-                      first={subject.topics[0] === t} last={subject.topics[subject.topics.length - 1] === t} act={act} busy={busy} />
+                    <TopicRow
+                      key={t.id}
+                      topic={t}
+                      stats={stats.topics.find((x) => x.topicId === t.id)}
+                      subjectId={subject.id}
+                      pages={data.topicPages?.[t.id] ?? []}
+                      first={subject.topics[0] === t}
+                      last={subject.topics[subject.topics.length - 1] === t}
+                      act={act}
+                      busy={busy}
+                    />
                   ))}
                 </ul>
               </div>
@@ -94,6 +133,7 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
   const { confirm, popup } = useSitePopup();
   const [editing, setEditing] = useState(false);
   const live = stats?.liveItems ?? 0;
+  const { wikiLinks, tags } = useMemo(() => parseObsidianTokens(topic.notes), [topic.notes]);
 
   async function remove() {
     const ok = await confirm({
@@ -105,7 +145,7 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
     if (ok) await act('remove-topic', { topicId: topic.id });
   }
 
-  if (editing) return <li className="sk-topic-edit"><TopicEditor topic={topic} act={act} busy={busy} onDone={() => setEditing(false)} /></li>;
+  if (editing) return <li className="sk-topic-edit"><TopicEditor topic={topic} subjectId={subjectId} act={act} busy={busy} onDone={() => setEditing(false)} /></li>;
 
   return (
     <li className="sk-topic-card">
@@ -121,6 +161,33 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
           <span className="sk-muted">{live} question{live === 1 ? '' : 's'}</span>
           {!!stats?.dueItems && <span className="sk-due">{stats.dueItems} due</span>}
         </div>
+        {topic.notes?.trim() && (
+          <p className="sk-topic-note-preview">{topic.notes}</p>
+        )}
+        {(wikiLinks.length > 0 || tags.length > 0) && (
+          <div className="sk-chips sk-wiki-badges" aria-label="Knowledge Vault links and tags">
+            {wikiLinks.map((w) => (
+              <Link
+                key={`w:${w.target}`}
+                href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(w.target)}`}
+                className="sk-chip sk-wiki-chip"
+                title={`Explore [[${w.target}]] in Knowledge Base`}
+              >
+                [[{w.label}]]
+              </Link>
+            ))}
+            {tags.map((tag) => (
+              <Link
+                key={`t:${tag}`}
+                href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(`#${tag}`)}`}
+                className="sk-chip sk-tag-chip"
+                title={`Filter #${tag} in Knowledge Base`}
+              >
+                #{tag}
+              </Link>
+            ))}
+          </div>
+        )}
         <TopicNotes topic={topic} pages={pages} act={act} busy={busy} />
       </div>
       <div className="sk-row-actions">
@@ -136,12 +203,13 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
   );
 }
 
-function TopicEditor({ topic, act, busy, onDone }: { topic: Topic; act: Act; busy: boolean; onDone: () => void }) {
+function TopicEditor({ topic, subjectId, act, busy, onDone }: { topic: Topic; subjectId: string; act: Act; busy: boolean; onDone: () => void }) {
   const [name, setName] = useState(topic.name);
   const [stage, setStage] = useState<Stage>(topic.stage);
   const [core, setCore] = useState(topic.core);
   const [description, setDescription] = useState(topic.description ?? '');
   const [notes, setNotes] = useState(topic.notes ?? '');
+  const { wikiLinks, tags } = useMemo(() => parseObsidianTokens(notes), [notes]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -160,7 +228,25 @@ function TopicEditor({ topic, act, busy, onDone }: { topic: Topic; act: Act; bus
       </div>
       <label className="sk-check"><input type="checkbox" checked={core} onChange={(e) => setCore(e.target.checked)} /> Core topic <small>(optional topics count half toward your level)</small></label>
       <label className="sk-field"><span>Description</span><textarea rows={2} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)} /></label>
-      <label className="sk-field"><span>Your notes</span><textarea rows={3} value={notes} maxLength={4000} onChange={(e) => setNotes(e.target.value)} /></label>
+      <label className="sk-field">
+        <span>Your notes</span>
+        <textarea rows={3} value={notes} maxLength={4000} onChange={(e) => setNotes(e.target.value)} placeholder="Key insights, equations, [[Wiki Links]], #tags…" />
+        <small>Supports [[Wiki Links]] &amp; #tags for the Knowledge Vault</small>
+      </label>
+      {(wikiLinks.length > 0 || tags.length > 0) && (
+        <div className="sk-chips sk-wiki-badges">
+          {wikiLinks.map((w) => (
+            <Link key={`w:${w.target}`} href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(w.target)}`} className="sk-chip sk-wiki-chip">
+              [[{w.label}]]
+            </Link>
+          ))}
+          {tags.map((tag) => (
+            <Link key={`t:${tag}`} href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(`#${tag}`)}`} className="sk-chip sk-tag-chip">
+              #{tag}
+            </Link>
+          ))}
+        </div>
+      )}
       <div className="sk-actions">
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="sk-text-btn" onClick={onDone}>Cancel</button>

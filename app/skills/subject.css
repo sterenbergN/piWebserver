@@ -140,3 +140,33 @@
 .sk-topic-pages a { color: var(--accent-light); overflow-wrap: anywhere; }
 .sk-topic-pick { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; }
 .sk-topic-pick .sk-field { flex: 1 1 12rem; }
+
+/* Subject parent & subskill links in header and Overview */
+.sk-subject-relations { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.85rem; margin-top: 0.35rem; font-size: 0.85rem; }
+.sk-rel-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.sk-rel-pill { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.14rem 0.58rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--accent-light); font-size: 0.82rem; font-weight: 600; text-decoration: none; }
+.sk-rel-pill:hover { border-color: var(--accent-light); }
+
+.sk-ov-links-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.85rem; }
+.sk-ov-link-group { display: flex; flex-direction: column; gap: 0.45rem; }
+.sk-ov-link-group h3 { margin: 0; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.sk-ov-link-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.sk-ov-link-pill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.45rem; padding: 0.4rem 0.7rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); text-decoration: none; font-size: 0.9rem; }
+.sk-ov-link-pill:hover { border-color: var(--accent-light); }
+
+/* Overview step-by-step progression preview */
+.sk-ov-step-item { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.55rem 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); }
+.sk-ov-step-check { display: inline-flex; align-items: center; padding-top: 0.15rem; }
+.sk-ov-step-check input[type='checkbox'] { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); cursor: pointer; }
+.sk-ov-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.sk-ov-step-top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; }
+.sk-ov-step-body p { margin: 0; }
+
+/* Topic notes preview & Obsidian wiki-link / tag chips */
+.sk-topic-note-preview { margin: 0.15rem 0 0; padding: 0.45rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--surface-glass); font-size: 0.86rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--foreground); }
+.sk-wiki-badges { margin-top: 0.15rem; }
+.sk-wiki-chip, .sk-tag-chip { text-decoration: none; cursor: pointer; }
+.sk-wiki-chip { border-color: color-mix(in srgb, var(--accent) 55%, var(--surface-border)); color: var(--accent-light); background: color-mix(in srgb, var(--accent) 10%, var(--background)); }
+.sk-wiki-chip:hover { border-color: var(--accent-light); }
+.sk-tag-chip { border-color: color-mix(in srgb, var(--habit-3) 50%, var(--surface-border)); color: var(--foreground); background: color-mix(in srgb, var(--habit-3) 12%, var(--background)); }
+.sk-tag-chip:hover { border-color: var(--habit-3); }

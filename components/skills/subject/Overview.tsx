@@ -4,13 +4,13 @@ import Link from 'next/link';
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { MathText } from '@/components/daily/MathText';
 import { STAGES } from '@/lib/skills/types';
-import type { NextStepKind } from '@/lib/skills/model';
+import { levelName, stepProgress, type NextStepKind } from '@/lib/skills/model';
 import { fmtLevel } from '../api';
-import { LevelBar, StateChip } from '../Ui';
-import { ago, shortDay, type TabProps } from './shared';
+import { ErrorNote, LevelBar, StateChip } from '../Ui';
+import { ago, shortDay, useAct, type TabProps } from './shared';
 
-// The first tab: what to do next, how close to an SME, the topic map and the
-// level over time. Nothing is edited here; every row leads somewhere.
+// The first tab: interconnected skills, next step-by-step actions, what to do
+// next, how close to an SME, the topic map and the level over time.
 
 const STEP_ICON: Record<NextStepKind, string> = {
   review: '🔁', plan: '🗺️', rate: '🎚️', practice: '🎯', refresh: '🍂', 'test-yourself': '✅', write: '✍️', resource: '📚', 'find-material': '🔎',
@@ -22,10 +22,12 @@ type Props = TabProps & {
   /** Handle a link that points at this same page (?tab=…#r-…): true if it did. */
   goto: (href: string) => boolean;
   setTab: (tab: string) => void;
+  onOpenEditor?: () => void;
 };
 
-export default function Overview({ data, goto, setTab }: Props) {
+export default function Overview({ data, reload, goto, setTab, onOpenEditor }: Props) {
   const { subject, stats, nextSteps, history } = data;
+  const { act, busy, error } = useAct(data, reload);
   const id = subject.id;
   const topics = stats.topics;
   const names = (state: string) => topics.filter((t) => t.state === state).map((t) => t.name);
@@ -35,21 +37,140 @@ export default function Overview({ data, goto, setTab }: Props) {
   const r = stats.resources;
   const chart = history.length >= 2 && history.some((h) => h.level > 0 || h.fitted > 0);
 
+  const allSubjects = data.allSubjects ?? [];
+  const subjectById = new Map(allSubjects.map((s) => [s.id, s]));
+  const parents = (subject.parentIds ?? [])
+    .map((pid) => subjectById.get(pid))
+    .filter((s): s is NonNullable<typeof s> => !!s);
+  const subskills = allSubjects.filter((s) => s.parentIds.includes(subject.id));
+  const hasConnections = parents.length > 0 || subskills.length > 0;
+
+  const allSteps = subject.steps ?? [];
+  const stepCounts = stepProgress(subject);
+  const nextStudySteps = allSteps.filter((st) => !st.done).slice(0, 5);
+
+  const interconnectedCard = (
+    <section className="sk-card sk-ov-links" aria-labelledby="sk-ov-links">
+      <div className="sk-card-head">
+        <h2 id="sk-ov-links">Interconnected Skills</h2>
+        {onOpenEditor && (
+          <button type="button" className="sk-small-btn" onClick={onOpenEditor}>
+            Link skills
+          </button>
+        )}
+      </div>
+      {!hasConnections ? (
+        <p className="sk-hint">
+          No parent prerequisites or subskills linked yet. Connect related skills to sequence your schedule and explore them in the Knowledge Graph.
+        </p>
+      ) : (
+        <div className="sk-ov-links-grid">
+          {parents.length > 0 && (
+            <div className="sk-ov-link-group">
+              <h3>Parent / Prerequisite Skills</h3>
+              <ul className="sk-ov-link-list">
+                {parents.map((p) => (
+                  <li key={p.id}>
+                    <Link href={`/skills/${p.id}`} className="sk-ov-link-pill">
+                      <span aria-hidden>{p.icon}</span>
+                      <strong>{p.name}</strong>
+                      <span className="sk-chip">{fmtLevel(p.level)} · {levelName(p.level)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {subskills.length > 0 && (
+            <div className="sk-ov-link-group">
+              <h3>Subskills</h3>
+              <ul className="sk-ov-link-list">
+                {subskills.map((sub) => (
+                  <li key={sub.id}>
+                    <Link href={`/skills/${sub.id}`} className="sk-ov-link-pill">
+                      <span aria-hidden>{sub.icon}</span>
+                      <strong>{sub.name}</strong>
+                      <span className="sk-chip">{fmtLevel(sub.level)} · {levelName(sub.level)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
+  const stepsCard = (
+    <section className="sk-card sk-ov-steps" aria-labelledby="sk-ov-steps">
+      <div className="sk-card-head">
+        <div>
+          <h2 id="sk-ov-steps">Step-by-Step Progression</h2>
+          <p className="sk-hint">
+            {stepCounts.done} of {stepCounts.total} step{stepCounts.total === 1 ? '' : 's'} completed
+          </p>
+        </div>
+        <button type="button" className="sk-text-btn" onClick={() => setTab('steps')}>
+          All {allSteps.length} step{allSteps.length === 1 ? '' : 's'} →
+        </button>
+      </div>
+      {error && <ErrorNote>{error}</ErrorNote>}
+      {nextStudySteps.length > 0 ? (
+        <ul className="sk-rows sk-ov-steps-list">
+          {nextStudySteps.map((st) => (
+            <li key={st.id} className="sk-ov-step-item">
+              <label className="sk-ov-step-check">
+                <input
+                  type="checkbox"
+                  checked={!!st.done}
+                  disabled={busy}
+                  aria-label={`Mark "${st.title}" done`}
+                  onChange={() => void act('toggle-step', { stepId: st.id })}
+                />
+              </label>
+              <div className="sk-ov-step-body">
+                <div className="sk-ov-step-top">
+                  <span className="sk-chip">{st.kind}</span>
+                  <strong>{st.title}</strong>
+                  {st.amount && <span className="sk-chip sk-sched-amount">{st.amount}</span>}
+                  {st.minutes && <span className="sk-chip sk-sched-mins">{st.minutes}m</span>}
+                </div>
+                {st.detail && <p className="sk-hint">{st.detail}</p>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="sk-hint">
+          All {allSteps.length} study step{allSteps.length === 1 ? '' : 's'} completed! Open the Steps tab to add next milestones.
+        </p>
+      )}
+    </section>
+  );
+
   if (!topics.length) {
     return (
-      <section className="sk-card sk-empty-card">
-        <h2>There’s nothing in {subject.name} yet</h2>
-        <p className="sk-hint">Topics are the parts of a subject. Once you have some, you can rate yourself, add books and projects, and get tested on each part. An AI can draft the whole plan in a few minutes.</p>
-        <div className="sk-actions">
-          <Link className="btn btn-primary" href={`/skills/${id}/plan`}>Plan it with AI</Link>
-          <button type="button" className="sk-text-btn" onClick={() => setTab('topics')}>or add topics yourself</button>
-        </div>
-      </section>
+      <>
+        <section className="sk-card sk-empty-card">
+          <h2>There’s nothing in {subject.name} yet</h2>
+          <p className="sk-hint">Topics are the parts of a subject. Once you have some, you can rate yourself, add books and projects, and get tested on each part. An AI can draft the whole plan in a few minutes.</p>
+          <div className="sk-actions">
+            <Link className="btn btn-primary" href={`/skills/${id}/plan`}>Plan it with AI</Link>
+            <button type="button" className="sk-text-btn" onClick={() => setTab('topics')}>or add topics yourself</button>
+          </div>
+        </section>
+        {hasConnections && interconnectedCard}
+        {allSteps.length > 0 && stepsCard}
+      </>
     );
   }
 
   return (
     <>
+      {interconnectedCard}
+      {allSteps.length > 0 && stepsCard}
+
       {nextSteps.length > 0 && (
         <section className="sk-card" aria-labelledby="sk-ov-next">
           <h2 id="sk-ov-next">Next steps</h2>
