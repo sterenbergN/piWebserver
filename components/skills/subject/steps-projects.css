@@ -1,0 +1,674 @@
+/* ─── Skills: Steps, Free Resources Finder, and Project Logs ─────────────────
+   Uses theme CSS variables so both dark and light themes stay consistent. */
+
+/* ── Step-by-step progression (Steps.tsx) ───────────────────────────────── */
+.sk-steps-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.sk-steps-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.sk-step-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.sk-step-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  transition: border-color 0.2s, opacity 0.2s;
+}
+.sk-step-item.is-done {
+  opacity: 0.78;
+  border-color: color-mix(in srgb, var(--success) 40%, var(--surface-border));
+}
+
+.sk-step-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.sk-step-check {
+  display: inline-flex;
+  align-items: center;
+  padding-top: 0.15rem;
+  cursor: pointer;
+}
+.sk-step-check input[type='checkbox'] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--success);
+  cursor: pointer;
+}
+
+.sk-step-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sk-step-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+}
+.sk-step-index {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sk-step-title {
+  font-weight: 600;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+.sk-step-item.is-done .sk-step-title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.sk-chip.is-kind {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.35);
+  color: var(--accent-light);
+}
+.sk-chip.is-amount {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--success) 42%, transparent);
+  color: var(--foreground);
+}
+.sk-chip.is-minutes {
+  color: var(--muted);
+}
+.sk-chip.is-topic {
+  background: var(--surface-glass);
+}
+.sk-chip.is-resource {
+  background: var(--surface-glass);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+.sk-step-detail {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sk-step-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.1rem;
+  border-radius: 12px;
+  border: 1px dashed var(--surface-border);
+  background: var(--background);
+}
+.sk-step-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+/* ── Free PDF & YouTube Audiobook Finder + Reader Helpers ───────────────── */
+.sk-res-saved-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.sk-link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-light);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.sk-link-pill:hover {
+  border-color: var(--accent-light);
+  background: rgba(var(--accent-rgb), 0.2);
+}
+.sk-link-pill.is-audio {
+  border-color: color-mix(in srgb, var(--habit-2) 55%, transparent);
+  background: color-mix(in srgb, var(--habit-2) 12%, transparent);
+  color: var(--foreground);
+}
+
+.sk-finder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  background: var(--background);
+}
+.sk-finder-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.sk-finder-section h4 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sk-finder-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.sk-finder-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.sk-finder-link:hover {
+  border-color: var(--accent-light);
+  background: var(--surface-hover);
+  color: var(--accent-light);
+}
+.sk-finder-link.is-highlight {
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent-light);
+}
+
+.sk-finder-url-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.sk-finder-url-row input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.sk-reader-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sk-reader-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+}
+.sk-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.sk-file-label input[type='file'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sk-res-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+.sk-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.sk-proj-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  font-size: 0.86rem;
+}
+
+/* ── Projects tab & logs (Projects.tsx) ─────────────────────────────────── */
+.sk-proj-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+.sk-proj-toolbar-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.sk-proj-toolbar-meta h2 {
+  font-size: 1.15rem;
+}
+
+.sk-proj-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.sk-proj-card.is-showcase {
+  border-color: rgba(var(--accent-rgb), 0.35);
+}
+
+.sk-proj-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 0.85rem;
+}
+.sk-proj-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.sk-proj-title-block h3 {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+.sk-proj-title-block h3 a {
+  color: var(--accent-light);
+}
+.sk-proj-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sk-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+}
+.sk-status-pill.is-doing {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-light);
+}
+.sk-status-pill.is-done {
+  border-color: rgba(var(--success-rgb), 0.55);
+  background: rgba(var(--success-rgb), 0.16);
+  color: var(--success);
+}
+.sk-status-pill.is-dropped {
+  color: var(--muted);
+}
+
+.sk-log-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  background: var(--background);
+}
+.sk-log-composer h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.sk-media-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+}
+
+.sk-rec-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--danger-rgb), 0.5);
+  background: rgba(var(--danger-rgb), 0.06);
+}
+.sk-rec-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sk-rec-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+.sk-rec-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: sk-rec-pulse 1s ease-in-out infinite;
+}
+@keyframes sk-rec-pulse {
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-rec-dot { animation: none; }
+}
+
+.sk-rec-preview {
+  width: 100%;
+  max-height: 260px;
+  border-radius: 8px;
+  background: #000;
+  object-fit: contain;
+}
+
+.sk-pending-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.sk-pending-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  font-size: 0.82rem;
+  max-width: 100%;
+}
+.sk-pending-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18rem;
+}
+
+.sk-link-attach-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(12rem, 1.4fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+@media (max-width: 640px) {
+  .sk-link-attach-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Timeline */
+.sk-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+}
+.sk-timeline-head h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sk-timeline {
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 1.2rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  border-left: 2px solid var(--surface-border);
+}
+
+.sk-log-entry {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+}
+.sk-log-entry::before {
+  content: '';
+  position: absolute;
+  left: -1.62rem;
+  top: 1.05rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface-glass);
+}
+
+.sk-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+.sk-log-head h5 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.sk-log-day {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sk-log-note {
+  margin: 0;
+  font-size: 0.91rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.sk-wikilink {
+  display: inline-block;
+  padding: 0.02rem 0.38rem;
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-light);
+  font-weight: 600;
+}
+.sk-hashtag {
+  display: inline-block;
+  padding: 0.02rem 0.38rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--habit-3) 16%, transparent);
+  color: var(--foreground);
+  font-weight: 600;
+  font-size: 0.88em;
+}
+
+.sk-att-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem;
+}
+
+.sk-att-video-card,
+.sk-att-image-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+}
+.sk-proj-video {
+  width: 100%;
+  max-height: 280px;
+  border-radius: 8px;
+  background: #000;
+}
+.sk-proj-img-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sk-proj-img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.sk-att-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+.sk-att-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 15rem;
+}
+
+.sk-proj-file-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+}
+.sk-proj-file-info {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+.sk-proj-file-icon {
+  font-size: 1.3rem;
+  flex: none;
+}
+.sk-proj-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sk-proj-file-text strong {
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sk-proj-file-text span {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.sk-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: rgba(15, 20, 28, 0.86);
+  backdrop-filter: blur(4px);
+}
+.sk-lightbox img {
+  max-width: min(94vw, 1100px);
+  max-height: 80vh;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.sk-lightbox-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  color: #fff;
+}
