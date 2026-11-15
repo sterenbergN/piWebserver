@@ -3,7 +3,7 @@
 import type { StrokePoint } from 'perfect-freehand';
 import { detailAt, smoothLine, startSmoothing, type Smoothing } from '@/lib/notes/smooth';
 import {
-  boundsOf, boxesTouch, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoint, movePoints, NO_MOVE, packPoints, pointInBox, recognizeShape, shapeFromDrag, strokeTouches, unionBoxes,
+  boundsOf, boxesTouch, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoint, movePoints, NO_MOVE, packPoints, pointInBox, recognizeShape, scratchOutTargets, shapeFromDrag, strokeTouches, unionBoxes,
   type Box, type Move, type ShapeKind,
 } from '@/lib/notes/geometry';
 import { isDark, MAX_STROKE_POINTS, type ImageElement, type MarkElement, type MarkRole, type MarkTarget, type PageElement, type PageRecord, type StrokeElement, type StrokeStyle, type TextElement, type TextFont } from '@/lib/notes/items';
@@ -186,10 +186,11 @@ export class NoteCanvas {
   private lastPenAt = 0;
   private touches = new Map<number, { x: number; y: number; startX: number; startY: number; at: number }>();
   private palms = new Set<number>();
-  private pinch: { distance: number; midX: number; midY: number; moved: boolean; at: number; fingers: number } | null = null;
+  private pinch: { distance: number; midX: number; midY: number; moved: boolean; at: number; fingers: number; startZ: number; zoomed: boolean } | null = null;
   private pinchFrame = 0;
   private wet: Wet | null = null;
   private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  private scratchedPointer: number | null = null;
   private erasing: { pointer: number; page: PageRecord; lastX: number; lastY: number; steps: Step[] } | null = null;
   private lasso: { pointer: number; page: PageRecord; points: number[] } | null = null;
   private tapPointer: { pointer: number; x: number; y: number; at: number } | null = null;
@@ -372,6 +373,16 @@ export class NoteCanvas {
     return this.rects.filter((r) => r.x < right && r.x + r.page.w > left && r.y < bottom && r.y + r.page.h > top);
   }
 
+  private verticalBounds() {
+    const top = this.topInset + SIDE_PAD;
+    const size = this.contentH * this.z;
+    if (size + top + END_PAD <= this.height) {
+      const mid = top + (this.height - top - END_PAD - size) / 2;
+      return { lo: mid, hi: mid };
+    }
+    return { lo: this.height - size - END_PAD, hi: top };
+  }
+
   private clampCamera() {
     const fit = (cam: number, content: number, view: number, start: number, end: number) => {
       const size = content * this.z;
@@ -390,7 +401,13 @@ export class NoteCanvas {
       return;
     }
     this.camX = fit(this.camX, this.contentW, this.width, vertical ? SIDE_PAD : END_PAD, vertical ? SIDE_PAD : END_PAD);
-    this.camY = vertical ? fit(this.camY, this.contentH, this.height, top, END_PAD) : fit(this.camY, this.contentH, this.height, top, SIDE_PAD);
+    if (vertical) {
+      const { lo, hi } = this.verticalBounds();
+      const give = this.dragging && !this.turning && !this.pinch?.zoomed && this.rects.length ? this.height * 0.5 : 0;
+      this.camY = Math.max(lo - give, Math.min(hi, this.camY));
+      return;
+    }
+    this.camY = fit(this.camY, this.contentH, this.height, top, SIDE_PAD);
   }
 
   private get paged() {
@@ -1198,7 +1215,7 @@ export class NoteCanvas {
       if (this.wet?.isFinger || this.erasing || this.lasso) this.cancelMark();
       if (this.selection?.drag) this.endSelectionDrag();
       const [a, b] = [...this.touches.values()];
-      this.pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, moved: false, at: this.pinch?.at ?? Date.now(), fingers: Math.max(this.touches.size, this.pinch?.fingers ?? 0) };
+      this.pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2, moved: false, at: this.pinch?.at ?? Date.now(), fingers: Math.max(this.touches.size, this.pinch?.fingers ?? 0), startZ: this.pinch?.startZ ?? this.z, zoomed: this.pinch?.zoomed ?? false };
       this.samples = [];
       return;
     }
@@ -1218,13 +1235,14 @@ export class NoteCanvas {
   }
 
   private isMarking(penOnly = false) {
-    if (penOnly) return (!!this.wet && !this.wet.isFinger) || (!!this.erasing && this.penDown) || (!!this.lasso && this.penDown) || (!!this.selection?.drag && this.penDown);
-    return !!this.wet || !!this.erasing || !!this.lasso || !!this.selection?.drag;
+    if (penOnly) return (!!this.wet && !this.wet.isFinger) || (!!this.erasing && this.penDown) || (!!this.lasso && this.penDown) || (!!this.selection?.drag && this.penDown) || (this.scratchedPointer !== null && this.penDown);
+    return !!this.wet || !!this.erasing || !!this.lasso || !!this.selection?.drag || this.scratchedPointer !== null;
   }
 
   private penDown = false;
 
   private startMark(e: PointerEvent, x: number, y: number) {
+    this.scratchedPointer = null;
     this.penDown = e.pointerType !== 'touch';
     // The eraser end of a stylus that has one.
     const erasingEnd = e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) !== 0);
@@ -1306,22 +1324,64 @@ export class NoteCanvas {
     });
   }
 
-  /** Hold the pencil still at the end of a line and it snaps to the shape you were drawing. */
+  /** Hold the pencil still at the end of a line and it snaps to the shape you were drawing, or erases what was crossed out. */
   private armHold() {
     if (this.holdTimer) clearTimeout(this.holdTimer);
-    if (!this.settings.snapShapes) return;
+    const wet = this.wet;
+    if (!wet) return;
+    const isPen = wet.style === 'ball' || wet.style === 'fountain' || wet.style === 'brush';
+    if (!this.settings.snapShapes && !isPen) return;
     this.holdTimer = setTimeout(() => {
-      const wet = this.wet;
-      if (!wet || wet.snapped) return;
-      const shape = recognizeShape(wet.pts);
+      const current = this.wet;
+      if (!current || current !== wet || current.snapped) return;
+      if (isPen) {
+        const { strokes, texts } = scratchOutTargets(current.pts, current.width, this.doc.elementsOf(current.page.id));
+        if (strokes.length || texts.length) {
+          this.applyScratchOut(current, strokes, texts);
+          return;
+        }
+      }
+      if (!this.settings.snapShapes) return;
+      const shape = recognizeShape(current.pts);
       if (!shape) return;
       // A highlighter or tape only ever goes straight.
-      if (wet.style !== 'ball' && wet.style !== 'fountain' && wet.style !== 'brush' && shape.kind !== 'line') return;
-      wet.snapped = shape.pts;
-      wet.snappedKind = shape.kind;
+      if (!isPen && shape.kind !== 'line') return;
+      current.snapped = shape.pts;
+      current.snappedKind = shape.kind;
       this.events.onSay(shape.kind === 'ellipse' ? 'Circle' : shape.kind === 'rect' ? 'Rectangle' : shape.kind === 'triangle' ? 'Triangle' : 'Straight line');
       this.requestLive();
     }, HOLD_MS);
+  }
+
+  private applyScratchOut(wet: Wet, strokes: StrokeElement[], texts: TextElement[]) {
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer);
+      this.holdTimer = null;
+    }
+    const pageId = wet.page.id;
+    this.wet = null;
+    this.scratchedPointer = wet.pointer;
+    this.touches.delete(wet.pointer);
+    this.strokeLog.start = 0;
+    setWriting(false);
+
+    const now = Date.now();
+    const steps: Step[] = [
+      ...strokes.map((el): Step => ({ type: 'element', page: pageId, before: el, after: tombstone(el, now) })),
+      ...texts.map((el): Step => ({ type: 'element', page: pageId, before: el, after: tombstone(el, now) })),
+    ];
+    if (this.editing && this.editing.page === pageId && texts.some((t) => t.id === this.editing!.element.id)) {
+      const editing = this.editing;
+      this.editing = null;
+      editing.box.removeEventListener('input', this.onEditorInput);
+      editing.box.remove();
+      editing.grip.remove();
+      this.events.onEditing(null);
+    }
+    this.doc.apply(steps);
+    this.paintLive();
+    this.requestPaint();
+    this.events.onSay('Erased');
   }
 
   private extendStroke(e: PointerEvent) {
@@ -1487,6 +1547,7 @@ export class NoteCanvas {
     if (this.holdTimer) clearTimeout(this.holdTimer);
     if (this.wet) setWriting(false);
     this.wet = null;
+    this.scratchedPointer = null;
     this.lasso = null;
     if (this.erasing) this.endErasing();
     this.requestPaint();
@@ -1543,6 +1604,12 @@ export class NoteCanvas {
       touch.x = x;
       touch.y = y;
     }
+    if (this.scratchedPointer === e.pointerId) {
+      this.scratchedPointer = null;
+      this.penDown = false;
+      this.touches.delete(e.pointerId);
+      return;
+    }
     if (this.wet?.pointer === e.pointerId) { this.extendStroke(e); return; }
     if (this.selection?.drag?.pointer === e.pointerId) { this.dragSelection(e); return; }
     if (this.erasing?.pointer === e.pointerId) {
@@ -1573,8 +1640,9 @@ export class NoteCanvas {
     const rect = this.paged ? this.turnedRect() : null;
     const { lo, hi } = rect ? this.pageRange(rect) : { lo: 0, hi: 0 };
     const stiff = rect && ((this.camX > hi && dx > 0 && rect === this.rects[0]) || (this.camX < lo && dx < 0 && rect === this.rects[this.rects.length - 1]));
+    const stiffY = !this.paged && this.settings.direction === 'vertical' && !this.pinch?.zoomed && this.camY < this.verticalBounds().lo && dy < 0;
     this.camX += stiff ? dx * 0.35 : dx;
-    this.camY += dy;
+    this.camY += stiffY ? dy * 0.5 : dy;
     this.samples.push({ x, y, at: performance.now() });
     if (this.samples.length > 6) this.samples.shift();
     this.cameraMoved();
@@ -1597,6 +1665,7 @@ export class NoteCanvas {
     this.camX = midX - (this.pinch.midX - this.camX) * applied;
     this.camY = midY - (this.pinch.midY - this.camY) * applied;
     this.z = next;
+    if (Math.abs(next / this.pinch.startZ - 1) > 0.08) this.pinch.zoomed = true;
     if (Math.hypot(a.x - a.startX, a.y - a.startY) > QUICK_TAP_MOVE_PIXELS || Math.hypot(b.x - b.startX, b.y - b.startY) > QUICK_TAP_MOVE_PIXELS) this.pinch.moved = true;
     this.pinch.distance = distance;
     this.pinch.midX = midX;
@@ -1613,6 +1682,12 @@ export class NoteCanvas {
     const cancelled = e.type === 'pointercancel';
     if (e.pointerType === 'pen') this.lastPenAt = Date.now();
 
+    if (this.scratchedPointer === e.pointerId) {
+      this.scratchedPointer = null;
+      this.penDown = false;
+      this.touches.delete(e.pointerId);
+      return;
+    }
     if (this.wet?.pointer === e.pointerId) {
       this.penDown = false;
       this.touches.delete(e.pointerId);
@@ -1691,7 +1766,7 @@ export class NoteCanvas {
       this.touches.clear();
       this.pinch = null;
       this.dragging = false;
-      this.flingOrTurn();
+      this.flingOrTurn(!gesture.zoomed);
       if (!gesture.moved && !cancelled && Date.now() - gesture.at < TAP_MS && Date.now() - this.lastPenAt > PEN_QUIET_MS) this.fingerTap(gesture.fingers);
       this.settle();
       return;
@@ -1701,11 +1776,11 @@ export class NoteCanvas {
     const moved = Math.hypot(touch.x - touch.startX, touch.y - touch.startY);
     if (cancelled || (moved < TAP_PIXELS && Date.now() - touch.at < TAP_MS)) {
       // Anything pulled past the edge goes back.
-      if (this.paged) this.cameraMoved();
+      if (this.paged || (this.settings.direction === 'vertical' && this.rects.length && this.camY < this.verticalBounds().lo)) this.cameraMoved();
       if (!cancelled) this.handleTap(touch.x, touch.y);
       return;
     }
-    this.flingOrTurn();
+    this.flingOrTurn(true);
     this.settle();
   };
 
@@ -1856,14 +1931,44 @@ export class NoteCanvas {
     this.turning = false;
   }
 
-  /** Side to side, a swipe past the edge of the page turns it; anything less slides back. */
-  private flingOrTurn() {
-    if (!this.paged || !this.rects.length) {
-      this.flingFromSamples();
+  /** Side to side, a swipe past the edge of the page turns it (or adds one at the end); vertically, overscrolling past the last page adds one too. */
+  private flingOrTurn(allowNewPage = true) {
+    if (!this.rects.length) {
+      this.samples = [];
       return;
     }
     const speed = this.sampleSpeed();
     this.samples = [];
+    if (!this.paged) {
+      if (this.settings.direction === 'vertical') {
+        const { lo } = this.verticalBounds();
+        const overscroll = lo - this.camY;
+        // Beyond `lo`, camY moves at 0.5x finger travel, so overscroll > 45 corresponds to > 90px pulled past the bottom.
+        if (allowNewPage && overscroll > 0 && (overscroll > 45 || (overscroll > 8 && speed.y < -TURN_SPEED))) {
+          const last = this.rects[this.rects.length - 1];
+          const prevCamX = this.camX;
+          const prevCamY = this.camY;
+          const created = this.doc.addPage(last.page.id);
+          this.layout();
+          const target = this.rectOf(created.id) ?? this.rects[this.rects.length - 1];
+          if (target) {
+            const { lo: newLo, hi: newHi } = this.verticalBounds();
+            const targetY = Math.max(newLo, Math.min(newHi, this.topInset + SIDE_PAD - target.y * this.z));
+            this.camX = prevCamX;
+            this.camY = prevCamY;
+            this.slideTo(this.camX, targetY);
+          }
+          this.events.onSay('New page');
+          return;
+        }
+        if (overscroll > 0.5) {
+          this.slideTo(this.camX, lo);
+          return;
+        }
+      }
+      this.flingWith(speed);
+      return;
+    }
     const rect = this.turnedRect();
     const index = this.rects.indexOf(rect);
     const { lo, hi } = this.pageRange(rect);
@@ -1872,7 +1977,18 @@ export class NoteCanvas {
     const far = this.width * TURN_FRACTION;
     if (index > 0 && (back > far || (back > 8 && speed.x > TURN_SPEED))) this.turnTo(index - 1);
     else if (index < this.rects.length - 1 && (ahead > far || (ahead > 8 && speed.x < -TURN_SPEED))) this.turnTo(index + 1);
-    else if (back > 0.5 || ahead > 0.5) this.slideTo(Math.max(lo, Math.min(hi, this.camX)), this.camY);
+    else if (allowNewPage && index === this.rects.length - 1 && (ahead > far || (ahead > 8 && speed.x < -TURN_SPEED))) {
+      const prevCamX = this.camX;
+      const prevCamY = this.camY;
+      const created = this.doc.addPage(rect.page.id);
+      this.layout();
+      const newIndex = this.rects.findIndex((r) => r.page.id === created.id);
+      this.turnedTo = rect.page.id;
+      this.camX = prevCamX;
+      this.camY = prevCamY;
+      this.turnTo(newIndex >= 0 ? newIndex : this.rects.length - 1);
+      this.events.onSay('New page');
+    } else if (back > 0.5 || ahead > 0.5) this.slideTo(Math.max(lo, Math.min(hi, this.camX)), this.camY);
     else this.flingWith(speed);
   }
 
@@ -1926,12 +2042,6 @@ export class NoteCanvas {
     if (performance.now() - last.at > 80) return { x: 0, y: 0 };
     const dt = Math.max(1, last.at - first.at);
     return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
-  }
-
-  private flingFromSamples() {
-    const speed = this.sampleSpeed();
-    this.samples = [];
-    this.flingWith(speed);
   }
 
   private flingWith(speed: { x: number; y: number }) {

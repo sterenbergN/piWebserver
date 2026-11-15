@@ -2,6 +2,8 @@
 // for storage, finding what a touch hit, erasing part of a stroke, and turning a wobbly
 // hand-drawn box into a straight one.
 
+import type { PageElement, StrokeElement, TextElement } from './items';
+
 /** Twentieths of a point: finer than a screen shows even zoomed right in. */
 const POSITION = 20;
 const PRESSURE = 100;
@@ -342,4 +344,221 @@ export function recognizeShape(pts: ArrayLike<number>): { kind: ShapeKind; pts: 
     return { kind: 'ellipse', pts: ellipsePoints(cx, cy, round ? r : rx, round ? r : ry) };
   }
   return null;
+}
+
+// ── Cross-out / scribble to erase ────────────────────────────────────────────────
+
+const SCRATCH_MIN_POINTS = 8;
+const SCRATCH_MIN_DIAG = 18;
+const SCRATCH_MIN_SEG = 6;
+const SCRATCH_REVERSE_DOT = -0.35;
+const SCRATCH_LENGTH_RATIO = 1.7;
+
+/**
+ * Recognizes a multi-pass cross-out / zig-zag scribble gesture (held at the end of a stroke)
+ * and returns its tight bounding box, or null if it looks like ordinary writing, a line, or a shape.
+ */
+export function recognizeScratchOut(pts: ArrayLike<number>): Box | null {
+  const count = Math.floor(pts.length / 3);
+  if (count < SCRATCH_MIN_POINTS) return null;
+  const box = boundsOf(pts);
+  const diag = Math.hypot(box.w, box.h);
+  if (diag < SCRATCH_MIN_DIAG) return null;
+
+  let length = 0;
+  let ax = pts[0];
+  let ay = pts[1];
+  const segs: { ux: number; uy: number; len: number }[] = [];
+  for (let i = 3; i < count * 3; i += 3) {
+    const x = pts[i];
+    const y = pts[i + 1];
+    length += Math.hypot(x - pts[i - 3], y - pts[i - 2]);
+    const dx = x - ax;
+    const dy = y - ay;
+    const d = Math.hypot(dx, dy);
+    if (d >= SCRATCH_MIN_SEG) {
+      segs.push({ ux: dx / d, uy: dy / d, len: d });
+      ax = x;
+      ay = y;
+    }
+  }
+  if (length < diag * SCRATCH_LENGTH_RATIO || segs.length < 3) return null;
+
+  let reversals = 0;
+  let posTurns = 0;
+  let negTurns = 0;
+  let sharpBackForth = 0;
+  let lastReversal = -1;
+  for (let i = 1; i < segs.length; i++) {
+    const prev = segs[i - 1];
+    const curr = segs[i];
+    const dot = prev.ux * curr.ux + prev.uy * curr.uy;
+    const cross = prev.ux * curr.uy - prev.uy * curr.ux;
+    if (dot < SCRATCH_REVERSE_DOT) {
+      reversals += 1;
+      if (dot < -0.7) sharpBackForth += 1;
+      if (cross > 0.05) posTurns += 1;
+      else if (cross < -0.05) negTurns += 1;
+      lastReversal = i;
+    } else if (i >= 2 && lastReversal < i - 1 && prev.len <= 16) {
+      // Catch a rounded turnaround spanning one short intermediate corner segment.
+      const before = segs[i - 2];
+      const spanDot = before.ux * curr.ux + before.uy * curr.uy;
+      if (spanDot < SCRATCH_REVERSE_DOT) {
+        reversals += 1;
+        if (spanDot < -0.7) sharpBackForth += 1;
+        const cornerCross = before.ux * prev.uy - before.uy * prev.ux;
+        if (cornerCross > 0.05) posTurns += 1;
+        else if (cornerCross < -0.05) negTurns += 1;
+        lastReversal = i;
+      }
+    }
+  }
+  if (reversals < 2) return null;
+
+  const firstX = pts[0];
+  const firstY = pts[1];
+  const lastX = pts[(count - 1) * 3];
+  const lastY = pts[(count - 1) * 3 + 1];
+  const chord = Math.hypot(lastX - firstX, lastY - firstY);
+  const size = Math.max(box.w, box.h);
+  const closed = chord <= Math.max(size * 0.28, length * 0.15);
+
+  if (reversals === 2) {
+    if (!(posTurns > 0 && negTurns > 0) && sharpBackForth < 2) return null;
+    if (closed && recognizeShape(pts)) return null;
+  }
+  if (closed && length < diag * 2.5) {
+    const shape = recognizeShape(pts);
+    if (shape && shape.kind !== 'line') return null;
+  }
+  return box;
+}
+
+function collectSegments(pts: ArrayLike<number>, minStep: number): [number, number, number, number][] {
+  const count = Math.floor(pts.length / 3);
+  if (count < 1) return [];
+  if (count === 1) return [[pts[0], pts[1], pts[0], pts[1]]];
+  const out: [number, number, number, number][] = [];
+  let ax = pts[0];
+  let ay = pts[1];
+  for (let i = 3; i < count * 3; i += 3) {
+    const x = pts[i];
+    const y = pts[i + 1];
+    if (Math.hypot(x - ax, y - ay) >= minStep) {
+      out.push([ax, ay, x, y]);
+      ax = x;
+      ay = y;
+    }
+  }
+  const lx = pts[(count - 1) * 3];
+  const ly = pts[(count - 1) * 3 + 1];
+  if (lx !== ax || ly !== ay || !out.length) out.push([ax, ay, lx, ly]);
+  return out;
+}
+
+function orient(ax: number, ay: number, bx: number, by: number, cx: number, cy: number) {
+  return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+}
+
+function onSegment(ax: number, ay: number, bx: number, by: number, px: number, py: number) {
+  return px >= Math.min(ax, bx) - 1e-6 && px <= Math.max(ax, bx) + 1e-6 && py >= Math.min(ay, by) - 1e-6 && py <= Math.max(ay, by) + 1e-6;
+}
+
+function segmentsIntersect(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number) {
+  if (Math.max(ax, bx) < Math.min(cx, dx) || Math.max(cx, dx) < Math.min(ax, bx)) return false;
+  if (Math.max(ay, by) < Math.min(cy, dy) || Math.max(cy, dy) < Math.min(ay, by)) return false;
+  const o1 = orient(ax, ay, bx, by, cx, cy);
+  const o2 = orient(ax, ay, bx, by, dx, dy);
+  const o3 = orient(cx, cy, dx, dy, ax, ay);
+  const o4 = orient(cx, cy, dx, dy, bx, by);
+  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) && ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) return true;
+  if (o1 === 0 && onSegment(ax, ay, bx, by, cx, cy)) return true;
+  if (o2 === 0 && onSegment(ax, ay, bx, by, dx, dy)) return true;
+  if (o3 === 0 && onSegment(cx, cy, dx, dy, ax, ay)) return true;
+  if (o4 === 0 && onSegment(cx, cy, dx, dy, bx, by)) return true;
+  return false;
+}
+
+function segmentsNear(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number, limit2: number) {
+  if (segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy)) return true;
+  return segmentDistance2(ax, ay, cx, cy, dx, dy) <= limit2
+    || segmentDistance2(bx, by, cx, cy, dx, dy) <= limit2
+    || segmentDistance2(cx, cy, ax, ay, bx, by) <= limit2
+    || segmentDistance2(dx, dy, ax, ay, bx, by) <= limit2;
+}
+
+const pointInAxisBox = (x: number, y: number, box: Box) => x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+
+function strokeHitsScratchOut(pts: ArrayLike<number>, strokeWidth: number, box: Box, scribbleSegs: [number, number, number, number][], pad: number) {
+  const reach = pad + strokeWidth / 2;
+  const reach2 = reach * reach;
+  for (let i = 0; i < pts.length; i += 3) {
+    if (pointInAxisBox(pts[i], pts[i + 1], box)) return true;
+  }
+  const elSegs = collectSegments(pts, 4);
+  for (const [ax, ay, bx, by] of elSegs) {
+    for (const [cx, cy, dx, dy] of scribbleSegs) {
+      if (segmentsNear(ax, ay, bx, by, cx, cy, dx, dy, reach2)) return true;
+    }
+  }
+  return false;
+}
+
+function textHitsScratchOut(el: TextElement, box: Box, scribbleSegs: [number, number, number, number][], pad: number) {
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  if (pointInAxisBox(cx, cy, box)) return true;
+  for (const [sx, sy, ex, ey] of scribbleSegs) {
+    if (pointInBox(sx, sy, el, pad) || pointInBox(ex, ey, el, pad)) return true;
+  }
+  const corners = ([[el.x, el.y], [el.x + el.w, el.y], [el.x + el.w, el.y + el.h], [el.x, el.y + el.h]] as const)
+    .map(([x, y]) => movePoint(x, y, { dx: 0, dy: 0, scale: 1, rot: el.rot, cx, cy }));
+  if (corners.some(([x, y]) => pointInAxisBox(x, y, box))) return true;
+  const pad2 = pad * pad;
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = corners[i];
+    const [bx, by] = corners[(i + 1) % 4];
+    for (const [sx, sy, ex, ey] of scribbleSegs) {
+      if (segmentsNear(ax, ay, bx, by, sx, sy, ex, ey, pad2)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Finds live ink strokes and non-empty text boxes hit by a cross-out scribble.
+ */
+export function scratchOutTargets(
+  scribblePts: ArrayLike<number>,
+  width: number,
+  elements: PageElement[],
+): { strokes: StrokeElement[]; texts: TextElement[] } {
+  const raw = recognizeScratchOut(scribblePts);
+  if (!raw) return { strokes: [], texts: [] };
+  const pad = Math.max(8, width * 1.5);
+  const box: Box = { x: raw.x - pad, y: raw.y - pad, w: raw.w + pad * 2, h: raw.h + pad * 2 };
+  const scribbleSegs = collectSegments(scribblePts, 4);
+
+  const strokes: StrokeElement[] = [];
+  const texts: TextElement[] = [];
+
+  for (const el of elements) {
+    if (el.deleted) continue;
+    if (el.kind === 'stroke') {
+      if (el.style === 'marker' || el.style === 'tape') continue;
+      const pts = unpackPoints(el.p);
+      if (pts.length < 3) continue;
+      const elBox = boundsOf(pts, el.width);
+      if (!boxesTouch(elBox, box)) continue;
+      if (strokeHitsScratchOut(pts, el.width, box, scribbleSegs, pad)) strokes.push(el);
+    } else if (el.kind === 'text') {
+      if (el.text.trim().length === 0) continue;
+      const elBox = turnedBounds(el);
+      if (!boxesTouch(elBox, box)) continue;
+      if (!el.rot || textHitsScratchOut(el, box, scribbleSegs, pad)) texts.push(el);
+    }
+  }
+
+  return { strokes, texts };
 }

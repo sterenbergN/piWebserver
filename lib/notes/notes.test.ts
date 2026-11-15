@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  boundsOf, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoints, packPoints, pointInBox, recognizeShape, shapeFromDrag, strokeTouches, unpackPoints,
+  boundsOf, eraseFromStroke, lassoCatchesBox, lassoCatchesStroke, moveBox, movePoints, packPoints, pointInBox, recognizeScratchOut, recognizeShape, scratchOutTargets, shapeFromDrag, strokeTouches, unpackPoints,
 } from './geometry';
 import {
   cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, folderPath, mergeChanges, orderBetween, recordsSince, sniffFile, wouldNest, MAX_STROKE_POINTS, type Folder, type PageElement,
@@ -511,4 +511,99 @@ test('the daily questions can find the pages tied to them, and nobody else’s',
   // In the trash, it stops being offered.
   await syncLibrary('gus', 0, [notebook('nb', 20, { title: 'Engineering questions', daily: true, trashedAt: NOW })], NOW);
   assert.deepEqual(await pagesTiedTo('gus', ['equilibrium']), []);
+});
+
+const polyline = (vertices: [number, number][], step = 5) => {
+  const pts: number[] = [];
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const [ax, ay] = vertices[i];
+    const [bx, by] = vertices[i + 1];
+    const dist = Math.hypot(bx - ax, by - ay);
+    const parts = Math.max(1, Math.ceil(dist / step));
+    for (let p = i === 0 ? 0 : 1; p <= parts; p++) {
+      const t = p / parts;
+      pts.push(ax + (bx - ax) * t, ay + (by - ay) * t, 0.5);
+    }
+  }
+  return pts;
+};
+
+test('recognizeScratchOut detects multi-pass cross-outs and ignores lines, arcs and closed shapes', () => {
+  const zigzag = polyline([[100, 100], [180, 100], [105, 112], [180, 122], [100, 134]]);
+  const box = recognizeScratchOut(zigzag);
+  assert.deepEqual(box, { x: 100, y: 100, w: 80, h: 34 });
+
+  const zCross = polyline([[40, 60], [110, 60], [40, 78], [110, 78]]);
+  assert.ok(recognizeScratchOut(zCross), '3-pass Z cross-out should match');
+
+  const diagonal = polyline([[20, 20], [70, 50], [30, 65], [80, 95], [40, 110]]);
+  assert.ok(recognizeScratchOut(diagonal), 'diagonal zig-zag should match');
+
+  // Rounded U-turns (like 120Hz pencil scribbles) should still match.
+  const rounded = [
+    100, 100, 0.5, 125, 100, 0.5, 150, 100, 0.5, 154, 103, 0.5, 153, 107, 0.5, 145, 109, 0.5,
+    120, 110, 0.5, 100, 111, 0.5, 96, 114, 0.5, 97, 118, 0.5, 105, 120, 0.5, 150, 121, 0.5,
+  ];
+  assert.ok(recognizeScratchOut(rounded), 'rounded-corner scribble should match');
+
+  // Flat 1D back-and-forth scribble along one line should match.
+  const flatBackForth = polyline([[40, 100], [120, 100], [40, 100], [120, 100]]);
+  assert.ok(recognizeScratchOut(flatBackForth), '1D back-and-forth scribble should match');
+
+  // Reject straight line, gentle arc, V-checkmark, tiny scribble, and closed shapes.
+  assert.equal(recognizeScratchOut(wobble((t) => [100 + t * 200, 100 + t * 6])), null, 'straight line');
+  assert.equal(recognizeScratchOut(wobble((t) => [100 + t * 140, 100 + Math.sin(t * Math.PI) * 35])), null, 'smooth arc');
+  assert.equal(recognizeScratchOut(polyline([[10, 40], [30, 65], [80, 15]])), null, 'single reversal checkmark');
+  assert.equal(recognizeScratchOut(polyline([[10, 10], [20, 10], [10, 15], [20, 15]])), null, 'too small (<18 diag)');
+  assert.equal(recognizeScratchOut([0, 0, 0.5, 50, 0, 0.5, 0, 10, 0.5, 50, 10, 0.5]), null, 'too few points');
+
+  const circle = wobble((t) => [200 + 80 * Math.cos(t * Math.PI * 2), 200 + 80 * Math.sin(t * Math.PI * 2)]);
+  assert.equal(recognizeScratchOut(circle), null, 'smooth circle');
+
+  const flatEllipse = wobble((t) => [200 + 80 * Math.cos(t * Math.PI * 2), 200 + 14 * Math.sin(t * Math.PI * 2)]);
+  assert.equal(recognizeScratchOut(flatEllipse), null, 'smooth ellipse');
+
+  const corners = (t: number, points: [number, number][]): [number, number] => {
+    const at = t * (points.length - 1);
+    const i = Math.min(points.length - 2, Math.floor(at));
+    const f = at - i;
+    return [points[i][0] + (points[i + 1][0] - points[i][0]) * f, points[i][1] + (points[i + 1][1] - points[i][1]) * f];
+  };
+  const rect = wobble((t) => corners(t, [[100, 100], [300, 100], [300, 240], [100, 240], [100, 100]]), 120);
+  assert.equal(recognizeScratchOut(rect), null, 'closed rectangle');
+
+  const tri = wobble((t) => corners(t, [[200, 100], [300, 280], [100, 280], [200, 100]]), 90);
+  assert.equal(recognizeScratchOut(tri), null, 'closed triangle');
+});
+
+test('scratchOutTargets finds overlapping ink strokes and text elements and ignores everything else', () => {
+  const scribble = polyline([[100, 100], [180, 100], [100, 114], [180, 128], [100, 140]]);
+  const hitPen = stroke('hit-pen', 10, [115, 110, 0.5, 145, 125, 0.5]);
+  const hitLine: PageElement = { id: 'hit-line', kind: 'stroke', style: 'shape', color: '#112233', width: 1.5, p: packPoints([20, 120, 0.5, 260, 120, 0.5]), createdAt: 1, updatedAt: 10 };
+  const farDiag = stroke('far-diag', 10, [0, 200, 0.5, 110, 0, 0.5]);
+  const distant = stroke('distant', 10, [300, 300, 0.5, 340, 320, 0.5]);
+  const deleted = { ...stroke('deleted', 10, [110, 110, 0.5, 150, 120, 0.5]), deleted: true };
+  const marker: PageElement = { id: 'marker', kind: 'stroke', style: 'marker', color: '#ffe14d', width: 14, p: packPoints([100, 115, 0.5, 180, 115, 0.5]), createdAt: 1, updatedAt: 10 };
+  const tape: PageElement = { id: 'tape', kind: 'stroke', style: 'tape', color: '#c9ccd3', width: 20, p: packPoints([100, 115, 0.5, 180, 115, 0.5]), createdAt: 1, updatedAt: 10 };
+
+  const hitText: PageElement = { id: 't-hit', kind: 'text', x: 110, y: 105, w: 90, h: 24, rot: 0, text: 'mistake', size: 14, color: '#000000', font: 'sans', createdAt: 1, updatedAt: 10 };
+  const emptyText: PageElement = { id: 't-empty', kind: 'text', x: 110, y: 105, w: 90, h: 24, rot: 0, text: '   ', size: 14, color: '#000000', font: 'sans', createdAt: 1, updatedAt: 10 };
+  const deletedText: PageElement = { id: 't-del', kind: 'text', x: 110, y: 105, w: 90, h: 24, rot: 0, text: 'gone', size: 14, color: '#000000', font: 'sans', createdAt: 1, updatedAt: 10, deleted: true };
+  const farText: PageElement = { id: 't-far', kind: 'text', x: 250, y: 260, w: 90, h: 24, rot: 0, text: 'keep', size: 14, color: '#000000', font: 'sans', createdAt: 1, updatedAt: 10 };
+  const dotStroke = stroke('dot-hit', 10, [140, 120, 0.5]);
+  const nearPadStroke = stroke('near-pad', 10, [100, 156, 0.5, 150, 156, 0.5]);
+  const rotHitText: PageElement = { id: 't-rot-hit', kind: 'text', x: 100, y: 110, w: 80, h: 20, rot: Math.PI / 4, text: 'tilted', size: 14, color: '#000000', font: 'sans', createdAt: 1, updatedAt: 10 };
+
+  const elements: PageElement[] = [hitPen, hitLine, farDiag, distant, deleted, marker, tape, hitText, emptyText, deletedText, farText, dotStroke, nearPadStroke, rotHitText];
+  const result = scratchOutTargets(scribble, 2, elements);
+  assert.deepEqual(result.strokes.map((s) => s.id), ['hit-pen', 'hit-line', 'dot-hit']);
+  assert.deepEqual(result.texts.map((t) => t.id), ['t-hit', 't-rot-hit']);
+
+  // Wider pen stroke expands the pad (Math.max(8, width * 1.5)) so nearPadStroke is caught.
+  const wider = scratchOutTargets(scribble, 12, elements);
+  assert.ok(wider.strokes.some((s) => s.id === 'near-pad'));
+
+  // A circle drawn around the same elements should not match any scratch-out targets.
+  const circle = wobble((t) => [140 + 50 * Math.cos(t * Math.PI * 2), 120 + 40 * Math.sin(t * Math.PI * 2)]);
+  assert.deepEqual(scratchOutTargets(circle, 2, elements), { strokes: [], texts: [] });
 });
