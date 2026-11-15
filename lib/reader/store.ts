@@ -5,8 +5,9 @@ import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { readJson, updateJson } from '@/lib/json-store';
+import { cleanEditedChapters } from './audio';
 import {
-  cleanFolderName, cleanProgress, emptyNotes, formatFromName, isId, itemsSince, matchesFormat, MAX_BOOK_BYTES, MAX_FOLDERS, mergeChanges, publicLibraryFile,
+  cleanFolderName, cleanProgress, cleanSeriesName, emptyNotes, formatFromName, isId, itemsSince, matchesFormat, MAX_BOOK_BYTES, MAX_FOLDERS, mergeChanges, progressNewer, publicLibraryFile,
   titleFromName, type BookMeta, type Folder, type NotesFile, type Progress,
 } from './items';
 
@@ -83,7 +84,7 @@ async function clearStaleUploads(userId: string) {
 
 export class UploadRefused extends Error {}
 
-async function assertRoom(folder: string, bytes: number) {
+export async function assertRoom(folder: string, bytes: number) {
   const disk = await fs.statfs(folder);
   if (Number(disk.bavail) * Number(disk.bsize) - bytes < KEEP_FREE_BYTES) throw new UploadRefused('The server is nearly out of space.');
 }
@@ -296,6 +297,123 @@ export async function renameBook(userId: string, bookId: string, title: string, 
   });
 }
 
+/** An audio book's chapters, as edited by hand. */
+export async function setChapters(userId: string, bookId: string, raw: unknown) {
+  return updateLibrary<BookMeta | false>(userId, (library) => {
+    const book = library.books.find((b) => b.id === bookId);
+    if (!book || book.format !== 'audio') return false;
+    const duration = book.audio?.duration ?? 0;
+    book.audio = { duration, chapters: cleanEditedChapters(raw, duration) };
+    return book;
+  });
+}
+
+/** A book on its own isn't "the same book in two forms" any more. */
+function tidyWorks(library: ReaderLibrary) {
+  const sizes = new Map<string, number>();
+  for (const book of library.books) if (book.work) sizes.set(book.work, (sizes.get(book.work) ?? 0) + 1);
+  for (const book of library.books) if (book.work && (sizes.get(book.work) ?? 0) < 2) delete book.work;
+}
+
+/**
+ * Say these are the same book in different forms (the EPUB or PDF, and the audio book), so
+ * the shelf shows them as one. They share a series too, whichever of them had it.
+ */
+export async function linkBooks(userId: string, bookIds: unknown[]) {
+  await updateLibrary(userId, (library) => {
+    const wanted = new Set(bookIds);
+    const chosen = library.books.filter((b) => wanted.has(b.id));
+    if (chosen.length < 2) throw new FolderError('Pick two books to put together.');
+    const work = chosen.find((b) => b.work)?.work ?? newId();
+    // Anything already tied to one of them comes along.
+    const works = new Set(chosen.flatMap((b) => (b.work ? [b.work] : [])));
+    const all = library.books.filter((b) => wanted.has(b.id) || (b.work && works.has(b.work)));
+    const series = all.find((b) => b.series);
+    for (const book of all) {
+      book.work = work;
+      if (series) { book.series = series.series; book.seriesIndex = series.seriesIndex; }
+    }
+  });
+}
+
+/** Take one form of a book back out on its own. */
+export async function unlinkBook(userId: string, bookId: string) {
+  await updateLibrary(userId, (library) => {
+    const book = library.books.find((b) => b.id === bookId);
+    if (book) delete book.work;
+    tidyWorks(library);
+  });
+}
+
+/** Every form of the books named, so a series always holds a whole book. */
+function withTheirForms(library: ReaderLibrary, bookIds: unknown[]) {
+  const wanted = new Set(bookIds);
+  const works = new Set(library.books.flatMap((b) => (wanted.has(b.id) && b.work ? [b.work] : [])));
+  return library.books.filter((b) => wanted.has(b.id) || (b.work && works.has(b.work)));
+}
+
+/**
+ * Put books in a series, in the order given, after any already in it; or with null, take
+ * them out. A series is just its name: it's there while a book carries it.
+ */
+export async function setSeries(userId: string, bookIds: unknown[], rawName: unknown) {
+  const name = rawName === null ? null : cleanSeriesName(rawName);
+  if (name === '') throw new FolderError('A series needs a name.');
+  await updateLibrary(userId, (library) => {
+    const books = withTheirForms(library, bookIds);
+    if (name === null) {
+      for (const book of books) { delete book.series; delete book.seriesIndex; }
+      return;
+    }
+    // The name as it's already written, whatever capitals were typed.
+    const held = library.books.find((b) => b.series?.toLowerCase() === name.toLowerCase())?.series ?? name;
+    let next = Math.max(0, ...library.books.filter((b) => b.series === held).map((b) => b.seriesIndex ?? 0));
+    const order = bookIds.filter((id): id is string => typeof id === 'string');
+    const place = new Map<string, number>();
+    for (const book of [...books].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))) {
+      const key = book.work ?? book.id;
+      // A book already in this series keeps its place.
+      if (!place.has(key)) place.set(key, book.series === held && book.seriesIndex ? book.seriesIndex : (next += 1));
+    }
+    for (const book of books) {
+      book.series = held;
+      book.seriesIndex = place.get(book.work ?? book.id);
+    }
+  });
+}
+
+/** Number a series 1, 2, 3… in the order given. Books left out follow, in the order they had. */
+export async function orderSeries(userId: string, rawName: unknown, bookIds: unknown[]) {
+  await updateLibrary(userId, (library) => {
+    const inSeries = library.books.filter((b) => b.series === rawName);
+    const order = bookIds.filter((id): id is string => typeof id === 'string');
+    const rank = (b: BookMeta) => {
+      const at = Math.min(...inSeries.filter((o) => (o.work ?? o.id) === (b.work ?? b.id)).map((o) => order.indexOf(o.id)).filter((i) => i >= 0));
+      return Number.isFinite(at) ? at : order.length + (b.seriesIndex ?? 0);
+    };
+    const keys = [...new Set([...inSeries].sort((a, b) => rank(a) - rank(b)).map((b) => b.work ?? b.id))];
+    for (const book of inSeries) book.seriesIndex = keys.indexOf(book.work ?? book.id) + 1;
+  });
+}
+
+export async function renameSeries(userId: string, from: unknown, rawName: unknown) {
+  const name = cleanSeriesName(rawName);
+  if (!name) throw new FolderError('A series needs a name.');
+  await updateLibrary(userId, (library) => {
+    if (library.books.some((b) => b.series?.toLowerCase() === name.toLowerCase() && b.series !== from)) throw new FolderError('There’s a series with that name already.');
+    for (const book of library.books) if (book.series === from) book.series = name;
+  });
+}
+
+/** The series goes. Its books stay on the shelf. */
+export async function removeSeries(userId: string, name: unknown) {
+  await updateLibrary(userId, (library) => {
+    for (const book of library.books) {
+      if (book.series === name) { delete book.series; delete book.seriesIndex; }
+    }
+  });
+}
+
 /** Gone from the account, along with its notes, everywhere. */
 export async function removeBook(userId: string, bookId: string) {
   const book = await findBook(userId, bookId);
@@ -303,6 +421,7 @@ export async function removeBook(userId: string, bookId: string) {
   await updateLibrary(userId, (library) => {
     library.books = library.books.filter((b) => b.id !== bookId);
     delete library.seqs[bookId];
+    tidyWorks(library);
   });
   await updateJson<ProgressFile>(progressFile(userId), {}, (progress) => {
     delete progress[bookId];
@@ -319,7 +438,7 @@ export async function saveProgress(userId: string, entries: ({ book: unknown } &
     for (const entry of entries) {
       const clean = cleanProgress(entry, now);
       if (!clean || !isId(entry.book) || !known.has(entry.book)) continue;
-      if ((progress[entry.book]?.at ?? 0) >= clean.at) continue;
+      if (!progressNewer(clean, progress[entry.book])) continue;
       progress[entry.book] = clean;
       changed = true;
     }

@@ -8,7 +8,8 @@ import { newId, type NotebookDoc } from './doc';
 import { RecordingDetail } from './RecordingDetail';
 import { findPagesForOlder, findRecordingPages, recordingPages } from './recording-pages';
 import { listTranscripts, type TranscriptInfo } from './transcripts';
-import { fetchFile, keepNewFile, newFileId } from './sync';
+import { boostSound } from './louder';
+import { fetchFile, keepNewFile, newFileId, sendAgain } from './sync';
 
 // Sound recorded while you write. Ink already knows when it was written, so nothing more is
 // needed to link the two: tap a word while listening and it jumps to what was being said then.
@@ -61,6 +62,7 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
   const started = useRef<Started | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
+  const boostRef = useRef<{ close: () => void } | null>(null);
   const tick = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const finish = useCallback(async (id: string, chunks: Blob[], mime: string, startedAt: number, duration: number, page?: string) => {
@@ -144,7 +146,9 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
     if (started.current) return;
     setCutOff(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true } });
+      // No echo cancelling: it's tuned for a voice at the microphone and swallows a lecturer across a room.
+      // That leaves the sound quiet on an iPad, so the microphone is asked to level it, and playback lifts it too.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
       const mime = pickType();
       const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const id = newId();
@@ -221,7 +225,8 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
     } catch (error) {
       started.current = null;
       const denied = (error as Error).name === 'NotAllowedError';
-      say(denied ? 'Notes isn’t allowed to use the microphone. It can be turned on in Settings.' : 'The microphone wouldn’t start.', 4000);
+      // Reached by a link from another page of the site, Notes keeps that page's permissions, which have no microphone.
+      say(denied ? 'Notes isn’t allowed to use the microphone. If you weren’t asked, reload Notes and try again; otherwise it can be turned on in Settings.' : 'The microphone wouldn’t start.', 6000);
     }
   }, [check, end, notebook, say]);
 
@@ -235,6 +240,8 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
   const closePlayer = useCallback(() => {
     audioRef.current?.pause();
     audioRef.current = null;
+    boostRef.current?.close();
+    boostRef.current = null;
     if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     urlRef.current = null;
     setPlaying(null);
@@ -242,15 +249,20 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
 
   const play = useCallback(async (record: RecordingRecord, at = 0) => {
     closePlayer();
+    // Asked for now, while this is still the tap that started it: browsers only let sound be shaped from one.
+    const boost = boostSound();
     const blob = (await getFile(notebook, record.file)) ?? (await fetchFile(notebook, record.file).catch(() => null));
     if (!blob) {
-      say('This recording isn’t on this device yet.', 3000);
+      say('This recording’s sound isn’t on this device, and hasn’t reached the Pi from the one that recorded it.', 4000);
       return;
     }
     const url = URL.createObjectURL(new Blob([blob], { type: record.mime || blob.type }));
     urlRef.current = url;
     const audio = new Audio(url);
     audioRef.current = audio;
+    // A lecture recorded from the back of a room is quiet: bring it up to a level you can hear.
+    boostRef.current = await boost.then((attach) => attach?.(audio) ?? null, () => null);
+    if (audioRef.current !== audio) { boostRef.current?.close(); boostRef.current = null; return; }
     audio.currentTime = at / 1000;
     const update = () => setPlaying({ record, at: audio.currentTime * 1000, paused: audio.paused });
     audio.addEventListener('timeupdate', update);
@@ -343,6 +355,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
   const [query, setQuery] = useState('');
   const [onlyHere, setOnlyHere] = useState(false);
   const [texts, setTexts] = useState<Record<string, TranscriptInfo>>({});
+  const [notOnPi, setNotOnPi] = useState<Set<string>>(new Set());
   const [found, setFound] = useState<Record<string, RecordingPage[]>>({});
   useEffect(() => doc.subscribe(() => setTick((t) => t + 1)), [doc]);
   const count = doc.recordings.length;
@@ -354,9 +367,16 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
   const pagesOf = (record: RecordingRecord) => recordingPages(record, found[record.id]);
   useEffect(() => {
     let live = true;
-    void listTranscripts(notebook).then((items) => { if (live) setTexts(items); }).catch(() => {});
+    void listTranscripts(notebook).then(({ texts: items, missing }) => {
+      if (!live) return;
+      setTexts(items);
+      setNotOnPi(new Set(missing));
+      // The Pi has no sound for these. Any that this device holds go up again now.
+      const files = doc.recordings.filter((record) => missing.includes(record.id)).map((record) => record.file);
+      if (files.length) void sendAgain(notebook, files).catch(() => {});
+    }).catch(() => {});
     return () => { live = false; };
-  }, [notebook, open]);
+  }, [doc, notebook, open, count]);
 
   const opened = open ? doc.recordings.find((r) => r.id === open) : undefined;
   if (opened) {
@@ -429,7 +449,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
                           <small>
                             {new Date(record.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · {fmtDuration(record.duration)}
                             {pages.length ? ` · ${pageList(pages)}` : ''}
-                            {record.summary ? ' · summary' : text?.status === 'done' ? ' · text' : text?.status === 'working' || text?.status === 'waiting' ? ' · turning into text…' : ''}
+                            {record.summary ? ' · summary' : text?.status === 'done' ? ' · text' : text?.status === 'working' || text?.status === 'waiting' ? ' · turning into text…' : notOnPi.has(record.id) ? ' · not on the Pi yet' : ''}
                           </small>
                         </button>
                         <button type="button" className="nt-icon-btn" aria-label={`Open ${record.title}`} onClick={() => setOpen(record.id)}><Icon name="chevron" /></button>

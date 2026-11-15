@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { isId } from '@/lib/notes/items';
-import { forDevice, forget, requestTranscript, resumeTranscripts } from '@/lib/notes/transcripts';
+import { forDevice, forget, notebookTranscripts, recordingOnPi, requestTranscript, resumeTranscripts } from '@/lib/notes/transcripts';
 
 // Recordings turned into text on the Pi. POST starts one (or starts it over), GET says how it's
-// going: for one recording with its text, or for the whole notebook without. DELETE stops it
+// going: for one recording with its text, or for the whole notebook without, along with which
+// recordings' sound hasn't reached the Pi (so the device that has it can send it). DELETE stops it
 // and forgets it.
 
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
@@ -22,12 +23,12 @@ export async function GET(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const { notebook, recording } = target(new URL(request.url).searchParams);
-    const file = await resumeTranscripts(userId, notebook);
     if (recording) {
-      const item = file.items[recording];
-      return NextResponse.json({ success: true, transcript: item ? forDevice(item, true) : null }, { headers: PRIVATE });
+      const item = (await resumeTranscripts(userId, notebook)).items[recording];
+      return NextResponse.json({ success: true, transcript: item ? forDevice(item, true) : null, onPi: await recordingOnPi(userId, notebook, recording) }, { headers: PRIVATE });
     }
-    return NextResponse.json({ success: true, items: Object.values(file.items).map((item) => forDevice(item, false)) }, { headers: PRIVATE });
+    const { file, missing } = await notebookTranscripts(userId, notebook);
+    return NextResponse.json({ success: true, items: Object.values(file.items).map((item) => forDevice(item, false)), missing }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Notes transcript failed');
   }
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
     if (!recording) throw new ApiError(400, 'Which recording?');
     const out = await requestTranscript(userId, notebook, recording, body.again === true);
     if ('gone' in out) throw new ApiError(404, 'That recording isn’t on the Pi.');
-    if ('notHere' in out) throw new ApiError(409, 'This recording is still on its way to the Pi. Try again once Notes has synced.');
+    if ('notHere' in out) throw new ApiError(409, 'The sound for this recording hasn’t reached the Pi yet. Open Notes on the device that recorded it, with a connection, and leave it open until it has synced.');
     return NextResponse.json({ success: true, transcript: forDevice(out.transcript, true) }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Notes transcribing failed');

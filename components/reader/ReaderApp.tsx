@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import SignInPrompt from '@/components/journal/SignInPrompt';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Anchor, BookMeta, Folder } from '@/lib/reader/items';
 import AudioView from './AudioView';
 import BookView from './BookView';
-import { getFolders, listBooks, selectAccount } from './db';
+import { getFolders, GUEST, listBooks, selectAccount } from './db';
 import Library from './Library';
+import { GuestShelf, publicBook, usePublicLibrary } from './PublicLibrary';
 import { prepareOffline } from './offline';
 import type { ReaderSettings } from './source';
 import { applyShelf, fetchShelf, flushEverything, flushNow, pullChangedNotes, ReaderSignedOut, USER_KEY } from './sync';
@@ -15,8 +15,10 @@ import { applyShelf, fetchShelf, flushEverything, flushNow, pullChangedNotes, Re
 // there's one thing for the service worker to keep and it can open with no connection.
 // The account comes from the server when it can be reached, and otherwise from the last
 // one seen on this device, whose books and notes are stored here under its name.
+// With no account at all it's still a reader: of the public Library, which anyone can read.
 
-type Phase = 'starting' | 'signed-out' | 'offline-new' | 'ready';
+type Phase = 'starting' | 'guest' | 'offline-new' | 'ready';
+
 
 const SETTINGS_KEY = 'reader-settings';
 
@@ -76,7 +78,11 @@ export default function ReaderApp() {
       const remembered = userRef.current ?? rememberedUser();
       if (error instanceof ReaderSignedOut) {
         setOnline(true);
-        if (!remembered) { setPhase('signed-out'); return; }
+        if (!remembered) {
+          selectAccount(GUEST);
+          setPhase('guest');
+          return;
+        }
         setSignedOut(true);
       } else {
         setOnline(false);
@@ -124,6 +130,12 @@ export default function ReaderApp() {
     setOpen({ id: book.id, at: at ?? null });
   };
 
+  /** From a book to its audio book, or back: in place, so Back still goes to the shelf. */
+  const switchTo = (book: BookMeta) => {
+    window.history.replaceState(null, '', `/reader?book=${encodeURIComponent(book.id)}`);
+    setOpen({ id: book.id, at: null });
+  };
+
   const closeBook = () => {
     if (bookInUrl()) window.history.pushState(null, '', '/reader');
     setOpen(null);
@@ -137,15 +149,9 @@ export default function ReaderApp() {
 
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));
 
-  if (phase === 'signed-out') {
-    return (
-      <div className="reader-signin">
-        <SignInPrompt title="Sign in to your books">
-          Your books, notes and pen marks are saved to your account, and only you can see them.
-        </SignInPrompt>
-      </div>
-    );
-  }
+  // With no account, the books are the Library's own.
+  const guestLibrary = usePublicLibrary(phase === 'guest');
+  const guestBooks = useMemo(() => (guestLibrary.docs ?? []).flatMap((doc) => publicBook(doc) ?? []), [guestLibrary.docs]);
 
   if (phase === 'offline-new') {
     return (
@@ -159,15 +165,24 @@ export default function ReaderApp() {
     );
   }
 
-  const openedBook = open && books.find((book) => book.id === open.id);
+  const openedBook = open && (phase === 'guest' ? guestBooks : books).find((book) => book.id === open.id);
+  // The same book in its other form: the audio book of a text, or the text of an audio book.
+  const otherForm = openedBook && openedBook.work
+    ? books.find((book) => book.work === openedBook.work && book.id !== openedBook.id && (book.format === 'audio') !== (openedBook.format === 'audio'))
+    : undefined;
 
   return (
     <div className="reader-space">
+      {settings && phase === 'guest' && (
+        openedBook
+          ? <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} onSettings={changeSettings} onExit={closeBook} onSignedOut={closeBook} />
+          : <GuestShelf library={guestLibrary} theme={settings.theme} onOpen={openBook} onSignIn={signIn} />
+      )}
       {settings && phase === 'ready' && (
         openedBook?.format === 'audio' ? (
-          <AudioView key={openedBook.id} book={openedBook} startAt={open?.at ?? null} settings={settings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
+          <AudioView key={openedBook.id} book={openedBook} startAt={open?.at ?? null} settings={settings} other={otherForm} onSwitch={switchTo} onEdited={() => void showBooks()} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
         ) : openedBook ? (
-          <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} onSettings={changeSettings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
+          <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} other={otherForm} onSwitch={switchTo} onSettings={changeSettings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
         ) : (
           <Library books={books} folders={folders} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} />
         )

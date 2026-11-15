@@ -80,7 +80,8 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/habits', label: 'Habits', icon: '✅', blurb: 'Keep your streaks going', keywords: 'routine tracker' },
         { href: '/chores', label: 'Chores', icon: '🧹', blurb: 'What’s due at home', keywords: 'cleaning household tasks' },
         { href: '/journal', label: 'Journal', icon: '📓', blurb: 'A private place to write', keywords: 'diary mood writing', account: true },
-        { href: '/reader', label: 'Reader', icon: '📖', blurb: 'Your books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline', account: true },
+        // Not account-only: with no account it's still where the Library is read.
+        { href: '/reader', label: 'Reader', icon: '📖', blurb: 'The Library, and your own books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline library documents manuals papers audiobook' },
         { href: '/notes', label: 'Notes', icon: '✏️', blurb: 'Notebooks you write in, with or without a connection', keywords: 'goodnotes notability handwriting pencil notebook pdf annotate lecture recording offline', account: true },
         { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆', short: 'Ranks', blurb: 'How everyone’s doing', keywords: 'scores xp' },
       ],
@@ -221,7 +222,6 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/resume', label: 'Resume', icon: '📄', blurb: 'The printable version', keywords: 'cv experience' },
         { href: '/blog', label: 'Posts', icon: '📝', blurb: 'Write-ups and build logs', keywords: 'blog articles' },
         { href: '/gallery', label: 'Gallery', icon: '🖼️', blurb: 'Photo albums', keywords: 'photos pictures' },
-        { href: '/library', label: 'Library', icon: '📚', blurb: 'Books, manuals and PDFs', keywords: 'documents pdf' },
         { href: '/cad', label: '3D Models', icon: '🧊', short: '3D Models', blurb: 'Interactive CAD parts and 3D models', keywords: 'cad 3d models stl glb obj onshape viewer' },
       ],
     },

@@ -114,8 +114,11 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-continue { margin-bottom: 1.2rem; }
 .rd-continue h2, .rd-shelf-head h2 { margin: 0; font-family: 'Newsreader Variable', Georgia, serif; font-size: 1.2rem; font-weight: 500; color: var(--rd-fg); background: none; -webkit-text-fill-color: currentColor; }
 .rd-continue ul { list-style: none; margin: 0.55rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 0.6rem; }
-.rd-continue button { display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.55rem; border: 0; border-radius: 12px; background: var(--rd-surface); color: inherit; font: inherit; text-align: left; cursor: pointer; box-shadow: 0 0 0 1px var(--rd-line); }
-.rd-continue button:disabled { opacity: 0.5; cursor: default; }
+.rd-continue-head { display: flex; align-items: center; gap: 0.5rem; }
+.rd-continue li { position: relative; }
+.rd-continue-open { display: flex; align-items: center; gap: 0.75rem; width: 100%; padding: 0.55rem 2.6rem 0.55rem 0.55rem; border: 0; border-radius: 12px; background: var(--rd-surface); color: inherit; font: inherit; text-align: left; cursor: pointer; box-shadow: 0 0 0 1px var(--rd-line); }
+.rd-continue-open:disabled { opacity: 0.5; cursor: default; }
+.rd-continue-x { position: absolute; top: 0; right: 0; color: var(--rd-muted); font-size: 0.95rem; }
 .rd-continue .rd-cover { flex: none; width: 54px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
 .rd-continue .rd-cover.is-plain { padding: 0.35rem; }
 .rd-continue .rd-cover.is-plain span { font-size: 0.6rem; }
@@ -142,18 +145,31 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-shelf-head .rd-icon-btn { flex: none; color: var(--rd-muted); font-size: 1rem; }
 
 .rd-select-bar {
-  position: sticky; bottom: calc(var(--rd-bottom) + 0.25rem); display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; padding: 0.45rem 0.45rem 0.45rem 0.9rem; border-radius: 14px;
+  position: sticky; bottom: calc(var(--rd-bottom) + 0.25rem); display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 1rem; padding: 0.45rem 0.45rem 0.45rem 0.9rem; border-radius: 14px;
   background: var(--rd-surface); box-shadow: 0 0 0 1px var(--rd-line), 0 10px 24px -10px rgba(0, 0, 0, 0.5); font-size: 0.92rem; font-weight: 550;
 }
 
 .rd-hint-top { margin: 0 0 0.8rem; }
-.rd-public { list-style: none; margin: 0.6rem 0 0; padding: 0; }
-.rd-public li { display: flex; align-items: center; gap: 0.75rem; min-height: 56px; padding: 0.5rem 0; border-bottom: 1px solid var(--rd-line); }
-.rd-public-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
+/* The Library: what anyone on the site can read, as a shelf of the Reader. */
+.rd-public-tools { margin: 0 0 0.6rem; }
+.rd-public-tools .rd-input { flex: 1 1 14rem; max-width: 30rem; }
+.rd-public-chips { margin-bottom: 0.4rem; }
+.rd-chip.is-on { background: var(--rd-accent); border-color: var(--rd-accent); color: var(--rd-accent-fg); }
+.rd-public-category { margin: 1.2rem 0 0; font-family: 'Newsreader Variable', Georgia, serif; font-size: 1.08rem; font-weight: 500; color: var(--rd-fg); background: none; -webkit-text-fill-color: currentColor; }
+.rd-public-category small { margin-left: 0.3rem; font-family: system-ui, sans-serif; font-size: 0.78rem; color: var(--rd-muted); }
+.rd-public { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+.rd-public li { display: flex; align-items: center; gap: 0.6rem; min-height: 56px; padding: 0.55rem 0; border-bottom: 1px solid var(--rd-line); }
+.rd-public-icon { flex: none; display: grid; place-items: center; width: 40px; height: 52px; border-radius: 5px; background: var(--rd-raised); color: var(--rd-muted); box-shadow: 0 0 0 1px var(--rd-line); }
+.rd-public-text { flex: 1; min-width: 0; display: grid; gap: 0.12rem; }
 .rd-public-text strong { font-size: 0.95rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .rd-public-text span { font-size: 0.8rem; color: var(--rd-muted); }
+.rd-public-text p { margin: 0.1rem 0 0; font-size: 0.86rem; line-height: 1.4; color: var(--rd-fg); overflow-wrap: anywhere; }
 .rd-public-text em { font-size: 0.82rem; font-style: normal; color: var(--rd-danger); }
-.rd-public-done { flex: none; display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; color: var(--rd-muted); }
+.rd-public-text .rd-public-mine { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--rd-accent); font-weight: 600; }
+.rd-public .rd-icon-btn { margin: 0 -0.5rem 0 -0.3rem; color: var(--rd-muted); }
+.rd-public a.rd-btn { text-decoration: none; }
+.rd-doc-meter { margin-top: 0.8rem; }
+.rd-welcome .rd-btn { margin-top: 1rem; }
 
 .rd-banner { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.8rem; padding: 0.55rem 0.8rem; border-radius: 12px; background: var(--rd-raised); font-size: 0.92rem; line-height: 1.4; }
 .rd-banner p { flex: 1; margin: 0; }
@@ -195,10 +211,52 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 
 .rd-lib-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--rd-line); font-size: 0.85rem; color: var(--rd-muted); }
 
-.rd-menu { width: min(92vw, 360px); padding: 0.9rem; border-radius: 16px; background: var(--rd-surface); color: var(--rd-fg); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4); }
+/* A book you have as text and as audio: a way into each, under the one title. */
+.rd-card-meta .rd-forms { flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.rd-form { display: inline-flex; align-items: center; gap: 0.25rem; min-height: 30px; padding: 0 0.55rem; border: 1px solid var(--rd-line); border-radius: 15px; background: var(--rd-surface); color: var(--rd-fg); font: inherit; font-size: 0.76rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.rd-form.is-current { border-color: var(--rd-accent); color: var(--rd-accent); }
+.rd-form:disabled { opacity: 0.45; cursor: default; }
+.rd-form:focus-visible { outline: 2px solid var(--rd-accent); outline-offset: 1px; }
+
+/* A series on the main shelf: its next book in front, the rest behind it. */
+.rd-card.is-stack .rd-card-open { padding: 0 9px 9px 0; }
+.rd-card.is-stack .rd-cover { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 4px 4px 0 -1px var(--rd-raised), 4px 4px 0 0 var(--rd-line), 8px 8px 0 -1px var(--rd-raised), 8px 8px 0 0 var(--rd-line); }
+.rd-card-count, .rd-card-number { position: absolute; display: inline-flex; align-items: center; gap: 0.2rem; min-width: 24px; height: 24px; box-sizing: border-box; padding: 0 0.45rem; border-radius: 12px; background: rgba(0, 0, 0, 0.62); color: #fff; font-size: 0.74rem; font-weight: 700; justify-content: center; }
+.rd-card-count { right: 15px; top: 6px; }
+.rd-card-number { right: 6px; top: 6px; }
+
+.rd-menu { width: min(92vw, 360px); max-height: calc(100% - 2rem); box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 0.9rem; border-radius: 16px; background: var(--rd-surface); color: var(--rd-fg); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4); }
+.rd-menu-scroll { max-height: 42vh; overflow-y: auto; margin: 0.3rem 0; }
+.rd-menu-scroll > button { display: flex; align-items: center; gap: 0.7rem; width: 100%; min-height: 46px; padding: 0.25rem 0.4rem; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.rd-menu-two { flex: 1; min-width: 0; display: grid; gap: 0.1rem; line-height: 1.25; }
+.rd-menu-two strong { font-weight: 600; overflow-wrap: anywhere; }
+.rd-menu-two small, .rd-menu-count { font-size: 0.8rem; color: var(--rd-muted); }
+.rd-menu-forms { display: flex; margin-bottom: 0.5rem; }
+.rd-menu-forms button { flex: 1; }
+.rd-menu .rd-row .rd-input { flex: 1; min-width: 0; }
+.rd-row.is-wrap { flex-wrap: wrap; }
+.rd-check { display: flex; align-items: center; gap: 0.55rem; min-height: 44px; margin-top: 0.5rem; font-size: 0.92rem; line-height: 1.3; cursor: pointer; }
+.rd-check input { flex: none; width: 20px; height: 20px; accent-color: var(--rd-accent); }
+
+.rd-order { list-style: none; margin: 0.3rem 0 0; padding: 0; max-height: 40vh; overflow-y: auto; }
+.rd-order li { display: flex; align-items: center; gap: 0.4rem; min-height: 46px; border-bottom: 1px solid var(--rd-line); }
+.rd-order-n { flex: none; width: 1.6rem; text-align: center; font-size: 0.82rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--rd-muted); }
+.rd-order-text { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
+.rd-order-text strong { font-size: 0.92rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-order-text small { font-size: 0.78rem; color: var(--rd-muted); }
+.rd-order .rd-icon-btn { width: 38px; height: 38px; }
+.reader-space .rd-turn-up { transform: rotate(-90deg); }
+.reader-space .rd-turn-down { transform: rotate(90deg); }
+
+.rd-chapter-rows { list-style: none; margin: 0 0 0.6rem; padding: 0; display: grid; gap: 0.4rem; }
+.rd-chapter-rows li { display: flex; align-items: center; gap: 0.4rem; }
+.rd-chapter-rows .rd-input { flex: 1; min-width: 0; }
+/* As specific as the site's own rule for text fields, which makes them all full width. */
+.rd-sheet .rd-chapter-rows input.rd-input.rd-chapter-time { flex: none; width: 6rem; padding-left: 0.4rem; padding-right: 0.4rem; font-variant-numeric: tabular-nums; text-align: center; }
+.rd-chapter-time.is-bad { border-color: var(--rd-danger); color: var(--rd-danger); }
 .rd-menu-title { margin: 0 0 0.6rem; font-weight: 600; line-height: 1.3; }
 .rd-menu-title small { display: block; margin-top: 0.15rem; font-weight: 400; color: var(--rd-muted); }
-.rd-menu > button { display: flex; align-items: center; gap: 0.7rem; width: 100%; min-height: 46px; padding: 0 0.4rem; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.rd-menu > button, .rd-menu > a { display: flex; align-items: center; gap: 0.7rem; width: 100%; min-height: 46px; box-sizing: border-box; padding: 0 0.4rem; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; border-radius: 8px; }
 .rd-menu > button:disabled { opacity: 0.4; cursor: default; }
 .rd-menu > button.is-danger { color: var(--rd-danger); }
 .rd-menu label.rd-menu-title { display: block; }
@@ -356,6 +414,13 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-yt-form input[type='url'] { flex: 1; min-width: 0; min-height: 44px; padding: 0 0.7rem; border-radius: 10px; border: 1px solid var(--rd-line); background: var(--rd-raised); color: var(--rd-fg); font: inherit; }
 .rd-yt-problem { margin: 0.6rem 0 0; color: var(--rd-danger); font-size: 0.9rem; }
 .rd-yt-jobs li > span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.rd-yt-jobs li.is-part { padding-left: 1.2rem; font-size: 0.86rem; }
+.rd-yt-jobs em { color: var(--rd-muted); }
+.rd-yt-jobs li.is-failed em { color: var(--rd-danger); }
+/* Over the player and the shelf, which scroll: a menu or sheet stays in the middle of the
+   screen, wherever the page has been scrolled to, and its backdrop covers all of it. */
+.rd-listen .rd-sheet-wrap, .rd-library .rd-sheet-wrap { position: fixed; max-width: none; }
+.rd-listen-panel .rd-hint { flex-basis: 100%; margin: 0; }
 
 .rd-listen { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; overflow-y: auto; background: var(--rd-bg); color: var(--rd-fg); }
 .rd-listen .rd-top { position: sticky; top: 0; display: flex; align-items: center; gap: 0.5rem; padding: calc(var(--rd-top) + 0.4rem) 0.75rem 0.4rem; background: var(--rd-bar); }

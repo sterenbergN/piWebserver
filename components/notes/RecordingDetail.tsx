@@ -7,12 +7,13 @@ import { getFile } from './db';
 import type { NotebookDoc } from './doc';
 import { safeFileName, shareOrSave } from './export';
 import { fmtDuration, type Recorder } from './Recorder';
-import { fetchFile } from './sync';
+import { fetchFile, sendAgain, syncNow } from './sync';
 import { getTranscript, removeTranscript, startTranscript, summaryPrompt, transcriptText, type TranscriptInfo } from './transcripts';
 
 // One recording: its name, where it was made, and what was said in it. The Pi writes down what
-// was said (it takes a while, in the background); a summary comes from copying that into an AI
-// and pasting its reply back, the same way the rest of the site uses AI.
+// was said (it starts as soon as the sound reaches it, and the text shows as it's heard); a
+// summary comes from copying that into an AI and pasting its reply back, the same way the rest
+// of the site uses AI.
 
 const POLL_MS = 4000;
 
@@ -25,6 +26,9 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
   const [transcript, setTranscript] = useState<TranscriptInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [offline, setOffline] = useState(false);
+  /** Whether the Pi has this recording's sound, and if not, whether this device does (so it can send it). */
+  const [onPi, setOnPi] = useState(true);
+  const [heldHere, setHeldHere] = useState<boolean | null>(null);
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => setName(record.title), [record.title]);
@@ -34,6 +38,7 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
       const out = await getTranscript(notebook, record.id);
       setTranscript(out.transcript);
       setOffline(!!out.offline);
+      setOnPi(out.onPi !== false);
       setProblem('');
     } catch (error) {
       setProblem((error as Error).message);
@@ -44,11 +49,23 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
 
   useEffect(() => { void refresh(); }, [refresh]);
   const running = transcript?.status === 'waiting' || transcript?.status === 'working';
+  // The sound isn't on the Pi. If it's on this device, send it now, and keep looking until it's there.
+  const sending = loaded && !onPi && !transcript;
   useEffect(() => {
-    if (!running) return;
+    if (!sending) return;
+    let live = true;
+    void getFile(notebook, record.file).then(async (blob) => {
+      if (!live) return;
+      setHeldHere(!!blob);
+      if (blob) { await sendAgain(notebook, [record.file]); void syncNow(); }
+    }).catch(() => { if (live) setHeldHere(false); });
+    return () => { live = false; };
+  }, [sending, notebook, record.file]);
+  useEffect(() => {
+    if (!running && !(sending && heldHere)) return;
     const timer = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(timer);
-  }, [running, refresh]);
+  }, [running, sending, heldHere, refresh]);
 
   const saveName = () => {
     const title = name.trim();
@@ -137,13 +154,22 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
         <h3 className="nt-label nt-rec-section">What was said</h3>
         {!loaded ? (
           <p className="nt-hint">Asking the Pi…</p>
+        ) : !transcript && !onPi ? (
+          <p className="nt-hint nt-tight">
+            {heldHere === null ? 'Looking for its sound…'
+              : heldHere ? 'The sound is on this device and hasn’t reached the Pi yet. Sending it now: keep Notes open until this changes, then it’s turned into text by itself.'
+              : 'The sound for this recording hasn’t reached the Pi. It’s still on the device that recorded it: open Notes there with a connection and keep it open for a minute, and it will come across.'}
+          </p>
         ) : !transcript ? (
           <>
             <p className="nt-hint nt-tight">The Pi can listen to this recording and write down what was said, then you can have your AI summarize it. It works in the background, so you can close Notes. A long lecture takes a while.</p>
             <button type="button" className="nt-btn nt-full nt-gap" disabled={busy} onClick={() => void start()}><Icon name="text" /> Turn into text</button>
           </>
         ) : transcript.status === 'waiting' || transcript.status === 'working' ? (
-          <Progress transcript={transcript} />
+          <>
+            <Progress transcript={transcript} />
+            {transcript.segments.length > 0 && <Lines transcript={transcript} partial onPlay={(at) => { void recorder.play(record, Math.max(0, at - 1000)); onClose(); }} onRedo={() => {}} />}
+          </>
         ) : transcript.status === 'failed' ? (
           <>
             <p className="nt-hint is-error nt-tight">{transcript.problem || 'It couldn’t be turned into text.'}</p>
@@ -177,7 +203,7 @@ function Progress({ transcript }: { transcript: TranscriptInfo }) {
   );
 }
 
-function Lines({ transcript, onPlay, onRedo }: { transcript: TranscriptInfo; onPlay: (at: number) => void; onRedo: () => void }) {
+function Lines({ transcript, partial, onPlay, onRedo }: { transcript: TranscriptInfo; partial?: boolean; onPlay: (at: number) => void; onRedo: () => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -195,11 +221,11 @@ function Lines({ transcript, onPlay, onRedo }: { transcript: TranscriptInfo; onP
   }
   return (
     <details className="nt-transcript" open>
-      <summary>Transcript · {transcript.words.toLocaleString()} words</summary>
+      <summary>{partial ? 'What it has heard so far' : 'Transcript'} · {transcript.words.toLocaleString()} words</summary>
       <div className="nt-row">
         <button type="button" className="nt-btn is-small" onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} /> {copied ? 'Copied' : 'Copy text'}</button>
         <span className="nt-grow" />
-        <button type="button" className="nt-btn is-small" onClick={onRedo}>Listen again</button>
+        {!partial && <button type="button" className="nt-btn is-small" onClick={onRedo}>Listen again</button>}
       </div>
       <ol className="nt-lines">
         {transcript.segments.map((segment) => (

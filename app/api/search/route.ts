@@ -41,7 +41,7 @@ async function buildIndex(): Promise<SearchDoc[]> {
   const library = await readJson<LibraryDoc[]>(path.join(uploads(), 'library', 'library.json'), []);
   for (const doc of Array.isArray(library) ? library : []) {
     if (!doc?.url) continue;
-    docs.push({ kind: 'document', title: doc.name || path.basename(doc.url), url: '/library', subtitle: doc.category, body: doc.note });
+    docs.push({ kind: 'document', title: doc.name || path.basename(doc.url), url: '/reader?shelf=library', subtitle: doc.category, body: doc.note });
   }
 
   const { projects, skills } = await getResume();

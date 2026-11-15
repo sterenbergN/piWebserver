@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import { readJson, updateJson } from '@/lib/json-store';
-import { findRecording, storedFile, transcriptsPath } from './store';
+import { findRecording, readBookItems, storedFile, transcriptsPath } from './store';
 import { SPEECH_MODEL, transcribe, TranscribeProblem, type SpeechSegment } from './transcriber';
 
 // Turning recordings into text is a long job on a Pi (minutes for a lecture), so it runs in the
@@ -131,6 +131,44 @@ export async function requestTranscript(userId: string, notebook: string, record
   stopIfRunning(keyOf({ userId, notebook, recording }), again);
   if (item.status !== 'done') enqueue({ userId, notebook, recording });
   return { transcript: item };
+}
+
+/** A recording this new is turned into text without being asked. Older ones wait for the button. */
+const AUTO_START_MS = 2 * 24 * 3600 * 1000;
+
+const onPi = (userId: string, notebook: string, file: string) => fs.stat(storedFile(userId, notebook, file)).then(() => true, () => false);
+
+/** A file has just arrived: if it's a recording's sound, start writing down what's said in it. */
+export async function transcribeNewFile(userId: string, notebook: string, file: string) {
+  const record = (await readBookItems(userId, notebook)).find((item) => item.kind === 'recording' && item.file === file);
+  if (record) await requestTranscript(userId, notebook, record.id);
+}
+
+/**
+ * How a notebook's recordings are getting on, and which of them have no sound on the Pi yet
+ * (it's still on the device that recorded it). A new recording whose sound is here and that
+ * nobody has asked about is started now: its details can arrive after its sound does.
+ */
+export async function notebookTranscripts(userId: string, notebook: string, now = Date.now()) {
+  let file = await resumeTranscripts(userId, notebook);
+  const missing: string[] = [];
+  let started = false;
+  for (const record of await readBookItems(userId, notebook)) {
+    if (record.kind !== 'recording') continue;
+    if (!(await onPi(userId, notebook, record.file))) missing.push(record.id);
+    else if (!file.items[record.id] && now - record.createdAt < AUTO_START_MS) {
+      await requestTranscript(userId, notebook, record.id);
+      started = true;
+    }
+  }
+  if (started) file = await readFile(userId, notebook);
+  return { file, missing };
+}
+
+/** Whether one recording's sound has reached the Pi. */
+export async function recordingOnPi(userId: string, notebook: string, recording: string) {
+  const record = await findRecording(userId, notebook, recording);
+  return !!record && onPi(userId, notebook, record.file);
 }
 
 /** Anything left waiting or half done when the site last stopped goes back in the queue. */

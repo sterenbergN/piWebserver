@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
-import { addYouTube, listJobs, removeJob, retryJob, YouTubeRefused } from '@/lib/reader/youtube';
+import { addCombine, addYouTube, listJobs, removeJob, retryJob, YouTubeRefused } from '@/lib/reader/youtube';
 
 // Audio books from YouTube for the signed-in account: the list of downloads,
-// adding a link, trying a failed one again, and taking one off the list. The
-// downloading happens on the Pi in the background (lib/reader/youtube.ts).
+// adding a link, joining audio books into one, trying a failed one again, and
+// taking one off the list. The work happens on the Pi in the background
+// (lib/reader/youtube.ts).
 
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
 
@@ -21,8 +22,9 @@ export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const body = await readJsonObject(request);
-    if (body.action === 'add') await addYouTube(userId, body.url, body.folder);
-    else if (body.action === 'retry') await retryJob(userId, body.id);
+    if (body.action === 'add') await addYouTube(userId, body.url, body.folder, body.joined === true);
+    else if (body.action === 'combine') await addCombine(userId, body.books, body.title, body.removeParts === true);
+    else if (body.action === 'retry') await retryJob(userId, body.id, body.skipMissing === true);
     else if (body.action === 'remove') await removeJob(userId, body.id);
     else throw new ApiError(400, 'Unknown action');
     return NextResponse.json({ success: true, jobs: await listJobs(userId) }, { headers: PRIVATE });

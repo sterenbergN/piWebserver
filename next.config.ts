@@ -29,7 +29,7 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
-          // Location is used by the restaurant finder; nothing needs the camera, mic or payment APIs.
+          // Location is used by the restaurant finder; the camera and mic are only for Notes and Skills (below).
           { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()' },
           // The site is only served over HTTPS (Cloudflare); browsers ignore this header on plain HTTP.
           { key: 'Strict-Transport-Security', value: 'max-age=15552000' },
@@ -40,6 +40,14 @@ const nextConfig: NextConfig = {
         source: '/notes',
         headers: [
           { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=(self), payment=(), usb=()' },
+        ],
+      },
+      {
+        // A Skills project can record a demo with the camera and microphone. Without this the
+        // browser refuses without even asking.
+        source: '/skills/:path*',
+        headers: [
+          { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(self), microphone=(self), payment=(), usb=()' },
         ],
       },
       {

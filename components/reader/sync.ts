@@ -1,8 +1,9 @@
 'use client';
 
-import { MAX_CHANGES, nextProgress, UPLOAD_CHUNK_BYTES, withFinished, type Anchor, type BookMeta, type Folder, type Progress, type ReaderItem } from '@/lib/reader/items';
+import type { AudioChapter } from '@/lib/reader/audio';
+import { MAX_CHANGES, nextProgress, progressNewer, UPLOAD_CHUNK_BYTES, withFinished, withSetAside, type Anchor, type BookMeta, type Folder, type Progress, type ReaderItem } from '@/lib/reader/items';
 import {
-  dirtyProgress, forgetBook, getCover, getItems, getKv, getProgress, listBooks, putBooks, putCover, putFile, putFolders, putItems, putKv, putProgress, type StoredItem,
+  dirtyProgress, forgetBook, getCover, isGuest, getItems, getKv, getProgress, listBooks, putBooks, putCover, putFile, putFolders, putItems, putKv, putProgress, type StoredItem,
 } from './db';
 
 // Keeping this device and the server in step. Everything is saved here first and sent
@@ -52,7 +53,7 @@ export async function applyShelf(shelf: Shelf) {
   for (const book of shelf.books) {
     const remote = shelf.progress[book.id];
     const local = await getProgress(book.id);
-    if (remote && remote.at > (local?.at ?? 0)) await putProgress(book.id, remote);
+    if (remote && progressNewer(remote, local)) await putProgress(book.id, remote);
     if (book.hasCover && !(await getCover(book.id))) {
       const res = await fetch(`/api/reader/file?book=${encodeURIComponent(book.id)}&cover=1`).catch(() => null);
       if (res?.ok) await putCover(book.id, await res.blob());
@@ -62,7 +63,7 @@ export async function applyShelf(shelf: Shelf) {
 
 let flushingProgress = false;
 export async function flushProgress() {
-  if (flushingProgress) return;
+  if (flushingProgress || isGuest()) return;
   flushingProgress = true;
   try {
     const dirty = await dirtyProgress();
@@ -70,7 +71,7 @@ export async function flushProgress() {
     await postAction({ action: 'progress', entries: dirty.slice(0, 500).map(({ book, progress: { dirty: _dirty, ...rest } }) => ({ book, ...rest })) });
     for (const { book, progress } of dirty.slice(0, 500)) {
       const current = await getProgress(book);
-      if (current && current.at === progress.at) await putProgress(book, { ...current, dirty: false });
+      if (current && current.at === progress.at && current.hiddenAt === progress.hiddenAt) await putProgress(book, { ...current, dirty: false });
     }
   } catch { /* Offline: it stays marked and goes next time. */ } finally {
     flushingProgress = false;
@@ -89,6 +90,15 @@ export async function markFinished(book: string, finished: boolean) {
   scheduleFlush();
 }
 
+/** Take books off Continue reading. Your place in each is kept, and opening one again puts it back. */
+export async function takeOffContinue(books: string[]) {
+  for (const book of books) {
+    const held = await getProgress(book);
+    if (held) await putProgress(book, { ...withSetAside(held, Date.now()), dirty: true });
+  }
+  scheduleFlush();
+}
+
 const running = new Map<string, Promise<boolean>>();
 
 /** Send this book's changes and take in the other devices'. True if anything new arrived. */
@@ -102,6 +112,7 @@ export function syncBook(book: string): Promise<boolean> {
 
 async function syncBookNow(book: string) {
   let gotNews = false;
+  if (isGuest()) return gotNews;
   for (let round = 0; round < 40; round++) {
     const local = await getItems(book);
     const changes = local.filter((item) => item.dirty).slice(0, MAX_CHANGES);
@@ -175,22 +186,37 @@ export async function pullChangedNotes(shelf: Shelf) {
   }
 }
 
+/** Where a book's file is on the Pi: the account's own copy, or the public Library's for someone with no account. */
+export const bookFileUrl = (book: Pick<BookMeta, 'id' | 'publicUrl'>) =>
+  (book.publicUrl ? `/api/reader/file?public=${encodeURIComponent(book.publicUrl)}` : `/api/reader/file?book=${encodeURIComponent(book.id)}`);
+
+/** What's arrived is put away in blobs this big, so a 500 MB book isn't all held in the page's memory at once. */
+const SETTLE_BYTES = 8 * 1024 * 1024;
+
 /** Keep a book on this device. Reports progress as a fraction of the file. */
 export async function downloadBook(book: BookMeta, onProgress?: (fraction: number) => void) {
-  const res = await fetch(`/api/reader/file?book=${encodeURIComponent(book.id)}`);
+  const res = await fetch(bookFileUrl(book));
   if (res.status === 401) throw new ReaderSignedOut();
   if (!res.ok || !res.body) throw new Error('That book wouldn’t download.');
   const reader = res.body.getReader();
-  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  const settled: Blob[] = [];
+  let chunks: Uint8Array<ArrayBuffer>[] = [];
+  let waiting = 0;
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value as Uint8Array<ArrayBuffer>);
+    waiting += value.length;
     received += value.length;
+    if (waiting >= SETTLE_BYTES) {
+      settled.push(new Blob(chunks));
+      chunks = [];
+      waiting = 0;
+    }
     onProgress?.(Math.min(1, received / Math.max(1, book.size)));
   }
-  const blob = new Blob(chunks);
+  const blob = new Blob([...settled, ...chunks]);
   await putFile(book.id, blob);
   return blob;
 }
@@ -247,6 +273,22 @@ export async function saveBookDetails(book: string, cover: string | null, author
 export async function renameBookEverywhere(book: BookMeta, title: string, author: string) {
   const updated = await postAction({ action: 'rename', book: book.id, title, author });
   await putBooks([updated.book as BookMeta]);
+}
+
+/** These are one book in different forms (the text and its audio book). */
+export const linkBooksEverywhere = (books: string[]) => postAction({ action: 'link', books });
+export const unlinkBookEverywhere = (book: string) => postAction({ action: 'unlink', book });
+
+/** Put books in a series (after any already in it), or with null take them out. */
+export const setSeriesEverywhere = (books: string[], name: string | null) => postAction({ action: 'series', books, name });
+export const orderSeriesEverywhere = (name: string, books: string[]) => postAction({ action: 'series-order', name, books });
+export const renameSeriesEverywhere = (from: string, name: string) => postAction({ action: 'series-rename', from, name });
+export const deleteSeriesEverywhere = (name: string) => postAction({ action: 'series-delete', name });
+
+export async function saveChaptersEverywhere(book: string, chapters: AudioChapter[]) {
+  const updated = await postAction({ action: 'chapters', book, chapters });
+  await putBooks([updated.book as BookMeta]);
+  return updated.book as BookMeta;
 }
 
 export async function deleteBookEverywhere(id: string) {

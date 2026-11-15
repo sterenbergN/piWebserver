@@ -23,19 +23,25 @@ async function call(url: string, init?: RequestInit) {
   return body;
 }
 
-/** How each of a notebook's recordings is getting on, without their text. */
-export async function listTranscripts(notebook: string): Promise<Record<string, TranscriptInfo>> {
+/**
+ * How each of a notebook's recordings is getting on, without their text, and which ones the
+ * Pi has no sound for yet (`missing`: it's still on the device that recorded it).
+ */
+export async function listTranscripts(notebook: string): Promise<{ texts: Record<string, TranscriptInfo>; missing: string[] }> {
   const body = await call(`/api/notes/transcribe?notebook=${encodeURIComponent(notebook)}`);
-  return Object.fromEntries((body.items as TranscriptInfo[]).map((item) => [item.id, item]));
+  return {
+    texts: Object.fromEntries((body.items as TranscriptInfo[]).map((item) => [item.id, item])),
+    missing: Array.isArray(body.missing) ? body.missing as string[] : [],
+  };
 }
 
 /** One recording's text: from the Pi, or what this device kept last time if the Pi can't be reached. */
-export async function getTranscript(notebook: string, recording: string): Promise<{ transcript: TranscriptInfo | null; offline?: boolean }> {
+export async function getTranscript(notebook: string, recording: string): Promise<{ transcript: TranscriptInfo | null; offline?: boolean; onPi?: boolean }> {
   try {
     const body = await call(`/api/notes/transcribe?notebook=${encodeURIComponent(notebook)}&recording=${encodeURIComponent(recording)}`);
     const transcript = body.transcript as TranscriptInfo | null;
     if (transcript?.status === 'done') void putKv(cacheKey(notebook, recording), transcript).catch(() => {});
-    return { transcript };
+    return { transcript, onPi: body.onPi !== false };
   } catch (error) {
     const kept = await getKv<TranscriptInfo>(cacheKey(notebook, recording)).catch(() => undefined);
     if (kept) return { transcript: kept, offline: true };

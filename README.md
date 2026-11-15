@@ -93,6 +93,8 @@ sudo apt install ffmpeg
 
 Without it, "Turn into text" says so and nothing else is affected. Set
 `FFMPEG_PATH` in `shared/env` to use an ffmpeg somewhere other than the PATH.
+A new recording starts being turned into text as soon as its sound reaches the
+Pi, and the text shows as it's heard; older ones wait for the button.
 
 The Reader can save a YouTube video's sound as an audio book ("Add a book" →
 "Audio from YouTube"). That needs ffmpeg (above) and yt-dlp. Install yt-dlp's
@@ -107,6 +109,14 @@ It needs Python 3, which Pi OS has. When downloads start failing with "YouTube
 turned yt-dlp away", update it with `sudo yt-dlp -U`. Set `YT_DLP_PATH` in
 `shared/env` to use one somewhere other than the PATH. Downloads run one at a
 time, in the background, and are stored with the rest of the Reader's books.
+A book too long to fit in 1 GB as it comes (about 18 hours and up) is
+re-encoded smaller on the Pi, which takes a while; a playlist can be saved as
+one book with a chapter per video, and audio books on the shelf can be joined
+the same way (Select → Join).
+
+The public Library (the PDFs anyone can read) is a shelf in the Reader, not a
+page of its own: `/library` goes to `/reader?shelf=library`. A visitor reads
+from it there with no account; the admin adds to it from that shelf.
 
 ### Layout on the site USB
 

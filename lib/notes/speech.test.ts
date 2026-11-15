@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { cutPoint, framePower, logMel, loudness, melFilters, N_FRAMES, N_MELS, pieces, repeatedTail, SAMPLE_RATE, tidySpeech, tokensToText, WINDOW_SAMPLES } from './speech';
+import { cutPoint, framePower, levelled, logMel, loudness, melFilters, N_FRAMES, N_MELS, pieces, repeatedTail, SAMPLE_RATE, tidySpeech, tokensToText, WINDOW_SAMPLES } from './speech';
 
 test('the quick transform gives the same power as the sum written out', () => {
   const frame = Float32Array.from({ length: 400 }, (_, n) => Math.sin(n * 0.37) + 0.5 * Math.cos(n * 1.91) + (n % 7) / 10);
@@ -46,6 +46,49 @@ test('the spectrogram is the shape Whisper takes, within its range', () => {
   const min = mel.reduce((a, b) => Math.min(a, b), Infinity);
   assert.ok(max - min <= 2 + 1e-6, 'clipped to 8 (2 after scaling) below the loudest');
   assert.ok(Number.isFinite(max) && Number.isFinite(min));
+});
+
+test('a quiet recording is turned up to speaking level, so the model sees what it would for a loud one', () => {
+  const voice = (level: number) => Float32Array.from({ length: SAMPLE_RATE * 3 }, (_, n) => level * (Math.sin(n * 0.11) + 0.5 * Math.sin(n * 0.37)) * (0.6 + 0.4 * Math.sin(n / 4000)));
+  const quiet = voice(0.004);
+  const lifted = levelled(quiet);
+  assert.ok(Math.abs(loudness(lifted) - 0.1) < 0.005, `lifted to ${loudness(lifted)}`);
+  // The picture of it is the same as for the same sound recorded at that level.
+  const scale = loudness(lifted) / loudness(quiet);
+  const same = logMel(voice(0.004 * scale));
+  const seen = logMel(lifted);
+  let worst = 0;
+  for (let i = 0; i < seen.length; i++) worst = Math.max(worst, Math.abs(seen[i] - same[i]));
+  assert.ok(worst < 1e-3, `off by ${worst}`);
+  // And well away from the picture of it left quiet, which is what the model was being shown.
+  const before = logMel(quiet);
+  const top = (values: Float32Array) => values.reduce((a, b) => Math.max(a, b), -Infinity);
+  assert.ok(Math.abs(top(seen) - top(before)) > 0.5);
+
+  const loud = voice(0.3);
+  assert.equal(levelled(loud), loud, 'already loud: left alone');
+  assert.equal(levelled(new Float32Array(100)).length, 100, 'silence stays silence');
+  const faint = levelled(voice(0.00001));
+  assert.ok(loudness(faint) < 0.01, 'almost nothing is not turned into a roar');
+  assert.ok(lifted.every((v) => v >= -1 && v <= 1));
+});
+
+test('the mel sums skip the empty bins without changing the answer', () => {
+  const tone = Float32Array.from({ length: SAMPLE_RATE }, (_, n) => 0.2 * Math.sin(n * 0.5) + 0.1 * Math.sin(n * 1.7));
+  const mel = logMel(tone);
+  // The first frame, band by band, worked out the long way.
+  const bank = melFilters();
+  const padded = new Float32Array(400);
+  // Frame 0 is centred on sample 0: the 200 before it are the next 200 mirrored.
+  for (let i = 0; i < 400; i++) padded[i] = (i < 200 ? tone[200 - i] : tone[i - 200]) * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / 400));
+  const power = framePower(padded, new Float64Array(201));
+  const whole = logMel(tone).reduce((a, b) => Math.max(a, b), -Infinity) * 4 - 4;
+  for (let m = 0; m < N_MELS; m += 7) {
+    let sum = 0;
+    for (let k = 0; k < 201; k++) sum += bank[m * 201 + k] * power[k];
+    const expected = (Math.max(Math.log10(Math.max(sum, 1e-10)), whole - 8) + 4) / 4;
+    assert.ok(Math.abs(mel[m * N_FRAMES] - expected) < 1e-4, `band ${m}: ${mel[m * N_FRAMES]} vs ${expected}`);
+  }
 });
 
 test('loudness tells silence from speech-level sound', () => {

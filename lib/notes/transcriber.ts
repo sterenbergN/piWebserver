@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { ensureModelFiles } from './model-files';
-import { logMel, loudness, N_FRAMES, N_MELS, pieces, repeatedTail, SAMPLE_RATE, tidySpeech, tokensToText } from './speech';
+import { levelled, logMel, loudness, N_FRAMES, N_MELS, pieces, repeatedTail, SAMPLE_RATE, tidySpeech, tokensToText } from './speech';
 
 // Turning a recording into text on the Pi, with OpenAI's Whisper (base, English), run by ONNX
 // Runtime like the handwriting model. Nothing leaves the Pi. ffmpeg turns the recording (AAC
@@ -162,9 +162,11 @@ function noSpeechChance(logits: Float32Array, size: number) {
 
 /** What was said in up to 30 seconds of sound, or '' if nothing was. */
 async function listen(model: Loaded, samples: Float32Array) {
-  if (loudness(samples) < SILENT) return '';
+  const loud = loudness(samples);
+  if (loud < SILENT) return '';
   const { ort, encoder, decoder, pieces, allowed, firstAllowed } = model;
-  const features = new ort.Tensor('float32', logMel(samples), [1, N_MELS, N_FRAMES]);
+  // A quiet recording is turned up first: the model mishears speech that's far below the level it learned at.
+  const features = new ort.Tensor('float32', logMel(levelled(samples, loud)), [1, N_MELS, N_FRAMES]);
   const encoded = (await encoder.run({ input_features: features }, ['last_hidden_state'])).last_hidden_state;
   const presentNames = decoder.outputNames.filter((name) => name.startsWith('present.'));
 

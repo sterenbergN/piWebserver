@@ -211,19 +211,47 @@ async function syncNotebook(notebook: string, alsoPages: string[]) {
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
 export { newId as newFileId };
 
-/** Send a file up in pieces, each one retried if the connection blips. */
+/**
+ * Small pieces: a lecture's recording is tens of megabytes, a phone's upload is slow, and an
+ * iPad stops sending the moment Notes is left. What has arrived stays arrived.
+ */
+const PIECE_BYTES = Math.min(UPLOAD_CHUNK_BYTES, 4 * 1024 * 1024);
+/** A file the server keeps refusing (it isn't a PDF, picture or recording) stops being sent after this many tries. */
+const MAX_REFUSALS = 3;
+
+/** Send a file up in pieces, carrying on from however much of it the server already has. */
 async function uploadFile(notebook: string, file: string) {
   const blob = await getFile(notebook, file);
   if (!blob) return;
   const address = `/api/notes/file?notebook=${encodeURIComponent(notebook)}&file=${encodeURIComponent(file)}`;
-  let offset = 0;
-  do {
-    const piece = blob.slice(offset, offset + UPLOAD_CHUNK_BYTES);
+  const held = await readJson<{ stored?: boolean; received?: number }>(await fetch(`${address}&probe=1`, { method: 'POST' }));
+  if (held.stored) return;
+  let offset = Math.min(held.received ?? 0, blob.size);
+  while (offset < blob.size) {
+    const piece = blob.slice(offset, offset + PIECE_BYTES);
     const res = await fetch(`${address}&offset=${offset}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: piece });
     offset = (await readJson<{ received: number }>(res)).received;
-  } while (offset < blob.size);
+  }
   await readJson(await fetch(`${address}&done=1`, { method: 'POST' }));
 }
+
+/**
+ * A file this device holds isn't on the server (it says so): put it back in line to go up.
+ * Answers how many were. This is what mends a recording whose upload was lost along the way.
+ */
+export async function sendAgain(notebook: string, files: string[]) {
+  let queued = 0;
+  for (const file of files) {
+    if ((await getKv(uploadKey(notebook, file))) !== undefined || !(await getFile(notebook, file))) continue;
+    await putKv(uploadKey(notebook, file), true);
+    queued += 1;
+  }
+  if (queued) scheduleSync(200);
+  return queued;
+}
+
+/** Whether a file is waiting here to go up. */
+export const isWaitingToUpload = async (notebook: string, file: string) => (await getKv(uploadKey(notebook, file))) !== undefined;
 
 async function moveFiles() {
   for (const key of await kvKeys('upload:')) {
@@ -232,8 +260,13 @@ async function moveFiles() {
       await uploadFile(notebook, file);
       await deleteKv(key);
     } catch (error) {
-      if (error instanceof NotebookIsGone) await deleteKv(key);
-      else throw error;
+      if (error instanceof NotebookIsGone) { await deleteKv(key); continue; }
+      // No connection, or signed out: nothing else will go either, and it's all tried again later.
+      if (error instanceof NotesSignedOut || error instanceof TypeError) throw error;
+      // The server refused this one. It mustn't hold up the files behind it.
+      const refusals = Number(await getKv<unknown>(key)) || 0;
+      if (refusals + 1 >= MAX_REFUSALS) await deleteKv(key);
+      else await putKv(key, refusals + 1);
     }
   }
   for (const key of await kvKeys('needed:')) {

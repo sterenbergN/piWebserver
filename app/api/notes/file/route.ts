@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, requireWorkoutUserId } from '@/lib/workout/api';
 import { isId, UPLOAD_CHUNK_BYTES } from '@/lib/notes/items';
-import { appendUpload, finishUpload, NotebookGone, openStoredFile, UploadRefused } from '@/lib/notes/store';
+import { appendUpload, finishUpload, NotebookGone, openStoredFile, UploadRefused, uploadState } from '@/lib/notes/store';
+import { transcribeNewFile } from '@/lib/notes/transcripts';
 
 // The PDFs, pictures and recordings that go with a notebook. They go up in pieces as raw bytes
-// at ?offset=<n>, then ?done=1 checks and files them. Only ever sent to the account that owns
+// at ?offset=<n>, then ?done=1 checks and files them. ?probe=1 says how much of one is here,
+// so an upload that was cut short carries on from there. Only ever sent to the account that owns
 // them, and always as a download: nothing here must ever open as a page of this site. The app
 // reads the bytes and shows them itself.
 
@@ -43,8 +45,13 @@ export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const { notebook, file, params } = target(request);
+    if (params.get('probe') !== null) {
+      return NextResponse.json({ success: true, ...(await uploadState(userId, notebook, file)) }, { headers: PRIVATE });
+    }
     if (params.get('done') !== null) {
       await finishUpload(userId, notebook, file);
+      // A recording starts being turned into text as soon as it's here, so it's ready when it's looked for.
+      void transcribeNewFile(userId, notebook, file).catch(() => {});
       return NextResponse.json({ success: true }, { headers: PRIVATE });
     }
     const offset = Number(params.get('offset'));

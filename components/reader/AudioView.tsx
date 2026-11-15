@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
 import { chapterAt, clock, spoken } from '@/lib/reader/audio';
 import type { Anchor, BookMeta } from '@/lib/reader/items';
-import { getCover, getFile, getProgress } from './db';
+import { deleteFile, getCover, getFile, getProgress } from './db';
+import { ChapterEditor } from './ShelfDialogs';
 import type { ReaderSettings } from './source';
 import { downloadBook, flushNow, ReaderSignedOut, saveProgressHere } from './sync';
 
@@ -28,10 +29,15 @@ function readSpeed() {
   try { const v = Number(localStorage.getItem(SPEED_KEY)); return SPEEDS.includes(v) ? v : 1; } catch { return 1; }
 }
 
-export default function AudioView({ book, startAt, settings, onExit, onSignedOut }: {
+export default function AudioView({ book, startAt, settings, other, onSwitch, onEdited, onExit, onSignedOut }: {
   book: BookMeta;
   startAt: Anchor | null;
   settings: ReaderSettings;
+  /** The book this is the audio of, if you have it too. */
+  other?: BookMeta;
+  onSwitch?: (book: BookMeta) => void;
+  /** Its chapters were changed: the shelf's copy needs reading again. */
+  onEdited?: () => void;
   onExit: () => void;
   onSignedOut: () => void;
 }) {
@@ -47,16 +53,29 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
   const [sleep, setSleep] = useState<Sleep>(null);
   const [panel, setPanel] = useState<'chapters' | 'sleep' | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
+  const [editing, setEditing] = useState(false);
   const lastSave = useRef(0);
   const startRef = useRef<number | null>(null);
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
   const chapters = book.audio?.chapters ?? [];
   const chapter = chapterAt(chapters, time);
 
-  // Where to start, and what to play from.
+  // Where to start, and what to play from. Only when another book is opened: a change to
+  // this one's chapters mustn't start it loading again.
+  const opened = useRef(book);
+  opened.current = book;
   useEffect(() => {
     let live = true;
     let made: string | null = null;
     (async () => {
+      const book = opened.current;
       setSpeed(readSpeed());
       const [file, progress, coverBlob] = await Promise.all([getFile(book.id), getProgress(book.id), book.hasCover ? getCover(book.id) : null]);
       if (!live) return;
@@ -74,7 +93,7 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
       setSrc(`/api/reader/file?book=${encodeURIComponent(book.id)}`);
     })().catch(() => setProblem('This couldn’t be opened.'));
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [book, startAt]);
+  }, [book.id, startAt]);
 
   useEffect(() => () => { if (src?.startsWith('blob:')) URL.revokeObjectURL(src); }, [src]);
 
@@ -185,6 +204,15 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
     }
   }
 
+  /** Off this device, to make room. It carries on from the Pi, from the same place. */
+  async function removeHere() {
+    const el = audio.current;
+    if (el) { startRef.current = el.currentTime; el.pause(); }
+    await deleteFile(book.id).catch(() => {});
+    setKept(false);
+    setSrc(`/api/reader/file?book=${encodeURIComponent(book.id)}`);
+  }
+
   const left = duration ? duration - time : 0;
   const sleepText = !sleep ? null : 'until' in sleep ? `Sleep in ${spoken(Math.max(0, (sleep.until - Date.now()) / 1000))}` : 'Sleep at chapter end';
 
@@ -193,7 +221,8 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
       <header className="rd-bar rd-top">
         <button type="button" className="rd-back" onClick={onExit} aria-label="Back to your books"><Icon name="chevron" className="is-flipped" /><span>Books</span></button>
         <span className="rd-grow" />
-        {kept ? <span className="rd-listen-kept"><Icon name="device" size="0.95em" /> On this device</span>
+        {other && onSwitch && <button type="button" className="rd-btn is-small" onClick={() => onSwitch(other)}><Icon name="book" /> Read</button>}
+        {kept ? <button type="button" className="rd-btn is-small" disabled={!online} title="Take it off this device to make room. It plays from the Pi instead." onClick={() => void removeHere()}><Icon name="device" /> On this device · Remove</button>
           : saving !== null ? <span className="rd-listen-kept">Keeping {Math.round(saving * 100)}%</span>
           : <button type="button" className="rd-btn is-small" onClick={keepHere}><Icon name="download" /> Keep for offline</button>}
       </header>
@@ -225,7 +254,7 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
         <div className="rd-listen-extras">
           <button type="button" className="rd-btn is-small" onClick={changeSpeed} aria-label={`Speed ${speed} times, tap to change`}>{speed}×</button>
           <button type="button" className={`rd-btn is-small${sleep ? ' is-primary' : ''}`} onClick={() => setPanel(panel === 'sleep' ? null : 'sleep')}><Icon name="moon" /> {sleepText ?? 'Sleep timer'}</button>
-          {chapters.length > 0 && <button type="button" className="rd-btn is-small" onClick={() => setPanel(panel === 'chapters' ? null : 'chapters')}><Icon name="list" /> Chapters</button>}
+          <button type="button" className="rd-btn is-small" onClick={() => setPanel(panel === 'chapters' ? null : 'chapters')}><Icon name="list" /> Chapters</button>
           {book.link && <a className="rd-btn is-small" href={book.link} target="_blank" rel="noopener noreferrer">YouTube</a>}
         </div>
 
@@ -237,6 +266,12 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
           </div>
         )}
         {panel === 'chapters' && (
+          <div className="rd-listen-panel">
+            {!chapters.length && <p className="rd-hint">This one has no chapters. Add them to skip between its parts.</p>}
+            <button type="button" className="rd-btn is-small" disabled={!online} onClick={() => { setPanel(null); setEditing(true); }}><Icon name="pencil" /> {chapters.length ? 'Edit chapters' : 'Add chapters'}</button>
+          </div>
+        )}
+        {panel === 'chapters' && chapters.length > 0 && (
           <ol className="rd-listen-chapters">
             {chapters.map((c, i) => (
               <li key={c.start}>
@@ -248,6 +283,8 @@ export default function AudioView({ book, startAt, settings, onExit, onSignedOut
           </ol>
         )}
       </main>
+
+      {editing && <ChapterEditor book={book} now={time} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onEdited?.(); }} />}
 
       {src && (
         <audio ref={audio} src={src} preload="metadata"

@@ -34,6 +34,10 @@ export function selectAccount(user: string) {
   if (opened?.user !== user) opened = { user, db: openDb(user) };
 }
 
+/** Reading with no account: what's kept here stays here, and nothing is sent anywhere. */
+export const GUEST = 'guest';
+export const isGuest = () => opened?.user === GUEST;
+
 function database() {
   if (!opened) throw new Error('No account yet');
   return opened.db;

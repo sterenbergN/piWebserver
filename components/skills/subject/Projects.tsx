@@ -23,6 +23,11 @@ import './steps-projects.css';
 
 type Act = ReturnType<typeof useAct>['act'];
 
+/** A little under the 100 MB a request can be through Cloudflare, with room for the form around the file. */
+const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
+/** A recording is stopped here, while it can still be saved. */
+const MAX_RECORDING_BYTES = 90 * 1024 * 1024;
+
 const FILE_ACCEPT = '.zip,.tar.gz,.tgz,.7z,.mp4,.webm,.mov,.png,.jpg,.jpeg,.webp,.pdf,.step,.stl,.obj,.glb,*';
 
 function formatBytes(bytes?: number) {
@@ -62,6 +67,7 @@ async function uploadProjectFileToServer(
   filename: string,
   kindHint?: ProjectAttachmentKind,
 ): Promise<ProjectAttachment> {
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${filename} is over the 95 MB a project file can be. A link to it works for anything bigger.`);
   const form = new FormData();
   form.append('file', file, filename);
   form.append('name', filename);
@@ -805,7 +811,10 @@ function ProjectLogForm({
     } catch (err) {
       const name = err instanceof DOMException ? err.name : '';
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-        setLocalError(mode === 'camera' ? 'Camera or microphone permission was denied.' : 'Screen recording permission was denied.');
+        // A page reached by a link inside the site keeps the first page's permissions, which don't include the camera.
+        setLocalError(mode === 'camera'
+          ? 'The camera or microphone was refused. If you weren’t asked, reload this page and try again: the browser only asks on a page opened fresh.'
+          : 'Screen recording permission was denied.');
       } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
         setLocalError('No camera device was found.');
       } else if (name === 'AbortError') {
@@ -831,6 +840,7 @@ function ProjectLogForm({
     }
 
     const chunks: BlobPart[] = [];
+    let recorded = 0;
     cancelRecRef.current = false;
     streamRef.current = stream;
     recorderRef.current = recorder;
@@ -838,7 +848,14 @@ function ProjectLogForm({
     setRecordingMode(mode);
 
     recorder.ondataavailable = (ev) => {
-      if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      if (!ev.data || ev.data.size <= 0) return;
+      chunks.push(ev.data);
+      recorded += ev.data.size;
+      // Stop while it can still be saved: a recording over the upload limit would be lost whole.
+      if (recorded > MAX_RECORDING_BYTES && recorder.state !== 'inactive') {
+        setLocalError('That’s as long as a recording can be (about 90 MB). It was stopped and saved.');
+        recorder.stop();
+      }
     };
 
     recorder.onerror = () => {

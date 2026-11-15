@@ -1,6 +1,9 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chapterAt, cleanChapters, clock, playlistEntries, readProgressLine, readYouTubeLink, spoken, videoDetails } from './audio';
+import {
+  ANY_AUDIO, chapterAt, chooseFormat, cleanChapters, cleanEditedChapters, clock, encodeKbps, joinChapters, playlistEntries, readClock, readFfmpegProgress, readProgressLine, readSoundInfo, readYouTubeLink,
+  sharedTitle, spoken, videoDetails,
+} from './audio';
 import { progressText } from './items';
 
 test('YouTube links are tidied, and nothing else gets through', () => {
@@ -49,4 +52,70 @@ test('playlists, progress lines and times', () => {
   assert.equal(progressText({ anchor: { page: 1800 }, pct: 0.5, at: 1, total: 3600, startedAt: 1 }, 'audio'), '50% · 30 min left');
   assert.equal(progressText(undefined, 'audio'), 'Not started listening');
   assert.equal(progressText({ anchor: { page: 12 }, pct: 0.5, at: 1, total: 24, startedAt: 1 }), '50% · p. 12 of 24', 'books are unchanged');
+});
+
+test('which sound to fetch: the best AAC that fits, or the smallest that’s good enough', () => {
+  const GB = 1024 ** 3;
+  const formats = [
+    { format_id: '249', vcodec: 'none', acodec: 'opus', abr: 50 },
+    { format_id: '251', vcodec: 'none', acodec: 'opus', abr: 130 },
+    { format_id: '139', vcodec: 'none', acodec: 'mp4a.40.5', abr: 48 },
+    { format_id: '140', vcodec: 'none', acodec: 'mp4a.40.2', abr: 129 },
+    { format_id: '18', vcodec: 'avc1.42001E', acodec: 'mp4a.40.2', tbr: 600 },
+    { format_id: 'sb0', vcodec: 'none', acodec: 'none' },
+  ];
+  assert.equal(chooseFormat({ formats }, 3600, GB), `140/${ANY_AUDIO}`, 'an hour: the best AAC, kept as it is');
+  // Twenty hours of 129 kbit/s is 1.16 GB: the small AAC fits and needs no re-encoding.
+  assert.equal(chooseFormat({ formats }, 72_000, GB), `139/${ANY_AUDIO}`);
+  // Without it, something has to be re-encoded: fetch one near the rate it'll end up at.
+  const noSmallAac = formats.filter((f) => f.format_id !== '139');
+  assert.equal(chooseFormat({ formats: noSmallAac }, 72_000, GB), `140/${ANY_AUDIO}`, 'at 96k the 129k AAC is the nearest above');
+  assert.equal(chooseFormat({ formats: [...noSmallAac, { format_id: '250', vcodec: 'none', acodec: 'opus', abr: 70 }] }, 100_000, GB), `250/${ANY_AUDIO}`, 'too long for 96k: 64k, from the 70k one');
+  assert.equal(chooseFormat({}, 3600, GB), ANY_AUDIO);
+  assert.equal(chooseFormat({ formats: [{ format_id: '-o /etc/x', vcodec: 'none', acodec: 'opus', abr: 50 }] }, 3600, GB), ANY_AUDIO, 'nothing odd reaches yt-dlp');
+  // A dubbed track is passed over for the original.
+  const dubbed = [{ format_id: '140-0', vcodec: 'none', acodec: 'mp4a.40.2', abr: 129, language_preference: -1 }, { format_id: '140-1', vcodec: 'none', acodec: 'mp4a.40.2', abr: 128, language_preference: 10 }];
+  assert.equal(chooseFormat({ formats: dubbed }, 3600, GB), `140-1/${ANY_AUDIO}`);
+  assert.equal(encodeKbps(3600, GB), 96);
+  assert.equal(encodeKbps(30 * 3600, GB), 64);
+  assert.ok((30 * 3600 * 64_000) / 8 < GB, 'the longest book allowed fits at 64k');
+});
+
+test('ffmpeg’s progress and its description of a file are read', () => {
+  assert.equal(readFfmpegProgress('out_time_us=90500000'), 90.5);
+  assert.equal(readFfmpegProgress('out_time_ms=90500000'), 90.5, 'older ffmpeg calls microseconds ms');
+  assert.equal(readFfmpegProgress('progress=continue'), null);
+  const said = "Input #0, mov,mp4,m4a, from 'a.m4a':\n  Duration: 01:02:05.50, start: 0.000000, bitrate: 128 kb/s\n  Stream #0:0[0x1](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 127 kb/s (default)\n";
+  assert.deepEqual(readSoundInfo(said), { codec: 'aac LC', rate: 44100, channels: 'stereo', duration: 3725.5 });
+  assert.deepEqual(readSoundInfo('  Stream #0:0: Audio: opus, 48000 Hz, mono, fltp\n'), { codec: 'opus', rate: 48000, channels: 'mono', duration: null });
+  assert.equal(readSoundInfo('a.m4a: No such file or directory'), null);
+});
+
+test('chapters edited by hand, and several books’ chapters end to end', () => {
+  assert.deepEqual(
+    cleanEditedChapters([{ start: 600, title: ' Two ' }, { start: 0, title: 'One' }, { start: 600, title: 'Same time' }, { start: 5000, title: 'Past the end' }, { start: 30, title: '' }, 'junk'], 3600),
+    [{ start: 0, title: 'One' }, { start: 600, title: 'Two' }],
+  );
+  assert.deepEqual(cleanEditedChapters([{ start: 12, title: 'Just the one' }], 100), [{ start: 12, title: 'Just the one' }], 'one is allowed when you ask for it');
+  assert.deepEqual(cleanEditedChapters('nope', 100), []);
+  const joined = joinChapters([
+    { title: 'Part 1', duration: 100.4, chapters: [] },
+    { title: 'Part 2', duration: 200, chapters: [{ start: 0, title: 'Opening' }, { start: 50, title: 'Later' }] },
+    { title: 'Part 3', duration: 60, chapters: [{ start: 20, title: 'After the intro' }, { start: 999, title: 'Not in it' }] },
+  ]);
+  assert.equal(joined.duration, 360.4);
+  assert.deepEqual(joined.chapters, [
+    { start: 0, title: 'Part 1' }, { start: 100.4, title: 'Opening' }, { start: 150.4, title: 'Later' }, { start: 300.4, title: 'Part 3' }, { start: 320.4, title: 'After the intro' },
+  ]);
+});
+
+test('a name for books joined, and times typed in', () => {
+  assert.equal(sharedTitle(['Dune, part 1', 'Dune, part 2', 'Dune, Part 3']), 'Dune');
+  assert.equal(sharedTitle(['The Hobbit - Chapter 01', 'The Hobbit - Chapter 02']), 'The Hobbit');
+  assert.equal(sharedTitle(['Alpha', 'Beta']), '');
+  assert.equal(readClock('1:02:03'), 3723);
+  assert.equal(readClock(' 4:05 '), 245);
+  assert.equal(readClock('90'), 90);
+  assert.equal(readClock('1:2:3:4'), null);
+  assert.equal(readClock('soon'), null);
 });

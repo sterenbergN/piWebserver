@@ -61,7 +61,7 @@ export const SITE_PAGES: SearchDoc[] = [
   { kind: 'page', title: 'Resume', url: '/resume', subtitle: 'Printable resume', body: 'cv pdf print experience' },
   { kind: 'page', title: 'Posts', url: '/blog', subtitle: 'Blog and build logs', body: 'blog articles writing' },
   { kind: 'page', title: 'Gallery', url: '/gallery', subtitle: 'Photo albums', body: 'photos pictures images' },
-  { kind: 'page', title: 'Library', url: '/library', subtitle: 'Documents and PDFs', body: 'pdf documents files' },
+  { kind: 'page', title: 'Library', url: '/reader?shelf=library', subtitle: 'Documents and PDFs, in the Reader', body: 'pdf documents files' },
   { kind: 'page', title: 'Snake', url: '/game?game=snake', subtitle: 'Play snake, beat the leaderboard', body: 'game play arcade' },
   { kind: 'page', title: '2048', url: '/game?game=2048', subtitle: 'Slide and merge tiles', body: 'game play arcade puzzle' },
   { kind: 'page', title: 'Breakout', url: '/game?game=breakout', subtitle: 'Bounce the ball, clear the wall', body: 'game play arcade bricks paddle' },

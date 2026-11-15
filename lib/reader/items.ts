@@ -27,6 +27,16 @@ export type BookMeta = {
   audio?: AudioInfo;
   /** Where an audio book came from (its YouTube video). */
   link?: string;
+  /** The same book in another form (the EPUB and its audio book) shares this, and the shelf shows them as one. */
+  work?: string;
+  /**
+   * Set only on a device, never stored: a book read straight from the public Library by
+   * someone with no account. Its file comes from there, and nothing about it goes up.
+   */
+  publicUrl?: string;
+  /** The series it's part of, by name, and its place in it (1, 2, 3…). */
+  series?: string;
+  seriesIndex?: number;
 };
 
 export type Folder = { id: string; name: string };
@@ -83,6 +93,8 @@ export type Progress = {
   total?: number;
   startedAt?: number;
   finishedAt?: number;
+  /** When it was taken off Continue reading. Reading it again (a later `at`) puts it back. */
+  hiddenAt?: number;
 };
 
 export type ReadingState = 'new' | 'reading' | 'finished';
@@ -104,11 +116,25 @@ export function progressText(progress: Progress | undefined, format?: BookFormat
   return progress.total ? `${percent}% · p. ${progress.anchor.page} of ${progress.total}` : `${percent}%`;
 }
 
-/** The books you're partway through, latest first. */
+/** Whether a book you're partway through was taken off Continue reading, and not opened since. */
+export const setAside = (progress: Progress | undefined) => !!progress?.hiddenAt && progress.hiddenAt >= progress.at;
+
+/** The books you're partway through, latest first, without the ones taken off the list. */
 export function booksInProgress<T extends { id: string }>(books: T[], progress: Record<string, Progress | undefined>) {
   return books
-    .filter((book) => readingState(progress[book.id]) === 'reading')
+    .filter((book) => readingState(progress[book.id]) === 'reading' && !setAside(progress[book.id]))
     .sort((a, b) => (progress[b.id]?.at ?? 0) - (progress[a.id]?.at ?? 0));
+}
+
+/** Whether `a` is the later word on a book: read more recently, or the same reading taken off the list since. */
+export function progressNewer(a: Progress, b: Progress | undefined) {
+  if (!b || a.at > b.at) return true;
+  return a.at === b.at && (a.hiddenAt ?? 0) > (b.hiddenAt ?? 0);
+}
+
+/** Take a book off Continue reading, keeping your place in it. */
+export function withSetAside(previous: Progress, now: number): Progress {
+  return { ...previous, hiddenAt: Math.max(now, previous.at) };
 }
 
 /** How near the end you have to have been already for reaching it to count as finishing, not a look ahead. */
@@ -132,12 +158,13 @@ export function withFinished(previous: Progress | undefined, finished: boolean, 
 }
 
 /** A reading position from a device, checked. */
-export function cleanProgress(raw: { anchor?: unknown; pct?: unknown; at?: unknown; total?: unknown; startedAt?: unknown; finishedAt?: unknown }, now: number): Progress | null {
+export function cleanProgress(raw: { anchor?: unknown; pct?: unknown; at?: unknown; total?: unknown; startedAt?: unknown; finishedAt?: unknown; hiddenAt?: unknown }, now: number): Progress | null {
   const anchor = cleanAnchor(raw.anchor);
   if (!anchor || !finite(raw.pct) || !finite(raw.at)) return null;
   const when = (value: unknown) => (finite(value) && value > 0 ? Math.min(value, now) : undefined);
   const startedAt = when(raw.startedAt);
   const finishedAt = when(raw.finishedAt);
+  const hiddenAt = when(raw.hiddenAt);
   return {
     anchor,
     pct: Math.max(0, Math.min(1, raw.pct)),
@@ -145,11 +172,56 @@ export function cleanProgress(raw: { anchor?: unknown; pct?: unknown; at?: unkno
     ...(finite(raw.total) && raw.total > 0 ? { total: Math.floor(raw.total) } : {}),
     ...(startedAt ? { startedAt } : {}),
     ...(finishedAt ? { finishedAt } : {}),
+    ...(hiddenAt ? { hiddenAt } : {}),
   };
 }
 
 export const MAX_FOLDERS = 200;
 export const cleanFolderName = (value: unknown) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 80) : '');
+export const cleanSeriesName = cleanFolderName;
+
+// ── The shelf: one card for a book in two forms, and series in order ────────
+
+/** A book as the shelf shows it: every form of it you have, the text before the audio. */
+export type ShelfEntry<T> = { key: string; books: T[] };
+
+type Shelved = Pick<BookMeta, 'id' | 'format' | 'work' | 'series' | 'seriesIndex' | 'title'>;
+
+/** Books gathered into shelf entries, in the order their first form comes in. */
+export function shelfEntries<T extends Shelved>(books: T[]): ShelfEntry<T>[] {
+  const byKey = new Map<string, ShelfEntry<T>>();
+  for (const book of books) {
+    const key = book.work ? `work:${book.work}` : book.id;
+    const held = byKey.get(key);
+    if (held) held.books.push(book);
+    else byKey.set(key, { key, books: [book] });
+  }
+  for (const entry of byKey.values()) {
+    entry.books.sort((a, b) => Number(a.format === 'audio') - Number(b.format === 'audio'));
+  }
+  return [...byKey.values()];
+}
+
+/** The series an entry is in (any of its forms may carry it), and its place there. */
+export function entrySeries<T extends Shelved>(entry: ShelfEntry<T>) {
+  const book = entry.books.find((b) => b.series);
+  return book?.series ? { name: book.series, index: book.seriesIndex ?? Number.MAX_SAFE_INTEGER } : null;
+}
+
+/** Entries in the order a series is read: by number, then by title for any without one. */
+export function inSeriesOrder<T extends Shelved>(entries: ShelfEntry<T>[]) {
+  return [...entries].sort((a, b) => (entrySeries(a)?.index ?? 0) - (entrySeries(b)?.index ?? 0) || a.books[0].title.localeCompare(b.books[0].title, undefined, { numeric: true }));
+}
+
+/** Every series on the shelf with how many books it has, by name. */
+export function seriesOnShelf<T extends Shelved>(books: T[]) {
+  const counts = new Map<string, number>();
+  for (const entry of shelfEntries(books)) {
+    const series = entrySeries(entry);
+    if (series) counts.set(series.name, (counts.get(series.name) ?? 0) + 1);
+  }
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
 
 /** The public Library's address for a file, turned into just its file name, or null if it isn't one. */
 export function publicLibraryFile(url: unknown) {

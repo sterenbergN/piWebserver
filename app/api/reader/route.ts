@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { cleanTitle, isId } from '@/lib/reader/items';
 import {
-  addFolder, coverFrom, fillBookDetails, FolderError, importPublicBook, moveBooks, readLibrary, readProgressFile, removeBook, removeFolder, renameBook, renameFolder, saveProgress, UploadRefused,
+  addFolder, coverFrom, fillBookDetails, FolderError, importPublicBook, linkBooks, moveBooks, orderSeries, readLibrary, readProgressFile, removeBook, removeFolder, removeSeries, renameBook, renameFolder,
+  renameSeries, saveProgress, setChapters, setSeries, unlinkBook, UploadRefused,
 } from '@/lib/reader/store';
 
 // The signed-in account's bookshelf. Every request only reads or writes the caller's
@@ -51,6 +52,29 @@ export async function POST(request: Request) {
     if (body.action === 'import') {
       return NextResponse.json({ success: true, ...(await importPublicBook(userId, body.url, body.folder)) }, { headers: PRIVATE });
     }
+    if (body.action === 'link') {
+      if (!Array.isArray(body.books) || body.books.length > 20) throw new ApiError(400, 'Which books?');
+      await linkBooks(userId, body.books);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
+    }
+    if (body.action === 'series') {
+      if (!Array.isArray(body.books) || body.books.length > 2000) throw new ApiError(400, 'Which books?');
+      await setSeries(userId, body.books, body.name ?? null);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
+    }
+    if (body.action === 'series-order') {
+      if (!Array.isArray(body.books) || body.books.length > 2000) throw new ApiError(400, 'Which books?');
+      await orderSeries(userId, body.name, body.books);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
+    }
+    if (body.action === 'series-rename') {
+      await renameSeries(userId, body.from, body.name);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
+    }
+    if (body.action === 'series-delete') {
+      await removeSeries(userId, body.name);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
+    }
 
     if (!isId(body.book)) throw new ApiError(400, 'Which book?');
 
@@ -64,6 +88,17 @@ export async function POST(request: Request) {
       const book = await renameBook(userId, body.book, cleanTitle(body.title, 'Untitled'), cleanTitle(body.author, ''));
       if (!book) throw new ApiError(404, 'That book isn’t here any more.');
       return NextResponse.json({ success: true, book }, { headers: PRIVATE });
+    }
+
+    if (body.action === 'chapters') {
+      const book = await setChapters(userId, body.book, body.chapters);
+      if (!book) throw new ApiError(404, 'That audio book isn’t here any more.');
+      return NextResponse.json({ success: true, book }, { headers: PRIVATE });
+    }
+
+    if (body.action === 'unlink') {
+      await unlinkBook(userId, body.book);
+      return NextResponse.json({ success: true }, { headers: PRIVATE });
     }
 
     if (body.action === 'delete') {

@@ -22,6 +22,8 @@ const hzToMel = (hz: number) => (hz < MIN_LOG_HZ ? hz / F_SP : MIN_LOG_MEL + Mat
 const melToHz = (mel: number) => (mel < MIN_LOG_MEL ? mel * F_SP : MIN_LOG_HZ * Math.exp(LOG_STEP * (mel - MIN_LOG_MEL)));
 
 let filters: Float32Array | null = null;
+/** Each filter's first bin with any weight, and the one after its last: most of a filter's 201 bins are zero. */
+let spans: Int32Array | null = null;
 
 /** 80 triangular filters over the 201 frequency bins, each scaled to the same area (librosa's `norm='slaney'`). */
 export function melFilters() {
@@ -39,6 +41,16 @@ export function melFilters() {
     }
   }
   filters = out;
+  spans = new Int32Array(N_MELS * 2);
+  for (let m = 0; m < N_MELS; m++) {
+    let first = BINS;
+    let last = 0;
+    for (let b = 0; b < BINS; b++) {
+      if (out[m * BINS + b] > 0) { first = Math.min(first, b); last = b + 1; }
+    }
+    spans[m * 2] = Math.min(first, last);
+    spans[m * 2 + 1] = last;
+  }
   return out;
 }
 
@@ -54,6 +66,27 @@ function fftTables() {
   return tables;
 }
 
+const turnTables = new Map<number, { c: Float64Array; s: Float64Array }>();
+
+/** For putting `p` pieces of an `n`-point transform together: how far round each piece's term turns for each output, worked out once. */
+function turns(n: number, p: number) {
+  let held = turnTables.get(n);
+  if (!held) {
+    const c = new Float64Array(n * p);
+    const s = new Float64Array(n * p);
+    for (let index = 0; index < n; index++) {
+      for (let j = 0; j < p; j++) {
+        const angle = (2 * Math.PI * ((j * index) % n)) / n;
+        c[index * p + j] = Math.cos(angle);
+        s[index * p + j] = -Math.sin(angle);
+      }
+    }
+    held = { c, s };
+    turnTables.set(n, held);
+  }
+  return held;
+}
+
 /**
  * The discrete Fourier transform of `n` points (a factor of 400, so made of 2s and 5s) taken
  * every `stride` from `start`, into `outRe`/`outIm` from `at`. Split by its smallest factor and
@@ -67,18 +100,59 @@ function fft(input: Float32Array, start: number, stride: number, n: number, outR
   }
   const p = n % 2 === 0 ? 2 : n % 5 === 0 ? 5 : n;
   const m = n / p;
-  for (let j = 0; j < p; j++) fft(input, start + j * stride, stride * p, m, outRe, outIm, at + j * m, scratch);
-  const { cos, sin } = fftTables();
-  const step = N_FFT / n;
+  // The smallest pieces are single points, read straight from the sound: not one call each.
+  if (m > 1) {
+    for (let j = 0; j < p; j++) fft(input, start + j * stride, stride * p, m, outRe, outIm, at + j * m, scratch);
+  } else if (p === 2) {
+    outRe[at] = input[start];
+    outRe[at + 1] = input[start + stride];
+    outIm[at] = 0;
+    outIm[at + 1] = 0;
+  }
+  // Two halves go together in place, each pair with one multiplication.
+  if (p === 2) {
+    const { cos, sin } = fftTables();
+    const step = N_FFT / n;
+    for (let k = 0; k < m; k++) {
+      const c = cos[k * step];
+      const s = -sin[k * step];
+      const a = at + k;
+      const b = a + m;
+      const tr = outRe[b] * c - outIm[b] * s;
+      const ti = outRe[b] * s + outIm[b] * c;
+      outRe[b] = outRe[a] - tr;
+      outIm[b] = outIm[a] - ti;
+      outRe[a] += tr;
+      outIm[a] += ti;
+    }
+    return;
+  }
+  const { c: turnRe, s: turnIm } = turns(n, p);
+  if (m === 1) {
+    // Five points of plain sound: half the arithmetic of five complex ones, and most of the work is here.
+    for (let index = 0; index < p; index++) {
+      let re = 0;
+      let im = 0;
+      const row = index * p;
+      for (let j = 0; j < p; j++) {
+        const y = input[start + j * stride];
+        re += y * turnRe[row + j];
+        im += y * turnIm[row + j];
+      }
+      outRe[at + index] = re;
+      outIm[at + index] = im;
+    }
+    return;
+  }
   for (let k = 0; k < m; k++) {
     for (let q = 0; q < p; q++) {
       const index = k + m * q;
       let re = 0;
       let im = 0;
+      const row = index * p;
       for (let j = 0; j < p; j++) {
-        const turn = ((j * index) % n) * step;
-        const c = cos[turn];
-        const s = -sin[turn];
+        const c = turnRe[row + j];
+        const s = turnIm[row + j];
         const yr = outRe[at + j * m + k];
         const yi = outIm[at + j * m + k];
         re += yr * c - yi * s;
@@ -94,11 +168,14 @@ function fft(input: Float32Array, start: number, stride: number, n: number, outR
   }
 }
 
+// Three thousand frames a piece: the working space is made once, not for each.
+const re = new Float64Array(N_FFT);
+const im = new Float64Array(N_FFT);
+const scratch = new Float64Array(2 * N_FFT);
+
 /** The power in each of the 201 frequency bins of one 400-sample frame (already windowed). */
 export function framePower(frame: Float32Array, power: Float32Array | Float64Array) {
-  const re = new Float64Array(N_FFT);
-  const im = new Float64Array(N_FFT);
-  fft(frame, 0, 1, N_FFT, re, im, 0, new Float64Array(2 * N_FFT));
+  fft(frame, 0, 1, N_FFT, re, im, 0, scratch);
   for (let k = 0; k < BINS; k++) power[k] = re[k] * re[k] + im[k] * im[k];
   return power;
 }
@@ -121,6 +198,7 @@ export function logMel(samples: Float32Array) {
   }
   const { hann } = fftTables();
   const bank = melFilters();
+  const span = spans!;
   const out = new Float32Array(N_MELS * N_FRAMES);
   const frame = new Float32Array(N_FFT);
   const power = new Float64Array(BINS);
@@ -133,7 +211,8 @@ export function logMel(samples: Float32Array) {
     for (let m = 0; m < N_MELS; m++) {
       let sum = 0;
       const row = m * BINS;
-      for (let k = 0; k < BINS; k++) sum += bank[row + k] * power[k];
+      // Only the bins this filter covers: a tenth of the work, for the same sum.
+      for (let k = span[m * 2]; k < span[m * 2 + 1]; k++) sum += bank[row + k] * power[k];
       const value = Math.log10(Math.max(sum, 1e-10));
       out[m * N_FRAMES + f] = value;
       if (value > loudest) loudest = value;
@@ -157,6 +236,28 @@ export function loudness(samples: Float32Array) {
     loudest = Math.max(loudest, Math.sqrt(sum / STEP));
   }
   return loudest;
+}
+
+/** Speech at an ordinary recording level: its loudest tenth of a second at about this RMS. */
+const SPEECH_LEVEL = 0.1;
+/** The most a quiet piece is turned up. Beyond this it's mostly the room. */
+const MAX_LIFT = 100;
+
+/**
+ * A quiet piece turned up to an ordinary speaking level. Whisper learned from speech recorded
+ * at normal levels, and what it's shown is measured against fixed marks, not against the
+ * piece's own loudest moment: a lecture picked up from the back of a room sits far below
+ * where it expects speech to be, and it mishears more of it. Loud pieces are left as they are.
+ */
+export function levelled(samples: Float32Array, loud = loudness(samples)) {
+  if (loud <= 0 || loud >= SPEECH_LEVEL) return samples;
+  const lift = Math.min(MAX_LIFT, SPEECH_LEVEL / loud);
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const value = samples[i] * lift;
+    out[i] = value > 1 ? 1 : value < -1 ? -1 : value;
+  }
+  return out;
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   cleanBookRecord, cleanElement, cleanLibraryRecord, emptyFile, folderPath, mergeChanges, orderBetween, recordsSince, sniffFile, wouldNest, MAX_STROKE_POINTS, type Folder, type PageElement,
 } from './items';
 import { pagesWrittenDuring } from './recording-pages';
-import { appendUpload, finishUpload, NotebookGone, openStoredFile, readLibrary, syncBook, syncLibrary, syncPage, UploadRefused } from './store';
+import { appendUpload, finishUpload, NotebookGone, openStoredFile, readLibrary, syncBook, syncLibrary, syncPage, UploadRefused, uploadState } from './store';
 import { PAGE_SIZES, TEMPLATES, templateMarks } from './templates';
 import { getStroke, getStrokePoints } from 'perfect-freehand';
 import { detailAt, outlineFromPoints, outlineOfLine, smoothLine, startSmoothing } from './smooth';
@@ -369,6 +369,20 @@ test('a file goes up in pieces, a resent piece is not doubled, and the wrong kin
   await assert.rejects(() => finishUpload('cy', 'nb', 'bad'), UploadRefused);
   assert.equal(await openStoredFile('cy', 'nb', 'bad'), null);
   await assert.rejects(() => appendUpload('cy', 'nope', 'f', 0, stream('x')), NotebookGone);
+});
+
+test('an upload cut short says how far it got, so the device carries on from there', async () => {
+  await syncLibrary('eve', 0, [notebook('nb')], NOW);
+  assert.deepEqual(await uploadState('eve', 'nb', 'rec'), { stored: false, received: 0 }, 'nothing yet');
+  // A recording: the first piece arrives, then the iPad is closed.
+  await appendUpload('eve', 'nb', 'rec', 0, stream('\u0000\u0000\u0000\u0018ftypmp42'));
+  assert.deepEqual(await uploadState('eve', 'nb', 'rec'), { stored: false, received: 12 });
+  // Next time it sends only what's missing.
+  assert.equal(await appendUpload('eve', 'nb', 'rec', 12, stream(' the rest of it')), 27);
+  await finishUpload('eve', 'nb', 'rec');
+  assert.deepEqual(await uploadState('eve', 'nb', 'rec'), { stored: true, received: 0 }, 'there: nothing to send');
+  assert.equal((await openStoredFile('eve', 'nb', 'rec'))?.size, 27);
+  await assert.rejects(() => uploadState('eve', 'nope', 'rec'), NotebookGone);
 });
 
 test('deleting a notebook for good takes its pages and files, and stays deleted', async () => {

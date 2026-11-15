@@ -1,16 +1,26 @@
 'use client';
 
-import { formatFromName, titleFromName, type BookFormat } from '@/lib/reader/items';
+import { formatFromName, titleFromName, type BookFormat, type BookMeta } from '@/lib/reader/items';
 import { isImageName, naturalSort, ZipReader } from '@/lib/reader/zip';
 import { loadEpub, loadFixed, loadFlow, loadPdf, loadText } from './offline';
 import type { Engine, ReaderSettings } from './source';
+import { bookFileUrl, downloadBook } from './sync';
 
 // What the page turner gets for each kind of file, and what the shelf shows for a new book.
 
-export async function openEngine(format: BookFormat, blob: Blob, stage: HTMLElement, settings: ReaderSettings, onChange: () => void): Promise<Engine> {
-  if (format === 'pdf' || format === 'cbz') {
-    const [{ FixedEngine, openComic }, pdf] = await Promise.all([loadFixed(), format === 'pdf' ? loadPdf() : null]);
-    return new FixedEngine(stage, pdf ? await pdf.openPdf(blob) : await openComic(blob), settings, onChange);
+/** A book to open: its file on this device, or (a PDF only) where to read it from on the Pi, a piece at a time. */
+export type BookFile = Blob | { url: string; size: number };
+
+export async function openEngine(format: BookFormat, file: BookFile, stage: HTMLElement, settings: ReaderSettings, onChange: () => void): Promise<Engine> {
+  if (format === 'pdf') {
+    const [{ FixedEngine }, pdf] = await Promise.all([loadFixed(), loadPdf()]);
+    return new FixedEngine(stage, await pdf.openPdf(file), settings, onChange);
+  }
+  if (!(file instanceof Blob)) throw new Error('This kind of book has to be on this device to open.');
+  const blob = file;
+  if (format === 'cbz') {
+    const { FixedEngine, openComic } = await loadFixed();
+    return new FixedEngine(stage, await openComic(blob), settings, onChange);
   }
   const { FlowEngine } = await loadFlow();
   const source = format === 'epub' ? await (await loadEpub()).openEpub(blob) : await (await loadText()).openTextBook(blob, format);
@@ -36,6 +46,20 @@ async function imageToCover(blob: Blob) {
   const cover = canvasToCover(bitmap, bitmap.width, bitmap.height);
   bitmap.close();
   return cover;
+}
+
+/**
+ * The same for a book that's on the Pi and not on this device (one just brought over from
+ * the Library). A PDF's first page is all that's fetched for it; anything else comes down
+ * whole, and is kept here ready to read.
+ */
+export async function readShelvedBookInfo(book: BookMeta): Promise<{ author: string; cover: string | null }> {
+  if (book.format === 'pdf') {
+    const info = await (await loadPdf()).readPdfInfo({ url: bookFileUrl(book), size: book.size });
+    return { author: info.author, cover: canvasToCover(info.canvas, info.canvas.width, info.canvas.height) };
+  }
+  const blob = await downloadBook(book);
+  return readBookInfo(new File([blob], `book.${book.format}`));
 }
 
 /** The title, author and cover hiding in a file. Nothing in here is worth failing an upload over. */

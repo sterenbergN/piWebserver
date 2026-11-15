@@ -2,17 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import { formatFromName, MAX_BOOK_BYTES, notesByChapter, progressText, readingState, type Anchor, type BookMeta, type Folder, type ReaderItem } from '@/lib/reader/items';
+import {
+  booksInProgress, entrySeries, formatFromName, inSeriesOrder, MAX_BOOK_BYTES, notesByChapter, progressText, readingState, seriesOnShelf, shelfEntries,
+  type Anchor, type BookMeta, type Folder, type ReaderItem, type ReadingState, type ShelfEntry,
+} from '@/lib/reader/items';
 import { readBookInfo } from './bookinfo';
 import { deleteFile, getCover, getItems, getProgress, listFileIds, type StoredProgress } from './db';
 import NotesPanel from './NotesPanel';
 import NotesSearch from './NotesSearch';
-import PublicShelf from './PublicShelf';
+import PublicLibrary, { usePublicLibrary } from './PublicLibrary';
+import { ChapterEditor, CombineDialog, LinkDialog, SeriesDialog, SeriesOrderDialog } from './ShelfDialogs';
 import { useYouTubeJobs, YouTubeForm, YouTubeJobs } from './YouTubeAudio';
 import { spoken } from '@/lib/reader/audio';
 import type { ReaderSettings } from './source';
 import {
-  createFolder, deleteBookEverywhere, deleteFolderEverywhere, downloadBook, markFinished, moveBooksEverywhere, ReaderSignedOut, renameBookEverywhere, renameFolderEverywhere, syncBook, uploadBook,
+  createFolder, deleteBookEverywhere, deleteFolderEverywhere, deleteSeriesEverywhere, downloadBook, linkBooksEverywhere, markFinished, moveBooksEverywhere, orderSeriesEverywhere, ReaderSignedOut,
+  renameBookEverywhere, renameFolderEverywhere, renameSeriesEverywhere, setSeriesEverywhere, syncBook, takeOffContinue, unlinkBookEverywhere, uploadBook,
 } from './sync';
 import { useBookItems } from './useBookItems';
 
@@ -20,16 +25,29 @@ import { useBookItems } from './useBookItems';
 // which. Only books kept on this device open with no connection. Your own reading (where
 // you are, what you've finished) works offline too; rearranging the shelf needs a
 // connection, so every device always agrees on what's where.
+//
+// A book you have as text and as an audio book is one card, with a way into each. Books
+// in a series stand together as one stack on the main shelf, and open out in their order.
 
-type View = 'all' | 'reading' | 'finished' | `folder:${string}`;
+type View = 'all' | 'reading' | 'finished' | 'device' | 'library' | `folder:${string}` | `series:${string}`;
 type Dialog =
   | { kind: 'add' }
-  | { kind: 'import' }
   | { kind: 'youtube' }
   | { kind: 'new-folder'; moving?: string[] }
   | { kind: 'rename-folder'; folder: Folder }
   | { kind: 'delete-folder'; folder: Folder }
-  | { kind: 'move'; books: string[] };
+  | { kind: 'move'; books: string[] }
+  | { kind: 'series'; books: string[] }
+  | { kind: 'rename-series'; name: string }
+  | { kind: 'delete-series'; name: string }
+  | { kind: 'order-series'; name: string }
+  | { kind: 'link'; book: BookMeta }
+  | { kind: 'combine'; books: string[] }
+  | { kind: 'free-space' };
+
+type Entry = ShelfEntry<BookMeta>;
+/** What stands on the shelf: a book, or on the main shelf a whole series as one stack. */
+type Shown = { kind: 'entry'; entry: Entry; number?: number } | { kind: 'stack'; name: string; entries: Entry[] };
 
 const VIEW_KEY = 'reader-shelf-view';
 
@@ -154,6 +172,7 @@ function FolderForm({ title, start, action, onSave, onCancel }: { title: string;
   );
 }
 
+
 export default function Library({ books, folders, theme, online, signedOut, onChanged, onOpen, onSignIn }: {
   books: BookMeta[];
   folders: Folder[];
@@ -171,10 +190,11 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [menuFor, setMenuFor] = useState<BookMeta | null>(null);
   const [notesFor, setNotesFor] = useState<BookMeta | null>(null);
+  const [chaptersFor, setChaptersFor] = useState<BookMeta | null>(null);
   const [renaming, setRenaming] = useState<{ title: string; author: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
-  // Audio on its way from YouTube; the shelf refreshes as each one lands.
+  // Audio on its way from YouTube, or being joined; the shelf refreshes as each one lands.
   const youtube = useYouTubeJobs(online && !signedOut, () => void onChanged());
   const [storage, setStorage] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -184,6 +204,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const coverUrls = useRef<Record<string, string>>({});
+  // The public Library: a shelf here like any other, that anyone on the site can read from.
+  const publicLibrary = usePublicLibrary(online);
 
   const refreshLocal = useCallback(async () => {
     const ids = await listFileIds();
@@ -209,6 +231,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   }, []);
 
   useEffect(() => {
+    // /library used to be its own page, and now lands here.
+    if (new URLSearchParams(window.location.search).get('shelf') === 'library') { setViewState('library'); return; }
     try {
       const saved = localStorage.getItem(VIEW_KEY);
       if (saved) setViewState(saved as View);
@@ -217,12 +241,16 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
 
   const setView = (next: View) => {
     setViewState(next);
+    // Arrived by the old Library address: once another shelf is picked, a reload shouldn't come back to it.
+    if (window.location.search.includes('shelf=')) window.history.replaceState(null, '', '/reader');
     try { localStorage.setItem(VIEW_KEY, next); } catch { /* It still applies for now. */ }
   };
 
+  const seriesList = useMemo(() => seriesOnShelf(books), [books]);
   const currentFolder = view.startsWith('folder:') ? folders.find((f) => `folder:${f.id}` === view) : undefined;
-  // A folder removed on another device.
-  const shownView: View = view.startsWith('folder:') && !currentFolder ? 'all' : view;
+  const currentSeries = view.startsWith('series:') ? seriesList.find((s) => `series:${s.name}` === view)?.name : undefined;
+  // A folder or series removed on another device, or nothing left on this one.
+  const shownView: View = (view.startsWith('folder:') && !currentFolder) || (view.startsWith('series:') && !currentSeries) || (view === 'device' && !kept.size) ? 'all' : view;
 
   /** Rearranging the shelf: says so plainly if it can't be done, then shows the new shelf. */
   const organize = async (work: () => Promise<unknown>) => {
@@ -283,15 +311,24 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     await refreshLocal();
   };
 
-  // Audio books are big: each is kept on purpose, from its own menu, never all at once.
-  const missing = books.filter((book) => !kept.has(book.id) && book.format !== 'audio');
-  const keepAll = async () => {
-    for (const book of missing) await keepHere(book);
+  const keepMany = async (list: BookMeta[]) => {
+    for (const book of list) if (!kept.has(book.id)) await keepHere(book);
   };
 
-  const removeHere = async (book: BookMeta) => {
-    await deleteFile(book.id);
+  // Audio books are big: each is kept on purpose, from its own menu or by selecting it, never all at once.
+  const missing = books.filter((book) => !kept.has(book.id) && book.format !== 'audio');
+
+  /** Off this device only. They stay in the account, with their notes and your place. */
+  const removeHere = async (ids: string[]) => {
+    for (const id of ids) await deleteFile(id);
     setMenuFor(null);
+    setDialog(null);
+    setSelected(null);
+    await refreshLocal();
+  };
+
+  const clearContinue = async (ids: string[]) => {
+    await takeOffContinue(ids);
     await refreshLocal();
   };
 
@@ -329,24 +366,158 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     const at = (book: BookMeta) => progress[book.id]?.at ?? Date.parse(book.addedAt);
     return at(b) - at(a);
   }), [books, progress]);
+  const entries = useMemo(() => shelfEntries(ordered), [ordered]);
 
   const canAdd = online && !signedOut;
 
-  const reading = ordered.filter((book) => readingState(progress[book.id]) === 'reading');
-  const finishedCount = ordered.filter((book) => readingState(progress[book.id]) === 'finished').length;
-  const notesTotal = Object.values(noteCounts).reduce((sum, n) => sum + n, 0);
-  const shown = ordered.filter((book) => {
-    if (shownView === 'all') return true;
-    if (shownView === 'reading' || shownView === 'finished') return readingState(progress[book.id]) === shownView;
-    return book.folder === currentFolder?.id;
-  });
+  /** A book in two forms is being read if either is, and finished once one is. */
+  const stateOf = (entry: Entry): ReadingState => {
+    const states = entry.books.map((book) => readingState(progress[book.id]));
+    return states.includes('reading') ? 'reading' : states.includes('finished') ? 'finished' : 'new';
+  };
+  /** The form you last had open: the text, until you've listened more recently. */
+  const currentOf = (entry: Entry) => entry.books.reduce((best, book) => ((progress[book.id]?.at ?? 0) > (progress[best.id]?.at ?? 0) ? book : best), entry.books[0]);
+  const inSeries = (name: string) => inSeriesOrder(entries.filter((entry) => entrySeries(entry)?.name === name));
 
-  const toggleSelected = (id: string) => setSelected((held) => {
+  const readingCount = entries.filter((entry) => stateOf(entry) === 'reading').length;
+  const finishedCount = entries.filter((entry) => stateOf(entry) === 'finished').length;
+  const deviceCount = entries.filter((entry) => entry.books.some((book) => kept.has(book.id))).length;
+  const notesTotal = Object.values(noteCounts).reduce((sum, n) => sum + n, 0);
+  const continuing = booksInProgress(ordered, progress);
+
+  const shown: Shown[] = (() => {
+    if (currentSeries) return inSeries(currentSeries).map((entry, i) => ({ kind: 'entry' as const, entry, number: i + 1 }));
+    if (shownView === 'all') {
+      const out: Shown[] = [];
+      const stacked = new Set<string>();
+      for (const entry of entries) {
+        const series = entrySeries(entry);
+        const together = series ? inSeries(series.name) : [];
+        if (!series || together.length < 2) out.push({ kind: 'entry', entry });
+        else if (!stacked.has(series.name)) {
+          stacked.add(series.name);
+          out.push({ kind: 'stack', name: series.name, entries: together });
+        }
+      }
+      return out;
+    }
+    const belongs = (entry: Entry) => {
+      if (shownView === 'device') return entry.books.some((book) => kept.has(book.id));
+      if (shownView === 'reading' || shownView === 'finished') return stateOf(entry) === shownView;
+      return entry.books.some((book) => book.folder === currentFolder?.id);
+    };
+    return entries.filter(belongs).map((entry) => ({ kind: 'entry' as const, entry }));
+  })();
+  const shownBooks = shown.flatMap((item) => (item.kind === 'entry' ? item.entry.books : item.entries.flatMap((entry) => entry.books)));
+
+  /** Selecting takes every form of a book, and a whole stack, together. */
+  const toggleSelected = (ids: string[]) => setSelected((held) => {
     const next = new Set(held);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    const all = ids.every((id) => next.has(id));
+    for (const id of ids) {
+      if (all) next.delete(id);
+      else next.add(id);
+    }
     return next;
   });
+
+  const selectedBooks = selected ? ordered.filter((book) => selected.has(book.id)) : [];
+  const canJoin = selectedBooks.length >= 2 && selectedBooks.every((book) => book.format === 'audio');
+  const selectedHere = selectedBooks.filter((book) => kept.has(book.id));
+  const menuForms = menuFor ? entries.find((entry) => entry.books.some((book) => book.id === menuFor.id))?.books ?? [menuFor] : [];
+  const dialogSeries = dialog?.kind === 'series' ? [...new Set(books.filter((book) => dialog.books.includes(book.id)).map((book) => book.series))] : [];
+
+  const describe = (entry: Entry) => {
+    const kinds = entry.books.map((book) => (book.format === 'audio' ? `Audio · ${spoken(book.audio?.duration ?? 0)}` : book.format.toUpperCase()));
+    return `${kinds.join(' + ')} · ${fmtSize(entry.books.reduce((sum, book) => sum + book.size, 0))}`;
+  };
+
+  const pickMark = (picked: boolean) => <span className="rd-card-pick" aria-hidden>{picked && <Icon name="check" size="0.9em" />}</span>;
+
+  const entryCard = (entry: Entry, number?: number) => {
+    const first = entry.books[0];
+    const current = currentOf(entry);
+    const place = progress[current.id];
+    const state = stateOf(entry);
+    const ids = entry.books.map((book) => book.id);
+    const picked = !!selected && ids.every((id) => selected.has(id));
+    const here = entry.books.filter((book) => kept.has(book.id));
+    const downloading = entry.books.map((book) => downloads[book.id]).find((d) => d !== undefined);
+    const notes = entry.books.reduce((n, book) => n + (noteCounts[book.id] ?? 0), 0);
+    // With no connection, the form that's on this device is the one that opens.
+    const opens = online || kept.has(current.id) ? current : here[0];
+    return (
+      <li key={entry.key} className={`rd-card${picked ? ' is-picked' : ''}`}>
+        <button
+          type="button" className="rd-card-open" aria-pressed={selected ? picked : undefined}
+          aria-label={selected ? `Select ${first.title}` : `Open ${first.title}`}
+          disabled={!selected && !opens}
+          onClick={() => (selected ? toggleSelected(ids) : opens && onOpen(opens))}
+        >
+          <Cover book={first} url={covers[(entry.books.find((book) => covers[book.id]) ?? first).id]} />
+          {state === 'reading' && place && <span className="rd-card-progress"><span style={{ width: `${Math.round(place.pct * 100)}%` }} /></span>}
+          {state === 'finished' && <span className="rd-card-badge" title="Finished"><Icon name="check" size="0.9em" /></span>}
+          {number !== undefined && <span className="rd-card-number" aria-label={`Number ${number} in the series`}>{number}</span>}
+          {selected && pickMark(picked)}
+        </button>
+        <div className="rd-card-meta">
+          <div>
+            <strong>{first.title}</strong>
+            {entry.books.length > 1 && !selected ? (
+              <span className="rd-forms">
+                {entry.books.map((book) => {
+                  const at = progress[book.id];
+                  const reads = readingState(at);
+                  const label = book.format === 'audio' ? 'Listen' : 'Read';
+                  return (
+                    <button type="button" key={book.id} className={`rd-form${book.id === current.id ? ' is-current' : ''}`} disabled={!online && !kept.has(book.id)} aria-label={`${label}: ${book.title}`} onClick={() => onOpen(book)}>
+                      <Icon name={book.format === 'audio' ? 'play' : 'book'} size="0.95em" /> {label}{reads === 'reading' && at ? ` ${Math.round(at.pct * 100)}%` : ''}{reads === 'finished' && <Icon name="check" size="0.85em" />}
+                    </button>
+                  );
+                })}
+              </span>
+            ) : <span className="rd-card-state">{progressText(place, current.format)}</span>}
+            <span>
+              {here.length === entry.books.length ? <><Icon name="device" size="0.95em" /> On this device</>
+                : downloading !== undefined ? `Downloading ${Math.round(downloading * 100)}%`
+                : here.length ? <><Icon name="device" size="0.95em" /> {here[0].format === 'audio' ? 'Audio' : 'Text'} on this device</>
+                : describe(entry)}
+            </span>
+            {notes > 0 && <span><Icon name="note" size="0.95em" /> {notes} note{notes === 1 ? '' : 's'}</span>}
+          </div>
+          {!selected && <button type="button" className="rd-icon-btn" aria-label={`More for ${first.title}`} onClick={() => setMenuFor(current)}><Icon name="more" /></button>}
+        </div>
+      </li>
+    );
+  };
+
+  const stackCard = (name: string, list: Entry[]) => {
+    const next = list.find((entry) => stateOf(entry) !== 'finished');
+    const front = next ?? list[0];
+    const done = list.filter((entry) => stateOf(entry) === 'finished').length;
+    const ids = list.flatMap((entry) => entry.books.map((book) => book.id));
+    const picked = !!selected && ids.every((id) => selected.has(id));
+    return (
+      <li key={`series:${name}`} className={`rd-card is-stack${picked ? ' is-picked' : ''}`}>
+        <button
+          type="button" className="rd-card-open" aria-pressed={selected ? picked : undefined}
+          aria-label={selected ? `Select the ${name} series` : `Open the ${name} series`}
+          onClick={() => (selected ? toggleSelected(ids) : setView(`series:${name}`))}
+        >
+          <Cover book={front.books[0]} url={covers[(front.books.find((book) => covers[book.id]) ?? front.books[0]).id]} />
+          <span className="rd-card-count"><Icon name="layers" size="0.9em" /> {list.length}</span>
+          {selected && pickMark(picked)}
+        </button>
+        <div className="rd-card-meta">
+          <div>
+            <strong>{name}</strong>
+            <span className="rd-card-state">{list.length} books{done ? ` · ${done} finished` : ''}</span>
+            {next && <span>{done || stateOf(next) === 'reading' ? 'Next' : 'Starts with'}: {next.books[0].title}</span>}
+          </div>
+        </div>
+      </li>
+    );
+  };
 
   return (
     <div
@@ -365,7 +536,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
           <a className="rd-home" href="/today"><Icon name="chevron" className="is-flipped" /> Noah Stuf</a>
           <h1>Reader</h1>
           {books.length > 0 && (
-            <p className="rd-lib-stats">{[`${reading.length} reading`, `${finishedCount} finished`, `${notesTotal} note${notesTotal === 1 ? '' : 's'}`].join(' · ')}</p>
+            <p className="rd-lib-stats">{[`${readingCount} reading`, `${finishedCount} finished`, `${notesTotal} note${notesTotal === 1 ? '' : 's'}`].join(' · ')}</p>
           )}
         </div>
         <span className="rd-grow" />
@@ -409,27 +580,32 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
         </ul>
       )}
 
-      <YouTubeJobs jobs={youtube.jobs} onRetry={(id) => void youtube.retry(id).catch((e) => setError(e.message))} onRemove={(id) => void youtube.remove(id).catch((e) => setError(e.message))} />
+      <YouTubeJobs jobs={youtube.jobs} onRetry={(id, skipMissing) => void youtube.retry(id, skipMissing).catch((e) => setError(e.message))} onRemove={(id) => void youtube.remove(id).catch((e) => setError(e.message))} />
 
-      {!books.length && !uploads.length && (
+      {!books.length && !uploads.length && shownView !== 'library' && (
         <div className="rd-welcome">
           <Icon name="book" size="2.5em" />
           <h2>Nothing on the shelf yet</h2>
-          <p>Add an EPUB, PDF, CBZ, text, Markdown or HTML file, or bring one over from the Library. It’s saved to your account, so it’s on your phone and your iPad, and only you can see it.</p>
+          <p>Add an EPUB, PDF, CBZ, text, Markdown or HTML file, or read something from the Library. What you add is saved to your account, so it’s on your phone and your iPad, and only you can see it.</p>
+          <button type="button" className="rd-btn" onClick={() => setView('library')}><Icon name="book" /> Open the Library</button>
         </div>
       )}
 
       {books.length > 0 && !selected && <NotesSearch books={books} onOpen={onOpen} />}
 
-      {shownView === 'all' && !selected && reading.length > 0 && (
+      {shownView === 'all' && !selected && continuing.length > 0 && (
         <section className="rd-continue" aria-label="Continue reading">
-          <h2>Continue reading</h2>
+          <div className="rd-continue-head">
+            <h2>Continue reading</h2>
+            <span className="rd-grow" />
+            <button type="button" className="rd-btn is-small" title="Your place in each book is kept" onClick={() => void clearContinue(continuing.map((book) => book.id))}>Clear</button>
+          </div>
           <ul>
-            {reading.slice(0, 3).map((book) => {
+            {continuing.slice(0, 3).map((book) => {
               const place = progress[book.id];
               return (
                 <li key={book.id}>
-                  <button type="button" onClick={() => onOpen(book)} disabled={!kept.has(book.id) && !online}>
+                  <button type="button" className="rd-continue-open" onClick={() => onOpen(book)} disabled={!kept.has(book.id) && !online}>
                     <Cover book={book} url={covers[book.id]} />
                     <span className="rd-continue-text">
                       <strong>{book.title}</strong>
@@ -438,6 +614,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
                       <small>{fmtLastRead(place.at, book.format === 'audio' ? 'Listened' : 'Read')}</small>
                     </span>
                   </button>
+                  <button type="button" className="rd-icon-btn rd-continue-x" aria-label={`Take ${book.title} off Continue reading`} onClick={() => void clearContinue([book.id])}><Icon name="x" /></button>
                 </li>
               );
             })}
@@ -445,107 +622,106 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
         </section>
       )}
 
-      {(books.length > 0 || folders.length > 0) && (
-        <nav className="rd-filter" aria-label="Your shelves">
-          {([['all', 'All', books.length], ['reading', 'Reading', reading.length], ['finished', 'Finished', finishedCount]] as const).map(([id, label, count]) => (
+      <nav className="rd-filter" aria-label="Your shelves">
+          {([['all', 'All', entries.length], ['reading', 'Reading', readingCount], ['finished', 'Finished', finishedCount]] as const).map(([id, label, count]) => (
             <button type="button" key={id} className={shownView === id ? 'is-on' : ''} aria-pressed={shownView === id} onClick={() => setView(id)}>{label} <small>{count}</small></button>
           ))}
+          {deviceCount > 0 && (
+            <button type="button" className={shownView === 'device' ? 'is-on' : ''} aria-pressed={shownView === 'device'} onClick={() => setView('device')}><Icon name="device" size="1em" /> On this device <small>{deviceCount}</small></button>
+          )}
+          <button type="button" className={shownView === 'library' ? 'is-on' : ''} aria-pressed={shownView === 'library'} onClick={() => { setSelected(null); setView('library'); }}>
+            <Icon name="book" size="1em" /> Library{publicLibrary.docs ? <small>{publicLibrary.docs.length}</small> : null}
+          </button>
           <span className="rd-filter-gap" aria-hidden />
           {folders.map((folder) => {
             const id: View = `folder:${folder.id}`;
             return (
               <button type="button" key={folder.id} className={shownView === id ? 'is-on' : ''} aria-pressed={shownView === id} onClick={() => setView(id)}>
-                <Icon name="folder" size="1em" /> {folder.name} <small>{books.filter((book) => book.folder === folder.id).length}</small>
+                <Icon name="folder" size="1em" /> {folder.name} <small>{entries.filter((entry) => entry.books.some((book) => book.folder === folder.id)).length}</small>
+              </button>
+            );
+          })}
+          {seriesList.map((series) => {
+            const id: View = `series:${series.name}`;
+            return (
+              <button type="button" key={id} className={shownView === id ? 'is-on' : ''} aria-pressed={shownView === id} onClick={() => setView(id)}>
+                <Icon name="layers" size="1em" /> {series.name} <small>{series.count}</small>
               </button>
             );
           })}
           <button type="button" className="is-add" disabled={!canAdd} onClick={() => setDialog({ kind: 'new-folder' })}><Icon name="plus" size="1em" /> New folder</button>
-        </nav>
-      )}
+      </nav>
 
-      {(currentFolder || books.length > 0) && (
+      {(currentFolder || currentSeries || books.length > 0 || shownView === 'library') && (
         <div className="rd-shelf-head">
-          {currentFolder ? (
+          {shownView === 'library' ? <h2>Library</h2> : currentFolder ? (
             <>
               <h2>{currentFolder.name}</h2>
               <button type="button" className="rd-icon-btn" aria-label={`Rename ${currentFolder.name}`} disabled={!canAdd} onClick={() => setDialog({ kind: 'rename-folder', folder: currentFolder })}><Icon name="pencil" /></button>
               <button type="button" className="rd-icon-btn" aria-label={`Delete ${currentFolder.name}`} disabled={!canAdd} onClick={() => setDialog({ kind: 'delete-folder', folder: currentFolder })}><Icon name="trash" /></button>
             </>
-          ) : <h2>{shownView === 'reading' ? 'Reading' : shownView === 'finished' ? 'Finished' : 'All books'}</h2>}
+          ) : currentSeries ? (
+            <>
+              <h2>{currentSeries}</h2>
+              <button type="button" className="rd-icon-btn" aria-label={`Rename ${currentSeries}`} disabled={!canAdd} onClick={() => setDialog({ kind: 'rename-series', name: currentSeries })}><Icon name="pencil" /></button>
+              <button type="button" className="rd-icon-btn" aria-label={`Change the order of ${currentSeries}`} disabled={!canAdd || shown.length < 2} onClick={() => setDialog({ kind: 'order-series', name: currentSeries })}><Icon name="list" /></button>
+              <button type="button" className="rd-icon-btn" aria-label={`Remove the series ${currentSeries}`} disabled={!canAdd} onClick={() => setDialog({ kind: 'delete-series', name: currentSeries })}><Icon name="trash" /></button>
+            </>
+          ) : <h2>{shownView === 'reading' ? 'Reading' : shownView === 'finished' ? 'Finished' : shownView === 'device' ? 'On this device' : 'All books'}</h2>}
           <span className="rd-grow" />
-          {books.length > 0 && (
+          {books.length > 0 && shownView !== 'library' && (
             selected
               ? <button type="button" className="rd-btn is-small" onClick={() => setSelected(null)}>Cancel</button>
-              : <button type="button" className="rd-btn is-small" disabled={!canAdd} onClick={() => setSelected(new Set())}>Select</button>
+              : <button type="button" className="rd-btn is-small" onClick={() => setSelected(new Set())}>Select</button>
           )}
         </div>
       )}
 
-      {books.length > 0 && !shown.length && (
+      {shownView === 'library' && (
+        <PublicLibrary library={publicLibrary} books={books} guest={false} canAdd={canAdd} onOpen={onOpen} onChanged={onChanged} onSignIn={onSignIn} />
+      )}
+
+      {books.length > 0 && !shown.length && shownView !== 'library' && (
         <p className="rd-empty">
           {currentFolder ? 'Nothing in this folder yet. Use Select, or a book’s ⋯ menu, to move books here.' : shownView === 'reading' ? 'Nothing on the go. Open a book to start it.' : 'Nothing finished yet. A book counts when you reach its last page, or mark it in its ⋯ menu.'}
         </p>
       )}
 
-      <ul className="rd-shelf">
-        {shown.map((book) => {
-          const place = progress[book.id];
-          const state = readingState(place);
-          const downloading = downloads[book.id];
-          const notes = noteCounts[book.id] ?? 0;
-          const picked = selected?.has(book.id) ?? false;
-          return (
-            <li key={book.id} className={`rd-card${picked ? ' is-picked' : ''}`}>
-              <button
-                type="button" className="rd-card-open" aria-pressed={selected ? picked : undefined}
-                aria-label={selected ? `Select ${book.title}` : `Open ${book.title}`}
-                disabled={!selected && !kept.has(book.id) && !online}
-                onClick={() => (selected ? toggleSelected(book.id) : onOpen(book))}
-              >
-                <Cover book={book} url={covers[book.id]} />
-                {state === 'reading' && <span className="rd-card-progress"><span style={{ width: `${Math.round(place!.pct * 100)}%` }} /></span>}
-                {state === 'finished' && <span className="rd-card-badge" title="Finished"><Icon name="check" size="0.9em" /></span>}
-                {selected && <span className="rd-card-pick" aria-hidden>{picked && <Icon name="check" size="0.9em" />}</span>}
-              </button>
-              <div className="rd-card-meta">
-                <div>
-                  <strong>{book.title}</strong>
-                  <span className="rd-card-state">{progressText(place, book.format)}</span>
-                  <span>
-                    {kept.has(book.id) ? <><Icon name="device" size="0.95em" /> On this device</> : downloading !== undefined ? `Downloading ${Math.round(downloading * 100)}%` : book.format === 'audio' ? `Audio · ${spoken(book.audio?.duration ?? 0)} · ${fmtSize(book.size)}` : `${book.format.toUpperCase()} · ${fmtSize(book.size)}`}
-                  </span>
-                  {notes > 0 && <span><Icon name="note" size="0.95em" /> {notes} note{notes === 1 ? '' : 's'}</span>}
-                </div>
-                {!selected && <button type="button" className="rd-icon-btn" aria-label={`More for ${book.title}`} onClick={() => setMenuFor(book)}><Icon name="more" /></button>}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {shownView !== 'library' && (
+        <ul className="rd-shelf">
+          {shown.map((item) => (item.kind === 'stack' ? stackCard(item.name, item.entries) : entryCard(item.entry, item.number)))}
+        </ul>
+      )}
 
       {selected && (
         <div className="rd-select-bar" role="toolbar" aria-label="Selected books">
-          <span>{selected.size} selected</span>
+          <span>{selectedBooks.length ? `${shelfEntries(selectedBooks).length} selected` : 'Tap books to select them'}</span>
           <span className="rd-grow" />
-          <button type="button" className="rd-btn" onClick={() => setSelected(new Set(shown.map((book) => book.id)))}>All</button>
-          <button type="button" className="rd-btn is-primary" disabled={!selected.size} onClick={() => setDialog({ kind: 'move', books: [...selected] })}><Icon name="folder" /> Move</button>
+          <button type="button" className="rd-btn is-small" onClick={() => setSelected(new Set(shownBooks.map((book) => book.id)))}>All</button>
+          <button type="button" className="rd-btn is-small" disabled={!selected.size || !canAdd} onClick={() => setDialog({ kind: 'move', books: [...selected] })}><Icon name="folder" /> Move</button>
+          <button type="button" className="rd-btn is-small" disabled={!selected.size || !canAdd} onClick={() => setDialog({ kind: 'series', books: selectedBooks.map((book) => book.id) })}><Icon name="layers" /> Series</button>
+          {canJoin && <button type="button" className="rd-btn is-small" disabled={!canAdd} onClick={() => setDialog({ kind: 'combine', books: selectedBooks.map((book) => book.id) })}><Icon name="link" /> Join</button>}
+          {selectedBooks.length > selectedHere.length && (
+            <button type="button" className="rd-btn is-small" disabled={!canAdd || Object.keys(downloads).length > 0} onClick={() => { const list = selectedBooks; setSelected(null); void keepMany(list); }}><Icon name="download" /> Keep here</button>
+          )}
+          {selectedHere.length > 0 && <button type="button" className="rd-btn is-small" onClick={() => void removeHere(selectedHere.map((book) => book.id))}><Icon name="device" /> Remove from device</button>}
         </div>
       )}
 
-      {dialog && dialog.kind !== 'import' && (
+      {dialog && (
         <div className="rd-sheet-wrap is-center" onClick={() => setDialog(null)}>
           <div className="rd-menu" role="dialog" aria-label="Your shelves" onClick={(e) => e.stopPropagation()}>
             {dialog.kind === 'add' && (
               <>
                 <p className="rd-menu-title">Add a book{currentFolder && <small>To {currentFolder.name}</small>}</p>
                 <button type="button" onClick={() => { setDialog(null); fileInput.current?.click(); }}><Icon name="device" /> A file from this device</button>
-                <button type="button" onClick={() => setDialog({ kind: 'import' })}><Icon name="book" /> From the Library</button>
+                <button type="button" onClick={() => { setDialog(null); setView('library'); }}><Icon name="book" /> From the Library</button>
                 <button type="button" onClick={() => setDialog({ kind: 'youtube' })}><Icon name="play" /> Audio from YouTube</button>
               </>
             )}
             {dialog.kind === 'youtube' && (
               <YouTubeForm folderName={currentFolder?.name} onCancel={() => setDialog(null)}
-                onAdd={async (url) => { await youtube.add(url, currentFolder?.id); setDialog(null); }} />
+                onAdd={async (url, joined) => { await youtube.add(url, currentFolder?.id, joined); setDialog(null); }} />
             )}
             {dialog.kind === 'new-folder' && (
               <FolderForm
@@ -584,17 +760,70 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
                 <button type="button" onClick={() => void moveTo(dialog.books, null)}><Icon name="x" /> Not in a folder</button>
               </>
             )}
+            {dialog.kind === 'series' && (
+              <SeriesDialog
+                count={shelfEntries(books.filter((book) => dialog.books.includes(book.id))).length} series={seriesList}
+                current={dialogSeries.length === 1 ? dialogSeries[0] : undefined}
+                onCancel={() => setDialog(null)}
+                onChoose={(name) => void organize(async () => {
+                  await setSeriesEverywhere(dialog.books, name);
+                  if (name && dialog.books.length > 1) setView(`series:${seriesList.find((s) => s.name.toLowerCase() === name.toLowerCase())?.name ?? name}`);
+                })}
+              />
+            )}
+            {dialog.kind === 'rename-series' && (
+              <FolderForm
+                title="Rename series" start={dialog.name} action="Save" onCancel={() => setDialog(null)}
+                onSave={(name) => void organize(async () => { await renameSeriesEverywhere(dialog.name, name); setView(`series:${name}`); })}
+              />
+            )}
+            {dialog.kind === 'delete-series' && (
+              <>
+                <p className="rd-menu-title">Remove the series {dialog.name}?</p>
+                <p className="rd-hint">Only the series goes. Its books stay on the shelf, on their own.</p>
+                <div className="rd-row">
+                  <button type="button" className="rd-btn" onClick={() => setDialog(null)}>Keep it</button>
+                  <span className="rd-grow" />
+                  <button type="button" className="rd-btn is-danger" onClick={() => void organize(() => deleteSeriesEverywhere(dialog.name))}>Remove series</button>
+                </div>
+              </>
+            )}
+            {dialog.kind === 'order-series' && (
+              <SeriesOrderDialog
+                name={dialog.name} items={inSeries(dialog.name).map((entry) => ({ id: entry.books[0].id, label: entry.books[0].title, sub: entry.books[0].author }))}
+                onCancel={() => setDialog(null)} onSave={(order) => void organize(() => orderSeriesEverywhere(dialog.name, order))}
+              />
+            )}
+            {dialog.kind === 'link' && (
+              <LinkDialog book={dialog.book} books={books} onCancel={() => setDialog(null)} onLink={(other) => void organize(() => linkBooksEverywhere([dialog.book.id, other.id]))} />
+            )}
+            {dialog.kind === 'combine' && (
+              <CombineDialog
+                books={books.filter((book) => dialog.books.includes(book.id))} onCancel={() => setDialog(null)}
+                onStart={async (order, title, removeParts) => { await youtube.combine(order, title, removeParts); setDialog(null); setSelected(null); }}
+              />
+            )}
+            {dialog.kind === 'free-space' && (
+              <>
+                <p className="rd-menu-title">Take every book off this device?</p>
+                <p className="rd-hint">They stay in your account, with your notes and your place in each, and open again whenever you have a connection. Only the copies kept here for offline go.</p>
+                <div className="rd-row">
+                  <button type="button" className="rd-btn" onClick={() => setDialog(null)}>Keep them</button>
+                  <span className="rd-grow" />
+                  <button type="button" className="rd-btn is-danger" onClick={() => void removeHere([...kept])}>Remove from device</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
 
-      {dialog?.kind === 'import' && <PublicShelf books={books} folder={currentFolder?.id} onClose={() => setDialog(null)} onImported={onChanged} onSignIn={onSignIn} />}
-
       {books.length > 0 && (
         <footer className="rd-lib-foot">
           {online && !signedOut && missing.length > 0 && (
-            <button type="button" className="rd-btn" disabled={Object.keys(downloads).length > 0} onClick={() => void keepAll()}><Icon name="download" /> Keep all {missing.length} on this device</button>
+            <button type="button" className="rd-btn" disabled={Object.keys(downloads).length > 0} onClick={() => void keepMany(missing)}><Icon name="download" /> Keep all {missing.length} on this device</button>
           )}
+          {kept.size > 0 && <button type="button" className="rd-btn" onClick={() => setDialog({ kind: 'free-space' })}><Icon name="device" /> Remove all from this device</button>}
           {storage && <span>Using {storage} on this device</span>}
         </footer>
       )}
@@ -616,8 +845,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
               </form>
             ) : confirmDelete ? (
               <>
-                <p className="rd-menu-title">Delete this book from your account?</p>
-                <p className="rd-hint">{menuFor.title}, with all its notes and pen marks, goes from every device. This can’t be undone.</p>
+                <p className="rd-menu-title">Delete this {menuFor.format === 'audio' ? 'audio book' : 'book'} from your account?</p>
+                <p className="rd-hint">{menuFor.title}, with all its notes and pen marks, goes from every device. This can’t be undone.{menuForms.length > 1 && ` Its ${menuFor.format === 'audio' ? 'text' : 'audio book'} stays.`}</p>
                 <div className="rd-row">
                   <button type="button" className="rd-btn" onClick={() => setConfirmDelete(false)}>Keep it</button>
                   <span className="rd-grow" />
@@ -627,13 +856,29 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
             ) : (
               <>
                 <p className="rd-menu-title">{menuFor.title}{menuFor.author && <small>{menuFor.author}</small>}</p>
+                {menuForms.length > 1 && (
+                  <div className="rd-tabs rd-menu-forms" role="tablist" aria-label="Which form of the book">
+                    {menuForms.map((book) => (
+                      <button type="button" role="tab" key={book.id} aria-selected={book.id === menuFor.id} className={book.id === menuFor.id ? 'is-on' : ''} onClick={() => setMenuFor(book)}>
+                        {book.format === 'audio' ? 'Audio book' : book.format.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button type="button" onClick={() => { const book = menuFor; closeMenu(); setNotesFor(book); }}><Icon name="note" /> Notes</button>
-                <button type="button" disabled={!canAdd} onClick={() => { const book = menuFor; closeMenu(); setDialog({ kind: 'move', books: [book.id] }); }}><Icon name="folder" /> Move to a folder</button>
+                <button type="button" disabled={!canAdd} onClick={() => { const forms = menuForms.map((book) => book.id); closeMenu(); setDialog({ kind: 'move', books: forms }); }}><Icon name="folder" /> Move to a folder</button>
+                <button type="button" disabled={!canAdd} onClick={() => { const book = menuFor; closeMenu(); setDialog({ kind: 'series', books: [book.id] }); }}>
+                  <Icon name="layers" /> {menuFor.series ? `Series: ${menuFor.series}` : 'Add to a series'}
+                </button>
+                {menuFor.work && menuForms.length > 1
+                  ? <button type="button" disabled={!canAdd} onClick={() => { const book = menuFor; closeMenu(); void organize(() => unlinkBookEverywhere(book.id)); }}><Icon name="scissors" /> Separate from its {menuFor.format === 'audio' ? 'book' : 'audio book'}</button>
+                  : <button type="button" disabled={!canAdd} onClick={() => { const book = menuFor; closeMenu(); setDialog({ kind: 'link', book }); }}><Icon name="link" /> {menuFor.format === 'audio' ? 'It’s the audio of a book here' : 'Put with its audio book'}</button>}
+                {menuFor.format === 'audio' && <button type="button" disabled={!canAdd} onClick={() => { const book = menuFor; closeMenu(); setChaptersFor(book); }}><Icon name="list" /> Edit chapters</button>}
                 <button type="button" onClick={() => { const { id } = menuFor; const finished = readingState(progress[id]) !== 'finished'; closeMenu(); void markFinished(id, finished).then(refreshLocal); }}>
                   <Icon name="check" /> {readingState(progress[menuFor.id]) === 'finished' ? 'Mark as not finished' : 'Mark as finished'}
                 </button>
                 {kept.has(menuFor.id)
-                  ? <button type="button" onClick={() => void removeHere(menuFor)}><Icon name="device" /> Remove from this device</button>
+                  ? <button type="button" onClick={() => void removeHere([menuFor.id])}><Icon name="device" /> Remove from this device</button>
                   : <button type="button" disabled={!online || signedOut} onClick={() => { const book = menuFor; closeMenu(); void keepHere(book); }}><Icon name="download" /> Keep on this device</button>}
                 <button type="button" disabled={!online || signedOut} onClick={() => setRenaming({ title: menuFor.title, author: menuFor.author })}><Icon name="pencil" /> Rename</button>
                 <button type="button" className="is-danger" disabled={!online || signedOut} onClick={() => setConfirmDelete(true)}><Icon name="trash" /> Delete</button>
@@ -644,6 +889,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
       )}
 
       {notesFor && <BookNotes book={notesFor} theme={theme} onClose={() => setNotesFor(null)} onOpenAt={(anchor) => { const book = notesFor; setNotesFor(null); onOpen(book, anchor); }} />}
+      {chaptersFor && <ChapterEditor book={chaptersFor} onClose={() => setChaptersFor(null)} onSaved={() => { setChaptersFor(null); void onChanged(); }} />}
     </div>
   );
 }

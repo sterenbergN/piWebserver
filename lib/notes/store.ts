@@ -244,6 +244,17 @@ export async function appendUpload(userId: string, notebook: string, file: strin
   return offset + received;
 }
 
+/**
+ * How far a file has got: here already, or how much of it has arrived. A device asks before
+ * sending, so an upload cut short (a lecture's recording, on a train) carries on from where
+ * it stopped and isn't started again from nothing every time.
+ */
+export async function uploadState(userId: string, notebook: string, file: string) {
+  if (!(await hasNotebook(userId, notebook))) throw new NotebookGone();
+  if (await fs.stat(storedFile(userId, notebook, file)).catch(() => null)) return { stored: true, received: 0 };
+  return { stored: false, received: (await fs.stat(incomingFile(userId, notebook, file)).catch(() => null))?.size ?? 0 };
+}
+
 /** All the pieces are here: check it's something the notes keep, and put it in place. */
 export async function finishUpload(userId: string, notebook: string, file: string) {
   const incoming = incomingFile(userId, notebook, file);

@@ -5,7 +5,7 @@ import './reader.css';
 
 export const metadata: Metadata = {
   title: { absolute: 'Reader' },
-  description: 'Your books and notes, on every device, with or without a connection.',
+  description: 'The Library, and your own books and notes, on every device, with or without a connection.',
   robots: { index: false, follow: false },
   // Its own app on a home screen. Setting `icons` here replaces the site's file icons, for these pages only.
   applicationName: 'Reader',

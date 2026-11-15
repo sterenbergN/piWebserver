@@ -1,10 +1,7 @@
-import { isAdminAuthenticated } from '@/lib/security/server-auth';
-import { getLibraryDocuments } from '@/lib/site-content';
-import LibraryClient from './LibraryClient';
-import './library.css';
+import { permanentRedirect } from 'next/navigation';
 
-// Documents are read on the server so the list is in the first paint.
-export default async function LibraryPage() {
-  const [documents, isAdmin] = await Promise.all([getLibraryDocuments(), isAdminAuthenticated()]);
-  return <LibraryClient initialDocuments={documents} initialIsAdmin={isAdmin} />;
+// The Library used to be a page of its own. It's a shelf in the Reader now, where its
+// books open like any others, so old links and bookmarks land there.
+export default function LibraryPage() {
+  permanentRedirect('/reader?shelf=library');
 }

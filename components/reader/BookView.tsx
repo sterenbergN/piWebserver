@@ -4,12 +4,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Icon } from '@/components/study/Icon';
 import { useWakeLock } from '@/components/useWakeLock';
 import { roundStroke, strokeTouches, type Anchor, type BookMeta, type InkColor, type ReaderItem } from '@/lib/reader/items';
-import { openEngine } from './bookinfo';
+import { openEngine, type BookFile } from './bookinfo';
 import { getFile, getProgress } from './db';
 import { drawPixels, drawStroke, inkColor, MARKER_COLORS, MARKER_PIXELS, PEN_COLORS, PEN_PIXELS, sizeCanvas } from './ink';
 import NotesPanel from './NotesPanel';
 import type { Engine, ReaderSettings } from './source';
-import { downloadBook, flushNow, ReaderSignedOut, saveProgressHere } from './sync';
+import { bookFileUrl, downloadBook, flushNow, ReaderSignedOut, saveProgressHere } from './sync';
 import { useBookItems } from './useBookItems';
 
 // A book, full screen. The page sits under two canvases, one for saved pen marks and
@@ -18,6 +18,13 @@ import { useBookItems } from './useBookItems';
 // in draw mode, until a pencil has been seen, after which a resting palm does nothing).
 
 type Tool = 'pen' | 'marker' | 'eraser';
+
+/**
+ * A PDF bigger than this, not kept on this device, is read from the Pi a page at a time. The
+ * first page shows in a moment, where fetching all of a textbook first takes minutes and can
+ * be more than a phone will hold. Smaller ones are fetched whole and kept, so they open offline.
+ */
+const READ_FROM_PI_BYTES = 20 * 1024 * 1024;
 type Panel = 'contents' | 'notes' | 'notes-here' | 'look' | null;
 type Undo = { kind: 'added' | 'removed'; item: ReaderItem };
 
@@ -43,14 +50,19 @@ function fullscreenTarget() {
   return el.requestFullscreen ? () => el.requestFullscreen() : el.webkitRequestFullscreen ? async () => el.webkitRequestFullscreen?.() : null;
 }
 
-export default function BookView({ book, startAt, settings, onSettings, onExit, onSignedOut }: {
+export default function BookView({ book, startAt, settings, other, onSwitch, onSettings, onExit, onSignedOut }: {
   book: BookMeta;
   startAt: Anchor | null;
   settings: ReaderSettings;
   onSettings: (settings: ReaderSettings) => void;
+  /** Its audio book, if you have it too. */
+  other?: BookMeta;
+  onSwitch?: (book: BookMeta) => void;
   onExit: () => void;
   onSignedOut: () => void;
 }) {
+  // Read straight from the public Library with no account: there's nowhere for notes or pen marks to go.
+  const readOnly = !!book.publicUrl;
   const stageRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef<HTMLCanvasElement>(null);
@@ -170,13 +182,14 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
     };
 
     (async () => {
-      let blob = await getFile(book.id);
-      if (!blob) blob = await downloadBook(book, (fraction) => { if (live) setFetched(fraction); });
+      const kept = await getFile(book.id);
+      const fromPi = !kept && book.format === 'pdf' && (!!book.publicUrl || book.size > READ_FROM_PI_BYTES);
+      const file: BookFile = kept ?? (fromPi ? { url: bookFileUrl(book), size: book.size } : await downloadBook(book, (fraction) => { if (live) setFetched(fraction); }));
       if (!live) return;
       setPhase('opening');
       const at = startAt ?? (await getProgress(book.id))?.anchor ?? null;
       if (at) lastPlace = placeKey(at);
-      const engine = await openEngine(book.format, blob, stageRef.current!, settingsRef.current, pageChanged);
+      const engine = await openEngine(book.format, file, stageRef.current!, settingsRef.current, pageChanged);
       if (!live) { engine.destroy(); return; }
       engineRef.current = engine;
       fitCanvases();
@@ -185,9 +198,10 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       setEngine(engine);
       setPhase('ready');
       redrawRef.current();
+      if (fromPi && !book.publicUrl) say('Reading this from the Pi, a page at a time. To read it with no connection, keep it on this device from its ⋯ menu on the shelf.', 6000);
     })().catch((error) => {
       if (!live) return;
-      if (error instanceof ReaderSignedOut) { onSignedOut(); return; }
+      if (error instanceof ReaderSignedOut || (error as { status?: number })?.status === 401) { onSignedOut(); return; }
       setPhase('error');
       setErrorText(error instanceof TypeError ? 'This book isn’t on this device yet, and there’s no connection to fetch it.' : error instanceof Error ? error.message : 'This book wouldn’t open.');
     });
@@ -242,13 +256,18 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
 
   // The gestures aren't visible anywhere, so say what they are once, on devices that can do them.
   useEffect(() => {
-    if (phase !== 'ready' || navigator.maxTouchPoints < 2) return;
+    if (phase !== 'ready' || navigator.maxTouchPoints < 2 || readOnly) return;
     try {
       if (localStorage.getItem(GESTURE_HINT_KEY)) return;
       localStorage.setItem(GESTURE_HINT_KEY, 'seen');
     } catch { return; }
     say('Two fingers: tap to switch pen and eraser, swipe left for notes.', 5000);
-  }, [phase, say]);
+  }, [phase, say, readOnly]);
+
+  // Reading from the Library with no account: the ways into notes (a swipe, a key) lead to the contents.
+  useEffect(() => {
+    if (readOnly && (panel === 'notes' || panel === 'notes-here')) setPanel('contents');
+  }, [panel, readOnly]);
 
   useEffect(() => {
     const layer = layerRef.current;
@@ -281,6 +300,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
 
     /** Two-finger tap: into draw mode for a finger, then between the pen and the eraser. */
     const switchTool = () => {
+      if (readOnly) return;
       const state = drawRef.current;
       if (!state.drawMode && !penSeen) {
         setDrawMode(true);
@@ -394,7 +414,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
       // It throws for a pointer that's already gone, and that mustn't cost a stroke.
       try { layer.setPointerCapture?.(e.pointerId); } catch { /* Then it just isn't captured. */ }
       const { x, y } = position(e);
-      if (e.pointerType === 'pen') {
+      if (e.pointerType === 'pen' && !readOnly) {
         // The pencil always writes, and a palm that landed first stops counting.
         penSeen = true;
         lastPenAt = Date.now();
@@ -664,8 +684,9 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
             <strong>{book.title}</strong>
             {here?.chapter && <span>{here.chapter}</span>}
           </div>
+          {other && onSwitch && <button type="button" className="rd-icon-btn" onClick={() => onSwitch(other)} aria-label="Listen to the audio book"><Icon name="play" /></button>}
           <button type="button" className="rd-icon-btn" onClick={() => setPanel('contents')} aria-label="Contents" disabled={!ready}><Icon name="list" /></button>
-          <button type="button" className="rd-icon-btn" onClick={() => setPanel('notes')} aria-label="Notes" disabled={!ready}><Icon name="note" /></button>
+          {!readOnly && <button type="button" className="rd-icon-btn" onClick={() => setPanel('notes')} aria-label="Notes" disabled={!ready}><Icon name="note" /></button>}
           <button type="button" className="rd-icon-btn" onClick={() => setPanel('look')} aria-label="How the page looks" disabled={!ready}><Icon name="text" /></button>
           {canFull && <button type="button" className="rd-icon-btn" onClick={toggleFull} aria-label={isFull ? 'Leave full screen' : 'Full screen'}><Icon name={isFull ? 'shrink' : 'expand'} /></button>}
         </header>
@@ -681,7 +702,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
             onKeyUp={() => { if (dragFraction !== null) { void engine.goToFraction(dragFraction); setDragFraction(null); } }}
           />
           <span className="rd-bar-page">{pageLabel}</span>
-          <button type="button" className="rd-btn is-primary" onClick={() => { setChrome(false); setDrawMode(true); }}><Icon name="pencil" /> Draw</button>
+          {!readOnly && <button type="button" className="rd-btn is-primary" onClick={() => { setChrome(false); setDrawMode(true); }}><Icon name="pencil" /> Draw</button>}
         </footer>
       )}
 
@@ -727,7 +748,7 @@ export default function BookView({ book, startAt, settings, onSettings, onExit, 
             <div className="rd-sheet-head">
               <div className="rd-tabs">
                 <button type="button" className={panel === 'contents' ? 'is-on' : ''} onClick={() => setPanel('contents')}>Contents</button>
-                <button type="button" className={panel === 'notes' || panel === 'notes-here' ? 'is-on' : ''} onClick={() => setPanel('notes')}>Notes</button>
+                {!readOnly && <button type="button" className={panel === 'notes' || panel === 'notes-here' ? 'is-on' : ''} onClick={() => setPanel('notes')}>Notes</button>}
                 <button type="button" className={panel === 'look' ? 'is-on' : ''} onClick={() => setPanel('look')}>Page</button>
               </div>
               <span className="rd-grow" />

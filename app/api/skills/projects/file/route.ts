@@ -1,8 +1,9 @@
 import crypto from 'crypto';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, requireWorkoutUserId } from '@/lib/workout/api';
 import { resolvePathInside } from '@/lib/security/paths';
@@ -13,6 +14,10 @@ import type { ProjectAttachment } from '@/lib/skills/types';
 // stored under .data/skills/<userId>/files/ and streamed only to the owner.
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
+/** The form around the file: its name and the multipart boundaries. */
+const FORM_OVERHEAD_BYTES = 1024 * 1024;
+/** Uploads stop before they'd fill the Pi's card, as the Reader's and Notes' do. */
+const KEEP_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const CACHE_CONTROL = 'private, max-age=3600';
 const NO_STORE = { 'Cache-Control': 'no-store, private' };
 
@@ -145,6 +150,10 @@ function headerSafeFilename(storedName: string): string {
 export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
+    // Before any of it is read: a form is held in memory whole, and the Pi doesn't have much.
+    const declared = Number(request.headers.get('content-length'));
+    if (!Number.isFinite(declared) || declared <= 0) throw new ApiError(411, 'The upload didn’t say how big it is.');
+    if (declared > MAX_FILE_BYTES + FORM_OVERHEAD_BYTES) throw new ApiError(413, 'File exceeds 100 MB limit.');
     let formData: FormData;
     try {
       formData = await request.formData();
@@ -174,8 +183,15 @@ export async function POST(request: Request) {
     const folder = projectFilesFolder(userId);
     await fs.mkdir(folder, { recursive: true });
     const targetPath = resolveUserFile(userId, storedName);
-    const bytes = Buffer.from(await rawFile.arrayBuffer());
-    await fs.writeFile(targetPath, bytes);
+    const disk = await fs.statfs(folder);
+    if (Number(disk.bavail) * Number(disk.bsize) - rawFile.size < KEEP_FREE_BYTES) throw new ApiError(507, 'The server is nearly out of space.');
+    // Straight to disk, not through a second copy of it in memory.
+    try {
+      await pipeline(Readable.fromWeb(rawFile.stream() as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(targetPath));
+    } catch (error) {
+      await fs.rm(targetPath, { force: true }).catch(() => {});
+      throw error;
+    }
 
     const attachment: ProjectAttachment = {
       id: fileId,

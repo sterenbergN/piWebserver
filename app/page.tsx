@@ -46,7 +46,8 @@ export default async function Home() {
   const blurbs = {
     ...(photoCount ? { '/gallery': plural(photoCount, 'photo') } : {}),
     ...(posts.length ? { '/blog': plural(posts.length, 'write-up') } : {}),
-    ...(documents.length ? { '/library': plural(documents.length, 'document') } : {}),
+    // The Library is a shelf in the Reader; that's what a visitor finds there.
+    ...(documents.length && !signedIn ? { '/reader': `${plural(documents.length, 'document')} in the Library` } : {}),
   };
 
   return (
