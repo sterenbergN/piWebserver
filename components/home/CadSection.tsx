@@ -1,27 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import type { CadProject } from '@/lib/site-content';
 import { useSitePopup } from '@/components/SitePopup';
 import { MAX_MODEL_BYTES, MODEL_EXTENSIONS, formatBytes, modelExtension } from '@/lib/cad/models';
 import { parseOnshapeLink } from '@/lib/cad/onshape';
 import { cadAnchor } from '@/lib/cad/embeds';
 import CadCard from './CadCard';
+import './cad.css';
 
 const PREVIEW = 4;
 const EMPTY: CadProject = { id: '', name: '', description: '', link: '' };
+type CadFilter = 'all' | 'interactive' | 'still';
 
 /**
- * CAD models: the first few, with a button to show the rest. A model with a 3D
- * file gets an interactive viewer. Signed in as admin, models (and their
- * files) are added and edited here; with Onshape API keys on the server
- * (`onshape`), a model linked to an Onshape Part Studio or assembly can have its 3D file
- * exported from Onshape instead of uploaded.
+ * CAD models: the first few on the home page (with a link to the dedicated `/cad`
+ * page), or the full searchable/filterable collection when `fullPage` is true.
+ * A model with a 3D file gets an interactive viewer. Signed in as admin, models
+ * (and their files) are added and edited here; with Onshape API keys on the
+ * server (`onshape`), a model linked to an Onshape Part Studio or assembly can
+ * have its 3D file exported from Onshape instead of uploaded.
  */
-export default function CadSection({ projects: initial, isAdmin = false, onshape = false }: { projects: CadProject[]; isAdmin?: boolean; onshape?: boolean }) {
+export default function CadSection({
+  projects: initial,
+  isAdmin = false,
+  onshape = false,
+  fullPage = false,
+}: {
+  projects: CadProject[];
+  isAdmin?: boolean;
+  onshape?: boolean;
+  fullPage?: boolean;
+}) {
   const { confirm, popup } = useSitePopup();
   const [projects, setProjects] = useState(initial);
   const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<CadFilter>('all');
   // `id` '' = a new model; null = no editor open.
   const [editing, setEditing] = useState<CadProject | null>(null);
   const [saving, setSaving] = useState(false);
@@ -34,6 +50,16 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
   const [notice, setNotice] = useState('');
   /** The model whose 3D view opens by itself (just saved), so its still picture gets taken. */
   const [justSaved, setJustSaved] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  /** The model a link (#cad-<id>, e.g. from a post) pointed at, glowing briefly. */
+  const [linked, setLinked] = useState<string | null>(null);
+
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+
+  useEffect(() => {
+    setProjects(initial);
+  }, [initial]);
 
   /** Save a picture of a model's current view as its still. */
   const saveStill = async (id: string, image: Blob, announce: boolean) => {
@@ -46,26 +72,48 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, poster: data.project.poster, posterFor: data.project.posterFor } : p)));
     if (announce) setNotice('Saved this view as the still picture.');
   };
-  const [error, setError] = useState('');
-  const shown = expanded || isAdmin ? projects : projects.slice(0, PREVIEW);
-  /** The model a link (/#cad-<id>, e.g. from a post) pointed at, glowing briefly. */
-  const [linked, setLinked] = useState<string | null>(null);
+
+  const interactiveCount = projects.filter((p) => Boolean(p.model)).length;
+  const stillCount = projects.filter((p) => Boolean(p.poster)).length;
+  const q = query.trim().toLowerCase();
+  const filtered = fullPage
+    ? projects.filter((p) => {
+        if (filter === 'interactive' && !p.model) return false;
+        if (filter === 'still' && !p.poster) return false;
+        if (!q) return true;
+        return p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
+      })
+    : projects;
+  const shown = fullPage || expanded || isAdmin ? filtered : filtered.slice(0, PREVIEW);
 
   useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+    let linkTimer: ReturnType<typeof setTimeout> | undefined;
     const open = () => {
       const m = window.location.hash.match(/^#cad-(.+)$/);
       const id = m ? decodeURIComponent(m[1]) : '';
-      const at = initial.findIndex((p) => p.id === id);
+      const at = projectsRef.current.findIndex((p) => p.id === id);
       if (at < 0) return;
-      if (at >= PREVIEW) setExpanded(true);
+      if (fullPage) {
+        setQuery('');
+        setFilter('all');
+      } else if (at >= PREVIEW) {
+        setExpanded(true);
+      }
       setLinked(id);
-      setTimeout(() => document.getElementById(cadAnchor(id))?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
-      setTimeout(() => setLinked(null), 2600);
+      if (scrollTimer) clearTimeout(scrollTimer);
+      if (linkTimer) clearTimeout(linkTimer);
+      scrollTimer = setTimeout(() => document.getElementById(cadAnchor(id))?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+      linkTimer = setTimeout(() => setLinked(null), 2600);
     };
     open();
     window.addEventListener('hashchange', open);
-    return () => window.removeEventListener('hashchange', open);
-  }, [initial]);
+    return () => {
+      window.removeEventListener('hashchange', open);
+      if (scrollTimer) clearTimeout(scrollTimer);
+      if (linkTimer) clearTimeout(linkTimer);
+    };
+  }, [initial, fullPage]);
 
   /**
    * Ask the server to export a model's Onshape tab as its 3D file. A Part
@@ -142,6 +190,10 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
         }
       }
       if (saved.model) setJustSaved(saved.id);
+      if (isNew && fullPage) {
+        setQuery('');
+        setFilter('all');
+      }
       setModelFile(null);
       setFromOnshape(false);
       setEditing(null);
@@ -170,7 +222,12 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
   };
 
   const remove = async (p: CadProject) => {
-    if (!(await confirm({ title: 'Delete CAD model', message: `Delete “${p.name}” from the home page?`, confirmLabel: 'Delete', danger: true }))) return;
+    if (!(await confirm({
+      title: 'Delete CAD model',
+      message: fullPage ? `Delete “${p.name}”?` : `Delete “${p.name}” from the home page?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))) return;
     const res = await fetch('/api/cad', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id }) }).catch(() => null);
     if (res?.ok) setProjects((prev) => prev.filter((x) => x.id !== p.id));
   };
@@ -214,44 +271,118 @@ export default function CadSection({ projects: initial, isAdmin = false, onshape
 
   return (
     <section id="cad" className="premium-card home-cad">
-      <div className="home-section-head" style={{ textAlign: 'center', display: 'block' }}>
-        <h2>CAD models &amp; designs</h2>
-        <p className="home-muted">3D parts and models. Drag the ones with a 3D view to turn them.</p>
-        {isAdmin && !editing && (
-          <button className="btn btn-secondary home-cad-add" onClick={() => edit(EMPTY)}>＋ Add model</button>
-        )}
-      </div>
+      {fullPage ? (
+        <div className="cad-full-head">
+          <div className="cad-full-top">
+            <Link href="/" className="cad-back">← Home</Link>
+            {isAdmin && !editing && (
+              <button type="button" className="btn btn-secondary home-cad-add" onClick={() => edit(EMPTY)}>＋ Add model</button>
+            )}
+          </div>
+          <div className="cad-full-title">
+            <h1>3D Models &amp; CAD</h1>
+            <p className="home-muted">Interactive 3D parts and CAD designs. Drag models with a 3D view to turn them, or scroll to zoom.</p>
+          </div>
+          {projects.length > 0 && (
+            <div className="cad-toolbar">
+              <div className="cad-search">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search models by name or description…"
+                  aria-label="Search 3D models"
+                  style={{ paddingLeft: '2.6rem', paddingRight: query ? '2.5rem' : '1rem' }}
+                />
+                {query && (
+                  <button type="button" className="cad-search-clear" onClick={() => setQuery('')} aria-label="Clear search">✕</button>
+                )}
+              </div>
+              <div className="cad-toolbar-row">
+                <div className="cad-pills" role="group" aria-label="Filter models">
+                  <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>
+                    All <span>{projects.length}</span>
+                  </button>
+                  <button type="button" aria-pressed={filter === 'interactive'} onClick={() => setFilter('interactive')}>
+                    Interactive 3D <span>{interactiveCount}</span>
+                  </button>
+                  <button type="button" aria-pressed={filter === 'still'} onClick={() => setFilter('still')}>
+                    Still preview <span>{stillCount}</span>
+                  </button>
+                </div>
+                <span className="cad-count" aria-live="polite">
+                  {shown.length === projects.length
+                    ? `${projects.length} ${projects.length === 1 ? 'model' : 'models'}`
+                    : `Showing ${shown.length} of ${projects.length} ${projects.length === 1 ? 'model' : 'models'}`}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="home-section-head" style={{ textAlign: 'center', display: 'block' }}>
+          <h2>CAD models &amp; designs</h2>
+          <p className="home-muted">3D parts and models. Drag the ones with a 3D view to turn them.</p>
+          {isAdmin && !editing && (
+            <button className="btn btn-secondary home-cad-add" onClick={() => edit(EMPTY)}>＋ Add model</button>
+          )}
+        </div>
+      )}
       {notice && <p className="home-cad-notice" role="status">{notice} <button type="button" onClick={() => setNotice('')} aria-label="Dismiss">✕</button></p>}
       {editing && !editing.id && editor}
-      {projects.length === 0 && !editing && <p className="home-muted" style={{ textAlign: 'center' }}>No models yet. Only you can see this section until one is added.</p>}
-      <div className="home-cad-grid">
-        {shown.map(cad => {
-          if (editing?.id === cad.id) return <div key={cad.id} style={{ gridColumn: '1 / -1' }}>{editor}</div>;
-          return (
-            <CadCard key={cad.id} cad={cad} id={cadAnchor(cad.id)} className={linked === cad.id ? 'is-linked' : ''}
-              still={isAdmin && cad.model ? {
-                onSnapshot: (image, byHand) => saveStill(cad.id, image, byHand),
-                wantsSnapshot: cad.posterFor !== cad.model,
-                autoStart: justSaved === cad.id,
-              } : undefined}>
-              {isAdmin && (
-                <div className="home-cad-admin">
-                  <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
-                  {onshape && parseOnshapeLink(cad.link) && (
-                    <button onClick={() => refresh(cad)} disabled={refreshing !== null} title="Refresh the 3D model from Onshape (assemblies can take a minute)" aria-label={`Refresh ${cad.name} from Onshape`}>{refreshing === cad.id ? '…' : '🔄'}</button>
-                  )}
-                  <button onClick={() => remove(cad)} title="Delete" aria-label={`Delete ${cad.name}`} className="is-danger">✕</button>
-                </div>
-              )}
-            </CadCard>
-          );
-        })}
-      </div>
-      {!isAdmin && projects.length > PREVIEW && (
-        <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-          <button className="btn btn-secondary" style={{ borderRadius: '30px' }} onClick={() => setExpanded(!expanded)}>
-            {expanded ? 'Show fewer' : `Show all ${projects.length}`}
+      {projects.length === 0 && !editing && (
+        <p className="home-muted" style={{ textAlign: 'center' }}>
+          {fullPage && !isAdmin
+            ? 'No 3D models have been published yet.'
+            : 'No models yet. Only you can see this section until one is added.'}
+        </p>
+      )}
+      {fullPage && projects.length > 0 && shown.length === 0 && (
+        <div className="cad-empty-filter">
+          <p className="home-muted">No models match your search or filter.</p>
+          <button type="button" className="btn btn-secondary" onClick={() => { setQuery(''); setFilter('all'); }}>
+            Clear filters
           </button>
+        </div>
+      )}
+      {shown.length > 0 && (
+        <div className="home-cad-grid">
+          {shown.map(cad => {
+            if (editing?.id === cad.id) return <div key={cad.id} style={{ gridColumn: '1 / -1' }}>{editor}</div>;
+            return (
+              <CadCard key={cad.id} cad={cad} id={cadAnchor(cad.id)} className={linked === cad.id ? 'is-linked' : ''}
+                still={isAdmin && cad.model ? {
+                  onSnapshot: (image, byHand) => saveStill(cad.id, image, byHand),
+                  wantsSnapshot: cad.posterFor !== cad.model,
+                  autoStart: justSaved === cad.id,
+                } : undefined}>
+                {isAdmin && (
+                  <div className="home-cad-admin">
+                    <button onClick={() => edit(cad)} title="Edit" aria-label={`Edit ${cad.name}`}>✏️</button>
+                    {onshape && parseOnshapeLink(cad.link) && (
+                      <button onClick={() => refresh(cad)} disabled={refreshing !== null} title="Refresh the 3D model from Onshape (assemblies can take a minute)" aria-label={`Refresh ${cad.name} from Onshape`}>{refreshing === cad.id ? '…' : '🔄'}</button>
+                    )}
+                    <button onClick={() => remove(cad)} title="Delete" aria-label={`Delete ${cad.name}`} className="is-danger">✕</button>
+                  </div>
+                )}
+              </CadCard>
+            );
+          })}
+        </div>
+      )}
+      {!fullPage && (
+        <div className="home-cad-footer">
+          {!isAdmin && projects.length > PREVIEW && (
+            <button type="button" className="btn btn-secondary home-cad-pill" onClick={() => setExpanded(!expanded)}>
+              {expanded ? 'Show fewer' : `Show all ${projects.length}`}
+            </button>
+          )}
+          <Link href="/cad" className="btn btn-secondary home-cad-pill">
+            Open 3D models page →
+          </Link>
         </div>
       )}
       {popup}

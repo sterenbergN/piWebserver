@@ -222,6 +222,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/blog', label: 'Posts', icon: '📝', blurb: 'Write-ups and build logs', keywords: 'blog articles' },
         { href: '/gallery', label: 'Gallery', icon: '🖼️', blurb: 'Photo albums', keywords: 'photos pictures' },
         { href: '/library', label: 'Library', icon: '📚', blurb: 'Books, manuals and PDFs', keywords: 'documents pdf' },
+        { href: '/cad', label: '3D Models', icon: '🧊', short: '3D Models', blurb: 'Interactive CAD parts and 3D models', keywords: 'cad 3d models stl glb obj onshape viewer' },
       ],
     },
   ];
