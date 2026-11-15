@@ -6,12 +6,13 @@ import { useSitePopup } from '@/components/SitePopup';
 import { freeResourceSearchLinks } from '@/lib/skills/model';
 import { RESOURCE_KINDS, RESOURCE_LABEL, RESOURCE_STATUS_LABEL, RESOURCE_STATUSES, type Resource, type ResourceKind, type ResourceStatus, type Topic } from '@/lib/skills/types';
 import { ErrorNote } from '../Ui';
+import WikiTextarea from '../WikiTextarea';
 import { AddFromReader, READER_ACCEPT, ReaderLine, sendYouTubeToReaderAudio, uploadBookToReader } from './ReaderLink';
 import { longDay, useAct, type TabProps } from './shared';
 import './steps-projects.css';
 
-// The resources tab: books, courses, papers, and projects grouped by status.
-// Includes Free PDF & YouTube Audiobook Discovery + Reader Import (Req #8).
+// The resources tab: books, courses, papers and the like, grouped by status, with ways to find a
+// free copy and bring it into the Reader. Projects have a tab of their own, so they're not here.
 
 type Act = ReturnType<typeof useAct>['act'];
 type StatusFilter = 'all' | ResourceStatus;
@@ -27,25 +28,30 @@ export default function Resources({ data, reload }: TabProps) {
   const { subject } = data;
   const { act, busy, error } = useAct(data, reload);
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const resources = subject.resources.filter((r) => r.kind !== 'project');
+  const projectCount = subject.resources.length - resources.length;
 
-  const dropped = subject.resources.filter((r) => r.status === 'dropped');
-  const countOf = (st: ResourceStatus) => subject.resources.filter((r) => r.status === st).length;
+  const dropped = resources.filter((r) => r.status === 'dropped');
+  const countOf = (st: ResourceStatus) => resources.filter((r) => r.status === st).length;
 
   return (
     <>
       {error && <ErrorNote>{error}</ErrorNote>}
-      {subject.resources.length === 0 && (
-        <p className="sk-empty">No books, courses or projects yet. Add one below, or plan the subject with AI to get a list.</p>
+      {resources.length === 0 && (
+        <p className="sk-empty">No books, courses or papers yet. Add one below, or plan the subject with AI to get a list.</p>
+      )}
+      {projectCount > 0 && (
+        <p className="sk-hint">{projectCount} project{projectCount === 1 ? ' is' : 's are'} in <Link href={`/skills/${subject.id}?tab=projects`}>Projects</Link>.</p>
       )}
 
       <div className="sk-res-filters">
         <div className="sk-actions">
           <AddFromReader resources={subject.resources} topics={subject.topics} act={act} busy={busy} />
         </div>
-        {subject.resources.length > 0 && (
+        {resources.length > 0 && (
           <div className="sk-filter-pills" role="group" aria-label="Filter resources by status">
             <button type="button" className="sk-small-btn" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>
-              All ({subject.resources.length})
+              All ({resources.length})
             </button>
             {RESOURCE_STATUSES.map((st) => {
               const count = countOf(st);
@@ -63,7 +69,7 @@ export default function Resources({ data, reload }: TabProps) {
       {filter === 'all' ? (
         <>
           {GROUPS.map((g) => {
-            const rows = subject.resources.filter((r) => r.status === g.status);
+            const rows = resources.filter((r) => r.status === g.status);
             if (!rows.length) return null;
             return (
               <section key={g.status} className="sk-res-group" aria-label={g.title}>
@@ -86,7 +92,7 @@ export default function Resources({ data, reload }: TabProps) {
       ) : (
         <section className="sk-res-group" aria-label={RESOURCE_STATUS_LABEL[filter]}>
           <h2>{RESOURCE_STATUS_LABEL[filter]} <span className="sk-muted">{countOf(filter)}</span></h2>
-          {subject.resources.filter((r) => r.status === filter).map((r) => (
+          {resources.filter((r) => r.status === filter).map((r) => (
             <ResourceCard key={r.id} subjectId={subject.id} resource={r} topics={subject.topics} act={act} busy={busy} />
           ))}
         </section>
@@ -230,12 +236,12 @@ function ResourceCard({
           {r.finishedOn && <p className="sk-hint">Finished on {longDay(r.finishedOn)}.</p>}
           <label className="sk-field">
             <span>What did you take away?</span>
-            <textarea
+            <WikiTextarea
               key={r.takeaways ?? ''}
               rows={3}
               maxLength={6000}
               defaultValue={r.takeaways ?? ''}
-              placeholder="A few lines in your own words (supports [[wiki-links]] and #tags)"
+              placeholder="A few lines in your own words. Type [[ to link a topic or skill."
               onBlur={(e) => { if (e.target.value.trim() !== (r.takeaways ?? '')) void act('edit-resource', { resourceId: r.id, changes: { takeaways: e.target.value } }); }}
             />
           </label>
@@ -474,7 +480,7 @@ function ResourceForm({
       <div className="sk-grid-2">
         <label className="sk-field"><span>Kind</span>
           <select value={kind} onChange={(e) => setKind(e.target.value as ResourceKind)}>
-            {RESOURCE_KINDS.map((k) => <option key={k} value={k}>{RESOURCE_LABEL[k].icon} {RESOURCE_LABEL[k].label}</option>)}
+            {RESOURCE_KINDS.filter((k) => k !== 'project' || kind === 'project').map((k) => <option key={k} value={k}>{RESOURCE_LABEL[k].icon} {RESOURCE_LABEL[k].label}</option>)}
           </select>
         </label>
         <label className="sk-field"><span>Status</span>
@@ -539,15 +545,26 @@ function ResourceForm({
 function AddResource({ topics, act, busy }: { topics: Topic[]; act: Act; busy: boolean }) {
   // Remount the form after a save so it comes back empty.
   const [round, setRound] = useState(0);
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <div className="sk-actions">
+        <button type="button" className="btn btn-secondary" onClick={() => setOpen(true)}>+ Add a book, course or paper</button>
+      </div>
+    );
+  }
   return (
     <section className="sk-card">
-      <h2>Add a resource</h2>
+      <div className="sk-card-head">
+        <h2>Add a resource</h2>
+        <button type="button" className="sk-text-btn" onClick={() => setOpen(false)}>Close</button>
+      </div>
       <ResourceForm
         key={round}
         topics={topics}
         busy={busy}
         submitLabel="Add resource"
-        onSubmit={async (v) => { if (await act('add-resource', { ...v })) setRound(round + 1); }}
+        onSubmit={async (v) => { if (await act('add-resource', { ...v })) { setRound(round + 1); setOpen(false); } }}
       />
     </section>
   );

@@ -15,6 +15,7 @@ import {
 } from '@/lib/skills/types';
 import type { SubjectResponse } from '../api';
 import { ErrorNote } from '../Ui';
+import WikiTextarea from '../WikiTextarea';
 import { longDay, useAct } from './shared';
 import './steps-projects.css';
 
@@ -997,14 +998,14 @@ function ProjectLogForm({
 
       <label className="sk-field">
         <span>Milestone note</span>
-        <textarea
+        <WikiTextarea
           rows={3}
           maxLength={6000}
           value={note}
-          placeholder="What you built, test observations, or lessons learned…"
+          placeholder="What you built, what you saw, what you learned…"
           onChange={(e) => setNote(e.target.value)}
         />
-        <small>Supports [[wiki-links]] and #tags for the Knowledge Vault.</small>
+        <small>Type [[ to link a topic or skill, # for a tag.</small>
       </label>
 
       <div className="sk-media-controls">

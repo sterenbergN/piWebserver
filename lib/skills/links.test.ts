@@ -7,7 +7,7 @@ import { cleanQuestions } from '../notes/items';
 import { readBookItems, readPageElements, saveInkText, syncLibrary, syncBook, syncPage } from '../notes/store';
 import { libraryFile, saveProgress, syncNotes } from '../reader/store';
 import { addProjectLog, addResource, addSubject, addTopic, saveCard, tiePage, untiePage } from './edit';
-import { buildKnowledgeGraph, describePages, extractTags, extractWikiLinks, inquiryConceptAlias, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
+import { buildKnowledgeGraph, describePages, extractTags, extractWikiLinks, inquiryConceptAlias, linkableNames, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
 import { buildQueue } from './model';
 import { buildQuestionsPrompt } from './prompts';
 import { projectFilesFolder, readSkills, updateSkills } from './store';
@@ -466,7 +466,7 @@ test('buildKnowledgeGraph integrates KnowledgeInquiry nodes, [[concept]] wiki-li
   assert.ok(mcpNode);
   assert.equal(mcpNode.kind, 'inquiry');
   assert.equal(mcpNode.label, 'What is MCP?');
-  assert.equal(mcpNode.subtitle, 'Solved Lookup · AI Systems');
+  assert.equal(mcpNode.subtitle, 'Answered · AI Systems');
   assert.equal(mcpNode.href, `/skills/${ai.id}?tab=knowledge`);
   assert.equal(mcpNode.status, 'solved');
   assert.ok(mcpNode.content?.includes('Context: Heard during an AI engineering podcast'));
@@ -475,7 +475,7 @@ test('buildKnowledgeGraph integrates KnowledgeInquiry nodes, [[concept]] wiki-li
   assert.equal(mcpNode.meta?.cardItemId, 'card-mcp');
 
   assert.ok(r1Node);
-  assert.equal(r1Node.subtitle, 'Open Question');
+  assert.equal(r1Node.subtitle, 'To look up');
   assert.equal(r1Node.href, '/skills?view=graph');
   assert.equal(r1Node.status, 'open');
 
@@ -507,4 +507,28 @@ test('buildKnowledgeGraph integrates KnowledgeInquiry nodes, [[concept]] wiki-li
   assert.ok(!scopedInqIds.has('inq-zero-trust'), 'excludes unrelated inquiries from other subjects');
   assert.ok(scoped.bundle.ownKnowledge.some((m) => m.id === 'ok-inq:inq-mcp' && m.sourceKind === 'inquiry-solved'));
   assert.ok(!scoped.bundle.qaAndActivities.some((m) => m.id === 'qa-inq:inq-zero-trust'));
+});
+
+test('a [[link]] to something not written yet shows as its own node, and becomes a real link once it exists', async () => {
+  const user = 'kb-missing-user';
+  const data = emptySkills();
+  const s = addSubject(data, { name: 'Controls', area: 'Engineering' }, makeId, NOW);
+  addTopic(s, { name: 'Loop tuning', notes: 'Start from [[Ziegler–Nichols]], then [[Loop tuning]] by feel. Mentions Controls in passing.' }, makeId, NOW);
+  const before = await buildKnowledgeGraph(user, data);
+  const ghost = before.nodes.find((n) => n.kind === 'missing');
+  assert.ok(ghost, 'the unwritten target is there');
+  assert.equal(ghost!.label, 'Ziegler–Nichols');
+  assert.ok(before.edges.some((e) => e.to === ghost!.id && e.kind === 'wiki-link'));
+  assert.ok((before.bundle.backlinks[ghost!.id] ?? []).length === 1, 'and what links to it is a backlink');
+
+  // Written as a lookup, the same link points at it and the placeholder goes.
+  data.inquiries = [{ id: 'inq-zn', question: 'What is Ziegler–Nichols?', status: 'open', createdAt: NOW, updatedAt: NOW }];
+  const after = await buildKnowledgeGraph(user, data);
+  assert.ok(!after.nodes.some((n) => n.kind === 'missing'));
+  assert.ok(after.edges.some((e) => e.to === 'inq:inq-zn' && e.kind === 'wiki-link'));
+
+  const names = linkableNames(data);
+  assert.ok(names.some((n) => n.kind === 'subject' && n.name === 'Controls'));
+  assert.ok(names.some((n) => n.kind === 'topic' && n.name === 'Loop tuning' && n.detail === 'Controls'));
+  assert.ok(names.some((n) => n.kind === 'lookup' && n.name === 'Ziegler–Nichols'), 'a lookup is offered by the name it answers');
 });

@@ -5,6 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { skillsPost, type KnowledgeSubjectOption } from '@/components/skills/api';
 import { ErrorNote } from '@/components/skills/Ui';
+import WikiTextarea from '@/components/skills/WikiTextarea';
 import type { DraftInquiryAnswer, InquiryStatus, KnowledgeInquiry, ParseResult } from '@/lib/skills/types';
 import './knowledge.css';
 
@@ -317,20 +318,20 @@ export function InquiryEditForm({
         />
       </label>
       <label className="sk-field">
-        <span>Answer / Explanation (supports [[Wiki-links]] and #tags)</span>
-        <textarea
+        <span>Answer</span>
+        <WikiTextarea
           rows={compact ? 3 : 4}
           value={answer}
-          placeholder="Clear explanation with [[Wiki-links]] to topics or skills and #tags…"
+          placeholder="In your own words. Type [[ to link a topic or skill, # for a tag."
           onChange={(e) => setAnswer(e.target.value)}
         />
       </label>
       <label className="sk-field">
-        <span>Key Takeaways</span>
-        <textarea
+        <span>What to remember</span>
+        <WikiTextarea
           rows={2}
           value={takeaways}
-          placeholder="1-3 crisp bullets or mental anchors to remember"
+          placeholder="A line or three"
           onChange={(e) => setTakeaways(e.target.value)}
         />
       </label>

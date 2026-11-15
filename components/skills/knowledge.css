@@ -1234,3 +1234,16 @@
 @media (max-width: 640px) {
   .kv-graph-card { height: min(420px, 60vh); }
 }
+
+/* ── Note pane: linked and unlinked mentions, as Obsidian shows them ── */
+.kv-mentions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.kv-mentions li { padding: 0.5rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); }
+.kv-mention-source { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 0.9rem; text-align: left; cursor: pointer; }
+.kv-mention-source:hover strong { text-decoration: underline; }
+.kv-mention-text { margin: 0.25rem 0 0; font-size: 0.86rem; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.kv-item-jump { display: block; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.kv-item-jump:hover { text-decoration: underline; }
+/* A link to something not written yet: an outline, like Obsidian's unresolved links. */
+.kv-node.is-missing .kv-node-circle { fill: var(--background); stroke: var(--muted); stroke-width: 1.4; stroke-dasharray: 3 2; }
+.kv-node.is-missing .kv-node-label { font-style: italic; opacity: 0.8; }
+.kv-inline-token.is-unresolved { cursor: pointer; }

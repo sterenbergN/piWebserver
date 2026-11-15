@@ -227,6 +227,29 @@ export async function materialFor(userId: string, subject: Subject, topicIds: st
 
 // ── Knowledge Vault: Obsidian-like graph, wiki-links, tags & backlinks ───────
 
+export type LinkableName = { name: string; kind: 'subject' | 'topic' | 'resource' | 'lookup'; detail?: string };
+
+/** Everything a [[link]] can point at, for suggesting names as one is typed. */
+export function linkableNames(data: SkillsData): LinkableName[] {
+  const out: LinkableName[] = [];
+  const seen = new Set<string>();
+  const add = (name: string | undefined, kind: LinkableName['kind'], detail?: string) => {
+    const clean = name?.trim().replace(/\s+/g, ' ');
+    if (!clean || clean.length > 160) return;
+    const key = `${kind}:${clean.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: clean, kind, ...(detail ? { detail } : {}) });
+  };
+  for (const s of data.subjects) {
+    add(s.name, 'subject', s.area);
+    for (const t of s.topics) add(t.name, 'topic', s.name);
+    for (const r of s.resources) add(r.title, 'resource', s.name);
+  }
+  for (const q of data.inquiries ?? []) add(inquiryConceptAlias(q.question) || q.question, 'lookup', q.status === 'solved' ? 'answered' : 'to look up');
+  return out;
+}
+
 export type KnowledgeNodeKind =
   | 'subject'
   | 'topic'
@@ -238,7 +261,9 @@ export type KnowledgeNodeKind =
   | 'reader'
   | 'question'
   | 'inquiry'
-  | 'tag';
+  | 'tag'
+  /** A [[link]] to something that isn't written yet, as Obsidian shows it: there, and one tap from existing. */
+  | 'missing';
 
 export type KnowledgeEdgeKind =
   | 'subskill'
@@ -759,7 +784,7 @@ export async function buildKnowledgeGraph(
       id: nodeId,
       kind: 'inquiry',
       label: inq.question,
-      subtitle: `${inq.status === 'solved' ? 'Solved Lookup' : 'Open Question'}${sub ? ` · ${sub.name}` : ''}`,
+      subtitle: `${inq.status === 'solved' ? 'Answered' : 'To look up'}${sub ? ` · ${sub.name}` : ''}`,
       subjectId: inq.subjectId,
       topicId: inq.topicId,
       href: inq.subjectId ? `/skills/${inq.subjectId}?tab=knowledge` : '/skills?view=graph',
@@ -847,6 +872,10 @@ export async function buildKnowledgeGraph(
       const targetId = localMatch?.nodeId ?? globalMatch?.nodeId;
       if (targetId && targetId !== node.id) {
         addEdge(node.id, targetId, 'wiki-link', targetName);
+      } else if (!targetId) {
+        const ghostId = `missing:${key}`;
+        addNode({ id: ghostId, kind: 'missing', label: targetName, tags: [], wikiLinks: [] });
+        addEdge(node.id, ghostId, 'wiki-link', targetName);
       }
     }
   }

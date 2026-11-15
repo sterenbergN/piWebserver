@@ -6,7 +6,7 @@ import {
   skillsGet,
   skillsPost,
   SignedOut,
-  type KnowledgeBacklink,
+
   type KnowledgeEdge,
   type KnowledgeEdgeKind,
   type KnowledgeMaterialItem,
@@ -16,6 +16,7 @@ import {
 } from '@/components/skills/api';
 import InquiryDesk, { InquiryEditForm, RichInquiryText } from '@/components/skills/InquiryDesk';
 import { ErrorNote, Loading, SignedOutCard } from '@/components/skills/Ui';
+import { inquiryConceptAlias } from '@/lib/skills/parse';
 import type { KnowledgeInquiry, ProjectAttachment } from '@/lib/skills/types';
 import './knowledge.css';
 
@@ -24,18 +25,20 @@ const VIEW_H = 640;
 const CX = VIEW_W / 2;
 const CY = VIEW_H / 2;
 
-const KIND_META: Record<KnowledgeNodeKind, { label: string; icon: string; color: string; radius: number; ring: number }> = {
-  subject: { label: 'Skills', icon: '🎯', color: 'var(--habit-1)', radius: 16, ring: 70 },
-  topic: { label: 'Topics', icon: '🧩', color: 'var(--habit-3)', radius: 11, ring: 165 },
-  book: { label: 'Books', icon: '📕', color: 'var(--habit-4)', radius: 10, ring: 245 },
-  paper: { label: 'Papers', icon: '📄', color: 'var(--habit-7)', radius: 10, ring: 245 },
-  project: { label: 'Projects', icon: '🛠️', color: 'var(--habit-2)', radius: 11, ring: 245 },
-  resource: { label: 'Resources', icon: '📎', color: 'var(--info)', radius: 9, ring: 245 },
-  note: { label: 'Notes & Logs', icon: '✏️', color: 'var(--habit-5)', radius: 9, ring: 305 },
-  reader: { label: 'Reader', icon: '📖', color: 'var(--habit-6)', radius: 10, ring: 305 },
-  inquiry: { label: 'Lookups & Qs', icon: '💡', color: 'var(--habit-2)', radius: 11, ring: 210 },
-  question: { label: 'Q&As', icon: '❓', color: 'var(--habit-8)', radius: 7, ring: 350 },
-  tag: { label: '#Tags', icon: '#', color: 'var(--muted)', radius: 8, ring: 385 },
+/** `label` names a group of them (for the filters), `one` names one (beside a link). */
+const KIND_META: Record<KnowledgeNodeKind, { label: string; one: string; icon: string; color: string; radius: number; ring: number }> = {
+  subject: { label: 'Skills', one: 'skill', icon: '🎯', color: 'var(--habit-1)', radius: 16, ring: 70 },
+  topic: { label: 'Topics', one: 'topic', icon: '🧩', color: 'var(--habit-3)', radius: 11, ring: 165 },
+  book: { label: 'Books', one: 'book', icon: '📕', color: 'var(--habit-4)', radius: 10, ring: 245 },
+  paper: { label: 'Papers', one: 'paper', icon: '📄', color: 'var(--habit-7)', radius: 10, ring: 245 },
+  project: { label: 'Projects', one: 'project', icon: '🛠️', color: 'var(--habit-2)', radius: 11, ring: 245 },
+  resource: { label: 'Resources', one: 'resource', icon: '📎', color: 'var(--info)', radius: 9, ring: 245 },
+  note: { label: 'Notes and logs', one: 'note', icon: '✏️', color: 'var(--habit-5)', radius: 9, ring: 305 },
+  reader: { label: 'Reader', one: 'in the Reader', icon: '📖', color: 'var(--habit-6)', radius: 10, ring: 305 },
+  inquiry: { label: 'Lookups', one: 'lookup', icon: '💡', color: 'var(--habit-2)', radius: 11, ring: 210 },
+  question: { label: 'Questions', one: 'question', icon: '❓', color: 'var(--habit-8)', radius: 7, ring: 350 },
+  tag: { label: 'Tags', one: 'tag', icon: '#', color: 'var(--muted)', radius: 8, ring: 385 },
+  missing: { label: 'Not written yet', one: 'not written yet', icon: '○', color: 'var(--surface-border)', radius: 7, ring: 330 },
 };
 
 const ALL_KINDS = Object.keys(KIND_META) as KnowledgeNodeKind[];
@@ -61,21 +64,48 @@ const SOURCE_LABEL: Record<KnowledgeMaterialItem['sourceKind'], string> = {
   project: 'Project',
 };
 
-const EDGE_LABEL: Record<KnowledgeEdgeKind, string> = {
-  subskill: 'Subskill link',
-  topic: 'Topic',
-  resource: 'Resource',
-  reader: 'Reader book',
-  'note-page': 'Notes page',
-  'wiki-link': '[[Wiki-link]]',
-  tag: '#Tag',
-  inquiry: 'Lookup / Q&A',
-  question: 'Q&A',
-  'project-log': 'Project log',
-};
-
 type Point = { x: number; y: number };
-type VaultTab = 'all' | 'knowledge' | 'materials' | 'qa' | 'connections';
+type Mention = { node: KnowledgeNode; snippet: string };
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The words around the first place `needle` appears, on one line. */
+function snippetAround(text: string, needle: string, radius = 80) {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) return flat.length > radius * 2 ? `${flat.slice(0, radius * 2)}…` : flat;
+  const start = Math.max(0, at - radius);
+  const end = Math.min(flat.length, at + needle.length + radius);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+}
+
+/** Backlinks as Obsidian shows them: where each one is, and the sentence it's in. */
+function MentionList({ title, hint, empty, mentions, resolveWiki, onSelectNode }: {
+  title: string; hint?: string; empty: string; mentions: Mention[];
+  resolveWiki: (target: string) => string | undefined; onSelectNode: (nodeId: string) => void;
+}) {
+  if (!mentions.length && !empty) return null;
+  return (
+    <section className="kv-section" aria-label={title}>
+      <div className="kv-section-head"><h4>{title}</h4><span className="sk-muted">{mentions.length}</span></div>
+      {hint && <p className="sk-hint">{hint}</p>}
+      {!mentions.length ? <p className="sk-hint">{empty}</p> : (
+        <ul className="kv-mentions">
+          {mentions.map(({ node, snippet }) => (
+            <li key={node.id}>
+              <button type="button" className="kv-mention-source" onClick={() => onSelectNode(node.id)}>
+                <span className="kv-dot" style={{ '--kv-dot': KIND_META[node.kind].color } as React.CSSProperties} aria-hidden />
+                <strong>{node.label}</strong>
+                <span className="sk-muted">{KIND_META[node.kind].one}</span>
+              </button>
+              {snippet && <p className="kv-mention-text"><RichText text={snippet} resolveWiki={resolveWiki} onSelectNode={onSelectNode} /></p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function hashUnit(value: string): number {
   let h = 2166136261;
@@ -280,6 +310,13 @@ function RichText({
       {parts.map((tok, i) => {
         if (tok.type === 'wiki') {
           const targetId = resolveWiki(tok.value);
+          if (targetId?.startsWith('missing:')) {
+            return (
+              <button key={i} type="button" className="kv-inline-token is-unresolved" title="Not written yet" onClick={() => onSelectNode(targetId)}>
+                {tok.raw}
+              </button>
+            );
+          }
           if (!targetId) {
             return <span key={i} className="kv-inline-token is-unresolved">{tok.raw}</span>;
           }
@@ -325,7 +362,7 @@ export default function KnowledgeVault({
   const [error, setError] = useState('');
 
   const [vaultMode, setVaultMode] = useState<'vault' | 'inquiries'>(initialTab);
-  const [quickJot, setQuickJot] = useState('');
+
   const [quickJotBusy, setQuickJotBusy] = useState(false);
   const [quickJotError, setQuickJotError] = useState('');
   const [focusInquiryId, setFocusInquiryId] = useState<string | undefined>(undefined);
@@ -335,8 +372,6 @@ export default function KnowledgeVault({
   const [search, setSearch] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [scopeToNode, setScopeToNode] = useState(true);
-  const [vaultTab, setVaultTab] = useState<VaultTab>('all');
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -490,7 +525,7 @@ export default function KnowledgeVault({
         });
       }
       setSelectedNodeId(nodeId);
-      setScopeToNode(true);
+
       const pt = positions[nodeId];
       if (pt) {
         setPan({ x: (CX - pt.x) * zoom, y: (CY - pt.y) * zoom });
@@ -578,7 +613,7 @@ export default function KnowledgeVault({
     setIsPanning(false);
     if (drag?.kind === 'node' && !drag.moved) {
       setSelectedNodeId(drag.id);
-      setScopeToNode(true);
+
     }
   }
 
@@ -598,45 +633,77 @@ export default function KnowledgeVault({
 
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) ?? null : null;
 
-  const { filteredKnowledge, filteredMaterials, filteredQa, incomingBacklinks, outgoingEdges } = useMemo(() => {
+  const { notesHere, linkedMentions, unlinkedMentions, linksOut, connected } = useMemo(() => {
+    const empty = {
+      notesHere: [] as KnowledgeMaterialItem[],
+      linkedMentions: [] as Mention[],
+      unlinkedMentions: [] as Mention[],
+      linksOut: [] as KnowledgeNode[],
+      connected: [] as { node: KnowledgeNode; edge: KnowledgeEdgeKind }[],
+    };
     const bundle = data?.bundle;
-    if (!bundle) {
-      return {
-        filteredKnowledge: [] as KnowledgeMaterialItem[],
-        filteredMaterials: [] as KnowledgeMaterialItem[],
-        filteredQa: [] as KnowledgeMaterialItem[],
-        incomingBacklinks: [] as KnowledgeBacklink[],
-        outgoingEdges: [] as KnowledgeEdge[],
-      };
-    }
+    if (!bundle || !selectedNode) return empty;
+    const graph = data.graph;
+    const active = selectedNode;
 
-    const active = selectedNode && scopeToNode ? selectedNode : null;
-    const isWholeSubjectNode = active?.kind === 'subject' && active.subjectId === subjectId;
-
+    // What's written on this: notes pages, Reader notes, takeaways and logs. Not for a whole skill:
+    // that's every note it has, which its own tabs already show.
     const matchesItem = (item: KnowledgeMaterialItem): boolean => {
-      if (!active || isWholeSubjectNode) return true;
       if (item.nodeId === active.id) return true;
-      if (active.kind === 'subject' && item.subjectId === active.subjectId) return true;
-      if (active.kind === 'topic' && item.topicId === active.topicId) return true;
-      if ((active.kind === 'book' || active.kind === 'paper' || active.kind === 'project' || active.kind === 'resource') && item.resourceId === active.resourceId) {
-        return true;
-      }
-      if (active.kind === 'reader' && item.nodeId === active.id) return true;
-      if (active.kind === 'tag' && active.tags[0] && item.tags.includes(active.tags[0])) return true;
+      if (active.kind === 'topic') return item.topicId === active.topicId;
+      if (active.kind === 'book' || active.kind === 'paper' || active.kind === 'project' || active.kind === 'resource') return item.resourceId === active.resourceId;
+      if (active.kind === 'tag') return !!active.tags[0] && item.tags.includes(active.tags[0]);
       return false;
     };
+    const notesHere = active.kind === 'subject' || active.kind === 'missing' ? [] : bundle.ownKnowledge.filter(matchesItem);
 
-    const incoming = active ? (bundle.backlinks[active.id] ?? []) : Object.values(bundle.backlinks).flat().slice(0, 40);
-    const outgoing = active ? (data?.graph.edges ?? []).filter((e) => e.from === active.id) : [];
+    // Linked mentions: everything that [[links]] here, with the words around the link.
+    const linkedIds = new Set<string>();
+    const linkedMentions: Mention[] = [];
+    for (const e of graph.edges) {
+      if (e.to !== active.id || e.kind !== 'wiki-link') continue;
+      const source = nodesById.get(e.from);
+      if (!source || linkedIds.has(source.id)) continue;
+      linkedIds.add(source.id);
+      linkedMentions.push({ node: source, snippet: snippetAround(source.content ?? source.excerpt ?? '', `[[${e.label ?? active.label}`) });
+    }
 
-    return {
-      filteredKnowledge: bundle.ownKnowledge.filter(matchesItem),
-      filteredMaterials: bundle.sourceMaterials.filter(matchesItem),
-      filteredQa: bundle.qaAndActivities.filter(matchesItem),
-      incomingBacklinks: incoming,
-      outgoingEdges: outgoing,
-    };
-  }, [data, selectedNode, scopeToNode, subjectId]);
+    // Unlinked mentions: the name written out in plain text somewhere, not yet a [[link]].
+    const unlinkedMentions: Mention[] = [];
+    const name = active.kind === 'inquiry' ? inquiryConceptAlias(active.label) || active.label : active.label;
+    if (active.kind !== 'tag' && name.trim().length >= 3) {
+      const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(name.trim())}(?![\\p{L}\\p{N}])`, 'iu');
+      for (const node of graph.nodes) {
+        if (node.id === active.id || linkedIds.has(node.id) || node.kind === 'tag' || node.kind === 'missing') continue;
+        const text = (node.content ?? '').replace(/\[\[[^\]]*\]\]/g, ' ');
+        const hit = pattern.exec(text);
+        if (!hit) continue;
+        // Found with the [[links]] left out, but shown with them in, as written.
+        unlinkedMentions.push({ node, snippet: snippetAround(node.content ?? text, hit[0].trim()) });
+        if (unlinkedMentions.length >= 20) break;
+      }
+    }
+
+    // Where this one's own [[links]] go, and everything else it's tied to (its skill, topic, tags, questions…).
+    const linksOut: KnowledgeNode[] = [];
+    const connected: { node: KnowledgeNode; edge: KnowledgeEdgeKind }[] = [];
+    const seen = new Set<string>([active.id]);
+    for (const e of graph.edges) {
+      const out = e.from === active.id;
+      if (!out && e.to !== active.id) continue;
+      const other = nodesById.get(out ? e.to : e.from);
+      if (!other) continue;
+      if (e.kind === 'wiki-link') {
+        if (out && !linksOut.includes(other)) linksOut.push(other);
+        continue;
+      }
+      if (seen.has(other.id)) continue;
+      seen.add(other.id);
+      connected.push({ node: other, edge: e.kind });
+    }
+    connected.sort((a, b) => ALL_KINDS.indexOf(a.node.kind) - ALL_KINDS.indexOf(b.node.kind) || a.node.label.localeCompare(b.node.label));
+    return { notesHere, linkedMentions, unlinkedMentions, linksOut, connected };
+  }, [data, selectedNode, nodesById]);
 
   const inquiries: KnowledgeInquiry[] = useMemo(() => {
     if (!data) return [];
@@ -658,21 +725,19 @@ export default function KnowledgeVault({
     return pool.find((q) => q.id === inqId) ?? null;
   }, [selectedNode, data, inquiries]);
 
-  async function handleQuickJot(e: React.FormEvent) {
-    e.preventDefault();
-    if (quickJotBusy || !quickJot.trim()) return;
+  /** A [[link]] to something not written yet: make it a lookup, which the links then point at. */
+  async function createFromMissing(node: KnowledgeNode) {
+    if (quickJotBusy) return;
+    const linker = data?.graph.edges.find((e) => e.to === node.id && e.kind === 'wiki-link');
+    const owner = (linker && nodesById.get(linker.from)?.subjectId) || subjectId;
     setQuickJotBusy(true);
     setQuickJotError('');
     try {
-      await skillsPost('add-inquiry', {
-        question: quickJot.trim(),
-        ...(subjectId ? { subjectId } : {}),
-        status: 'open',
-      });
-      setQuickJot('');
+      const made = await skillsPost<{ id: string }>('add-inquiry', { question: node.label, status: 'open', ...(owner ? { subjectId: owner } : {}) });
       await reloadAll();
+      setSelectedNodeId(`inq:${made.id}`);
     } catch (err) {
-      setQuickJotError(err instanceof Error ? err.message : 'Could not jot down lookup.');
+      setQuickJotError(err instanceof Error ? err.message : 'That didn’t save.');
     } finally {
       setQuickJotBusy(false);
     }
@@ -724,25 +789,6 @@ export default function KnowledgeVault({
             </button>
           </div>
 
-          {vaultMode === 'vault' && (
-            <div className="kv-quickjot-strip">
-              <form className="kv-quickjot-form" onSubmit={(e) => void handleQuickJot(e)}>
-                <input
-                  type="text"
-                  className="kv-quickjot-input"
-                  value={quickJot}
-                  maxLength={300}
-                  placeholder="Quick jot: What is MCP, What is R1 Redundancy…"
-                  aria-label="Quick jot a lookup question"
-                  onChange={(e) => setQuickJot(e.target.value)}
-                />
-                <button type="submit" className="sk-small-btn" disabled={quickJotBusy || !quickJot.trim()}>
-                  {quickJotBusy ? 'Saving…' : '+ Jot down'}
-                </button>
-              </form>
-              {quickJotError && <span className="sk-warning">{quickJotError}</span>}
-            </div>
-          )}
         </div>
       )}
 
@@ -762,15 +808,15 @@ export default function KnowledgeVault({
         />
       ) : data.graph.nodes.length === 0 ? (
         <section className="sk-card">
-          <h2>Knowledge Vault</h2>
+          <h2>Nothing in the graph yet</h2>
           <p className="sk-empty">
-            No notes, topics, books, or links in this vault yet. Add topics, tie Notes pages, link Reader books, jot down lookups above, or write{' '}
-            <code>[[Wiki-links]]</code> and <code>#tags</code> to grow the graph.
+            Topics, books, Notes pages and lookups show up here, joined by what they’re about. Write <code>[[a topic]]</code> or{' '}
+            <code>#a-tag</code> in a note, takeaway or answer to join ideas yourself.
           </p>
           {showInquiriesTab && (
             <div className="sk-actions">
               <button type="button" className="btn btn-primary" onClick={() => setVaultMode('inquiries')}>
-                💡 Open Lookups &amp; Paste Running List
+                💡 Lookups
               </button>
             </div>
           )}
@@ -785,7 +831,7 @@ export default function KnowledgeVault({
               className="kv-search-input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search skills, topics, books, notes, #tags…"
+              placeholder="Find a skill, topic, book, note or #tag"
               aria-label="Search knowledge graph"
             />
             {search && (
@@ -931,7 +977,7 @@ export default function KnowledgeVault({
                 return (
                   <g
                     key={node.id}
-                    className={`kv-node${isSelected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}`}
+                    className={`kv-node is-${node.kind}${isSelected ? ' is-selected' : ''}${dimmed ? ' is-dimmed' : ''}`}
                     transform={`translate(${pt.x}, ${pt.y})`}
                     onPointerDown={(e) => onNodePointerDown(node.id, e)}
                     onPointerEnter={() => setHoveredNodeId(node.id)}
@@ -976,15 +1022,6 @@ export default function KnowledgeVault({
                     {selectedNode.subtitle && <p className="sk-muted">{selectedNode.subtitle}</p>}
                   </div>
                   <div className="sk-actions">
-                    {selectedNode.kind !== 'subject' && (
-                      <button
-                        type="button"
-                        className="sk-text-btn"
-                        onClick={() => setScopeToNode((s) => !s)}
-                      >
-                        {scopeToNode ? 'Show whole vault' : 'Filter to node'}
-                      </button>
-                    )}
                     {subjectId && selectedNode.id !== `sub:${subjectId}` && (
                       <button
                         type="button"
@@ -1001,7 +1038,7 @@ export default function KnowledgeVault({
                   <div className="kv-inspector-inquiry">
                     <div className="inq-card-badges">
                       <span className={`inq-status-pill ${selectedInquiry.status === 'open' ? 'is-open' : 'is-solved'}`}>
-                        {selectedInquiry.status === 'open' ? '❓ To Solve' : '💡 Knowledge'}
+                        {selectedInquiry.status === 'open' ? '❓ To look up' : '💡 Answered'}
                       </span>
                       {selectedInquiry.cardItemId && <span className="sk-chip">🃏 Flashcard</span>}
                     </div>
@@ -1027,7 +1064,7 @@ export default function KnowledgeVault({
                         </div>
                       </div>
                     ) : (
-                      <p className="sk-hint">No answer yet — solve it inline below or batch-solve with AI.</p>
+                      <p className="sk-hint">No answer yet.</p>
                     )}
 
                     {selectedInquiry.takeaways && (
@@ -1084,7 +1121,7 @@ export default function KnowledgeVault({
                         aria-expanded={inspectorEditId === selectedInquiry.id}
                         onClick={() => setInspectorEditId((cur) => (cur === selectedInquiry.id ? null : selectedInquiry.id))}
                       >
-                        {inspectorEditId === selectedInquiry.id ? 'Close Editor' : 'Solve / Edit Lookup'}
+                        {inspectorEditId === selectedInquiry.id ? 'Close' : selectedInquiry.status === 'open' ? 'Answer it' : 'Edit'}
                       </button>
                       {showInquiriesTab && (
                         <button
@@ -1095,7 +1132,7 @@ export default function KnowledgeVault({
                             setVaultMode('inquiries');
                           }}
                         >
-                          Open in Lookups Desk →
+                          Open in Lookups →
                         </button>
                       )}
                     </div>
@@ -1127,7 +1164,7 @@ export default function KnowledgeVault({
                   {renderNavAction('Open →', selectedNode.href)}
                   {selectedNode.url && (
                     <a className="sk-small-btn" href={selectedNode.url} target="_blank" rel="noopener noreferrer">
-                      Source Link ↗
+                      Source ↗
                     </a>
                   )}
                   {selectedNode.freePdfUrl && (
@@ -1144,241 +1181,105 @@ export default function KnowledgeVault({
               </>
             ) : (
               <div>
-                <h3>{subjectId ? 'Skill Knowledge Vault' : 'Whole Knowledge Vault'}</h3>
-                <p className="sk-hint">Select any node on the graph to inspect its notes, materials, Q&As, and backlinks.</p>
+                <h3>{subjectId ? 'This skill’s notes' : 'All your notes'}</h3>
+                <p className="sk-hint">Pick anything on the graph to read it, see what links to it, and where its name comes up.</p>
               </div>
             )}
           </div>
 
-          <div className="kv-section-tabs" role="tablist" aria-label="Vault sections">
-            {([
-              { id: 'all', label: 'All' },
-              { id: 'knowledge', label: `My Knowledge (${filteredKnowledge.length})` },
-              { id: 'materials', label: `Materials (${filteredMaterials.length})` },
-              { id: 'qa', label: `Q&As & Steps (${filteredQa.length})` },
-              { id: 'connections', label: `Backlinks (${incomingBacklinks.length + outgoingEdges.length})` },
-            ] as const).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                className="kv-section-tab"
-                aria-selected={vaultTab === tab.id}
-                onClick={() => setVaultTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {(vaultTab === 'all' || vaultTab === 'knowledge') && (
-            <section className="kv-section" aria-label="My Knowledge">
-              <div className="kv-section-head">
-                <h4>1. My Knowledge</h4>
-                <span className="sk-muted">{filteredKnowledge.length}</span>
+          {selectedNode && selectedNode.kind === 'missing' && (
+            <section className="kv-section" aria-label="Not written yet">
+              <p className="sk-hint">
+                Nothing called “{selectedNode.label}” exists yet. It’s linked from {linkedMentions.length} place{linkedMentions.length === 1 ? '' : 's'}.
+                Add it as something to look up, and the links start pointing at it.
+              </p>
+              <div className="sk-actions">
+                <button type="button" className="btn btn-primary" disabled={quickJotBusy} onClick={() => void createFromMissing(selectedNode)}>
+                  {quickJotBusy ? 'Adding…' : 'Add as a lookup'}
+                </button>
               </div>
-              {filteredKnowledge.length === 0 ? (
-                <p className="sk-hint">No notes, Reader highlights, takeaways, or project logs in this selection yet.</p>
-              ) : (
-                <ul className="kv-item-list">
-                  {filteredKnowledge.map((item) => (
-                    <li key={item.id} className="kv-item-card">
-                      <div className="kv-item-top">
-                        <span className="sk-chip">{SOURCE_LABEL[item.sourceKind]}</span>
-                        {item.day && <span className="sk-muted">{item.day}</span>}
-                      </div>
-                      <div className="kv-item-title">{item.title}</div>
-                      {item.subtitle && <div className="sk-muted">{item.subtitle}</div>}
-                      {item.text && (
-                        <p className="kv-item-text">
-                          <RichText text={item.text} resolveWiki={resolveWiki} onSelectNode={selectAndFocus} />
-                        </p>
-                      )}
-                      <AttachmentList attachments={item.attachments} />
-                      <div className="sk-actions">
-                        <button type="button" className="sk-text-btn" onClick={() => selectAndFocus(item.nodeId)}>
-                          Focus node
-                        </button>
-                        {renderNavAction('Open ↗', item.href)}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {quickJotError && <ErrorNote>{quickJotError}</ErrorNote>}
             </section>
           )}
 
-          {(vaultTab === 'all' || vaultTab === 'materials') && (
-            <section className="kv-section" aria-label="Source Materials">
-              <div className="kv-section-head">
-                <h4>2. Source Materials</h4>
-                <span className="sk-muted">{filteredMaterials.length}</span>
-              </div>
-              {filteredMaterials.length === 0 ? (
-                <p className="sk-hint">No books, papers, courses, or Reader items in this selection.</p>
-              ) : (
-                <ul className="kv-item-list">
-                  {filteredMaterials.map((item) => (
-                    <li key={item.id} className="kv-item-card">
-                      <div className="kv-item-top">
-                        <span className="sk-chip">{SOURCE_LABEL[item.sourceKind]}</span>
-                        {item.status && <span className="sk-muted">{item.status}</span>}
-                      </div>
-                      <div className="kv-item-title">{item.title}</div>
-                      {item.subtitle && <div className="sk-muted">{item.subtitle}</div>}
-                      {item.text && (
-                        <p className="kv-item-text">
-                          <RichText text={item.text} resolveWiki={resolveWiki} onSelectNode={selectAndFocus} />
-                        </p>
-                      )}
-                      <div className="sk-actions">
-                        <button type="button" className="sk-text-btn" onClick={() => selectAndFocus(item.nodeId)}>
-                          Focus node
-                        </button>
-                        {renderNavAction(item.sourceKind === 'reader-book' ? 'Open in Reader ↗' : 'Open ↗', item.href)}
-                        {item.url && (
-                          <a className="sk-small-btn" href={item.url} target="_blank" rel="noopener noreferrer">
-                            Link ↗
-                          </a>
-                        )}
-                        {item.freePdfUrl && (
-                          <a className="sk-small-btn" href={item.freePdfUrl} target="_blank" rel="noopener noreferrer">
-                            Free PDF ↗
-                          </a>
-                        )}
-                        {item.youtubeAudioUrl && (
-                          <a className="sk-small-btn" href={item.youtubeAudioUrl} target="_blank" rel="noopener noreferrer">
-                            Audio ↗
-                          </a>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+          {selectedNode && (
+            <>
+              <MentionList
+                title="Linked mentions"
+                empty={selectedNode.kind === 'missing' ? '' : 'Nothing links here yet. Write [[' + selectedNode.label + ']] in a note, takeaway or answer to link it.'}
+                mentions={linkedMentions}
+                resolveWiki={resolveWiki}
+                onSelectNode={selectAndFocus}
+              />
+              {unlinkedMentions.length > 0 && (
+                <MentionList
+                  title="Unlinked mentions"
+                  hint="Its name, written without [[ ]]. Add the brackets there to link it."
+                  empty=""
+                  mentions={unlinkedMentions}
+                  resolveWiki={resolveWiki}
+                  onSelectNode={selectAndFocus}
+                />
               )}
-            </section>
-          )}
 
-          {(vaultTab === 'all' || vaultTab === 'qa') && (
-            <section className="kv-section" aria-label="Q&As and Steps">
-              <div className="kv-section-head">
-                <h4>3. Q&As &amp; Steps</h4>
-                <span className="sk-muted">{filteredQa.length}</span>
-              </div>
-              {filteredQa.length === 0 ? (
-                <p className="sk-hint">No questions, flashcards, study steps, or activities in this selection.</p>
-              ) : (
-                <ul className="kv-item-list">
-                  {filteredQa.map((item) => (
-                    <li key={item.id} className="kv-item-card">
-                      <div className="kv-item-top">
-                        <span className="sk-chip">{SOURCE_LABEL[item.sourceKind]}</span>
-                        {item.status && <span className="sk-muted">{item.status}</span>}
-                      </div>
-                      <div className="kv-item-title">{item.title}</div>
-                      {item.subtitle && <div className="sk-muted">{item.subtitle}</div>}
-                      {item.text && (
-                        <p className="kv-item-text">
-                          <RichText text={item.text} resolveWiki={resolveWiki} onSelectNode={selectAndFocus} />
-                        </p>
-                      )}
-                      <div className="sk-actions">
-                        <button type="button" className="sk-text-btn" onClick={() => selectAndFocus(item.nodeId)}>
-                          Focus node
-                        </button>
-                        {renderNavAction(item.sourceKind === 'question' || item.sourceKind === 'card' ? 'Practice ↗' : 'Open ↗', item.href)}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-
-          {(vaultTab === 'all' || vaultTab === 'connections') && (
-            <section className="kv-section" aria-label="Connections and Backlinks">
-              <div className="kv-section-head">
-                <h4>4. Connections &amp; Backlinks</h4>
-                <span className="sk-muted">{incomingBacklinks.length + outgoingEdges.length}</span>
-              </div>
-
-              {incomingBacklinks.length > 0 && (
-                <div>
-                  <p className="sk-muted">Incoming backlinks ({incomingBacklinks.length})</p>
+              {linksOut.length > 0 && (
+                <section className="kv-section" aria-label="Links from here">
+                  <div className="kv-section-head"><h4>Links from here</h4><span className="sk-muted">{linksOut.length}</span></div>
                   <div className="kv-link-pills">
-                    {incomingBacklinks.map((bl, idx) => {
-                      const meta = KIND_META[bl.sourceKind];
-                      return (
-                        <button
-                          key={`${bl.sourceId}-${bl.edgeKind}-${idx}`}
-                          type="button"
-                          className="kv-conn-btn"
-                          onClick={() => selectAndFocus(bl.sourceId)}
-                        >
-                          <span className="kv-dot" style={{ '--kv-dot': meta.color } as React.CSSProperties} aria-hidden />
-                          <span>{bl.sourceLabel}</span>
-                          <span className="sk-muted">← {EDGE_LABEL[bl.edgeKind]}</span>
-                        </button>
-                      );
-                    })}
+                    {linksOut.map((target) => (
+                      <button
+                        key={target.id}
+                        type="button"
+                        className={`kv-inline-token${target.kind === 'missing' ? ' is-unresolved' : ''}`}
+                        title={target.kind === 'missing' ? 'Not written yet' : undefined}
+                        onClick={() => selectAndFocus(target.id)}
+                      >
+                        [[{target.label}]]
+                      </button>
+                    ))}
                   </div>
-                </div>
+                </section>
               )}
 
-              {outgoingEdges.length > 0 && (
-                <div>
-                  <p className="sk-muted">Outgoing connections ({outgoingEdges.length})</p>
+              {notesHere.length > 0 && (
+                <section className="kv-section" aria-label="Notes on this">
+                  <div className="kv-section-head"><h4>Notes on this</h4><span className="sk-muted">{notesHere.length}</span></div>
+                  <ul className="kv-item-list">
+                    {notesHere.map((item) => (
+                      <li key={item.id} className="kv-item-card">
+                        <div className="kv-item-top">
+                          <span className="sk-chip">{SOURCE_LABEL[item.sourceKind]}</span>
+                          {item.day && <span className="sk-muted">{item.day}</span>}
+                        </div>
+                        <button type="button" className="kv-item-title kv-item-jump" onClick={() => selectAndFocus(item.nodeId)}>{item.title}</button>
+                        {item.text && (
+                          <p className="kv-item-text">
+                            <RichText text={item.text} resolveWiki={resolveWiki} onSelectNode={selectAndFocus} />
+                          </p>
+                        )}
+                        <AttachmentList attachments={item.attachments} />
+                        {item.href && <div className="sk-actions">{renderNavAction('Open ↗', item.href)}</div>}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {connected.length > 0 && (
+                <section className="kv-section" aria-label="Connected to">
+                  <div className="kv-section-head"><h4>Connected to</h4><span className="sk-muted">{connected.length}</span></div>
                   <div className="kv-link-pills">
-                    {outgoingEdges.map((edge) => {
-                      const target = nodesById.get(edge.to);
-                      if (!target) return null;
-                      const meta = KIND_META[target.kind];
-                      return (
-                        <button
-                          key={edge.id}
-                          type="button"
-                          className="kv-conn-btn"
-                          onClick={() => selectAndFocus(target.id)}
-                        >
-                          <span className="kv-dot" style={{ '--kv-dot': meta.color } as React.CSSProperties} aria-hidden />
-                          <span>{target.label}</span>
-                          <span className="sk-muted">· {EDGE_LABEL[edge.kind]}</span>
-                        </button>
-                      );
-                    })}
+                    {connected.map(({ node }) => (
+                      <button key={node.id} type="button" className="kv-conn-btn" onClick={() => selectAndFocus(node.id)}>
+                        <span className="kv-dot" style={{ '--kv-dot': KIND_META[node.kind].color } as React.CSSProperties} aria-hidden />
+                        <span>{node.label}</span>
+                        <span className="sk-muted">{KIND_META[node.kind].one}</span>
+                      </button>
+                    ))}
                   </div>
-                </div>
+                </section>
               )}
-
-              {selectedNode && selectedNode.wikiLinks.length > 0 && (
-                <div>
-                  <p className="sk-muted">Wiki-links in text</p>
-                  <div className="kv-link-pills">
-                    {selectedNode.wikiLinks.map((wl) => {
-                      const targetId = resolveWiki(wl);
-                      if (!targetId) {
-                        return (
-                          <span key={wl} className="kv-inline-token is-unresolved">
-                            [[{wl}]] (unlinked)
-                          </span>
-                        );
-                      }
-                      return (
-                        <button key={wl} type="button" className="kv-inline-token" onClick={() => selectAndFocus(targetId)}>
-                          [[{wl}]]
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {incomingBacklinks.length === 0 && outgoingEdges.length === 0 && (
-                <p className="sk-hint">
-                  No links on this node yet. Mention <code>[[Topic or Skill]]</code> or <code>#tag</code> in notes, takeaways, or project logs to link ideas together.
-                </p>
-              )}
-            </section>
+            </>
           )}
         </aside>
       </div>

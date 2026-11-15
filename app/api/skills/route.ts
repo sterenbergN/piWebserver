@@ -13,7 +13,7 @@ import {
 import { parseInquiryReply, parsePlanReply, sameName } from '@/lib/skills/parse';
 import { buildInquiryPrompt } from '@/lib/skills/prompts';
 import { reviewDays, skillsXp } from '@/lib/skills/xp';
-import { buildKnowledgeGraph, describePages, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
+import { buildKnowledgeGraph, describePages, linkableNames, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
 import {
   itemDifficulty, itemTitle,
   type Item, type KnowledgeInquiry, type ProgressData, type ProjectLogEntry, type ScheduledSkillTask, type SkillAttempt,
@@ -67,6 +67,7 @@ export async function GET(request: Request) {
     if (await syncReaderResources(userId, data)) await updateSkills(userId, (fresh) => syncReaderResources(userId, fresh));
 
     if (params.get('shelf') !== null) return ok({ books: await readerShelf(userId) });
+    if (params.get('names') !== null) return ok({ names: linkableNames(data) });
     if (params.get('notesPages') !== null) return ok({ notebooks: await notesPageChoices(userId) });
     if (params.get('material') !== null) {
       const subject = findSubject(data, params.get('subject'));

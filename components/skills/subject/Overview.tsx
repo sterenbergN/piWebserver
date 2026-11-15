@@ -160,7 +160,6 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
             <button type="button" className="sk-text-btn" onClick={() => setTab('topics')}>or add topics yourself</button>
           </div>
         </section>
-        {hasConnections && interconnectedCard}
         {allSteps.length > 0 && stepsCard}
       </>
     );
@@ -168,7 +167,6 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
 
   return (
     <>
-      {hasConnections && interconnectedCard}
       {allSteps.length > 0 && stepsCard}
 
       {nextSteps.length > 0 && (

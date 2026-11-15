@@ -7,6 +7,7 @@ import { STAGES, type Stage, type Topic } from '@/lib/skills/types';
 import type { TopicStats } from '@/lib/skills/model';
 import { fmtLevel, type NotesPageView } from '../api';
 import { ErrorNote, LevelPicker, LevelScale, StateChip } from '../Ui';
+import WikiTextarea from '../WikiTextarea';
 import { useAct, type TabProps } from './shared';
 import TopicNotes from './TopicNotes';
 
@@ -230,8 +231,8 @@ function TopicEditor({ topic, subjectId, act, busy, onDone }: { topic: Topic; su
       <label className="sk-field"><span>Description</span><textarea rows={2} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)} /></label>
       <label className="sk-field">
         <span>Your notes</span>
-        <textarea rows={3} value={notes} maxLength={4000} onChange={(e) => setNotes(e.target.value)} placeholder="Key insights, equations, [[Wiki Links]], #tags…" />
-        <small>Supports [[Wiki Links]] &amp; #tags for the Knowledge Vault</small>
+        <WikiTextarea rows={3} value={notes} maxLength={4000} onChange={(e) => setNotes(e.target.value)} placeholder="Key ideas, equations, what trips you up" />
+        <small>Type [[ to link a topic or skill, # for a tag.</small>
       </label>
       {(wikiLinks.length > 0 || tags.length > 0) && (
         <div className="sk-chips sk-wiki-badges">
