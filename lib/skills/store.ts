@@ -1,6 +1,6 @@
 import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
-import { emptyProgress, emptySkills, type ProgressData, type SkillsData } from './types';
+import { emptyProgress, emptySkills, type ProgressData, type SkillSchedule, type SkillsData } from './types';
 import { skillsXp } from './xp';
 
 // One folder per account in .data/skills (kept by backups): skills.json holds the
@@ -12,11 +12,30 @@ export function skillsFolder(userId: string) {
   return path.join(process.cwd(), '.data', 'skills', userId);
 }
 
+export const projectFilesFolder = (userId: string) => path.join(skillsFolder(userId), 'files');
+
 const skillsFile = (userId: string) => path.join(skillsFolder(userId), 'skills.json');
 const progressFile = (userId: string) => path.join(skillsFolder(userId), 'progress.json');
 
+function normalizeSchedule(raw: Partial<SkillSchedule> | null | undefined): SkillSchedule | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const hoursPerDay = typeof raw.hoursPerDay === 'number' && Number.isFinite(raw.hoursPerDay) && raw.hoursPerDay > 0
+    ? raw.hoursPerDay
+    : undefined;
+  return {
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : '',
+    ...(hoursPerDay !== undefined ? { hoursPerDay } : {}),
+    tasks: Array.isArray(raw.tasks) ? raw.tasks : [],
+  };
+}
+
 function normalizeSkills(raw: Partial<SkillsData> | null | undefined): SkillsData {
-  return { subjects: Array.isArray(raw?.subjects) ? raw.subjects : [], ...(typeof raw?.notesNotebook === 'string' ? { notesNotebook: raw.notesNotebook } : {}) };
+  const schedule = normalizeSchedule(raw?.schedule);
+  return {
+    subjects: Array.isArray(raw?.subjects) ? raw.subjects : [],
+    ...(typeof raw?.notesNotebook === 'string' ? { notesNotebook: raw.notesNotebook } : {}),
+    ...(schedule ? { schedule } : {}),
+  };
 }
 
 function normalizeProgress(raw: Partial<ProgressData> | null | undefined): ProgressData {

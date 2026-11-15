@@ -4,12 +4,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { cleanQuestions } from '../notes/items';
-import { readBookItems, readPageElements, syncLibrary, syncBook, syncPage } from '../notes/store';
+import { readBookItems, readPageElements, saveInkText, syncLibrary, syncBook, syncPage } from '../notes/store';
 import { libraryFile, saveProgress, syncNotes } from '../reader/store';
-import { addResource, addSubject, addTopic, saveCard, tiePage, untiePage } from './edit';
-import { describePages, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
+import { addProjectLog, addResource, addSubject, addTopic, saveCard, tiePage, untiePage } from './edit';
+import { buildKnowledgeGraph, describePages, extractTags, extractWikiLinks, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
 import { buildQueue } from './model';
 import { buildQuestionsPrompt } from './prompts';
+import { projectFilesFolder, readSkills, updateSkills } from './store';
 import { emptyProgress, emptySkills } from './types';
 
 // Skills' ties to the Reader and Notes, against real stores in a scratch folder.
@@ -116,4 +117,266 @@ test('one question by name, and Notes keeping its link back to Skills', () => {
     { id: 'q2', date: '2026-11-12', title: 'B', href: 'https://evil.example/x' },
   ]);
   assert.deepEqual(links, [{ id: 'q1', date: '2026-11-12', title: 'A', href: '/skills/review?item=q1' }, { id: 'q2', date: '2026-11-12', title: 'B' }]);
+});
+
+test('extractWikiLinks extracts deduplicated targets and handles aliases', () => {
+  const sample = [
+    'Review [[Eigenvalues]] and [[PID Control|PID]] before [[  Linear   Algebra ]].',
+    'Case dedupe: [[eigenvalues|Eig]], empty [[]], multiline [[bad\nlink]].',
+  ].join('\n');
+  assert.deepEqual(extractWikiLinks(sample), ['Eigenvalues', 'PID Control', 'Linear Algebra']);
+  assert.deepEqual(extractWikiLinks(''), []);
+});
+
+test('extractTags extracts hierarchical/kebab tags while ignoring URLs, hex colors, and LaTeX', () => {
+  const sample = [
+    'Covers #CAD #robotics/kinematics and #pid-control (#LinearAlgebra).',
+    'Ignore colors #ffffff #3987e5 #fff, heading line:',
+    '# Markdown Heading',
+    'Ignore URL https://example.com/docs#section and /skills/sub1#overview and escaped \\#escaped.',
+    'Ignore pure numbers #123 and math $x + #alpha$ $$y + #beta$$, keep price note $50 #budget.',
+  ].join('\n');
+  assert.deepEqual(extractTags(sample), ['cad', 'robotics/kinematics', 'pid-control', 'linearalgebra', 'budget']);
+  assert.deepEqual(extractTags(''), []);
+});
+
+test('store.ts preserves schedule during updateSkills/readSkills and computes projectFilesFolder', async () => {
+  const userId = 'store-schedule-user';
+  assert.equal(projectFilesFolder(userId), path.join(process.cwd(), '.data', 'skills', userId, 'files'));
+
+  await updateSkills(userId, (data) => {
+    const sub = addSubject(data, { name: 'Control Theory', area: 'Engineering' }, makeId, NOW);
+    const top = addTopic(sub, { name: 'State Space' }, makeId, NOW);
+    data.schedule = {
+      hoursPerDay: 2.5,
+      updatedAt: NOW,
+      tasks: [
+        {
+          id: 'task-1',
+          subjectId: sub.id,
+          topicId: top.id,
+          title: 'Solve observability proofs',
+          day: '2026-11-12',
+          minutes: 60,
+          done: false,
+        },
+      ],
+    };
+  });
+
+  const saved = await readSkills(userId);
+  assert.ok(saved.schedule);
+  assert.equal(saved.schedule.hoursPerDay, 2.5);
+  assert.equal(saved.schedule.updatedAt, NOW);
+  assert.equal(saved.schedule.tasks.length, 1);
+  assert.equal(saved.schedule.tasks[0].title, 'Solve observability proofs');
+  assert.equal(saved.schedule.tasks[0].minutes, 60);
+});
+
+test('buildKnowledgeGraph resolves cross-subject wiki-links, tags, backlinks, Notes OCR, Reader notes, and project logs', async () => {
+  const kbUser = 'kb-graph-user';
+  const ts = Date.parse(NOW);
+  const data = emptySkills();
+
+  const math = addSubject(data, {
+    name: 'Linear Algebra',
+    area: 'Math',
+    goal: 'Master [[Eigenvalues]] #math',
+    roadmap: 'Foundational vectors and matrices',
+  }, makeId, NOW);
+  const robotics = addSubject(data, {
+    name: 'Mobile Robotics',
+    area: 'Robotics',
+    goal: 'Autonomous differential drive #robotics/kinematics',
+  }, makeId, NOW);
+  robotics.parentIds = [math.id];
+
+  const eig = addTopic(math, {
+    name: 'Eigenvalues',
+    description: 'Characteristic polynomial and spectrum',
+    notes: 'Connects directly to [[PID Control]] and [[Linear Algebra|LA]] #spectral #control',
+  }, makeId, NOW);
+  const pid = addTopic(robotics, {
+    name: 'PID Control',
+    description: 'Closed-loop feedback',
+    notes: 'Poles mirror [[Eigenvalues]] #control #pid-control',
+  }, makeId, NOW);
+
+  // Linked Reader book + highlight notes
+  const readerBookId = 'reader-ladr-1';
+  await fs.mkdir(path.dirname(libraryFile(kbUser)), { recursive: true });
+  await fs.writeFile(libraryFile(kbUser), JSON.stringify({
+    books: [
+      {
+        id: readerBookId,
+        title: 'Linear Algebra Done Right',
+        author: 'Sheldon Axler',
+        format: 'pdf',
+        fileName: 'ladr.pdf',
+        addedAt: NOW,
+      },
+    ],
+    folders: [],
+    seqs: {},
+  }));
+  await syncNotes(kbUser, readerBookId, 0, [
+    {
+      id: 'rn-1',
+      kind: 'note',
+      anchor: { page: 42 },
+      quote: 'Every operator on a complex space has an eigenvalue.',
+      text: 'Relates directly to [[PID Control]] pole placement #theorem',
+      createdAt: ts,
+      updatedAt: ts,
+    },
+  ], ts);
+
+  const book = addResource(math, {
+    kind: 'book',
+    title: 'Linear Algebra Done Right',
+    author: 'Sheldon Axler',
+    url: 'https://linear.axler.net/',
+    freePdfUrl: 'https://linear.axler.net/LADR4e.pdf',
+    takeaways: 'Proof-first view of invariant subspaces #proofs',
+    topicIds: [eig.id],
+  }, makeId, '2026-11-12', NOW);
+  book.readerBookId = readerBookId;
+
+  const paper = addResource(robotics, {
+    kind: 'paper',
+    title: 'Probabilistic Robotics Paper',
+    youtubeAudioUrl: 'https://youtube.com/watch?v=demo',
+    takeaways: 'Covariance uses [[Eigenvalues]] #bayes',
+    topicIds: [pid.id],
+  }, makeId, '2026-11-12', NOW);
+
+  const project = addResource(robotics, {
+    kind: 'project',
+    title: 'Mini Rover Build',
+    detail: 'Differential drive hardware',
+    topicIds: [pid.id],
+  }, makeId, '2026-11-12', NOW);
+  const plog = addProjectLog(robotics, project, {
+    day: '2026-11-12',
+    title: 'Bench PID tuning',
+    note: 'Tuned gains for [[PID Control]] #hardware',
+    attachments: [
+      {
+        kind: 'video',
+        name: 'rover-run.webm',
+        url: '/api/skills/projects/file?id=att1__rover-run.webm',
+        size: 2048,
+        mime: 'video/webm',
+      },
+    ],
+  }, makeId, '2026-11-12', NOW);
+
+  robotics.steps = [
+    {
+      id: 'step-1',
+      title: 'Verify closed-loop stability margins',
+      kind: 'practice',
+      topicId: pid.id,
+      minutes: 30,
+      done: false,
+    },
+  ];
+
+  const card = saveCard(math, {
+    topicId: eig.id,
+    front: 'When is A diagonalizable? #spectral',
+    back: 'When algebraic and geometric multiplicities match.',
+  }, makeId, NOW);
+
+  // Tied Notes page with typed text + handwriting OCR
+  const nbId = 'nb-skills-1';
+  const pageId = 'pg-eig-1';
+  await syncLibrary(kbUser, 0, [
+    { id: nbId, kind: 'notebook', title: 'Math Notes', createdAt: ts, updatedAt: ts },
+  ], ts);
+  await syncBook(kbUser, nbId, 0, [
+    { id: pageId, kind: 'page', order: 0, w: 612, h: 792, title: 'Eigenvalues Scratchpad', createdAt: ts, updatedAt: ts },
+  ], ts);
+  await syncPage(kbUser, nbId, pageId, 0, [
+    {
+      id: 'el-txt-1',
+      kind: 'text',
+      x: 10,
+      y: 10,
+      w: 200,
+      h: 40,
+      text: 'Typed note linking [[PID Control]] #typed-note',
+      size: 14,
+      color: '#ffffff',
+      createdAt: ts,
+      updatedAt: ts,
+    },
+  ], ts);
+  await saveInkText(kbUser, nbId, {
+    id: pageId,
+    kind: 'inktext',
+    page: pageId,
+    pageSeq: 1,
+    text: 'Handwritten [[Mobile Robotics]] matrix sketch #ocr-note',
+    lines: [{ text: 'Handwritten [[Mobile Robotics]] matrix sketch #ocr-note', box: { x: 1, y: 2, w: 100, h: 20 } }],
+    keys: ['robotics', 'sketch'],
+  }, ts);
+  tiePage(math, eig, { notebook: nbId, page: pageId }, NOW);
+
+  // Full graph verification
+  const full = await buildKnowledgeGraph(kbUser, data);
+  const nodeIds = new Set(full.nodes.map((n) => n.id));
+  assert.ok(nodeIds.has(`sub:${math.id}`));
+  assert.ok(nodeIds.has(`sub:${robotics.id}`));
+  assert.ok(nodeIds.has(`top:${eig.id}`));
+  assert.ok(nodeIds.has(`top:${pid.id}`));
+  assert.ok(nodeIds.has(`res:${book.id}`));
+  assert.ok(nodeIds.has(`res:${paper.id}`));
+  assert.ok(nodeIds.has(`res:${project.id}`));
+  assert.ok(nodeIds.has(`reader:${readerBookId}`));
+  assert.ok(nodeIds.has(`note:${nbId}:${pageId}`));
+  assert.ok(nodeIds.has(`log:${plog.id}`));
+  assert.ok(nodeIds.has(`item:${card.id}`));
+  assert.ok(nodeIds.has('tag:control'));
+  assert.ok(nodeIds.has('tag:ocr-note'));
+
+  const hasEdge = (from: string, to: string, kind: string) =>
+    full.edges.some((e) => e.from === from && e.to === to && e.kind === kind);
+
+  assert.ok(hasEdge(`sub:${math.id}`, `sub:${robotics.id}`, 'subskill'));
+  assert.ok(hasEdge(`sub:${math.id}`, `top:${eig.id}`, 'topic'));
+  assert.ok(hasEdge(`top:${eig.id}`, `res:${book.id}`, 'resource'));
+  assert.ok(hasEdge(`res:${book.id}`, `reader:${readerBookId}`, 'reader'));
+  assert.ok(hasEdge(`top:${eig.id}`, `note:${nbId}:${pageId}`, 'note-page'));
+  assert.ok(hasEdge(`res:${project.id}`, `log:${plog.id}`, 'project-log'));
+  assert.ok(hasEdge(`top:${eig.id}`, `item:${card.id}`, 'question'));
+  assert.ok(hasEdge(`top:${eig.id}`, `top:${pid.id}`, 'wiki-link'));
+  assert.ok(hasEdge(`top:${pid.id}`, `top:${eig.id}`, 'wiki-link'));
+  assert.ok(hasEdge(`reader:${readerBookId}`, `top:${pid.id}`, 'wiki-link'));
+  assert.ok(hasEdge(`note:${nbId}:${pageId}`, `sub:${robotics.id}`, 'wiki-link'));
+  assert.ok(hasEdge(`top:${eig.id}`, 'tag:control', 'tag'));
+
+  const eigBacklinks = full.bundle.backlinks[`top:${eig.id}`] ?? [];
+  assert.ok(eigBacklinks.some((b) => b.sourceId === `top:${pid.id}` && b.edgeKind === 'wiki-link'));
+  assert.ok(eigBacklinks.some((b) => b.sourceId === `res:${paper.id}` && b.edgeKind === 'wiki-link'));
+
+  const pidBacklinks = full.bundle.backlinks[`top:${pid.id}`] ?? [];
+  assert.ok(pidBacklinks.some((b) => b.sourceId === `top:${eig.id}` && b.edgeKind === 'wiki-link'));
+  assert.ok(pidBacklinks.some((b) => b.sourceId === `reader:${readerBookId}` && b.edgeKind === 'wiki-link'));
+
+  assert.ok(full.bundle.ownKnowledge.some((m) => m.sourceKind === 'notes-page' && m.text?.includes('Typed note linking') && m.text?.includes('Handwritten')));
+  assert.ok(full.bundle.ownKnowledge.some((m) => m.sourceKind === 'reader-notes' && m.text?.includes('Relates directly to [[PID Control]]')));
+  assert.ok(full.bundle.ownKnowledge.some((m) => m.sourceKind === 'project-log' && m.attachments?.length === 1));
+  assert.ok(full.bundle.sourceMaterials.some((m) => m.sourceKind === 'book' && m.freePdfUrl?.endsWith('LADR4e.pdf')));
+  assert.ok(full.bundle.sourceMaterials.some((m) => m.sourceKind === 'paper' && m.youtubeAudioUrl?.includes('youtube.com')));
+  assert.ok(full.bundle.qaAndActivities.some((m) => m.sourceKind === 'card'));
+  assert.ok(full.bundle.qaAndActivities.some((m) => m.sourceKind === 'step' && m.title.includes('stability margins')));
+  assert.ok(full.bundle.qaAndActivities.some((m) => m.sourceKind === 'project' && m.title === 'Mini Rover Build'));
+
+  // Focused subjectId graph keeps cross-subject links while scoping bundle items
+  const scoped = await buildKnowledgeGraph(kbUser, data, math.id);
+  assert.equal(scoped.bundle.scopeSubjectId, math.id);
+  assert.ok(scoped.nodes.some((n) => n.id === `top:${pid.id}`), 'cross-subject wiki-link neighbor kept in local graph');
+  assert.ok(scoped.nodes.some((n) => n.id === `sub:${robotics.id}`), 'subskill child kept in local graph');
+  assert.ok(!scoped.bundle.ownKnowledge.some((m) => m.sourceKind === 'project-log'), 'bundle excludes unrelated subject logs');
 });

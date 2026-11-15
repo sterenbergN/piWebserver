@@ -3,9 +3,30 @@
 import { localToday } from '@/lib/habits/dates';
 import type { PublicQuestion } from '@/lib/daily/grade';
 import type { BoardSummary, NextStep, QueueReason, SubjectStats } from '@/lib/skills/model';
-import type { Item, SkillAttempt, Subject } from '@/lib/skills/types';
+import type {
+  KnowledgeBacklink,
+  KnowledgeBundle,
+  KnowledgeEdge,
+  KnowledgeEdgeKind,
+  KnowledgeGraph,
+  KnowledgeMaterialItem,
+  KnowledgeNode,
+  KnowledgeNodeKind,
+} from '@/lib/skills/links';
+import type { Item, ProjectAttachment, SkillAttempt, Subject } from '@/lib/skills/types';
 import type { Answered } from '@/components/daily/QuestionCard';
 import type { CheckResult } from '@/components/daily/useDaily';
+
+export type {
+  KnowledgeBacklink,
+  KnowledgeBundle,
+  KnowledgeEdge,
+  KnowledgeEdgeKind,
+  KnowledgeGraph,
+  KnowledgeMaterialItem,
+  KnowledgeNode,
+  KnowledgeNodeKind,
+};
 
 // Talking to /api/skills. A 401 means signed out (pages show a way in); anything
 // else that fails carries a message worth showing.
@@ -34,6 +55,20 @@ export async function skillsPost<T = Record<string, unknown>>(action: string, pa
   }));
 }
 
+export async function uploadProjectFile(file: Blob | File, filename?: string): Promise<ProjectAttachment> {
+  const form = new FormData();
+  const resolvedName = filename?.trim() || (file instanceof File && file.name ? file.name : 'attachment');
+  form.append('file', file, resolvedName);
+  form.append('name', resolvedName);
+  const res = await read<{ attachment: ProjectAttachment }>(
+    await fetch('/api/skills/projects/file', {
+      method: 'POST',
+      body: form,
+    }),
+  );
+  return res.attachment;
+}
+
 // ── Response shapes ──────────────────────────────────────────────────────────
 
 /** GET /api/skills */
@@ -43,6 +78,16 @@ export type BoardResponse = { board: BoardSummary; xp: number; reviewDays: strin
 export type ItemRow = {
   id: string; kind: Item['kind']; topicId: string; title: string; difficulty: number; source: Item['source']; createdAt: string;
   retired: boolean; feedback: Item['feedback'] | null; answers: number; lastScore: number | null; lastDay: string | null; due: string | null;
+};
+
+export type SubjectListSummary = {
+  id: string;
+  name: string;
+  icon: string;
+  area: string;
+  status: Subject['status'];
+  level: number;
+  parentIds: string[];
 };
 
 /** GET /api/skills?subject=id */
@@ -55,6 +100,13 @@ export type SubjectResponse = {
   areas: string[];
   /** Each topic's Notes pages, by topic id (only topics that have some). */
   topicPages: Record<string, NotesPageView[]>;
+  allSubjects?: SubjectListSummary[];
+};
+
+/** GET /api/skills?knowledge=1(&subject=id) */
+export type KnowledgeResponse = {
+  graph: KnowledgeGraph;
+  bundle: KnowledgeBundle;
 };
 
 export type NotesPageView = { notebook: string; page: string; label: string; href: string };

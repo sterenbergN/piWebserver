@@ -13,11 +13,11 @@ import { localDayOf } from '@/lib/habits/dates';
 import { orderBetween, type Notebook, type PageElement, type PageRecord, type RecordingRecord } from '@/lib/notes/items';
 import { readBookItems, readInkText, readLibrary as readNotesLibrary, readPageElements, syncBook, syncLibrary, syncPage, transcriptsPath } from '@/lib/notes/store';
 import type { Transcript } from '@/lib/notes/transcripts';
-import { compareAnchors, readingState, type NotesFile } from '@/lib/reader/items';
+import { compareAnchors, readingState, type BookMeta, type NotesFile, type Progress as ReaderProgress } from '@/lib/reader/items';
 import { notesFolder as readerNotesFolder, readLibrary as readReaderLibrary, readProgressFile } from '@/lib/reader/store';
 import { asDailyQuestion } from './edit';
 import { readSkills, updateSkills } from './store';
-import type { NotesPageRef, SkillsData, Subject, Topic } from './types';
+import { itemTitle, type NotesPageRef, type ProjectAttachment, type Resource, type SkillsData, type Subject, type Topic } from './types';
 
 const newId = () => crypto.randomBytes(12).toString('hex');
 
@@ -221,3 +221,880 @@ export async function materialFor(userId: string, subject: Subject, topicIds: st
   }
   return out;
 }
+
+// ── Knowledge Vault: Obsidian-like graph, wiki-links, tags & backlinks ───────
+
+export type KnowledgeNodeKind =
+  | 'subject'
+  | 'topic'
+  | 'book'
+  | 'paper'
+  | 'project'
+  | 'resource'
+  | 'note'
+  | 'reader'
+  | 'question'
+  | 'tag';
+
+export type KnowledgeEdgeKind =
+  | 'subskill'
+  | 'topic'
+  | 'resource'
+  | 'reader'
+  | 'note-page'
+  | 'wiki-link'
+  | 'tag'
+  | 'question'
+  | 'project-log';
+
+export type KnowledgeNode = {
+  id: string;
+  kind: KnowledgeNodeKind;
+  label: string;
+  subtitle?: string;
+  subjectId?: string;
+  topicId?: string;
+  resourceId?: string;
+  href?: string;
+  url?: string;
+  freePdfUrl?: string;
+  youtubeAudioUrl?: string;
+  status?: string;
+  excerpt?: string;
+  content?: string;
+  tags: string[];
+  wikiLinks: string[];
+  attachments?: ProjectAttachment[];
+  meta?: Record<string, string | number | boolean | undefined>;
+};
+
+export type KnowledgeEdge = {
+  id: string;
+  from: string;
+  to: string;
+  kind: KnowledgeEdgeKind;
+  label?: string;
+};
+
+export type KnowledgeMaterialItem = {
+  id: string;
+  nodeId: string;
+  sourceKind:
+    | 'notes-page'
+    | 'reader-notes'
+    | 'topic-notes'
+    | 'resource-takeaways'
+    | 'project-log'
+    | 'book'
+    | 'paper'
+    | 'article'
+    | 'course'
+    | 'video'
+    | 'reader-book'
+    | 'question'
+    | 'card'
+    | 'step'
+    | 'activity'
+    | 'project';
+  title: string;
+  subtitle?: string;
+  subjectId?: string;
+  subjectName?: string;
+  topicId?: string;
+  topicName?: string;
+  resourceId?: string;
+  day?: string;
+  status?: string;
+  text?: string;
+  href?: string;
+  url?: string;
+  freePdfUrl?: string;
+  youtubeAudioUrl?: string;
+  attachments?: ProjectAttachment[];
+  tags: string[];
+  wikiLinks: string[];
+};
+
+export type KnowledgeBacklink = {
+  targetId: string;
+  targetLabel: string;
+  targetKind: KnowledgeNodeKind;
+  sourceId: string;
+  sourceLabel: string;
+  sourceKind: KnowledgeNodeKind;
+  edgeKind: KnowledgeEdgeKind;
+  label?: string;
+};
+
+export type KnowledgeBundle = {
+  scopeSubjectId?: string;
+  ownKnowledge: KnowledgeMaterialItem[];
+  sourceMaterials: KnowledgeMaterialItem[];
+  qaAndActivities: KnowledgeMaterialItem[];
+  backlinks: Record<string, KnowledgeBacklink[]>;
+};
+
+export type KnowledgeGraph = {
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+};
+
+const normKey = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Extract `[[Target]]` or `[[Target|Alias]]` wiki-links, deduplicated case-insensitively. */
+export function extractWikiLinks(text: string): string[] {
+  if (!text) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const re = /\[\[([^[\]\r\n]+?)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const rawTarget = m[1].split('|')[0].trim().replace(/\s+/g, ' ');
+    if (!rawTarget || rawTarget.length > 160) continue;
+    const key = rawTarget.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(rawTarget);
+  }
+  return out;
+}
+
+/** Extract `#tag-name` tokens outside URLs, hex colors, and LaTeX math blocks. */
+export function extractTags(text: string): string[] {
+  if (!text) return [];
+  // Strip display/inline LaTeX, escaped hashes, and URLs/site paths containing fragments.
+  const cleaned = text
+    .replace(/\$\$[\s\S]*?\$\$/g, ' ')
+    .replace(/\$(?!\s|\d+(?:[.,]\d+)?(?:\s|$))[^$\n]+?(?<!\s)\$/g, ' ')
+    .replace(/\\\[[\s\S]*?\\\]/g, ' ')
+    .replace(/\\\([\s\S]*?\\\)/g, ' ')
+    .replace(/\\#/g, ' ')
+    .replace(/https?:\/\/[^\s<>"')]+/gi, ' ')
+    .replace(/(^|[\s(["'])\/[a-zA-Z0-9_./?=&%-]*#[^\s<>"')]+/g, '$1 ');
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const re = /(?:^|[\s(\[{,;:])#([a-zA-Z][a-zA-Z0-9_/-]{0,63})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cleaned)) !== null) {
+    const tag = m[1].replace(/[/_-]+$/, '').toLowerCase();
+    if (!tag || !/^[a-z]/.test(tag)) continue;
+    // Skip CSS hex colors such as #ffffff, #ff00aa, #fff while preserving real words like #cad / #fea.
+    if (/^(?:[0-9a-f]{6}|[0-9a-f]{8})$/i.test(tag)) continue;
+    if (/^([a-f])\1\1$/i.test(tag)) continue;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+function collectMeta(texts: (string | undefined)[], extraTags: string[] = []): { tags: string[]; wikiLinks: string[] } {
+  const joined = texts.filter(Boolean).join('\n');
+  const tagSet = new Set<string>();
+  const tags: string[] = [];
+  for (const t of [...extraTags.map((x) => x.trim().toLowerCase()).filter(Boolean), ...extractTags(joined)]) {
+    if (!tagSet.has(t)) {
+      tagSet.add(t);
+      tags.push(t);
+    }
+  }
+  const wikiLinks = extractWikiLinks(joined);
+  return { tags, wikiLinks };
+}
+
+function nodeKindForResource(kind: Resource['kind']): KnowledgeNodeKind {
+  if (kind === 'book') return 'book';
+  if (kind === 'paper') return 'paper';
+  if (kind === 'project') return 'project';
+  return 'resource';
+}
+
+function sourceKindForMaterial(kind: Resource['kind']): KnowledgeMaterialItem['sourceKind'] {
+  if (kind === 'book' || kind === 'paper' || kind === 'article' || kind === 'course' || kind === 'video' || kind === 'project' || kind === 'activity') {
+    return kind;
+  }
+  return 'book';
+}
+
+type PageVaultDetail = {
+  ref: NotesPageRef;
+  label: string;
+  pageTitle?: string;
+  notebookTitle: string;
+  href: string;
+  text: string;
+  tags: string[];
+};
+
+async function readVaultPageDetail(userId: string, ref: NotesPageRef, view: NotesPageView, notebookTitle: string): Promise<PageVaultDetail> {
+  const [text, rawBookItems] = await Promise.all([
+    pageText(userId, ref).catch(() => ''),
+    readBookItems(userId, ref.notebook).catch(() => null),
+  ]);
+  const bookItems = rawBookItems ?? [];
+  let pageRec: PageRecord | undefined;
+  const summaries: string[] = [];
+  for (const item of bookItems) {
+    if (item.kind === 'page' && item.id === ref.page) {
+      pageRec = item;
+    } else if (
+      item.kind === 'recording' &&
+      !item.deleted &&
+      (item.page === ref.page || !!item.pages?.some((p) => p.page === ref.page)) &&
+      !!item.summary?.trim()
+    ) {
+      summaries.push(`Summary "${item.title}":\n${item.summary.trim()}`);
+    }
+  }
+  const fullText = [text, ...summaries].filter(Boolean).join('\n\n');
+  const pageTags = (pageRec?.tags ?? []).map((t) => t.replace(/^#/, '').trim().toLowerCase()).filter(Boolean);
+  return {
+    ref,
+    label: view.label,
+    pageTitle: pageRec?.title,
+    notebookTitle,
+    href: view.href,
+    text: fullText,
+    tags: pageTags,
+  };
+}
+
+/**
+ * Build an Obsidian-like Knowledge Graph (nodes + typed edges including resolved
+ * `[[Wiki-links]]`, `#tags`, subskill hierarchy, resources, tied Notes pages,
+ * Reader books, project logs, and Q&A items) plus the unified Vault `bundle`.
+ */
+export async function buildKnowledgeGraph(
+  userId: string,
+  data: SkillsData,
+  subjectId?: string,
+): Promise<KnowledgeGraph & { bundle: KnowledgeBundle }> {
+  if (subjectId && !data.subjects.some((s) => s.id === subjectId)) {
+    return {
+      nodes: [],
+      edges: [],
+      bundle: { scopeSubjectId: subjectId, ownKnowledge: [], sourceMaterials: [], qaAndActivities: [], backlinks: {} },
+    };
+  }
+
+  // Load Reader & Notes libraries once per call.
+  const [readerLib, readerProg, notesLib] = await Promise.all([
+    readReaderLibrary(userId).catch(() => ({ books: [] as BookMeta[], folders: [], seqs: {} })),
+    readProgressFile(userId).catch(() => ({} as Record<string, ReaderProgress>)),
+    readNotesLibrary(userId).catch(() => null),
+  ]);
+  const readerBooksById = new Map(readerLib.books.map((b) => [b.id, b]));
+
+  // Deduplicated unique Notes pages and Reader books across the account.
+  const uniqueRefs = new Map<string, NotesPageRef>();
+  const uniqueBookIds = new Set<string>();
+  for (const s of data.subjects) {
+    for (const t of s.topics) {
+      for (const ref of t.notePages ?? []) {
+        uniqueRefs.set(`${ref.notebook}:${ref.page}`, ref);
+      }
+    }
+    for (const r of s.resources) {
+      if (r.readerBookId) uniqueBookIds.add(r.readerBookId);
+    }
+  }
+
+  const refList = [...uniqueRefs.values()];
+  const pageViews = refList.length ? await describePages(userId, refList).catch(() => [] as NotesPageView[]) : [];
+  const pageViewMap = new Map(pageViews.map((v) => [`${v.notebook}:${v.page}`, v]));
+
+  const [pageDetailEntries, bookNotesEntries] = await Promise.all([
+    Promise.all(
+      pageViews.map(async (v) => {
+        const nb = notesLib?.items[v.notebook];
+        const nbTitle = nb?.kind === 'notebook' ? nb.title : 'Notes';
+        return [`${v.notebook}:${v.page}`, await readVaultPageDetail(userId, v, v, nbTitle)] as const;
+      }),
+    ),
+    Promise.all(
+      [...uniqueBookIds].map(async (bookId) => {
+        const text = await bookNotes(userId, bookId).catch(() => '');
+        return [bookId, text] as const;
+      }),
+    ),
+  ]);
+
+  const pageDetailMap = new Map<string, PageVaultDetail>(pageDetailEntries);
+  const bookNotesMap = new Map<string, string>(bookNotesEntries);
+
+  const allNodes = new Map<string, KnowledgeNode>();
+  const allEdges: KnowledgeEdge[] = [];
+  const edgeKeys = new Set<string>();
+  const addNode = (node: KnowledgeNode) => {
+    if (!allNodes.has(node.id)) {
+      allNodes.set(node.id, node);
+    }
+  };
+  const addEdge = (from: string, to: string, kind: KnowledgeEdgeKind, label?: string) => {
+    if (from === to) return;
+    if (!allNodes.has(from) || !allNodes.has(to)) return;
+    const key = `${from}|${to}|${kind}`;
+    if (edgeKeys.has(key)) return;
+    edgeKeys.add(key);
+    allEdges.push({ id: `e:${allEdges.length + 1}`, from, to, kind, ...(label ? { label } : {}) });
+  };
+
+  // Lookup indexes for [[Wiki-link]] resolution (priority: subject > topic > resource > note > reader).
+  const globalLookup = new Map<string, { priority: number; nodeId: string }>();
+  const subjectLookup = new Map<string, Map<string, { priority: number; nodeId: string }>>();
+  const registerAlias = (alias: string | undefined, nodeId: string, priority: number, subId?: string) => {
+    if (!alias) return;
+    const k = normKey(alias);
+    if (!k) return;
+    const prevGlobal = globalLookup.get(k);
+    if (!prevGlobal || priority < prevGlobal.priority) {
+      globalLookup.set(k, { priority, nodeId });
+    }
+    if (subId) {
+      let map = subjectLookup.get(subId);
+      if (!map) {
+        map = new Map();
+        subjectLookup.set(subId, map);
+      }
+      const prevLocal = map.get(k);
+      if (!prevLocal || priority < prevLocal.priority) {
+        map.set(k, { priority, nodeId });
+      }
+    }
+  };
+
+  // Pass 1: create nodes across all subjects so cross-subject [[wiki-links]] and subskill edges resolve.
+  for (const subject of data.subjects) {
+    const subNodeId = `sub:${subject.id}`;
+    const stepTexts = (subject.steps ?? []).flatMap((st) => [st.title, st.detail]);
+    const subMeta = collectMeta([subject.goal, subject.background, subject.roadmap, ...stepTexts]);
+    const subExcerpt = (subject.goal || subject.roadmap || '').trim().slice(0, 240) || undefined;
+    const subContent = [subject.goal, subject.background, subject.roadmap].filter(Boolean).join('\n\n') || undefined;
+
+    addNode({
+      id: subNodeId,
+      kind: 'subject',
+      label: subject.name,
+      subtitle: `${subject.icon} ${subject.area}`,
+      subjectId: subject.id,
+      href: `/skills/${subject.id}`,
+      status: subject.status,
+      excerpt: subExcerpt,
+      content: subContent,
+      tags: subMeta.tags,
+      wikiLinks: subMeta.wikiLinks,
+      meta: { area: subject.area, target: subject.target, icon: subject.icon },
+    });
+    registerAlias(subject.name, subNodeId, 1, subject.id);
+
+    for (const topic of subject.topics) {
+      const topNodeId = `top:${topic.id}`;
+      const topMeta = collectMeta([topic.description, topic.notes]);
+      addNode({
+        id: topNodeId,
+        kind: 'topic',
+        label: topic.name,
+        subtitle: subject.name,
+        subjectId: subject.id,
+        topicId: topic.id,
+        href: `/skills/${subject.id}?tab=topics`,
+        excerpt: (topic.notes || topic.description || '').trim().slice(0, 240) || undefined,
+        content: [topic.description, topic.notes].filter(Boolean).join('\n\n') || undefined,
+        tags: topMeta.tags,
+        wikiLinks: topMeta.wikiLinks,
+        meta: { stage: topic.stage, core: topic.core },
+      });
+      registerAlias(topic.name, topNodeId, 2, subject.id);
+      registerAlias(`${subject.name}: ${topic.name}`, topNodeId, 2, subject.id);
+      registerAlias(`${subject.name} / ${topic.name}`, topNodeId, 2, subject.id);
+
+      for (const ref of topic.notePages ?? []) {
+        const refKey = `${ref.notebook}:${ref.page}`;
+        const view = pageViewMap.get(refKey);
+        if (!view) continue;
+        const detail = pageDetailMap.get(refKey);
+        const noteNodeId = `note:${ref.notebook}:${ref.page}`;
+        const pageMeta = collectMeta([detail?.pageTitle, detail?.text], detail?.tags ?? []);
+        if (!allNodes.has(noteNodeId)) {
+          addNode({
+            id: noteNodeId,
+            kind: 'note',
+            label: detail?.pageTitle || view.label,
+            subtitle: `${detail?.notebookTitle ?? 'Notes'} · ${topic.name}`,
+            subjectId: subject.id,
+            topicId: topic.id,
+            href: view.href,
+            excerpt: detail?.text.slice(0, 240) || undefined,
+            content: detail?.text || undefined,
+            tags: pageMeta.tags,
+            wikiLinks: pageMeta.wikiLinks,
+          });
+        }
+        registerAlias(view.label, noteNodeId, 4, subject.id);
+        registerAlias(detail?.pageTitle, noteNodeId, 4, subject.id);
+      }
+    }
+
+    for (const res of subject.resources) {
+      const resNodeId = `res:${res.id}`;
+      const resMeta = collectMeta([res.detail, res.takeaways]);
+      addNode({
+        id: resNodeId,
+        kind: nodeKindForResource(res.kind),
+        label: res.title,
+        subtitle: res.author ? `${res.author} · ${subject.name}` : subject.name,
+        subjectId: subject.id,
+        resourceId: res.id,
+        href: `/skills/${subject.id}?tab=${res.kind === 'project' ? 'projects' : 'resources'}#r-${res.id}`,
+        url: res.url,
+        freePdfUrl: res.freePdfUrl,
+        youtubeAudioUrl: res.youtubeAudioUrl,
+        status: res.status,
+        excerpt: (res.takeaways || res.detail || '').trim().slice(0, 240) || undefined,
+        content: [res.detail, res.takeaways].filter(Boolean).join('\n\n') || undefined,
+        tags: resMeta.tags,
+        wikiLinks: resMeta.wikiLinks,
+        meta: { resourceKind: res.kind },
+      });
+      registerAlias(res.title, resNodeId, 3, subject.id);
+
+      if (res.readerBookId) {
+        const readerNodeId = `reader:${res.readerBookId}`;
+        const book = readerBooksById.get(res.readerBookId);
+        const rNotes = bookNotesMap.get(res.readerBookId) ?? '';
+        const rMeta = collectMeta([book?.title, rNotes]);
+        if (!allNodes.has(readerNodeId)) {
+          const prog = readerProg[res.readerBookId];
+          const state = readingState(prog);
+          addNode({
+            id: readerNodeId,
+            kind: 'reader',
+            label: book?.title ?? res.title,
+            subtitle: book?.author ? `${book.author} · Reader (${state})` : `Reader (${state})`,
+            subjectId: subject.id,
+            resourceId: res.id,
+            href: `/reader?book=${encodeURIComponent(res.readerBookId)}`,
+            status: state,
+            excerpt: rNotes.slice(0, 240) || undefined,
+            content: rNotes || undefined,
+            tags: rMeta.tags,
+            wikiLinks: rMeta.wikiLinks,
+          });
+        }
+        registerAlias(book?.title, readerNodeId, 5, subject.id);
+      }
+
+      for (const log of res.logs ?? []) {
+        const logNodeId = `log:${log.id}`;
+        const logMeta = collectMeta([log.title, log.note]);
+        addNode({
+          id: logNodeId,
+          kind: 'note',
+          label: log.title,
+          subtitle: `${res.title} · ${log.day}`,
+          subjectId: subject.id,
+          resourceId: res.id,
+          href: `/skills/${subject.id}?tab=projects`,
+          excerpt: (log.note || '').trim().slice(0, 240) || undefined,
+          content: log.note || undefined,
+          tags: logMeta.tags,
+          wikiLinks: logMeta.wikiLinks,
+          attachments: log.attachments,
+          meta: { isProjectLog: true, day: log.day, attachmentCount: log.attachments.length },
+        });
+        registerAlias(log.title, logNodeId, 4, subject.id);
+      }
+    }
+
+    for (const item of subject.items) {
+      if (item.retired) continue;
+      const itemNodeId = `item:${item.id}`;
+      const itemTexts = item.kind === 'graded'
+        ? [item.question.title, item.question.prompt, item.question.solution, ...(item.question.hints ?? [])]
+        : [item.front, item.back];
+      const qMeta = collectMeta(itemTexts);
+      const body = item.kind === 'graded'
+        ? `${item.question.prompt}\n\n${item.question.solution ?? ''}`.trim()
+        : `${item.front}\n\n${item.back}`.trim();
+      addNode({
+        id: itemNodeId,
+        kind: 'question',
+        label: itemTitle(item),
+        subtitle: `${item.kind === 'card' ? 'Flashcard' : 'Graded question'} · ${subject.name}`,
+        subjectId: subject.id,
+        topicId: item.topicId,
+        href: `/skills/review?item=${encodeURIComponent(item.id)}`,
+        excerpt: body.slice(0, 240) || undefined,
+        content: body || undefined,
+        tags: qMeta.tags,
+        wikiLinks: qMeta.wikiLinks,
+        meta: { itemKind: item.kind },
+      });
+    }
+  }
+
+  // Pass 2: structural edges across all subjects.
+  for (const subject of data.subjects) {
+    const subNodeId = `sub:${subject.id}`;
+    for (const pid of subject.parentIds ?? []) {
+      addEdge(`sub:${pid}`, subNodeId, 'subskill', 'prerequisite');
+    }
+    for (const topic of subject.topics) {
+      const topNodeId = `top:${topic.id}`;
+      addEdge(subNodeId, topNodeId, 'topic');
+      for (const ref of topic.notePages ?? []) {
+        const noteNodeId = `note:${ref.notebook}:${ref.page}`;
+        addEdge(topNodeId, noteNodeId, 'note-page');
+      }
+    }
+    for (const res of subject.resources) {
+      const resNodeId = `res:${res.id}`;
+      const validTopicIds = res.topicIds.filter((tid) => subject.topics.some((t) => t.id === tid));
+      if (validTopicIds.length) {
+        for (const tid of validTopicIds) addEdge(`top:${tid}`, resNodeId, 'resource');
+      } else {
+        addEdge(subNodeId, resNodeId, 'resource');
+      }
+      if (res.readerBookId) {
+        addEdge(resNodeId, `reader:${res.readerBookId}`, 'reader');
+      }
+      for (const log of res.logs ?? []) {
+        addEdge(resNodeId, `log:${log.id}`, 'project-log', log.day);
+      }
+    }
+    for (const item of subject.items) {
+      if (item.retired) continue;
+      const fromId = subject.topics.some((t) => t.id === item.topicId) ? `top:${item.topicId}` : subNodeId;
+      addEdge(fromId, `item:${item.id}`, 'question');
+    }
+  }
+
+  // Pass 3: tag nodes/edges & [[wiki-link]] edges from every node.
+  const baseNodes = [...allNodes.values()];
+  for (const node of baseNodes) {
+    for (const tag of node.tags) {
+      const tagNodeId = `tag:${tag}`;
+      addNode({
+        id: tagNodeId,
+        kind: 'tag',
+        label: `#${tag}`,
+        tags: [tag],
+        wikiLinks: [],
+      });
+      addEdge(node.id, tagNodeId, 'tag');
+    }
+    for (const targetName of node.wikiLinks) {
+      const key = normKey(targetName);
+      const localMatch = node.subjectId ? subjectLookup.get(node.subjectId)?.get(key) : undefined;
+      const globalMatch = globalLookup.get(key);
+      const targetId = localMatch?.nodeId ?? globalMatch?.nodeId;
+      if (targetId && targetId !== node.id) {
+        addEdge(node.id, targetId, 'wiki-link', targetName);
+      }
+    }
+  }
+
+  // Filter graph when focused on a single subjectId while preserving cross-subject neighbors/backlinks.
+  let outNodes: KnowledgeNode[];
+  let outEdges: KnowledgeEdge[];
+  if (subjectId) {
+    const coreIds = new Set<string>();
+    for (const node of allNodes.values()) {
+      if (node.subjectId === subjectId) coreIds.add(node.id);
+    }
+    // Also mark directly tied reader books & notes pages whose edges originate from this subject's core nodes.
+    for (const edge of allEdges) {
+      if (coreIds.has(edge.from) && (edge.kind === 'reader' || edge.kind === 'note-page')) {
+        coreIds.add(edge.to);
+      }
+    }
+    const includedIds = new Set<string>(coreIds);
+    outEdges = allEdges.filter((e) => {
+      if (coreIds.has(e.from) || coreIds.has(e.to)) {
+        includedIds.add(e.from);
+        includedIds.add(e.to);
+        return true;
+      }
+      return false;
+    });
+    outNodes = [...includedIds].map((id) => allNodes.get(id)!).filter(Boolean);
+  } else {
+    outNodes = [...allNodes.values()];
+    outEdges = allEdges;
+  }
+
+  // Build unified KnowledgeBundle for the requested scope (focused subject or entire vault).
+  const bundleSubjects = subjectId ? data.subjects.filter((s) => s.id === subjectId) : data.subjects;
+  const ownKnowledge: KnowledgeMaterialItem[] = [];
+  const sourceMaterials: KnowledgeMaterialItem[] = [];
+  const qaAndActivities: KnowledgeMaterialItem[] = [];
+  const seenNotePages = new Set<string>();
+  const seenReaderNotes = new Set<string>();
+  const seenReaderSources = new Set<string>();
+
+  for (const subject of bundleSubjects) {
+    const topicById = new Map(subject.topics.map((t) => [t.id, t]));
+
+    for (const topic of subject.topics) {
+      if (topic.notes?.trim()) {
+        const meta = collectMeta([topic.notes]);
+        ownKnowledge.push({
+          id: `ok-topic:${topic.id}`,
+          nodeId: `top:${topic.id}`,
+          sourceKind: 'topic-notes',
+          title: `${topic.name} notes`,
+          subtitle: subject.name,
+          subjectId: subject.id,
+          subjectName: subject.name,
+          topicId: topic.id,
+          topicName: topic.name,
+          text: topic.notes.trim(),
+          href: `/skills/${subject.id}?tab=topics`,
+          tags: meta.tags,
+          wikiLinks: meta.wikiLinks,
+        });
+      }
+
+      for (const ref of topic.notePages ?? []) {
+        const refKey = `${ref.notebook}:${ref.page}`;
+        if (seenNotePages.has(refKey)) continue;
+        const detail = pageDetailMap.get(refKey);
+        if (!detail) continue;
+        seenNotePages.add(refKey);
+        const meta = collectMeta([detail.pageTitle, detail.text], detail.tags);
+        ownKnowledge.push({
+          id: `ok-page:${refKey}`,
+          nodeId: `note:${refKey}`,
+          sourceKind: 'notes-page',
+          title: detail.label,
+          subtitle: `${subject.name} · ${topic.name}`,
+          subjectId: subject.id,
+          subjectName: subject.name,
+          topicId: topic.id,
+          topicName: topic.name,
+          text: detail.text || '(Handwritten / blank notes page)',
+          href: detail.href,
+          tags: meta.tags,
+          wikiLinks: meta.wikiLinks,
+        });
+      }
+    }
+
+    for (const res of subject.resources) {
+      const firstTopic = res.topicIds.map((tid) => topicById.get(tid)).find(Boolean);
+
+      if (res.takeaways?.trim()) {
+        const meta = collectMeta([res.takeaways]);
+        ownKnowledge.push({
+          id: `ok-takeaway:${res.id}`,
+          nodeId: `res:${res.id}`,
+          sourceKind: 'resource-takeaways',
+          title: `Takeaways: ${res.title}`,
+          subtitle: res.author ? `${res.author} · ${subject.name}` : subject.name,
+          subjectId: subject.id,
+          subjectName: subject.name,
+          topicId: firstTopic?.id,
+          topicName: firstTopic?.name,
+          resourceId: res.id,
+          text: res.takeaways.trim(),
+          href: `/skills/${subject.id}?tab=resources#r-${res.id}`,
+          tags: meta.tags,
+          wikiLinks: meta.wikiLinks,
+        });
+      }
+
+      if (res.readerBookId) {
+        const rText = bookNotesMap.get(res.readerBookId) ?? '';
+        const rBook = readerBooksById.get(res.readerBookId);
+        if (rText && !seenReaderNotes.has(res.readerBookId)) {
+          seenReaderNotes.add(res.readerBookId);
+          const meta = collectMeta([rText]);
+          ownKnowledge.push({
+            id: `ok-reader:${res.readerBookId}`,
+            nodeId: `reader:${res.readerBookId}`,
+            sourceKind: 'reader-notes',
+            title: `Reader notes: ${rBook?.title ?? res.title}`,
+            subtitle: rBook?.author ? `${rBook.author} · ${subject.name}` : subject.name,
+            subjectId: subject.id,
+            subjectName: subject.name,
+            topicId: firstTopic?.id,
+            topicName: firstTopic?.name,
+            resourceId: res.id,
+            text: rText,
+            href: `/reader?book=${encodeURIComponent(res.readerBookId)}`,
+            tags: meta.tags,
+            wikiLinks: meta.wikiLinks,
+          });
+        }
+        if (!seenReaderSources.has(res.readerBookId)) {
+          seenReaderSources.add(res.readerBookId);
+          const prog = readerProg[res.readerBookId];
+          const state = readingState(prog);
+          sourceMaterials.push({
+            id: `src-reader:${res.readerBookId}`,
+            nodeId: `reader:${res.readerBookId}`,
+            sourceKind: 'reader-book',
+            title: rBook?.title ?? res.title,
+            subtitle: rBook?.author ? `${rBook.author} · Reader` : 'Reader book',
+            subjectId: subject.id,
+            subjectName: subject.name,
+            resourceId: res.id,
+            status: state,
+            href: `/reader?book=${encodeURIComponent(res.readerBookId)}`,
+            tags: [],
+            wikiLinks: [],
+          });
+        }
+      }
+
+      for (const log of res.logs ?? []) {
+        const meta = collectMeta([log.title, log.note]);
+        ownKnowledge.push({
+          id: `ok-log:${log.id}`,
+          nodeId: `log:${log.id}`,
+          sourceKind: 'project-log',
+          title: log.title,
+          subtitle: `${res.title} · ${subject.name}`,
+          subjectId: subject.id,
+          subjectName: subject.name,
+          topicId: firstTopic?.id,
+          topicName: firstTopic?.name,
+          resourceId: res.id,
+          day: log.day,
+          text: log.note,
+          attachments: log.attachments,
+          href: `/skills/${subject.id}?tab=projects`,
+          tags: meta.tags,
+          wikiLinks: meta.wikiLinks,
+        });
+      }
+
+      if (res.status !== 'dropped') {
+        const meta = collectMeta([res.detail]);
+        if (res.kind === 'project' || res.kind === 'activity') {
+          qaAndActivities.push({
+            id: `qa-res:${res.id}`,
+            nodeId: `res:${res.id}`,
+            sourceKind: res.kind,
+            title: res.title,
+            subtitle: `${res.kind === 'project' ? 'Project' : 'Activity'} · ${subject.name}`,
+            subjectId: subject.id,
+            subjectName: subject.name,
+            topicId: firstTopic?.id,
+            topicName: firstTopic?.name,
+            resourceId: res.id,
+            status: res.status,
+            text: res.detail,
+            url: res.url,
+            href: `/skills/${subject.id}?tab=${res.kind === 'project' ? 'projects' : 'resources'}#r-${res.id}`,
+            tags: meta.tags,
+            wikiLinks: meta.wikiLinks,
+          });
+        } else {
+          sourceMaterials.push({
+            id: `src-res:${res.id}`,
+            nodeId: `res:${res.id}`,
+            sourceKind: sourceKindForMaterial(res.kind),
+            title: res.title,
+            subtitle: res.author ? `${res.author} · ${subject.name}` : subject.name,
+            subjectId: subject.id,
+            subjectName: subject.name,
+            topicId: firstTopic?.id,
+            topicName: firstTopic?.name,
+            resourceId: res.id,
+            status: res.status,
+            text: res.detail,
+            url: res.url,
+            freePdfUrl: res.freePdfUrl,
+            youtubeAudioUrl: res.youtubeAudioUrl,
+            href: res.readerBookId
+              ? `/reader?book=${encodeURIComponent(res.readerBookId)}`
+              : `/skills/${subject.id}?tab=resources#r-${res.id}`,
+            tags: meta.tags,
+            wikiLinks: meta.wikiLinks,
+          });
+        }
+      }
+    }
+
+    for (const step of subject.steps ?? []) {
+      const topic = step.topicId ? topicById.get(step.topicId) : undefined;
+      const meta = collectMeta([step.title, step.detail]);
+      qaAndActivities.push({
+        id: `qa-step:${step.id}`,
+        nodeId: step.topicId ? `top:${step.topicId}` : `sub:${subject.id}`,
+        sourceKind: 'step',
+        title: step.title,
+        subtitle: [step.kind, step.amount, step.minutes ? `${step.minutes} min` : undefined].filter(Boolean).join(' · '),
+        subjectId: subject.id,
+        subjectName: subject.name,
+        topicId: step.topicId,
+        topicName: topic?.name,
+        resourceId: step.resourceId,
+        status: step.done ? 'done' : 'planned',
+        text: step.detail,
+        href: `/skills/${subject.id}?tab=steps`,
+        tags: meta.tags,
+        wikiLinks: meta.wikiLinks,
+      });
+    }
+
+    for (const item of subject.items) {
+      if (item.retired) continue;
+      const topic = topicById.get(item.topicId);
+      const itemTexts = item.kind === 'graded'
+        ? [item.question.title, item.question.prompt, item.question.solution]
+        : [item.front, item.back];
+      const meta = collectMeta(itemTexts);
+      qaAndActivities.push({
+        id: `qa-item:${item.id}`,
+        nodeId: `item:${item.id}`,
+        sourceKind: item.kind === 'card' ? 'card' : 'question',
+        title: itemTitle(item),
+        subtitle: `${item.kind === 'card' ? 'Flashcard' : 'Graded question'}${topic ? ` · ${topic.name}` : ''}`,
+        subjectId: subject.id,
+        subjectName: subject.name,
+        topicId: item.topicId,
+        topicName: topic?.name,
+        text: item.kind === 'card' ? item.back : item.question.prompt,
+        href: `/skills/review?item=${encodeURIComponent(item.id)}`,
+        tags: meta.tags,
+        wikiLinks: meta.wikiLinks,
+      });
+    }
+  }
+
+  const nodeMap = new Map(outNodes.map((n) => [n.id, n]));
+  const backlinks: Record<string, KnowledgeBacklink[]> = {};
+  for (const edge of outEdges) {
+    const source = nodeMap.get(edge.from);
+    const target = nodeMap.get(edge.to);
+    if (!source || !target) continue;
+    const list = backlinks[target.id] ?? [];
+    list.push({
+      targetId: target.id,
+      targetLabel: target.label,
+      targetKind: target.kind,
+      sourceId: source.id,
+      sourceLabel: source.label,
+      sourceKind: source.kind,
+      edgeKind: edge.kind,
+      ...(edge.label ? { label: edge.label } : {}),
+    });
+    backlinks[target.id] = list;
+  }
+
+  return {
+    nodes: outNodes,
+    edges: outEdges,
+    bundle: {
+      ...(subjectId ? { scopeSubjectId: subjectId } : {}),
+      ownKnowledge,
+      sourceMaterials,
+      qaAndActivities,
+      backlinks,
+    },
+  };
+}
+

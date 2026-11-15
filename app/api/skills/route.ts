@@ -3,16 +3,21 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
 import { publicQuestion, revealedQuestion } from '@/lib/daily/grade';
-import { boardSummary, buildQueue, levelHistory, nextSteps, subjectStats, type ReviewMode } from '@/lib/skills/model';
+import { boardSummary, buildQueue, levelHistory, nextSteps, subjectStats, wouldCreateSkillCycle, type ReviewMode } from '@/lib/skills/model';
 import { readSkills, readSkillsProgress, updateBoth, updateSkills, updateSkillsProgress } from '@/lib/skills/store';
 import {
-  SkillsInputError, addResource, addSubject, addTopic, answerGraded, asDailyQuestion, editResource, editSubject, editTopic, findItem, findItemAnywhere,
-  findSubject, findTopic, importPlan, importQuestions, itemFeedback, moveItem, moveTopic, rateCard, rateTopics, removeItem, removeResource,
-  removeSubject, removeTopic, resourceOf, retireItem, saveCard, tiePage, untiePage,
+  SkillsInputError, addResource, addSubject, addTopic, answerGraded, applySkillEdit, asDailyQuestion, editResource, editSubject, editTopic,
+  findItem, findItemAnywhere, findSubject, findTopic, importPlan, importQuestions, itemFeedback, moveItem, moveTopic, rateCard, rateTopics,
+  removeItem, removeResource, removeSubject, removeTopic, resourceOf, retireItem, saveCard, setParents, tiePage, untiePage,
 } from '@/lib/skills/edit';
+import { parsePlanReply, sameName } from '@/lib/skills/parse';
 import { reviewDays, skillsXp } from '@/lib/skills/xp';
-import { describePages, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
-import { itemDifficulty, itemTitle, type Item, type ProgressData, type SkillAttempt, type Subject } from '@/lib/skills/types';
+import { buildKnowledgeGraph, describePages, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
+import {
+  itemDifficulty, itemTitle,
+  type Item, type ProgressData, type ProjectLogEntry, type ScheduledSkillTask, type SkillAttempt,
+  type SkillEdit, type SkillSchedule, type SkillStep, type Subject,
+} from '@/lib/skills/types';
 
 // The signed-in account's skills: subjects, their topics, resources and
 // questions, and every answer. Each request only reads or writes the caller's
@@ -86,6 +91,13 @@ export async function GET(request: Request) {
       return ok({ queue: queue.map((e) => ({ ...askable(e.item, e.subject, e.topic.name), reason: e.reason })) });
     }
 
+    if (params.get('knowledge') !== null) {
+      const requestedSubject = params.get('subject');
+      const focusedId = requestedSubject !== null && requestedSubject !== '' ? findSubject(data, requestedSubject).id : undefined;
+      const { nodes, edges, bundle } = await buildKnowledgeGraph(userId, data, focusedId);
+      return ok({ graph: { nodes, edges }, bundle });
+    }
+
     const subjectId = params.get('subject');
     if (subjectId !== null) {
       const subject = findSubject(data, subjectId);
@@ -98,6 +110,15 @@ export async function GET(request: Request) {
         history: levelHistory(subject, progress, today),
         topicPages: Object.fromEntries(await Promise.all(subject.topics.filter((t) => t.notePages?.length).map(async (t) => [t.id, await describePages(userId, t.notePages!)] as const))),
         areas: [...new Set(data.subjects.map((s) => s.area))].sort(),
+        allSubjects: data.subjects.map((s) => ({
+          id: s.id,
+          name: s.name,
+          icon: s.icon,
+          area: s.area,
+          status: s.status,
+          level: subjectStats(s, progress, today).level,
+          parentIds: s.parentIds ?? [],
+        })),
       });
     }
 
@@ -191,13 +212,86 @@ export async function POST(request: Request) {
 
       // ── From an AI ──
       case 'import-plan': {
-        const result = await updateSkills(userId, (data) => importPlan(findSubject(data, body.subjectId), body.reply, body, newId, now));
+        const result = await updateSkills(userId, (data) => {
+          const subject = findSubject(data, body.subjectId);
+          const imported = importPlan(subject, body.reply, body, newId, now);
+          if (body.includeParents === true) {
+            const parsed = parsePlanReply(typeof body.reply === 'string' ? body.reply : '', subject);
+            if (parsed.parentSubjects.length) {
+              const nextParents = [...(subject.parentIds ?? [])];
+              for (const ref of parsed.parentSubjects) {
+                const parent = data.subjects.find((s) => s.id === ref || sameName(s.name, ref));
+                if (
+                  parent
+                  && parent.id !== subject.id
+                  && !nextParents.includes(parent.id)
+                  && !wouldCreateSkillCycle(data, subject.id, parent.id)
+                ) {
+                  nextParents.push(parent.id);
+                }
+              }
+              if (nextParents.length) setParents(data, subject.id, nextParents, now);
+            }
+          }
+          return imported;
+        });
         return ok(result);
       }
       case 'import-questions': {
         const result = await updateSkills(userId, (data) => importQuestions(findSubject(data, body.subjectId), body.reply, body, newId, now));
         return ok(result);
       }
+
+      // ── Interconnected parents & explicit study steps ──
+      case 'set-parents':
+        await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'set-parents' } as unknown as SkillEdit, newId, today, now));
+        return ok();
+      case 'add-step': {
+        const step = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'add-step' } as unknown as SkillEdit, newId, today, now) as SkillStep);
+        return ok({ id: step.id, step });
+      }
+      case 'edit-step':
+      case 'toggle-step': {
+        const step = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, ...(body.action === 'edit-step' ? { changes: body.changes ?? {} } : {}), op: body.action } as unknown as SkillEdit, newId, today, now) as SkillStep);
+        return ok({ step });
+      }
+      case 'move-step':
+      case 'remove-step':
+        await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: body.action } as unknown as SkillEdit, newId, today, now));
+        return ok();
+
+      // ── Multi-day schedule & interconnected AI plan ──
+      case 'set-schedule':
+      case 'rebuild-schedule-from-steps': {
+        const schedule = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: body.action } as unknown as SkillEdit, newId, today, now) as SkillSchedule);
+        return ok({ schedule });
+      }
+      case 'shift-schedule':
+      case 'toggle-schedule-task':
+      case 'apply-interconnected-plan': {
+        const result = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: body.action } as unknown as SkillEdit, newId, today, now) as Record<string, unknown>);
+        return ok(result);
+      }
+      case 'add-schedule-task': {
+        const task = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'add-schedule-task' } as unknown as SkillEdit, newId, today, now) as ScheduledSkillTask);
+        return ok({ id: task.id, task });
+      }
+      case 'remove-schedule-task':
+        await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'remove-schedule-task' } as unknown as SkillEdit, newId, today, now));
+        return ok();
+
+      // ── Project logs ──
+      case 'add-project-log': {
+        const log = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'add-project-log' } as unknown as SkillEdit, newId, today, now) as ProjectLogEntry);
+        return ok({ id: log.id, log });
+      }
+      case 'edit-project-log': {
+        const log = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, changes: body.changes ?? {}, op: 'edit-project-log' } as unknown as SkillEdit, newId, today, now) as ProjectLogEntry);
+        return ok({ log });
+      }
+      case 'remove-project-log':
+        await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'remove-project-log' } as unknown as SkillEdit, newId, today, now));
+        return ok();
 
       // ── Questions ──
       case 'save-card': {
