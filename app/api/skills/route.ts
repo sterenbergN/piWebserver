@@ -10,12 +10,13 @@ import {
   findItem, findItemAnywhere, findSubject, findTopic, importPlan, importQuestions, itemFeedback, moveItem, moveTopic, rateCard, rateTopics,
   removeItem, removeResource, removeSubject, removeTopic, resourceOf, retireItem, saveCard, setParents, tiePage, untiePage,
 } from '@/lib/skills/edit';
-import { parsePlanReply, sameName } from '@/lib/skills/parse';
+import { parseInquiryReply, parsePlanReply, sameName } from '@/lib/skills/parse';
+import { buildInquiryPrompt } from '@/lib/skills/prompts';
 import { reviewDays, skillsXp } from '@/lib/skills/xp';
 import { buildKnowledgeGraph, describePages, materialFor, newTopicPage, notesPageChoices, readerShelf, skillsNotebook, syncReaderResources } from '@/lib/skills/links';
 import {
   itemDifficulty, itemTitle,
-  type Item, type ProgressData, type ProjectLogEntry, type ScheduledSkillTask, type SkillAttempt,
+  type Item, type KnowledgeInquiry, type ProgressData, type ProjectLogEntry, type ScheduledSkillTask, type SkillAttempt,
   type SkillEdit, type SkillSchedule, type SkillStep, type Subject,
 } from '@/lib/skills/types';
 
@@ -95,7 +96,18 @@ export async function GET(request: Request) {
       const requestedSubject = params.get('subject');
       const focusedId = requestedSubject !== null && requestedSubject !== '' ? findSubject(data, requestedSubject).id : undefined;
       const { nodes, edges, bundle } = await buildKnowledgeGraph(userId, data, focusedId);
-      return ok({ graph: { nodes, edges }, bundle });
+      return ok({
+        graph: { nodes, edges },
+        bundle,
+        inquiries: data.inquiries ?? [],
+        subjects: data.subjects.map((s) => ({
+          id: s.id,
+          name: s.name,
+          icon: s.icon,
+          area: s.area,
+          topics: s.topics.map((t) => ({ id: t.id, name: t.name })),
+        })),
+      });
     }
 
     const subjectId = params.get('subject');
@@ -119,6 +131,7 @@ export async function GET(request: Request) {
           level: subjectStats(s, progress, today).level,
           parentIds: s.parentIds ?? [],
         })),
+        inquiries: (data.inquiries ?? []).filter((q) => q.subjectId === subject.id),
       });
     }
 
@@ -292,6 +305,47 @@ export async function POST(request: Request) {
       case 'remove-project-log':
         await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'remove-project-log' } as unknown as SkillEdit, newId, today, now));
         return ok();
+
+      // ── Knowledge lookups & running inbox ──
+      case 'add-inquiry': {
+        const inquiry = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'add-inquiry' } as unknown as SkillEdit, newId, today, now) as KnowledgeInquiry);
+        return ok({ id: inquiry.id, inquiry });
+      }
+      case 'import-inquiries': {
+        const result = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'import-inquiries' } as unknown as SkillEdit, newId, today, now) as Record<string, unknown>);
+        return ok(result);
+      }
+      case 'edit-inquiry': {
+        const inquiry = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, changes: body.changes ?? {}, op: 'edit-inquiry' } as unknown as SkillEdit, newId, today, now) as KnowledgeInquiry);
+        return ok({ inquiry });
+      }
+      case 'toggle-inquiry': {
+        const inquiry = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'toggle-inquiry' } as unknown as SkillEdit, newId, today, now) as KnowledgeInquiry);
+        return ok({ inquiry });
+      }
+      case 'remove-inquiry':
+        await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'remove-inquiry' } as unknown as SkillEdit, newId, today, now));
+        return ok();
+      case 'promote-inquiry-to-card': {
+        const result = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'promote-inquiry-to-card' } as unknown as SkillEdit, newId, today, now) as Record<string, unknown>);
+        return ok(result);
+      }
+      case 'apply-inquiry-answers': {
+        const result = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'apply-inquiry-answers' } as unknown as SkillEdit, newId, today, now) as Record<string, unknown>);
+        return ok(result);
+      }
+      case 'inquiry-prompt': {
+        const data = await readSkills(userId);
+        const inquiryIds = Array.isArray(body.inquiryIds)
+          ? body.inquiryIds.filter((id): id is string => typeof id === 'string')
+          : undefined;
+        return ok({ prompt: buildInquiryPrompt(data, inquiryIds) });
+      }
+      case 'parse-inquiry-reply': {
+        const data = await readSkills(userId);
+        const parsed = parseInquiryReply(typeof body.reply === 'string' ? body.reply : '', data);
+        return ok({ parsed });
+      }
 
       // ── Questions ──
       case 'save-card': {

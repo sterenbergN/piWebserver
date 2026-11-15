@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   skillsGet,
+  skillsPost,
   SignedOut,
   type KnowledgeBacklink,
   type KnowledgeEdge,
@@ -13,8 +14,9 @@ import {
   type KnowledgeNodeKind,
   type KnowledgeResponse,
 } from '@/components/skills/api';
+import InquiryDesk, { InquiryEditForm, RichInquiryText } from '@/components/skills/InquiryDesk';
 import { ErrorNote, Loading, SignedOutCard } from '@/components/skills/Ui';
-import type { ProjectAttachment } from '@/lib/skills/types';
+import type { KnowledgeInquiry, ProjectAttachment } from '@/lib/skills/types';
 import './knowledge.css';
 
 const VIEW_W = 960;
@@ -31,6 +33,7 @@ const KIND_META: Record<KnowledgeNodeKind, { label: string; icon: string; color:
   resource: { label: 'Resources', icon: '📎', color: 'var(--info)', radius: 9, ring: 245 },
   note: { label: 'Notes & Logs', icon: '✏️', color: 'var(--habit-5)', radius: 9, ring: 305 },
   reader: { label: 'Reader', icon: '📖', color: 'var(--habit-6)', radius: 10, ring: 305 },
+  inquiry: { label: 'Lookups & Qs', icon: '💡', color: 'var(--habit-2)', radius: 11, ring: 210 },
   question: { label: 'Q&As', icon: '❓', color: 'var(--habit-8)', radius: 7, ring: 350 },
   tag: { label: '#Tags', icon: '#', color: 'var(--muted)', radius: 8, ring: 385 },
 };
@@ -49,6 +52,8 @@ const SOURCE_LABEL: Record<KnowledgeMaterialItem['sourceKind'], string> = {
   course: 'Course',
   video: 'Video',
   'reader-book': 'Reader book',
+  'inquiry-open': 'Open question',
+  'inquiry-solved': 'Solved lookup',
   question: 'Graded Q&A',
   card: 'Flashcard',
   step: 'Study step',
@@ -64,6 +69,7 @@ const EDGE_LABEL: Record<KnowledgeEdgeKind, string> = {
   'note-page': 'Notes page',
   'wiki-link': '[[Wiki-link]]',
   tag: '#Tag',
+  inquiry: 'Lookup / Q&A',
   question: 'Q&A',
   'project-log': 'Project log',
 };
@@ -300,15 +306,30 @@ export default function KnowledgeVault({
   subjectId,
   compact,
   onNavigateSubjectTab,
+  initialTab = 'vault',
+  showInquiriesTab = true,
+  focusNodeId,
+  onDataChanged,
 }: {
   subjectId?: string;
   compact?: boolean;
   onNavigateSubjectTab?: (tab: string) => void;
+  initialTab?: 'vault' | 'inquiries';
+  showInquiriesTab?: boolean;
+  focusNodeId?: string;
+  onDataChanged?: () => Promise<void> | void;
 }) {
   const [data, setData] = useState<KnowledgeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [signedOut, setSignedOut] = useState(false);
   const [error, setError] = useState('');
+
+  const [vaultMode, setVaultMode] = useState<'vault' | 'inquiries'>(initialTab);
+  const [quickJot, setQuickJot] = useState('');
+  const [quickJotBusy, setQuickJotBusy] = useState(false);
+  const [quickJotError, setQuickJotError] = useState('');
+  const [focusInquiryId, setFocusInquiryId] = useState<string | undefined>(undefined);
+  const [inspectorEditId, setInspectorEditId] = useState<string | null>(null);
 
   const [enabledKinds, setEnabledKinds] = useState<Set<KnowledgeNodeKind>>(() => new Set(ALL_KINDS));
   const [search, setSearch] = useState('');
@@ -339,6 +360,7 @@ export default function KnowledgeVault({
       setSignedOut(false);
       setDragPositions({});
       setSelectedNodeId((prev) => {
+        if (focusNodeId && res.graph.nodes.some((n) => n.id === focusNodeId)) return focusNodeId;
         if (prev && res.graph.nodes.some((n) => n.id === prev)) return prev;
         if (subjectId && res.graph.nodes.some((n) => n.id === `sub:${subjectId}`)) return `sub:${subjectId}`;
         return res.graph.nodes.find((n) => n.kind === 'subject')?.id ?? res.graph.nodes[0]?.id ?? null;
@@ -349,7 +371,12 @@ export default function KnowledgeVault({
     } finally {
       setLoading(false);
     }
-  }, [subjectId]);
+  }, [subjectId, focusNodeId]);
+
+  const reloadAll = useCallback(async () => {
+    await load();
+    await onDataChanged?.();
+  }, [load, onDataChanged]);
 
   useEffect(() => {
     void load();
@@ -366,7 +393,7 @@ export default function KnowledgeVault({
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [data]);
+  }, [data, vaultMode]);
 
   const nodesById = useMemo(() => new Map((data?.graph.nodes ?? []).map((n) => [n.id, n])), [data]);
 
@@ -433,9 +460,17 @@ export default function KnowledgeVault({
   const resolveWiki = useCallback(
     (target: string): string | undefined => {
       const k = target.trim().replace(/\s+/g, ' ').toLowerCase();
-      if (!data) return undefined;
+      if (!data || !k) return undefined;
       for (const n of data.graph.nodes) {
-        if (n.label.trim().replace(/\s+/g, ' ').toLowerCase() === k) return n.id;
+        const label = n.label.trim().replace(/\s+/g, ' ').toLowerCase();
+        if (label === k) return n.id;
+        if (n.kind === 'inquiry') {
+          const alias = label
+            .replace(/^(?:what\s+(?:is|are)|how\s+(?:does|do|to)|why\s+(?:is|are|do|does)|when\s+(?:is|to)|who\s+is)\s+/i, '')
+            .replace(/\?+$/, '')
+            .trim();
+          if (alias === k) return n.id;
+        }
       }
       return undefined;
     },
@@ -593,6 +628,46 @@ export default function KnowledgeVault({
     };
   }, [data, selectedNode, scopeToNode, subjectId]);
 
+  const inquiries: KnowledgeInquiry[] = useMemo(() => {
+    if (!data) return [];
+    if (subjectId) return data.bundle.inquiries ?? (data.inquiries ?? []).filter((q) => q.subjectId === subjectId);
+    return data.inquiries ?? data.bundle.inquiries ?? [];
+  }, [data, subjectId]);
+
+  const openInquiriesCount = useMemo(
+    () => inquiries.filter((q) => q.status === 'open').length,
+    [inquiries],
+  );
+
+  const selectedInquiry = useMemo(() => {
+    if (selectedNode?.kind !== 'inquiry' || !data) return null;
+    const inqId = typeof selectedNode.meta?.inquiryId === 'string'
+      ? selectedNode.meta.inquiryId
+      : selectedNode.id.replace(/^inq:/, '');
+    const pool = data.inquiries ?? data.bundle.inquiries ?? inquiries;
+    return pool.find((q) => q.id === inqId) ?? null;
+  }, [selectedNode, data, inquiries]);
+
+  async function handleQuickJot(e: React.FormEvent) {
+    e.preventDefault();
+    if (quickJotBusy || !quickJot.trim()) return;
+    setQuickJotBusy(true);
+    setQuickJotError('');
+    try {
+      await skillsPost('add-inquiry', {
+        question: quickJot.trim(),
+        ...(subjectId ? { subjectId } : {}),
+        status: 'open',
+      });
+      setQuickJot('');
+      await reloadAll();
+    } catch (err) {
+      setQuickJotError(err instanceof Error ? err.message : 'Could not jot down lookup.');
+    } finally {
+      setQuickJotBusy(false);
+    }
+  }
+
   if (signedOut) return <SignedOutCard />;
   if (loading) return <Loading rows={3} />;
   if (error) {
@@ -605,20 +680,93 @@ export default function KnowledgeVault({
       </div>
     );
   }
-  if (!data || !data.graph.nodes.length) {
-    return (
-      <section className="sk-card">
-        <h2>Knowledge Vault</h2>
-        <p className="sk-empty">
-          No notes, topics, books, or links in this vault yet. Add topics, tie Notes pages, link Reader books, or write{' '}
-          <code>[[Wiki-links]]</code> and <code>#tags</code> in your notes to grow the graph.
-        </p>
-      </section>
-    );
+  if (!data) {
+    return null;
   }
+
+  const showTopBar = showInquiriesTab || vaultMode === 'inquiries';
 
   return (
     <div className={`kv-root${compact ? ' is-compact' : ''}`}>
+      {showTopBar && (
+        <div className="kv-top-bar">
+          <div className="kv-subtabs" role="tablist" aria-label="Knowledge vault views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={vaultMode === 'vault'}
+              className={`kv-subtab${vaultMode === 'vault' ? ' is-active' : ''}`}
+              onClick={() => setVaultMode('vault')}
+            >
+              🕸️ Vault &amp; Graph
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={vaultMode === 'inquiries'}
+              className={`kv-subtab${vaultMode === 'inquiries' ? ' is-active' : ''}`}
+              onClick={() => setVaultMode('inquiries')}
+            >
+              <span>💡 Lookups &amp; Running List</span>
+              {openInquiriesCount > 0 && (
+                <span className="kv-subtab-badge">{openInquiriesCount} open</span>
+              )}
+            </button>
+          </div>
+
+          {vaultMode === 'vault' && (
+            <div className="kv-quickjot-strip">
+              <form className="kv-quickjot-form" onSubmit={(e) => void handleQuickJot(e)}>
+                <input
+                  type="text"
+                  className="kv-quickjot-input"
+                  value={quickJot}
+                  maxLength={300}
+                  placeholder="Quick jot: What is MCP, What is R1 Redundancy…"
+                  aria-label="Quick jot a lookup question"
+                  onChange={(e) => setQuickJot(e.target.value)}
+                />
+                <button type="submit" className="sk-small-btn" disabled={quickJotBusy || !quickJot.trim()}>
+                  {quickJotBusy ? 'Saving…' : '+ Jot down'}
+                </button>
+              </form>
+              {quickJotError && <span className="sk-warning">{quickJotError}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {vaultMode === 'inquiries' ? (
+        <InquiryDesk
+          inquiries={inquiries}
+          subjects={data.subjects}
+          fixedSubjectId={subjectId}
+          focusInquiryId={focusInquiryId}
+          onReload={reloadAll}
+          resolveWiki={resolveWiki}
+          onSelectGraphNode={(nodeId) => {
+            setVaultMode('vault');
+            selectAndFocus(nodeId);
+          }}
+          compact={compact}
+        />
+      ) : data.graph.nodes.length === 0 ? (
+        <section className="sk-card">
+          <h2>Knowledge Vault</h2>
+          <p className="sk-empty">
+            No notes, topics, books, or links in this vault yet. Add topics, tie Notes pages, link Reader books, jot down lookups above, or write{' '}
+            <code>[[Wiki-links]]</code> and <code>#tags</code> to grow the graph.
+          </p>
+          {showInquiriesTab && (
+            <div className="sk-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setVaultMode('inquiries')}>
+                💡 Open Lookups &amp; Paste Running List
+              </button>
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
       <div className="kv-toolbar">
         <div className="kv-toolbar-top">
           <div className="kv-search-wrap">
@@ -839,11 +987,129 @@ export default function KnowledgeVault({
                   </div>
                 </div>
 
-                {selectedNode.content && (
+                {selectedNode.kind === 'inquiry' && selectedInquiry ? (
+                  <div className="kv-inspector-inquiry">
+                    <div className="inq-card-badges">
+                      <span className={`inq-status-pill ${selectedInquiry.status === 'open' ? 'is-open' : 'is-solved'}`}>
+                        {selectedInquiry.status === 'open' ? '❓ To Solve' : '💡 Knowledge'}
+                      </span>
+                      {selectedInquiry.cardItemId && <span className="sk-chip">🃏 Flashcard</span>}
+                    </div>
+
+                    {selectedInquiry.context && (
+                      <div className="kv-inspector-inq-block">
+                        <span className="kv-inspector-inq-label">Context</span>
+                        <p className="kv-inspector-inq-text">{selectedInquiry.context}</p>
+                      </div>
+                    )}
+
+                    {selectedInquiry.answer ? (
+                      <div className="kv-inspector-inq-block">
+                        <span className="kv-inspector-inq-label">Answer</span>
+                        <div className="kv-inspector-inq-text">
+                          <RichInquiryText
+                            text={selectedInquiry.answer}
+                            resolveWiki={resolveWiki}
+                            onSelectGraphNode={selectAndFocus}
+                            inquiries={inquiries}
+                            subjects={data.subjects}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="sk-hint">No answer yet — solve it inline below or batch-solve with AI.</p>
+                    )}
+
+                    {selectedInquiry.takeaways && (
+                      <div className="kv-inspector-inq-block">
+                        <span className="kv-inspector-inq-label">Key Takeaways</span>
+                        <div className="kv-inspector-inq-text">
+                          <RichInquiryText
+                            text={selectedInquiry.takeaways}
+                            resolveWiki={resolveWiki}
+                            onSelectGraphNode={selectAndFocus}
+                            inquiries={inquiries}
+                            subjects={data.subjects}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedInquiry.sources && selectedInquiry.sources.length > 0 && (
+                      <div className="kv-inspector-inq-block">
+                        <span className="kv-inspector-inq-label">Sources</span>
+                        <div className="inq-sources">
+                          {selectedInquiry.sources.map((src, i) =>
+                            /^https?:\/\//i.test(src) ? (
+                              <a key={`${src}-${i}`} className="inq-source-link" href={src} target="_blank" rel="noopener noreferrer">
+                                {src}
+                              </a>
+                            ) : (
+                              <span key={`${src}-${i}`} className="sk-chip">{src}</span>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedInquiry.tags && selectedInquiry.tags.length > 0 && (
+                      <div className="inq-tags">
+                        {selectedInquiry.tags.map((tag) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            className="inq-tag-chip"
+                            onClick={() => selectAndFocus(`tag:${tag}`)}
+                          >
+                            #{tag}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="sk-actions">
+                      <button
+                        type="button"
+                        className="sk-small-btn"
+                        aria-expanded={inspectorEditId === selectedInquiry.id}
+                        onClick={() => setInspectorEditId((cur) => (cur === selectedInquiry.id ? null : selectedInquiry.id))}
+                      >
+                        {inspectorEditId === selectedInquiry.id ? 'Close Editor' : 'Solve / Edit Lookup'}
+                      </button>
+                      {showInquiriesTab && (
+                        <button
+                          type="button"
+                          className="sk-text-btn"
+                          onClick={() => {
+                            setFocusInquiryId(selectedInquiry.id);
+                            setVaultMode('inquiries');
+                          }}
+                        >
+                          Open in Lookups Desk →
+                        </button>
+                      )}
+                    </div>
+
+                    {inspectorEditId === selectedInquiry.id && (
+                      <InquiryEditForm
+                        key={selectedInquiry.id}
+                        inquiry={selectedInquiry}
+                        subjects={data.subjects}
+                        fixedSubjectId={subjectId}
+                        compact
+                        onSaved={async () => {
+                          setInspectorEditId(null);
+                          await reloadAll();
+                        }}
+                        onCancel={() => setInspectorEditId(null)}
+                      />
+                    )}
+                  </div>
+                ) : selectedNode.content ? (
                   <div className="kv-node-body">
                     <RichText text={selectedNode.content} resolveWiki={resolveWiki} onSelectNode={selectAndFocus} />
                   </div>
-                )}
+                ) : null}
 
                 <AttachmentList attachments={selectedNode.attachments} />
 
@@ -1106,6 +1372,8 @@ export default function KnowledgeVault({
           )}
         </aside>
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import type { DateKey } from '@/lib/habits/dates';
 import { parentSkillsOf, subjectStats, subskillsOf, type SubjectStats, type TopicStats } from './model';
 import {
   LEVELS, RESOURCE_KINDS, SKILL_STEP_KINDS, STAGES, emptyProgress, itemTitle,
-  type Item, type ProgressData, type SkillsData, type Subject,
+  type Item, type KnowledgeInquiry, type ProgressData, type SkillsData, type Subject,
 } from './types';
 
 const levelScale = () => LEVELS.map((l) => `${l.level} ${l.name}: ${l.meaning}`).join('\n');
@@ -381,4 +381,83 @@ Answer types for a graded part (one per part, up to 8 parts):
 - { "type": "order", "items": ["first", "second", "third"] }  (listed in the correct order; I see them shuffled)
 - { "type": "range", "min": 0, "max": 6 }  (an interval like 0 < K < 6; null for unbounded)
 - { "type": "coefficients", "numerator": [1], "denominator": [1, 3, 2] }  (polynomials, highest power first)`;
+}
+
+// ── Lookups & Knowledge Inquiries ────────────────────────────────────────────
+
+export function buildInquiryPrompt(data: SkillsData, inquiryIds?: string[]): string {
+  const all: KnowledgeInquiry[] = data.inquiries ?? [];
+  const wanted = inquiryIds?.length ? new Set(inquiryIds) : null;
+  const selected = wanted
+    ? all.filter((q) => wanted.has(q.id))
+    : all.filter((q) => q.status === 'open');
+
+  const subjectsById = new Map(data.subjects.map((s) => [s.id, s]));
+
+  const inquiryLines = selected.length
+    ? selected.map((q, idx) => {
+        const sub = q.subjectId ? subjectsById.get(q.subjectId) : undefined;
+        const top = sub && q.topicId ? sub.topics.find((t) => t.id === q.topicId) : undefined;
+        const parts = [
+          `${idx + 1}. [inquiryId: "${q.id}"] ${q.question}`,
+          q.context ? `   Context: ${q.context}` : '',
+          sub ? `   Linked skill: ${sub.name}${top ? ` -> ${top.name}` : ''}` : '',
+          q.tags?.length ? `   Existing tags: ${q.tags.map((t) => `#${t}`).join(' ')}` : '',
+        ].filter(Boolean);
+        return parts.join('\n');
+      }).join('\n')
+    : '- (No open inquiries selected; write answers for any concepts I list below.)';
+
+  const skillLines = data.subjects.length
+    ? data.subjects.map((s) => {
+        const topics = s.topics.length ? s.topics.map((t) => `"${t.name}"`).join(', ') : '(no topics yet)';
+        return `- "${s.name}" (area: ${s.area}): topics: ${topics}`;
+      }).join('\n')
+    : '- (No skills created yet.)';
+
+  const existingKnowledge = all
+    .filter((q) => q.status === 'solved')
+    .slice(-30)
+    .map((q) => `- [[${q.question}]]${q.tags?.length ? ` (${q.tags.map((t) => `#${t}`).join(' ')})` : ''}`)
+    .join('\n');
+
+  return `You are helping me turn my running list of lookups and questions ("things I heard about and want to understand") into clear, interconnected Obsidian-style knowledge notes.
+
+Lookups & questions to solve:
+${inquiryLines}
+
+My existing skills and topics (use exact skill/topic names in "suggestedSubject" and "suggestedTopic" when one fits, and feel free to [[Wiki-link]] them):
+${skillLines}
+${existingKnowledge ? `\nConcepts already in my Knowledge Vault (cross-link with [[Wiki-links]] where relevant):\n${existingKnowledge}\n` : ''}
+Instructions for each lookup:
+1. "answer": Write a clear, accurate explanation in Markdown. Start with the core intuition in plain English, then explain how it works, why it matters, and give a concrete example or contrast. Use Obsidian \`[[Wiki-links]]\` to cross-link related concepts, skills, or topics (e.g. \`[[MCP]]\`, \`[[JSON-RPC]]\`) and lowercase \`#tags\` where helpful.
+2. "takeaways": 2 to 4 concise bullet points summarizing the key takeaways.
+3. "tags": 2 to 5 short lowercase tags (without leading \`#\`, e.g. \`["mcp", "ai-protocols"]\`).
+4. "sources": 1 to 3 authoritative, real references (official specs/docs, RFCs, textbooks, or URLs — only ones you are confident exist).
+5. "suggestedSubject" & "suggestedTopic": exact name of an existing skill and topic above if relevant (leave empty or omit if none fits).
+6. "flashcard": one active-recall flashcard \`{ "front": "...", "back": "...", "difficulty": 1..5 }\` testing real understanding rather than trivia.
+
+Reply with one JSON code block in exactly this shape and nothing after it:
+
+\`\`\`json
+{
+  "answers": [
+    {
+      "inquiryId": "exact inquiryId from the list above (or omit if answering a new lookup)",
+      "question": "What is MCP?",
+      "answer": "Clear Markdown explanation using [[Wiki-links]] and #tags...",
+      "takeaways": "- Key takeaway 1\\n- Key takeaway 2",
+      "tags": ["mcp", "protocols"],
+      "sources": ["Model Context Protocol specification (modelcontextprotocol.io)"],
+      "suggestedSubject": "Exact existing skill name",
+      "suggestedTopic": "Exact existing topic name",
+      "flashcard": {
+        "front": "What problem does MCP solve?",
+        "back": "Provides a standard client-server protocol for LLM hosts to discover and invoke external tools, resources, and prompts.",
+        "difficulty": 2
+      }
+    }
+  ]
+}
+\`\`\``;
 }

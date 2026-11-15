@@ -575,3 +575,657 @@
 .kv-attachment-link:hover {
   border-color: var(--accent-light);
 }
+
+/* ── Vault Sub-modes, Quick-Jot Strip & Inspector Inquiry Controls ── */
+
+.kv-top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 16px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+}
+
+.kv-subtabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.kv-subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.kv-subtab:hover {
+  color: var(--foreground);
+  border-color: var(--accent-light);
+}
+
+.kv-subtab.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--primary-fg);
+}
+
+.kv-subtab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  padding: 0.05rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--habit-2) 22%, var(--background));
+  color: var(--foreground);
+  border: 1px solid color-mix(in srgb, var(--habit-2) 55%, var(--surface-border));
+}
+
+.kv-subtab.is-active .kv-subtab-badge {
+  background: color-mix(in srgb, var(--primary-fg) 20%, transparent);
+  color: var(--primary-fg);
+  border-color: color-mix(in srgb, var(--primary-fg) 35%, transparent);
+}
+
+.kv-quickjot-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.kv-quickjot-form {
+  display: flex;
+  flex: 1 1 16rem;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.kv-quickjot-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.kv-inspector-inquiry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--habit-2) 45%, var(--surface-border));
+  background: var(--background);
+}
+
+.kv-inspector-inq-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.kv-inspector-inq-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.kv-inspector-inq-text {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kv-inquiry-edit-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.kv-inquiry-edit-box input,
+.kv-inquiry-edit-box textarea,
+.kv-inquiry-edit-box select {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.42rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+/* ── InquiryDesk: Lookups & Questions Inbox / Knowledge Base ── */
+
+.inq-desk {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.inq-desk.is-compact {
+  gap: 0.7rem;
+}
+
+.inq-capture-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.95rem 1.05rem;
+  border-radius: 16px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+}
+
+.inq-desk.is-compact .inq-capture-card {
+  padding: 0.8rem 0.85rem;
+}
+
+.inq-capture-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+.inq-capture-head h2,
+.inq-capture-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.inq-capture-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.inq-capture-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.inq-capture-input {
+  flex: 1 1 18rem;
+  min-width: 0;
+  min-height: 2.55rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.94rem;
+}
+
+.inq-capture-extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem;
+}
+
+.inq-capture-extras input,
+.inq-capture-extras select,
+.inq-drawer input:not([type='checkbox']):not([type='radio']),
+.inq-drawer select,
+.inq-drawer textarea,
+.inq-edit-form input:not([type='checkbox']):not([type='radio']),
+.inq-edit-form select,
+.inq-edit-form textarea {
+  width: 100%;
+  min-height: 2.3rem;
+  padding: 0.42rem 0.68rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.inq-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.95rem 1.05rem;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--surface-border));
+  background: var(--card-bg);
+}
+
+.inq-drawer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.inq-drawer-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.inq-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.inq-ai-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 12.5rem;
+  overflow-y: auto;
+  padding: 0.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+}
+
+.inq-ai-select-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.32rem 0.45rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.inq-ai-select-row:hover {
+  background: var(--surface-hover);
+}
+
+.inq-ai-select-row input[type='checkbox'] {
+  margin-top: 0.22rem;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.inq-preview-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.inq-preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+}
+
+.inq-preview-item p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inq-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+}
+
+.inq-status-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.inq-status-tab {
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.28rem 0.72rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inq-status-tab[aria-selected='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--primary-fg);
+}
+
+.inq-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+}
+
+.inq-filter-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.inq-filter-skill {
+  min-height: 2.25rem;
+  max-width: 14rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.inq-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.inq-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  scroll-margin-top: 5rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.inq-card.is-open {
+  border-left: 3px solid var(--habit-2);
+}
+
+.inq-card.is-solved {
+  border-left: 3px solid var(--success);
+}
+
+.inq-card.is-focused {
+  border-color: var(--accent-light);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.inq-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem 0.75rem;
+}
+
+.inq-card-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
+.inq-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.inq-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.14rem 0.58rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 1px solid var(--surface-border);
+  white-space: nowrap;
+}
+
+.inq-status-pill.is-open {
+  border-color: color-mix(in srgb, var(--habit-2) 60%, var(--surface-border));
+  background: color-mix(in srgb, var(--habit-2) 15%, var(--background));
+  color: var(--foreground);
+}
+
+.inq-status-pill.is-solved {
+  border-color: color-mix(in srgb, var(--success) 60%, var(--surface-border));
+  background: color-mix(in srgb, var(--success) 16%, var(--background));
+  color: var(--foreground);
+}
+
+.inq-skill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.14rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+.inq-card-question {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.inq-card-context {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.inq-answer-box {
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inq-takeaways-box {
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, var(--surface-border));
+  background: color-mix(in srgb, var(--success) 8%, var(--background));
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inq-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.inq-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.52rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--habit-3) 45%, var(--surface-border));
+  background: color-mix(in srgb, var(--habit-3) 12%, var(--background));
+  color: var(--habit-3);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inq-tag-chip:hover {
+  border-color: var(--habit-3);
+  text-decoration: underline;
+}
+
+.inq-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.inq-source-link {
+  color: var(--accent-light);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.inq-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.inq-notice {
+  margin: 0;
+  padding: 0.55rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--success) 50%, var(--surface-border));
+  background: color-mix(in srgb, var(--success) 12%, var(--background));
+  color: var(--foreground);
+  font-size: 0.88rem;
+}
+
+/* ── Board Open Lookups Preview Card ── */
+
+.sk-board-inquiries-preview {
+  gap: 0.65rem;
+}
+
+.sk-board-inq-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sk-board-inq-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--background);
+}
+
+.sk-board-inq-q {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .kv-top-bar {
+    padding: 0.65rem 0.75rem;
+  }
+  .inq-capture-main {
+    flex-direction: column;
+  }
+  .inq-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .inq-filter-controls {
+    justify-content: stretch;
+  }
+}

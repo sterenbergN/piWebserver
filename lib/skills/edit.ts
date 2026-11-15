@@ -6,15 +6,19 @@ import { gradeQuestion, parseResponses } from '@/lib/daily/grade';
 import type { PartResponse, Question } from '@/lib/daily/types';
 import { isDateKey, type DateKey } from '@/lib/habits/dates';
 import { cardScore, generateScheduleFromSteps, gradedScore, nextSchedule, shiftScheduleToToday, wouldCreateSkillCycle } from './model';
-import { LIMITS, SkillsInputError, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply, sameName } from './parse';
 import {
-  CARD_RATINGS, MAX_LEVEL, PROJECT_ATTACHMENT_KINDS, RESOURCE_KINDS, RESOURCE_STATUSES, SKILL_STEP_KINDS, SUBJECT_STATUSES,
-  itemDifficulty,
-  type CardItem, type CardRating, type DraftResource, type DraftStep, type DraftTopic, type InterconnectedPlanDraft,
-  type Item, type ProgressData, type ProjectAttachment, type ProjectAttachmentKind, type ProjectLogEntry,
-  type Resource, type ResourceKind, type ResourceStatus, type ScheduledSkillTask, type SkillAttempt,
-  type SkillEdit, type SkillQuestion, type SkillSchedule, type SkillStep, type SkillStepKind,
-  type SkillsData, type Stage, type Subject, type SubjectStatus, type Topic,
+  LIMITS, SkillsInputError, inquiryConceptAlias, normalizeInquiryQuestionKey, normalizeInquirySources,
+  normalizeInquiryTags, parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply, sameName,
+} from './parse';
+import {
+  CARD_RATINGS, INQUIRY_STATUSES, MAX_LEVEL, PROJECT_ATTACHMENT_KINDS, RESOURCE_KINDS, RESOURCE_STATUSES,
+  SKILL_STEP_KINDS, SUBJECT_STATUSES, itemDifficulty,
+  type CardItem, type CardRating, type DraftInquiryAnswer, type DraftResource, type DraftStep, type DraftTopic,
+  type InquiryStatus, type InterconnectedPlanDraft, type Item, type KnowledgeInquiry, type ProgressData,
+  type ProjectAttachment, type ProjectAttachmentKind, type ProjectLogEntry, type Resource, type ResourceKind,
+  type ResourceStatus, type ScheduledSkillTask, type SkillAttempt, type SkillEdit, type SkillQuestion,
+  type SkillSchedule, type SkillStep, type SkillStepKind, type SkillsData, type Stage, type Subject,
+  type SubjectStatus, type Topic,
 } from './types';
 
 export { SkillsInputError };
@@ -249,6 +253,14 @@ export function removeSubject(data: SkillsData, progress: ProgressData, id: unkn
       tasks: data.schedule.tasks.filter((t) => t.subjectId !== subject.id),
     };
   }
+  if (data.inquiries) {
+    for (const q of data.inquiries) {
+      if (q.subjectId === subject.id) {
+        delete q.subjectId;
+        delete q.topicId;
+      }
+    }
+  }
   forgetItems(progress, subject.items.map((i) => i.id));
   progress.attempts = progress.attempts.filter((a) => a.subjectId !== subject.id);
 }
@@ -314,7 +326,7 @@ export function moveTopic(subject: Subject, topicId: unknown, direction: unknown
 }
 
 /** Remove a topic, its questions and their history, and untie it from resources and steps. */
-export function removeTopic(subject: Subject, progress: ProgressData, topicId: unknown, now: string) {
+export function removeTopic(subject: Subject, progress: ProgressData, topicId: unknown, now: string, data?: SkillsData) {
   const topic = findTopic(subject, topicId);
   subject.topics = subject.topics.filter((t) => t !== topic);
   const gone = subject.items.filter((i) => i.topicId === topic.id);
@@ -327,6 +339,11 @@ export function removeTopic(subject: Subject, progress: ProgressData, topicId: u
       const { topicId: _t, ...rest } = st;
       return rest;
     });
+  }
+  if (data?.inquiries) {
+    for (const q of data.inquiries) {
+      if (q.topicId === topic.id) delete q.topicId;
+    }
   }
   touch(subject, now);
 }
@@ -1259,6 +1276,526 @@ export function rateCard(subject: Subject, item: Item, progress: ProgressData, r
   }, rating as CardRating);
 }
 
+// ── Lookups & Knowledge Inquiries ────────────────────────────────────────────
+
+export function findInquiry(data: SkillsData, id: unknown): KnowledgeInquiry {
+  const inquiry = isId(id) ? (data.inquiries ?? []).find((q) => q.id === id) : undefined;
+  if (!inquiry) throw new SkillsInputError('That lookup isn’t here any more.');
+  return inquiry;
+}
+
+/**
+ * Parse a pasted running list of questions/lookups: strips bullets (`- `, `* `,
+ * `• `, `[ ] `, `[x] `, `1. `, `1) `), drops blanks, and deduplicates
+ * case-insensitively while preserving the first spelling.
+ */
+export function parseRunningInquiryList(rawText: string): string[] {
+  if (typeof rawText !== 'string' || !rawText.trim()) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rawLine of rawText.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    while (line) {
+      const next = line
+        .replace(/^(?:[-*•◦▪‣]|\d+[.)])(?:\s+|$)/, '')
+        .replace(/^\[(?: |x|X)?\](?:\s+|$)/, '')
+        .trim();
+      if (next === line) break;
+      line = next;
+    }
+    if (!line) continue;
+    const clipped = line.slice(0, LIMITS.question).trim();
+    if (!clipped) continue;
+    const key = clipped.replace(/\s+/g, ' ').toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clipped);
+  }
+  return out;
+}
+
+function resolveNewInquiryLink(
+  data: SkillsData,
+  rawSubjectId: unknown,
+  rawTopicId: unknown,
+): { subjectId?: string; topicId?: string } {
+  const hasSubject = rawSubjectId !== undefined && rawSubjectId !== null && rawSubjectId !== '';
+  const hasTopic = rawTopicId !== undefined && rawTopicId !== null && rawTopicId !== '';
+  if (hasSubject) {
+    const subject = findSubject(data, rawSubjectId);
+    if (!hasTopic) return { subjectId: subject.id };
+    const topic = findTopic(subject, rawTopicId);
+    return { subjectId: subject.id, topicId: topic.id };
+  }
+  if (hasTopic) {
+    if (!isId(rawTopicId)) throw new SkillsInputError('That topic isn’t here any more.');
+    const owner = data.subjects.find((s) => s.topics.some((t) => t.id === rawTopicId));
+    if (!owner) throw new SkillsInputError('That topic isn’t here any more.');
+    return { subjectId: owner.id, topicId: rawTopicId };
+  }
+  return {};
+}
+
+export function addInquiry(
+  data: SkillsData,
+  input: Input,
+  makeId: () => string,
+  now: string,
+): KnowledgeInquiry {
+  const question = text(input.question, LIMITS.question);
+  if (!question) throw new SkillsInputError('Write the question or lookup first.');
+  const existing = data.inquiries ?? [];
+  if (existing.length >= 5000) throw new SkillsInputError('That’s a lot of lookups. Remove some first.');
+
+  let status: InquiryStatus = 'open';
+  if (has(input, 'status') && input.status !== undefined && input.status !== '') {
+    if (!INQUIRY_STATUSES.includes(input.status as InquiryStatus)) {
+      throw new SkillsInputError('Status must be open or solved.');
+    }
+    status = input.status as InquiryStatus;
+  }
+
+  const context = text(input.context, LIMITS.context);
+  const answer = text(input.answer, LIMITS.answer);
+  const takeaways = text(input.takeaways, LIMITS.takeaways);
+  const sources = normalizeInquirySources(input.sources);
+  const tags = normalizeInquiryTags(input.tags);
+  const link = resolveNewInquiryLink(data, input.subjectId, input.topicId);
+
+  const inquiry: KnowledgeInquiry = {
+    id: makeId(),
+    question,
+    ...(context ? { context } : {}),
+    ...(answer ? { answer } : {}),
+    ...(takeaways ? { takeaways } : {}),
+    ...(sources.length ? { sources } : {}),
+    ...(tags.length ? { tags } : {}),
+    status,
+    ...(link.subjectId ? { subjectId: link.subjectId } : {}),
+    ...(link.topicId ? { topicId: link.topicId } : {}),
+    createdAt: now,
+    updatedAt: now,
+    ...(status === 'solved' ? { solvedAt: now } : {}),
+  };
+
+  data.inquiries = [...existing, inquiry];
+  return inquiry;
+}
+
+export function importInquiries(
+  data: SkillsData,
+  input: Input,
+  makeId: () => string,
+  now: string,
+): { added: KnowledgeInquiry[]; skipped: number } {
+  const defaultLink = resolveNewInquiryLink(data, input.subjectId, input.topicId);
+  const defaultTags = normalizeInquiryTags(input.tags);
+
+  type Candidate = {
+    question: string;
+    context?: unknown;
+    answer?: unknown;
+    takeaways?: unknown;
+    sources?: unknown;
+    tags?: unknown;
+    subjectId?: unknown;
+    topicId?: unknown;
+    status?: unknown;
+  };
+  const candidates: Candidate[] = [];
+
+  if (typeof input.text === 'string' && input.text.trim()) {
+    for (const q of parseRunningInquiryList(input.text)) {
+      candidates.push({ question: q });
+    }
+  }
+  if (Array.isArray(input.items)) {
+    for (const rawItem of input.items.slice(0, 500)) {
+      if (!rawItem || typeof rawItem !== 'object') continue;
+      const item = rawItem as Input;
+      candidates.push({
+        question: text(item.question, LIMITS.question),
+        context: item.context,
+        answer: item.answer,
+        takeaways: item.takeaways,
+        sources: item.sources,
+        tags: item.tags,
+        subjectId: item.subjectId,
+        topicId: item.topicId,
+        status: item.status,
+      });
+    }
+  }
+
+  if (!candidates.length) {
+    throw new SkillsInputError('Paste at least one question or lookup to import.');
+  }
+
+  const existing = data.inquiries ?? [];
+  const seenExact = new Set<string>();
+  const seenAlias = new Set<string>();
+  for (const q of existing) {
+    const k = normalizeInquiryQuestionKey(q.question);
+    if (k) seenExact.add(k);
+    const a = normalizeInquiryQuestionKey(inquiryConceptAlias(q.question));
+    if (a) seenAlias.add(a);
+  }
+
+  const added: KnowledgeInquiry[] = [];
+  let skipped = 0;
+
+  for (const c of candidates) {
+    const q = c.question.trim();
+    if (!q) {
+      skipped++;
+      continue;
+    }
+    const qKey = normalizeInquiryQuestionKey(q);
+    const qAlias = normalizeInquiryQuestionKey(inquiryConceptAlias(q));
+    const duplicate = seenExact.has(qKey)
+      || (qAlias && seenExact.has(qAlias))
+      || (qKey && qKey === qAlias && seenAlias.has(qKey));
+    if (duplicate) {
+      skipped++;
+      continue;
+    }
+
+    const mergedTags = normalizeInquiryTags([
+      ...defaultTags,
+      ...normalizeInquiryTags(c.tags),
+    ]);
+    const useSubject = c.subjectId !== undefined && c.subjectId !== null && c.subjectId !== ''
+      ? c.subjectId
+      : defaultLink.subjectId;
+    const useTopic = c.topicId !== undefined && c.topicId !== null && c.topicId !== ''
+      ? c.topicId
+      : (!c.subjectId || c.subjectId === defaultLink.subjectId ? defaultLink.topicId : undefined);
+
+    const created = addInquiry(data, {
+      question: q,
+      context: c.context,
+      answer: c.answer,
+      takeaways: c.takeaways,
+      sources: c.sources,
+      tags: mergedTags,
+      subjectId: useSubject,
+      topicId: useTopic,
+      status: c.status,
+    }, makeId, now);
+
+    seenExact.add(qKey);
+    if (qAlias) seenAlias.add(qAlias);
+    added.push(created);
+  }
+
+  return { added, skipped };
+}
+
+export function editInquiry(
+  data: SkillsData,
+  inquiryId: unknown,
+  input: Input,
+  now: string,
+): KnowledgeInquiry {
+  const inquiry = findInquiry(data, inquiryId);
+
+  if (has(input, 'question')) {
+    const question = text(input.question, LIMITS.question);
+    if (!question) throw new SkillsInputError('A lookup needs a question.');
+    inquiry.question = question;
+  }
+  if (has(input, 'context')) setText(inquiry, 'context', input.context, LIMITS.context);
+  if (has(input, 'answer')) setText(inquiry, 'answer', input.answer, LIMITS.answer);
+  if (has(input, 'takeaways')) setText(inquiry, 'takeaways', input.takeaways, LIMITS.takeaways);
+  if (has(input, 'sources')) {
+    const sources = normalizeInquirySources(input.sources);
+    if (sources.length) inquiry.sources = sources;
+    else delete inquiry.sources;
+  }
+  if (has(input, 'tags')) {
+    const tags = normalizeInquiryTags(input.tags);
+    if (tags.length) inquiry.tags = tags;
+    else delete inquiry.tags;
+  }
+
+  if (has(input, 'subjectId')) {
+    const rawSub = input.subjectId;
+    if (rawSub === undefined || rawSub === null || rawSub === '') {
+      if (has(input, 'topicId') && input.topicId !== undefined && input.topicId !== null && input.topicId !== '') {
+        throw new SkillsInputError('Pick a subject for that topic.');
+      }
+      delete inquiry.subjectId;
+      delete inquiry.topicId;
+    } else {
+      const subject = findSubject(data, rawSub);
+      inquiry.subjectId = subject.id;
+      if (has(input, 'topicId')) {
+        const rawTop = input.topicId;
+        if (rawTop === undefined || rawTop === null || rawTop === '') delete inquiry.topicId;
+        else inquiry.topicId = findTopic(subject, rawTop).id;
+      } else if (inquiry.topicId && !subject.topics.some((t) => t.id === inquiry.topicId)) {
+        delete inquiry.topicId;
+      }
+    }
+  } else if (has(input, 'topicId')) {
+    const rawTop = input.topicId;
+    if (rawTop === undefined || rawTop === null || rawTop === '') {
+      delete inquiry.topicId;
+    } else if (inquiry.subjectId) {
+      const subject = findSubject(data, inquiry.subjectId);
+      inquiry.topicId = findTopic(subject, rawTop).id;
+    } else {
+      const link = resolveNewInquiryLink(data, undefined, rawTop);
+      inquiry.subjectId = link.subjectId;
+      inquiry.topicId = link.topicId;
+    }
+  }
+
+  if (has(input, 'status') && input.status !== undefined) {
+    if (!INQUIRY_STATUSES.includes(input.status as InquiryStatus)) {
+      throw new SkillsInputError('Status must be open or solved.');
+    }
+    const nextStatus = input.status as InquiryStatus;
+    inquiry.status = nextStatus;
+    if (nextStatus === 'solved') inquiry.solvedAt = inquiry.solvedAt ?? now;
+    else delete inquiry.solvedAt;
+  }
+
+  inquiry.updatedAt = now;
+  return inquiry;
+}
+
+export function toggleInquiry(
+  data: SkillsData,
+  inquiryId: unknown,
+  status: unknown,
+  answer: unknown,
+  now: string,
+): KnowledgeInquiry {
+  const inquiry = findInquiry(data, inquiryId);
+  let nextStatus: InquiryStatus;
+  if (status === undefined || status === null || status === '') {
+    nextStatus = inquiry.status === 'solved' ? 'open' : 'solved';
+  } else if (INQUIRY_STATUSES.includes(status as InquiryStatus)) {
+    nextStatus = status as InquiryStatus;
+  } else {
+    throw new SkillsInputError('Status must be open or solved.');
+  }
+
+  if (answer !== undefined) {
+    setText(inquiry, 'answer', answer, LIMITS.answer);
+  }
+  inquiry.status = nextStatus;
+  if (nextStatus === 'solved') inquiry.solvedAt = inquiry.solvedAt ?? now;
+  else delete inquiry.solvedAt;
+  inquiry.updatedAt = now;
+  return inquiry;
+}
+
+export function removeInquiry(data: SkillsData, inquiryId: unknown) {
+  const inquiry = findInquiry(data, inquiryId);
+  data.inquiries = (data.inquiries ?? []).filter((q) => q !== inquiry);
+}
+
+export function promoteInquiryToCard(
+  data: SkillsData,
+  input: Input,
+  makeId: () => string,
+  now: string,
+): { inquiry: KnowledgeInquiry; card: CardItem; cardId: string } {
+  const inquiry = findInquiry(data, input.inquiryId);
+  const rawSubjectId = input.subjectId !== undefined && input.subjectId !== null && input.subjectId !== ''
+    ? input.subjectId
+    : inquiry.subjectId;
+  if (!rawSubjectId) {
+    throw new SkillsInputError('Pick a skill and topic before creating a flashcard.');
+  }
+  const subject = findSubject(data, rawSubjectId);
+  const rawTopicId = input.topicId !== undefined && input.topicId !== null && input.topicId !== ''
+    ? input.topicId
+    : (inquiry.subjectId === subject.id ? inquiry.topicId : undefined);
+  if (!rawTopicId) {
+    throw new SkillsInputError('Pick a topic before creating a flashcard.');
+  }
+  const topic = findTopic(subject, rawTopicId);
+
+  const front = text(input.front, LIMITS.front) || inquiry.question;
+  const back = text(input.back, LIMITS.back) || inquiry.answer || inquiry.takeaways || '';
+  if (!front || !back) {
+    throw new SkillsInputError('Add an answer or back text before creating a flashcard.');
+  }
+
+  const existingCard = inquiry.cardItemId
+    ? subject.items.find((i): i is CardItem => i.id === inquiry.cardItemId && i.kind === 'card')
+    : undefined;
+
+  const card = saveCard(subject, {
+    ...(existingCard ? { itemId: existingCard.id } : {}),
+    topicId: topic.id,
+    front,
+    back,
+    difficulty: input.difficulty,
+  }, makeId, now) as CardItem;
+
+  inquiry.subjectId = subject.id;
+  inquiry.topicId = topic.id;
+  inquiry.cardItemId = card.id;
+  inquiry.updatedAt = now;
+
+  return { inquiry, card, cardId: card.id };
+}
+
+function findMatchingInquiryForAnswer(inquiries: KnowledgeInquiry[], ans: DraftInquiryAnswer): KnowledgeInquiry | undefined {
+  if (ans.inquiryId) {
+    const byId = inquiries.find((q) => q.id === ans.inquiryId);
+    if (byId) return byId;
+  }
+  const qKey = normalizeInquiryQuestionKey(ans.question);
+  if (!qKey) return undefined;
+  const exact = inquiries.find((q) => normalizeInquiryQuestionKey(q.question) === qKey);
+  if (exact) return exact;
+  const aliasKey = normalizeInquiryQuestionKey(inquiryConceptAlias(ans.question));
+  if (!aliasKey) return undefined;
+  return inquiries.find((q) => normalizeInquiryQuestionKey(inquiryConceptAlias(q.question)) === aliasKey);
+}
+
+export function applyInquiryAnswers(
+  data: SkillsData,
+  input: Input,
+  makeId: () => string,
+  now: string,
+): { updated: number; created: number; cardsCreated: number } {
+  let answers: DraftInquiryAnswer[];
+  if (typeof input.reply === 'string' && input.reply.trim()) {
+    const parsed = parseInquiryReply(input.reply, data);
+    if (!parsed.ok) throw new SkillsInputError(parsed.error);
+    answers = parsed.data;
+  } else if (Array.isArray(input.answers)) {
+    answers = input.answers
+      .filter((a): a is DraftInquiryAnswer => !!a && typeof a === 'object')
+      .map((a) => ({
+        ...(typeof a.inquiryId === 'string' && a.inquiryId.trim() ? { inquiryId: a.inquiryId.trim() } : {}),
+        question: text(a.question, LIMITS.question),
+        answer: text(a.answer, LIMITS.answer),
+        ...(text(a.takeaways, LIMITS.takeaways) ? { takeaways: text(a.takeaways, LIMITS.takeaways) } : {}),
+        tags: normalizeInquiryTags(a.tags),
+        sources: normalizeInquirySources(a.sources),
+        ...(text(a.suggestedSubject, LIMITS.name) ? { suggestedSubject: text(a.suggestedSubject, LIMITS.name) } : {}),
+        ...(text(a.suggestedTopic, LIMITS.name) ? { suggestedTopic: text(a.suggestedTopic, LIMITS.name) } : {}),
+        ...(typeof a.subjectId === 'string' && a.subjectId.trim() ? { subjectId: a.subjectId.trim() } : {}),
+        ...(typeof a.topicId === 'string' && a.topicId.trim() ? { topicId: a.topicId.trim() } : {}),
+        ...(a.flashcard && typeof a.flashcard === 'object' ? { flashcard: a.flashcard } : {}),
+      }))
+      .filter((a) => !!a.question && (!!a.answer || !!a.takeaways));
+    if (!answers.length) {
+      throw new SkillsInputError('Provide at least one inquiry answer to apply.');
+    }
+  } else {
+    throw new SkillsInputError('Provide an AI reply or inquiry answers to apply.');
+  }
+
+  data.inquiries ??= [];
+  const createCards = input.createCards === true;
+  let updated = 0;
+  let created = 0;
+  let cardsCreated = 0;
+
+  for (const ans of answers) {
+    const ansQuestion = text(ans.question, LIMITS.question);
+    const ansAnswer = text(ans.answer, LIMITS.answer);
+    const ansTakeaways = text(ans.takeaways, LIMITS.takeaways);
+    if (!ansQuestion || (!ansAnswer && !ansTakeaways)) continue;
+
+    const ansTags = normalizeInquiryTags(ans.tags);
+    const ansSources = normalizeInquirySources(ans.sources);
+
+    const ansSubject = ans.subjectId
+      ? data.subjects.find((s) => s.id === ans.subjectId)
+      : ans.suggestedSubject
+        ? data.subjects.find((s) => sameName(s.name, ans.suggestedSubject!))
+        : undefined;
+    const ansTopic = ansSubject
+      ? (ans.topicId
+          ? ansSubject.topics.find((t) => t.id === ans.topicId)
+          : ans.suggestedTopic
+            ? ansSubject.topics.find((t) => sameName(t.name, ans.suggestedTopic!))
+            : undefined)
+      : undefined;
+
+    let targetInquiry = findMatchingInquiryForAnswer(data.inquiries, ans);
+
+    if (targetInquiry) {
+      if (ansAnswer) targetInquiry.answer = ansAnswer;
+      if (ansTakeaways) targetInquiry.takeaways = ansTakeaways;
+      const mergedTags = normalizeInquiryTags([...(targetInquiry.tags ?? []), ...ansTags]);
+      if (mergedTags.length) targetInquiry.tags = mergedTags;
+      const mergedSources = normalizeInquirySources([...(targetInquiry.sources ?? []), ...ansSources]);
+      if (mergedSources.length) targetInquiry.sources = mergedSources;
+
+      if (!targetInquiry.subjectId && ansSubject) {
+        targetInquiry.subjectId = ansSubject.id;
+      }
+      if (!targetInquiry.topicId && targetInquiry.subjectId) {
+        const linkedSub = data.subjects.find((s) => s.id === targetInquiry!.subjectId);
+        const matchingTop = linkedSub && ansTopic && linkedSub.id === ansSubject?.id
+          ? ansTopic
+          : linkedSub && ans.suggestedTopic
+            ? linkedSub.topics.find((t) => sameName(t.name, ans.suggestedTopic!))
+            : undefined;
+        if (matchingTop) targetInquiry.topicId = matchingTop.id;
+      }
+
+      targetInquiry.status = 'solved';
+      targetInquiry.solvedAt = targetInquiry.solvedAt ?? now;
+      targetInquiry.updatedAt = now;
+      updated++;
+    } else {
+      targetInquiry = addInquiry(data, {
+        question: ansQuestion,
+        answer: ansAnswer || ansTakeaways,
+        ...(ansTakeaways ? { takeaways: ansTakeaways } : {}),
+        tags: ansTags,
+        sources: ansSources,
+        status: 'solved',
+        ...(ansSubject ? { subjectId: ansSubject.id } : {}),
+        ...(ansSubject && ansTopic ? { topicId: ansTopic.id } : {}),
+      }, makeId, now);
+      created++;
+    }
+
+    if (createCards) {
+      const cardSubject = targetInquiry.subjectId
+        ? data.subjects.find((s) => s.id === targetInquiry!.subjectId)
+        : ansSubject;
+      const cardTopic = cardSubject && targetInquiry.topicId
+        ? cardSubject.topics.find((t) => t.id === targetInquiry!.topicId)
+        : (cardSubject && ansTopic ? cardSubject.topics.find((t) => t.id === ansTopic.id) : undefined);
+
+      if (cardSubject && cardTopic) {
+        const alreadyLinked = !!targetInquiry.cardItemId
+          && cardSubject.items.some((i) => i.id === targetInquiry!.cardItemId);
+        if (!alreadyLinked) {
+          const front = text(ans.flashcard?.front, LIMITS.front) || targetInquiry.question;
+          const back = text(ans.flashcard?.back, LIMITS.back) || targetInquiry.answer || targetInquiry.takeaways || '';
+          if (front && back) {
+            promoteInquiryToCard(data, {
+              inquiryId: targetInquiry.id,
+              subjectId: cardSubject.id,
+              topicId: cardTopic.id,
+              front,
+              back,
+              difficulty: ans.flashcard?.difficulty,
+            }, makeId, now);
+            cardsCreated++;
+          }
+        }
+      }
+    }
+  }
+
+  return { updated, created, cardsCreated };
+}
+
 // ── Unified SkillEdit dispatcher ─────────────────────────────────────────────
 
 /** Apply any synchronous `SkillEdit` op cleanly. */
@@ -1290,7 +1827,7 @@ export function applySkillEdit(
       return moveTopic(findSubject(data, edit.subjectId), edit.topicId, edit.direction);
     case 'remove-topic':
       if (!progress) throw new SkillsInputError('Progress data is required to remove a topic.');
-      return removeTopic(findSubject(data, edit.subjectId), progress, edit.topicId, now);
+      return removeTopic(findSubject(data, edit.subjectId), progress, edit.topicId, now, data);
     case 'topic-notes-new':
       throw new SkillsInputError('Creating a new Notes page must be handled through the async Notes link helper.');
     case 'topic-notes-tie': {
@@ -1386,5 +1923,19 @@ export function applySkillEdit(
       const subject = findSubject(data, edit.subjectId);
       return removeProjectLog(subject, findResource(subject, edit.resourceId), edit.logId, now);
     }
+    case 'add-inquiry':
+      return addInquiry(data, edit as unknown as Input, makeId, now);
+    case 'import-inquiries':
+      return importInquiries(data, edit as unknown as Input, makeId, now);
+    case 'edit-inquiry':
+      return editInquiry(data, edit.inquiryId, edit.changes as Input, now);
+    case 'toggle-inquiry':
+      return toggleInquiry(data, edit.inquiryId, edit.status, edit.answer, now);
+    case 'remove-inquiry':
+      return removeInquiry(data, edit.inquiryId);
+    case 'promote-inquiry-to-card':
+      return promoteInquiryToCard(data, edit as unknown as Input, makeId, now);
+    case 'apply-inquiry-answers':
+      return applyInquiryAnswers(data, edit as unknown as Input, makeId, now);
   }
 }

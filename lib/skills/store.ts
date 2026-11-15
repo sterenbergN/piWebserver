@@ -35,6 +35,7 @@ function normalizeSkills(raw: Partial<SkillsData> | null | undefined): SkillsDat
     subjects: Array.isArray(raw?.subjects) ? raw.subjects : [],
     ...(typeof raw?.notesNotebook === 'string' ? { notesNotebook: raw.notesNotebook } : {}),
     ...(schedule ? { schedule } : {}),
+    ...(Array.isArray(raw?.inquiries) ? { inquiries: raw.inquiries } : {}),
   };
 }
 

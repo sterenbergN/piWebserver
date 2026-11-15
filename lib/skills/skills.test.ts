@@ -1,19 +1,24 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { addDays } from '../habits/dates';
 import {
-  addProjectLog, addResource, addScheduleTask, addStep, addSubject, addTopic, answerGraded, applyInterconnectedPlan, applySkillEdit,
-  editProjectLog, editResource, editStep, importPlan, importQuestions, itemFeedback, moveStep, rateCard, rateTopics, rebuildScheduleFromSteps,
-  removeProjectLog, removeScheduleTask, removeStep, removeSubject, removeTopic, saveCard, setParents, setSchedule, shiftSchedule, SkillsInputError,
-  toggleScheduleTask, toggleStep,
+  addInquiry, addProjectLog, addResource, addScheduleTask, addStep, addSubject, addTopic, answerGraded, applyInquiryAnswers,
+  applyInterconnectedPlan, applySkillEdit, editInquiry, editProjectLog, editResource, editStep, importInquiries, importPlan,
+  importQuestions, itemFeedback, moveStep, parseRunningInquiryList, promoteInquiryToCard, rateCard, rateTopics,
+  rebuildScheduleFromSteps, removeInquiry, removeProjectLog, removeScheduleTask, removeStep, removeSubject, removeTopic,
+  saveCard, setParents, setSchedule, shiftSchedule, SkillsInputError, toggleInquiry, toggleScheduleTask, toggleStep,
 } from './edit';
 import {
   boardSummary, buildQueue, expectedScore, fadedLevel, fitLevel, freeResourceSearchLinks, generateScheduleFromSteps, gradedScore, levelHistory,
   nextSchedule, nextSteps, parentSkillsOf, retentionAfter, scheduleByDay, shiftScheduleToToday, stabilityDays, stepProgress, subjectStats,
   subskillsOf, tierOf, wouldCreateSkillCycle,
 } from './model';
-import { parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply } from './parse';
-import { buildInterconnectedPlanPrompt, buildPlanPrompt, buildQuestionsPrompt } from './prompts';
+import { parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply } from './parse';
+import { buildInquiryPrompt, buildInterconnectedPlanPrompt, buildPlanPrompt, buildQuestionsPrompt } from './prompts';
+import { readSkills, updateSkills } from './store';
 import { FRESH_TARGET, WEEKLY_CAP, topUpRequest } from './topup';
 import { SKILLS_XP, reviewDays, skillsXp } from './xp';
 import { emptyProgress, emptySkills, type ProgressData, type SkillSchedule, type SkillsData, type Subject } from './types';
@@ -681,4 +686,314 @@ test('project log CRUD and unified applySkillEdit dispatcher', () => {
   assert.equal(shifted.shiftedDays, 1);
   assert.equal(data.schedule!.tasks[0].day, TODAY);
   assert.ok(boardSummary(data, emptyProgress(), TODAY).schedule.todayTasks.length === 1);
+});
+
+test('parseRunningInquiryList cleans bullets, checkboxes, numbering, blanks, and case duplicates', () => {
+  const raw = [
+    '',
+    '  - What is MCP?  ',
+    '* What is R1 Redundancy?',
+    '• What is gRPC?',
+    '[ ] How does Raft work?',
+    '[x]   Already checked question',
+    '- [ ] Nested checklist item',
+    '1. First numbered lookup',
+    '2) Second numbered lookup',
+    '-',
+    '1.',
+    '   what is mcp? ',
+    '--cli-flag',
+    '1.5 volt rail',
+  ].join('\n');
+  assert.deepEqual(parseRunningInquiryList(raw), [
+    'What is MCP?',
+    'What is R1 Redundancy?',
+    'What is gRPC?',
+    'How does Raft work?',
+    'Already checked question',
+    'Nested checklist item',
+    'First numbered lookup',
+    'Second numbered lookup',
+    '--cli-flag',
+    '1.5 volt rail',
+  ]);
+  assert.deepEqual(parseRunningInquiryList('   \n\n  '), []);
+});
+
+test('inquiry CRUD, tag/source normalization, subject/topic validation, import dedup, and boardSummary', () => {
+  const { data, progress, subject, basics, nozzles } = setup();
+
+  assert.throws(() => addInquiry(data, { question: '   ' }, makeId, NOW), SkillsInputError);
+  assert.throws(() => addInquiry(data, { question: 'Q', subjectId: 'missing' }, makeId, NOW), SkillsInputError);
+  assert.throws(() => addInquiry(data, { question: 'Q', subjectId: subject.id, topicId: 'missing' }, makeId, NOW), SkillsInputError);
+  assert.throws(() => addInquiry(data, { question: 'Q', status: 'bad' }, makeId, NOW), SkillsInputError);
+
+  const q1 = addInquiry(data, {
+    question: 'What is MCP?',
+    context: 'Heard on a podcast',
+    tags: ['#MCP', 'mcp', ' #AI-Protocols ', ''],
+    sources: ['https://modelcontextprotocol.io', '  ', 'https://modelcontextprotocol.io'],
+    topicId: basics.id,
+  }, makeId, NOW);
+  assert.equal(q1.status, 'open');
+  assert.equal(q1.solvedAt, undefined);
+  assert.equal(q1.subjectId, subject.id);
+  assert.equal(q1.topicId, basics.id);
+  assert.deepEqual(q1.tags, ['mcp', 'ai-protocols']);
+  assert.deepEqual(q1.sources, ['https://modelcontextprotocol.io']);
+
+  // Editing inquiry fields, clearing optional links, and status transitions
+  editInquiry(data, q1.id, {
+    context: '',
+    tags: ['#Agents', 'MCP'],
+    topicId: nozzles.id,
+    status: 'solved',
+    answer: 'Model Context Protocol connects hosts to tools via [[JSON-RPC]].',
+  }, '2026-11-12T16:00:00.000Z');
+  assert.equal(q1.context, undefined);
+  assert.deepEqual(q1.tags, ['agents', 'mcp']);
+  assert.equal(q1.topicId, nozzles.id);
+  assert.equal(q1.status, 'solved');
+  assert.equal(q1.solvedAt, '2026-11-12T16:00:00.000Z');
+
+  assert.throws(() => editInquiry(data, q1.id, { question: '' }, NOW), SkillsInputError);
+  assert.throws(() => editInquiry(data, 'nope', { question: 'Valid' }, NOW), SkillsInputError);
+  assert.throws(() => editInquiry(data, q1.id, { subjectId: '', topicId: nozzles.id }, NOW), SkillsInputError);
+
+  // Toggle flips open <-> solved and manages solvedAt + optional answer
+  toggleInquiry(data, q1.id, undefined, undefined, '2026-11-12T17:00:00.000Z');
+  assert.equal(q1.status, 'open');
+  assert.equal(q1.solvedAt, undefined);
+  toggleInquiry(data, q1.id, 'solved', 'Updated MCP explanation.', '2026-11-12T18:00:00.000Z');
+  assert.equal(q1.status, 'solved');
+  assert.equal(q1.solvedAt, '2026-11-12T18:00:00.000Z');
+  assert.equal(q1.answer, 'Updated MCP explanation.');
+  assert.throws(() => toggleInquiry(data, q1.id, 'bogus', undefined, NOW), SkillsInputError);
+
+  // Bulk import deduplicates against existing inquiries (? stripped + concept alias)
+  const imported = importInquiries(data, {
+    text: '- what is mcp\n- MCP\n- What is R1 Redundancy?\n- How does MCP work?',
+    items: [{ question: 'What is R1 Redundancy?' }, { question: 'What is BGP anycast?', tags: ['#Networking'] }],
+    subjectId: subject.id,
+    tags: ['#Lookup'],
+  }, makeId, NOW);
+  assert.equal(imported.added.length, 3);
+  assert.equal(imported.skipped, 3);
+  assert.deepEqual(imported.added[2].tags, ['lookup', 'networking']);
+  assert.throws(() => importInquiries(data, { text: '  \n-  ' }, makeId, NOW), SkillsInputError);
+
+  // Add 10 more open inquiries with ascending timestamps to verify recentOpen sorting & cap at 10
+  for (let i = 1; i <= 10; i++) {
+    addInquiry(data, { question: `Open question ${i}` }, makeId, `2026-11-13T${String(i).padStart(2, '0')}:00:00.000Z`);
+  }
+  const summary = boardSummary(data, progress, TODAY);
+  assert.equal(summary.inquiries.total, 14);
+  assert.equal(summary.inquiries.open, 13);
+  assert.equal(summary.inquiries.solved, 1);
+  assert.equal(summary.inquiries.recentOpen.length, 10);
+  assert.equal(summary.inquiries.recentOpen[0].question, 'Open question 10');
+  assert.equal(summary.inquiries.recentOpen[9].question, 'Open question 1');
+  assert.ok(summary.inquiries.recentOpen.every((q) => q.status === 'open'));
+
+  // Remove inquiry and verify subject/topic deletion cleans up inquiry links without deleting the inquiry
+  removeInquiry(data, imported.added[2].id);
+  assert.throws(() => removeInquiry(data, imported.added[2].id), SkillsInputError);
+  applySkillEdit(data, { op: 'remove-topic', subjectId: subject.id, topicId: nozzles.id }, makeId, TODAY, NOW, progress);
+  assert.equal(q1.topicId, undefined);
+  assert.equal(q1.subjectId, subject.id);
+  removeSubject(data, progress, subject.id);
+  assert.equal(q1.subjectId, undefined);
+});
+
+test('promoteInquiryToCard, buildInquiryPrompt, parseInquiryReply, applyInquiryAnswers, and SkillEdit wiring', () => {
+  const { data, subject, basics, nozzles } = setup();
+
+  const qUnlinked = addInquiry(data, { question: 'What is MCP?', context: 'AI tooling' }, makeId, NOW);
+  const qLinked = addInquiry(data, {
+    question: 'What is R1 Redundancy?',
+    tags: ['#infra'],
+    sources: ['Existing note'],
+    subjectId: subject.id,
+    topicId: basics.id,
+  }, makeId, NOW);
+  const qAlreadySolved = addInquiry(data, {
+    question: 'What is Isp?',
+    answer: 'Specific impulse.',
+    status: 'solved',
+    subjectId: subject.id,
+    topicId: basics.id,
+  }, makeId, NOW);
+
+  // promoteInquiryToCard validation and linking
+  assert.throws(() => promoteInquiryToCard(data, { inquiryId: qUnlinked.id }, makeId, NOW), SkillsInputError);
+  assert.throws(() => promoteInquiryToCard(data, { inquiryId: qLinked.id }, makeId, NOW), SkillsInputError);
+  const promotedDirect = promoteInquiryToCard(data, {
+    inquiryId: qAlreadySolved.id,
+    difficulty: 3,
+  }, makeId, NOW);
+  assert.equal(promotedDirect.card.front, 'What is Isp?');
+  assert.equal(promotedDirect.card.back, 'Specific impulse.');
+  assert.equal(promotedDirect.card.difficulty, 3);
+  assert.equal(qAlreadySolved.cardItemId, promotedDirect.cardId);
+
+  // buildInquiryPrompt selects open inquiries by default, or specific inquiryIds when passed
+  const openPrompt = buildInquiryPrompt(data);
+  assert.ok(openPrompt.includes(qUnlinked.id) && openPrompt.includes('What is MCP?'));
+  assert.ok(openPrompt.includes(qLinked.id) && openPrompt.includes('What is R1 Redundancy?'));
+  assert.ok(!openPrompt.includes(qAlreadySolved.id));
+  assert.ok(openPrompt.includes('Rocket propulsion'));
+  assert.ok(openPrompt.includes('[[Wiki-links]]'));
+  assert.ok(openPrompt.includes('"answers"'));
+
+  const subsetPrompt = buildInquiryPrompt(data, [qUnlinked.id]);
+  assert.ok(subsetPrompt.includes('What is MCP?'));
+  assert.ok(!subsetPrompt.includes('What is R1 Redundancy?'));
+
+  // Malformed reply returns ok: false cleanly
+  assert.equal(parseInquiryReply('', data).ok, false);
+  assert.equal(parseInquiryReply('no json here', data).ok, false);
+  assert.equal(parseInquiryReply('{"answers": []}', data).ok, false);
+
+  // Valid reply matching by concept-only ("MCP"), by inquiryId, and an unmatched new lookup
+  const reply = '```json\n' + JSON.stringify({
+    answers: [
+      {
+        question: 'MCP',
+        answer: 'Model Context Protocol standardizes [[Tool Calling]] over [[JSON-RPC]]. #mcp',
+        takeaways: ['- Client-server protocol', 'Separates tools, resources, and prompts'],
+        tags: ['#MCP', 'ai-protocols', 'mcp'],
+        sources: ['https://modelcontextprotocol.io'],
+        suggestedSubject: 'Rocket propulsion',
+        suggestedTopic: 'Nozzle flow',
+        flashcard: {
+          front: 'What are the 3 core MCP server primitives?',
+          back: 'Tools, Resources, and Prompts.',
+          difficulty: 2,
+        },
+      },
+      {
+        inquiryId: qLinked.id,
+        question: 'What is R1 Redundancy?',
+        answer: 'Redundancy design ensuring single failure tolerance via [[Failover]] paths.',
+        takeaways: '- Survives N-1 failure',
+        tags: ['#reliability', 'infra'],
+        sources: ['Existing note', 'Reliability Engineering Ch. 3'],
+        suggestedSubject: 'Rocket propulsion',
+        suggestedTopic: 'Nozzle flow',
+      },
+      {
+        question: 'What is gRPC?',
+        answer: 'High-performance RPC framework over [[HTTP/2]] using [[Protobuf]].',
+        tags: ['rpc'],
+        sources: ['https://grpc.io/docs/'],
+        suggestedSubject: 'Rocket propulsion',
+        suggestedTopic: 'Rocket equation',
+        flashcard: {
+          front: 'What transport and serialization does gRPC use by default?',
+          back: 'HTTP/2 and Protocol Buffers.',
+          difficulty: 1,
+        },
+      },
+    ],
+  }) + '\n```';
+
+  const parsed = parseInquiryReply(reply, data);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.data.length, 3);
+  assert.equal(parsed.data[0].inquiryId, qUnlinked.id);
+  assert.equal(parsed.data[0].subjectId, subject.id);
+  assert.equal(parsed.data[0].topicId, nozzles.id);
+  assert.deepEqual(parsed.data[0].tags, ['mcp', 'ai-protocols']);
+  assert.equal(parsed.data[0].takeaways, '- Client-server protocol\n- Separates tools, resources, and prompts');
+  assert.equal(parsed.data[1].inquiryId, qLinked.id);
+  assert.equal(parsed.data[2].inquiryId, undefined);
+
+  // Apply answers via applySkillEdit with createCards: true
+  const applied = applySkillEdit(data, {
+    op: 'apply-inquiry-answers',
+    reply,
+    createCards: true,
+  }, makeId, TODAY, NOW) as { updated: number; created: number; cardsCreated: number };
+  assert.deepEqual(applied, { updated: 2, created: 1, cardsCreated: 3 });
+
+  assert.equal(qUnlinked.status, 'solved');
+  assert.equal(qUnlinked.solvedAt, NOW);
+  assert.equal(qUnlinked.subjectId, subject.id);
+  assert.equal(qUnlinked.topicId, nozzles.id);
+  assert.ok(qUnlinked.cardItemId);
+
+  // Existing subjectId/topicId on qLinked was preserved (not overwritten by suggestedTopic "Nozzle flow")
+  assert.equal(qLinked.subjectId, subject.id);
+  assert.equal(qLinked.topicId, basics.id);
+  assert.deepEqual(qLinked.tags, ['infra', 'reliability']);
+  assert.deepEqual(qLinked.sources, ['Existing note', 'Reliability Engineering Ch. 3']);
+  assert.ok(qLinked.cardItemId);
+
+  const createdInq = data.inquiries!.find((q) => q.question === 'What is gRPC?')!;
+  assert.equal(createdInq.status, 'solved');
+  assert.ok(createdInq.cardItemId);
+
+  // Re-applying with createCards: true does not create duplicate cards
+  const reapplied = applyInquiryAnswers(data, { answers: parsed.data, createCards: true }, makeId, NOW);
+  assert.deepEqual(reapplied, { updated: 3, created: 0, cardsCreated: 0 });
+
+  // Remaining SkillEdit inquiry ops
+  const addedViaOp = applySkillEdit(data, {
+    op: 'add-inquiry',
+    question: 'What is Quic?',
+    tags: ['#Networking'],
+  }, makeId, TODAY, NOW) as { id: string; tags?: string[] };
+  assert.deepEqual(addedViaOp.tags, ['networking']);
+
+  applySkillEdit(data, {
+    op: 'edit-inquiry',
+    inquiryId: addedViaOp.id,
+    changes: { question: 'What is QUIC?', answer: 'UDP-based multiplexed transport.' },
+  }, makeId, TODAY, NOW);
+  applySkillEdit(data, {
+    op: 'toggle-inquiry',
+    inquiryId: addedViaOp.id,
+    status: 'solved',
+  }, makeId, TODAY, NOW);
+  applySkillEdit(data, {
+    op: 'promote-inquiry-to-card',
+    inquiryId: addedViaOp.id,
+    subjectId: subject.id,
+    topicId: basics.id,
+  }, makeId, TODAY, NOW);
+  const importedViaOp = applySkillEdit(data, {
+    op: 'import-inquiries',
+    text: '- What is QUIC?\n- What is eBPF?',
+  }, makeId, TODAY, NOW) as { added: Array<{ id: string }>; skipped: number };
+  assert.equal(importedViaOp.added.length, 1);
+  assert.equal(importedViaOp.skipped, 1);
+
+  applySkillEdit(data, {
+    op: 'remove-inquiry',
+    inquiryId: importedViaOp.added[0].id,
+  }, makeId, TODAY, NOW);
+  assert.ok(!data.inquiries!.some((q) => q.id === importedViaOp.added[0].id));
+});
+
+test('store.ts preserves inquiries during updateSkills and readSkills', async () => {
+  const orig = process.cwd();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-inquiry-store-'));
+  try {
+    process.chdir(dir);
+    await updateSkills('inquiry-store-user', (data) => {
+      addInquiry(data, {
+        question: 'What is MCP?',
+        tags: ['#mcp'],
+        sources: ['https://modelcontextprotocol.io'],
+      }, makeId, NOW);
+    });
+    const loaded = await readSkills('inquiry-store-user');
+    assert.equal(loaded.inquiries?.length, 1);
+    assert.equal(loaded.inquiries![0].question, 'What is MCP?');
+    assert.deepEqual(loaded.inquiries![0].tags, ['mcp']);
+  } finally {
+    process.chdir(orig);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

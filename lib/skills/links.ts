@@ -16,8 +16,11 @@ import type { Transcript } from '@/lib/notes/transcripts';
 import { compareAnchors, readingState, type BookMeta, type NotesFile, type Progress as ReaderProgress } from '@/lib/reader/items';
 import { notesFolder as readerNotesFolder, readLibrary as readReaderLibrary, readProgressFile } from '@/lib/reader/store';
 import { asDailyQuestion } from './edit';
+import { inquiryConceptAlias } from './parse';
 import { readSkills, updateSkills } from './store';
-import { itemTitle, type NotesPageRef, type ProjectAttachment, type Resource, type SkillsData, type Subject, type Topic } from './types';
+import { itemTitle, type KnowledgeInquiry, type NotesPageRef, type ProjectAttachment, type Resource, type SkillsData, type Subject, type Topic } from './types';
+
+export { inquiryConceptAlias };
 
 const newId = () => crypto.randomBytes(12).toString('hex');
 
@@ -234,6 +237,7 @@ export type KnowledgeNodeKind =
   | 'note'
   | 'reader'
   | 'question'
+  | 'inquiry'
   | 'tag';
 
 export type KnowledgeEdgeKind =
@@ -245,6 +249,7 @@ export type KnowledgeEdgeKind =
   | 'wiki-link'
   | 'tag'
   | 'question'
+  | 'inquiry'
   | 'project-log';
 
 export type KnowledgeNode = {
@@ -295,7 +300,9 @@ export type KnowledgeMaterialItem = {
     | 'card'
     | 'step'
     | 'activity'
-    | 'project';
+    | 'project'
+    | 'inquiry-open'
+    | 'inquiry-solved';
   title: string;
   subtitle?: string;
   subjectId?: string;
@@ -331,6 +338,7 @@ export type KnowledgeBundle = {
   ownKnowledge: KnowledgeMaterialItem[];
   sourceMaterials: KnowledgeMaterialItem[];
   qaAndActivities: KnowledgeMaterialItem[];
+  inquiries: KnowledgeInquiry[];
   backlinks: Record<string, KnowledgeBacklink[]>;
 };
 
@@ -474,7 +482,7 @@ export async function buildKnowledgeGraph(
     return {
       nodes: [],
       edges: [],
-      bundle: { scopeSubjectId: subjectId, ownKnowledge: [], sourceMaterials: [], qaAndActivities: [], backlinks: {} },
+      bundle: { scopeSubjectId: subjectId, ownKnowledge: [], sourceMaterials: [], qaAndActivities: [], inquiries: [], backlinks: {} },
     };
   }
 
@@ -734,6 +742,44 @@ export async function buildKnowledgeGraph(
     }
   }
 
+  const subjectById = new Map(data.subjects.map((s) => [s.id, s]));
+  for (const inq of data.inquiries ?? []) {
+    const nodeId = `inq:${inq.id}`;
+    const sub = inq.subjectId ? subjectById.get(inq.subjectId) : undefined;
+    const rawTags = (inq.tags ?? []).map((t) => t.replace(/^#/, ''));
+    const meta = collectMeta([inq.question, inq.context, inq.answer, inq.takeaways], rawTags);
+    const excerpt = (inq.answer || inq.takeaways || inq.context || '').trim().slice(0, 240) || undefined;
+    const content = [
+      inq.context ? `Context: ${inq.context}` : '',
+      inq.answer,
+      inq.takeaways ? `Takeaways: ${inq.takeaways}` : '',
+    ].filter(Boolean).join('\n\n') || undefined;
+
+    addNode({
+      id: nodeId,
+      kind: 'inquiry',
+      label: inq.question,
+      subtitle: `${inq.status === 'solved' ? 'Solved Lookup' : 'Open Question'}${sub ? ` · ${sub.name}` : ''}`,
+      subjectId: inq.subjectId,
+      topicId: inq.topicId,
+      href: inq.subjectId ? `/skills/${inq.subjectId}?tab=knowledge` : '/skills?view=graph',
+      status: inq.status,
+      excerpt,
+      content,
+      tags: meta.tags,
+      wikiLinks: meta.wikiLinks,
+      meta: {
+        inquiryId: inq.id,
+        inquiryStatus: inq.status,
+        cardItemId: inq.cardItemId,
+        sources: inq.sources?.length ? inq.sources.join(' | ') : undefined,
+      },
+    });
+    registerAlias(inq.question, nodeId, 3, inq.subjectId);
+    const alias = inquiryConceptAlias(inq.question);
+    if (alias) registerAlias(alias, nodeId, 3, inq.subjectId);
+  }
+
   // Pass 2: structural edges across all subjects.
   for (const subject of data.subjects) {
     const subNodeId = `sub:${subject.id}`;
@@ -767,6 +813,16 @@ export async function buildKnowledgeGraph(
       if (item.retired) continue;
       const fromId = subject.topics.some((t) => t.id === item.topicId) ? `top:${item.topicId}` : subNodeId;
       addEdge(fromId, `item:${item.id}`, 'question');
+    }
+  }
+
+  for (const inq of data.inquiries ?? []) {
+    const nodeId = `inq:${inq.id}`;
+    const sub = inq.subjectId ? subjectById.get(inq.subjectId) : undefined;
+    if (sub && inq.topicId && sub.topics.some((t) => t.id === inq.topicId)) {
+      addEdge(`top:${inq.topicId}`, nodeId, 'inquiry');
+    } else if (inq.subjectId) {
+      addEdge(`sub:${inq.subjectId}`, nodeId, 'inquiry');
     }
   }
 
@@ -1065,6 +1121,39 @@ export async function buildKnowledgeGraph(
     }
   }
 
+  const outNodeIds = new Set(outNodes.map((n) => n.id));
+  const scopedInquiries = (data.inquiries ?? []).filter(
+    (inq) => !subjectId || inq.subjectId === subjectId || outNodeIds.has(`inq:${inq.id}`),
+  );
+  for (const inq of scopedInquiries) {
+    const nodeId = `inq:${inq.id}`;
+    const node = allNodes.get(nodeId);
+    const sub = inq.subjectId ? subjectById.get(inq.subjectId) : undefined;
+    const topic = sub && inq.topicId ? sub.topics.find((t) => t.id === inq.topicId) : undefined;
+    const solved = inq.status === 'solved';
+    const baseItem: KnowledgeMaterialItem = {
+      id: `${solved ? 'ok' : 'qa'}-inq:${inq.id}`,
+      nodeId,
+      sourceKind: solved ? 'inquiry-solved' : 'inquiry-open',
+      title: inq.question,
+      subtitle: sub ? (topic ? `${sub.name} · ${topic.name}` : sub.name) : solved ? 'Solved lookup' : 'Open question',
+      subjectId: inq.subjectId,
+      subjectName: sub?.name,
+      topicId: topic?.id ?? inq.topicId,
+      topicName: topic?.name,
+      day: (solved ? (inq.solvedAt ?? inq.updatedAt) : inq.createdAt).slice(0, 10),
+      status: solved ? 'solved' : 'open',
+      text: solved
+        ? [inq.answer, inq.takeaways ? `Takeaways: ${inq.takeaways}` : ''].filter(Boolean).join('\n\n') || inq.context
+        : inq.context,
+      href: node?.href ?? (inq.subjectId ? `/skills/${inq.subjectId}?tab=knowledge` : '/skills?view=graph'),
+      tags: node?.tags ?? [],
+      wikiLinks: node?.wikiLinks ?? [],
+    };
+    if (solved) ownKnowledge.push(baseItem);
+    else qaAndActivities.push(baseItem);
+  }
+
   const nodeMap = new Map(outNodes.map((n) => [n.id, n]));
   const backlinks: Record<string, KnowledgeBacklink[]> = {};
   for (const edge of outEdges) {
@@ -1093,6 +1182,7 @@ export async function buildKnowledgeGraph(
       ownKnowledge,
       sourceMaterials,
       qaAndActivities,
+      inquiries: scopedInquiries,
       backlinks,
     },
   };

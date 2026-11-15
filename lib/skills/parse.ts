@@ -8,15 +8,16 @@ import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
 import { readReply } from '@/lib/study/study';
 import {
   MAX_LEVEL, RESOURCE_KINDS, SKILL_STEP_KINDS, SUBJECT_STATUSES,
-  type DraftNewSubject, type DraftParentLink, type DraftResource, type DraftScheduledTask,
-  type DraftStep, type DraftSubjectPlan, type DraftTopic, type InterconnectedPlanDraft,
-  type ParseResult, type Resource, type ResourceKind, type SkillQuestion, type SkillStepKind,
-  type Stage, type Subject, type SubjectStatus, type Topic,
+  type DraftInquiryAnswer, type DraftNewSubject, type DraftParentLink, type DraftResource,
+  type DraftScheduledTask, type DraftStep, type DraftSubjectPlan, type DraftTopic,
+  type InterconnectedPlanDraft, type KnowledgeInquiry, type ParseResult, type Resource,
+  type ResourceKind, type SkillQuestion, type SkillStepKind, type SkillsData, type Stage,
+  type Subject, type SubjectStatus, type Topic,
 } from './types';
 
 export type {
-  DraftNewSubject, DraftParentLink, DraftResource, DraftScheduledTask, DraftStep,
-  DraftSubjectPlan, DraftTopic, InterconnectedPlanDraft, ParseResult,
+  DraftInquiryAnswer, DraftNewSubject, DraftParentLink, DraftResource, DraftScheduledTask,
+  DraftStep, DraftSubjectPlan, DraftTopic, InterconnectedPlanDraft, ParseResult,
 };
 
 export class SkillsInputError extends Error {}
@@ -36,6 +37,7 @@ function reply(raw: string) {
 export const LIMITS = {
   name: 100, description: 600, title: 200, author: 160, amount: 160,
   detail: 1200, roadmap: 20000, summary: 2000, front: 3000, back: 6000,
+  question: 500, context: 2000, answer: 20000, takeaways: 6000, source: 500, tag: 64,
 };
 
 // ── Shared field parsers ─────────────────────────────────────────────────────
@@ -531,4 +533,281 @@ export function parseQuestionsReply(raw: string, subject: Pick<Subject, 'topics'
     return { ok: true, title: question.title, topicName: topic.name, ...(warning ? { warning } : {}), item: { kind: 'graded', topicId: topic.id, question: { id: '', ...question } } };
   });
   return { questions, cutOff };
+}
+
+// ── Lookups & Knowledge Inquiries ────────────────────────────────────────────
+
+export function normalizeInquiryQuestionKey(q: string): string {
+  return q.trim().replace(/\s+/g, ' ').replace(/\?+$/, '').trim().toLowerCase();
+}
+
+export function inquiryConceptAlias(question: string): string {
+  let s = question.trim().replace(/\s+/g, ' ').replace(/\?+$/, '').trim();
+  s = s.replace(
+    /^(?:what(?:'s|\u2019s|\s+(?:is|are|was|were))|who(?:'s|\u2019s|\s+(?:is|are|was|were))|how\s+(?:does|do|did|to|is|are)|why\s+(?:is|are|does|do)|when\s+(?:is|are|does|do)|where\s+(?:is|are)|which\s+(?:is|are)|can\s+you\s+explain|explain|define|describe|tell\s+me\s+about)\s+(?:(?:a|an|the)\s+)?/i,
+    '',
+  );
+  return s.replace(/\?+$/, '').trim();
+}
+
+export function normalizeInquiryTags(raw: unknown): string[] {
+  const items = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string' && raw.trim()
+      ? raw.split(/[\s,]+/)
+      : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items.slice(0, 50)) {
+    if (typeof item !== 'string') continue;
+    const tag = item.trim().replace(/^#+/, '').trim().toLowerCase().slice(0, LIMITS.tag).trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+
+export function normalizeInquirySources(raw: unknown): string[] {
+  const items = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string' && raw.trim()
+      ? raw.split(/\r?\n/)
+      : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items.slice(0, 50)) {
+    let val = '';
+    if (typeof item === 'string') {
+      val = item.trim();
+    } else if (isRecord(item)) {
+      const title = text(item.title ?? item.name ?? item.label, 300);
+      const url = text(item.url ?? item.href, 400);
+      val = title && url ? `${title} (${url})` : title || url;
+    }
+    val = val.slice(0, LIMITS.source).trim();
+    if (!val) continue;
+    const key = val.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(val);
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+
+function normalizeTakeaways(raw: unknown): string {
+  if (typeof raw === 'string') return raw.trim().slice(0, LIMITS.takeaways);
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((x): x is string => typeof x === 'string' && !!x.trim())
+      .map((x) => {
+        const t = x.trim();
+        return /^[-*•]/.test(t) ? t : `- ${t}`;
+      })
+      .join('\n')
+      .slice(0, LIMITS.takeaways)
+      .trim();
+  }
+  return '';
+}
+
+function completeTopObjects(slice: string): unknown[] {
+  const found: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  for (let i = 0; i < slice.length; i++) {
+    const c = slice[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === '{') {
+      if (depth++ === 0) start = i;
+    } else if (c === '}' && depth > 0 && --depth === 0) {
+      try {
+        found.push(JSON.parse(slice.slice(start, i + 1).replace(/,(\s*[}\]])/g, '$1')));
+      } catch {
+        /* skip malformed object */
+      }
+    }
+  }
+  return found;
+}
+
+function readInquiryJson(raw: string): { value: unknown; cutOff: boolean } {
+  try {
+    return readReply(raw);
+  } catch (err) {
+    const unfenced = raw.replace(/```[a-z]*\s*\n?/gi, '').replace(/```/g, '');
+    const marker = unfenced.search(/"(?:answers|items|lookups)"\s*:\s*\[/);
+    if (marker >= 0) {
+      const objects = completeTopObjects(unfenced.slice(unfenced.indexOf('[', marker))).filter(isRecord);
+      if (objects.length) return { value: { answers: objects }, cutOff: true };
+    }
+    throw err;
+  }
+}
+
+function matchInquiryInData(inquiries: KnowledgeInquiry[], rawId: unknown, question: string): KnowledgeInquiry | undefined {
+  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  if (id) {
+    const byId = inquiries.find((q) => q.id === id);
+    if (byId) return byId;
+  }
+  if (!question) return undefined;
+  const qKey = normalizeInquiryQuestionKey(question);
+  const byQuestion = inquiries.find((q) => normalizeInquiryQuestionKey(q.question) === qKey);
+  if (byQuestion) return byQuestion;
+  const aliasKey = normalizeInquiryQuestionKey(inquiryConceptAlias(question));
+  if (!aliasKey) return undefined;
+  return inquiries.find((q) => {
+    const existingAlias = normalizeInquiryQuestionKey(inquiryConceptAlias(q.question));
+    return existingAlias === aliasKey;
+  });
+}
+
+function resolveTopicInSubject(topics: Topic[], rawTopicId: unknown, suggestedTopic: string | undefined): Topic | undefined {
+  const id = typeof rawTopicId === 'string' ? rawTopicId.trim() : '';
+  if (id) {
+    const byId = topics.find((t) => t.id === id);
+    if (byId) return byId;
+  }
+  if (!suggestedTopic) return undefined;
+  const exact = topics.find((t) => sameName(t.name, suggestedTopic));
+  if (exact) return exact;
+  const lower = suggestedTopic.toLowerCase();
+  if (lower.length >= 3) {
+    const close = topics.filter((t) => t.name.toLowerCase().includes(lower) || lower.includes(t.name.toLowerCase()));
+    if (close.length === 1) return close[0];
+  }
+  return undefined;
+}
+
+export function parseInquiryReply(raw: string, data: SkillsData): ParseResult<DraftInquiryAnswer[]> {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: 'Paste the AI’s reply first.', warnings: [] };
+  }
+  let parsedReply: { value: unknown; cutOff: boolean };
+  try {
+    parsedReply = readInquiryJson(raw);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'That reply couldn’t be read.', warnings: [] };
+  }
+  const { value, cutOff } = parsedReply;
+  const list = Array.isArray(value)
+    ? value
+    : isRecord(value)
+      ? (Array.isArray(value.answers)
+          ? value.answers
+          : Array.isArray(value.items)
+            ? value.items
+            : Array.isArray(value.lookups)
+              ? value.lookups
+              : Array.isArray(value.questions)
+                ? value.questions
+                : null)
+      : null;
+
+  if (!list) {
+    return { ok: false, error: 'That doesn’t look like inquiry answers. Expected JSON with an "answers" list.', warnings: [] };
+  }
+  if (!list.length) {
+    return { ok: false, error: 'The reply had an empty list of answers.', warnings: [] };
+  }
+
+  const warnings: string[] = cutOff ? ['The reply looks cut off; only the answers that came through were read.'] : [];
+  const inquiries = data.inquiries ?? [];
+  const out: DraftInquiryAnswer[] = [];
+
+  list.slice(0, 100).forEach((entry, i) => {
+    if (!isRecord(entry)) {
+      warnings.push(`Answer ${i + 1} wasn’t an object and was skipped.`);
+      return;
+    }
+    const rawQuestion = text(entry.question ?? entry.title ?? entry.concept ?? entry.term, LIMITS.question);
+    const matchedInquiry = matchInquiryInData(inquiries, entry.inquiryId, rawQuestion);
+    const question = rawQuestion || matchedInquiry?.question || '';
+    if (!question) {
+      warnings.push(`Answer ${i + 1} had no question or matching inquiryId and was skipped.`);
+      return;
+    }
+    const takeaways = normalizeTakeaways(entry.takeaways ?? entry.keyTakeaways);
+    const rawAnswer = text(entry.answer ?? entry.explanation ?? entry.summary, LIMITS.answer);
+    const answer = rawAnswer || takeaways;
+    if (!answer) {
+      warnings.push(`Answer for "${question}" had no explanation and was skipped.`);
+      return;
+    }
+    if (!rawAnswer && takeaways) {
+      warnings.push(`Answer for "${question}" used takeaways because "answer" was empty.`);
+    }
+
+    const tags = normalizeInquiryTags(entry.tags);
+    const sources = normalizeInquirySources(entry.sources);
+    const suggestedSubject = text(entry.suggestedSubject ?? entry.subject ?? entry.skill, LIMITS.name) || undefined;
+    const suggestedTopic = text(entry.suggestedTopic ?? entry.topic, LIMITS.name) || undefined;
+
+    let subject: Subject | undefined;
+    const rawSubjectId = typeof entry.subjectId === 'string' ? entry.subjectId.trim() : '';
+    if (rawSubjectId) subject = data.subjects.find((s) => s.id === rawSubjectId);
+    if (!subject && suggestedSubject) {
+      subject = data.subjects.find((s) => s.id === suggestedSubject || sameName(s.name, suggestedSubject));
+    }
+    if (!subject && matchedInquiry?.subjectId) {
+      subject = data.subjects.find((s) => s.id === matchedInquiry.subjectId);
+    }
+
+    let topic: Topic | undefined;
+    if (subject) {
+      topic = resolveTopicInSubject(subject.topics, entry.topicId, suggestedTopic);
+      if (!topic && matchedInquiry?.subjectId === subject.id && matchedInquiry.topicId) {
+        topic = subject.topics.find((t) => t.id === matchedInquiry.topicId);
+      }
+    } else if (suggestedTopic) {
+      const topicMatches: { subject: Subject; topic: Topic }[] = [];
+      for (const s of data.subjects) {
+        const t = s.topics.find((tp) => sameName(tp.name, suggestedTopic));
+        if (t) topicMatches.push({ subject: s, topic: t });
+      }
+      if (topicMatches.length === 1) {
+        subject = topicMatches[0].subject;
+        topic = topicMatches[0].topic;
+      }
+    }
+
+    let flashcard: DraftInquiryAnswer['flashcard'];
+    if (isRecord(entry.flashcard)) {
+      const front = text(entry.flashcard.front, LIMITS.front);
+      const back = text(entry.flashcard.back, LIMITS.back);
+      if (front && back) {
+        const diffRaw = Number(entry.flashcard.difficulty);
+        const difficulty = Number.isFinite(diffRaw) ? Math.min(5, Math.max(1, Math.round(diffRaw))) : undefined;
+        flashcard = { front, back, ...(difficulty !== undefined ? { difficulty } : {}) };
+      }
+    }
+
+    out.push({
+      ...(matchedInquiry ? { inquiryId: matchedInquiry.id } : {}),
+      question,
+      answer,
+      ...(takeaways ? { takeaways } : {}),
+      tags,
+      sources,
+      ...(suggestedSubject ? { suggestedSubject } : {}),
+      ...(suggestedTopic ? { suggestedTopic } : {}),
+      ...(subject ? { subjectId: subject.id } : {}),
+      ...(topic ? { topicId: topic.id } : {}),
+      ...(flashcard ? { flashcard } : {}),
+    });
+  });
+
+  if (!out.length) {
+    return { ok: false, error: 'None of the inquiry answers in that reply could be read.', warnings };
+  }
+
+  return { ok: true, data: out, warnings };
 }

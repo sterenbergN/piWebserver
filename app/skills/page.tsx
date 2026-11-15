@@ -2,15 +2,24 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import InquiryDesk from '@/components/skills/InquiryDesk';
 import KnowledgeVault from '@/components/skills/KnowledgeVault';
 import SchedulePanel from '@/components/skills/SchedulePanel';
-import { skillsGet, SignedOut, type BoardResponse, fmtLevel } from '@/components/skills/api';
+import {
+  skillsGet,
+  skillsPost,
+  SignedOut,
+  type BoardResponse,
+  type KnowledgeResponse,
+  fmtLevel,
+} from '@/components/skills/api';
 import { ConfidenceChip, ErrorNote, LevelBar, LevelScale, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import { TIER_LABEL, type NextStepKind, type SubjectCard, type Tier } from '@/lib/skills/model';
 import { STATUS_LABEL, SUBJECT_STATUSES, type SubjectStatus } from '@/lib/skills/types';
+import '@/components/skills/knowledge.css';
 
 // The skill board: schedule queue, where I stand (who's the SME), skill tree
-// interconnections, what to do next, every subject by area, and the Vault graph.
+// interconnections, what to do next, every subject by area, lookups inbox, and the Vault graph.
 
 const TIERS: Tier[] = ['sme', 'proficient', 'competent', 'developing', 'not-started'];
 const STEP_ICON: Record<NextStepKind, string> = {
@@ -20,7 +29,7 @@ const EXAMPLES = ['Rocket propulsion', 'PID tuning', 'Thermodynamics', 'TIA Port
 
 type StatusFilter = 'all' | SubjectStatus;
 type SortKey = 'level' | 'gap' | 'name' | 'tested';
-type BoardView = 'board' | 'graph';
+type BoardView = 'board' | 'inquiries' | 'graph';
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'level', label: 'Level' },
@@ -220,6 +229,137 @@ function Empty() {
   );
 }
 
+function BoardInquiriesSection({
+  focusInquiryId,
+  onBoardReload,
+  onSelectGraphNode,
+}: {
+  focusInquiryId?: string;
+  onBoardReload: () => Promise<void>;
+  onSelectGraphNode: (nodeId: string) => void;
+}) {
+  const [knowledge, setKnowledge] = useState<KnowledgeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadKnowledge = useCallback(async () => {
+    setError('');
+    try {
+      const res = await skillsGet<KnowledgeResponse>({ knowledge: '1' });
+      setKnowledge(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t load lookups.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadKnowledge();
+  }, [loadKnowledge]);
+
+  if (loading && !knowledge) return <Loading rows={3} />;
+  if (error && !knowledge) {
+    return (
+      <section className="sk-card">
+        <ErrorNote>{error}</ErrorNote>
+        <div className="sk-actions">
+          <button type="button" className="sk-small-btn" onClick={() => void loadKnowledge()}>Retry</button>
+        </div>
+      </section>
+    );
+  }
+  if (!knowledge) return null;
+
+  return (
+    <InquiryDesk
+      inquiries={knowledge.inquiries ?? knowledge.bundle.inquiries ?? []}
+      subjects={knowledge.subjects}
+      focusInquiryId={focusInquiryId}
+      onReload={async () => {
+        await Promise.all([loadKnowledge(), onBoardReload()]);
+      }}
+      onSelectGraphNode={onSelectGraphNode}
+    />
+  );
+}
+
+function OpenLookupsPreview({
+  board,
+  onReload,
+  onOpenInbox,
+}: {
+  board: BoardResponse['board'];
+  onReload: () => Promise<void>;
+  onOpenInbox: (focusId?: string) => void;
+}) {
+  const [jot, setJot] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const summary = board.inquiries ?? { total: 0, open: 0, solved: 0, recentOpen: [] };
+
+  async function submitJot(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || !jot.trim()) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await skillsPost('add-inquiry', { question: jot.trim(), status: 'open' });
+      setJot('');
+      await onReload();
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : 'Could not jot down lookup.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="sk-card sk-board-inquiries-preview" aria-labelledby="sk-open-lookups">
+      <div className="sk-card-head">
+        <div>
+          <h2 id="sk-open-lookups">💡 Open Lookups &amp; Running List</h2>
+          <p className="sk-hint">
+            {summary.open} open to solve · {summary.solved} solved in knowledge base
+          </p>
+        </div>
+        <button type="button" className="sk-small-btn" onClick={() => onOpenInbox()}>
+          Open Lookups Inbox →
+        </button>
+      </div>
+
+      <form className="kv-quickjot-form" onSubmit={(e) => void submitJot(e)}>
+        <input
+          type="text"
+          className="kv-quickjot-input"
+          value={jot}
+          maxLength={300}
+          placeholder="Heard something you don't know? e.g. What is MCP, What is R1 Redundancy…"
+          aria-label="Quick jot a lookup question"
+          onChange={(e) => setJot(e.target.value)}
+        />
+        <button type="submit" className="sk-small-btn" disabled={busy || !jot.trim()}>
+          {busy ? 'Saving…' : 'Jot down'}
+        </button>
+      </form>
+      {err && <ErrorNote>{err}</ErrorNote>}
+
+      {summary.recentOpen.length > 0 && (
+        <ul className="sk-board-inq-list">
+          {summary.recentOpen.slice(0, 4).map((q) => (
+            <li key={q.id} className="sk-board-inq-row">
+              <span className="sk-board-inq-q">❓ {q.question}</span>
+              <button type="button" className="sk-text-btn" onClick={() => onOpenInbox(q.id)}>
+                Solve / Edit →
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function SkillsBoardPage() {
   const [board, setBoard] = useState<BoardResponse['board'] | null>(null);
   const [signedOut, setSignedOut] = useState(false);
@@ -227,6 +367,8 @@ export default function SkillsBoardPage() {
   const [status, setStatus] = useState<StatusFilter>('all');
   const [sort, setSort] = useState<SortKey>('level');
   const [view, setView] = useState<BoardView>('board');
+  const [focusInquiryId, setFocusInquiryId] = useState<string | undefined>(undefined);
+  const [focusGraphNode, setFocusGraphNode] = useState<string | undefined>(undefined);
 
   const loadBoard = useCallback(async () => {
     try {
@@ -244,7 +386,7 @@ export default function SkillsBoardPage() {
     setSort(remembered<SortKey>(SORT_KEY, SORTS.map((s) => s.key), 'level'));
     try {
       const v = new URLSearchParams(window.location.search).get('view');
-      if (v === 'graph') setView('graph');
+      if (v === 'graph' || v === 'inquiries') setView(v);
     } catch { /* ignore */ }
     void loadBoard();
   }, [loadBoard]);
@@ -253,8 +395,8 @@ export default function SkillsBoardPage() {
     setView(next);
     try {
       const url = new URL(window.location.href);
-      if (next === 'graph') url.searchParams.set('view', 'graph');
-      else url.searchParams.delete('view');
+      if (next === 'board') url.searchParams.delete('view');
+      else url.searchParams.set('view', next);
       window.history.replaceState(null, '', url.toString());
     } catch { /* ignore */ }
   }
@@ -325,33 +467,68 @@ export default function SkillsBoardPage() {
         </div>
       </header>
 
-      {board.subjects.length > 0 && (
-        <div className="sk-view-switch" role="tablist" aria-label="Skills workspace view">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'board'}
-            className={`sk-view-btn${view === 'board' ? ' is-active' : ''}`}
-            onClick={() => switchView('board')}
-          >
-            Board &amp; Schedule
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'graph'}
-            className={`sk-view-btn${view === 'graph' ? ' is-active' : ''}`}
-            onClick={() => switchView('graph')}
-          >
-            🕸️ Knowledge Graph
-          </button>
-        </div>
-      )}
+      <div className="sk-view-switch" role="tablist" aria-label="Skills workspace view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'board'}
+          className={`sk-view-btn${view === 'board' ? ' is-active' : ''}`}
+          onClick={() => switchView('board')}
+        >
+          Board &amp; Schedule
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'inquiries'}
+          className={`sk-view-btn${view === 'inquiries' ? ' is-active' : ''}`}
+          onClick={() => {
+            setFocusInquiryId(undefined);
+            switchView('inquiries');
+          }}
+        >
+          💡 Lookups &amp; Questions
+          {(board.inquiries?.open ?? 0) > 0 && (
+            <span className="sk-tab-badge">{board.inquiries!.open}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'graph'}
+          className={`sk-view-btn${view === 'graph' ? ' is-active' : ''}`}
+          onClick={() => {
+            setFocusGraphNode(undefined);
+            switchView('graph');
+          }}
+        >
+          🕸️ Knowledge Graph
+        </button>
+      </div>
 
-      {view === 'graph' && board.subjects.length > 0 ? (
-        <KnowledgeVault />
+      {view === 'inquiries' ? (
+        <BoardInquiriesSection
+          focusInquiryId={focusInquiryId}
+          onBoardReload={loadBoard}
+          onSelectGraphNode={(nodeId) => {
+            setFocusGraphNode(nodeId);
+            switchView('graph');
+          }}
+        />
+      ) : view === 'graph' ? (
+        <KnowledgeVault focusNodeId={focusGraphNode} onDataChanged={loadBoard} />
       ) : board.subjects.length === 0 ? (
-        <Empty />
+        <>
+          <OpenLookupsPreview
+            board={board}
+            onReload={loadBoard}
+            onOpenInbox={(id) => {
+              setFocusInquiryId(id);
+              switchView('inquiries');
+            }}
+          />
+          <Empty />
+        </>
       ) : (
         <>
           <dl className="sk-board-stats">
@@ -361,6 +538,15 @@ export default function SkillsBoardPage() {
           </dl>
 
           <SchedulePanel board={board} onReload={loadBoard} />
+
+          <OpenLookupsPreview
+            board={board}
+            onReload={loadBoard}
+            onOpenInbox={(id) => {
+              setFocusInquiryId(id);
+              switchView('inquiries');
+            }}
+          />
 
           <section className="sk-card" aria-labelledby="sk-stand">
             <h2 id="sk-stand">Where you stand</h2>

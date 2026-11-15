@@ -133,6 +133,7 @@ function SubjectPage() {
   const subskills = allSubjects.filter((s) => s.parentIds.includes(subject.id));
   const stepsCount = subject.steps?.length ?? 0;
   const projectsCount = subject.resources.filter((r) => r.kind === 'project').length;
+  const openInquiriesCount = (data.inquiries ?? []).filter((q) => q.status === 'open').length;
 
   return (
     <main className="sk">
@@ -193,7 +194,14 @@ function SubjectPage() {
 
       <div className="sk-tabs" role="tablist" aria-label="Subject sections">
         {TABS.map((t) => {
-          const count = t.id === 'steps' ? stepsCount : t.id === 'projects' ? projectsCount : 0;
+          const count =
+            t.id === 'steps'
+              ? stepsCount
+              : t.id === 'projects'
+                ? projectsCount
+                : t.id === 'knowledge'
+                  ? openInquiriesCount
+                  : 0;
           return (
             <button
               key={t.id}
@@ -218,7 +226,13 @@ function SubjectPage() {
         {tab === 'resources' && <Resources {...tabProps} />}
         {tab === 'projects' && <Projects data={data} reload={load} />}
         {tab === 'questions' && <Questions {...tabProps} />}
-        {tab === 'knowledge' && <KnowledgeVault subjectId={id} onNavigateSubjectTab={(next: string) => setTab(next)} />}
+        {tab === 'knowledge' && (
+          <KnowledgeVault
+            subjectId={id}
+            onNavigateSubjectTab={(next: string) => setTab(next)}
+            onDataChanged={load}
+          />
+        )}
       </div>
       {popup}
     </main>

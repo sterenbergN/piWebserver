@@ -13,16 +13,19 @@ import type {
   KnowledgeNode,
   KnowledgeNodeKind,
 } from '@/lib/skills/links';
-import type { Item, ProjectAttachment, SkillAttempt, Subject } from '@/lib/skills/types';
+import type { DraftInquiryAnswer, InquiryStatus, Item, KnowledgeInquiry, ProjectAttachment, SkillAttempt, Subject } from '@/lib/skills/types';
 import type { Answered } from '@/components/daily/QuestionCard';
 import type { CheckResult } from '@/components/daily/useDaily';
 
 export type {
+  DraftInquiryAnswer,
+  InquiryStatus,
   KnowledgeBacklink,
   KnowledgeBundle,
   KnowledgeEdge,
   KnowledgeEdgeKind,
   KnowledgeGraph,
+  KnowledgeInquiry,
   KnowledgeMaterialItem,
   KnowledgeNode,
   KnowledgeNodeKind,
@@ -101,12 +104,23 @@ export type SubjectResponse = {
   /** Each topic's Notes pages, by topic id (only topics that have some). */
   topicPages: Record<string, NotesPageView[]>;
   allSubjects?: SubjectListSummary[];
+  inquiries?: KnowledgeInquiry[];
+};
+
+export type KnowledgeSubjectOption = {
+  id: string;
+  name: string;
+  icon: string;
+  area: string;
+  topics: { id: string; name: string }[];
 };
 
 /** GET /api/skills?knowledge=1(&subject=id) */
 export type KnowledgeResponse = {
   graph: KnowledgeGraph;
   bundle: KnowledgeBundle;
+  inquiries?: KnowledgeInquiry[];
+  subjects?: KnowledgeSubjectOption[];
 };
 
 export type NotesPageView = { notebook: string; page: string; label: string; href: string };

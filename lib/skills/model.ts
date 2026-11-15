@@ -8,7 +8,7 @@
 import { addDays, daysBetween, isDateKey, type DateKey } from '@/lib/habits/dates';
 import {
   CARD_SCORE, LEVELS, MAX_LEVEL, itemDifficulty,
-  type CardRating, type Item, type ProgressData, type Resource, type Schedule,
+  type CardRating, type Item, type KnowledgeInquiry, type ProgressData, type Resource, type Schedule,
   type ScheduledSkillTask, type SkillAttempt, type SkillSchedule, type SkillStepKind,
   type SkillsData, type Subject, type SubjectStatus, type Topic,
 } from './types';
@@ -746,6 +746,11 @@ export function boardSummary(data: SkillsData, progress: ProgressData, today: Da
   const steps = rows.flatMap((r) => nextSteps(r.subject, r.stats, today).slice(0, 3)).sort((a, b) => b.priority - a.priority);
   const due = buildQueue(data, progress, today).length;
   const lastWeek = addDays(today, -6);
+  const allInquiries = data.inquiries ?? [];
+  const openInquiries = allInquiries.filter((q) => q.status === 'open');
+  const recentOpen: KnowledgeInquiry[] = [...openInquiries]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 10);
   return {
     subjects: rows.map((r) => r.card),
     areas,
@@ -755,6 +760,12 @@ export function boardSummary(data: SkillsData, progress: ProgressData, today: Da
     streak: reviewStreak(progress, today),
     nextSteps: steps.slice(0, 8),
     schedule: scheduleByDay(data.schedule, today),
+    inquiries: {
+      total: allInquiries.length,
+      open: openInquiries.length,
+      solved: allInquiries.filter((q) => q.status === 'solved').length,
+      recentOpen,
+    },
   };
 }
 export type BoardSummary = ReturnType<typeof boardSummary>;

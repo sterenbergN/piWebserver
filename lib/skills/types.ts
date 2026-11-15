@@ -203,12 +203,48 @@ export type SkillSchedule = {
   tasks: ScheduledSkillTask[];
 };
 
+export const INQUIRY_STATUSES = ['open', 'solved'] as const;
+export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
+
+export type KnowledgeInquiry = {
+  id: string;
+  question: string;
+  context?: string;
+  answer?: string;
+  takeaways?: string;
+  sources?: string[];
+  tags?: string[];
+  status: InquiryStatus;
+  subjectId?: string;
+  topicId?: string;
+  cardItemId?: string;
+  createdAt: string;
+  updatedAt: string;
+  solvedAt?: string;
+};
+
+export type DraftInquiryAnswer = {
+  inquiryId?: string;
+  question: string;
+  answer: string;
+  takeaways?: string;
+  tags: string[];
+  sources: string[];
+  suggestedSubject?: string;
+  suggestedTopic?: string;
+  subjectId?: string;
+  topicId?: string;
+  flashcard?: { front: string; back: string; difficulty?: number };
+};
+
 export type SkillsData = {
   subjects: Subject[];
   /** The Notes notebook that topic pages and question working go in, once made. */
   notesNotebook?: string;
   /** Multi-day skill study schedule that automatically shifts missed days forward. */
   schedule?: SkillSchedule;
+  /** Running inbox / solved knowledge base of lookups and questions. */
+  inquiries?: KnowledgeInquiry[];
 };
 
 export const CARD_RATINGS = ['again', 'hard', 'good', 'easy'] as const;
@@ -506,4 +542,54 @@ export type SkillEdit =
         attachments?: Array<Omit<ProjectAttachment, 'id'> & { id?: string }>;
       };
     }
-  | { op: 'remove-project-log'; subjectId: string; resourceId: string; logId: string };
+  | { op: 'remove-project-log'; subjectId: string; resourceId: string; logId: string }
+  | {
+      op: 'add-inquiry';
+      question: string;
+      context?: string;
+      answer?: string;
+      takeaways?: string;
+      sources?: string[];
+      tags?: string[];
+      status?: InquiryStatus;
+      subjectId?: string;
+      topicId?: string;
+    }
+  | {
+      op: 'import-inquiries';
+      text?: string;
+      items?: Array<{
+        question: string;
+        context?: string;
+        answer?: string;
+        takeaways?: string;
+        tags?: string[];
+        subjectId?: string;
+        topicId?: string;
+      }>;
+      subjectId?: string;
+      topicId?: string;
+      tags?: string[];
+    }
+  | {
+      op: 'edit-inquiry';
+      inquiryId: string;
+      changes: Partial<
+        Pick<
+          KnowledgeInquiry,
+          'question' | 'context' | 'answer' | 'takeaways' | 'sources' | 'tags' | 'status' | 'subjectId' | 'topicId'
+        >
+      >;
+    }
+  | { op: 'toggle-inquiry'; inquiryId: string; status?: InquiryStatus; answer?: string }
+  | { op: 'remove-inquiry'; inquiryId: string }
+  | {
+      op: 'promote-inquiry-to-card';
+      inquiryId: string;
+      subjectId?: string;
+      topicId?: string;
+      front?: string;
+      back?: string;
+      difficulty?: number;
+    }
+  | { op: 'apply-inquiry-answers'; reply?: string; answers?: DraftInquiryAnswer[]; createCards?: boolean };

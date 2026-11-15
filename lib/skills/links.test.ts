@@ -7,11 +7,11 @@ import { cleanQuestions } from '../notes/items';
 import { readBookItems, readPageElements, saveInkText, syncLibrary, syncBook, syncPage } from '../notes/store';
 import { libraryFile, saveProgress, syncNotes } from '../reader/store';
 import { addProjectLog, addResource, addSubject, addTopic, saveCard, tiePage, untiePage } from './edit';
-import { buildKnowledgeGraph, describePages, extractTags, extractWikiLinks, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
+import { buildKnowledgeGraph, describePages, extractTags, extractWikiLinks, inquiryConceptAlias, materialFor, newTopicPage, skillsNotebook, syncReaderResources } from './links';
 import { buildQueue } from './model';
 import { buildQuestionsPrompt } from './prompts';
 import { projectFilesFolder, readSkills, updateSkills } from './store';
-import { emptyProgress, emptySkills } from './types';
+import { emptyProgress, emptySkills, type KnowledgeInquiry } from './types';
 
 // Skills' ties to the Reader and Notes, against real stores in a scratch folder.
 
@@ -379,4 +379,132 @@ test('buildKnowledgeGraph resolves cross-subject wiki-links, tags, backlinks, No
   assert.ok(scoped.nodes.some((n) => n.id === `top:${pid.id}`), 'cross-subject wiki-link neighbor kept in local graph');
   assert.ok(scoped.nodes.some((n) => n.id === `sub:${robotics.id}`), 'subskill child kept in local graph');
   assert.ok(!scoped.bundle.ownKnowledge.some((m) => m.sourceKind === 'project-log'), 'bundle excludes unrelated subject logs');
+});
+
+test('inquiryConceptAlias strips leading question phrases and trailing question marks', () => {
+  assert.equal(inquiryConceptAlias('What is MCP?'), 'MCP');
+  assert.equal(inquiryConceptAlias('What is R1 Redundancy?'), 'R1 Redundancy');
+  assert.equal(inquiryConceptAlias('  What are eigenvalues?? '), 'eigenvalues');
+  assert.equal(inquiryConceptAlias('Who is Claude Shannon?'), 'Claude Shannon');
+  assert.equal(inquiryConceptAlias('How does a PID controller work?'), 'PID controller work');
+  assert.equal(inquiryConceptAlias('How do transformers work?'), 'transformers work');
+  assert.equal(inquiryConceptAlias('Why is an API idempotent?'), 'API idempotent');
+  assert.equal(inquiryConceptAlias('Explain the Kalman filter?'), 'Kalman filter');
+  assert.equal(inquiryConceptAlias('Define A* search'), 'A* search');
+  assert.equal(inquiryConceptAlias("What's MCP?"), 'MCP');
+  assert.equal(inquiryConceptAlias(''), '');
+});
+
+test('buildKnowledgeGraph integrates KnowledgeInquiry nodes, [[concept]] wiki-links, #tags, edges, and subject scoping', async () => {
+  const user = 'kb-inquiry-user';
+  const data = emptySkills();
+
+  const robotics = addSubject(data, { name: 'Robotics', area: 'Engineering' }, makeId, NOW);
+  const ai = addSubject(data, { name: 'AI Systems', area: 'Software' }, makeId, NOW);
+
+  const pid = addTopic(robotics, {
+    name: 'Controls',
+    notes: 'Compare [[MCP]] and [[R1 Redundancy]] for telemetry reliability #architecture',
+  }, makeId, NOW);
+  const agents = addTopic(ai, {
+    name: 'Tool Use',
+    description: 'Agent tool calling protocols',
+  }, makeId, NOW);
+
+  const inqMcp: KnowledgeInquiry = {
+    id: 'inq-mcp',
+    question: 'What is MCP?',
+    context: 'Heard during an AI engineering podcast',
+    answer: 'Model Context Protocol standardizes connections between models and [[Tool Use]]. #protocol',
+    takeaways: 'JSON-RPC interface for tools and resources',
+    sources: ['https://modelcontextprotocol.io'],
+    tags: ['ai-infra', '#MCP'],
+    status: 'solved',
+    subjectId: ai.id,
+    topicId: agents.id,
+    cardItemId: 'card-mcp',
+    createdAt: NOW,
+    updatedAt: NOW,
+    solvedAt: NOW,
+  };
+  const inqR1: KnowledgeInquiry = {
+    id: 'inq-r1',
+    question: 'What is R1 Redundancy?',
+    context: 'Came up in reliability design review',
+    tags: ['reliability'],
+    status: 'open',
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const inqRoboticsLocal: KnowledgeInquiry = {
+    id: 'inq-servo',
+    question: 'What is Servo Backlash?',
+    context: 'Gearbox sizing note',
+    status: 'open',
+    subjectId: robotics.id,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  const inqUnrelated: KnowledgeInquiry = {
+    id: 'inq-zero-trust',
+    question: 'What is Zero Trust?',
+    context: 'Security architecture reading',
+    status: 'open',
+    subjectId: ai.id,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  data.inquiries = [inqMcp, inqR1, inqRoboticsLocal, inqUnrelated];
+
+  const missingScoped = await buildKnowledgeGraph(user, data, 'does-not-exist');
+  assert.deepEqual(missingScoped.bundle.inquiries, []);
+
+  const full = await buildKnowledgeGraph(user, data);
+  const nodeById = new Map(full.nodes.map((n) => [n.id, n]));
+  const mcpNode = nodeById.get('inq:inq-mcp');
+  const r1Node = nodeById.get('inq:inq-r1');
+  assert.ok(mcpNode);
+  assert.equal(mcpNode.kind, 'inquiry');
+  assert.equal(mcpNode.label, 'What is MCP?');
+  assert.equal(mcpNode.subtitle, 'Solved Lookup · AI Systems');
+  assert.equal(mcpNode.href, `/skills/${ai.id}?tab=knowledge`);
+  assert.equal(mcpNode.status, 'solved');
+  assert.ok(mcpNode.content?.includes('Context: Heard during an AI engineering podcast'));
+  assert.ok(mcpNode.content?.includes('Takeaways: JSON-RPC interface'));
+  assert.equal(mcpNode.meta?.sources, 'https://modelcontextprotocol.io');
+  assert.equal(mcpNode.meta?.cardItemId, 'card-mcp');
+
+  assert.ok(r1Node);
+  assert.equal(r1Node.subtitle, 'Open Question');
+  assert.equal(r1Node.href, '/skills?view=graph');
+  assert.equal(r1Node.status, 'open');
+
+  const hasEdge = (from: string, to: string, kind: string) =>
+    full.edges.some((e) => e.from === from && e.to === to && e.kind === kind);
+
+  assert.ok(hasEdge(`top:${agents.id}`, 'inq:inq-mcp', 'inquiry'));
+  assert.ok(hasEdge(`sub:${robotics.id}`, 'inq:inq-servo', 'inquiry'));
+  assert.ok(hasEdge(`sub:${ai.id}`, 'inq:inq-zero-trust', 'inquiry'));
+  assert.ok(hasEdge(`top:${pid.id}`, 'inq:inq-mcp', 'wiki-link'), '[[MCP]] resolves to What is MCP?');
+  assert.ok(hasEdge(`top:${pid.id}`, 'inq:inq-r1', 'wiki-link'), '[[R1 Redundancy]] resolves to What is R1 Redundancy?');
+  assert.ok(hasEdge('inq:inq-mcp', `top:${agents.id}`, 'wiki-link'));
+  assert.ok(hasEdge('inq:inq-mcp', 'tag:protocol', 'tag'));
+  assert.ok(hasEdge('inq:inq-mcp', 'tag:ai-infra', 'tag'));
+  assert.ok(hasEdge('inq:inq-mcp', 'tag:mcp', 'tag'));
+  assert.ok(hasEdge('inq:inq-r1', 'tag:reliability', 'tag'));
+
+  assert.equal(full.bundle.inquiries.length, 4);
+  assert.ok(full.bundle.ownKnowledge.some((m) => m.id === 'ok-inq:inq-mcp' && m.sourceKind === 'inquiry-solved' && m.text?.includes('Takeaways: JSON-RPC')));
+  assert.ok(full.bundle.qaAndActivities.some((m) => m.id === 'qa-inq:inq-r1' && m.sourceKind === 'inquiry-open' && m.status === 'open'));
+  assert.ok((full.bundle.backlinks['inq:inq-mcp'] ?? []).some((b) => b.sourceId === `top:${pid.id}` && b.edgeKind === 'wiki-link'));
+
+  // Subject scoping keeps inquiries belonging to the subject OR linked into it via [[wiki-link]].
+  const scoped = await buildKnowledgeGraph(user, data, robotics.id);
+  const scopedInqIds = new Set(scoped.bundle.inquiries.map((q) => q.id));
+  assert.ok(scopedInqIds.has('inq-servo'), 'includes inquiries belonging to the subject');
+  assert.ok(scopedInqIds.has('inq-mcp'), 'includes cross-subject inquiries linked via [[MCP]]');
+  assert.ok(scopedInqIds.has('inq-r1'), 'includes global inquiries linked via [[R1 Redundancy]]');
+  assert.ok(!scopedInqIds.has('inq-zero-trust'), 'excludes unrelated inquiries from other subjects');
+  assert.ok(scoped.bundle.ownKnowledge.some((m) => m.id === 'ok-inq:inq-mcp' && m.sourceKind === 'inquiry-solved'));
+  assert.ok(!scoped.bundle.qaAndActivities.some((m) => m.id === 'qa-inq:inq-zero-trust'));
 });
