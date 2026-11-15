@@ -1,12 +1,16 @@
 // The numbers behind the skill board: a level per topic fitted to my answers,
 // how much of it has faded since, the subject's level and SME badge, each
-// question's review schedule, what to review today and what to do next.
-// Everything is worked out again from the history, so nothing here is stored.
+// question's review schedule, what to review today, interconnected skill links,
+// free resource search links, and the auto-shifting multi-day study schedule.
+// Everything is worked out again from the history, so nothing derived is stored.
 // The reasoning is in docs/skills/PLAN.md.
 
-import { addDays, daysBetween, type DateKey } from '@/lib/habits/dates';
+import { addDays, daysBetween, isDateKey, type DateKey } from '@/lib/habits/dates';
 import {
-  CARD_SCORE, LEVELS, MAX_LEVEL, itemDifficulty, type CardRating, type Item, type ProgressData, type Schedule, type SkillAttempt, type SkillsData, type Subject, type Topic,
+  CARD_SCORE, LEVELS, MAX_LEVEL, itemDifficulty,
+  type CardRating, type Item, type ProgressData, type Resource, type Schedule,
+  type ScheduledSkillTask, type SkillAttempt, type SkillSchedule, type SkillStepKind,
+  type SkillsData, type Subject, type SubjectStatus, type Topic,
 } from './types';
 
 // ── Fitting a level ──────────────────────────────────────────────────────────
@@ -212,6 +216,341 @@ export function levelHistory(subject: Subject, progress: ProgressData, today: Da
   return points;
 }
 
+// ── Interconnected skills & step progress ────────────────────────────────────
+
+/** Direct child subjects that list `subjectId` in their `parentIds`. */
+export function subskillsOf(data: SkillsData, subjectId: string): Subject[] {
+  return data.subjects.filter((s) => s.parentIds?.includes(subjectId));
+}
+
+/** Direct parent subjects listed in `subject.parentIds`, preserving parentIds order. */
+export function parentSkillsOf(data: SkillsData, subjectId: string): Subject[] {
+  const subject = data.subjects.find((s) => s.id === subjectId);
+  if (!subject?.parentIds?.length) return [];
+  const byId = new Map(data.subjects.map((s) => [s.id, s]));
+  const seen = new Set<string>();
+  const out: Subject[] = [];
+  for (const pid of subject.parentIds) {
+    if (seen.has(pid)) continue;
+    const parent = byId.get(pid);
+    if (parent) {
+      seen.add(pid);
+      out.push(parent);
+    }
+  }
+  return out;
+}
+
+/** True if linking `candidateParentId` as a parent of `subjectId` creates a cycle (including self-parenting). */
+export function wouldCreateSkillCycle(data: SkillsData, subjectId: string, candidateParentId: string): boolean {
+  if (subjectId === candidateParentId) return true;
+  const byId = new Map(data.subjects.map((s) => [s.id, s]));
+  const visited = new Set<string>();
+  const stack = [candidateParentId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === subjectId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    const subj = byId.get(cur);
+    for (const pid of subj?.parentIds ?? []) {
+      if (!visited.has(pid)) stack.push(pid);
+    }
+  }
+  return false;
+}
+
+export function stepProgress(subject: Pick<Subject, 'steps'>): { done: number; total: number } {
+  const steps = subject.steps ?? [];
+  return {
+    done: steps.filter((s) => !!s.done).length,
+    total: steps.length,
+  };
+}
+
+// ── Free resource search links ───────────────────────────────────────────────
+
+export type FreeResourceSearchLinks = {
+  pdfGoogle: string;
+  annasArchive: string;
+  internetArchive: string;
+  openLibrary: string;
+  googleScholar: string;
+  arxiv: string;
+  youtubeAudiobook: string;
+  youtubeLectures: string;
+  librivox: string;
+};
+
+/** Direct search URLs to locate free PDFs, papers, audiobooks, and lectures for a resource. */
+export function freeResourceSearchLinks(resource: Pick<Resource, 'title' | 'author' | 'kind'>): FreeResourceSearchLinks {
+  const title = resource.title.trim();
+  const author = resource.author?.trim() ?? '';
+  const query = [title, author].filter(Boolean).join(' ');
+  const enc = encodeURIComponent;
+  return {
+    pdfGoogle: `https://www.google.com/search?q=${enc(query ? `${query} filetype:pdf` : 'filetype:pdf')}`,
+    annasArchive: `https://annas-archive.org/search?q=${enc(query)}`,
+    internetArchive: `https://archive.org/search?query=${enc(query)}`,
+    openLibrary: `https://openlibrary.org/search?q=${enc(query)}`,
+    googleScholar: `https://scholar.google.com/scholar?q=${enc(query)}`,
+    arxiv: `https://arxiv.org/search/?query=${enc(query)}&searchtype=all`,
+    youtubeAudiobook: `https://www.youtube.com/results?search_query=${enc(query ? `${query} full audiobook` : 'audiobook')}`,
+    youtubeLectures: `https://www.youtube.com/results?search_query=${enc(query ? `${query} lectures` : 'lectures')}`,
+    librivox: `https://librivox.org/search?q=${enc(query)}&search_form=advanced`,
+  };
+}
+
+// ── Auto-shifting multi-day skill schedule ───────────────────────────────────
+
+/**
+ * Shift incomplete tasks forward when an earlier scheduled day was missed.
+ * All incomplete tasks at or after the earliest missed incomplete day shift by
+ * `delta = daysBetween(earliestMissed, today)` so strict completion order is
+ * preserved; completed tasks keep their original `day` and `completedOn`.
+ */
+export function shiftScheduleToToday(
+  schedule: SkillSchedule | undefined,
+  today: DateKey,
+): { schedule: SkillSchedule; shiftedDays: number; shiftedFrom?: DateKey } {
+  if (!schedule) {
+    return { schedule: { updatedAt: '', tasks: [] }, shiftedDays: 0 };
+  }
+  const missedDays = schedule.tasks
+    .filter((t) => !t.done && isDateKey(t.day) && t.day < today)
+    .map((t) => t.day);
+  if (!missedDays.length) {
+    return {
+      schedule: { ...schedule, tasks: schedule.tasks.map((t) => ({ ...t })) },
+      shiftedDays: 0,
+    };
+  }
+  const earliestMissed = missedDays.reduce((min, d) => (d < min ? d : min), missedDays[0]);
+  const delta = daysBetween(earliestMissed, today);
+  if (delta <= 0) {
+    return {
+      schedule: { ...schedule, tasks: schedule.tasks.map((t) => ({ ...t })) },
+      shiftedDays: 0,
+    };
+  }
+  const tasks = schedule.tasks.map((t) => {
+    if (!t.done && isDateKey(t.day) && t.day >= earliestMissed) {
+      return { ...t, day: addDays(t.day, delta) };
+    }
+    return { ...t };
+  });
+  return {
+    schedule: { ...schedule, tasks },
+    shiftedDays: delta,
+    shiftedFrom: earliestMissed,
+  };
+}
+
+export type ScheduleDayGroup = { day: DateKey; tasks: ScheduledSkillTask[]; totalMinutes: number };
+export type ScheduleByDay = {
+  todayTasks: ScheduledSkillTask[];
+  upcomingDays: ScheduleDayGroup[];
+  completedTasks: ScheduledSkillTask[];
+  shiftedDays: number;
+  shiftedFrom?: DateKey;
+};
+
+export function scheduleByDay(schedule: SkillSchedule | undefined, today: DateKey): ScheduleByDay {
+  const { schedule: shifted, shiftedDays, shiftedFrom } = shiftScheduleToToday(schedule, today);
+  const todayTasks = shifted.tasks.filter((t) => t.day === today);
+  const completedTasks = shifted.tasks.filter((t) => !!t.done);
+  const upcomingMap = new Map<DateKey, ScheduledSkillTask[]>();
+  for (const t of shifted.tasks) {
+    if (!t.done && t.day > today) {
+      const list = upcomingMap.get(t.day);
+      if (list) list.push(t);
+      else upcomingMap.set(t.day, [t]);
+    }
+  }
+  const upcomingDays: ScheduleDayGroup[] = [...upcomingMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, tasks]) => ({
+      day,
+      tasks,
+      totalMinutes: tasks.reduce((sum, t) => sum + (t.minutes ?? 0), 0),
+    }));
+  return { todayTasks, upcomingDays, completedTasks, shiftedDays, shiftedFrom };
+}
+
+const DEFAULT_STEP_MINUTES: Record<SkillStepKind, number> = {
+  read: 30,
+  practice: 30,
+  project: 45,
+  note: 20,
+  other: 30,
+};
+
+const STATUS_ORDER: Record<SubjectStatus, number> = {
+  learning: 0,
+  maintaining: 1,
+  want: 2,
+  paused: 3,
+};
+
+type CandidateTask = Omit<ScheduledSkillTask, 'id' | 'day'>;
+
+function subjectTaskCandidates(subject: Subject, explicitlySelected: boolean): CandidateTask[] {
+  if (subject.steps?.length) {
+    return subject.steps
+      .filter((st) => !st.done)
+      .map((st) => ({
+        subjectId: subject.id,
+        stepId: st.id,
+        ...(st.topicId ? { topicId: st.topicId } : {}),
+        ...(st.resourceId ? { resourceId: st.resourceId } : {}),
+        title: st.title,
+        ...(st.amount ? { amount: st.amount } : {}),
+        ...(st.detail ? { detail: st.detail } : {}),
+        minutes: st.minutes ?? DEFAULT_STEP_MINUTES[st.kind] ?? 30,
+      }));
+  }
+
+  const out: CandidateTask[] = [];
+  const coveredTopics = new Set<string>();
+  const openResources = subject.resources.filter((r) => r.status === 'doing' || r.status === 'planned');
+  for (const r of openResources) {
+    for (const tid of r.topicIds) coveredTopics.add(tid);
+    const verb = r.kind === 'book' || r.kind === 'paper' || r.kind === 'article' ? 'Read' : r.kind === 'project' ? 'Build' : 'Work on';
+    const amount = r.progress ? `${r.progress.done}/${r.progress.total} ${r.progress.unit}` : undefined;
+    out.push({
+      subjectId: subject.id,
+      resourceId: r.id,
+      ...(r.topicIds[0] ? { topicId: r.topicIds[0] } : {}),
+      title: `${verb}: ${r.title}`,
+      ...(amount ? { amount } : {}),
+      ...(r.detail ? { detail: r.detail } : {}),
+      minutes: r.kind === 'project' ? 45 : 30,
+    });
+  }
+  const topics = [...subject.topics].sort((a, b) => a.stage - b.stage);
+  for (const t of topics) {
+    if (coveredTopics.has(t.id)) continue;
+    out.push({
+      subjectId: subject.id,
+      topicId: t.id,
+      title: `Study ${t.name}`,
+      ...(t.description ? { detail: t.description } : {}),
+      minutes: 30,
+    });
+  }
+  if (!out.length && (explicitlySelected || subject.status === 'learning')) {
+    out.push({
+      subjectId: subject.id,
+      title: `Start ${subject.name}`,
+      ...(subject.goal ? { detail: subject.goal } : {}),
+      minutes: 30,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build an ordered multi-day schedule from incomplete `steps` (or open resources
+ * and topics if a skill has no steps yet), ordering parent/prerequisite skills
+ * before their subskills and interleaving ready skills within `minutesPerDay`.
+ */
+export function generateScheduleFromSteps(
+  data: SkillsData,
+  startDay: DateKey,
+  minutesPerDay = 60,
+  subjectIds?: string[],
+  makeId?: () => string,
+): SkillSchedule {
+  const budget = Math.max(15, Math.round(Number.isFinite(minutesPerDay) ? minutesPerDay : 60));
+  const wanted = subjectIds?.length ? new Set(subjectIds) : null;
+  const selected = data.subjects.filter((s) => (wanted ? wanted.has(s.id) : s.status !== 'paused'));
+  const byId = new Map(selected.map((s) => [s.id, s]));
+
+  const queues = new Map<string, CandidateTask[]>();
+  for (const s of selected) {
+    const items = subjectTaskCandidates(s, !!wanted);
+    if (items.length) queues.set(s.id, items);
+  }
+
+  const depthCache = new Map<string, number>();
+  const depthOf = (id: string, stack = new Set<string>()): number => {
+    const hit = depthCache.get(id);
+    if (hit !== undefined) return hit;
+    if (stack.has(id)) return 0;
+    stack.add(id);
+    const s = byId.get(id);
+    let maxParent = -1;
+    for (const pid of s?.parentIds ?? []) {
+      if (queues.has(pid)) maxParent = Math.max(maxParent, depthOf(pid, stack));
+    }
+    stack.delete(id);
+    const d = maxParent + 1;
+    depthCache.set(id, d);
+    return d;
+  };
+
+  const remainingParents = new Map<string, Set<string>>();
+  for (const id of queues.keys()) {
+    const s = byId.get(id)!;
+    const parents = new Set((s.parentIds ?? []).filter((pid) => pid !== id && queues.has(pid)));
+    remainingParents.set(id, parents);
+  }
+
+  const orderSubjects = (ids: string[]) =>
+    ids.sort((a, b) => {
+      const sa = byId.get(a)!;
+      const sb = byId.get(b)!;
+      return depthOf(a) - depthOf(b) || STATUS_ORDER[sa.status] - STATUS_ORDER[sb.status] || sa.name.localeCompare(sb.name);
+    });
+
+  const activeIds = orderSubjects([...queues.keys()]);
+  const orderedTasks: CandidateTask[] = [];
+
+  while (queues.size > 0) {
+    const ready = activeIds.filter((id) => queues.has(id) && (remainingParents.get(id)?.size ?? 0) === 0);
+    // Cycle fallback: pick the queued subject with fewest unsatisfied parents.
+    const round = ready.length
+      ? ready
+      : [[...queues.keys()].sort((a, b) => (remainingParents.get(a)?.size ?? 0) - (remainingParents.get(b)?.size ?? 0) || depthOf(a) - depthOf(b))[0]];
+
+    for (const id of round) {
+      const q = queues.get(id);
+      if (!q?.length) continue;
+      orderedTasks.push(q.shift()!);
+      if (!q.length) {
+        queues.delete(id);
+        for (const set of remainingParents.values()) set.delete(id);
+      }
+    }
+  }
+
+  let dayOffset = 0;
+  let usedToday = 0;
+  let seq = 0;
+  const tasks: ScheduledSkillTask[] = orderedTasks.map((item) => {
+    const dur = Math.max(5, Math.min(480, Math.round(item.minutes ?? 30)));
+    if (usedToday > 0 && usedToday + dur > budget) {
+      dayOffset++;
+      usedToday = 0;
+    }
+    const day = addDays(startDay, dayOffset);
+    usedToday += dur;
+    seq++;
+    return {
+      ...item,
+      minutes: dur,
+      id: makeId ? makeId() : `sched_${seq}`,
+      day,
+    };
+  });
+
+  return {
+    updatedAt: `${startDay}T00:00:00.000Z`,
+    hoursPerDay: round2(budget / 60),
+    tasks,
+  };
+}
+
 // ── Scheduling ───────────────────────────────────────────────────────────────
 
 /** SM-2 style: intervals grow when it's got right, go back to tomorrow when it isn't. */
@@ -372,6 +711,8 @@ export type SubjectCard = {
   due: number; newItems: number; liveItems: number; answers: number; lastTested?: DateKey; coverage: number;
   topics: number; resources: { done: number; total: number };
   strong: string[]; weak: string[]; fading: string[]; gaps: number;
+  parentIds: string[];
+  steps: { done: number; total: number };
 };
 
 export function subjectCard(subject: Subject, stats: SubjectStats): SubjectCard {
@@ -382,6 +723,8 @@ export function subjectCard(subject: Subject, stats: SubjectStats): SubjectCard 
     due: stats.due, newItems: stats.newItems, liveItems: stats.liveItems, answers: stats.answers, lastTested: stats.lastTested, coverage: stats.coverage,
     topics: subject.topics.length, resources: { done: stats.resources.done, total: subject.resources.filter((r) => r.status !== 'dropped').length },
     strong: named('strong'), weak: named('weak'), fading: named('fading'), gaps: stats.topics.filter((t) => t.state === 'gap').length,
+    parentIds: subject.parentIds ? [...subject.parentIds] : [],
+    steps: stepProgress(subject),
   };
 }
 
@@ -411,6 +754,7 @@ export function boardSummary(data: SkillsData, progress: ProgressData, today: Da
     answeredThisWeek: progress.attempts.filter((a) => a.day >= lastWeek && a.day <= today).length,
     streak: reviewStreak(progress, today),
     nextSteps: steps.slice(0, 8),
+    schedule: scheduleByDay(data.schedule, today),
   };
 }
 export type BoardSummary = ReturnType<typeof boardSummary>;

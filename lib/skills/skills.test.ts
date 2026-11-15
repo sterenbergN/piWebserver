@@ -2,16 +2,21 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { addDays } from '../habits/dates';
 import {
-  addResource, addSubject, addTopic, answerGraded, editResource, importPlan, importQuestions, itemFeedback, rateCard, rateTopics, removeTopic, saveCard, SkillsInputError,
+  addProjectLog, addResource, addScheduleTask, addStep, addSubject, addTopic, answerGraded, applyInterconnectedPlan, applySkillEdit,
+  editProjectLog, editResource, editStep, importPlan, importQuestions, itemFeedback, moveStep, rateCard, rateTopics, rebuildScheduleFromSteps,
+  removeProjectLog, removeScheduleTask, removeStep, removeSubject, removeTopic, saveCard, setParents, setSchedule, shiftSchedule, SkillsInputError,
+  toggleScheduleTask, toggleStep,
 } from './edit';
 import {
-  boardSummary, buildQueue, expectedScore, fadedLevel, fitLevel, gradedScore, levelHistory, nextSchedule, nextSteps, retentionAfter, stabilityDays, subjectStats, tierOf,
+  boardSummary, buildQueue, expectedScore, fadedLevel, fitLevel, freeResourceSearchLinks, generateScheduleFromSteps, gradedScore, levelHistory,
+  nextSchedule, nextSteps, parentSkillsOf, retentionAfter, scheduleByDay, shiftScheduleToToday, stabilityDays, stepProgress, subjectStats,
+  subskillsOf, tierOf, wouldCreateSkillCycle,
 } from './model';
-import { parsePlanReply, parseQuestionsReply } from './parse';
-import { buildPlanPrompt, buildQuestionsPrompt } from './prompts';
+import { parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply } from './parse';
+import { buildInterconnectedPlanPrompt, buildPlanPrompt, buildQuestionsPrompt } from './prompts';
 import { FRESH_TARGET, WEEKLY_CAP, topUpRequest } from './topup';
 import { SKILLS_XP, reviewDays, skillsXp } from './xp';
-import { emptyProgress, emptySkills, type ProgressData, type SkillsData, type Subject } from './types';
+import { emptyProgress, emptySkills, type ProgressData, type SkillSchedule, type SkillsData, type Subject } from './types';
 
 const TODAY = '2026-11-12';
 const NOW = `${TODAY}T15:00:00.000Z`;
@@ -301,4 +306,379 @@ test('weekly top-up: only switched-on subjects, low topics first, capped', () =>
   assert.equal(topUpRequest(subject, progress, TODAY)!.count, WEEKLY_CAP);
   subject.status = 'paused';
   assert.equal(topUpRequest(subject, progress, TODAY), null);
+});
+
+test('shiftScheduleToToday shifts uncompleted queues cleanly and preserves completed tasks', () => {
+  const day0 = '2026-11-10';
+  const day1 = '2026-11-11';
+  const day2 = '2026-11-12';
+  const day3 = '2026-11-13';
+
+  const schedule: SkillSchedule = {
+    updatedAt: `${day0}T08:00:00.000Z`,
+    hoursPerDay: 1,
+    tasks: [
+      { id: 't0_done', subjectId: 's1', title: 'Done before opening', day: day0, done: true, completedOn: day0, minutes: 20 },
+      { id: 't0_a', subjectId: 's1', title: 'Day 0 Task A', day: day0, minutes: 30 },
+      { id: 't0_b', subjectId: 's2', title: 'Day 0 Task B', day: day0, minutes: 30 },
+      { id: 't1_a', subjectId: 's1', title: 'Day 1 Task A', day: day1, minutes: 30 },
+      { id: 't1_b', subjectId: 's2', title: 'Day 1 Task B', day: day1, minutes: 30 },
+    ],
+  };
+
+  // Opening on Day 1 without finishing Day 0 shifts both Day 0 tasks to Day 1 and Day 1 tasks to Day 2.
+  const onDay1 = shiftScheduleToToday(schedule, day1);
+  assert.equal(onDay1.shiftedDays, 1);
+  assert.equal(onDay1.shiftedFrom, day0);
+  const byId1 = new Map(onDay1.schedule.tasks.map((t) => [t.id, t]));
+  assert.equal(byId1.get('t0_done')!.day, day0);
+  assert.equal(byId1.get('t0_done')!.completedOn, day0);
+  assert.equal(byId1.get('t0_a')!.day, day1);
+  assert.equal(byId1.get('t0_b')!.day, day1);
+  assert.equal(byId1.get('t1_a')!.day, day2);
+  assert.equal(byId1.get('t1_b')!.day, day2);
+  // Pure function: original input was not mutated.
+  assert.equal(schedule.tasks[1].day, day0);
+
+  // Opening on Day 3 (3 days after earliestMissed=day0) shifts everything forward by 3 days.
+  const onDay3 = shiftScheduleToToday(schedule, day3);
+  assert.equal(onDay3.shiftedDays, 3);
+  assert.equal(onDay3.shiftedFrom, day0);
+  const byId3 = new Map(onDay3.schedule.tasks.map((t) => [t.id, t]));
+  assert.equal(byId3.get('t0_done')!.day, day0);
+  assert.equal(byId3.get('t0_a')!.day, day3);
+  assert.equal(byId3.get('t0_b')!.day, day3);
+  assert.equal(byId3.get('t1_a')!.day, '2026-11-14');
+  assert.equal(byId3.get('t1_b')!.day, '2026-11-14');
+
+  // scheduleByDay organizes today, upcomingDays, completedTasks cleanly.
+  const view = scheduleByDay(schedule, day1);
+  assert.equal(view.shiftedDays, 1);
+  assert.deepEqual(view.todayTasks.map((t) => t.id), ['t0_a', 't0_b']);
+  assert.equal(view.upcomingDays.length, 1);
+  assert.equal(view.upcomingDays[0].day, day2);
+  assert.equal(view.upcomingDays[0].totalMinutes, 60);
+  assert.deepEqual(view.completedTasks.map((t) => t.id), ['t0_done']);
+
+  // Undefined schedule behaves safely.
+  assert.deepEqual(shiftScheduleToToday(undefined, TODAY), { schedule: { updatedAt: '', tasks: [] }, shiftedDays: 0 });
+});
+
+test('step CRUD, schedule generation, and bidirectional toggle sync', () => {
+  const { data, subject, basics } = setup();
+  const s1 = addStep(subject, {
+    title: 'Read Ch. 1',
+    kind: 'read',
+    amount: 'Ch. 1 (pp. 1-30)',
+    detail: 'Ideal rocket equation',
+    topicId: basics.id,
+    minutes: 30,
+  }, makeId, TODAY, NOW);
+  const s2 = addStep(subject, {
+    title: 'Solve nozzle problems',
+    kind: 'practice',
+    amount: '5 problems',
+    minutes: 30,
+  }, makeId, TODAY, NOW);
+  assert.deepEqual(stepProgress(subject), { done: 0, total: 2 });
+
+  editStep(subject, s2, { amount: '6 problems', minutes: 40 }, TODAY, NOW);
+  assert.equal(subject.steps![1].amount, '6 problems');
+  moveStep(subject, s2.id, 'up', NOW);
+  assert.deepEqual(subject.steps!.map((s) => s.id), [s2.id, s1.id]);
+  moveStep(subject, s2.id, 'down', NOW);
+  assert.deepEqual(subject.steps!.map((s) => s.id), [s1.id, s2.id]);
+
+  // Build schedule from steps (60 min/day -> s1 30m on TODAY, s2 40m overflows to TODAY+1).
+  const sched = rebuildScheduleFromSteps(data, { minutesPerDay: 60, startDay: TODAY }, makeId, TODAY, NOW);
+  assert.equal(sched.tasks.length, 2);
+  assert.equal(sched.tasks[0].day, TODAY);
+  assert.equal(sched.tasks[0].stepId, s1.id);
+  assert.equal(sched.tasks[1].day, addDays(TODAY, 1));
+  assert.equal(sched.tasks[1].stepId, s2.id);
+
+  // Toggling step marks scheduled task done (and sets completedOn).
+  toggleStep(data, subject.id, s1.id, undefined, TODAY, NOW);
+  assert.equal(subject.steps![0].done, true);
+  assert.equal(subject.steps![0].completedOn, TODAY);
+  assert.equal(data.schedule!.tasks[0].done, true);
+  assert.equal(data.schedule!.tasks[0].completedOn, TODAY);
+  assert.deepEqual(stepProgress(subject), { done: 1, total: 2 });
+
+  // Unchecking via toggleStep unchecks task too.
+  toggleStep(data, subject.id, s1.id, false, TODAY, NOW);
+  assert.equal(subject.steps![0].done, undefined);
+  assert.equal(data.schedule!.tasks[0].done, undefined);
+
+  // Toggling scheduled task on a later day auto-shifts overdue incomplete tasks first, then marks matching SkillStep done!
+  const laterDay = addDays(TODAY, 2);
+  const toggled = toggleScheduleTask(data, sched.tasks[1].id, true, laterDay, `${laterDay}T10:00:00.000Z`);
+  assert.equal(toggled.shiftedDays, 2);
+  assert.equal(toggled.shiftedFrom, TODAY);
+  assert.equal(toggled.task.done, true);
+  assert.equal(toggled.task.day, addDays(TODAY, 3));
+  assert.equal(data.schedule!.tasks[0].day, laterDay);
+  assert.equal(subject.steps![1].done, true);
+  assert.equal(subject.steps![1].completedOn, laterDay);
+
+  // Manual task add/remove and shiftSchedule + removeStep unlink.
+  const custom = addScheduleTask(data, { subjectId: subject.id, title: 'Extra drill', day: addDays(laterDay, 1), minutes: 15 }, makeId, laterDay, NOW);
+  assert.ok(data.schedule!.tasks.some((t) => t.id === custom.id));
+  removeScheduleTask(data, custom.id, NOW);
+  assert.ok(!data.schedule!.tasks.some((t) => t.id === custom.id));
+
+  removeStep(subject, s2.id, NOW, data);
+  assert.equal(subject.steps!.length, 1);
+  assert.equal(data.schedule!.tasks.find((t) => t.id === sched.tasks[1].id)!.stepId, undefined);
+});
+
+test('interconnected subskills, cycle rejection, and dependency-aware schedule generation', () => {
+  const data = emptySkills();
+  const progress = emptyProgress();
+  const math = addSubject(data, {
+    name: 'Fluid Mechanics',
+    area: 'Engineering',
+    steps: [{ id: 'st_m1', title: 'Read compressible flow Ch. 1', kind: 'read', amount: 'pp. 1-25', minutes: 30 }],
+  }, makeId, NOW);
+  const propulsion = addSubject(data, {
+    name: 'Rocket Propulsion',
+    area: 'Aerospace',
+    parentIds: [math.id],
+    steps: [{ id: 'st_p1', title: 'Derive thrust equation', kind: 'practice', amount: '4 derivations', minutes: 30 }],
+  }, makeId, NOW);
+  const turbopumps = addSubject(data, { name: 'Turbopumps', area: 'Aerospace' }, makeId, NOW);
+  const design = addSubject(data, {
+    name: 'Industrial Design',
+    area: 'Design',
+    steps: [{ id: 'st_d1', title: 'Sketch impeller', kind: 'project', minutes: 30 }],
+  }, makeId, NOW);
+
+  setParents(data, turbopumps.id, [propulsion.id], NOW);
+  assert.deepEqual(parentSkillsOf(data, turbopumps.id).map((s) => s.id), [propulsion.id]);
+  assert.deepEqual(subskillsOf(data, math.id).map((s) => s.id), [propulsion.id]);
+  assert.deepEqual(subskillsOf(data, propulsion.id).map((s) => s.id), [turbopumps.id]);
+
+  // Cycle detection: self-parenting and transitive cycles must be rejected.
+  assert.equal(wouldCreateSkillCycle(data, math.id, math.id), true);
+  assert.equal(wouldCreateSkillCycle(data, math.id, turbopumps.id), true);
+  assert.equal(wouldCreateSkillCycle(data, design.id, math.id), false);
+  assert.throws(() => setParents(data, math.id, [math.id], NOW), SkillsInputError);
+  assert.throws(() => setParents(data, math.id, [turbopumps.id], NOW), SkillsInputError);
+
+  // Schedule generation puts parent skill Fluid Mechanics before child Rocket Propulsion while interleaving independent Industrial Design.
+  const generated = generateScheduleFromSteps(data, TODAY, 60, [math.id, propulsion.id, design.id], makeId);
+  const mathIdx = generated.tasks.findIndex((t) => t.subjectId === math.id);
+  const propIdx = generated.tasks.findIndex((t) => t.subjectId === propulsion.id);
+  assert.ok(mathIdx >= 0 && propIdx > mathIdx, 'parent skill scheduled before subskill');
+  assert.ok(generated.tasks.some((t) => t.subjectId === design.id));
+
+  // Removing a parent subject cleans up child parentIds and schedule tasks.
+  removeSubject(data, progress, math.id);
+  assert.equal(propulsion.parentIds, undefined);
+});
+
+test('freeResourceSearchLinks encodes search URLs and editResource accepts freePdfUrl / youtubeAudioUrl', () => {
+  const links = freeResourceSearchLinks({
+    title: 'Feedback Control of Dynamic Systems',
+    author: 'Gene F. Franklin',
+    kind: 'book',
+  });
+  assert.ok(links.pdfGoogle.includes('filetype%3Apdf'));
+  assert.ok(links.pdfGoogle.includes('Feedback%20Control%20of%20Dynamic%20Systems'));
+  assert.ok(links.annasArchive.startsWith('https://annas-archive.org/search?q='));
+  assert.ok(links.internetArchive.startsWith('https://archive.org/search?query='));
+  assert.ok(links.openLibrary.startsWith('https://openlibrary.org/search?q='));
+  assert.ok(links.googleScholar.startsWith('https://scholar.google.com/scholar?q='));
+  assert.ok(links.arxiv.startsWith('https://arxiv.org/search/?query='));
+  assert.ok(links.youtubeAudiobook.includes('full%20audiobook'));
+  assert.ok(links.youtubeLectures.includes('lectures'));
+  assert.ok(links.librivox.startsWith('https://librivox.org/search?q='));
+
+  const { subject } = setup();
+  const book = addResource(subject, {
+    title: 'Control Systems',
+    kind: 'book',
+    freePdfUrl: 'https://example.edu/control.pdf',
+    youtubeAudioUrl: 'https://youtube.com/watch?v=abc123',
+  }, makeId, TODAY, NOW);
+  assert.equal(book.freePdfUrl, 'https://example.edu/control.pdf');
+  assert.equal(book.youtubeAudioUrl, 'https://youtube.com/watch?v=abc123');
+  assert.throws(() => editResource(subject, book, { freePdfUrl: 'javascript:alert(1)' }, TODAY, NOW), SkillsInputError);
+  editResource(subject, book, { freePdfUrl: '' }, TODAY, NOW);
+  assert.equal(book.freePdfUrl, undefined);
+});
+
+test('single-skill plan supports steps and interconnected prompts/parser/apply work in schedule and brainstorm modes', () => {
+  const { data, progress, subject, basics } = setup();
+  rateTopics(subject, { [basics.id]: 2.5 }, TODAY, NOW);
+  const sub = addSubject(data, { name: 'Thermodynamics', area: 'Aerospace', target: 4 }, makeId, NOW);
+  setParents(data, subject.id, [sub.id], NOW);
+
+  // Single-skill plan with steps
+  const singleReply = JSON.stringify({
+    summary: 'Step-by-step propulsion plan.',
+    parentSubjects: ['Thermodynamics'],
+    topics: [{ key: 't1', name: 'Rocket equation', stage: 1 }],
+    resources: [{ kind: 'book', title: 'Sutton Propulsion', author: 'Sutton', topics: ['t1'], freePdfUrl: 'https://example.org/sutton.pdf' }],
+    steps: [
+      { title: 'Read Sutton Ch. 1', kind: 'read', amount: 'Ch. 1 (pp. 1-26)', detail: 'Classification & definitions', topic: 't1', resource: 'Sutton Propulsion', minutes: 40 },
+    ],
+  });
+  const parsedSingle = parsePlanReply(singleReply, subject);
+  assert.equal(parsedSingle.steps.length, 1);
+  assert.deepEqual(parsedSingle.parentSubjects, ['Thermodynamics']);
+  const importedSingle = importPlan(subject, singleReply, {}, makeId, NOW);
+  assert.deepEqual(importedSingle, { topics: 0, resources: 1, roadmap: false, steps: 1 });
+  assert.equal(subject.steps![0].amount, 'Ch. 1 (pp. 1-26)');
+  assert.equal(subject.steps![0].topicId, basics.id);
+  assert.equal(subject.resources[0].freePdfUrl, 'https://example.org/sutton.pdf');
+
+  // Schedule mode prompt & parse & apply
+  const schedPrompt = buildInterconnectedPlanPrompt(data, {
+    hoursPerDay: 1.5,
+    days: 7,
+    mode: 'schedule',
+    focusSubjectIds: [sub.id, subject.id],
+    goals: 'Build a liquid bipropellant test stand',
+    progress,
+  }, TODAY);
+  assert.ok(schedPrompt.includes('subjectLevel:'));
+  assert.ok(schedPrompt.includes('Thermodynamics'));
+  assert.ok(schedPrompt.includes('Rocket propulsion'));
+  assert.ok(schedPrompt.includes('Dreyfus'));
+
+  const schedReply = JSON.stringify({
+    summary: 'Thermodynamics fundamentals before propulsion.',
+    hoursPerDay: 1.5,
+    subjectPlans: [
+      {
+        subject: 'Thermodynamics',
+        steps: [
+          { title: 'Read 1st & 2nd Law', kind: 'read', amount: 'Ch. 1-2 (pp. 1-48)', minutes: 45 },
+          { title: 'Solve isentropic flow problems', kind: 'practice', amount: '6 problems', minutes: 45 },
+        ],
+      },
+    ],
+    schedule: [
+      {
+        dayIndex: 1,
+        tasks: [
+          { subject: 'Thermodynamics', title: 'Read 1st & 2nd Law', stepTitle: 'Read 1st & 2nd Law', amount: 'Ch. 1-2 (pp. 1-48)', minutes: 45 },
+          { subject: 'Rocket propulsion', title: 'Read Sutton Ch. 1', stepTitle: 'Read Sutton Ch. 1', amount: 'Ch. 1 (pp. 1-26)', minutes: 40 },
+        ],
+      },
+      {
+        dayIndex: 2,
+        tasks: [
+          { subject: 'Thermodynamics', title: 'Solve isentropic flow problems', minutes: 45 },
+        ],
+      },
+    ],
+  });
+  const parsedSched = parseInterconnectedPlanReply(schedReply, data.subjects, TODAY);
+  assert.equal(parsedSched.ok, true);
+  if (!parsedSched.ok) return;
+  assert.equal(parsedSched.data.schedule.length, 3);
+  assert.equal(parsedSched.data.schedule[2].day, addDays(TODAY, 1));
+
+  const appliedSched = applyInterconnectedPlan(data, { draft: parsedSched.data }, makeId, TODAY, NOW);
+  assert.equal(appliedSched.addedSteps, 2);
+  assert.equal(appliedSched.scheduledTasks, 3);
+  assert.equal(data.schedule!.tasks.length, 3);
+  assert.ok(data.schedule!.tasks[0].stepId, 'schedule task linked to stepId');
+
+  // Brainstorm mode prompt & parse & apply
+  const brainPrompt = buildInterconnectedPlanPrompt(data, { hoursPerDay: 1, mode: 'brainstorm', progress }, TODAY);
+  assert.ok(brainPrompt.includes('"newSubjects"'));
+  assert.ok(brainPrompt.includes('parentSubjectNames'));
+
+  const brainReply = '```json\n' + JSON.stringify({
+    summary: 'Extend aerospace stack into controls and data acquisition.',
+    newSubjects: [
+      {
+        name: 'Valve & Sensor Control',
+        icon: '🎛️',
+        area: 'Controls',
+        why: 'Needed to automate hot-fire test stand valves safely.',
+        targetLevel: 3,
+        parentSubjectNames: ['Rocket propulsion'],
+        topics: [{ key: 't1', name: 'PID loops', stage: 1, core: true }],
+        resources: [{ kind: 'book', title: 'Feedback Systems', author: 'Astrom & Murray', freePdfUrl: 'https://fbswiki.org/wiki/index.php/Main_Page', topics: ['t1'], hours: 25 }],
+        steps: [{ title: 'Read Ch. 1 of Feedback Systems', kind: 'read', amount: 'Ch. 1 (pp. 1-24)', topic: 't1', resource: 'Feedback Systems', minutes: 35 }],
+      },
+    ],
+  }) + '\n```';
+  const parsedBrain = parseInterconnectedPlanReply(brainReply, data.subjects, TODAY);
+  assert.equal(parsedBrain.ok, true);
+  if (!parsedBrain.ok) return;
+  assert.equal(parsedBrain.data.newSubjects.length, 1);
+  assert.deepEqual(parsedBrain.data.newSubjects[0].parentIds, [subject.id]);
+
+  const appliedBrain = applyInterconnectedPlan(data, { reply: brainReply }, makeId, TODAY, NOW);
+  assert.equal(appliedBrain.addedSubjects, 1);
+  const created = data.subjects.find((s) => s.name === 'Valve & Sensor Control')!;
+  assert.ok(created);
+  assert.deepEqual(created.parentIds, [subject.id]);
+  assert.equal(created.topics.length, 1);
+  assert.equal(created.resources[0].freePdfUrl, 'https://fbswiki.org/wiki/index.php/Main_Page');
+  assert.equal(created.steps![0].amount, 'Ch. 1 (pp. 1-24)');
+
+  // Malformed interconnected reply returns { ok: false } gracefully.
+  const bad = parseInterconnectedPlanReply('not json', data.subjects, TODAY);
+  assert.equal(bad.ok, false);
+});
+
+test('project log CRUD and unified applySkillEdit dispatcher', () => {
+  const { data, subject } = setup();
+  const project = addResource(subject, { title: 'Test stand', kind: 'project' }, makeId, TODAY, NOW);
+
+  const log1 = addProjectLog(subject, project, {
+    title: 'Machined injector plate',
+    note: 'Drilled 12 coaxial orifices at 1.2 mm.',
+    day: TODAY,
+    attachments: [
+      { kind: 'image', name: 'injector.jpg', url: '/api/media/uploads/injector.jpg', size: 120400, mime: 'image/jpeg' },
+      { kind: 'video', name: 'cold-flow.mp4', url: 'https://example.com/cold-flow.mp4' },
+      { kind: 'zip', name: 'cad-files.zip', url: '/uploads/cad-files.zip' },
+    ],
+  }, makeId, TODAY, NOW);
+  assert.equal(project.logs!.length, 1);
+  assert.equal(log1.attachments.length, 3);
+
+  assert.throws(() => addProjectLog(subject, project, {
+    title: 'Bad link',
+    attachments: [{ kind: 'link', name: 'xss', url: 'javascript:alert(1)' }],
+  }, makeId, TODAY, NOW), SkillsInputError);
+
+  const edited = editProjectLog(subject, project, log1.id, {
+    title: 'Machined & tested injector plate',
+    note: 'Cold flow passed at 40 bar.',
+    day: addDays(TODAY, 1),
+  }, NOW, makeId);
+  assert.equal(edited.title, 'Machined & tested injector plate');
+  assert.equal(edited.day, addDays(TODAY, 1));
+  assert.equal(project.logs![0].note, 'Cold flow passed at 40 bar.');
+
+  removeProjectLog(subject, project, log1.id, NOW);
+  assert.equal(project.logs, undefined);
+
+  // Also test via applySkillEdit discriminated union
+  applySkillEdit(data, {
+    op: 'add-project-log',
+    subjectId: subject.id,
+    resourceId: project.id,
+    title: 'Logged via SkillEdit',
+    attachments: [{ kind: 'link', name: 'Repo', url: 'https://github.com/example/stand' }],
+  }, makeId, TODAY, NOW);
+  assert.equal(project.logs!.length, 1);
+
+  applySkillEdit(data, {
+    op: 'set-schedule',
+    hoursPerDay: 2,
+    tasks: [{ subjectId: subject.id, title: 'Review cold flow data', day: addDays(TODAY, -1), minutes: 30 }],
+  }, makeId, TODAY, NOW);
+  const shifted = shiftSchedule(data, TODAY, NOW);
+  assert.equal(shifted.shiftedDays, 1);
+  assert.equal(data.schedule!.tasks[0].day, TODAY);
+  assert.ok(boardSummary(data, emptyProgress(), TODAY).schedule.todayTasks.length === 1);
 });

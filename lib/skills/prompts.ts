@@ -1,9 +1,14 @@
-// The prompts to copy into an AI app: planning a subject, and writing questions
-// for it. Their replies are read by parse.ts, so the JSON shapes asked for here
-// and read there must stay in step.
+// The prompts to copy into an AI app: planning one subject, planning or
+// brainstorming across the entire interconnected skill graph, and writing
+// practice questions. Replies are read by parse.ts, so the JSON shapes asked
+// for here and parsed there must stay in step.
 
-import { LEVELS, RESOURCE_KINDS, STAGES, itemTitle, type Item, type Subject } from './types';
-import type { SubjectStats, TopicStats } from './model';
+import type { DateKey } from '@/lib/habits/dates';
+import { parentSkillsOf, subjectStats, subskillsOf, type SubjectStats, type TopicStats } from './model';
+import {
+  LEVELS, RESOURCE_KINDS, SKILL_STEP_KINDS, STAGES, emptyProgress, itemTitle,
+  type Item, type ProgressData, type SkillsData, type Subject,
+} from './types';
 
 const levelScale = () => LEVELS.map((l) => `${l.level} ${l.name}: ${l.meaning}`).join('\n');
 const fmt = (v: number) => v.toFixed(1);
@@ -11,23 +16,27 @@ const fmt = (v: number) => v.toFixed(1);
 export const LEARNING_STYLES = ['Books', 'Online courses', 'Videos', 'Hands-on projects', 'Papers and standards', 'Teaching it to others'] as const;
 
 export type PlanOptions = {
-  subject: Pick<Subject, 'name' | 'goal' | 'target' | 'background' | 'hoursPerWeek' | 'topics' | 'resources' | 'area'>;
+  subject: Pick<Subject, 'name' | 'goal' | 'target' | 'background' | 'hoursPerWeek' | 'topics' | 'resources' | 'area'>
+    & Partial<Pick<Subject, 'steps' | 'parentIds'>>;
   /** Where things stand, for planning again. Leave out for a first plan. */
   stats?: SubjectStats;
   styles: string[];
   /** Anything else to tell the AI. */
   extra?: string;
+  /** Optional list of other skills so the AI can suggest parent/prerequisite links. */
+  otherSubjects?: Pick<Subject, 'id' | 'name' | 'area'>[];
 };
 
 function standing(subject: PlanOptions['subject'], stats: SubjectStats) {
   const topics = stats.topics.map((t) => `- ${t.name} (stage ${t.stage}${t.core ? '' : ', optional'}): level ${fmt(t.level)}, ${describeState(t)}`).join('\n');
   const resources = subject.resources.map((r) => `- ${r.kind}: ${r.title}${r.author ? ` (${r.author})` : ''}, ${r.status}`).join('\n');
+  const steps = (subject.steps ?? []).map((s) => `- [${s.done ? 'x' : ' '}] (${s.kind}) ${s.title}${s.amount ? ` — ${s.amount}` : ''}`).join('\n');
   return `Where I stand now (subject level ${fmt(stats.level)} of 5):
 ${topics || '- no topics yet'}
 
 What I already have lined up or done:
 ${resources || '- nothing yet'}
-
+${steps ? `\nCurrent study steps:\n${steps}\n` : ''}
 Plan the next steps from here. Keep the topics above (use their exact names when a resource covers them) and only add topics that are missing. Add resources and projects aimed at my weak, fading and untested topics and at getting from where I am to my target. Don't list anything I already have.`;
 }
 
@@ -42,8 +51,11 @@ export function describeState(t: TopicStats) {
   }
 }
 
-export function buildPlanPrompt({ subject, stats, styles, extra }: PlanOptions) {
+export function buildPlanPrompt({ subject, stats, styles, extra, otherSubjects }: PlanOptions) {
   const replan = !!stats && subject.topics.length > 0;
+  const siblingLine = otherSubjects?.length
+    ? `\nOther skills on my board (if any are direct prerequisites/parents, name them in "parentSubjects"): ${otherSubjects.map((s) => `${s.name} (${s.area})`).join(', ')}.\n`
+    : '';
   return `You are helping me plan how to learn a subject properly: the way a senior engineer who knows it inside out and a good teacher would plan it together.
 
 Subject: ${subject.name}${subject.area ? ` (area: ${subject.area})` : ''}
@@ -53,26 +65,29 @@ ${levelScale()}
 What I already know: ${subject.background || 'not given'}
 Time I can give it: ${subject.hoursPerWeek ? `about ${subject.hoursPerWeek} hours a week` : 'not given'}
 I like learning from: ${styles.length ? styles.join(', ') : 'a mix'}
-${extra ? `\nAlso: ${extra}\n` : ''}
+${siblingLine}${extra ? `\nAlso: ${extra}\n` : ''}
 ${replan ? standing(subject, stats!) : `Plan it from the start.`}
 
-Write three things:
+Write four things:
 
 1. Topics. ${replan ? 'Only the missing ones.' : 'Between 8 and 20 for the whole subject, up to my target level.'} Each is a teachable chunk that can be tested on its own (not "Introduction"). Put each in a stage: 1 Foundations, 2 Core, 3 Applied, 4 Mastery. Set "core": false for nice-to-haves that an expert wouldn't need.
 
 2. Resources, tied to the topics they cover:
-   - the specific books (title, author, which chapters), courses, videos, papers and standards that people who know this field actually recommend. Only ones you are confident exist. Leave "url" out unless you are sure of it;
+   - the specific books (title, author, which chapters), courses, videos, papers and standards that people who know this field actually recommend — prefer free/open-access textbooks, arXiv/open papers, and full YouTube lecture series or audiobooks when solid free options exist. Only ones you are confident exist. Leave "url", "freePdfUrl", and "youtubeAudioUrl" out unless you are sure of them;
    - 2 to 5 hands-on projects with a concrete deliverable that proves each stage (what to build, measure or write, and what "done" looks like);
    - activities that build the skill (teach it, write a one-page summary, solve a problem set, review real work).
    Give rough hours for each. "kind" is one of: ${RESOURCE_KINDS.join(', ')}.
 
-3. A roadmap in markdown: phases at my pace with rough weeks, what to read and build in each, and how I'll know I'm ready to move on (a test I could pass, a thing I could build).
+3. Explicit step-by-step progression ("steps"): an ordered sequence of concrete, bite-sized actions so I always know exactly what to do next and how much to read or practice (e.g. exact chapters, page ranges, exercises, or project milestones, with estimated minutes). "kind" is one of: ${SKILL_STEP_KINDS.join(', ')}.
+
+4. A roadmap in markdown: phases at my pace with rough weeks, what to read and build in each, and how I'll know I'm ready to move on (a test I could pass, a thing I could build).
 
 Reply with one JSON code block in exactly this shape and nothing after it:
 
 \`\`\`json
 {
   "summary": "Two or three sentences on the approach.",
+  "parentSubjects": ["Optional prerequisite skill name"],
   "roadmap": "## Phase 1: ... (weeks 1-4)\\n- ...",
   "topics": [
     { "key": "t1", "name": "Short topic name", "stage": 1, "core": true, "description": "What it covers, one or two sentences." }
@@ -80,11 +95,171 @@ Reply with one JSON code block in exactly this shape and nothing after it:
   "resources": [
     { "kind": "book", "title": "Exact title", "author": "Author", "detail": "Why, and which chapters", "topics": ["t1", "Exact name of a topic I already have"], "hours": 20 },
     { "kind": "project", "title": "Short project name", "detail": "What to build and what done looks like", "topics": ["t1"], "hours": 10 }
+  ],
+  "steps": [
+    { "title": "Read Ch. 1-2 of Exact title", "kind": "read", "amount": "Ch. 1-2 (pp. 1-42)", "detail": "Focus on core definitions and worked examples", "topic": "t1", "resource": "Exact title", "minutes": 45 }
   ]
 }
 \`\`\`
 
-"topics" in a resource lists topic keys from your list or exact names of my existing topics. Stages are ${STAGES.map((s) => `${s.stage} ${s.name}`).join(', ')}.`;
+"topics" in a resource or "topic" in a step lists topic keys from your list or exact names of my existing topics. Stages are ${STAGES.map((s) => `${s.stage} ${s.name}`).join(', ')}.`;
+}
+
+// ── Interconnected multi-skill planner & brainstormer ────────────────────────
+
+export type InterconnectedPlanOptions = {
+  hoursPerDay: number;
+  days?: number;
+  mode: 'schedule' | 'brainstorm';
+  focusSubjectIds?: string[];
+  goals?: string;
+  progress?: ProgressData;
+};
+
+function serializeSkillGraph(data: SkillsData, progress: ProgressData, today: DateKey, focusIds: Set<string>): string {
+  if (!data.subjects.length) return '- (No skills added yet.)';
+  return data.subjects.map((subject) => {
+    const stats = subjectStats(subject, progress, today);
+    const parents = parentSkillsOf(data, subject.id);
+    const children = subskillsOf(data, subject.id);
+    const focused = focusIds.size ? (focusIds.has(subject.id) ? ' [FOCUSED]' : '') : '';
+    const topicLines = stats.topics.length
+      ? stats.topics.map((t) => `    * ${t.name} (stage ${t.stage}, ${t.core ? 'core' : 'optional'}): level ${fmt(t.level)}, ${describeState(t)}`).join('\n')
+      : '    * (none yet)';
+    const resourceLines = subject.resources.length
+      ? subject.resources.map((r) => `    * [${r.status}] ${r.kind}: ${r.title}${r.author ? ` by ${r.author}` : ''}${r.progress ? ` (${r.progress.done}/${r.progress.total} ${r.progress.unit})` : ''}${r.hours ? ` ~${r.hours}h` : ''}`).join('\n')
+      : '    * (none yet)';
+    const stepLines = subject.steps?.length
+      ? subject.steps.map((st, idx) => `    ${idx + 1}. [${st.done ? 'x' : ' '}] (${st.kind}) ${st.title}${st.amount ? ` | amount: ${st.amount}` : ''}${st.minutes ? ` | ~${st.minutes}m` : ''}`).join('\n')
+      : '    * (no explicit steps yet)';
+
+    return `- Skill: "${subject.name}" (id: ${subject.id}, area: ${subject.area}, status: ${subject.status}${focused})
+  subjectLevel: ${fmt(stats.level)} / 5 (${stats.levelName}, confidence: ${stats.confidence}) | target: ${subject.target} / 5
+  goal: ${subject.goal || 'not specified'}
+  parents (prerequisites): ${parents.length ? parents.map((p) => `${p.name} [${p.id}]`).join(', ') : 'none'}
+  subskills (dependents): ${children.length ? children.map((c) => `${c.name} [${c.id}]`).join(', ') : 'none'}
+  topics:
+${topicLines}
+  resources:
+${resourceLines}
+  steps:
+${stepLines}`;
+  }).join('\n\n');
+}
+
+export function buildInterconnectedPlanPrompt(data: SkillsData, opts: InterconnectedPlanOptions, today: DateKey): string {
+  const days = Math.min(90, Math.max(1, Math.round(opts.days ?? 14)));
+  const hoursPerDay = Math.max(0.25, Math.min(16, opts.hoursPerDay));
+  const minutesPerDay = Math.round(hoursPerDay * 60);
+  const focusIds = new Set(opts.focusSubjectIds ?? []);
+  const progress = opts.progress ?? emptyProgress();
+  const serialized = serializeSkillGraph(data, progress, today, focusIds);
+  const focusNames = data.subjects.filter((s) => focusIds.has(s.id)).map((s) => s.name);
+
+  const header = `You are acting as a master curriculum architect and technical mentor. Look across my entire interconnected skill graph below — every skill's Dreyfus subjectLevel, parent/subskill relationships, topics, resources, and existing study steps — and produce a coherent, non-generic plan.
+
+Today: ${today}
+Daily study budget: ${hoursPerDay} hours/day (~${minutesPerDay} minutes/day)
+Planning horizon: ${days} days (dayIndex 1 = ${today}, dayIndex ${days})
+${focusNames.length ? `Focused skills to prioritize: ${focusNames.join(', ')}\n` : ''}${opts.goals ? `My goals & direction: ${opts.goals}\n` : ''}
+Dreyfus level scale (0–5):
+${levelScale()}
+
+My current skill graph:
+${serialized}`;
+
+  if (opts.mode === 'brainstorm') {
+    return `${header}
+
+TASK (Brainstorm interconnected skills & next growth paths):
+Use my existing skills and their current Dreyfus subjectLevels to brainstorm 3 to 7 high-leverage new skills or subskills that naturally extend what I already know, bridge gaps between my skills, or unlock my goals.
+
+Requirements for every suggested skill in "newSubjects":
+1. Explain clearly in "why" how it builds on my current skills and subjectLevels.
+2. Connect it to existing skills (or earlier suggested skills in the same list) using "parentSubjectNames" (exact names or IDs of prerequisite/parent skills).
+3. Include starter "topics" (stages 1–4), free/open-access "resources" (open textbooks/PDFs, arXiv/free papers, YouTube lectures/audiobooks, hands-on projects; only include "url", "freePdfUrl", or "youtubeAudioUrl" when confident it exists), and explicit step-by-step "steps" with concrete reading/practice amounts and minutes.
+4. Optionally include "parentLinks" between existing skills, "subjectPlans" for existing skills that need explicit steps, and a multi-day "schedule" (dayIndex 1..${days}, fitting ~${minutesPerDay} min/day) integrating the best next work across existing and suggested skills.
+
+Reply with one JSON code block in exactly this shape and nothing after it:
+
+\`\`\`json
+{
+  "summary": "Synthesis of how your current skills connect and what these suggested skills unlock.",
+  "hoursPerDay": ${hoursPerDay},
+  "newSubjects": [
+    {
+      "name": "New Skill Name",
+      "icon": "🧠",
+      "area": "Area name",
+      "why": "How this builds on your current skills and levels",
+      "targetLevel": 3,
+      "parentSubjectNames": ["Existing Parent Skill Name"],
+      "topics": [
+        { "key": "t1", "name": "Starter topic", "stage": 1, "core": true, "description": "What it covers" }
+      ],
+      "resources": [
+        { "kind": "book", "title": "Free/Classic Book Title", "author": "Author", "detail": "Which chapters to read", "topics": ["t1"], "hours": 15 },
+        { "kind": "project", "title": "Hands-on Milestone", "detail": "What to build and verify", "topics": ["t1"], "hours": 8 }
+      ],
+      "steps": [
+        { "title": "Read Ch. 1 of Free/Classic Book Title", "kind": "read", "amount": "Ch. 1 (pp. 1-28)", "detail": "Key concepts to extract", "topic": "t1", "resource": "Free/Classic Book Title", "minutes": 40 }
+      ]
+    }
+  ],
+  "parentLinks": [
+    { "subject": "Existing Child Skill", "parents": ["Existing Parent Skill"] }
+  ],
+  "subjectPlans": [],
+  "schedule": [
+    {
+      "dayIndex": 1,
+      "tasks": [
+        { "subject": "New Skill Name", "title": "Read Ch. 1 of Free/Classic Book Title", "stepTitle": "Read Ch. 1 of Free/Classic Book Title", "amount": "Ch. 1 (pp. 1-28)", "minutes": 40 }
+      ]
+    }
+  ]
+}
+\`\`\``;
+  }
+
+  return `${header}
+
+TASK (Interconnected step-by-step progressions & multi-day schedule):
+1. For each active/focused skill that needs clearer next actions (or needs updated steps based on its current subjectLevel and weak/fading topics), produce an entry in "subjectPlans" with explicit ordered "steps". Every step MUST specify a concrete "amount" (exact chapters, page ranges, problem counts, or deliverable milestones), "kind" (${SKILL_STEP_KINDS.join(' | ')}), and realistic "minutes".
+2. Respect parent/subskill prerequisites: schedule foundational parent skill steps before dependent subskill steps, while interleaving independent skills so each day stays engaging and balanced.
+3. Build a concrete ${days}-day "schedule" starting at dayIndex 1 (${today}) through dayIndex ${days}, packing ~${minutesPerDay} minutes per day without overloading a single day. Every scheduled task must reference an existing skill name (or id), a step title, its exact amount, and minutes.
+4. Prefer free/open-access books, papers, and YouTube lectures when suggesting any new resources in "subjectPlans".
+
+Reply with one JSON code block in exactly this shape and nothing after it:
+
+\`\`\`json
+{
+  "summary": "Two or three sentences explaining the sequencing across skills and prerequisites.",
+  "hoursPerDay": ${hoursPerDay},
+  "parentLinks": [
+    { "subject": "Subskill Name", "parents": ["Prerequisite Skill Name"] }
+  ],
+  "subjectPlans": [
+    {
+      "subject": "Exact existing skill name",
+      "parentSubjects": ["Optional prerequisite skill name"],
+      "topics": [],
+      "resources": [],
+      "steps": [
+        { "title": "Read Ch. 3-4 of Textbook", "kind": "read", "amount": "Ch. 3-4 (pp. 55-98)", "detail": "Derive the key equations and note edge cases", "topic": "Topic name", "resource": "Textbook", "minutes": 45 }
+      ]
+    }
+  ],
+  "schedule": [
+    {
+      "dayIndex": 1,
+      "tasks": [
+        { "subject": "Exact existing skill name", "title": "Read Ch. 3-4 of Textbook", "stepTitle": "Read Ch. 3-4 of Textbook", "amount": "Ch. 3-4 (pp. 55-98)", "detail": "Derive the key equations", "topic": "Topic name", "resource": "Textbook", "minutes": 45 }
+      ]
+    }
+  ]
+}
+\`\`\``;
 }
 
 // ── Questions ────────────────────────────────────────────────────────────────
