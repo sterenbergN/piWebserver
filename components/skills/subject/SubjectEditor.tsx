@@ -8,7 +8,7 @@ import type { TabProps } from './shared';
 
 // The inline editor under the subject's header. One form, one save.
 
-export default function SubjectEditor({ data, reload, onDone }: TabProps & { onDone: () => void }) {
+export default function SubjectEditor({ data, reload, onDone, onDelete, deleting }: TabProps & { onDone: () => void; onDelete?: () => void; deleting?: boolean }) {
   const s = data.subject;
   const uid = useId();
   const [busy, setBusy] = useState(false);
@@ -104,8 +104,8 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
 
       {otherSubjects.length > 0 && (
         <fieldset className="sk-parent-pick">
-          <legend>Parent / Prerequisite Skills</legend>
-          <p className="sk-hint">Select skills this subject builds on. Parent skills are scheduled earlier and linked in the Knowledge Graph.</p>
+          <legend>Builds on</legend>
+          <p className="sk-hint">The skills this one needs first. They come earlier in your schedule, and the graph links them.</p>
           <div className="sk-parent-grid">
             {otherSubjects.map((other) => {
               const checked = parentIds.includes(other.id);
@@ -138,6 +138,7 @@ export default function SubjectEditor({ data, reload, onDone }: TabProps & { onD
       <div className="sk-actions">
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="sk-text-btn" onClick={onDone}>Cancel</button>
+        {onDelete && <><span className="sk-grow" /><button type="button" className="sk-text-btn is-danger" disabled={deleting} onClick={onDelete}>Delete subject</button></>}
       </div>
     </form>
   );

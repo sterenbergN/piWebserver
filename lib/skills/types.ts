@@ -195,6 +195,8 @@ export type ScheduledSkillTask = {
   day: DateKey;
   done?: boolean;
   completedOn?: DateKey;
+  /** Added by hand: kept when the schedule is rebuilt from steps. */
+  manual?: true;
 };
 
 export type SkillSchedule = {

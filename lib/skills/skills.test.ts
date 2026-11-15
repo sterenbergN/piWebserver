@@ -429,6 +429,13 @@ test('step CRUD, schedule generation, and bidirectional toggle sync', () => {
   // Manual task add/remove and shiftSchedule + removeStep unlink.
   const custom = addScheduleTask(data, { subjectId: subject.id, title: 'Extra drill', day: addDays(laterDay, 1), minutes: 15 }, makeId, laterDay, NOW);
   assert.ok(data.schedule!.tasks.some((t) => t.id === custom.id));
+  assert.equal(custom.manual, true);
+  // Rebuilding from steps makes the step tasks again but leaves a task added by hand where it was.
+  const keptHours = data.schedule!.hoursPerDay;
+  rebuildScheduleFromSteps(data, { keepCompleted: true }, makeId, laterDay, NOW);
+  assert.ok(data.schedule!.tasks.some((t) => t.id === custom.id && t.day === addDays(laterDay, 1)), 'the hand-added task survives');
+  assert.ok(data.schedule!.tasks.some((t) => t.done), 'and so does what was done');
+  assert.equal(data.schedule!.hoursPerDay, keptHours, 'with no budget given, the saved one is used');
   removeScheduleTask(data, custom.id, NOW);
   assert.ok(!data.schedule!.tasks.some((t) => t.id === custom.id));
 
@@ -490,7 +497,7 @@ test('freeResourceSearchLinks encodes search URLs and editResource accepts freeP
   });
   assert.ok(links.pdfGoogle.includes('filetype%3Apdf'));
   assert.ok(links.pdfGoogle.includes('Feedback%20Control%20of%20Dynamic%20Systems'));
-  assert.ok(links.annasArchive.startsWith('https://annas-archive.org/search?q='));
+  assert.ok(!('annasArchive' in links), 'no shadow libraries');
   assert.ok(links.internetArchive.startsWith('https://archive.org/search?query='));
   assert.ok(links.openLibrary.startsWith('https://openlibrary.org/search?q='));
   assert.ok(links.googleScholar.startsWith('https://scholar.google.com/scholar?q='));
@@ -586,9 +593,14 @@ test('single-skill plan supports steps and interconnected prompts/parser/apply w
   assert.equal(parsedSched.data.schedule.length, 3);
   assert.equal(parsedSched.data.schedule[2].day, addDays(TODAY, 1));
 
+  // A finished task from before survives the plan replacing the schedule; an unfinished one doesn't.
+  addScheduleTask(data, { subjectId: data.subjects[0].id, title: 'Old finished task', day: TODAY, done: true }, makeId, TODAY, NOW);
+  addScheduleTask(data, { subjectId: data.subjects[0].id, title: 'Old open task', day: TODAY }, makeId, TODAY, NOW);
   const appliedSched = applyInterconnectedPlan(data, { draft: parsedSched.data }, makeId, TODAY, NOW);
   assert.equal(appliedSched.addedSteps, 2);
   assert.equal(appliedSched.scheduledTasks, 3);
+  assert.deepEqual(data.schedule!.tasks.filter((t) => t.title.startsWith('Old')).map((t) => t.title), ['Old finished task']);
+  data.schedule!.tasks = data.schedule!.tasks.filter((t) => !t.title.startsWith('Old'));
   assert.equal(data.schedule!.tasks.length, 3);
   assert.ok(data.schedule!.tasks[0].stepId, 'schedule task linked to stepId');
 

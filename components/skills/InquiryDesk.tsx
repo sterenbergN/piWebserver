@@ -789,10 +789,10 @@ export default function InquiryDesk({
       <section className="inq-capture-card" aria-label="Quick capture lookup">
         <div className="inq-capture-head">
           <div>
-            <h2>Lookups &amp; Questions Inbox</h2>
+            <h2>Things to look up</h2>
             <p className="sk-hint">
-              Jot down anything you hear that you want to understand later, link it to skills &amp;{' '}
-              <code>[[Wiki-links]]</code>, or batch-solve with AI.
+              Jot down anything you hear and want to understand later. Link it to a skill or to
+              <code>[[a topic]]</code>, and have your AI answer a batch at once.
             </p>
           </div>
           <div className="sk-actions">
@@ -805,7 +805,7 @@ export default function InquiryDesk({
                 setShowAiPanel(false);
               }}
             >
-              {showBulk ? 'Close Paste List' : '📋 Paste Running List'}
+              {showBulk ? 'Close' : '📋 Paste a list'}
             </button>
             <button
               type="button"
@@ -816,7 +816,7 @@ export default function InquiryDesk({
                 setShowBulk(false);
               }}
             >
-              {showAiPanel ? 'Close AI Solver' : `🤖 Solve with AI (${openCount})`}
+              {showAiPanel ? 'Close' : `🤖 Answer with AI (${openCount})`}
             </button>
           </div>
         </div>
@@ -894,7 +894,7 @@ export default function InquiryDesk({
       {showBulk && (
         <section className="inq-drawer" aria-label="Paste running list bulk import">
           <div className="inq-drawer-head">
-            <h3>📋 Paste Running List</h3>
+            <h3>📋 Paste a list</h3>
             <button type="button" className="sk-text-btn" onClick={() => setShowBulk(false)}>
               Close
             </button>
@@ -992,7 +992,7 @@ export default function InquiryDesk({
       {showAiPanel && (
         <section className="inq-drawer" aria-label="Solve lookups with AI">
           <div className="inq-drawer-head">
-            <h3>🤖 Solve with AI (Copy / Paste)</h3>
+            <h3>🤖 Answer with AI</h3>
             <button type="button" className="sk-text-btn" onClick={() => setShowAiPanel(false)}>
               Close
             </button>
@@ -1206,7 +1206,7 @@ export default function InquiryDesk({
             aria-selected={statusTab === 'open'}
             onClick={() => setStatusTab('open')}
           >
-            To Solve ({openCount})
+            To look up ({openCount})
           </button>
           <button
             type="button"
@@ -1215,7 +1215,7 @@ export default function InquiryDesk({
             aria-selected={statusTab === 'solved'}
             onClick={() => setStatusTab('solved')}
           >
-            Solved Knowledge Base ({solvedCount})
+            Answered ({solvedCount})
           </button>
         </div>
 

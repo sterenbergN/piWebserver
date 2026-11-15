@@ -387,6 +387,8 @@ export default function KnowledgeVault({
     const el = canvasWrapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      // A plain scroll scrolls the page past the graph. A trackpad pinch (it comes as ctrl + wheel) or Ctrl + scroll zooms.
+      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.12 : 0.89;
       setZoom((z) => Math.max(0.35, Math.min(3.2, Math.round(z * factor * 100) / 100)));
@@ -519,6 +521,14 @@ export default function KnowledgeVault({
     setZoom(Math.round(nextZoom * 100) / 100);
     setPan({ x: (CX - midX) * nextZoom, y: (CY - midY) * nextZoom });
   }, [visibleNodes, positions]);
+
+  // Each time the graph loads, it fills the frame: laid out at its natural size it's a small cluster in the middle.
+  const fittedFor = useRef<KnowledgeResponse | null>(null);
+  useEffect(() => {
+    if (!data || fittedFor.current === data || !visibleNodes.length) return;
+    fittedFor.current = data;
+    fitGraph();
+  }, [data, visibleNodes, fitGraph]);
 
   const unitPerPx = () => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -698,7 +708,7 @@ export default function KnowledgeVault({
               className={`kv-subtab${vaultMode === 'vault' ? ' is-active' : ''}`}
               onClick={() => setVaultMode('vault')}
             >
-              🕸️ Vault &amp; Graph
+              🕸️ Graph
             </button>
             <button
               type="button"
@@ -707,7 +717,7 @@ export default function KnowledgeVault({
               className={`kv-subtab${vaultMode === 'inquiries' ? ' is-active' : ''}`}
               onClick={() => setVaultMode('inquiries')}
             >
-              <span>💡 Lookups &amp; Running List</span>
+              <span>💡 Lookups</span>
               {openInquiriesCount > 0 && (
                 <span className="kv-subtab-badge">{openInquiriesCount} open</span>
               )}
@@ -945,7 +955,7 @@ export default function KnowledgeVault({
           </svg>
 
           <div className="kv-graph-legend">
-            <span className="kv-graph-hint">Click node to inspect · Drag node to rearrange · Drag background to pan · Scroll to zoom</span>
+            <span className="kv-graph-hint">Tap a node to see it · drag to move it or the graph · − and + zoom</span>
           </div>
         </div>
 

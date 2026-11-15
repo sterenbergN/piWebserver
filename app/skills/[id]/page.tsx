@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import KnowledgeVault from '@/components/skills/KnowledgeVault';
 import { skillsGet, skillsPost, SignedOut, fmtLevel, type SubjectResponse } from '@/components/skills/api';
-import { ConfidenceChip, ErrorNote, LevelBar, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
+import { arrowTabs, ConfidenceChip, ErrorNote, LevelBar, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import Overview from '@/components/skills/subject/Overview';
 import Projects from '@/components/skills/subject/Projects';
 import Questions from '@/components/skills/subject/Questions';
@@ -25,10 +25,10 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'steps', label: 'Steps' },
   { id: 'topics', label: 'Topics' },
-  { id: 'resources', label: 'Resources & PDFs' },
+  { id: 'resources', label: 'Resources' },
   { id: 'projects', label: 'Projects' },
   { id: 'questions', label: 'Questions' },
-  { id: 'knowledge', label: 'Knowledge Base' },
+  { id: 'knowledge', label: 'Knowledge' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 const isTab = (v: string | null): v is TabId => TABS.some((t) => t.id === v);
@@ -185,14 +185,13 @@ function SubjectPage() {
           <Link className="btn btn-secondary" href={`/skills/${id}/questions`}>Write questions</Link>
           <Link className="btn btn-secondary" href={`/skills/${id}/plan`}>Plan with AI</Link>
           <button type="button" className="btn btn-secondary" aria-expanded={editing} onClick={() => setEditing(!editing)}>{editing ? 'Close editor' : 'Edit'}</button>
-          <button type="button" className="sk-text-btn is-danger" disabled={deleting} onClick={remove}>Delete subject</button>
         </div>
         {error && <ErrorNote>{error}</ErrorNote>}
       </header>
 
-      {editing && <SubjectEditor {...tabProps} onDone={() => setEditing(false)} />}
+      {editing && <SubjectEditor {...tabProps} onDone={() => setEditing(false)} onDelete={remove} deleting={deleting} />}
 
-      <div className="sk-tabs" role="tablist" aria-label="Subject sections">
+      <div className="sk-tabs" role="tablist" aria-label="Subject sections" onKeyDown={arrowTabs}>
         {TABS.map((t) => {
           const count =
             t.id === 'steps'

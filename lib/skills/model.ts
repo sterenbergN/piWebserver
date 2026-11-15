@@ -272,7 +272,6 @@ export function stepProgress(subject: Pick<Subject, 'steps'>): { done: number; t
 
 export type FreeResourceSearchLinks = {
   pdfGoogle: string;
-  annasArchive: string;
   internetArchive: string;
   openLibrary: string;
   googleScholar: string;
@@ -290,7 +289,6 @@ export function freeResourceSearchLinks(resource: Pick<Resource, 'title' | 'auth
   const enc = encodeURIComponent;
   return {
     pdfGoogle: `https://www.google.com/search?q=${enc(query ? `${query} filetype:pdf` : 'filetype:pdf')}`,
-    annasArchive: `https://annas-archive.org/search?q=${enc(query)}`,
     internetArchive: `https://archive.org/search?query=${enc(query)}`,
     openLibrary: `https://openlibrary.org/search?q=${enc(query)}`,
     googleScholar: `https://scholar.google.com/scholar?q=${enc(query)}`,

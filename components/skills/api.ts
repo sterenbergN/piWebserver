@@ -93,6 +93,9 @@ export type SubjectListSummary = {
   parentIds: string[];
 };
 
+/** GET /api/skills?all=1: the board, and every subject with its stats (no questions). */
+export type AllSubjectsResponse = { board: BoardSummary; subjects: { subject: Omit<Subject, 'items'>; stats: SubjectStats }[] };
+
 /** GET /api/skills?subject=id */
 export type SubjectResponse = {
   subject: Omit<Subject, 'items'>;

@@ -1229,3 +1229,8 @@
     justify-content: stretch;
   }
 }
+
+/* On a phone the graph leaves room to scroll past it: a finger on it moves the graph, not the page. */
+@media (max-width: 640px) {
+  .kv-graph-card { height: min(420px, 60vh); }
+}

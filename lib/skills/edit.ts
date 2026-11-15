@@ -673,6 +673,7 @@ function cleanScheduledTask(
   const minutes = intIn(raw.minutes, 1, 600);
   const done = raw.done === true;
   const completedOn = done ? (isDateKey(raw.completedOn) ? raw.completedOn : today) : undefined;
+  const manual = raw.manual === true;
   return {
     id: isId(raw.id) ? raw.id : makeId(),
     subjectId: subject.id,
@@ -685,6 +686,7 @@ function cleanScheduledTask(
     ...(minutes ? { minutes } : {}),
     day: raw.day,
     ...(done ? { done: true, completedOn } : {}),
+    ...(manual ? { manual: true as const } : {}),
   };
 }
 
@@ -783,7 +785,7 @@ export function addScheduleTask(
   now: string,
 ): ScheduledSkillTask {
   const day = input.day === undefined || input.day === '' ? today : input.day;
-  const task = cleanScheduledTask(data, { ...input, day }, makeId, today);
+  const task = cleanScheduledTask(data, { ...input, day, manual: true }, makeId, today);
   const prev = data.schedule;
   data.schedule = {
     updatedAt: now,
@@ -823,13 +825,14 @@ export function rebuildScheduleFromSteps(
   const startDay = isDateKey(input.startDay) ? input.startDay : today;
   const subjectIds = Array.isArray(input.subjectIds) ? input.subjectIds.filter((id): id is string => isId(id)) : undefined;
   const generated = generateScheduleFromSteps(data, startDay, minutesPerDay, subjectIds, makeId);
-  const completed = input.keepCompleted === true
-    ? (data.schedule?.tasks ?? []).filter((t) => !!t.done).map((t) => ({ ...t }))
-    : [];
+  const previous = data.schedule?.tasks ?? [];
+  const completed = input.keepCompleted === true ? previous.filter((t) => !!t.done).map((t) => ({ ...t })) : [];
+  // Tasks added by hand aren't made from steps, so making the rest again leaves them where they were.
+  const handAdded = previous.filter((t) => t.manual && !t.done).map((t) => ({ ...t }));
   data.schedule = {
     ...generated,
     updatedAt: now,
-    tasks: [...completed, ...generated.tasks],
+    tasks: [...completed, ...handAdded, ...generated.tasks],
   };
   return data.schedule;
 }
@@ -1136,7 +1139,8 @@ export function applyInterconnectedPlan(
     }
     if (builtTasks.length) {
       const replace = input.replaceSchedule !== false;
-      const prevTasks = replace ? [] : (data.schedule?.tasks ?? []);
+      // Replacing the plan still keeps what's been done: it's the record of the work.
+      const prevTasks = replace ? (data.schedule?.tasks ?? []).filter((t) => t.done) : (data.schedule?.tasks ?? []);
       const hoursRaw = Number(input.hoursPerDay ?? draft.hoursPerDay ?? data.schedule?.hoursPerDay);
       const hoursPerDay = Number.isFinite(hoursRaw) && hoursRaw > 0 && hoursRaw <= 24 ? Math.round(hoursRaw * 100) / 100 : undefined;
       data.schedule = {

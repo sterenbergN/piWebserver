@@ -130,7 +130,7 @@
 .sk-planner-focus-item { display: flex; align-items: center; gap: 0.45rem; padding: 0.45rem 0.65rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); cursor: pointer; min-width: 0; }
 .sk-planner-focus-item:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--background)); }
 .sk-planner-focus-item input[type='checkbox'] { flex: none; width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
-.sk-planner-focus-name { flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+.sk-planner-focus-name { flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: break-word; hyphens: auto; }
 .sk-planner-preview { gap: 1rem; }
 .sk-planner-section { display: flex; flex-direction: column; gap: 0.55rem; padding-top: 0.5rem; border-top: 1px solid var(--surface-border); }
 .sk-planner-subplans, .sk-planner-timeline { display: flex; flex-direction: column; gap: 0.65rem; }
@@ -149,3 +149,25 @@
 .sk-brainstorm-why { margin: 0; font-size: 0.9rem; line-height: 1.45; }
 .sk-brainstorm-details { display: flex; flex-direction: column; gap: 0.4rem; }
 .sk-brainstorm-details summary { cursor: pointer; font-size: 0.86rem; font-weight: 600; color: var(--accent-light); }
+
+/* ─── Review fixes ─────────────────────────────────────────────────────────── */
+
+.sk-grow { flex: 1 1 auto; }
+
+/* The board's quick jot sits in a column card: its form's flex basis would be its height. */
+.sk-board-inquiries-preview .kv-quickjot-form { flex: none; }
+
+/* iPhones zoom the whole page into any field under 16px when it's tapped. */
+@media (pointer: coarse) {
+  .sk-space input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  .sk-space textarea,
+  .sk-space select { font-size: max(16px, 1em); }
+}
+
+@media (max-width: 640px) {
+  /* The three header actions on one line, and the views as one row of tabs. */
+  .sk-board .sk-head > .sk-actions { width: 100%; flex-wrap: nowrap; }
+  .sk-board .sk-head > .sk-actions > .btn { flex: 1 1 auto; justify-content: center; padding-left: 0.6rem; padding-right: 0.6rem; white-space: nowrap; }
+  .sk-view-switch { flex-wrap: nowrap; align-self: stretch; }
+  .sk-view-btn { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; padding-left: 0.5rem; padding-right: 0.5rem; white-space: nowrap; }
+}

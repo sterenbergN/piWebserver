@@ -13,7 +13,7 @@ import {
   type KnowledgeResponse,
   fmtLevel,
 } from '@/components/skills/api';
-import { ConfidenceChip, ErrorNote, LevelBar, LevelScale, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
+import { arrowTabs, ConfidenceChip, ErrorNote, LevelBar, LevelScale, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import { TIER_LABEL, type NextStepKind, type SubjectCard, type Tier } from '@/lib/skills/model';
 import { STATUS_LABEL, SUBJECT_STATUSES, type SubjectStatus } from '@/lib/skills/types';
 import '@/components/skills/knowledge.css';
@@ -217,7 +217,7 @@ function Empty() {
       </ol>
       <div className="sk-actions">
         <Link href="/skills/new" className="btn btn-primary">Add your first subject</Link>
-        <Link href="/skills/plan" className="btn btn-secondary">🗓️ Interconnected Plan &amp; Brainstorm</Link>
+        <Link href="/skills/plan?mode=brainstorm" className="btn btn-secondary">Brainstorm with AI</Link>
       </div>
       <p className="sk-hint">Or start from an idea:</p>
       <div className="sk-chips">
@@ -318,13 +318,13 @@ function OpenLookupsPreview({
     <section className="sk-card sk-board-inquiries-preview" aria-labelledby="sk-open-lookups">
       <div className="sk-card-head">
         <div>
-          <h2 id="sk-open-lookups">💡 Open Lookups &amp; Running List</h2>
+          <h2 id="sk-open-lookups">Things to look up</h2>
           <p className="sk-hint">
-            {summary.open} open to solve · {summary.solved} solved in knowledge base
+            {summary.open || summary.solved ? `${summary.open} to look up · ${summary.solved} answered` : 'Heard something you didn’t know? Jot it down and come back to it.'}
           </p>
         </div>
         <button type="button" className="sk-small-btn" onClick={() => onOpenInbox()}>
-          Open Lookups Inbox →
+          All lookups →
         </button>
       </div>
 
@@ -334,7 +334,7 @@ function OpenLookupsPreview({
           className="kv-quickjot-input"
           value={jot}
           maxLength={300}
-          placeholder="Heard something you don't know? e.g. What is MCP, What is R1 Redundancy…"
+          placeholder="e.g. What is MCP?"
           aria-label="Quick jot a lookup question"
           onChange={(e) => setJot(e.target.value)}
         />
@@ -350,7 +350,7 @@ function OpenLookupsPreview({
             <li key={q.id} className="sk-board-inq-row">
               <span className="sk-board-inq-q">❓ {q.question}</span>
               <button type="button" className="sk-text-btn" onClick={() => onOpenInbox(q.id)}>
-                Solve / Edit →
+                Answer →
               </button>
             </li>
           ))}
@@ -462,12 +462,12 @@ export default function SkillsBoardPage() {
         </div>
         <div className="sk-actions">
           <Link href="/skills/review" className="btn btn-primary">{board.due > 0 ? `Review (${board.due})` : 'Test me'}</Link>
-          <Link href="/skills/plan" className="btn btn-secondary">🗓️ Interconnected Plan &amp; Brainstorm</Link>
-          <Link href="/skills/new" className="btn btn-secondary">+ Add a subject</Link>
+          <Link href="/skills/plan" className="btn btn-secondary">Plan</Link>
+          <Link href="/skills/new" className="btn btn-secondary">+ Subject</Link>
         </div>
       </header>
 
-      <div className="sk-view-switch" role="tablist" aria-label="Skills workspace view">
+      <div className="sk-view-switch" role="tablist" aria-label="Skills views" onKeyDown={arrowTabs}>
         <button
           type="button"
           role="tab"
@@ -475,7 +475,7 @@ export default function SkillsBoardPage() {
           className={`sk-view-btn${view === 'board' ? ' is-active' : ''}`}
           onClick={() => switchView('board')}
         >
-          Board &amp; Schedule
+          Board
         </button>
         <button
           type="button"
@@ -487,7 +487,7 @@ export default function SkillsBoardPage() {
             switchView('inquiries');
           }}
         >
-          💡 Lookups &amp; Questions
+          Lookups
           {(board.inquiries?.open ?? 0) > 0 && (
             <span className="sk-tab-badge">{board.inquiries!.open}</span>
           )}
@@ -502,7 +502,7 @@ export default function SkillsBoardPage() {
             switchView('graph');
           }}
         >
-          🕸️ Knowledge Graph
+          Graph
         </button>
       </div>
 
@@ -539,14 +539,21 @@ export default function SkillsBoardPage() {
 
           <SchedulePanel board={board} onReload={loadBoard} />
 
-          <OpenLookupsPreview
-            board={board}
-            onReload={loadBoard}
-            onOpenInbox={(id) => {
-              setFocusInquiryId(id);
-              switchView('inquiries');
-            }}
-          />
+          {board.nextSteps.length > 0 && (
+            <section className="sk-card" aria-labelledby="sk-next">
+              <h2 id="sk-next">Next steps</h2>
+              <ul className="sk-board-next">
+                {board.nextSteps.map((n, i) => (
+                  <li key={`${n.href}-${i}`}>
+                    <Link href={n.href} className="sk-board-step">
+                      <span className="sk-board-step-icon" aria-hidden>{STEP_ICON[n.kind]}</span>
+                      <span><strong>{n.title}</strong><span className="sk-hint">{n.detail}</span></span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section className="sk-card" aria-labelledby="sk-stand">
             <h2 id="sk-stand">Where you stand</h2>
@@ -571,10 +578,10 @@ export default function SkillsBoardPage() {
             <section className="sk-card sk-hierarchy-card" aria-labelledby="sk-hierarchy">
               <div className="sk-card-head">
                 <div>
-                  <h2 id="sk-hierarchy">Interconnected Skill Hierarchy</h2>
-                  <p className="sk-hint">Prerequisite parent skills and the subskills that build on them.</p>
+                  <h2 id="sk-hierarchy">Skill tree</h2>
+                  <p className="sk-hint">Each skill, with the ones that build on it underneath.</p>
                 </div>
-                <Link href="/skills/plan" className="sk-small-btn">Plan across graph →</Link>
+                <Link href="/skills/plan" className="sk-small-btn">Plan across them →</Link>
               </div>
               <ul className="sk-hierarchy-tree">
                 {hierarchyRoots.map((root) => (
@@ -584,22 +591,6 @@ export default function SkillsBoardPage() {
                     childrenMap={childrenMap}
                     path={new Set([root.id])}
                   />
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {board.nextSteps.length > 0 && (
-            <section className="sk-card" aria-labelledby="sk-next">
-              <h2 id="sk-next">Next steps</h2>
-              <ul className="sk-board-next">
-                {board.nextSteps.map((n, i) => (
-                  <li key={`${n.href}-${i}`}>
-                    <Link href={n.href} className="sk-board-step">
-                      <span className="sk-board-step-icon" aria-hidden>{STEP_ICON[n.kind]}</span>
-                      <span><strong>{n.title}</strong><span className="sk-hint">{n.detail}</span></span>
-                    </Link>
-                  </li>
                 ))}
               </ul>
             </section>
@@ -636,10 +627,19 @@ export default function SkillsBoardPage() {
               </ul>
             </section>
           ))}
+
+          <OpenLookupsPreview
+            board={board}
+            onReload={loadBoard}
+            onOpenInbox={(id) => {
+              setFocusInquiryId(id);
+              switchView('inquiries');
+            }}
+          />
         </>
       )}
 
-      <HowLevelsWork />
+      {view === 'board' && <HowLevelsWork />}
     </main>
   );
 }

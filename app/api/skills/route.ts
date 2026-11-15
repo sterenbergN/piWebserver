@@ -92,6 +92,14 @@ export async function GET(request: Request) {
       return ok({ queue: queue.map((e) => ({ ...askable(e.item, e.subject, e.topic.name), reason: e.reason })) });
     }
 
+    // Every subject with its topics' standing, in one request: what the planner across subjects reads.
+    if (params.get('all') !== null) {
+      return ok({
+        board: boardSummary(data, progress, today),
+        subjects: data.subjects.map((s) => ({ subject: { ...s, items: undefined }, stats: subjectStats(s, progress, today) })),
+      });
+    }
+
     if (params.get('knowledge') !== null) {
       const requestedSubject = params.get('subject');
       const focusedId = requestedSubject !== null && requestedSubject !== '' ? findSubject(data, requestedSubject).id : undefined;

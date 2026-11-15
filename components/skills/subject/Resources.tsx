@@ -256,7 +256,7 @@ function ResourceCard({
           aria-expanded={finderOpen}
           onClick={() => setFinderOpen(!finderOpen)}
         >
-          🔎 Find Free PDF / Audiobook
+          🔎 Find a free copy
         </button>
         <button type="button" className="sk-text-btn" onClick={() => setEditing(true)}>Edit</button>
         <button type="button" className="sk-text-btn is-danger" onClick={remove}>Delete</button>
@@ -344,7 +344,7 @@ function FreeResourceFinder({ resource: r, act, busy }: { resource: Resource; ac
   return (
     <div className="sk-finder" aria-label={`Free PDF and audiobook finder for ${r.title}`}>
       <div className="sk-finder-section">
-        <h4>Free PDF &amp; Paper Sources</h4>
+        <h4>Free PDFs and papers</h4>
         <div className="sk-finder-links">
           {isPaper && (
             <>
@@ -353,7 +353,6 @@ function FreeResourceFinder({ resource: r, act, busy }: { resource: Resource; ac
             </>
           )}
           <a className="sk-finder-link" href={links.pdfGoogle} target="_blank" rel="noreferrer">🔍 Google filetype:pdf</a>
-          <a className="sk-finder-link" href={links.annasArchive} target="_blank" rel="noreferrer">📚 Anna&apos;s Archive</a>
           <a className="sk-finder-link" href={links.internetArchive} target="_blank" rel="noreferrer">🏛️ Internet Archive</a>
           <a className="sk-finder-link" href={links.openLibrary} target="_blank" rel="noreferrer">📖 OpenLibrary</a>
           {!isPaper && (
@@ -366,7 +365,7 @@ function FreeResourceFinder({ resource: r, act, busy }: { resource: Resource; ac
       </div>
 
       <div className="sk-finder-section">
-        <h4>Free Audiobooks &amp; Lectures</h4>
+        <h4>Audiobooks and lectures</h4>
         <div className="sk-finder-links">
           <a className="sk-finder-link" href={links.youtubeAudiobook} target="_blank" rel="noreferrer">🎧 YouTube Full Audiobook</a>
           <a className="sk-finder-link" href={links.youtubeLectures} target="_blank" rel="noreferrer">🎓 YouTube Lectures</a>
@@ -375,7 +374,7 @@ function FreeResourceFinder({ resource: r, act, busy }: { resource: Resource; ac
       </div>
 
       <div className="sk-finder-section">
-        <h4>Save Links &amp; Import to Reader</h4>
+        <h4>Save what you found</h4>
         <form className="sk-finder-url-row" onSubmit={savePdf}>
           <input
             type="url"

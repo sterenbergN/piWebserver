@@ -52,22 +52,22 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
   const interconnectedCard = (
     <section className="sk-card sk-ov-links" aria-labelledby="sk-ov-links">
       <div className="sk-card-head">
-        <h2 id="sk-ov-links">Interconnected Skills</h2>
+        <h2 id="sk-ov-links">Related skills</h2>
         {onOpenEditor && (
           <button type="button" className="sk-small-btn" onClick={onOpenEditor}>
-            Link skills
+            {hasConnections ? 'Change' : 'Link skills'}
           </button>
         )}
       </div>
       {!hasConnections ? (
         <p className="sk-hint">
-          No parent prerequisites or subskills linked yet. Connect related skills to sequence your schedule and explore them in the Knowledge Graph.
+          None linked. Say which skills this one builds on, and they’ll come first in your schedule.
         </p>
       ) : (
         <div className="sk-ov-links-grid">
           {parents.length > 0 && (
             <div className="sk-ov-link-group">
-              <h3>Parent / Prerequisite Skills</h3>
+              <h3>Builds on</h3>
               <ul className="sk-ov-link-list">
                 {parents.map((p) => (
                   <li key={p.id}>
@@ -83,7 +83,7 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
           )}
           {subskills.length > 0 && (
             <div className="sk-ov-link-group">
-              <h3>Subskills</h3>
+              <h3>Leads on to</h3>
               <ul className="sk-ov-link-list">
                 {subskills.map((sub) => (
                   <li key={sub.id}>
@@ -106,7 +106,7 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
     <section className="sk-card sk-ov-steps" aria-labelledby="sk-ov-steps">
       <div className="sk-card-head">
         <div>
-          <h2 id="sk-ov-steps">Step-by-Step Progression</h2>
+          <h2 id="sk-ov-steps">Steps</h2>
           <p className="sk-hint">
             {stepCounts.done} of {stepCounts.total} step{stepCounts.total === 1 ? '' : 's'} completed
           </p>
@@ -143,7 +143,7 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
         </ul>
       ) : (
         <p className="sk-hint">
-          All {allSteps.length} study step{allSteps.length === 1 ? '' : 's'} completed! Open the Steps tab to add next milestones.
+          All {allSteps.length} step{allSteps.length === 1 ? '' : 's'} done. Add the next ones in Steps.
         </p>
       )}
     </section>
@@ -168,7 +168,7 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
 
   return (
     <>
-      {interconnectedCard}
+      {hasConnections && interconnectedCard}
       {allSteps.length > 0 && stepsCard}
 
       {nextSteps.length > 0 && (
@@ -282,6 +282,8 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
           <p className="sk-hint">There’s no roadmap yet. <Link href={`/skills/${id}/plan`}>Plan it with AI</Link> to get one.</p>
         )}
       </section>
+
+      {!hasConnections && interconnectedCard}
     </>
   );
 }

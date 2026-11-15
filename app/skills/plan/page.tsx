@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CopyPrompt, ErrorNote, Loading, PasteReply, SignedOutCard } from '@/components/skills/Ui';
-import { SignedOut, fmtLevel, skillsGet, skillsPost, type BoardResponse, type SubjectResponse } from '@/components/skills/api';
+import { arrowTabs, CopyPrompt, ErrorNote, Loading, PasteReply, SignedOutCard } from '@/components/skills/Ui';
+import { SignedOut, fmtLevel, skillsGet, skillsPost, type AllSubjectsResponse, type BoardResponse } from '@/components/skills/api';
 import { localToday } from '@/lib/habits/dates';
 import { parseInterconnectedPlanReply, type InterconnectedPlanDraft } from '@/lib/skills/parse';
 import { buildInterconnectedPlanPrompt } from '@/lib/skills/prompts';
@@ -33,6 +33,10 @@ export default function InterconnectedPlanPage() {
   const [loadError, setLoadError] = useState('');
 
   const [mode, setMode] = useState<Mode>('schedule');
+  // The board's "Brainstorm with AI" lands on the second mode.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('mode') === 'brainstorm') setMode('brainstorm');
+  }, []);
   const [hoursPerDay, setHoursPerDay] = useState('1.5');
   const [days, setDays] = useState<7 | 14 | 30>(14);
   const [focusIds, setFocusIds] = useState<Set<string>>(new Set());
@@ -59,11 +63,8 @@ export default function InterconnectedPlanPage() {
 
   const loadAll = useCallback(async () => {
     try {
-      const boardRes = await skillsGet<BoardResponse>();
-      const board = boardRes.board;
-      const details = await Promise.all(
-        board.subjects.map((s) => skillsGet<SubjectResponse>({ subject: s.id })),
-      );
+      // One request for all of them: a request per subject is slow on the Pi.
+      const { board, subjects: details } = await skillsGet<AllSubjectsResponse>({ all: '1' });
       const levelById = new Map<string, number>(board.subjects.map((s) => [s.id, s.level]));
       const realSubjects: Subject[] = details.map((d) => ({ ...d.subject, items: [] }));
       const promptSubjects: Subject[] = details.map((d) => {
@@ -188,7 +189,7 @@ export default function InterconnectedPlanPage() {
       setDone(res);
       await loadAll();
     } catch (e) {
-      setApplyError(e instanceof Error ? e.message : 'Couldn’t apply the interconnected plan.');
+      setApplyError(e instanceof Error ? e.message : 'Couldn’t save the plan.');
     } finally {
       setBusy(false);
     }
@@ -220,22 +221,22 @@ export default function InterconnectedPlanPage() {
         <header className="sk-head">
           <div>
             <Link className="sk-back" href="/skills">← Skills</Link>
-            <h1>Interconnected Plan Applied</h1>
+            <h1>Plan saved</h1>
           </div>
         </header>
         <section className="sk-card sk-done" role="status">
-          <h2>Your skill graph &amp; schedule are updated</h2>
+          <h2>Your skills and schedule are updated</h2>
           <ul className="sk-planner-summary-list">
             {done.addedSubjects > 0 && <li>Added <strong>{done.addedSubjects}</strong> new skill{done.addedSubjects === 1 ? '' : 's'}</li>}
             {done.updatedSubjects > 0 && <li>Updated <strong>{done.updatedSubjects}</strong> existing skill{done.updatedSubjects === 1 ? '' : 's'}</li>}
             {done.addedTopics > 0 && <li>Added <strong>{done.addedTopics}</strong> topic{done.addedTopics === 1 ? '' : 's'}</li>}
             {done.addedResources > 0 && <li>Added <strong>{done.addedResources}</strong> resource{done.addedResources === 1 ? '' : 's'}</li>}
-            {done.addedSteps > 0 && <li>Saved <strong>{done.addedSteps}</strong> explicit study step{done.addedSteps === 1 ? '' : 's'}</li>}
-            {done.scheduledTasks > 0 && <li>Scheduled <strong>{done.scheduledTasks}</strong> daily task{done.scheduledTasks === 1 ? '' : 's'}</li>}
+            {done.addedSteps > 0 && <li>Added <strong>{done.addedSteps}</strong> step{done.addedSteps === 1 ? '' : 's'}</li>}
+            {done.scheduledTasks > 0 && <li>Scheduled <strong>{done.scheduledTasks}</strong> task{done.scheduledTasks === 1 ? '' : 's'}</li>}
           </ul>
           <div className="sk-actions">
-            <Link href="/skills" className="btn btn-primary">Open Board &amp; Schedule</Link>
-            <Link href="/skills?view=graph" className="btn btn-secondary">🕸️ View Knowledge Graph</Link>
+            <Link href="/skills" className="btn btn-primary">See today’s schedule</Link>
+            <Link href="/skills?view=graph" className="btn btn-secondary">See the graph</Link>
             <button
               type="button"
               className="sk-small-btn"
@@ -257,14 +258,14 @@ export default function InterconnectedPlanPage() {
       <header className="sk-head">
         <div>
           <Link className="sk-back" href="/skills">← Skills</Link>
-          <h1>Interconnected AI Planner &amp; Brainstormer</h1>
+          <h1>Plan across your skills</h1>
           <p>
-            Build an ordered multi-skill study schedule or brainstorm new skills and subskills from your current Dreyfus levels.
+            Have your AI lay out a day-by-day schedule over all your skills, prerequisites first, or suggest new skills that build on the ones you have.
           </p>
         </div>
       </header>
 
-      <div className="sk-view-switch" role="tablist" aria-label="Planner mode">
+      <div className="sk-view-switch" role="tablist" aria-label="Planner mode" onKeyDown={arrowTabs}>
         <button
           type="button"
           role="tab"
@@ -272,7 +273,7 @@ export default function InterconnectedPlanPage() {
           className={`sk-view-btn${mode === 'schedule' ? ' is-active' : ''}`}
           onClick={() => setMode('schedule')}
         >
-          🗓️ Interconnected Learning Schedule
+          Schedule
         </button>
         <button
           type="button"
@@ -281,16 +282,16 @@ export default function InterconnectedPlanPage() {
           className={`sk-view-btn${mode === 'brainstorm' ? ' is-active' : ''}`}
           onClick={() => setMode('brainstorm')}
         >
-          💡 Brainstorm New Skills &amp; Subskills
+          Brainstorm new skills
         </button>
       </div>
 
       <section className="sk-card">
-        <h2><span className="sk-step">0</span> Configure your {mode === 'schedule' ? 'schedule' : 'brainstorm'}</h2>
+        <h2><span className="sk-step">1</span> {mode === 'schedule' ? 'What to plan' : 'What to brainstorm'}</h2>
 
         <div className="sk-grid-2">
           <label className="sk-field">
-            <span>Daily study budget (hours / day)</span>
+            <span>Hours a day</span>
             <input
               type="number"
               min={0.25}
@@ -318,11 +319,11 @@ export default function InterconnectedPlanPage() {
                   </button>
                 ))}
               </div>
-              <small>Starts today ({today}) with automatic carry-forward if you miss a day.</small>
+              <small>Starts today. Miss a day and the rest moves along with you.</small>
             </div>
           ) : (
             <div className="sk-field">
-              <span>Starter schedule horizon</span>
+              <span>Schedule for the new skills</span>
               <div className="sk-toggles">
                 {([7, 14, 30] as const).map((d) => (
                   <button
@@ -336,7 +337,7 @@ export default function InterconnectedPlanPage() {
                   </button>
                 ))}
               </div>
-              <small>Brainstorm includes starter topics, free PDFs/lectures, steps, and optional schedule.</small>
+              <small>Each suggestion comes with topics, free material, steps, and a starter schedule you can leave out.</small>
             </div>
           )}
         </div>
@@ -344,10 +345,10 @@ export default function InterconnectedPlanPage() {
         {board.subjects.length > 0 && (
           <div className="sk-field">
             <div className="sk-card-head">
-              <span>Focus skills ({focusIds.size ? `${focusIds.size} selected` : 'all active skills included'})</span>
+              <span>Skills to include {focusIds.size ? `(${focusIds.size} picked)` : '(all but paused ones)'}</span>
               {focusIds.size > 0 && (
                 <button type="button" className="sk-text-btn" onClick={() => setFocusIds(new Set())}>
-                  Clear focus filter
+                  Include all
                 </button>
               )}
             </div>
@@ -369,7 +370,7 @@ export default function InterconnectedPlanPage() {
         )}
 
         <label className="sk-field">
-          <span>Goals &amp; direction (optional)</span>
+          <span>What you’re aiming for (optional)</span>
           <textarea
             rows={3}
             value={goals}
@@ -384,11 +385,11 @@ export default function InterconnectedPlanPage() {
       </section>
 
       <CopyPrompt
-        title={mode === 'schedule' ? 'Copy interconnected schedule prompt' : 'Copy skill brainstorm prompt'}
+        title={mode === 'schedule' ? 'Copy the schedule prompt' : 'Copy the brainstorm prompt'}
         prompt={prompt}
       >
         <p className="sk-hint">
-          Includes all {board.subjects.length} skill{board.subjects.length === 1 ? '' : 's'}, their Dreyfus levels, parent/subskill links, topics, resources, and current steps.
+          It has all {board.subjects.length} skill{board.subjects.length === 1 ? '' : 's'} in it: levels, how they link, topics, resources and steps.
         </p>
       </CopyPrompt>
 
@@ -398,7 +399,7 @@ export default function InterconnectedPlanPage() {
 
       {draft && (
         <section className="sk-card sk-planner-preview" aria-live="polite">
-          <h2>Preview parsed {mode === 'schedule' ? 'interconnected plan' : 'brainstorm & plan'}</h2>
+          <h2>What your AI suggested</h2>
           {draft.summary && <p className="sk-pp-summary">{draft.summary}</p>}
           {parsed && parsed.warnings.length > 0 && (
             <ul className="sk-pp-warnings">
@@ -409,7 +410,7 @@ export default function InterconnectedPlanPage() {
           {draft.newSubjects.length > 0 && (
             <div className="sk-planner-section">
               <div className="sk-card-head">
-                <h3>Suggested new skills &amp; subskills ({selectedNewSubjects.length}/{draft.newSubjects.length})</h3>
+                <h3>New skills ({selectedNewSubjects.length} of {draft.newSubjects.length} picked)</h3>
                 <div className="sk-actions">
                   <button
                     type="button"
@@ -499,7 +500,7 @@ export default function InterconnectedPlanPage() {
 
                       {ns.steps.length > 0 && (
                         <details className="sk-brainstorm-details" open>
-                          <summary>{ns.steps.length} explicit step{ns.steps.length === 1 ? '' : 's'}</summary>
+                          <summary>{ns.steps.length} step{ns.steps.length === 1 ? '' : 's'}</summary>
                           <ol className="sk-pp-list">
                             {ns.steps.map((st, idx) => (
                               <li key={idx} className="sk-pp-row">
@@ -526,7 +527,7 @@ export default function InterconnectedPlanPage() {
 
           {draft.parentLinks.length > 0 && (
             <div className="sk-planner-section">
-              <h3>Parent / subskill links ({draft.parentLinks.length})</h3>
+              <h3>Links between skills ({draft.parentLinks.length})</h3>
               <ul className="sk-pp-list">
                 {draft.parentLinks.map((link, idx) => (
                   <li key={idx} className="sk-pp-row">
@@ -543,7 +544,7 @@ export default function InterconnectedPlanPage() {
           {draft.subjectPlans.length > 0 && (
             <div className="sk-planner-section">
               <div className="sk-card-head">
-                <h3>Skill step plans ({draft.subjectPlans.length})</h3>
+                <h3>Steps for your skills ({draft.subjectPlans.length})</h3>
               </div>
               <div className="sk-pp-choices">
                 <label>
@@ -552,7 +553,7 @@ export default function InterconnectedPlanPage() {
                     checked={includeSubjectPlans}
                     onChange={(e) => setIncludeSubjectPlans(e.target.checked)}
                   />
-                  Apply explicit steps, topics, and resources to these skills
+                  Add these steps, topics and resources
                 </label>
                 {includeSubjectPlans && (
                   <label>
@@ -561,7 +562,7 @@ export default function InterconnectedPlanPage() {
                       checked={replaceSteps}
                       onChange={(e) => setReplaceSteps(e.target.checked)}
                     />
-                    Replace existing steps on updated skills (uncheck to append new steps)
+                    Replace the steps these skills have now (otherwise they’re added after)
                   </label>
                 )}
               </div>
@@ -601,7 +602,7 @@ export default function InterconnectedPlanPage() {
 
           {scheduleGroups.length > 0 && (
             <div className="sk-planner-section">
-              <h3>Day-by-day schedule ({draft.schedule.length} task{draft.schedule.length === 1 ? '' : 's'} across {scheduleGroups.length} day{scheduleGroups.length === 1 ? '' : 's'})</h3>
+              <h3>Schedule: {draft.schedule.length} task{draft.schedule.length === 1 ? '' : 's'} over {scheduleGroups.length} day{scheduleGroups.length === 1 ? '' : 's'}</h3>
               <div className="sk-pp-choices">
                 <label>
                   <input
@@ -609,7 +610,7 @@ export default function InterconnectedPlanPage() {
                     checked={includeSchedule}
                     onChange={(e) => setIncludeSchedule(e.target.checked)}
                   />
-                  Import scheduled tasks into your study queue
+                  Use this schedule
                 </label>
                 {includeSchedule && (
                   <label>
@@ -618,7 +619,7 @@ export default function InterconnectedPlanPage() {
                       checked={replaceSchedule}
                       onChange={(e) => setReplaceSchedule(e.target.checked)}
                     />
-                    Replace your existing schedule (uncheck to append)
+                    Replace what’s still to do in your schedule (otherwise it’s added alongside). What’s done stays.
                   </label>
                 )}
               </div>
@@ -666,7 +667,7 @@ export default function InterconnectedPlanPage() {
                 ? 'Applying…'
                 : mode === 'brainstorm' && selectedNewSubjects.length > 0
                   ? `Import ${selectedNewSubjects.length} skill${selectedNewSubjects.length === 1 ? '' : 's'} & Apply Plan`
-                  : 'Apply Interconnected Plan'}
+                  : 'Save the plan'}
             </button>
           </div>
         </section>

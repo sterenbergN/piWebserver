@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useSitePopup } from '@/components/SitePopup';
 import { addDays, localToday } from '@/lib/habits/dates';
 import type { BoardSummary } from '@/lib/skills/model';
 import type { ScheduledSkillTask } from '@/lib/skills/types';
@@ -13,7 +14,7 @@ function formatDayLabel(day: string, today: string): string {
   if (day === addDays(today, 1)) return 'Tomorrow';
   const d = new Date(`${day}T12:00:00`);
   if (Number.isNaN(d.getTime())) return day;
-  return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${day}`;
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 export default function SchedulePanel({
@@ -23,6 +24,7 @@ export default function SchedulePanel({
   board: BoardSummary;
   onReload: () => Promise<void>;
 }) {
+  const { confirm, popup } = useSitePopup();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
@@ -63,6 +65,21 @@ export default function SchedulePanel({
     } finally {
       setBusyKey(null);
     }
+  }
+
+  /** Make the schedule again from every skill's steps. Unfinished tasks from steps or an AI plan are replaced; ones added by hand stay. */
+  async function rebuild() {
+    const planned = [...todayTasks, ...upcomingDays.flatMap((d) => d.tasks)].filter((t) => !t.done && !t.manual).length;
+    if (planned > 0) {
+      const ok = await confirm({
+        title: 'Make the schedule again from your steps?',
+        message: `The ${planned} unfinished task${planned === 1 ? '' : 's'} from steps or an AI plan are replaced with new ones from each skill’s steps, at your daily budget. Tasks you added yourself, and what’s done, stay.`,
+        confirmLabel: 'Rebuild',
+      });
+      if (!ok) return;
+    }
+    // No budget given: the server uses the one saved with the schedule (an hour if there isn't one).
+    await run('rebuild', 'rebuild-schedule-from-steps', { keepCompleted: true });
   }
 
   async function submitNewTask(e: React.FormEvent) {
@@ -130,11 +147,11 @@ export default function SchedulePanel({
     <section className="sk-card sk-sched-panel" aria-labelledby="sk-sched-heading">
       <div className="sk-card-head">
         <div>
-          <h2 id="sk-sched-heading">Study Schedule &amp; Today&apos;s Queue</h2>
+          <h2 id="sk-sched-heading">Today</h2>
           <p className="sk-hint">
             {todayTasks.length > 0
               ? `${remainingToday} of ${todayTasks.length} task${todayTasks.length === 1 ? '' : 's'} left today${todayMinutes > 0 ? ` · ~${todayMinutes} min remaining` : ''}`
-              : 'No tasks scheduled for today yet.'}
+              : 'Nothing scheduled for today.'}
           </p>
         </div>
         <div className="sk-actions">
@@ -142,12 +159,13 @@ export default function SchedulePanel({
             type="button"
             className="sk-small-btn"
             disabled={!!busyKey || board.subjects.length === 0}
-            onClick={() => void run('rebuild', 'rebuild-schedule-from-steps', { hoursPerDay: 1, keepCompleted: true })}
+            title="Make the schedule from each skill’s steps"
+            onClick={() => void rebuild()}
           >
-            {busyKey === 'rebuild' ? 'Rebuilding…' : '⚡ Rebuild from skill steps'}
+            {busyKey === 'rebuild' ? 'Rebuilding…' : 'Rebuild from steps'}
           </button>
           <Link href="/skills/plan" className="sk-small-btn sk-sched-ai-link">
-            🤖 Interconnected AI Plan →
+            Plan with AI →
           </Link>
         </div>
       </div>
@@ -155,8 +173,8 @@ export default function SchedulePanel({
       {shiftedDays > 0 && (
         <div className="sk-sched-shift-banner" role="status">
           <p>
-            Paused days carried forward: tasks from <strong>{shiftedFrom ?? 'an earlier day'}</strong> shifted ahead{' '}
-            <strong>{shiftedDays} day{shiftedDays === 1 ? '' : 's'}</strong> into today&apos;s queue to keep your learning order intact.
+            Some days were missed, so everything from <strong>{shiftedFrom ? formatDayLabel(shiftedFrom, today) : 'an earlier day'}</strong> on has moved{' '}
+            <strong>{shiftedDays} day{shiftedDays === 1 ? '' : 's'}</strong> later, in the same order.
           </p>
           <button
             type="button"
@@ -164,7 +182,7 @@ export default function SchedulePanel({
             disabled={!!busyKey}
             onClick={() => void run('shift', 'shift-schedule')}
           >
-            {busyKey === 'shift' ? 'Saving…' : 'Save shifted dates'}
+            {busyKey === 'shift' ? 'Saving…' : 'Keep the new dates'}
           </button>
         </div>
       )}
@@ -173,7 +191,7 @@ export default function SchedulePanel({
 
       <div className="sk-sched-today">
         <div className="sk-sched-subhead">
-          <h3>Today&apos;s Study Queue</h3>
+          <h3>To do today</h3>
           {board.subjects.length > 0 && (
             <button
               type="button"
@@ -261,8 +279,7 @@ export default function SchedulePanel({
           </ul>
         ) : (
           <p className="sk-empty sk-sched-empty">
-            Nothing queued for today. Click <strong>Rebuild from skill steps</strong>, add a quick task above, or build an{' '}
-            <Link href="/skills/plan">Interconnected AI Plan</Link>.
+            Nothing for today. Add a task, <strong>Rebuild from steps</strong>, or <Link href="/skills/plan">plan with AI</Link>.
           </p>
         )}
       </div>
@@ -270,7 +287,7 @@ export default function SchedulePanel({
       {upcomingDays.length > 0 && (
         <details className="sk-sched-upcoming">
           <summary>
-            Upcoming schedule ({upcomingDays.length} day{upcomingDays.length === 1 ? '' : 's'} · {upcomingTaskCount} task{upcomingTaskCount === 1 ? '' : 's'})
+            Coming up: {upcomingTaskCount} task{upcomingTaskCount === 1 ? '' : 's'} over {upcomingDays.length} day{upcomingDays.length === 1 ? '' : 's'}
           </summary>
           <div className="sk-sched-upcoming-days">
             {upcomingDays.map((group) => (
@@ -290,9 +307,10 @@ export default function SchedulePanel({
 
       {completedTasks.length > 0 && (
         <p className="sk-hint sk-sched-done-count">
-          {completedTasks.length} scheduled task{completedTasks.length === 1 ? '' : 's'} completed across your schedule.
+          {completedTasks.length} task{completedTasks.length === 1 ? '' : 's'} done so far.
         </p>
       )}
+      {popup}
     </section>
   );
 }
