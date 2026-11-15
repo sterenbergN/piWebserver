@@ -11,7 +11,8 @@
 !.yarn/versions
 
 # local files
-/public
+/public/*
+!/public/icons/
 /.data
 /.cache
 

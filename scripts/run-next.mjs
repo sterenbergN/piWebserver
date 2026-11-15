@@ -30,9 +30,13 @@ if (command === 'dev') {
   await rm(path.join(process.cwd(), '.next-dev', 'dev', 'types'), { recursive: true, force: true }).catch(() => {});
 }
 
-if (command === 'build' && process.env.NEXT_DIST_DIR) {
-  const targetDir = path.join(process.cwd(), process.env.NEXT_DIST_DIR);
-  await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+if (command === 'build') {
+  await rm(path.join(process.cwd(), '.next-dev', 'types'), { recursive: true, force: true }).catch(() => {});
+  await rm(path.join(process.cwd(), '.next-dev', 'dev', 'types'), { recursive: true, force: true }).catch(() => {});
+  if (process.env.NEXT_DIST_DIR) {
+    const targetDir = path.join(process.cwd(), process.env.NEXT_DIST_DIR);
+    await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // pdf.js loads its worker, fonts and character maps by address, so they're served from
