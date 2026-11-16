@@ -14,6 +14,7 @@ import { wavelengthLogic } from './games/wavelength';
 import { bluffClashLogic } from './games/bluff-clash';
 import { emojiTelephoneLogic } from './games/emoji-telephone';
 import { kartClashLogic } from './games/kart-clash';
+import { debateDuelLogic } from './games/debate-duel';
 import { stopKartSimulation } from './kart-physics';
 import { GAME_CATALOG, GAME_INFO } from './catalog';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
@@ -43,6 +44,7 @@ export const GAME_TYPES: GameType[] = [
   'bluff-clash',
   'emoji-telephone',
   'kart-clash',
+  'debate-duel',
 ];
 
 type GameLogic = {
@@ -62,6 +64,7 @@ const LOGIC: Record<GameType, GameLogic> = {
   'bluff-clash': bluffClashLogic,
   'emoji-telephone': emojiTelephoneLogic,
   'kart-clash': kartClashLogic,
+  'debate-duel': debateDuelLogic,
 };
 
 /** Minimum players needed to start each game. */

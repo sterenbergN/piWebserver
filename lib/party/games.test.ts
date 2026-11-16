@@ -692,8 +692,10 @@ test('prompt store: new games\' content is validated, back-filled into older fil
     herdMentality: ['Only herd prompt'],
     wavelengthSpectrums: [{ left: 'Cold', right: 'Hot' }],
     emojiTelephone: ['Only phrase'],
+    debateTopics: ['Best pet: Cats vs Dogs'],
   }));
   for (const [game, check] of [
+    ['debate-duel', (s: GameState) => assert.ok(s.gameData.debates.every((d: any) => d.topic.motion === 'Best pet' && d.topic.sides.join() === 'Cats,Dogs'))],
     ['spyfall', (s: GameState) => assert.equal(s.gameData.location, 'Fire Station')],
     ['bluff-clash', (s: GameState) => assert.equal(s.hostData.prompt, 'A group of crows is a _____.')],
     ['herd-mentality', (s: GameState) => assert.equal(s.hostData.prompt, 'Only herd prompt')],
@@ -705,6 +707,107 @@ test('prompt store: new games\' content is validated, back-filled into older fil
     assert.equal((await engine.processAction(roomCode, hostId, { type: 'START_GAME' })).success, true, game);
     check((await engine.getGameState(roomCode))!);
   }
+});
+
+test('Debate Duel: topics parse into two sides', async () => {
+  const { parseDebateTopic } = await import('./games/debate-duel');
+  assert.deepEqual(parseDebateTopic('Cats vs Dogs'), { motion: 'Cats vs Dogs', sides: ['Cats', 'Dogs'] });
+  assert.deepEqual(parseDebateTopic('Best pet: Cats vs. Dogs'), { motion: 'Best pet', sides: ['Cats', 'Dogs'] });
+  assert.deepEqual(parseDebateTopic('Is a hot dog a sandwich? Yes vs No'), { motion: 'Is a hot dog a sandwich?', sides: ['Yes', 'No'] });
+  assert.deepEqual(parseDebateTopic(' Pineapple belongs on pizza '), { motion: 'Pineapple belongs on pizza', sides: ['For', 'Against'] });
+});
+
+test('Debate Duel: everyone argues both sides once, then the room judges each debate', async () => {
+  const { debateDuelLogic, SILENT_OPENING, SILENT_REBUTTAL, VOTE_POINTS, MIC_DROP_BONUS } = await import('./games/debate-duel');
+  await savePrompts(normalizePrompts({ debateTopics: ['Cats vs Dogs', 'Tea vs Coffee', 'Naps are good', 'Summer vs Winter'] }));
+  const state = makeState('debate-duel', 4);
+  await debateDuelLogic.onStart(state);
+
+  assert.equal(state.phase, 'OPENING');
+  assert.equal(state.gameData.debates.length, 4);
+  for (const pid of state.playerOrder) {
+    const seats = state.gameData.seats[pid];
+    assert.deepEqual(seats.map((s: any) => s.side), [0, 1], 'one debate on each side');
+    const opponents = seats.map((s: any) => state.gameData.debates[s.debate].debaters[1 - s.side]);
+    assert.ok(!opponents.includes(pid) && opponents[0] !== opponents[1], 'two different opponents, never yourself');
+  }
+
+  // Blank text and a third slot are ignored; p3 never writes, so the host ends the phase.
+  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_OPENING', slot: 0, text: '   ' });
+  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_OPENING', slot: 2, text: 'nope' });
+  for (const pid of ['p0', 'p1', 'p2']) {
+    for (const slot of [0, 1]) await debateDuelLogic.processAction(state, pid, { type: 'SUBMIT_OPENING', slot, text: `${pid} opens ${slot}` });
+  }
+  assert.equal(state.phase, 'OPENING', 'still waiting on p3');
+  await debateDuelLogic.processAction(state, 'p1', { type: 'FORCE_REBUTTALS' });
+  assert.equal(state.phase, 'OPENING', 'only the host can end it');
+  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_REBUTTALS' });
+  assert.equal(state.phase, 'REBUTTAL');
+
+  // Each rebuttal card shows the opponent's opening (or the silence filler).
+  const p0Card = state.playerData.p0.cards[0];
+  const d0 = state.gameData.debates[0];
+  assert.equal(p0Card.theirOpening, d0.openings[1]);
+  assert.ok(state.gameData.debates.some((d: any) => d.openings.includes(SILENT_OPENING)));
+
+  for (const pid of state.playerOrder) {
+    for (const slot of [0, 1]) await debateDuelLogic.processAction(state, pid, { type: 'SUBMIT_REBUTTAL', slot, text: `${pid} rebuts ${slot}` });
+  }
+  assert.equal(state.phase, 'VOTING', 'everyone wrote, so the debates start early');
+  assert.ok(!JSON.stringify(state.hostData).includes('"debaters"'), 'who argued which side stays hidden while voting');
+  assert.ok(!state.gameData.debates.some((d: any) => d.rebuttals.includes(SILENT_REBUTTAL)));
+
+  // Debate 0 is p0 (side 0) vs p3 (side 1); p1 and p2 judge.
+  const [a, b] = state.gameData.debates[0].debaters;
+  assert.deepEqual([a, b], ['p0', 'p3']);
+  assert.equal(state.playerData.p0.phase, 'WAITING');
+  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_VOTE', side: 0 });
+  await debateDuelLogic.processAction(state, 'p1', { type: 'SUBMIT_VOTE', side: 2 });
+  assert.deepEqual(state.gameData.votes[0] || {}, {}, 'debaters cannot vote and a vote must name a side');
+  await debateDuelLogic.processAction(state, 'p1', { type: 'SUBMIT_VOTE', side: 0 });
+  await debateDuelLogic.processAction(state, 'p2', { type: 'SUBMIT_VOTE', side: 0 });
+
+  assert.equal(state.phase, 'DEBATE_RESULTS');
+  assert.deepEqual(state.hostData.tally, [2, 0]);
+  assert.equal(state.hostData.micDrop, 0);
+  assert.equal(state.players.p0.score, 2 * VOTE_POINTS + MIC_DROP_BONUS);
+  assert.equal(state.players.p3.score, 0);
+
+  // A split vote is a dead heat with no bonus.
+  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
+  assert.equal(state.phase, 'VOTING');
+  const [c, d] = state.gameData.debates[1].debaters;
+  const judges = state.playerOrder.filter((pid) => pid !== c && pid !== d);
+  await debateDuelLogic.processAction(state, judges[0], { type: 'SUBMIT_VOTE', side: 0 });
+  await debateDuelLogic.processAction(state, judges[1], { type: 'SUBMIT_VOTE', side: 1 });
+  assert.equal(state.hostData.winnerSide, null);
+  assert.equal(state.hostData.micDrop, null);
+
+  // Timers run out the rest; the game ends after the last debate.
+  for (let i = 0; i < 2; i++) {
+    await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
+    await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_TALLY' });
+  }
+  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
+  assert.equal(state.phase, 'FINAL_RESULTS');
+});
+
+test('Debate Duel: a second round starts fresh debates', async () => {
+  const { debateDuelLogic } = await import('./games/debate-duel');
+  await savePrompts(normalizePrompts({ debateTopics: ['Cats vs Dogs'] }));
+  const state = makeState('debate-duel', 3);
+  state.gameData = { targetRounds: 2 };
+  await debateDuelLogic.onStart(state);
+  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_REBUTTALS' });
+  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_DEBATES' });
+  for (let i = 0; i < 3; i++) {
+    await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_TALLY' });
+    await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
+  }
+  assert.equal(state.phase, 'OPENING');
+  assert.equal(state.gameData.currentRound, 1);
+  assert.equal(state.hostData.round, 2);
+  assert.ok(state.playerData.p0.written.every((t: string) => t === ''));
 });
 
 test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and multi-race scoring', async () => {

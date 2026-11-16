@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 import { shareResultsCard } from '@/components/party/resultsCard';
 import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls, HowToPlayModal, ShareInviteButton, safetyQuip, useTurnBuzz } from '@/components/party/PhoneExtras';
+import { DebateDuelPhone } from '@/components/party/DebateDuelViews';
 import KartClashPhoneController from '@/components/party/KartClashPhoneController';
 import { KART_STYLES } from '@/lib/party/kart-shared';
 import { GameSwitcher } from '@/components/party/GamePicker';
@@ -137,7 +138,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const inputPhases = [
     'PROMPTING', 'VOTING', 'QUESTION', 'FINAL_ESCAPE', 'PREDICTION', 'MATCHUP',
     'TIEBREAKER', 'RACING', 'TASK_DELIVERY', 'DISCUSSION', 'CLUE_GIVING',
-    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP',
+    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP', 'OPENING', 'REBUTTAL',
   ];
   useTurnBuzz(
     state ? `${state.phase}|${state.data?.phase}|${state.data?.prompt || state.data?.question || state.data?.clue || ''}|${state.data?.isOnFloor ? 'floor' : ''}` : null,
@@ -288,6 +289,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     'wavelength': 'wavelengthSpectrums',
     'bluff-clash': 'bluffFacts',
     'emoji-telephone': 'emojiTelephone',
+    'debate-duel': 'debateTopics',
   };
   const activePacks: string[] = state?.settings?.packs?.length ? state.settings.packs : ['classic'];
   const togglePack = (id: string) => {
@@ -618,7 +620,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   </button>
                 </div>
 
-                {state.gameType === 'quip-clash' && (
+                {(state.gameType === 'quip-clash' || state.gameType === 'debate-duel') && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Rounds:</span>
                     {[1, 2, 3].map((r) => (
@@ -939,6 +941,19 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               );
             })}
           </div>
+        )}
+
+        {/* ===== DEBATE DUEL ===== */}
+        {state.gameType === 'debate-duel' && (
+          <DebateDuelPhone
+            key={`${state.phase}-${hd?.round ?? ''}-${hd?.debateNumber ?? ''}`}
+            phase={state.phase}
+            pd={pd}
+            hd={hd}
+            players={state.players}
+            meId={me.id}
+            sendAction={sendAction}
+          />
         )}
 
         {/* ===== FAKER ===== */}

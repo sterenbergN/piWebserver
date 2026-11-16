@@ -3,6 +3,7 @@ import path from 'path';
 import { BUILT_IN_PACKS } from './prompt-packs';
 import {
   DEFAULT_BLUFF_FACTS,
+  DEFAULT_DEBATE_TOPICS,
   DEFAULT_HERD_PROMPTS,
   DEFAULT_SPYFALL_LOCATIONS,
   DEFAULT_TELEPHONE_PROMPTS,
@@ -50,18 +51,20 @@ export interface PromptLists {
   wavelengthSpectrums: WavelengthSpectrum[];
   bluffFacts: BluffFact[];
   emojiTelephone: string[];
+  /** "Cats vs Dogs", "Best pet: Cats vs Dogs", or a motion argued For/Against. */
+  debateTopics: string[];
 }
 
 export const PROMPT_LIST_KEYS = [
   'quipClash', 'theFaker', 'triviaQuestions', 'bracketBattles',
-  'spyfallLocations', 'herdMentality', 'wavelengthSpectrums', 'bluffFacts', 'emojiTelephone',
+  'spyfallLocations', 'herdMentality', 'wavelengthSpectrums', 'bluffFacts', 'emojiTelephone', 'debateTopics',
 ] as const satisfies readonly (keyof PromptLists)[];
 
 /** Packs saved before a list existed simply don't have it yet. */
 export function emptyLists(): PromptLists {
   return {
     quipClash: [], theFaker: [], triviaQuestions: [], bracketBattles: [],
-    spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [],
+    spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [], debateTopics: [],
   };
 }
 
@@ -179,6 +182,7 @@ const DEFAULT_PROMPTS: PromptLists = {
   wavelengthSpectrums: DEFAULT_WAVELENGTH_SPECTRUMS,
   bluffFacts: DEFAULT_BLUFF_FACTS,
   emojiTelephone: DEFAULT_TELEPHONE_PROMPTS,
+  debateTopics: DEFAULT_DEBATE_TOPICS,
 };
 
 const MAX_PROMPT_LENGTH = 200;
@@ -268,6 +272,7 @@ function cleanLists(input: any): PromptLists {
     wavelengthSpectrums: cleanSpectrums(input?.wavelengthSpectrums),
     bluffFacts: cleanBluffFacts(input?.bluffFacts),
     emojiTelephone: cleanList(input?.emojiTelephone),
+    debateTopics: cleanList(input?.debateTopics),
   };
 }
 
@@ -366,7 +371,7 @@ export async function getRandomTriviaQuestions(count: number, packIds?: string[]
 }
 
 /** Up to `count` distinct entries of one list from the chosen packs (fewer if the pool is smaller). */
-export async function getGameContent<K extends 'spyfallLocations' | 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone'>(
+export async function getGameContent<K extends 'spyfallLocations' | 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone' | 'debateTopics'>(
   key: K, count: number, packIds?: string[],
 ): Promise<PromptLists[K]> {
   const list = pool(await getPrompts(), key, packIds) as unknown[];
@@ -374,7 +379,7 @@ export async function getGameContent<K extends 'spyfallLocations' | 'herdMentali
 }
 
 /** Like getGameContent, but repeats entries once the pool runs out (for games that need exactly `count`). */
-export async function drawGameContent<K extends 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone'>(
+export async function drawGameContent<K extends 'herdMentality' | 'wavelengthSpectrums' | 'bluffFacts' | 'emojiTelephone' | 'debateTopics'>(
   key: K, count: number, packIds?: string[],
 ): Promise<PromptLists[K]> {
   return draw(pool(await getPrompts(), key, packIds) as unknown[], count) as PromptLists[K];

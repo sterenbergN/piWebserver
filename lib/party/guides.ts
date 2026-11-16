@@ -212,6 +212,26 @@ export const GAME_GUIDES: Record<GameType, GameGuide> = {
     ],
     tip: 'Use the quick-pick emoji palette or your phone’s emoji keyboard to build visual stories.',
   },
+  'debate-duel': {
+    id: 'debate-duel',
+    name: 'Debate Duel',
+    emoji: '🎤',
+    tagline: 'Argue the side you’re handed',
+    players: '3–8 Players',
+    rounds: '1–3 Rounds',
+    goal: 'Win the room with whichever side you’re handed, however ridiculous it is.',
+    steps: [
+      'You get two silly debates and a side in each. Write a punchy opening argument for both.',
+      'Read your opponent’s opening and fire back with a rebuttal.',
+      'Each debate plays on the TV. Everyone not in it votes for the side that argued better.',
+    ],
+    scoring: [
+      '+500 pts for every vote your side wins',
+      '+500 pts Mic Drop bonus for winning every vote (2+ voters)',
+      '+250 pts Audience Favorite bonus',
+    ],
+    tip: 'You don’t have to believe it. Confidence and one good joke beat a long essay.',
+  },
   'kart-clash': {
     id: 'kart-clash',
     name: 'Kart Clash',

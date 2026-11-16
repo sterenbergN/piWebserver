@@ -78,6 +78,13 @@ const AWARDS: Record<GameType, AwardDef[]> = {
   'emoji-telephone': [
     { stat: 'votes', emoji: '🔗', title: 'Emoji Poet', detail: (n) => `${plural(n, 'vote')} for funniest chain`, atLeast: 1 },
   ],
+  'debate-duel': [
+    { stat: 'votes', emoji: '🎤', title: 'Silver Tongue', detail: (n) => `${plural(n, 'vote')} in total`, atLeast: 1 },
+    { stat: 'debatesWon', emoji: '🏛️', title: 'Undisputed', detail: (n) => `won ${plural(n, 'debate')}`, atLeast: 2 },
+    { stat: 'micDrop', emoji: '💥', title: 'Mic Drop', detail: (n) => plural(n, 'unanimous win'), atLeast: 1 },
+    { stat: 'audienceFavorite', emoji: '👀', title: 'Audience Darling', detail: (n) => `the audience's pick ${plural(n, 'time')}`, atLeast: 1 },
+    { stat: 'votes', emoji: '🦗', title: 'Tough Room', detail: (n) => `only ${plural(n, 'vote')}`, mode: 'min' },
+  ],
   'kart-clash': [
     { stat: 'raceWins', emoji: '🏎️', title: 'Pole Position', detail: (n) => plural(n, 'race win'), atLeast: 1 },
     { stat: 'drifts', emoji: '💨', title: 'Drift King', detail: (n) => plural(n, 'mini-turbo boost'), atLeast: 1 },

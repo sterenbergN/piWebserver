@@ -6,6 +6,7 @@ import { shareResultsCard } from '@/components/party/resultsCard';
 import { GAME_TITLES, ReactionLayer, ScoreTicker, SoundBar, TitleCard, VoterFaces, useImmersive, useShowDirector } from '@/components/party/HostShow';
 import { HowToPlayModal, ShareInviteButton } from '@/components/party/PhoneExtras';
 import KartClashHostView from '@/components/party/KartClashHostView';
+import { DebateDuelHost } from '@/components/party/DebateDuelViews';
 import { GameSwitcher } from '@/components/party/GamePicker';
 import { GAME_CATALOG, gameLabel } from '@/lib/party/catalog';
 import { BOT_LEVELS } from '@/lib/party/kart-shared';
@@ -237,7 +238,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   };
   const PACK_LIST_KEY: Record<string, string> = {
     'quip-clash': 'quipClash', 'the-faker': 'theFaker', 'bracket-battles': 'bracketBattles', 'trivia-death': 'triviaQuestions',
-    'spyfall': 'spyfallLocations', 'herd-mentality': 'herdMentality', 'wavelength': 'wavelengthSpectrums', 'bluff-clash': 'bluffFacts', 'emoji-telephone': 'emojiTelephone',
+    'spyfall': 'spyfallLocations', 'herd-mentality': 'herdMentality', 'wavelength': 'wavelengthSpectrums', 'bluff-clash': 'bluffFacts', 'emoji-telephone': 'emojiTelephone', 'debate-duel': 'debateTopics',
   };
 
   const isPlaying = state && state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';
@@ -443,7 +444,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </div>
             )}
             
-            {state.gameType === 'quip-clash' && (
+            {(state.gameType === 'quip-clash' || state.gameType === 'debate-duel') && (
               <div style={{ marginTop: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
                 <span style={{ fontWeight: 'bold' }}>Rounds to play:</span>
                 {[1, 2, 3].map(r => (
@@ -744,6 +745,11 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               ))}
             </div>
           </div>
+        )}
+
+        {/* ===== DEBATE DUEL ===== */}
+        {state.gameType === 'debate-duel' && (
+          <DebateDuelHost state={state} secondsLeft={secondsLeft} pct={pct} />
         )}
 
         {/* ===== FAKER ===== */}

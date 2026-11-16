@@ -11,6 +11,7 @@ export type GameType =
   | 'wavelength'
   | 'bluff-clash'
   | 'emoji-telephone'
+  | 'debate-duel'
   | 'kart-clash';
 
 export interface Player {
