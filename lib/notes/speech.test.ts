@@ -137,3 +137,10 @@ test('stock silence lines are dropped, speech is tidied', () => {
   assert.equal(tidySpeech('  ... '), '');
   assert.equal(tidySpeech(' Hello   there. '), 'Hello there.');
 });
+
+test('the speech worker stops a run said over and over in the same place as here', async () => {
+  const worker = (await import('./speech-worker.cjs')) as unknown as { repeatedTail: (ids: number[]) => number; default?: { repeatedTail: (ids: number[]) => number } };
+  const workerTail = worker.repeatedTail ?? worker.default!.repeatedTail;
+  const cases = [[1, 2, 3, 4], [9, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6], [1, 7, 7, 7, 7, 7, 7, 7, 7], [4, 1, 2, 3, 1, 2, 3, 1, 2, 3], []];
+  for (const ids of cases) assert.equal(workerTail(ids), repeatedTail(ids), JSON.stringify(ids));
+});

@@ -55,6 +55,8 @@ export type EngineSettings = {
   fingerDraws: 'auto' | 'on' | 'off';
   gestures: Record<GestureName, GestureAction>;
   snapShapes: boolean;
+  /** Swiping or pulling past the last page adds a new one. Off, a new page only comes from the + button. */
+  swipeNewPage: boolean;
 };
 
 export type SelectionInfo = { count: number; rect: Box; hasImage: boolean; hasText: boolean; hasStroke: boolean; mark: MarkElement | null };
@@ -1933,6 +1935,7 @@ export class NoteCanvas {
 
   /** Side to side, a swipe past the edge of the page turns it (or adds one at the end); vertically, overscrolling past the last page adds one too. */
   private flingOrTurn(allowNewPage = true) {
+    allowNewPage = allowNewPage && this.settings.swipeNewPage !== false;
     if (!this.rects.length) {
       this.samples = [];
       return;

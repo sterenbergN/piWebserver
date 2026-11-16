@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
   // Tracing finds the handwriting runtime's binding but not the library the binding loads, so
   // name it. Only the build machine's own, since a release runs on the machine type it's built on.
   outputFileTracingIncludes: {
-    '/api/notes/*': [`./node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/**/*`],
+    '/api/notes/*': [`./node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/**/*`, './lib/notes/speech-worker.cjs'],
   },
   // Don't advertise the framework in every response.
   poweredByHeader: false,

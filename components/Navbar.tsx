@@ -44,7 +44,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const { theme, toggleTheme } = useTheme();
   const studyHome = !!user?.studyHome;
   const { pins, togglePin } = useNavPins(!!user, studyHome);
-  const [launcher, setLauncher] = useState(false);
+  // Open, and what it starts with: "?" opens it ready for a question.
+  const [launcher, setLauncher] = useState<false | { query: string }>(false);
   const barRef = useRef<HTMLElement>(null);
   const [discovery, setDiscovery] = useState<{ text: string; everywhere: boolean } | null>(null);
 
@@ -87,7 +88,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
     return () => window.clearTimeout(handle);
   }, [discovery]);
 
-  // "/" or Ctrl+K opens the panel from anywhere.
+  // "/" or Ctrl+K opens the panel from anywhere; "?" opens it to jot down a question for Skills.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -95,7 +96,10 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
       const typing = e.defaultPrevented || (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
       if ((e.key === '/' && !typing) || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
-        setLauncher(true);
+        setLauncher({ query: '' });
+      } else if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setLauncher({ query: '? ' });
       }
     };
     window.addEventListener('keydown', onKey);
@@ -117,7 +121,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
     }
   };
 
-  const openButton = { onClick: () => setLauncher(true), onPointerEnter: () => { void loadLauncher(); } };
+  const openButton = { onClick: () => setLauncher({ query: '' }), onPointerEnter: () => { void loadLauncher(); } };
 
   return (
     <>
@@ -168,7 +172,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
               <span>{item.short ?? item.label}</span>
             </Link>
           ))}
-          <button type="button" onClick={() => setLauncher(true)}>
+          <button type="button" onClick={() => setLauncher({ query: '' })}>
             <span aria-hidden>{inStudy ? <Icon name="compass" /> : '🧭'}</span>
             <span>Explore</span>
           </button>
@@ -180,7 +184,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
 
       {launcher && (
         <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} studyFirst={studyHome} theme={theme}
-          onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} />
+          onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} initialQuery={launcher.query} />
       )}
     </>
   );

@@ -172,7 +172,7 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
                 key={`w:${w.target}`}
                 href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(w.target)}`}
                 className="sk-chip sk-wiki-chip"
-                title={`Explore [[${w.target}]] in Knowledge Base`}
+                title={`Explore [[${w.target}]] in Notes and lookups`}
               >
                 [[{w.label}]]
               </Link>
@@ -182,7 +182,7 @@ function TopicRow({ topic, stats, subjectId, pages, first, last, act, busy }: { 
                 key={`t:${tag}`}
                 href={`/skills/${subjectId}?tab=knowledge&q=${encodeURIComponent(`#${tag}`)}`}
                 className="sk-chip sk-tag-chip"
-                title={`Filter #${tag} in Knowledge Base`}
+                title={`Filter #${tag} in Notes and lookups`}
               >
                 #{tag}
               </Link>

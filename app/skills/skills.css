@@ -95,6 +95,7 @@
 .sk-tabs button { flex: none; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.55rem 0.9rem; border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
 .sk-tabs button[aria-selected='true'] { color: var(--foreground); border-bottom-color: var(--accent); }
 .sk-tab-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: var(--input-bg); border: 1px solid var(--surface-border); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sk-tab-hint { margin: -0.35rem 0 0; color: var(--muted); font-size: 0.85rem; }
 .sk-tabs button[aria-selected='true'] .sk-tab-badge { color: var(--foreground); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 
 /* View & mode switcher */

@@ -5,6 +5,20 @@ export async function registerNode() {
     const { startBackupScheduler } = await import('./lib/backup');
     startBackupScheduler();
 
+    // Recordings that were being turned into text carry on after a restart, without waiting for
+    // someone to open their notebook; checked again every few minutes in case one was missed.
+    if (!(global as { _transcriptsResuming?: boolean })._transcriptsResuming) {
+      (global as { _transcriptsResuming?: boolean })._transcriptsResuming = true;
+      const resume = async () => {
+        const { resumeAllTranscripts } = await import('./lib/notes/transcripts');
+        const resumed = await resumeAllTranscripts().catch((error) => { console.error('Resuming transcripts failed', error); return 0; });
+        if (resumed) console.log(`Transcripts waiting: ${resumed}`);
+      };
+      // Not straight away: the site answers its first pages before the model starts loading.
+      setTimeout(() => void resume(), 30_000).unref();
+      setInterval(() => void resume(), 10 * 60_000).unref();
+    }
+
     // Try to prevent multiple intervals in dev mode HMR
     if (!(global as any)._statsCollectorStarted) {
       (global as any)._statsCollectorStarted = true;

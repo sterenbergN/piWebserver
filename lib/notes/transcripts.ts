@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
+import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
-import { findRecording, readBookItems, storedFile, transcriptsPath } from './store';
+import { isId } from './items';
+import { findRecording, notesFolder, readBookItems, storedFile, transcriptsPath } from './store';
 import { SPEECH_MODEL, transcribe, TranscribeProblem, type SpeechSegment } from './transcriber';
 
 // Turning recordings into text is a long job on a Pi (minutes for a lecture), so it runs in the
@@ -82,8 +84,8 @@ async function runJob(job: Job) {
     await forget(userId, notebook, recording);
     return;
   }
-  const path = storedFile(userId, notebook, record.file);
-  if (!(await fs.stat(path).catch(() => null))) {
+  const soundFile = storedFile(userId, notebook, record.file);
+  if (!(await fs.stat(soundFile).catch(() => null))) {
     await change(userId, notebook, recording, run, (t) => { t.status = 'failed'; t.problem = 'The recording isn’t on the Pi yet.'; });
     return;
   }
@@ -94,14 +96,16 @@ async function runJob(job: Job) {
     t.runStartedAt = Date.now();
     t.runFrom = from;
   });
+  console.log(`Transcribing ${recording} from ${Math.round(from / 1000)}s`);
   try {
-    const finished = await transcribe(path, from, async (segment, heardTo) => {
+    const finished = await transcribe(soundFile, from, async (segment, heardTo) => {
       await change(userId, notebook, recording, run, (t) => {
         if (segment) t.segments.push(segment);
         t.heardTo = Math.min(heardTo, t.duration || heardTo);
       });
     }, () => work.stop.has(keyOf(job)));
     if (finished) await change(userId, notebook, recording, run, (t) => { t.status = 'done'; t.heardTo = t.duration; });
+    console.log(`Transcribing ${recording} ${finished ? 'finished' : 'stopped to start over'}`);
   } catch (error) {
     const problem = error instanceof TranscribeProblem ? error.message : `Something went wrong turning it into text${error instanceof Error ? `: ${error.message}` : '.'}`;
     await change(userId, notebook, recording, run, (t) => { t.status = 'failed'; t.problem = problem; });
@@ -178,6 +182,24 @@ export async function resumeTranscripts(userId: string, notebook: string) {
     if (item.status === 'waiting' || item.status === 'working') enqueue({ userId, notebook, recording: item.id });
   }
   return file;
+}
+
+/**
+ * Every account's unfinished transcripts back in the queue. Run when the site starts and every
+ * few minutes after: a restart used to leave them stopped until someone opened that notebook.
+ */
+export async function resumeAllTranscripts() {
+  const root = path.join(process.cwd(), '.data', 'notes');
+  let resumed = 0;
+  for (const userId of await fs.readdir(root).catch(() => [] as string[])) {
+    if (!isId(userId)) continue;
+    for (const notebook of await fs.readdir(path.join(notesFolder(userId), 'books')).catch(() => [] as string[])) {
+      if (!isId(notebook)) continue;
+      const file = await resumeTranscripts(userId, notebook).catch(() => null);
+      resumed += Object.values(file?.items ?? {}).filter((item) => item.status === 'waiting' || item.status === 'working').length;
+    }
+  }
+  return resumed;
 }
 
 function stopIfRunning(key: string, wanted = true) {

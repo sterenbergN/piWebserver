@@ -61,7 +61,7 @@ const DEFAULT_TOOLS: Tools = {
 };
 
 const DEFAULT_GESTURES: EngineSettings['gestures'] = { twoFingerTap: 'eraser', twoFingerDoubleTap: 'none', threeFingerTap: 'undo', fingerHold: 'none' };
-const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', gestures: DEFAULT_GESTURES, snapShapes: true };
+const DEFAULT_SETTINGS: EngineSettings = { direction: 'vertical', fingerDraws: 'auto', gestures: DEFAULT_GESTURES, snapShapes: true, swipeNewPage: true };
 
 const GESTURE_LABELS: Record<GestureName, string> = {
   twoFingerTap: 'Two-finger tap',
@@ -823,6 +823,10 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
                   <label className="nt-check">
                     <input type="checkbox" checked={settings.snapShapes} onChange={(e) => applySettings({ ...settings, snapShapes: e.target.checked })} />
                     <span><strong>Hold to straighten</strong>Hold the pencil still at the end of a stroke, and it snaps to a straight line, circle, box or triangle.</span>
+                  </label>
+                  <label className="nt-check">
+                    <input type="checkbox" checked={settings.swipeNewPage} onChange={(e) => applySettings({ ...settings, swipeNewPage: e.target.checked })} />
+                    <span><strong>Swipe for a new page</strong>Swiping or pulling past the last page adds a new one. Off, the last page just springs back, and new pages come from the + button.</span>
                   </label>
                   <label className="nt-check">
                     <input type="checkbox" checked={night} onChange={(e) => { setNight(e.target.checked); try { localStorage.setItem(NIGHT_KEY, e.target.checked ? 'yes' : 'no'); } catch { /* For now, then. */ } }} />

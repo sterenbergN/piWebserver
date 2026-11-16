@@ -1,19 +1,24 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
-import KnowledgeVault from '@/components/skills/KnowledgeVault';
 import { skillsGet, skillsPost, SignedOut, fmtLevel, type SubjectResponse } from '@/components/skills/api';
 import { arrowTabs, ConfidenceChip, ErrorNote, LevelBar, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import Overview from '@/components/skills/subject/Overview';
-import Projects from '@/components/skills/subject/Projects';
-import Questions from '@/components/skills/subject/Questions';
-import Resources from '@/components/skills/subject/Resources';
-import Steps from '@/components/skills/subject/Steps';
-import SubjectEditor from '@/components/skills/subject/SubjectEditor';
-import Topics from '@/components/skills/subject/Topics';
+
+// Each tab's code comes when the tab is opened, not all of it with the page: together they were
+// over a megabyte of script, most of it for tabs that weren't looked at.
+const tabLoading = () => <Loading rows={2} />;
+const KnowledgeVault = dynamic(() => import('@/components/skills/KnowledgeVault'), { loading: tabLoading });
+const Projects = dynamic(() => import('@/components/skills/subject/Projects'), { loading: tabLoading });
+const Questions = dynamic(() => import('@/components/skills/subject/Questions'), { loading: tabLoading });
+const Resources = dynamic(() => import('@/components/skills/subject/Resources'), { loading: tabLoading });
+const Steps = dynamic(() => import('@/components/skills/subject/Steps'), { loading: tabLoading });
+const SubjectEditor = dynamic(() => import('@/components/skills/subject/SubjectEditor'), { loading: tabLoading });
+const Topics = dynamic(() => import('@/components/skills/subject/Topics'), { loading: tabLoading });
 import { STATUS_LABEL } from '@/lib/skills/types';
 import { tierOf } from '@/lib/skills/model';
 
@@ -21,14 +26,15 @@ import { tierOf } from '@/lib/skills/model';
 // The tab lives in the URL (?tab=) so links from the board and next steps
 // land on the right one.
 
+// Each tab says what it's for under the bar, so the names don't have to explain themselves.
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'steps', label: 'Steps' },
-  { id: 'topics', label: 'Topics' },
-  { id: 'resources', label: 'Resources' },
-  { id: 'projects', label: 'Projects' },
-  { id: 'questions', label: 'Questions' },
-  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'overview', label: 'Overview', hint: 'Where you stand, and what to do next.' },
+  { id: 'steps', label: 'Steps', hint: 'Your study plan for this subject, in order. Today’s tasks come from these.' },
+  { id: 'topics', label: 'Topics', hint: 'The parts of the subject, and how well you know each one.' },
+  { id: 'resources', label: 'Resources', hint: 'Books, courses, papers and videos you’re working through.' },
+  { id: 'projects', label: 'Projects', hint: 'Things you build or do to put it into practice.' },
+  { id: 'questions', label: 'Quiz', hint: 'The questions Review tests you on. How you answer them sets your level.' },
+  { id: 'knowledge', label: 'Notes & lookups', hint: 'Your notes, and things you want to look up, linked like a wiki. Press ? on any page to add a lookup.' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 const isTab = (v: string | null): v is TabId => TABS.some((t) => t.id === v);
@@ -218,6 +224,7 @@ function SubjectPage() {
           );
         })}
       </div>
+      <p className="sk-tab-hint">{TABS.find((t) => t.id === tab)?.hint}</p>
       <div id="sk-panel" role="tabpanel" aria-labelledby={`sk-tab-${tab}`} className="sk-panel">
         {tab === 'overview' && <Overview {...tabProps} goto={goto} setTab={setTab} onOpenEditor={() => setEditing(true)} />}
         {tab === 'steps' && <Steps data={data} reload={load} onOpenPlan={() => router.push(`/skills/${id}/plan`)} />}

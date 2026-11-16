@@ -48,7 +48,9 @@ function load() {
       const folder = await ensureFiles();
       const ort = await import('onnxruntime-node');
       // Two threads: enough to be quick, and leaves the Pi's other cores for the site.
-      const options = { intraOpNumThreads: 2, interOpNumThreads: 1, graphOptimizationLevel: 'all' as const };
+      // No memory arena: it holds on to the largest buffers ever used (see transcriber.ts), and the
+      // site has to stay under the Pi's 700 MB limit with both models loaded.
+      const options = { intraOpNumThreads: 2, interOpNumThreads: 1, graphOptimizationLevel: 'all' as const, enableCpuMemArena: false };
       const encoder = await ort.InferenceSession.create(path.join(folder, 'onnx/encoder_model_quantized.onnx'), options);
       const decoder = await ort.InferenceSession.create(path.join(folder, 'onnx/decoder_model_quantized.onnx'), options);
       const tokenizer = JSON.parse(await fs.readFile(path.join(folder, 'tokenizer.json'), 'utf-8')) as { model: { vocab: [string, number][] } };

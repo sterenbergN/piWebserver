@@ -1,14 +1,18 @@
-import { spawn } from 'child_process';
+import { fork, spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { ensureModelFiles } from './model-files';
-import { levelled, logMel, loudness, N_FRAMES, N_MELS, pieces, repeatedTail, SAMPLE_RATE, tidySpeech, tokensToText } from './speech';
+import { levelled, logMelYielding, loudness, pieces, SAMPLE_RATE, tidySpeech, tokensToText } from './speech';
 
 // Turning a recording into text on the Pi, with OpenAI's Whisper (base, English), run by ONNX
 // Runtime like the handwriting model. Nothing leaves the Pi. ffmpeg turns the recording (AAC
 // from an iPad, Opus from Chrome) into plain 16 kHz sound, a piece at a time, so a long
 // lecture never has to fit in memory. The model hears 30 seconds at a time and writes what
 // was said; each piece keeps when it started, so the text can jump to that point.
+//
+// The model itself runs in a process of its own (speech-worker.cjs): run here, on the server's
+// one thread, it held up every request to the site for seconds at a time while a lecture was
+// going, and its memory pushed the site past the limit pm2 restarts it at.
 
 const REPO = 'Xenova/whisper-base.en';
 const REVISION = '95bf40a508535962c6483ead40270b2e32267508';
@@ -22,53 +26,78 @@ const FILES: Record<string, string> = {
 };
 export const SPEECH_MODEL = 'whisper-base.en';
 
-const START = 50257;
-const END = 50256;
-const NO_SPEECH = 50361;
-const NO_TIMESTAMPS = 50362;
 /** Room for what's said in 30 seconds, even quickly, inside the model's 448. */
 const MAX_TOKENS = 220;
-const HEADS = 8;
-const HEAD_SIZE = 64;
 const IDLE_MS = 10 * 60 * 1000;
 /** Quieter than this all through is silence: Whisper makes things up when given silence. */
 const SILENT = 0.0025;
 
-type Ort = typeof import('onnxruntime-node');
-type Session = import('onnxruntime-node').InferenceSession;
-type Tensor = import('onnxruntime-node').Tensor;
-type Loaded = { ort: Ort; encoder: Session; decoder: Session; pieces: string[]; allowed: Uint8Array; firstAllowed: Uint8Array };
+type Heard = { ids: number[]; logprobs: number; noSpeech: number };
+type Loaded = { pieces: string[]; ask: (features: Float32Array) => Promise<Heard>; stop: () => Promise<void> };
 
 export type SpeechSegment = { start: number; end: number; text: string };
 
 export class TranscribeProblem extends Error {}
 
 export const speechModelFolder = () => path.join(process.cwd(), '.cache', 'notes-transcribe', REVISION.slice(0, 7));
+/** Found from where the site runs, the same in development and in a release (next.config.ts copies it). */
+export const speechWorkerFile = () => path.join(process.cwd(), 'lib', 'notes', 'speech-worker.cjs');
 
 let loading: Promise<Loaded> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Start the worker and wait for it to have the model ready. A worker that dies takes the model with it, and the next piece starts another. */
+async function startWorker(folder: string): Promise<Omit<Loaded, 'pieces'>> {
+  // "advanced" so the picture of the sound goes across as numbers, not as JSON text.
+  const worker = fork(speechWorkerFile(), [], { serialization: 'advanced', stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  let next = 0;
+  const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  const failAll = (error: Error) => {
+    for (const w of waiting.values()) w.reject(error);
+    waiting.clear();
+    if (loading) loading = null;
+  };
+  worker.on('message', (raw) => {
+    const m = raw as { id: number; ok: boolean; result?: unknown; error?: string };
+    const w = waiting.get(m.id);
+    if (!w) return;
+    waiting.delete(m.id);
+    if (m.ok) w.resolve(m.result);
+    else w.reject(new Error(m.error ?? 'The speech model failed.'));
+  });
+  worker.on('error', (error) => failAll(error instanceof Error ? error : new Error(String(error))));
+  worker.on('exit', (code) => {
+    failAll(new Error(`The speech model stopped (${code ?? 'killed'}).`));
+  });
+  // It doesn't keep the site running on its own.
+  worker.unref();
+  worker.channel?.unref();
+  const send = <T>(message: Record<string, unknown>) => new Promise<T>((resolve, reject) => {
+    const id = ++next;
+    waiting.set(id, { resolve: resolve as (value: unknown) => void, reject });
+    worker.send({ ...message, id }, (error) => { if (error) { waiting.delete(id); reject(error); } });
+  });
+  try {
+    await send({ type: 'load', folder });
+  } catch (error) {
+    worker.kill();
+    throw error;
+  }
+  return {
+    ask: (features) => send<Heard>({ type: 'listen', features, maxTokens: MAX_TOKENS }),
+    stop: async () => { worker.kill(); },
+  };
+}
 
 function load() {
   if (!loading) {
     loading = (async () => {
       const folder = await ensureModelFiles(REPO, REVISION, FILES, speechModelFolder(), 'speech');
-      const ort = await import('onnxruntime-node');
-      // Three of the Pi's four cores: it's a long job, and the site keeps the fourth.
-      const options = { intraOpNumThreads: 3, interOpNumThreads: 1, graphOptimizationLevel: 'all' as const };
-      const encoder = await ort.InferenceSession.create(path.join(folder, 'onnx/encoder_model.onnx'), options);
-      const decoder = await ort.InferenceSession.create(path.join(folder, 'onnx/decoder_model_merged_quantized.onnx'), options);
       const tokenizer = JSON.parse(await fs.readFile(path.join(folder, 'tokenizer.json'), 'utf-8')) as { model: { vocab: Record<string, number> }; added_tokens: { id: number; content: string }[] };
-      const generation = JSON.parse(await fs.readFile(path.join(folder, 'generation_config.json'), 'utf-8')) as { suppress_tokens: number[]; begin_suppress_tokens: number[] };
       const size = Math.max(...Object.values(tokenizer.model.vocab), ...tokenizer.added_tokens.map((t) => t.id)) + 1;
       const pieces: string[] = new Array(size).fill('');
       for (const [piece, id] of Object.entries(tokenizer.model.vocab)) pieces[id] = piece;
-      // Words and the end; none of the model's own markers, and none of the noises it was told not to write.
-      const allowed = new Uint8Array(size);
-      for (let id = 0; id < START; id++) allowed[id] = 1;
-      for (const id of generation.suppress_tokens) if (id < size) allowed[id] = 0;
-      const firstAllowed = allowed.slice();
-      for (const id of generation.begin_suppress_tokens) if (id < size) firstAllowed[id] = 0;
-      return { ort, encoder, decoder, pieces, allowed, firstAllowed };
+      return { pieces, ...(await startWorker(folder)) };
     })().catch((error) => {
       loading = null;
       throw error;
@@ -84,12 +113,12 @@ function holdModel() {
   idleTimer.unref?.();
 }
 
+/** Ten minutes with nothing to hear: the worker goes, and its memory with it. */
 async function release() {
   const held = loading;
   loading = null;
   const model = await held?.catch(() => null);
-  await model?.encoder.release();
-  await model?.decoder.release();
+  await model?.stop();
 }
 
 // ── The sound ────────────────────────────────────────────────────────────────
@@ -133,79 +162,15 @@ export async function* decodeAudio(file: string, fromMs = 0): AsyncGenerator<Flo
 
 // ── Listening ────────────────────────────────────────────────────────────────
 
-function emptyPast(ort: Ort) {
-  return new ort.Tensor('float32', new Float32Array(0), [1, HEADS, 0, HEAD_SIZE]);
-}
-
-/** The best word the model allows, and how sure it was (as a log probability). */
-function pick(logits: Float32Array, offset: number, size: number, allowed: Uint8Array) {
-  let best = -1;
-  let top = -Infinity;
-  for (let id = 0; id < size; id++) {
-    if (!allowed[id]) continue;
-    const value = logits[offset + id];
-    if (value > top) { top = value; best = id; }
-  }
-  let sum = 0;
-  for (let id = 0; id < size; id++) if (allowed[id]) sum += Math.exp(logits[offset + id] - top);
-  return { id: best, logprob: -Math.log(sum) };
-}
-
-/** How likely the model thinks it is that nobody is speaking, read where it's first asked. */
-function noSpeechChance(logits: Float32Array, size: number) {
-  let top = -Infinity;
-  for (let id = 0; id < size; id++) top = Math.max(top, logits[id]);
-  let sum = 0;
-  for (let id = 0; id < size; id++) sum += Math.exp(logits[id] - top);
-  return Math.exp(logits[NO_SPEECH] - top) / sum;
-}
-
 /** What was said in up to 30 seconds of sound, or '' if nothing was. */
 async function listen(model: Loaded, samples: Float32Array) {
   const loud = loudness(samples);
   if (loud < SILENT) return '';
-  const { ort, encoder, decoder, pieces, allowed, firstAllowed } = model;
   // A quiet recording is turned up first: the model mishears speech that's far below the level it learned at.
-  const features = new ort.Tensor('float32', logMel(levelled(samples, loud)), [1, N_MELS, N_FRAMES]);
-  const encoded = (await encoder.run({ input_features: features }, ['last_hidden_state'])).last_hidden_state;
-  const presentNames = decoder.outputNames.filter((name) => name.startsWith('present.'));
-
-  let past: Record<string, Tensor> = {};
-  for (const name of decoder.inputNames) if (name.startsWith('past_key_values.')) past[name] = emptyPast(ort);
-  let input = [START, NO_TIMESTAMPS];
-  const ids: number[] = [];
-  let logprobs = 0;
-  let noSpeech = 0;
-  for (let step = 0; step < MAX_TOKENS; step++) {
-    const feeds: Record<string, Tensor> = {
-      input_ids: new ort.Tensor('int64', BigInt64Array.from(input.map(BigInt)), [1, input.length]),
-      encoder_hidden_states: encoded,
-      use_cache_branch: new ort.Tensor('bool', [step > 0], [1]),
-      ...past,
-    };
-    const out = await decoder.run(feeds, ['logits', ...presentNames]);
-    const logits = out.logits.data as Float32Array;
-    const size = out.logits.dims[2];
-    if (step === 0) noSpeech = noSpeechChance(logits, size);
-    const next = pick(logits, (input.length - 1) * size, size, step === 0 ? firstAllowed : allowed);
-    // What the model worked out about the sound is made once, on the first step; after that
-    // only its memory of the words so far grows (the later "encoder" outputs are empty).
-    const nextPast: Record<string, Tensor> = { ...past };
-    for (const name of presentNames) {
-      if (step > 0 && name.includes('.encoder.')) continue;
-      nextPast[name.replace('present.', 'past_key_values.')] = out[name];
-    }
-    past = nextPast;
-    if (next.id === END || next.id < 0) break;
-    ids.push(next.id);
-    logprobs += next.logprob;
-    input = [next.id];
-    const drop = repeatedTail(ids);
-    if (drop) { ids.splice(ids.length - drop); break; }
-  }
+  const { ids, logprobs, noSpeech } = await model.ask(await logMelYielding(levelled(samples, loud)));
   // Whisper's own test for a piece with nobody speaking: it says so, and isn't sure of what it wrote.
   if (noSpeech > 0.6 && (!ids.length || logprobs / ids.length < -1)) return '';
-  return tidySpeech(tokensToText(pieces, ids));
+  return tidySpeech(tokensToText(model.pieces, ids));
 }
 
 /**

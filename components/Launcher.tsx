@@ -16,6 +16,11 @@ type Hit = { kind: string; title: string; url: string; subtitle?: string; snippe
 const KIND_ICON: Record<string, string> = { post: '📝', album: '🖼️', photo: '📷', document: '📄', project: '🛠️', page: '🔗' };
 /** Typing one of these words first makes adding to the list what Enter does. */
 const ADD_PREFIX = /^(add|buy|get)\s+/i;
+/** And these make it a question for the Skills lookups: "? why do cats purr", "ask how…", "q …". */
+const ASK_PREFIX = /^(\?+\s*|(ask|q)\s+)/i;
+
+/** The Skills subject a page belongs to, so a question asked there is filed with it. */
+const subjectHere = () => /^\/skills\/([^/?#]+)/.exec(window.location.pathname)?.[1];
 
 const greeting = () => {
   const hour = new Date().getHours();
@@ -27,7 +32,7 @@ const greeting = () => {
  * it with the Explore button, "/" or Ctrl+K. Empty, it's a map of rooms by what
  * you came to do; type, and it's pages, then content, then "add to the list".
  */
-export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose }: {
+export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose, initialQuery = '' }: {
   groups: NavGroup[];
   pins: string[];
   togglePin: (href: string) => void;
@@ -38,13 +43,15 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   onToggleTheme: () => void;
   onFollow: (href: string) => (e: React.MouseEvent) => void;
   onClose: () => void;
+  /** Opened with "?": starts as a question. */
+  initialQuery?: string;
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [hits, setHits] = useState<Hit[]>([]);
   const [info, setInfo] = useState<NavInfo | undefined>();
   const [editing, setEditing] = useState(false);
-  const [flash, setFlash] = useState<{ text: string; ok: boolean } | null>(null);
+  const [flash, setFlash] = useState<{ text: string; ok: boolean; href?: string; link?: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recent = useRecentPages();
@@ -63,6 +70,11 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const contentHits = hits.filter((h) => !pageUrls.has(h.url));
   const groceryText = q.replace(ADD_PREFIX, '').trim();
   const addFirst = ADD_PREFIX.test(q) && groceryText.length > 0;
+  // A question: anything after "?", "ask" or "q", or a sentence that ends in a question mark.
+  const asking = ASK_PREFIX.test(q);
+  const questionText = q.replace(ASK_PREFIX, '').trim();
+  const askFirst = signedIn && questionText.length > 0 && (asking || /\?$/.test(q));
+  const quickFirst = addFirst || askFirst;
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +86,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   }, []);
 
   useEffect(() => {
-    if (!q || addFirst) { setHits([]); return; }
+    if (!q || quickFirst) { setHits([]); return; }
     const controller = new AbortController();
     const t = setTimeout(() => {
       fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal })
@@ -83,13 +95,34 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         .catch(() => { /* pages still match */ });
     }, 150);
     return () => { clearTimeout(t); controller.abort(); };
-  }, [q, addFirst]);
+  }, [q, quickFirst]);
 
   const addToList = async () => {
     if (!groceryText) return;
     const ok = await addGroceryItem(groceryText);
-    setFlash({ text: ok ? `Added “${groceryText}” to your grocery list` : 'Couldn’t reach the list. Try again.', ok });
+    setFlash(ok ? { text: `Added “${groceryText}” to your grocery list`, ok, href: '/recipes?view=list', link: 'Open the list' } : { text: 'Couldn’t reach the list. Try again.', ok });
     if (ok) setQuery('');
+    inputRef.current?.focus();
+  };
+
+  // Into Skills → Lookups, with the page it was asked on, so it can be looked up later.
+  const askLater = async () => {
+    if (!questionText) return;
+    const subjectId = subjectHere();
+    // "Skills · Site name" → "Skills".
+    const where = document.title.split(/\s[|·–-]\s/)[0].trim();
+    const question = questionText;
+    try {
+      const { skillsPost } = await import('./skills/api');
+      const payload = { question, status: 'open', ...(where ? { context: `Asked on ${where} (${window.location.pathname})` } : {}) };
+      // A subject page's id may not be one this account has: then it's filed with no subject.
+      await skillsPost('add-inquiry', subjectId ? { ...payload, subjectId } : payload)
+        .catch(() => (subjectId ? skillsPost('add-inquiry', payload) : Promise.reject(new Error('failed'))));
+      setFlash({ text: `Added “${question}” to the things to look up`, ok: true, href: '/skills?view=inquiries', link: 'Open lookups' });
+      setQuery('');
+    } catch {
+      setFlash({ text: 'Couldn’t save the question. Try again.', ok: false });
+    }
     inputRef.current?.focus();
   };
 
@@ -135,6 +168,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     if (e.key !== 'Enter' || !q) return;
     e.preventDefault();
     if (addFirst) { void addToList(); return; }
+    if (askFirst) { void askLater(); return; }
     const url = pageHits[0]?.href ?? contentHits[0]?.url;
     if (url) { onClose(); router.push(url); } else void addToList();
   };
@@ -148,6 +182,16 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     </button>
   );
 
+  const askRow = signedIn && questionText && (
+    <button type="button" data-lc className="lc-row" onClick={askLater}>
+      <span className="lc-icon" aria-hidden>❓</span>
+      <span className="lc-text">
+        <strong>Add “{questionText}” to things to look up</strong>
+        <small>Saved in Skills → Lookups{asking ? '' : ' · start with ? to skip the search'}</small>
+      </span>
+    </button>
+  );
+
   // Portal: stays clear of the header's stacking.
   return createPortal(
     <div className="lc-backdrop" onClick={onClose}>
@@ -155,14 +199,14 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         <div className="lc-search">
           <span aria-hidden>🔍</span>
           <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setFlash(null); }} onKeyDown={onInputKey}
-            placeholder="Jump to a page, search posts and recipes, or “add milk”" aria-label="Search the site" enterKeyHint="go" />
+            placeholder={signedIn ? 'Jump to a page, search, “add milk”, or “? a question”' : 'Jump to a page, search posts and recipes, or “add milk”'} aria-label="Search the site" enterKeyHint="go" />
           <button type="button" className="lc-close" onClick={onClose} aria-label="Close">Esc</button>
         </div>
 
         {flash && (
           <p className={`lc-flash${flash.ok ? '' : ' is-error'}`} role="status">
             {flash.text}
-            {flash.ok && <Link href="/recipes?view=list" onClick={onClose}>Open the list</Link>}
+            {flash.href && <Link href={flash.href} onClick={onClose}>{flash.link}</Link>}
           </p>
         )}
 
@@ -170,6 +214,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
           {q ? (
             <>
               {addFirst && addRow}
+              {askFirst && askRow}
               {pageHits.length > 0 && (
                 <section aria-label="Pages">
                   <h2>Pages</h2>
@@ -191,9 +236,10 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   ))}
                 </section>
               )}
-              {!addFirst && (
+              {!quickFirst && (
                 <section aria-label="Actions">
                   {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
+                  {askRow}
                   {addRow}
                 </section>
               )}

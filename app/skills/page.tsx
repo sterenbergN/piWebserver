@@ -1,9 +1,8 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import InquiryDesk from '@/components/skills/InquiryDesk';
-import KnowledgeVault from '@/components/skills/KnowledgeVault';
 import SchedulePanel from '@/components/skills/SchedulePanel';
 import {
   skillsGet,
@@ -15,7 +14,10 @@ import {
 import { arrowTabs, ConfidenceChip, ErrorNote, LevelBar, LevelScale, LevelText, Loading, SignedOutCard, TierBadge } from '@/components/skills/Ui';
 import { TIER_LABEL, type NextStepKind, type SubjectCard, type Tier } from '@/lib/skills/model';
 import { STATUS_LABEL, SUBJECT_STATUSES, type SubjectStatus } from '@/lib/skills/types';
-import '@/components/skills/knowledge.css';
+
+// The Lookups and Graph views load when they're opened: the board shouldn't wait for them.
+const InquiryDesk = dynamic(() => import('@/components/skills/InquiryDesk'), { loading: () => <Loading rows={3} /> });
+const KnowledgeVault = dynamic(() => import('@/components/skills/KnowledgeVault'), { loading: () => <Loading rows={3} /> });
 
 // The skill board: schedule queue, where I stand (who's the SME), skill tree
 // interconnections, what to do next, every subject by area, lookups inbox, and the Vault graph.
@@ -30,6 +32,11 @@ type StatusFilter = 'all' | SubjectStatus;
 type GroupKey = 'area' | 'standing' | 'tree';
 type SortKey = 'level' | 'gap' | 'name' | 'tested';
 type BoardView = 'board' | 'inquiries' | 'graph';
+const VIEW_HINT: Record<BoardView, string> = {
+  board: 'Today’s tasks, and every subject you’re learning.',
+  inquiries: 'Things you want to find out (not quiz questions). Press ? on any page of the site to add one.',
+  graph: 'How your subjects, topics, notes and lookups link together.',
+};
 
 const SORTS: { key: SortKey; label: string }[] = [
   { key: 'level', label: 'Level' },
@@ -434,6 +441,7 @@ export default function SkillsBoardPage() {
           Graph
         </button>
       </div>
+      <p className="sk-tab-hint">{VIEW_HINT[view]}</p>
 
       {view === 'inquiries' ? (
         <BoardInquiriesSection

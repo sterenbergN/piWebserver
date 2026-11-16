@@ -187,6 +187,30 @@ export function framePower(frame: Float32Array, power: Float32Array | Float64Arr
  * below the loudest, then scaled to about −1…1.
  */
 export function logMel(samples: Float32Array) {
+  const steps = melSteps(samples);
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+}
+
+/** Frames worked out between pauses: about a twentieth of the picture. */
+const FRAMES_PER_PAUSE = 150;
+
+/**
+ * The same, letting the server answer other requests between slices. On a Pi the whole picture
+ * takes most of a second, and done in one go every page on the site waited for it.
+ */
+export async function logMelYielding(samples: Float32Array) {
+  const steps = melSteps(samples);
+  let next = steps.next();
+  while (!next.done) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    next = steps.next();
+  }
+  return next.value;
+}
+
+function* melSteps(samples: Float32Array): Generator<void, Float32Array> {
   const audio = new Float32Array(WINDOW_SAMPLES);
   audio.set(samples.subarray(0, WINDOW_SAMPLES));
   const pad = N_FFT / 2;
@@ -205,6 +229,7 @@ export function logMel(samples: Float32Array) {
   let loudest = -Infinity;
   // Whisper drops the last of the 3001 frames.
   for (let f = 0; f < N_FRAMES; f++) {
+    if (f > 0 && f % FRAMES_PER_PAUSE === 0) yield;
     const startAt = f * HOP;
     for (let n = 0; n < N_FFT; n++) frame[n] = padded[startAt + n] * hann[n];
     framePower(frame, power);
