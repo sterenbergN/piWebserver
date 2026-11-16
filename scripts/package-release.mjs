@@ -28,6 +28,13 @@ await cp(path.join(standalone, 'server.js'), path.join(out, 'server.js'));
 await cp(path.join(standalone, 'package.json'), path.join(out, 'package.json'));
 await cp(path.join(standalone, 'node_modules'), path.join(out, 'node_modules'), { recursive: true, verbatimSymlinks: true });
 await cp(path.join(standalone, path.basename(dist)), path.join(out, path.basename(dist)), { recursive: true });
+// Files the server runs as processes of their own, which aren't part of the bundle: the speech
+// model's worker. next.config.ts traces them into standalone; without this they stopped there,
+// and on the Pi transcribing failed with "The speech model stopped (1)".
+for (const file of ['lib/notes/speech-worker.cjs']) {
+  await mkdir(path.dirname(path.join(out, file)), { recursive: true });
+  await cp(path.join(standalone, file), path.join(out, file));
+}
 // Hashed static assets (not copied into standalone by Next).
 await cp(path.join(dist, 'static'), path.join(out, path.basename(dist), 'static'), { recursive: true });
 
