@@ -1,4 +1,4 @@
-import { fork, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { ensureModelFiles } from './model-files';
@@ -41,7 +41,7 @@ export class TranscribeProblem extends Error {}
 
 export const speechModelFolder = () => path.join(process.cwd(), '.cache', 'notes-transcribe', REVISION.slice(0, 7));
 /** Found from where the site runs, the same in development and in a release (next.config.ts copies it). */
-export const speechWorkerFile = () => path.join(process.cwd(), 'lib', 'notes', 'speech-worker.cjs');
+export const speechWorkerFile = () => path.join(/*turbopackIgnore: true*/ process.cwd(), 'lib', 'notes', 'speech-worker.cjs');
 
 let loading: Promise<Loaded> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +49,9 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 /** Start the worker and wait for it to have the model ready. A worker that dies takes the model with it, and the next piece starts another. */
 async function startWorker(folder: string): Promise<Omit<Loaded, 'pieces'>> {
   // "advanced" so the picture of the sound goes across as numbers, not as JSON text.
-  const worker = fork(speechWorkerFile(), [], { serialization: 'advanced', stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  // spawn of Node with an "ipc" channel is what fork does; fork itself the release build mistakes
+  // for an import of the file, and fails trying to bundle it.
+  const worker = spawn(process.execPath, [speechWorkerFile()], { serialization: 'advanced', stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   let next = 0;
   const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const failAll = (error: Error) => {
