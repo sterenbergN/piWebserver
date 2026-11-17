@@ -47,6 +47,8 @@ export function useImmersive(className: 'party-tv' | 'party-phone') {
 function moodFor(state: HostState): Mood | null {
   // The race has its own track music and engine sounds
   if (state.gameType === 'kart-clash' && state.phase === 'RACING') return null;
+  // Someone is talking out loud; the room needs to hear them.
+  if (state.gameType === 'debate-duel' && state.phase === 'PITCH') return null;
   if (state.phase === 'LOBBY') return 'lobby';
   if (state.phase === 'FINAL_RESULTS') return 'results';
   if (['KILLING_FLOOR', 'TIEBREAKER', 'FINAL_ESCAPE'].includes(state.phase)) return 'tense';
@@ -155,20 +157,24 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
       return { sfx: 'ding', say: h.chain ? `${h.chain.originPrompt}… became… ${h.chain.guess}!` : '' };
     case 'emoji-telephone:VOTING':
       return { sfx: 'whoosh', say: 'Vote for the funniest chain!' };
-    case 'debate-duel:OPENING':
-      return { card: intro || { title: `Round ${h.round || ''}`, subtitle: 'New debates on your phones' }, sfx: 'whoosh',
-        say: line(['You have been handed a side. You do not have to agree with it. You just have to win.', 'Opening statements, please. Make them short and make them hurt.', 'Check your phones. Defend the indefensible!']) };
-    case 'debate-duel:REBUTTAL':
-      return { card: { title: 'Rebuttals', subtitle: 'Your opponent has spoken. Hit back.' }, sfx: 'slam',
-        say: line(['Your opponents have spoken. Time to fire back!', 'Rebuttals! Read what they said and tear it apart.']) };
-    case 'debate-duel:VOTING': {
-      const [a, b] = h.sides || [];
-      const [oa, ob] = h.openings || [];
-      const [ra, rb] = h.rebuttals || [];
-      return { sfx: 'slam', say: a && b ? `${h.motion}. ${a}: ${oa}. ${b}: ${ob}. Rebuttals! ${a}: ${ra}. ${b}: ${rb}.` : '' };
+    case 'debate-duel:SUGGEST':
+      return { card: intro || { title: `Round ${h.round || ''}`, subtitle: 'Feed the debate' }, sfx: 'whoosh',
+        say: line(['Give me two things, people or places. They will be used against you.', 'Suggestions, please! The weirder the better.']) };
+    case 'debate-duel:UP_NEXT': {
+      const [pro, con] = (h.debaters || []).map((id: string) => state.players[id]?.name || 'someone');
+      const motion = (h.proposition || []).join(' ');
+      if (h.speakerSide === 1) return { sfx: 'whoosh', say: `${con}, you argue against. Get ready.` };
+      return { card: { title: `${pro} vs ${con}`, subtitle: motion }, sfx: 'slam', say: `The motion: ${motion}. ${pro} argues for. ${con} argues against.` };
     }
-    case 'debate-duel:DEBATE_RESULTS': {
-      const sides: string[] = h.sides || [];
+    case 'debate-duel:PITCH': {
+      if (h.switch) {
+        return { sfx: 'buzzer', say: line(['Switch! It’s now: {motion}', 'Switcheroo! New topic: {motion}'], { motion: (h.words || []).join(' ') }) };
+      }
+      return { sfx: 'ding', say: line(['{name}, thirty seconds. Go!', 'The floor is yours, {name}. Go!'], { name: state.players[h.speakerId]?.name || '' }) };
+    }
+    case 'debate-duel:VERDICT':
+      return { sfx: 'whoosh', say: h.mode === 'rate' ? 'Rate each other’s pitch. Be honest. Ish.' : 'Judges! Who argued it better?' };
+    case 'debate-duel:VERDICT_RESULTS': {
       const debaters: string[] = h.debaters || [];
       const tally: number[] = h.tally || [0, 0];
       if (h.micDrop !== null && h.micDrop !== undefined) {
@@ -176,7 +182,7 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
       }
       if (tally[0] + tally[1] === 0) return { sfx: 'boo', say: 'Nobody voted. The judges are asleep.' };
       if (h.winnerSide === null || h.winnerSide === undefined) return { sfx: 'ding', say: 'A dead heat! Both sides live to argue another day.' };
-      return { sfx: 'ding', say: line(['The room sides with {side}! Point to {name}.', '{name} wins it for {side}!'], { name: state.players[debaters[h.winnerSide]]?.name || '', side: sides[h.winnerSide] || '' }) };
+      return { sfx: 'ding', say: line(['{name} wins the debate!', 'The room sides with {name}!'], { name: state.players[debaters[h.winnerSide]]?.name || '' }) };
     }
   }
   if (state.phase === 'FINAL_RESULTS') {

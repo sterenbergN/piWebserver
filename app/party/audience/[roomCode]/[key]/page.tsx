@@ -3,6 +3,7 @@ import { useEffect, useState, use } from 'react';
 import Link from 'next/link';
 import { useImmersive } from '@/components/party/HostShow';
 import { ReactionBar, PhoneSessionControls } from '@/components/party/PhoneExtras';
+import { HeckleBox } from '@/components/party/DebateDuelViews';
 
 type Poll = { key: string; prompt: string; choices: { id: string; label: string }[]; myChoice: string | null };
 type AudienceState = {
@@ -15,6 +16,8 @@ type AudienceState = {
   audienceSize: number;
   audienceLeaders: { name: string; score: number }[];
   poll: Poll | null;
+  /** Debate Duel: someone is mid-pitch and can be heckled. */
+  heckle?: { speaker: string; proposition: string } | null;
 };
 
 const POLL_HINT: Record<string, string> = {
@@ -29,7 +32,7 @@ const POLL_HINT: Record<string, string> = {
   'wavelength': 'Read the Psychic\'s mind!',
   'bluff-clash': 'Spot the real truth!',
   'emoji-telephone': 'Vote for your favorite chain!',
-  'debate-duel': 'Back the side that argued better!',
+  'debate-duel': 'Heckle the speaker, then back who argued it better!',
 };
 
 export default function AudiencePage({ params }: { params: Promise<{ roomCode: string; key: string }> }) {
@@ -117,7 +120,20 @@ export default function AudiencePage({ params }: { params: Promise<{ roomCode: s
       )}
 
       <div className="player-body party-content">
-        {state.poll ? (
+        {state.heckle ? (
+          <HeckleBox
+            speaker={state.heckle.speaker}
+            proposition={state.heckle.proposition}
+            onSend={async (text) => {
+              const res = await fetch('/api/party/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roomCode, playerId: key, action: { type: 'SUBMIT_HECKLE', text } }),
+              }).catch(() => null);
+              return Boolean(res?.ok);
+            }}
+          />
+        ) : state.poll ? (
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '1rem' }}>
             <div style={{ textAlign: 'center', fontSize: '0.75rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--party-cyan)', fontWeight: 900 }}>Audience vote</div>
             <div className="player-vote-prompt-text text-center">{state.poll.prompt}</div>

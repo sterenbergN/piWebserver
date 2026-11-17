@@ -14,7 +14,7 @@ import { wavelengthLogic } from './games/wavelength';
 import { bluffClashLogic } from './games/bluff-clash';
 import { emojiTelephoneLogic } from './games/emoji-telephone';
 import { kartClashLogic } from './games/kart-clash';
-import { debateDuelLogic } from './games/debate-duel';
+import { addHeckle, debateDuelLogic } from './games/debate-duel';
 import { stopKartSimulation } from './kart-physics';
 import { GAME_CATALOG, GAME_INFO } from './catalog';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
@@ -323,6 +323,10 @@ export function audienceView(state: GameState, audienceId: string) {
     audienceSize: members.length,
     audienceLeaders: members.filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map(({ name, score }) => ({ name, score })),
     poll: poll ? { key: poll.key, prompt: poll.prompt, choices: poll.choices, myChoice: poll.votes[audienceId] ?? null } : null,
+    /** Debate Duel: someone is mid-pitch and can be heckled. */
+    heckle: state.gameType === 'debate-duel' && state.phase === 'PITCH'
+      ? { speaker: state.players[state.hostData?.speakerId]?.name || 'The speaker', proposition: (state.hostData?.words || []).join(' ') }
+      : null,
     updatedAt: state.updatedAt,
   };
 }
@@ -562,6 +566,12 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         const res = updateProfile(state, { audienceId }, action);
         if (res.success) await saveGameState(state);
         return res;
+      }
+      if (action.type === 'SUBMIT_HECKLE') {
+        // Debate Duel: the audience heckles too. A dropped heckle (too soon) isn't an error.
+        if (state.paused || !addHeckle(state, audienceId, state.audience![audienceId].name, action.text)) return { success: true };
+        await saveGameState(state);
+        return { success: true };
       }
       if (action.type !== 'AUDIENCE_VOTE') return { success: false, error: 'The audience can only vote' };
       if (state.paused) return { success: false, error: 'The game is paused' };

@@ -138,7 +138,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const inputPhases = [
     'PROMPTING', 'VOTING', 'QUESTION', 'FINAL_ESCAPE', 'PREDICTION', 'MATCHUP',
     'TIEBREAKER', 'RACING', 'TASK_DELIVERY', 'DISCUSSION', 'CLUE_GIVING',
-    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP', 'OPENING', 'REBUTTAL',
+    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP', 'SUGGEST', 'VERDICT',
   ];
   useTurnBuzz(
     state ? `${state.phase}|${state.data?.phase}|${state.data?.prompt || state.data?.question || state.data?.clue || ''}|${state.data?.isOnFloor ? 'floor' : ''}` : null,
@@ -946,12 +946,13 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         {/* ===== DEBATE DUEL ===== */}
         {state.gameType === 'debate-duel' && (
           <DebateDuelPhone
-            key={`${state.phase}-${hd?.round ?? ''}-${hd?.debateNumber ?? ''}`}
+            key={`${state.phase}-${hd?.round ?? ''}-${hd?.matchNumber ?? ''}-${hd?.speakerSide ?? ''}`}
             phase={state.phase}
             pd={pd}
             hd={hd}
             players={state.players}
             meId={me.id}
+            secondsLeft={secondsLeft}
             sendAction={sendAction}
           />
         )}

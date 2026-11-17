@@ -695,7 +695,7 @@ test('prompt store: new games\' content is validated, back-filled into older fil
     debateTopics: ['Best pet: Cats vs Dogs'],
   }));
   for (const [game, check] of [
-    ['debate-duel', (s: GameState) => assert.ok(s.gameData.debates.every((d: any) => d.topic.motion === 'Best pet' && d.topic.sides.join() === 'Cats,Dogs'))],
+    ['debate-duel', (s: GameState) => assert.equal(s.phase, 'SUGGEST')],
     ['spyfall', (s: GameState) => assert.equal(s.gameData.location, 'Fire Station')],
     ['bluff-clash', (s: GameState) => assert.equal(s.hostData.prompt, 'A group of crows is a _____.')],
     ['herd-mentality', (s: GameState) => assert.equal(s.hostData.prompt, 'Only herd prompt')],
@@ -709,105 +709,154 @@ test('prompt store: new games\' content is validated, back-filled into older fil
   }
 });
 
-test('Debate Duel: topics parse into two sides', async () => {
-  const { parseDebateTopic } = await import('./games/debate-duel');
-  assert.deepEqual(parseDebateTopic('Cats vs Dogs'), { motion: 'Cats vs Dogs', sides: ['Cats', 'Dogs'] });
-  assert.deepEqual(parseDebateTopic('Best pet: Cats vs. Dogs'), { motion: 'Best pet', sides: ['Cats', 'Dogs'] });
-  assert.deepEqual(parseDebateTopic('Is a hot dog a sandwich? Yes vs No'), { motion: 'Is a hot dog a sandwich?', sides: ['Yes', 'No'] });
-  assert.deepEqual(parseDebateTopic(' Pineapple belongs on pizza '), { motion: 'Pineapple belongs on pizza', sides: ['For', 'Against'] });
+test('Debate Duel: propositions, and which words can be switched', async () => {
+  const { topicToProposition, fillTemplate, isSwitchable, switchWord, toWords, cleanSwitchWord, pairPlayers } = await import('./games/debate-duel');
+  assert.equal(topicToProposition(' Pineapple belongs on pizza '), 'Pineapple belongs on pizza');
+  assert.equal(topicToProposition('Best pet: Cats vs. Dogs'), 'Best pet: Cats over Dogs');
+  assert.equal(topicToProposition('Cats vs Dogs'), 'Cats over Dogs');
+  assert.equal(fillTemplate('{X} would beat {Y} in a fight', ['Llamas', 'my boss']), 'Llamas would beat my boss in a fight');
+
+  const words = toWords('Is pizza better than soup?');
+  assert.deepEqual(words.map(isSwitchable), [false, true, false, false, true]);
+  assert.deepEqual(switchWord(words, 4, 'toasters'), ['Is', 'pizza', 'better', 'than', 'toasters?'], 'punctuation stays put');
+  assert.equal(cleanSwitchWord('  <b>gravy</b>!! '), 'bgravyb');
+
+  // Everyone debates; an odd one out takes on someone a second time.
+  for (const n of [2, 3, 5, 8]) {
+    const ids = Array.from({ length: n }, (_, i) => `p${i}`);
+    const pairs = pairPlayers(ids);
+    assert.equal(pairs.length, Math.ceil(n / 2));
+    assert.ok(ids.every((id) => pairs.some((p) => p.includes(id))), `everyone debates (${n})`);
+    assert.ok(pairs.every(([a, b]) => a !== b), 'never against yourself');
+  }
 });
 
-test('Debate Duel: everyone argues both sides once, then the room judges each debate', async () => {
-  const { debateDuelLogic, SILENT_OPENING, SILENT_REBUTTAL, VOTE_POINTS, MIC_DROP_BONUS } = await import('./games/debate-duel');
-  await savePrompts(normalizePrompts({ debateTopics: ['Cats vs Dogs', 'Tea vs Coffee', 'Naps are good', 'Summer vs Winter'] }));
+test('Debate Duel: suggestions, pitches with a switch and heckles, then the room votes', async () => {
+  const { debateDuelLogic, VOTE_POINTS, MIC_DROP_BONUS, SWITCH_POINTS } = await import('./games/debate-duel');
+  await savePrompts(normalizePrompts({ debateTopics: ['Naps are good'] }));
   const state = makeState('debate-duel', 4);
   await debateDuelLogic.onStart(state);
+  assert.equal(state.phase, 'SUGGEST');
 
-  assert.equal(state.phase, 'OPENING');
-  assert.equal(state.gameData.debates.length, 4);
+  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_SUGGESTION', slot: 2, text: 'nope' });
+  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_SUGGESTION', slot: 0, text: '   ' });
   for (const pid of state.playerOrder) {
-    const seats = state.gameData.seats[pid];
-    assert.deepEqual(seats.map((s: any) => s.side), [0, 1], 'one debate on each side');
-    const opponents = seats.map((s: any) => state.gameData.debates[s.debate].debaters[1 - s.side]);
-    assert.ok(!opponents.includes(pid) && opponents[0] !== opponents[1], 'two different opponents, never yourself');
+    for (const slot of [0, 1]) await debateDuelLogic.processAction(state, pid, { type: 'SUBMIT_SUGGESTION', slot, text: `thing${pid}${slot}` });
   }
+  assert.equal(state.phase, 'UP_NEXT', 'everyone suggested, so the debates start');
+  assert.equal(state.gameData.matchups.length, 2);
+  const [pro, con] = state.gameData.matchups[0].debaters;
+  assert.equal(state.hostData.speakerId, pro, 'Pro goes first');
 
-  // Blank text and a third slot are ignored; p3 never writes, so the host ends the phase.
-  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_OPENING', slot: 0, text: '   ' });
-  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_OPENING', slot: 2, text: 'nope' });
-  for (const pid of ['p0', 'p1', 'p2']) {
-    for (const slot of [0, 1]) await debateDuelLogic.processAction(state, pid, { type: 'SUBMIT_OPENING', slot, text: `${pid} opens ${slot}` });
-  }
-  assert.equal(state.phase, 'OPENING', 'still waiting on p3');
-  await debateDuelLogic.processAction(state, 'p1', { type: 'FORCE_REBUTTALS' });
-  assert.equal(state.phase, 'OPENING', 'only the host can end it');
-  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_REBUTTALS' });
-  assert.equal(state.phase, 'REBUTTAL');
+  await debateDuelLogic.processAction(state, 'host', { type: 'START_PITCH' });
+  assert.equal(state.phase, 'PITCH');
+  const judge = state.playerOrder.find((pid) => pid !== pro && pid !== con)!;
+  const index = state.hostData.words.findIndex((w: string, i: number) => i > 0 && /^[a-z]{3,}$/i.test(w) && !['should', 'would', 'than', 'every'].includes(w.toLowerCase()));
 
-  // Each rebuttal card shows the opponent's opening (or the silence filler).
-  const p0Card = state.playerData.p0.cards[0];
-  const d0 = state.gameData.debates[0];
-  assert.equal(p0Card.theirOpening, d0.openings[1]);
-  assert.ok(state.gameData.debates.some((d: any) => d.openings.includes(SILENT_OPENING)));
+  // Too early to switch.
+  await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_SWITCH', index, word: 'gravy' });
+  assert.equal(state.hostData.switch, null);
+  state.hostData.switchOpensAt = Date.now() - 1;
+  // Debaters can't switch, and the speaker can't heckle themself.
+  await debateDuelLogic.processAction(state, con, { type: 'SUBMIT_SWITCH', index, word: 'gravy' });
+  assert.equal(state.hostData.switch, null);
+  await debateDuelLogic.processAction(state, pro, { type: 'SUBMIT_HECKLE', text: 'I am great' });
+  assert.equal(state.hostData.heckles.length, 0);
 
-  for (const pid of state.playerOrder) {
-    for (const slot of [0, 1]) await debateDuelLogic.processAction(state, pid, { type: 'SUBMIT_REBUTTAL', slot, text: `${pid} rebuts ${slot}` });
-  }
-  assert.equal(state.phase, 'VOTING', 'everyone wrote, so the debates start early');
-  assert.ok(!JSON.stringify(state.hostData).includes('"debaters"'), 'who argued which side stays hidden while voting');
-  assert.ok(!state.gameData.debates.some((d: any) => d.rebuttals.includes(SILENT_REBUTTAL)));
+  await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_SWITCH', index, word: 'gravy' });
+  assert.equal(state.hostData.switch.to, 'gravy');
+  assert.equal(state.hostData.switch.byName, state.players[judge].name);
+  assert.ok(state.hostData.words.join(' ').includes('gravy'));
+  assert.equal(state.players[judge].score, SWITCH_POINTS);
+  assert.equal(state.hostData.autoAdvanceAction, 'END_PITCH');
+  await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_SWITCH', index, word: 'soup' });
+  assert.equal(state.hostData.switch.to, 'gravy', 'one switch per pitch');
 
-  // Debate 0 is p0 (side 0) vs p3 (side 1); p1 and p2 judge.
-  const [a, b] = state.gameData.debates[0].debaters;
-  assert.deepEqual([a, b], ['p0', 'p3']);
-  assert.equal(state.playerData.p0.phase, 'WAITING');
-  await debateDuelLogic.processAction(state, 'p0', { type: 'SUBMIT_VOTE', side: 0 });
-  await debateDuelLogic.processAction(state, 'p1', { type: 'SUBMIT_VOTE', side: 2 });
-  assert.deepEqual(state.gameData.votes[0] || {}, {}, 'debaters cannot vote and a vote must name a side');
-  await debateDuelLogic.processAction(state, 'p1', { type: 'SUBMIT_VOTE', side: 0 });
-  await debateDuelLogic.processAction(state, 'p2', { type: 'SUBMIT_VOTE', side: 0 });
+  await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_HECKLE', text: 'Objection!' });
+  await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_HECKLE', text: 'Again!' });
+  await debateDuelLogic.processAction(state, con, { type: 'SUBMIT_HECKLE', text: 'Wrong!' });
+  assert.deepEqual(state.hostData.heckles.map((h: any) => h.text), ['Objection!', 'Wrong!'], 'heckles are rate limited per person');
 
-  assert.equal(state.phase, 'DEBATE_RESULTS');
+  await debateDuelLogic.processAction(state, pro, { type: 'SUBMIT_PITCH_LINE', text: 'Gravy is life' });
+  assert.deepEqual(state.hostData.typed, ['Gravy is life']);
+  await debateDuelLogic.processAction(state, pro, { type: 'SUBMIT_PITCH_DONE' });
+  assert.equal(state.phase, 'UP_NEXT');
+  assert.equal(state.hostData.speakerId, con);
+
+  // Con's pitch: nobody switches, so the game does.
+  await debateDuelLogic.processAction(state, 'host', { type: 'START_PITCH' });
+  assert.equal(state.hostData.switch, null, 'each pitch starts from the original proposition');
+  await debateDuelLogic.processAction(state, 'host', { type: 'HOUSE_SWITCH' });
+  assert.equal(state.hostData.switch.by, null);
+  await debateDuelLogic.processAction(state, 'host', { type: 'END_PITCH' });
+  assert.equal(state.phase, 'VERDICT');
+  assert.equal(state.hostData.mode, 'vote');
+  assert.ok(state.hostData.pitches[0].words.join(' ').includes('gravy'));
+
+  const judges = state.playerOrder.filter((pid) => pid !== pro && pid !== con);
+  await debateDuelLogic.processAction(state, pro, { type: 'SUBMIT_VOTE', side: 0 });
+  assert.deepEqual(state.gameData.votes[0] || {}, {}, 'debaters cannot vote');
+  for (const j of judges) await debateDuelLogic.processAction(state, j, { type: 'SUBMIT_VOTE', side: 0 });
+  assert.equal(state.phase, 'VERDICT_RESULTS');
   assert.deepEqual(state.hostData.tally, [2, 0]);
   assert.equal(state.hostData.micDrop, 0);
-  assert.equal(state.players.p0.score, 2 * VOTE_POINTS + MIC_DROP_BONUS);
-  assert.equal(state.players.p3.score, 0);
+  assert.equal(state.players[pro].score, 2 * VOTE_POINTS + MIC_DROP_BONUS);
 
-  // A split vote is a dead heat with no bonus.
-  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
-  assert.equal(state.phase, 'VOTING');
-  const [c, d] = state.gameData.debates[1].debaters;
-  const judges = state.playerOrder.filter((pid) => pid !== c && pid !== d);
-  await debateDuelLogic.processAction(state, judges[0], { type: 'SUBMIT_VOTE', side: 0 });
-  await debateDuelLogic.processAction(state, judges[1], { type: 'SUBMIT_VOTE', side: 1 });
-  assert.equal(state.hostData.winnerSide, null);
-  assert.equal(state.hostData.micDrop, null);
-
-  // Timers run out the rest; the game ends after the last debate.
-  for (let i = 0; i < 2; i++) {
-    await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
-    await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_TALLY' });
+  // Run out the second debate on the timers; the game then ends.
+  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_MATCHUP' });
+  for (const action of ['START_PITCH', 'HOUSE_SWITCH', 'END_PITCH', 'START_PITCH', 'HOUSE_SWITCH', 'END_PITCH', 'FORCE_TALLY', 'NEXT_MATCHUP']) {
+    await debateDuelLogic.processAction(state, 'host', { type: action });
   }
-  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
   assert.equal(state.phase, 'FINAL_RESULTS');
 });
 
-test('Debate Duel: a second round starts fresh debates', async () => {
-  const { debateDuelLogic } = await import('./games/debate-duel');
-  await savePrompts(normalizePrompts({ debateTopics: ['Cats vs Dogs'] }));
-  const state = makeState('debate-duel', 3);
+test('Debate Duel: two players rate each other, and an empty room falls back to written topics', async () => {
+  const { debateDuelLogic, STAR_POINTS } = await import('./games/debate-duel');
+  await savePrompts(normalizePrompts({ debateTopics: ['Best pet: Cats vs Dogs'] }));
+  const state = makeState('debate-duel', 2);
   state.gameData = { targetRounds: 2 };
   await debateDuelLogic.onStart(state);
-  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_REBUTTALS' });
-  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_DEBATES' });
-  for (let i = 0; i < 3; i++) {
-    await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_TALLY' });
-    await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_DEBATE' });
+  await debateDuelLogic.processAction(state, 'host', { type: 'FORCE_MATCHUPS' });
+  assert.equal(state.hostData.proposition.join(' '), 'Best pet: Cats over Dogs', 'no suggestions, so a written topic');
+
+  for (const action of ['START_PITCH', 'END_PITCH', 'START_PITCH', 'END_PITCH']) {
+    await debateDuelLogic.processAction(state, 'host', { type: action });
   }
-  assert.equal(state.phase, 'OPENING');
-  assert.equal(state.gameData.currentRound, 1);
+  assert.equal(state.phase, 'VERDICT');
+  assert.equal(state.hostData.mode, 'rate');
+  const [pro, con] = state.hostData.debaters;
+  await debateDuelLogic.processAction(state, pro, { type: 'SUBMIT_RATING', stars: 2 });
+  await debateDuelLogic.processAction(state, con, { type: 'SUBMIT_RATING', stars: 9 });
+  assert.equal(state.phase, 'VERDICT', 'out-of-range ratings are ignored');
+  await debateDuelLogic.processAction(state, con, { type: 'SUBMIT_RATING', stars: 5 });
+  assert.equal(state.phase, 'VERDICT_RESULTS');
+  assert.deepEqual(state.hostData.tally, [5, 2], 'each rating scores the other debater');
+  assert.equal(state.hostData.winnerSide, 0);
+  assert.equal(state.players[pro].score, 5 * STAR_POINTS);
+
+  await debateDuelLogic.processAction(state, 'host', { type: 'NEXT_MATCHUP' });
+  assert.equal(state.phase, 'SUGGEST', 'round two');
   assert.equal(state.hostData.round, 2);
-  assert.ok(state.playerData.p0.written.every((t: string) => t === ''));
+});
+
+test('Debate Duel: the audience can heckle a pitch through the engine', async () => {
+  await savePrompts(normalizePrompts({ debateTopics: ['Naps are good'] }));
+  const { roomCode, hostId } = await engine.createRoom('debate-duel');
+  for (const name of ['Alice', 'Bob']) await engine.joinRoom(roomCode, name);
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  const fan = (await engine.joinRoom(roomCode, 'Fan', { asAudience: true })) as { playerId: string };
+
+  await engine.processAction(roomCode, fan.playerId, { type: 'SUBMIT_HECKLE', text: 'Too early' });
+  let state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.hostData.heckles, undefined, 'nothing to heckle before a pitch');
+  assert.equal(engine.audienceView(state, state.audienceKeys![fan.playerId]).heckle, null);
+
+  await engine.processAction(roomCode, hostId, { type: 'FORCE_MATCHUPS' });
+  await engine.processAction(roomCode, hostId, { type: 'START_PITCH' });
+  await engine.processAction(roomCode, fan.playerId, { type: 'SUBMIT_HECKLE', text: 'Boo!' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.deepEqual(state.hostData.heckles.map((h: any) => [h.name, h.text]), [['Fan', 'Boo!']]);
+  assert.ok(engine.audienceView(state, state.audienceKeys![fan.playerId]).heckle);
 });
 
 test('Kart Clash: Grand Prix Cup track voting, gyro physics simulation, and multi-race scoring', async () => {

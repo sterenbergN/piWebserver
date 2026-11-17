@@ -83,7 +83,8 @@ const AWARDS: Record<GameType, AwardDef[]> = {
     { stat: 'debatesWon', emoji: '🏛️', title: 'Undisputed', detail: (n) => `won ${plural(n, 'debate')}`, atLeast: 2 },
     { stat: 'micDrop', emoji: '💥', title: 'Mic Drop', detail: (n) => plural(n, 'unanimous win'), atLeast: 1 },
     { stat: 'audienceFavorite', emoji: '👀', title: 'Audience Darling', detail: (n) => `the audience's pick ${plural(n, 'time')}`, atLeast: 1 },
-    { stat: 'votes', emoji: '🦗', title: 'Tough Room', detail: (n) => `only ${plural(n, 'vote')}`, mode: 'min' },
+    { stat: 'switches', emoji: '🔀', title: 'Saboteur', detail: (n) => `switched ${plural(n, 'topic')}`, atLeast: 1 },
+    { stat: 'heckles', emoji: '📢', title: 'Heckler-in-Chief', detail: (n) => plural(n, 'heckle'), atLeast: 3 },
   ],
   'kart-clash': [
     { stat: 'raceWins', emoji: '🏎️', title: 'Pole Position', detail: (n) => plural(n, 'race win'), atLeast: 1 },
