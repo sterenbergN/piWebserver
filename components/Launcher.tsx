@@ -14,10 +14,23 @@ import './launcher.css';
 type Hit = { kind: string; title: string; url: string; subtitle?: string; snippet?: string };
 
 const KIND_ICON: Record<string, string> = { post: '📝', album: '🖼️', photo: '📷', document: '📄', project: '🛠️', page: '🔗' };
-/** Typing one of these words first makes adding to the list what Enter does. */
-const ADD_PREFIX = /^(add|buy|get)\s+/i;
-/** And these make it a question for the Skills lookups: "? why do cats purr", "ask how…", "q …". */
-const ASK_PREFIX = /^(\?+\s*|(ask|q)\s+)/i;
+/**
+ * What the box is for. Find never saves anything: a question or a grocery item
+ * only gets saved from its own mode, so a stray Enter can't put either anywhere.
+ */
+type Mode = 'find' | 'ask' | 'list';
+/** "add milk" / "buy milk" in Find offers (never does) the grocery list. */
+const ADD_PREFIX = /^(add|buy)\s+/i;
+/** Typing "?" first in Find switches to asking. */
+const ASK_PREFIX = /^\?+\s*/;
+/** Reads like a question: Find offers to save it, and Enter opens it as one. */
+const QUESTION_START = /^(who|what|whats|what's|when|where|why|how|which|is|are|can|could|should|would|does|do|did|will)\b/i;
+
+const MODES: { id: Mode; icon: string; label: string; placeholder: string }[] = [
+  { id: 'find', icon: '🔍', label: 'Find', placeholder: 'Jump to a page or search the site' },
+  { id: 'ask', icon: '❓', label: 'Ask a question', placeholder: 'What do you want to look up later?' },
+  { id: 'list', icon: '🛒', label: 'Grocery list', placeholder: 'An item for the list, e.g. 2 lemons' },
+];
 
 /** The Skills subject a page belongs to, so a question asked there is filed with it. */
 const subjectHere = () => /^\/skills\/([^/?#]+)/.exec(window.location.pathname)?.[1];
@@ -30,7 +43,8 @@ const greeting = () => {
 /**
  * Everything on the site in one place, and the way to find anything in it. Open
  * it with the Explore button, "/" or Ctrl+K. Empty, it's a map of rooms by what
- * you came to do; type, and it's pages, then content, then "add to the list".
+ * you came to do; type, and it's pages, then content. Asking a question or adding to
+ * the grocery list each has its own mode, so neither happens by accident.
  */
 export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose, initialQuery = '' }: {
   groups: NavGroup[];
@@ -47,7 +61,10 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   initialQuery?: string;
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState(initialQuery);
+  const startsAsking = signedIn && ASK_PREFIX.test(initialQuery);
+  const [mode, setMode] = useState<Mode>(startsAsking ? 'ask' : 'find');
+  const [query, setQuery] = useState(startsAsking ? initialQuery.replace(ASK_PREFIX, '') : initialQuery);
+  const [busy, setBusy] = useState(false);
   const [hits, setHits] = useState<Hit[]>([]);
   const [info, setInfo] = useState<NavInfo | undefined>();
   const [editing, setEditing] = useState(false);
@@ -68,13 +85,15 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const pageHits = useMemo(() => matchNavItems(items, q), [items, q]);
   const pageUrls = new Set(pageHits.map((i) => i.href));
   const contentHits = hits.filter((h) => !pageUrls.has(h.url));
-  const groceryText = q.replace(ADD_PREFIX, '').trim();
-  const addFirst = ADD_PREFIX.test(q) && groceryText.length > 0;
-  // A question: anything after "?", "ask" or "q", or a sentence that ends in a question mark.
-  const asking = ASK_PREFIX.test(q);
-  const questionText = q.replace(ASK_PREFIX, '').trim();
-  const askFirst = signedIn && questionText.length > 0 && (asking || /\?$/.test(q));
-  const quickFirst = addFirst || askFirst;
+  const finding = mode === 'find';
+  // In Find these are only offers, which switch modes when picked.
+  const groceryOffer = ADD_PREFIX.test(q) ? q.replace(ADD_PREFIX, '').trim() : '';
+  const looksLikeQuestion = signedIn && (/\?$/.test(q) || QUESTION_START.test(q));
+  const modes = MODES.filter((m) => m.id !== 'ask' || signedIn);
+  const modeInfo = MODES.find((m) => m.id === mode)!;
+  const subjectId = typeof window === 'undefined' ? undefined : subjectHere();
+  // "Skills · Site name" → "Skills".
+  const askedOn = typeof document === 'undefined' ? '' : document.title.split(/\s[|·–-]\s/)[0].trim();
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +105,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   }, []);
 
   useEffect(() => {
-    if (!q || quickFirst) { setHits([]); return; }
+    if (!q || !finding) { setHits([]); return; }
     const controller = new AbortController();
     const t = setTimeout(() => {
       fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal })
@@ -95,34 +114,50 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         .catch(() => { /* pages still match */ });
     }, 150);
     return () => { clearTimeout(t); controller.abort(); };
-  }, [q, quickFirst]);
+  }, [q, finding]);
+
+  /** Change what the box is for, keeping (or replacing) what's typed. */
+  const switchTo = (next: Mode, text = q) => {
+    setMode(next);
+    setQuery(text);
+    setFlash(null);
+    inputRef.current?.focus();
+  };
+
+  const onType = (value: string) => {
+    setFlash(null);
+    if (finding && signedIn && ASK_PREFIX.test(value)) { setMode('ask'); setQuery(value.replace(ASK_PREFIX, '')); return; }
+    setQuery(value);
+  };
 
   const addToList = async () => {
-    if (!groceryText) return;
-    const ok = await addGroceryItem(groceryText);
-    setFlash(ok ? { text: `Added “${groceryText}” to your grocery list`, ok, href: '/recipes?view=list', link: 'Open the list' } : { text: 'Couldn’t reach the list. Try again.', ok });
+    if (!q || busy) return;
+    const item = q;
+    setBusy(true);
+    const ok = await addGroceryItem(item);
+    setBusy(false);
+    setFlash(ok ? { text: `Added “${item}” to your grocery list`, ok, href: '/recipes?view=list', link: 'Open the list' } : { text: 'Couldn’t reach the list. Try again.', ok });
     if (ok) setQuery('');
     inputRef.current?.focus();
   };
 
   // Into Skills → Lookups, with the page it was asked on, so it can be looked up later.
   const askLater = async () => {
-    if (!questionText) return;
-    const subjectId = subjectHere();
-    // "Skills · Site name" → "Skills".
-    const where = document.title.split(/\s[|·–-]\s/)[0].trim();
-    const question = questionText;
+    if (!q || busy) return;
+    const question = q;
+    setBusy(true);
     try {
       const { skillsPost } = await import('./skills/api');
-      const payload = { question, status: 'open', ...(where ? { context: `Asked on ${where} (${window.location.pathname})` } : {}) };
+      const payload = { question, status: 'open', ...(askedOn ? { context: `Asked on ${askedOn} (${window.location.pathname})` } : {}) };
       // A subject page's id may not be one this account has: then it's filed with no subject.
       await skillsPost('add-inquiry', subjectId ? { ...payload, subjectId } : payload)
         .catch(() => (subjectId ? skillsPost('add-inquiry', payload) : Promise.reject(new Error('failed'))));
-      setFlash({ text: `Added “${question}” to the things to look up`, ok: true, href: '/skills?view=inquiries', link: 'Open lookups' });
+      setFlash({ text: `Saved “${question}” to look up later`, ok: true, href: '/skills?view=inquiries', link: 'Open lookups' });
       setQuery('');
     } catch {
       setFlash({ text: 'Couldn’t save the question. Try again.', ok: false });
     }
+    setBusy(false);
     inputRef.current?.focus();
   };
 
@@ -165,29 +200,38 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   };
 
   const onInputKey = (e: React.KeyboardEvent) => {
+    // Backspace in an empty box goes back to finding.
+    if (e.key === 'Backspace' && !query && !finding) { e.preventDefault(); switchTo('find', ''); return; }
     if (e.key !== 'Enter' || !q) return;
     e.preventDefault();
-    if (addFirst) { void addToList(); return; }
-    if (askFirst) { void askLater(); return; }
+    if (mode === 'ask') { void askLater(); return; }
+    if (mode === 'list') { void addToList(); return; }
+    // Find: open the best match. A question opens the question box (it isn't saved
+    // until Enter there); anything else with no match does nothing.
     const url = pageHits[0]?.href ?? contentHits[0]?.url;
-    if (url) { onClose(); router.push(url); } else void addToList();
+    if (signedIn && /\?$/.test(q)) switchTo('ask');
+    else if (url) { onClose(); router.push(url); }
+    else if (looksLikeQuestion) switchTo('ask');
   };
 
   const jumpTo = (id: string) => panelRef.current?.querySelector(`[data-room="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-  const addRow = groceryText && (
-    <button type="button" data-lc className="lc-row" onClick={addToList}>
-      <span className="lc-icon" aria-hidden>🛒</span>
-      <span className="lc-text"><strong>Add “{groceryText}” to your grocery list</strong></span>
-    </button>
-  );
-
-  const askRow = signedIn && questionText && (
-    <button type="button" data-lc className="lc-row" onClick={askLater}>
+  // Offers in Find: each opens its own mode with the text in it, ready to check and save.
+  const askOffer = signedIn && (
+    <button type="button" data-lc className="lc-row" onClick={() => switchTo('ask')}>
       <span className="lc-icon" aria-hidden>❓</span>
       <span className="lc-text">
-        <strong>Add “{questionText}” to things to look up</strong>
-        <small>Saved in Skills → Lookups{asking ? '' : ' · start with ? to skip the search'}</small>
+        <strong>Ask “{q}” as a question…</strong>
+        <small>Opens the question box · saved to Skills → Lookups once you confirm</small>
+      </span>
+    </button>
+  );
+  const listOffer = groceryOffer && (
+    <button type="button" data-lc className="lc-row" onClick={() => switchTo('list', groceryOffer)}>
+      <span className="lc-icon" aria-hidden>🛒</span>
+      <span className="lc-text">
+        <strong>Put “{groceryOffer}” on the grocery list…</strong>
+        <small>Opens the grocery box · added once you confirm</small>
       </span>
     </button>
   );
@@ -196,11 +240,20 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   return createPortal(
     <div className="lc-backdrop" onClick={onClose}>
       <div ref={panelRef} className="lc-panel" role="dialog" aria-modal="true" aria-label="Explore the site" onClick={(e) => e.stopPropagation()} onKeyDown={move}>
-        <div className="lc-search">
-          <span aria-hidden>🔍</span>
-          <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setFlash(null); }} onKeyDown={onInputKey}
-            placeholder={signedIn ? 'Jump to a page, search, “add milk”, or “? a question”' : 'Jump to a page, search posts and recipes, or “add milk”'} aria-label="Search the site" enterKeyHint="go" />
+        <div className={`lc-search is-${mode}`}>
+          <span aria-hidden>{modeInfo.icon}</span>
+          <input ref={inputRef} value={query} onChange={(e) => onType(e.target.value)} onKeyDown={onInputKey}
+            placeholder={modeInfo.placeholder} aria-label={modeInfo.label} enterKeyHint={finding ? 'go' : 'done'} maxLength={finding ? undefined : 500} />
           <button type="button" className="lc-close" onClick={onClose} aria-label="Close">Esc</button>
+        </div>
+        <div className="lc-modes" role="group" aria-label="What the box does">
+          {modes.map((m) => (
+            <button key={m.id} type="button" aria-pressed={mode === m.id} className={mode === m.id ? 'is-on' : ''}
+              onClick={() => switchTo(m.id, m.id === 'list' && groceryOffer ? groceryOffer : q)}>
+              <span aria-hidden>{m.icon}</span>{m.label}
+            </button>
+          ))}
+          {finding && signedIn && <span className="lc-modes-tip">Tip: type <kbd>?</kbd> first to ask</span>}
         </div>
 
         {flash && (
@@ -211,10 +264,41 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         )}
 
         <div className="lc-body">
-          {q ? (
+          {mode === 'ask' ? (
+            <section className="lc-compose" aria-label="Save a question">
+              <div className="lc-compose-card">
+                <span className="lc-icon" aria-hidden>❓</span>
+                <span className="lc-text">
+                  <strong>{q ? `“${q}”` : 'Type the question in the box above'}</strong>
+                  <small>Goes to Skills → Lookups{subjectId ? ', filed with this subject' : ''}{askedOn ? ` · noted as asked on ${askedOn}` : ''}</small>
+                </span>
+              </div>
+              <div className="lc-compose-actions">
+                <button type="button" className="btn btn-primary" disabled={!q || busy} onClick={askLater}>{busy ? 'Saving…' : 'Save question'}</button>
+                <button type="button" className="btn btn-secondary" onClick={() => switchTo('find')}>{q ? 'Search the site instead' : 'Back to search'}</button>
+                <Link className="lc-compose-link" href="/skills?view=inquiries" onClick={onClose}>Your lookups →</Link>
+              </div>
+              <p className="lc-compose-hint"><kbd>Enter</kbd> saves · <kbd>Backspace</kbd> in an empty box goes back to search</p>
+            </section>
+          ) : mode === 'list' ? (
+            <section className="lc-compose is-list" aria-label="Add to the grocery list">
+              <div className="lc-compose-card">
+                <span className="lc-icon" aria-hidden>🛒</span>
+                <span className="lc-text">
+                  <strong>{q ? `Add “${q}” to the grocery list` : 'Type an item in the box above'}</strong>
+                  <small>{signedIn ? 'Your household’s list in Recipes' : 'Kept on this device'}</small>
+                </span>
+              </div>
+              <div className="lc-compose-actions">
+                <button type="button" className="btn btn-primary" disabled={!q || busy} onClick={addToList}>{busy ? 'Adding…' : 'Add to list'}</button>
+                <button type="button" className="btn btn-secondary" onClick={() => switchTo('find', '')}>Cancel</button>
+                <Link className="lc-compose-link" href="/recipes?view=list" onClick={onClose}>Open the list →</Link>
+              </div>
+              <p className="lc-compose-hint"><kbd>Enter</kbd> adds · <kbd>Backspace</kbd> in an empty box goes back to search</p>
+            </section>
+          ) : q ? (
             <>
-              {addFirst && addRow}
-              {askFirst && askRow}
+              {looksLikeQuestion && askOffer}
               {pageHits.length > 0 && (
                 <section aria-label="Pages">
                   <h2>Pages</h2>
@@ -236,13 +320,11 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   ))}
                 </section>
               )}
-              {!quickFirst && (
-                <section aria-label="Actions">
-                  {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
-                  {askRow}
-                  {addRow}
-                </section>
-              )}
+              <section aria-label="Actions">
+                {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
+                {!looksLikeQuestion && pageHits.length + contentHits.length === 0 && askOffer}
+                {listOffer}
+              </section>
             </>
           ) : (
             <>
@@ -278,7 +360,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         <footer className="lc-foot">
           <button type="button" onClick={onToggleTheme}>{theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}</button>
           {!signedIn && <button type="button" onClick={() => { onClose(); window.dispatchEvent(new Event('site:sign-in')); }}>👤 Sign in</button>}
-          <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
+          <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setMode('find'); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
           <span className="lc-keys" aria-hidden>{editing ? 'Tap a star to keep it in your header and dock' : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> to move · <kbd>Enter</kbd> to open</>}</span>
         </footer>
       </div>

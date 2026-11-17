@@ -122,6 +122,34 @@
 .adm-bars > div > div { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
 .adm-pages > div { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 2.5rem; gap: 0.5rem; align-items: center; font-size: 0.8rem; margin-bottom: 0.35rem; }
 
+/* Disk use: the whole drive, then each part of the site */
+.adm-disk { margin-bottom: 1.25rem; }
+.adm-disk-bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface-border); }
+.adm-disk-bar span { display: block; height: 100%; }
+.adm-disk-bar .is-site, .adm-disk-key i.is-site { background: var(--accent); }
+.adm-disk-bar .is-other, .adm-disk-key i.is-other { background: var(--muted); opacity: 0.7; }
+.adm-disk-key { display: flex; flex-wrap: wrap; gap: 0.35rem 1.25rem; margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.82rem; color: var(--muted); }
+.adm-disk-key li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.adm-disk-key i { width: 0.75rem; height: 0.75rem; border-radius: 3px; background: var(--surface-border); }
+.adm-disk-key strong { color: var(--foreground); font-family: ui-monospace, monospace; }
+.adm-usage { display: flex; flex-direction: column; gap: 0.15rem; }
+.adm-usage-row { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 5.5rem; gap: 0.75rem; align-items: center; padding: 0.45rem 0.5rem; border-radius: 8px; font-size: 0.9rem; }
+.adm-usage-group > summary { cursor: pointer; list-style: none; }
+.adm-usage-group > summary::-webkit-details-marker { display: none; }
+.adm-usage-group > summary .adm-usage-name::after { content: ' ▸'; color: var(--muted); font-size: 0.75rem; }
+.adm-usage-group[open] > summary .adm-usage-name::after { content: ' ▾'; }
+.adm-usage-group > summary:hover, .adm-usage-group > summary:focus-visible { background: var(--surface-hover); outline: none; }
+.adm-usage-group[open] { padding-bottom: 0.5rem; border-bottom: 1px solid var(--surface-border); margin-bottom: 0.3rem; }
+.adm-usage-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.adm-usage-track { height: 8px; }
+.adm-usage-track > span { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.adm-usage-track > span.is-other { background: var(--muted); opacity: 0.7; }
+.adm-usage-size { text-align: right; font-family: ui-monospace, monospace; font-size: 0.82rem; font-weight: 700; }
+.adm-usage-row.is-item { padding: 0.2rem 0.5rem 0.2rem 2rem; font-size: 0.82rem; }
+.adm-usage-row.is-item .adm-usage-name { font-weight: 500; }
+.adm-usage-row.is-item .adm-usage-track { height: 6px; }
+.adm-usage-where { margin: 0 0 0.35rem 2rem; font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+
 pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; overflow: auto; padding: 0.75rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); margin: 0.5rem 0 0; }
 
 @media (max-width: 600px) {
@@ -130,4 +158,8 @@ pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; over
   /* Text gets its own line when the buttons would squeeze it. */
   .adm-row-main { min-width: min(100%, 11rem); }
   .adm-stat-value { font-size: 1.15rem; }
+  .adm-usage-row { grid-template-columns: minmax(0, 1fr) 4.5rem; gap: 0.2rem 0.5rem; }
+  .adm-usage-track { grid-column: 1 / -1; grid-row: 2; }
+  .adm-usage-row.is-item { padding-left: 1.25rem; }
+  .adm-usage-where { margin-left: 1.25rem; }
 }

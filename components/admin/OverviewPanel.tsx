@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import ProgressBar from '@/components/ProgressBar';
 import CpuBreakdown from '@/components/stats/CpuBreakdown';
+import StoragePanel from './StoragePanel';
 import type { CpuDetail } from '@/lib/cpu-detail';
 
 interface SystemStats { platform: string; temp: string; ram: string; storage: string; uptime?: string; cpu?: string; cpuDetail?: CpuDetail | null; network?: string; networkTotal?: string; }
@@ -96,6 +97,8 @@ export default function OverviewPanel() {
             </div>
           )}
       </section>
+
+      <StoragePanel />
 
       <section className="adm-card" aria-labelledby="visits-title">
         <div className="adm-card-head">

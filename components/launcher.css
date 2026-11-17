@@ -14,6 +14,27 @@
 
 .lc-search { display: flex; align-items: center; gap: 0.65rem; padding: 0.35rem 0.7rem 0.35rem 1.1rem; border-bottom: 1px solid var(--surface-border); }
 .lc-search input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .lc-search input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus { flex: 1; min-width: 0; padding: 0.8rem 0; border: none; border-radius: 0; background: transparent; font-size: 1.05rem; box-shadow: none; }
+.lc-search.is-ask { box-shadow: inset 3px 0 0 var(--accent); }
+.lc-search.is-list { box-shadow: inset 3px 0 0 var(--success); }
+
+/* Find / Ask / Grocery: saving only ever happens from its own mode. */
+.lc-modes { display: flex; align-items: center; gap: 0.35rem; padding: 0.5rem 1rem; border-bottom: 1px solid var(--surface-border); overflow-x: auto; scrollbar-width: none; }
+.lc-modes::-webkit-scrollbar { display: none; }
+.lc-modes button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.7rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--muted); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.lc-modes button:hover { color: var(--foreground); }
+.lc-modes button.is-on { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.lc-modes-tip { margin-left: auto; flex-shrink: 0; font-size: 0.75rem; color: var(--muted); }
+.lc-modes-tip kbd, .lc-compose-hint kbd { padding: 0 0.3rem; border-radius: 4px; border: 1px solid var(--surface-border); font: inherit; font-size: 0.7rem; }
+
+.lc-compose { display: flex; flex-direction: column; gap: 0.75rem; max-width: 640px; }
+.lc-compose-card { display: flex; align-items: center; gap: 0.7rem; padding: 0.85rem 0.9rem; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--surface-border)); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lc-compose.is-list .lc-compose-card { border-color: color-mix(in srgb, var(--success) 45%, var(--surface-border)); background: color-mix(in srgb, var(--success) 8%, transparent); }
+.lc-compose-card strong { font-size: 1rem; overflow-wrap: anywhere; }
+.lc-compose-card small { white-space: normal; }
+.lc-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.lc-compose-link { margin-left: auto; font-size: 0.85rem; }
+.lc-compose-hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+
 .lc-close { flex-shrink: 0; padding: 0.25rem 0.55rem; border-radius: 7px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--muted); font-size: 0.75rem; font-weight: 600; cursor: pointer; }
 .lc-close:hover { color: var(--foreground); }
 
@@ -67,4 +88,7 @@
   .lc-chips a { flex-shrink: 0; }
   .lc-row { padding-top: 0.55rem; padding-bottom: 0.55rem; }
   .lc-keys { display: none; }
+  .lc-modes-tip, .lc-compose-hint { display: none; }
+  .lc-compose-actions .btn { flex: 1; }
+  .lc-compose-link { margin-left: 0; width: 100%; text-align: center; }
 }
