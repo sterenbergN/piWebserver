@@ -54,7 +54,7 @@ const PARTY_GAMES: NavItem[] = ([
   ['ready-set-bet', 'Ready Set Bet', '🐎', 'Bet live as horses race'],
   ['quip-clash', 'Quip Clash', '⚡', 'Silly prompts, vote for the funniest'],
   ['bracket-battles', 'Bracket Battles', '🏆', 'Your wildest answers fight it out'],
-  ['debate-duel', 'Debate Duel', '🎤', 'Out-talk a rival while the room switches the topic'],
+  ['debate-duel', 'Debate Duel', '🎤', 'Argue hot takes out loud, then switch a word'],
   ['emoji-telephone', 'Emoji Telephone', '🔗', 'Watch the chain derail'],
   ['the-faker', 'The Faker', '🕵️', 'Vote out whoever’s faking'],
   ['spyfall', 'Spyfall', '🕵️‍♀️', 'One spy doesn’t know the location'],

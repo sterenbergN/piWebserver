@@ -4,24 +4,24 @@ import { useRouter } from 'next/navigation';
 import type { BluffFact, PromptLists, PromptsData, SpyfallLocation, TriviaQuestion, WavelengthSpectrum } from '@/lib/party/prompts';
 
 type GameKey = keyof PromptLists;
-type TextKey = 'quipClash' | 'theFaker' | 'bracketBattles' | 'herdMentality' | 'emojiTelephone' | 'debateTopics';
-const TEXT_KEYS: TextKey[] = ['quipClash', 'theFaker', 'bracketBattles', 'herdMentality', 'emojiTelephone', 'debateTopics'];
+type TextKey = 'quipClash' | 'theFaker' | 'bracketBattles' | 'herdMentality' | 'emojiTelephone';
+const TEXT_KEYS: TextKey[] = ['quipClash', 'theFaker', 'bracketBattles', 'herdMentality', 'emojiTelephone'];
 
 // prompts.ts reads the disk, so the client keeps its own empty template.
 const EMPTY_LISTS: PromptLists = {
   quipClash: [], theFaker: [], triviaQuestions: [], bracketBattles: [],
-  spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [], debateTopics: [],
+  spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [],
 };
 const ALL_KEYS = Object.keys(EMPTY_LISTS) as GameKey[];
 
 const LabelMap: Record<GameKey, string> = {
   quipClash: '⚡ Quip Clash', theFaker: '🕵️ The Faker', bracketBattles: '🏆 Bracket Battles', triviaQuestions: '💀 Trivia Death',
   herdMentality: '🐄 Herd Mentality', emojiTelephone: '🔗 Emoji Telephone', spyfallLocations: '🕵️‍♀️ Spyfall Locations',
-  wavelengthSpectrums: '📡 Wavelength Spectrums', bluffFacts: '🤥 Bluff Clash Facts', debateTopics: '🎤 Debate Duel',
+  wavelengthSpectrums: '📡 Wavelength Spectrums', bluffFacts: '🤥 Bluff Clash Facts',
 };
 const ColorMap: Record<GameKey, string> = {
   quipClash: 'yellow', theFaker: 'red', bracketBattles: 'cyan', triviaQuestions: 'purple',
-  herdMentality: 'pink', emojiTelephone: 'green', spyfallLocations: 'red', wavelengthSpectrums: 'cyan', bluffFacts: 'yellow', debateTopics: 'red',
+  herdMentality: 'pink', emojiTelephone: 'green', spyfallLocations: 'red', wavelengthSpectrums: 'cyan', bluffFacts: 'yellow',
 };
 
 // Comma lists (roles, house lies) are edited as one string. Splitting on ", "

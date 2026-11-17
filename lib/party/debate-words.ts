@@ -3,12 +3,13 @@
 
 export const MAX_SWITCH_WORD = 24;
 
-/** Words not worth switching. */
+/**
+ * Filler words not worth switching. Words that change the meaning stay
+ * switchable ("We need more spiders" → "We need hotter spiders").
+ */
 const STOP_WORDS = new Set([
-  'the', 'and', 'for', 'are', 'was', 'were', 'all', 'any', 'its', 'our', 'your', 'their', 'than', 'then', 'that', 'this',
-  'with', 'from', 'into', 'onto', 'should', 'would', 'could', 'have', 'has', 'had', 'been', 'being', 'every', 'each',
-  'more', 'most', 'less', 'over', 'under', 'better', 'best', 'worse', 'worst', 'not', 'but', 'own', 'who', 'what',
-  'can', 'does', 'did', 'way', 'one',
+  'the', 'and', 'for', 'are', 'was', 'were', 'its', 'our', 'your', 'their', 'than', 'then', 'that', 'this', 'these', 'those',
+  'with', 'from', 'into', 'onto', 'have', 'has', 'had', 'been', 'being', 'but', 'who', 'what', 'which', 'does', 'did',
 ]);
 
 /** Split a proposition into words, keeping punctuation attached so it reads back the same. */

@@ -79,11 +79,11 @@ const AWARDS: Record<GameType, AwardDef[]> = {
     { stat: 'votes', emoji: '🔗', title: 'Emoji Poet', detail: (n) => `${plural(n, 'vote')} for funniest chain`, atLeast: 1 },
   ],
   'debate-duel': [
-    { stat: 'votes', emoji: '🎤', title: 'Silver Tongue', detail: (n) => `${plural(n, 'vote')} in total`, atLeast: 1 },
+    { stat: 'votes', emoji: '🎤', title: 'Silver Tongue', detail: (n) => `won over ${n} ${n === 1 ? 'person' : 'people'}`, atLeast: 1 },
     { stat: 'debatesWon', emoji: '🏛️', title: 'Undisputed', detail: (n) => `won ${plural(n, 'debate')}`, atLeast: 2 },
     { stat: 'micDrop', emoji: '💥', title: 'Mic Drop', detail: (n) => plural(n, 'unanimous win'), atLeast: 1 },
     { stat: 'audienceFavorite', emoji: '👀', title: 'Audience Darling', detail: (n) => `the audience's pick ${plural(n, 'time')}`, atLeast: 1 },
-    { stat: 'switches', emoji: '🔀', title: 'Saboteur', detail: (n) => `switched ${plural(n, 'topic')}`, atLeast: 1 },
+    { stat: 'switches', emoji: '🔀', title: 'Saboteur', detail: (n) => `${n} ${n === 1 ? 'switch' : 'switches'} picked`, atLeast: 1 },
     { stat: 'heckles', emoji: '📢', title: 'Heckler-in-Chief', detail: (n) => plural(n, 'heckle'), atLeast: 3 },
   ],
   'kart-clash': [

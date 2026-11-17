@@ -238,7 +238,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
   };
   const PACK_LIST_KEY: Record<string, string> = {
     'quip-clash': 'quipClash', 'the-faker': 'theFaker', 'bracket-battles': 'bracketBattles', 'trivia-death': 'triviaQuestions',
-    'spyfall': 'spyfallLocations', 'herd-mentality': 'herdMentality', 'wavelength': 'wavelengthSpectrums', 'bluff-clash': 'bluffFacts', 'emoji-telephone': 'emojiTelephone', 'debate-duel': 'debateTopics',
+    'spyfall': 'spyfallLocations', 'herd-mentality': 'herdMentality', 'wavelength': 'wavelengthSpectrums', 'bluff-clash': 'bluffFacts', 'emoji-telephone': 'emojiTelephone',
   };
 
   const isPlaying = state && state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';

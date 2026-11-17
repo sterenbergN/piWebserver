@@ -32,7 +32,7 @@ const POLL_HINT: Record<string, string> = {
   'wavelength': 'Read the Psychic\'s mind!',
   'bluff-clash': 'Spot the real truth!',
   'emoji-telephone': 'Vote for your favorite chain!',
-  'debate-duel': 'Heckle the speaker, then back who argued it better!',
+  'debate-duel': 'Heckle the speakers, then back who won you over!',
 };
 
 export default function AudiencePage({ params }: { params: Promise<{ roomCode: string; key: string }> }) {

@@ -52,7 +52,8 @@ function computeWaitingOnNames(state: GameState): string[] {
         if (state.phase === 'VOTING') return Boolean(pd?.voted);
         return true;
       case 'debate-duel':
-        if (state.phase === 'SUGGEST') return Boolean(pd?.written?.[0] && pd?.written?.[1]);
+        if (state.phase === 'TOPIC') return Boolean(pd?.topic);
+        if (state.phase === 'SWITCH') return Boolean(pd?.proposed);
         if (state.phase === 'VERDICT') return !(pd?.canVote || pd?.canRate) || (pd?.chosen !== null && pd?.chosen !== undefined);
         return true;
       case 'kart-clash':

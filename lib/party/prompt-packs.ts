@@ -6,7 +6,7 @@ type PackSeed = Omit<PromptPack, keyof PromptLists> & Partial<PromptLists>;
 // games fall back to Classic) until the admin fills them in.
 const withAllLists = (seed: PackSeed): PromptPack => ({
   quipClash: [], theFaker: [], triviaQuestions: [], bracketBattles: [],
-  spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [], debateTopics: [],
+  spyfallLocations: [], herdMentality: [], wavelengthSpectrums: [], bluffFacts: [], emojiTelephone: [],
   ...seed,
 });
 

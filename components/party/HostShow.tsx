@@ -157,23 +157,26 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
       return { sfx: 'ding', say: h.chain ? `${h.chain.originPrompt}… became… ${h.chain.guess}!` : '' };
     case 'emoji-telephone:VOTING':
       return { sfx: 'whoosh', say: 'Vote for the funniest chain!' };
-    case 'debate-duel:SUGGEST':
-      return { card: intro || { title: `Round ${h.round || ''}`, subtitle: 'Feed the debate' }, sfx: 'whoosh',
-        say: line(['Give me two things, people or places. They will be used against you.', 'Suggestions, please! The weirder the better.']) };
+    case 'debate-duel:TOPIC':
+      return { card: intro || { title: `Round ${h.round || ''}`, subtitle: 'Write a hot take' }, sfx: 'whoosh',
+        say: h.again ? 'Nobody wrote one! I need your hot takes, people.' : line(['Write a hot take. Something goofy enough to argue about.', 'Hot takes, please! Somebody is going to have to defend them.']) };
     case 'debate-duel:UP_NEXT': {
       const [pro, con] = (h.debaters || []).map((id: string) => state.players[id]?.name || 'someone');
-      const motion = (h.proposition || []).join(' ');
-      if (h.speakerSide === 1) return { sfx: 'whoosh', say: `${con}, you argue against. Get ready.` };
-      return { card: { title: `${pro} vs ${con}`, subtitle: motion }, sfx: 'slam', say: `The motion: ${motion}. ${pro} argues for. ${con} argues against.` };
+      const topic = (h.words || []).join(' ');
+      if (h.stage === 0) return { card: { title: `${pro} vs ${con}`, subtitle: topic }, sfx: 'slam', say: `${topic}. ${pro} argues for. ${con} argues against. Everyone else, pick a side!` };
+      if (h.stage === 2) return { sfx: 'whoosh', say: `Round two! ${pro}, defend the new topic.` };
+      return { sfx: 'whoosh', say: `${con}, your turn.` };
     }
-    case 'debate-duel:PITCH': {
-      if (h.switch) {
-        return { sfx: 'buzzer', say: line(['Switch! It’s now: {motion}', 'Switcheroo! New topic: {motion}'], { motion: (h.words || []).join(' ') }) };
-      }
-      return { sfx: 'ding', say: line(['{name}, thirty seconds. Go!', 'The floor is yours, {name}. Go!'], { name: state.players[h.speakerId]?.name || '' }) };
-    }
+    case 'debate-duel:PITCH':
+      return { sfx: 'ding', say: line(['{name}, go!', 'The floor is yours, {name}.'], { name: state.players[h.speakerId]?.name || '' }) };
+    case 'debate-duel:SWITCH':
+      return { card: { title: 'Switch It Up!', subtitle: 'Change one word of the topic' }, sfx: 'whoosh', say: 'Time to switch it up! Pick a word and change it.' };
+    case 'debate-duel:SWITCH_REVEAL':
+      return h.switch
+        ? { sfx: 'buzzer', say: `Switched by ${h.switch.byName}! The topic is now: ${(h.words || []).join(' ')}` }
+        : { sfx: 'boo', say: 'Nobody switched it. Same topic, round two!' };
     case 'debate-duel:VERDICT':
-      return { sfx: 'whoosh', say: h.mode === 'rate' ? 'Rate each other’s pitch. Be honest. Ish.' : 'Judges! Who argued it better?' };
+      return { sfx: 'whoosh', say: h.mode === 'rate' ? 'Rate each other. Be honest. Ish.' : 'Final call! Lock in your side.' };
     case 'debate-duel:VERDICT_RESULTS': {
       const debaters: string[] = h.debaters || [];
       const tally: number[] = h.tally || [0, 0];

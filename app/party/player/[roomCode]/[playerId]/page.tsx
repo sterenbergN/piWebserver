@@ -138,7 +138,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const inputPhases = [
     'PROMPTING', 'VOTING', 'QUESTION', 'FINAL_ESCAPE', 'PREDICTION', 'MATCHUP',
     'TIEBREAKER', 'RACING', 'TASK_DELIVERY', 'DISCUSSION', 'CLUE_GIVING',
-    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP', 'SUGGEST', 'VERDICT',
+    'DIALING', 'BLUFFING', 'TRANSLATE', 'GUESS', 'TRACK_VOTE', 'HEAT_SETUP', 'TOPIC', 'SWITCH', 'VERDICT',
   ];
   useTurnBuzz(
     state ? `${state.phase}|${state.data?.phase}|${state.data?.prompt || state.data?.question || state.data?.clue || ''}|${state.data?.isOnFloor ? 'floor' : ''}` : null,
@@ -289,7 +289,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     'wavelength': 'wavelengthSpectrums',
     'bluff-clash': 'bluffFacts',
     'emoji-telephone': 'emojiTelephone',
-    'debate-duel': 'debateTopics',
   };
   const activePacks: string[] = state?.settings?.packs?.length ? state.settings.packs : ['classic'];
   const togglePack = (id: string) => {

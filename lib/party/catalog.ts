@@ -31,7 +31,7 @@ export const GAME_CATALOG: GameInfo[] = [
   { id: 'ready-set-bet', name: 'Ready Set Bet', emoji: '🐎', color: 'green', category: 'race', blurb: 'Bet live as dice-powered horses race to the finish.', minPlayers: 1, maxPlayers: 16 },
   { id: 'quip-clash', name: 'Quip Clash', emoji: '⚡', color: 'yellow', category: 'comedy', blurb: 'Answer silly prompts, then vote for the funniest.', minPlayers: 3, maxPlayers: 8 },
   { id: 'bracket-battles', name: 'Bracket Battles', emoji: '🏆', color: 'cyan', category: 'comedy', blurb: 'Your wildest answers fight it out, tournament-style.', minPlayers: 3, maxPlayers: 16 },
-  { id: 'debate-duel', name: 'Debate Duel', emoji: '🎤', color: 'red', category: 'comedy', blurb: 'Talk for 30 seconds on a silly stance while the room switches the topic mid-speech.', minPlayers: 2, maxPlayers: 8 },
+  { id: 'debate-duel', name: 'Debate Duel', emoji: '🎤', color: 'red', category: 'comedy', blurb: 'Argue the room’s own hot takes out loud. Then someone switches a word.', minPlayers: 2, maxPlayers: 8 },
   { id: 'emoji-telephone', name: 'Emoji Telephone', emoji: '🔗', color: 'green', category: 'comedy', blurb: 'Translate to emoji, decode, and watch the chain derail.', minPlayers: 3, maxPlayers: 12 },
   { id: 'the-faker', name: 'The Faker', emoji: '🕵️', color: 'red', category: 'deception', blurb: 'Everyone gets a task except the Faker. Vote them out.', minPlayers: 3, maxPlayers: 8 },
   { id: 'spyfall', name: 'Spyfall', emoji: '🕵️‍♀️', color: 'red', category: 'deception', blurb: 'One spy doesn’t know the location. Question each other.', minPlayers: 3, maxPlayers: 12 },
