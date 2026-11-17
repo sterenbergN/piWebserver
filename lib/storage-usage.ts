@@ -215,3 +215,187 @@ export async function measureStorage(opts: { cwd?: string; backupDir?: string } 
     tookMs: Date.now() - started,
   };
 }
+
+// ── Everything else on the drive ─────────────────────────────────────────────
+// The rest of the drive the site is on, with the site's own folders left out
+// (they're measured above). Big, so only run when asked, and stopped after a
+// time limit rather than tying up the Pi.
+
+export type SystemFolder = {
+  path: string;
+  label?: string;
+  /** What it is, and how to free it when that's safe. */
+  hint?: string;
+  bytes: number;
+  files: number;
+  /** The biggest things inside, drilling through folders that hold nearly all of it. */
+  inside?: SystemFolder[];
+};
+export type SystemReport = {
+  /** Where the drive starts: / on the Pi's SD card, a mount point for a USB drive. */
+  root: string;
+  bytes: number;
+  files: number;
+  folders: SystemFolder[];
+  /** Folders only root can open: their size can't be counted. */
+  unreadable: { count: number; examples: string[] };
+  /** Ran out of time, so some folders were only partly counted. */
+  partial: boolean;
+  scannedAt: string;
+  tookMs: number;
+};
+
+type TreeNode = { path: string; bytes: number; files: number; children?: TreeNode[] };
+
+/** How deep the folder tree is kept for drilling (root is 0). */
+const KEEP_DEPTH = 6;
+/** Biggest children kept per folder. */
+const KEEP_CHILDREN = 12;
+
+/** Plain names and tips for the usual places space goes on a Raspberry Pi OS install. */
+const SYSTEM_PLACES: { match: RegExp; label: string; hint?: string }[] = [
+  { match: /^\/usr$/, label: 'Installed programs & libraries', hint: 'The operating system and everything installed with apt.' },
+  { match: /^\/usr\/lib$/, label: 'Program libraries' },
+  { match: /^\/usr\/share$/, label: 'Shared program files', hint: 'Icons, docs, fonts and data for installed programs.' },
+  { match: /^\/usr\/local$/, label: 'Programs installed by hand', hint: 'Things installed outside apt, e.g. Node.js.' },
+  { match: /^\/var$/, label: 'Logs, caches & program data' },
+  { match: /^\/var\/log$/, label: 'System logs' },
+  { match: /^\/var\/log\/journal$/, label: 'System journal', hint: 'Safe to trim: sudo journalctl --vacuum-size=100M' },
+  { match: /^\/var\/cache\/apt$/, label: 'Downloaded package files', hint: 'Safe to clear: sudo apt clean' },
+  { match: /^\/var\/lib\/apt\/lists$/, label: 'Package lists', hint: 'Rebuilt by sudo apt update.' },
+  { match: /^\/var\/lib\/docker$/, label: 'Docker', hint: 'docker system prune removes unused images.' },
+  { match: /^\/var\/swap$|^\/swapfile$/, label: 'Swap file', hint: 'Spare memory on disk. Its size is set in /etc/dphys-swapfile.' },
+  { match: /^\/boot(\/firmware)?$/, label: 'Boot files' },
+  { match: /^\/opt$/, label: 'Optional software' },
+  { match: /^\/tmp$/, label: 'Temporary files', hint: 'Cleared on reboot.' },
+  { match: /^\/home$/, label: 'Home folders' },
+  { match: /^\/root$/, label: 'Root user’s home' },
+  { match: /^\/snap$/, label: 'Snap packages' },
+  { match: /^\/lib\/modules$|^\/usr\/lib\/modules$/, label: 'Kernel modules', hint: 'Old kernels’ modules go when sudo apt autoremove removes the kernels.' },
+  { match: /\/\.npm$|\/\.npm\/_cacache$/, label: 'npm download cache', hint: 'Safe to clear: npm cache clean --force' },
+  { match: /\/\.cache$/, label: 'Program caches', hint: 'Usually safe to delete; programs rebuild what they need.' },
+  { match: /\/\.cache\/pip$/, label: 'pip download cache', hint: 'Safe to clear: pip cache purge' },
+  { match: /\/\.pm2\/logs$/, label: 'pm2 logs', hint: 'The site’s own output logs. Safe to clear: pm2 flush' },
+  { match: /\/\.pm2$/, label: 'pm2 (runs the site)' },
+  { match: /\/\.vscode-server$/, label: 'VS Code remote server', hint: 'Left by VS Code remote editing; reinstalls itself next time.' },
+  { match: /\/\.nvm$/, label: 'Node versions (nvm)', hint: 'nvm uninstall <version> removes old ones.' },
+  { match: /\/\.local\/share\/Trash$/, label: 'Trash', hint: 'Files deleted from the desktop. Safe to empty.' },
+  { match: /\/node_modules$/, label: 'node_modules' },
+];
+
+function describe(p: string): { label?: string; hint?: string } {
+  const posix = p.replace(/\\/g, '/');
+  const place = SYSTEM_PLACES.find((s) => s.match.test(posix));
+  return place ? { label: place.label, ...(place.hint ? { hint: place.hint } : {}) } : {};
+}
+
+/** The top of the drive a path is on: climb while the parent is the same device. */
+export async function driveRoot(p: string): Promise<string> {
+  let cur = await fs.realpath(p);
+  const dev = (await fs.stat(cur)).dev;
+  for (;;) {
+    const up = path.dirname(cur);
+    if (up === cur) return cur;
+    const st = await fs.stat(up).catch(() => null);
+    if (!st || st.dev !== dev) return cur;
+    cur = up;
+  }
+}
+
+/** Every folder the site's own report covers, as real paths, so the drive scan skips them. */
+export async function siteFolders(opts: { cwd?: string; backupDir?: string } = {}): Promise<string[]> {
+  const cwd = path.resolve(opts.cwd ?? process.cwd());
+  const app = appDir(cwd);
+  const candidates = [
+    app ?? cwd, cwd,
+    path.join(cwd, '.data'), path.join(cwd, '.cache'), path.join(cwd, 'backups'),
+    path.join(cwd, 'public', 'uploads'), path.join(cwd, 'public', 'content'),
+    ...(opts.backupDir ? [opts.backupDir] : []),
+  ];
+  const real = await Promise.all(candidates.map((c) => fs.realpath(c).catch(() => null)));
+  return [...new Set(real.filter((r): r is string => !!r))];
+}
+
+class TreeWalker {
+  private seen = new Set<string>();
+  unreadable = { count: 0, examples: [] as string[] };
+  partial = false;
+
+  constructor(private dev: number, private skip: Set<string>, private deadline: number) {}
+
+  async node(p: string, depth: number): Promise<TreeNode | null> {
+    if (this.skip.has(p)) return null;
+    const st = await fs.lstat(p).catch(() => null);
+    // Links, and other drives mounted inside this one (/proc, /boot/firmware…), aren't this drive's space.
+    if (!st || st.isSymbolicLink() || st.dev !== this.dev) return null;
+    if (!st.isDirectory()) {
+      if (st.nlink > 1) {
+        const key = `${st.dev}:${st.ino}`;
+        if (this.seen.has(key)) return null;
+        this.seen.add(key);
+      }
+      return { path: p, bytes: sizeOf(st), files: 1 };
+    }
+    const node: TreeNode = { path: p, bytes: sizeOf(st), files: 0 };
+    if (Date.now() > this.deadline) { this.partial = true; return node; }
+    let names: string[];
+    try {
+      names = await fs.readdir(p);
+    } catch {
+      this.unreadable.count++;
+      if (this.unreadable.examples.length < 5) this.unreadable.examples.push(p);
+      return node;
+    }
+    const keep = depth < KEEP_DEPTH;
+    const kids: TreeNode[] = [];
+    for (let i = 0; i < names.length; i += 16) {
+      const parts = await Promise.all(names.slice(i, i + 16).map((name) => this.node(path.join(p, name), depth + 1)));
+      for (const part of parts) {
+        if (!part) continue;
+        node.bytes += part.bytes;
+        node.files += part.files;
+        if (keep && part.bytes > 0) kids.push(part);
+      }
+    }
+    if (keep && kids.length) node.children = kids.sort((a, b) => b.bytes - a.bytes).slice(0, KEEP_CHILDREN);
+    return node;
+  }
+}
+
+const toFolder = (n: TreeNode): SystemFolder => ({ path: n.path, ...describe(n.path), bytes: n.bytes, files: n.files });
+
+/** The biggest things in a folder, going straight through any folder that is nearly all of its parent (/home → /home/pi). */
+function biggestInside(n: TreeNode): SystemFolder[] {
+  const kids = n.children ?? [];
+  if (kids[0]?.children?.length && kids[0].bytes >= n.bytes * 0.95) return biggestInside(kids[0]);
+  return kids.slice(0, 8).map(toFolder);
+}
+
+export async function measureSystem(opts: { cwd?: string; backupDir?: string; root?: string; skip?: string[]; timeLimitMs?: number } = {}): Promise<SystemReport> {
+  const started = Date.now();
+  const cwd = path.resolve(opts.cwd ?? process.cwd());
+  const root = opts.root ? await fs.realpath(opts.root) : await driveRoot(cwd);
+  const skip = new Set(opts.skip ?? await siteFolders(opts));
+  const dev = (await fs.stat(root)).dev;
+  const walker = new TreeWalker(dev, skip, started + (opts.timeLimitMs ?? 150_000));
+  const tree = (await walker.node(root, 0)) ?? { path: root, bytes: 0, files: 0 };
+
+  const folders: SystemFolder[] = (tree.children ?? []).map((n) => {
+    const inside = biggestInside(n);
+    return { ...toFolder(n), ...(inside.length ? { inside } : {}) };
+  });
+  const shown = folders.reduce((s, f) => s + f.bytes, 0);
+  if (tree.bytes - shown > 0 && (tree.children?.length ?? 0) >= KEEP_CHILDREN) {
+    folders.push({ path: '', label: 'Everything smaller', bytes: tree.bytes - shown, files: Math.max(0, tree.files - folders.reduce((s, f) => s + f.files, 0)) });
+  }
+  return {
+    root,
+    bytes: tree.bytes,
+    files: tree.files,
+    folders,
+    unreadable: walker.unreadable,
+    partial: walker.partial,
+    scannedAt: new Date().toISOString(),
+    tookMs: Date.now() - started,
+  };
+}

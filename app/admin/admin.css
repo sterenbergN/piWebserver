@@ -149,6 +149,20 @@
 .adm-usage-row.is-item .adm-usage-name { font-weight: 500; }
 .adm-usage-row.is-item .adm-usage-track { height: 6px; }
 .adm-usage-where { margin: 0 0 0.35rem 2rem; font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+.adm-usage-scan { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; font-size: 0.82rem; }
+.adm-usage-error { color: var(--danger); }
+.adm-link-btn { padding: 0; border: none; background: none; color: var(--accent-light); font: inherit; text-decoration: underline; cursor: pointer; }
+/* Drive folders: a name, then its path and a tip on their own lines. */
+.adm-usage-row.is-item .adm-usage-name { white-space: normal; }
+.adm-usage-path, .adm-usage-hint { display: block; font-size: 0.72rem; font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
+.adm-usage-path { font-family: ui-monospace, monospace; }
+.adm-usage-hint { font-style: italic; }
+.adm-usage-sub > summary { cursor: pointer; list-style: none; }
+.adm-usage-sub > summary::-webkit-details-marker { display: none; }
+.adm-usage-sub > summary .adm-usage-name::after { content: ' ▸'; color: var(--muted); font-size: 0.7rem; }
+.adm-usage-sub[open] > summary .adm-usage-name::after { content: ' ▾'; }
+.adm-usage-sub > summary:hover, .adm-usage-sub > summary:focus-visible { background: var(--surface-hover); outline: none; }
+.adm-usage-row.is-deep { padding-left: 3.25rem; }
 
 pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; overflow: auto; padding: 0.75rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); margin: 0.5rem 0 0; }
 
@@ -162,4 +176,5 @@ pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; over
   .adm-usage-track { grid-column: 1 / -1; grid-row: 2; }
   .adm-usage-row.is-item { padding-left: 1.25rem; }
   .adm-usage-where { margin-left: 1.25rem; }
+  .adm-usage-row.is-deep { padding-left: 2rem; }
 }
