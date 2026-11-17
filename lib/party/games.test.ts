@@ -732,7 +732,7 @@ test('Debate Duel: propositions, and which words can be switched', async () => {
 });
 
 test('Debate Duel: suggestions, pitches with a switch and heckles, then the room votes', async () => {
-  const { debateDuelLogic, VOTE_POINTS, MIC_DROP_BONUS, SWITCH_POINTS } = await import('./games/debate-duel');
+  const { debateDuelLogic, isSwitchable, VOTE_POINTS, MIC_DROP_BONUS, SWITCH_POINTS } = await import('./games/debate-duel');
   await savePrompts(normalizePrompts({ debateTopics: ['Naps are good'] }));
   const state = makeState('debate-duel', 4);
   await debateDuelLogic.onStart(state);
@@ -751,7 +751,9 @@ test('Debate Duel: suggestions, pitches with a switch and heckles, then the room
   await debateDuelLogic.processAction(state, 'host', { type: 'START_PITCH' });
   assert.equal(state.phase, 'PITCH');
   const judge = state.playerOrder.find((pid) => pid !== pro && pid !== con)!;
-  const index = state.hostData.words.findIndex((w: string, i: number) => i > 0 && /^[a-z]{3,}$/i.test(w) && !['should', 'would', 'than', 'every'].includes(w.toLowerCase()));
+  // The game's own rule, so a random proposition can't hand the test a word the game refuses ("are", "more"…).
+  const index = state.hostData.words.findIndex((w: string, i: number) => i > 0 && isSwitchable(w) && !/gravy|soup/i.test(w));
+  assert.ok(index > 0, 'the proposition has a word to switch');
 
   // Too early to switch.
   await debateDuelLogic.processAction(state, judge, { type: 'SUBMIT_SWITCH', index, word: 'gravy' });

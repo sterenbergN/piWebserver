@@ -367,7 +367,9 @@ const toFolder = (n: TreeNode): SystemFolder => ({ path: n.path, ...describe(n.p
 /** The biggest things in a folder, going straight through any folder that is nearly all of its parent (/home → /home/pi). */
 function biggestInside(n: TreeNode): SystemFolder[] {
   const kids = n.children ?? [];
-  if (kids[0]?.children?.length && kids[0].bytes >= n.bytes * 0.95) return biggestInside(kids[0]);
+  // Against the children, not the folder: on Linux a folder's own 4 KB would otherwise count against it.
+  const inKids = kids.reduce((s, k) => s + k.bytes, 0);
+  if (kids[0]?.children?.length && (kids.length === 1 || kids[0].bytes >= inKids * 0.95)) return biggestInside(kids[0]);
   return kids.slice(0, 8).map(toFolder);
 }
 
