@@ -297,6 +297,7 @@ export function SoundBar({ prefs, setPrefs, soundOn, enableSound }: Pick<ReturnT
           <button style={btn(prefs.music)} onClick={() => setPrefs({ ...prefs, music: !prefs.music })} aria-pressed={prefs.music}>🎵 Music</button>
           <button style={btn(prefs.sfx)} onClick={() => setPrefs({ ...prefs, sfx: !prefs.sfx })} aria-pressed={prefs.sfx}>💥 Effects</button>
           <button style={btn(prefs.voice)} onClick={() => setPrefs({ ...prefs, voice: !prefs.voice })} aria-pressed={prefs.voice}>🎙️ Narrator</button>
+          {prefs.voice && <VoicePicker prefs={prefs} setPrefs={setPrefs} />}
         </>
       )}
       <button style={btn(fullscreen)} onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {})}>
@@ -304,6 +305,41 @@ export function SoundBar({ prefs, setPrefs, soundOn, enableSound }: Pick<ReturnT
       </button>
     </div>
   );
+}
+
+const VOICE_SAMPLES = ['Welcome to the party! Let’s play.', 'And the winner is… you, obviously.', 'This is how I sound. Ready when you are!'];
+
+/** Choose the narrator's voice from the ones this device has, best first, and hear a sample. */
+function VoicePicker({ prefs, setPrefs }: { prefs: SoundPrefs; setPrefs: (next: SoundPrefs) => void }) {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    if (typeof speechSynthesis === 'undefined') return;
+    const refresh = () => setVoices(partyAudio.voices());
+    refresh();
+    speechSynthesis.addEventListener('voiceschanged', refresh);
+    return () => speechSynthesis.removeEventListener('voiceschanged', refresh);
+  }, []);
+  if (voices.length < 2) return null;
+  const current = voices.some((v) => v.name === prefs.voiceName) ? prefs.voiceName! : '';
+  return (
+    <select
+      className="party-voice-select"
+      aria-label="Narrator voice"
+      value={current}
+      onChange={(e) => {
+        setPrefs({ ...prefs, voiceName: e.target.value || undefined });
+        partyAudio.say(line(VOICE_SAMPLES));
+      }}
+    >
+      <option value="">🗣️ Best voice ({shortVoiceName(voices[0].name)})</option>
+      {voices.map((v) => <option key={v.name} value={v.name}>{shortVoiceName(v.name)} · {v.lang}</option>)}
+    </select>
+  );
+}
+
+/** "Microsoft Ryan Online (Natural) - English (United Kingdom)" → "Ryan (Natural)". */
+function shortVoiceName(name: string) {
+  return name.replace(/^(Microsoft|Google|Apple)\s+/i, '').replace(/\s+Online/i, '').replace(/\s+-\s+.*$/, '').trim() || name;
 }
 
 export function TitleCard({ card, color }: { card: { title: string; subtitle?: string; key: number }; color?: string }) {

@@ -333,6 +333,7 @@ function resolveEscapeAnswers(state: GameState) {
 }
 
 async function startTriviaRound(state: GameState) {
+  const now = Date.now();
   state.gameData.round++;
   state.gameData.currentAnswers = {};
   state.gameData.killingFloorPlayers = [];
@@ -350,9 +351,9 @@ async function startTriviaRound(state: GameState) {
     playerMoney: state.gameData.money,
     ghostStreaks: state.gameData.ghostStreaks,
     flavor: randomFlavor('QUESTION'),
-    timerStart: Date.now(),
+    timerStart: now,
     timerDuration: questionTime(state),
-    autoAdvanceAt: Date.now() + questionTime(state) * 1000,
+    autoAdvanceAt: now + questionTime(state) * 1000,
     autoAdvanceAction: 'FORCE_TRIVIA_REVEAL',
   };
   // The audience plays along for their own leaderboard.
@@ -377,7 +378,7 @@ async function startTriviaRound(state: GameState) {
         round: state.gameData.round,
         totalRounds: state.gameData.totalRounds,
         money: state.gameData.money[pid],
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: questionTime(state),
         flavor: status === 'ghost'
           ? '👻 Answer correctly 3 times in a row to resurrect!'
@@ -388,6 +389,7 @@ async function startTriviaRound(state: GameState) {
 }
 
 function revealTriviaAnswers(state: GameState) {
+  const now = Date.now();
   state.phase = 'QUESTION_RESULTS';
   const q = state.gameData.questions[state.gameData.round - 1] as TriviaQuestion;
   const correctIdx = q.answer;
@@ -448,9 +450,9 @@ function revealTriviaAnswers(state: GameState) {
     playerMoney: state.gameData.money,
     ghostStreaks: state.gameData.ghostStreaks,
     ...(q.explanation ? { explanation: q.explanation } : {}),
-    timerStart: Date.now(),
+    timerStart: now,
     timerDuration: resultsTime,
-    autoAdvanceAt: Date.now() + resultsTime * 1000,
+    autoAdvanceAt: now + resultsTime * 1000,
     autoAdvanceAction: 'PROCEED_TO_KILLING_FLOOR',
   };
 
@@ -479,6 +481,7 @@ function revealTriviaAnswers(state: GameState) {
 }
 
 async function startKillingFloor(state: GameState) {
+  const now = Date.now();
   const miniGame = pickMiniGame();
   state.gameData.killingFloorMiniGame = miniGame;
   state.gameData.killingFloorAnswers = {};
@@ -520,9 +523,9 @@ async function startKillingFloor(state: GameState) {
     state.phase = 'KILLING_FLOOR';
     state.hostData = {
       ...baseHostData,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: 6,
-      autoAdvanceAt: Date.now() + 6_000,
+      autoAdvanceAt: now + 6_000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -539,9 +542,9 @@ async function startKillingFloor(state: GameState) {
     state.hostData = {
       ...baseHostData,
       question: mathQ.question,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -549,7 +552,7 @@ async function startKillingFloor(state: GameState) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
         mathQuestion: isOnFloor ? mathQ.question : null,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -563,15 +566,15 @@ async function startKillingFloor(state: GameState) {
     state.phase = 'KILLING_FLOOR';
     state.hostData = {
       ...baseHostData,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -590,9 +593,9 @@ async function startKillingFloor(state: GameState) {
       ...baseHostData,
       grid,
       revealPhase: true, // show symbols
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -600,7 +603,7 @@ async function startKillingFloor(state: GameState) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
         grid: isOnFloor ? grid : null,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -620,9 +623,9 @@ async function startKillingFloor(state: GameState) {
       ...baseHostData,
       hotPotatoHolder: holder,
       passes: 0,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -630,7 +633,7 @@ async function startKillingFloor(state: GameState) {
         ...basePlayerData(pid),
         hotPotatoHolder: holder,
         isHolder: pid === holder,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -645,9 +648,9 @@ async function startKillingFloor(state: GameState) {
     state.hostData = {
       ...baseHostData,
       scrambled,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -655,7 +658,7 @@ async function startKillingFloor(state: GameState) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
         scrambled: isOnFloor ? scrambled : null,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -664,15 +667,15 @@ async function startKillingFloor(state: GameState) {
 
   if (miniGame === 'reaction') {
     // First player to tap after a hidden countdown survives
-    miniGameData = { type: 'reaction', revealAt: Date.now() + 3000 + Math.random() * 4000 };
+    miniGameData = { type: 'reaction', revealAt: now + 3000 + Math.random() * 4000 };
     state.gameData.killingFloorData = miniGameData;
     state.phase = 'KILLING_FLOOR';
     state.hostData = {
       ...baseHostData,
       revealAt: miniGameData.revealAt,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -680,7 +683,7 @@ async function startKillingFloor(state: GameState) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
         revealAt: isOnFloor ? miniGameData.revealAt : null,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -695,9 +698,9 @@ async function startKillingFloor(state: GameState) {
     state.phase = 'KILLING_FLOOR';
     state.hostData = {
       ...baseHostData,
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: KILLING_FLOOR_TIME,
-      autoAdvanceAt: Date.now() + KILLING_FLOOR_TIME * 1000,
+      autoAdvanceAt: now + KILLING_FLOOR_TIME * 1000,
       autoAdvanceAction: 'FORCE_KILLING_FLOOR_RESOLVE',
     };
     for (const pid of state.playerOrder) {
@@ -705,7 +708,7 @@ async function startKillingFloor(state: GameState) {
       state.playerData[pid] = {
         ...basePlayerData(pid),
         maxBid: isOnFloor ? state.gameData.money[pid] : 0,
-        timerStart: Date.now(),
+        timerStart: now,
         timerDuration: KILLING_FLOOR_TIME,
       };
     }
@@ -714,6 +717,7 @@ async function startKillingFloor(state: GameState) {
 }
 
 function resolveKillingFloor(state: GameState) {
+  const now = Date.now();
   state.phase = 'KILLING_FLOOR_RESULTS';
   const miniGame = state.gameData.killingFloorMiniGame as MiniGame;
   const data = state.gameData.killingFloorData;
@@ -796,9 +800,9 @@ function resolveKillingFloor(state: GameState) {
     playerStatuses: state.gameData.playerStatuses,
     playerMoney: state.gameData.money,
     flavor: dead.length > 0 ? randomFlavor('DEATH') : randomFlavor('SURVIVE'),
-    timerStart: Date.now(),
+    timerStart: now,
     timerDuration: 7,
-    autoAdvanceAt: Date.now() + 7_000,
+    autoAdvanceAt: now + 7_000,
     autoAdvanceAction: 'NEXT_TRIVIA_ROUND',
   };
 
@@ -826,6 +830,7 @@ async function nextRoundOrEscape(state: GameState) {
 }
 
 async function startFinalEscape(state: GameState) {
+  const now = Date.now();
   state.phase = 'FINAL_ESCAPE';
   
   const sortedPids = [...state.playerOrder].sort((a, b) => (state.gameData.money[a] || 0) - (state.gameData.money[b] || 0));
@@ -854,9 +859,9 @@ async function startFinalEscape(state: GameState) {
     playerStatuses: state.gameData.playerStatuses,
     playerMoney: state.gameData.money,
     escapeStepsNeeded: ESCAPE_QUESTIONS,
-    timerStart: Date.now(),
+    timerStart: now,
     timerDuration: escapeTime(state),
-    autoAdvanceAt: Date.now() + escapeTime(state) * 1000,
+    autoAdvanceAt: now + escapeTime(state) * 1000,
     autoAdvanceAction: 'FORCE_ESCAPE_ADVANCE',
   };
 
@@ -871,7 +876,7 @@ async function startFinalEscape(state: GameState) {
       escapeProgress: state.gameData.escapeProgress[pid],
       escapeStepsNeeded: ESCAPE_QUESTIONS,
       money: state.gameData.money[pid],
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: escapeTime(state),
       flavor: '🚪 Answer correctly to escape the Murder Hotel!',
       allowDoubleDown: !isLeader
@@ -880,6 +885,7 @@ async function startFinalEscape(state: GameState) {
 }
 
 function advanceEscapeQuestion(state: GameState) {
+  const now = Date.now();
   state.gameData.escapeQuestionIndex++;
   const q = state.gameData.questions[state.gameData.escapeQuestionIndex] as TriviaQuestion;
 
@@ -903,9 +909,9 @@ function advanceEscapeQuestion(state: GameState) {
     playerStatuses: state.gameData.playerStatuses,
     playerMoney: state.gameData.money,
     escapeStepsNeeded: ESCAPE_QUESTIONS,
-    timerStart: Date.now(),
+    timerStart: now,
     timerDuration: escapeTime(state),
-    autoAdvanceAt: Date.now() + escapeTime(state) * 1000,
+    autoAdvanceAt: now + escapeTime(state) * 1000,
     autoAdvanceAction: 'FORCE_ESCAPE_ADVANCE',
   };
 
@@ -923,7 +929,7 @@ function advanceEscapeQuestion(state: GameState) {
       escapeProgress: state.gameData.escapeProgress[pid],
       escapeStepsNeeded: ESCAPE_QUESTIONS,
       money: state.gameData.money[pid],
-      timerStart: Date.now(),
+      timerStart: now,
       timerDuration: escapeTime(state),
       allowDoubleDown: !isLeader
     };

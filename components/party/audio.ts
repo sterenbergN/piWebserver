@@ -2,10 +2,13 @@
 // plus sound effects — and a narrator voice via the browser's speech engine.
 // No audio files, so nothing to download or license.
 
+import { chooseVoice, rankVoices, speakable, splitForSpeech, voiceRate } from '@/lib/party/narration';
+
 type Sfx = 'pop' | 'whoosh' | 'tick' | 'ding' | 'buzzer' | 'fanfare' | 'drumroll' | 'slam' | 'boo' | 'cheer';
 
 const PREFS_KEY = 'partySound';
-export type SoundPrefs = { music: boolean; sfx: boolean; voice: boolean };
+/** `voiceName` is the narrator voice picked on this TV; unset means the best one available. */
+export type SoundPrefs = { music: boolean; sfx: boolean; voice: boolean; voiceName?: string };
 
 export function loadPrefs(): SoundPrefs {
   try {
@@ -144,7 +147,7 @@ class PartyAudio {
     this.prefs = prefs;
     savePrefs(prefs);
     if (!prefs.music) { const m = this.mood; this.music(null); this.mood = m; }
-    if (!prefs.voice && typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    if (!prefs.voice && typeof speechSynthesis !== 'undefined') { this.sayId++; speechSynthesis.cancel(); }
   }
 
   /** Quiet the room for a pause. `resumeMusic` picks the music back up. */
@@ -152,6 +155,7 @@ class PartyAudio {
     const m = this.mood;
     this.music(null);
     this.mood = m;
+    this.sayId++;
     if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
   }
 
@@ -161,25 +165,64 @@ class PartyAudio {
     this.music(m);
   }
 
+  // ─── Narrator ────────────────────────────────────────────────────────────────
+  // Bumped by every new line, so pieces of an interrupted line stop.
+  private sayId = 0;
+
   /** Narrator: speak a line (drops anything still queued so it stays in sync). */
   say(text: string, { interrupt = true } = {}) {
-    if (!this.prefs.voice || typeof speechSynthesis === 'undefined' || !text) return;
+    if (!this.prefs.voice || typeof speechSynthesis === 'undefined') return;
+    const chunks = splitForSpeech(speakable(text));
+    if (!chunks.length) return;
+    const id = ++this.sayId;
     if (interrupt) speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    const voices = speechSynthesis.getVoices();
-    // Prefer a lively English voice when the device offers one.
-    const pick = voices.find((v) => /en-GB/i.test(v.lang) && /male|daniel|arthur|george/i.test(v.name))
-      || voices.find((v) => /en-GB/i.test(v.lang)) || voices.find((v) => /^en/i.test(v.lang));
-    if (pick) u.voice = pick;
-    u.rate = 1.05;
-    u.pitch = 1.1;
-    // Duck the music under the voice.
-    if (this.musicGain && this.ctx) {
-      this.musicGain.gain.setTargetAtTime(0.08, this.ctx.currentTime, 0.1);
-      u.onend = () => { if (this.musicGain && this.ctx) this.musicGain.gain.setTargetAtTime(0.22, this.ctx.currentTime, 0.3); };
-    }
-    speechSynthesis.speak(u);
+    // Chrome loads its voice list late; wait for it so the first line isn't in the default voice.
+    whenVoicesReady().then(() => {
+      if (id !== this.sayId || !this.prefs.voice) return;
+      // Chrome can drop a line spoken in the same tick as cancel(), so give it a beat.
+      setTimeout(() => this.speakChunks(id, chunks), interrupt ? 60 : 0);
+    });
   }
+
+  private speakChunks(id: number, chunks: string[]) {
+    if (id !== this.sayId) return;
+    const voice = chooseVoice(speechSynthesis.getVoices(), this.prefs.voiceName);
+    const duck = (down: boolean) => {
+      if (!this.musicGain || !this.ctx) return;
+      this.musicGain.gain.setTargetAtTime(down ? 0.07 : 0.22, this.ctx.currentTime, down ? 0.1 : 0.3);
+    };
+    duck(true);
+    speechSynthesis.resume(); // Chrome sometimes leaves the engine paused
+    chunks.forEach((chunk, i) => {
+      const u = new SpeechSynthesisUtterance(chunk);
+      if (voice) { u.voice = voice; u.lang = voice.lang; }
+      u.rate = voiceRate(voice);
+      u.pitch = 1;
+      if (i === chunks.length - 1) {
+        // Bring the music back once the whole line is done (or cut off by the next one).
+        u.onend = u.onerror = () => { if (id === this.sayId) duck(false); };
+      }
+      speechSynthesis.speak(u);
+    });
+  }
+
+  /** English voices on this device, best first, for a voice picker. */
+  voices(): SpeechSynthesisVoice[] {
+    return typeof speechSynthesis === 'undefined' ? [] : rankVoices(speechSynthesis.getVoices());
+  }
+}
+
+let voicesReady: Promise<void> | null = null;
+
+/** Resolves once the speech engine has listed its voices (or after a second, whatever happens). */
+export function whenVoicesReady(): Promise<void> {
+  if (typeof speechSynthesis === 'undefined' || speechSynthesis.getVoices().length) return Promise.resolve();
+  voicesReady ||= new Promise<void>((resolve) => {
+    const done = () => { speechSynthesis.removeEventListener('voiceschanged', done); resolve(); };
+    speechSynthesis.addEventListener('voiceschanged', done);
+    setTimeout(done, 1000);
+  });
+  return voicesReady;
 }
 
 export const partyAudio = new PartyAudio();
