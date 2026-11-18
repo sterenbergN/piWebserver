@@ -1,8 +1,9 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
-  cleanFolderName, cleanItem, cleanProgress, emptyNotes, flowPage, formatFromName, itemsSince, markedPages, markupLength, matchesFormat, mergeChanges, nextProgress, notesByChapter, publicLibraryFile,
-  booksInProgress, progressText, readingState, resolveZipPath, splitParagraphs, strokeTouches, textToParagraphs, titleFromName, withFinished, type ReaderItem,
+  audioTimeSeconds, cleanFolderName, cleanItem, cleanProgress, emptyNotes, findTextSnippets, flowPage, formatBookmarkText, formatFromName, isBookmarkItem, itemsSince, markedPages, markupLength,
+  matchesFormat, mergeChanges, nextProgress, notesByChapter, publicLibraryFile, booksInProgress, progressText, readingState, resolveZipPath, splitParagraphs, strokeTouches, textToParagraphs,
+  titleFromName, withFinished, type ReaderItem,
 } from './items';
 
 const NOW = 1_800_000_000_000;
@@ -252,4 +253,42 @@ test('a handwritten note keeps what it was read as, and nothing that isn’t tex
   assert.equal(cleanItem({ ...sketch, text: '  brachial plexus ' }, 10)?.text, 'brachial plexus');
   assert.equal(cleanItem({ ...sketch, text: 42 }, 10)?.text, undefined);
   assert.equal(cleanItem(sketch, 10)?.text, undefined);
+});
+
+test('local audio extensions and magic headers are accepted as audio', () => {
+  for (const ext of ['mp3', 'm4a', 'm4b', 'ogg', 'wav', 'flac', 'aac']) {
+    assert.equal(formatFromName(`audiobook.${ext.toUpperCase()}`), 'audio');
+  }
+  const bytes = (s: string) => new TextEncoder().encode(s);
+  assert.ok(matchesFormat('audio', bytes('ID3\x03\x00\x00\x00')));
+  assert.ok(matchesFormat('audio', bytes('\x00\x00\x00\x20ftypM4A ')));
+  assert.ok(matchesFormat('audio', bytes('OggS\x00\x02')));
+  assert.ok(matchesFormat('audio', bytes('RIFF\x00\x00\x00\x00WAVE')));
+  assert.ok(matchesFormat('audio', bytes('fLaC\x00\x00\x00\x22')));
+  assert.ok(matchesFormat('audio', new Uint8Array([0xff, 0xfb, 0x90, 0x00])));
+  assert.ok(!matchesFormat('audio', bytes('<html>not audio</html>')));
+  assert.ok(!matchesFormat('audio', new Uint8Array([0x00, 0x01])));
+});
+
+test('bookmarks and audio timestamp anchors normalize cleanly', () => {
+  const bmText = formatBookmarkText({ page: 14, chapter: 'Chapter 2' });
+  const bm = note('bm1', NOW, bmText, 14);
+  assert.ok(isBookmarkItem(bm));
+  assert.ok(cleanItem(bm, NOW));
+  assert.ok(!isBookmarkItem(note('n1', NOW, 'regular note', 14)));
+  assert.ok(!isBookmarkItem({ ...bm, deleted: true }));
+  assert.equal(audioTimeSeconds({ page: 1, o: 0 }), 0);
+  assert.equal(audioTimeSeconds({ page: 65, o: 65400 }), 65.4);
+  assert.equal(audioTimeSeconds({ page: 42 }), 42);
+});
+
+test('findTextSnippets locates case-insensitive matches with context and respects maxHits', () => {
+  const sample = 'The quick brown fox jumps over the lazy fox near the river.';
+  const hits = findTextSnippets(sample, 'FOX', 10);
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0].offset, 16);
+  assert.equal(hits[0].match, 'fox');
+  assert.equal(hits[1].offset, 40);
+  assert.equal(findTextSnippets(sample, 'fox', 1).length, 1);
+  assert.deepEqual(findTextSnippets(sample, '   '), []);
 });

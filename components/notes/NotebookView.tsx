@@ -143,11 +143,13 @@ function Widths({ widths, value, scale, onPick }: { widths: number[]; value: num
   );
 }
 
-export default function NotebookView({ notebook, startPage, returnTo, onExit, onOpen }: {
+export default function NotebookView({ notebook, startPage, returnTo, returnUrl, onExit, onOpen }: {
   notebook: string;
   startPage: string | null;
   /** Followed a link here from another notebook: the way back. */
   returnTo: Place | null;
+  /** Returned from another page (e.g. ?from=/daily) in standalone/same-tab navigation. */
+  returnUrl?: string | null;
   onExit: () => void;
   onOpen: (notebook: string, page: string | null, from: Place | null) => void;
 }) {
@@ -239,8 +241,11 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
 
   useEffect(() => {
     let live = true;
-    const savedTools = loadStored(TOOLS_KEY, DEFAULT_TOOLS);
+    // Always open on Pen rather than resuming a previous modal tool like Shapes/Eraser/Lasso.
+    const savedTools: Tools = { ...loadStored(TOOLS_KEY, DEFAULT_TOOLS), tool: 'pen' };
     const savedSettings = loadSettings();
+    lastInk.current = 'pen';
+    previousTool.current = 'pen';
     toolsRef.current = savedTools;
     setTools(savedTools);
     setSettings(savedSettings);
@@ -452,6 +457,8 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
       setCameFrom(null);
     } else if (returnTo) {
       onOpen(returnTo.notebook, returnTo.page, null);
+    } else if (returnUrl) {
+      void doc.settled().then(() => window.location.assign(returnUrl));
     }
   };
 
@@ -704,8 +711,8 @@ export default function NotebookView({ notebook, startPage, returnTo, onExit, on
 
       {phase === 'ready' && (
         <div className="nt-corner">
-          {(cameFrom || returnTo) && (
-            <button type="button" className="nt-chip is-back" onClick={goBack}><Icon name="left" /> Back</button>
+          {(cameFrom || returnTo || returnUrl) && (
+            <button type="button" className="nt-chip is-back" onClick={goBack}>← Back</button>
           )}
           {linksHere.length > 0 && (
             <button type="button" className="nt-chip" onClick={() => setPanel('links-here')} aria-label={`${linksHere.length} link${linksHere.length === 1 ? '' : 's'} to this page`}><Icon name="link" /> {linksHere.length}</button>

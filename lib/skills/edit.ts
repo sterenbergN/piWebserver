@@ -8,7 +8,8 @@ import { isDateKey, type DateKey } from '@/lib/habits/dates';
 import { cardScore, generateScheduleFromSteps, gradedScore, nextSchedule, shiftScheduleToToday, wouldCreateSkillCycle } from './model';
 import {
   LIMITS, SkillsInputError, inquiryConceptAlias, normalizeInquiryQuestionKey, normalizeInquirySources,
-  normalizeInquiryTags, parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply, sameName,
+  normalizeInquiryTags, parseBulkQAInput, parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply,
+  parseQuestionsReply, sameName,
 } from './parse';
 import {
   CARD_RATINGS, INQUIRY_STATUSES, MAX_LEVEL, PROJECT_ATTACHMENT_KINDS, RESOURCE_KINDS, RESOURCE_STATUSES,
@@ -867,6 +868,7 @@ function applyDraftContent(
   options: {
     topicKeys?: Set<string> | null;
     resourceIndexes?: Set<number> | null;
+    stepIndexes?: Set<number> | null;
     replaceSteps?: boolean;
     includeSteps?: boolean;
   },
@@ -907,7 +909,8 @@ function applyDraftContent(
 
   if (options.includeSteps !== false && stepsDraft.length > 0) {
     const built: SkillStep[] = [];
-    for (const draft of stepsDraft) {
+    stepsDraft.forEach((draft, index) => {
+      if (options.stepIndexes && !options.stepIndexes.has(index)) return;
       let topicId: string | undefined;
       if (draft.topicKey) {
         topicId = draft.topicKey.startsWith('existing:') ? draft.topicKey.slice(9) : ids.get(draft.topicKey);
@@ -926,7 +929,7 @@ function applyDraftContent(
         resourceId,
         minutes: draft.minutes,
       }, makeId, today));
-    }
+    });
 
     if (options.replaceSteps) {
       subject.steps = built;
@@ -951,13 +954,14 @@ function applyDraftContent(
 export function importPlan(
   subject: Subject,
   reply: unknown,
-  input: { topicKeys?: unknown; resourceIndexes?: unknown; roadmap?: unknown; includeSteps?: unknown; replaceSteps?: unknown },
+  input: { topicKeys?: unknown; resourceIndexes?: unknown; stepIndexes?: unknown; roadmap?: unknown; includeSteps?: unknown; replaceSteps?: unknown },
   makeId: () => string,
   now: string,
 ) {
   const plan = parsePlanReply(typeof reply === 'string' ? reply : '', subject);
   const wantedTopics = Array.isArray(input.topicKeys) ? new Set(input.topicKeys.map(String)) : null;
   const wantedResources = Array.isArray(input.resourceIndexes) ? new Set(input.resourceIndexes.map(Number)) : null;
+  const wantedSteps = Array.isArray(input.stepIndexes) ? new Set(input.stepIndexes.map(Number)) : null;
   const today = now.slice(0, 10);
 
   const counts = applyDraftContent(
@@ -968,6 +972,7 @@ export function importPlan(
     {
       topicKeys: wantedTopics,
       resourceIndexes: wantedResources,
+      stepIndexes: wantedSteps,
       includeSteps: input.includeSteps !== false,
       replaceSteps: input.replaceSteps === true,
     },
@@ -1351,20 +1356,22 @@ export function addInquiry(
   const existing = data.inquiries ?? [];
   if (existing.length >= 5000) throw new SkillsInputError('That’s a lot of lookups. Remove some first.');
 
-  let status: InquiryStatus = 'open';
+  const context = text(input.context, LIMITS.context);
+  const answer = text(input.answer, LIMITS.answer);
+  const takeaways = text(input.takeaways ?? input.takeaway, LIMITS.takeaways);
+  const sources = normalizeInquirySources(input.sources);
+  const tags = normalizeInquiryTags(input.tags);
+  const link = resolveNewInquiryLink(data, input.subjectId, input.topicId);
+
+  let status: InquiryStatus;
   if (has(input, 'status') && input.status !== undefined && input.status !== '') {
     if (!INQUIRY_STATUSES.includes(input.status as InquiryStatus)) {
       throw new SkillsInputError('Status must be open or solved.');
     }
     status = input.status as InquiryStatus;
+  } else {
+    status = answer ? 'solved' : 'open';
   }
-
-  const context = text(input.context, LIMITS.context);
-  const answer = text(input.answer, LIMITS.answer);
-  const takeaways = text(input.takeaways, LIMITS.takeaways);
-  const sources = normalizeInquirySources(input.sources);
-  const tags = normalizeInquiryTags(input.tags);
-  const link = resolveNewInquiryLink(data, input.subjectId, input.topicId);
 
   const inquiry: KnowledgeInquiry = {
     id: makeId(),
@@ -1383,6 +1390,17 @@ export function addInquiry(
   };
 
   data.inquiries = [...existing, inquiry];
+
+  if (input.createCard === true && link.subjectId && link.topicId && answer) {
+    promoteInquiryToCard(data, {
+      inquiryId: inquiry.id,
+      subjectId: link.subjectId,
+      topicId: link.topicId,
+      front: inquiry.question,
+      back: answer,
+    }, makeId, now);
+  }
+
   return inquiry;
 }
 
@@ -1409,8 +1427,11 @@ export function importInquiries(
   const candidates: Candidate[] = [];
 
   if (typeof input.text === 'string' && input.text.trim()) {
-    for (const q of parseRunningInquiryList(input.text)) {
-      candidates.push({ question: q });
+    for (const item of parseBulkQAInput(input.text)) {
+      candidates.push({
+        question: item.question,
+        ...(item.answer ? { answer: item.answer, status: 'solved' as const } : {}),
+      });
     }
   }
   if (Array.isArray(input.items)) {

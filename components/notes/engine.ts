@@ -1551,7 +1551,7 @@ export class NoteCanvas {
     this.wet = null;
     this.scratchedPointer = null;
     this.lasso = null;
-    if (this.erasing) this.endErasing();
+    if (this.erasing) this.discardErasing();
     this.requestPaint();
   }
 
@@ -1593,6 +1593,14 @@ export class NoteCanvas {
     if (!this.erasing) return;
     this.doc.pushUndo(this.erasing.steps);
     this.erasing = null;
+    this.events.onUndoState();
+  }
+
+  private discardErasing() {
+    if (!this.erasing) return;
+    const { steps } = this.erasing;
+    this.erasing = null;
+    if (steps.length) this.doc.revert(steps);
     this.events.onUndoState();
   }
 

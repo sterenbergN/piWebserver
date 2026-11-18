@@ -26,6 +26,18 @@ function cleanAttributes(root: Element) {
   }
 }
 
+export function extractBodyText(doc: Document): string {
+  const body = doc.querySelector('body');
+  if (!body) return '';
+  let out = '';
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (node.length) out += node.data;
+  }
+  return out;
+}
+
 /** A parsed document as one safe HTML page, ready for the frame. */
 export function toSafePage(doc: Document, styles: string[], extraHead = '') {
   const page = document.implementation.createHTMLDocument('');
@@ -190,9 +202,16 @@ export async function openEpub(blob: Blob): Promise<FlowSource> {
     return toSafePage(doc, styles);
   };
 
+  const loadSectionText = async (index: number) => {
+    const doc = parseChapter(await zip.text(pkg.spine[index]));
+    doc.querySelectorAll(REMOVE).forEach((el) => el.remove());
+    return extractBodyText(doc);
+  };
+
   const sections = await Promise.all(pkg.spine.map(async (path, index) => ({
     length: markupLength(await zip.text(path).catch(() => '')),
     load: () => loadSection(index),
+    text: () => loadSectionText(index),
   })));
 
   return {

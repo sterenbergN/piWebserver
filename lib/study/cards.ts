@@ -46,11 +46,12 @@ export type CardDeck = {
 const clip = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-const CLOZE = /\{\{c\d+::[\s\S]+?\}\}/;
-export const isCloze = (text: string) => CLOZE.test(text);
-/** Each piece of a cloze in order, blanks marked, for showing it on a page. */
-export function clozeParts(text: string) {
-  const parts: { blank: boolean; text: string }[] = [];
+export type ClozeSegment = { blank: boolean; text: string; hint?: string };
+
+const BRACKET_CLOZE = /\[([^\]{}\n]{1,80})\]/g;
+
+function scanCurlyCloze(text: string): ClozeSegment[] {
+  const parts: ClozeSegment[] = [];
   const open = /\{\{c\d+::/g;
   let at = 0;
   for (let found = open.exec(text); found; found = open.exec(text)) {
@@ -65,12 +66,153 @@ export function clozeParts(text: string) {
     }
     if (end < 0) break;
     if (found.index > at) parts.push({ blank: false, text: text.slice(at, found.index) });
-    parts.push({ blank: true, text: text.slice(start, end).replace(/::[^{}$]*$/, '') });
+    const inner = text.slice(start, end);
+    const hintMatch = /::([^{}$]*)$/.exec(inner);
+    const answer = hintMatch ? inner.slice(0, hintMatch.index) : inner;
+    const hint = hintMatch ? hintMatch[1].trim() : '';
+    parts.push({ blank: true, text: answer, ...(hint ? { hint } : {}) });
     at = end + 2;
     open.lastIndex = at;
   }
   if (at < text.length) parts.push({ blank: false, text: text.slice(at) });
   return parts;
+}
+
+function scanBracketCloze(text: string): ClozeSegment[] {
+  const parts: ClozeSegment[] = [];
+  let at = 0;
+  BRACKET_CLOZE.lastIndex = 0;
+  for (let found = BRACKET_CLOZE.exec(text); found; found = BRACKET_CLOZE.exec(text)) {
+    const inner = found[1];
+    // Ignore pre-masked blank placeholders like [____].
+    if (/^_+$/.test(inner.trim())) continue;
+    if (found.index > at) parts.push({ blank: false, text: text.slice(at, found.index) });
+    parts.push({ blank: true, text: inner });
+    at = found.index + found[0].length;
+  }
+  if (at < text.length) parts.push({ blank: false, text: text.slice(at) });
+  return parts;
+}
+
+const CLOZE = /\{\{c\d+::[\s\S]+?\}\}/;
+export const isCloze = (text: string) => CLOZE.test(text);
+/** Each piece of a cloze in order, blanks marked, for showing it on a page. */
+export function clozeParts(text: string) {
+  return scanCurlyCloze(text).map(({ blank, text: partText }) => ({ blank, text: partText }));
+}
+
+/** Ordered segments of a card's front for interactive drill rendering, supporting {{cN::...::hint}} and [...] clozes. */
+export function drillClozeSegments(card: Pick<AnkiCard, 'kind' | 'front'>): ClozeSegment[] {
+  if (isCloze(card.front)) return scanCurlyCloze(card.front);
+  const bracketed = scanBracketCloze(card.front);
+  if (bracketed.some((s) => s.blank)) return bracketed;
+  return [{ blank: false, text: card.front }];
+}
+
+export type DrillCardFaces = {
+  frontHtmlOrText: string;
+  blanks: string[];
+  revealAnswer: string;
+  extra: string;
+};
+
+/** Front prompt (blanks masked as [____] or [hint]) and revealed answer for interactive flashcard drill. */
+export function drillCardFaces(card: Pick<AnkiCard, 'kind' | 'front' | 'back'>): DrillCardFaces {
+  const segments = drillClozeSegments(card);
+  const blanks = segments.filter((s) => s.blank).map((s) => s.text);
+  if (blanks.length > 0) {
+    return {
+      frontHtmlOrText: segments.map((s) => (s.blank ? (s.hint ? `[${s.hint}]` : '[____]') : s.text)).join(''),
+      blanks,
+      revealAnswer: segments.map((s) => (s.blank ? `<mark>${s.text}</mark>` : s.text)).join(''),
+      extra: card.back.trim(),
+    };
+  }
+  return {
+    frontHtmlOrText: card.front,
+    blanks: [],
+    revealAnswer: card.back,
+    extra: '',
+  };
+}
+
+export type DrillGrade = 'again' | 'hard' | 'good' | 'easy';
+export type DrillScope = 'all' | 'new';
+
+export type DrillState = {
+  queue: string[];
+  totalCards: number;
+  completedIds: string[];
+  missedIds: string[];
+  reviewed: number;
+  counts: Record<DrillGrade, number>;
+};
+
+/** Initialize a flashcard drill queue, optionally filtered to unsent ("new") cards or shuffled. */
+export function initDrillQueue(
+  cards: ReadonlyArray<Pick<AnkiCard, 'id' | 'exportedAt'>>,
+  options: { scope?: DrillScope; shuffle?: boolean; random?: () => number } = {},
+): DrillState {
+  const scope = options.scope ?? 'all';
+  const filtered = scope === 'new' ? cards.filter((c) => !c.exportedAt) : cards;
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const card of filtered) {
+    if (!card.id || seen.has(card.id)) continue;
+    seen.add(card.id);
+    ids.push(card.id);
+  }
+  if (options.shuffle) {
+    const random = options.random ?? Math.random;
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+  }
+  return {
+    queue: ids,
+    totalCards: ids.length,
+    completedIds: [],
+    missedIds: [],
+    reviewed: 0,
+    counts: { again: 0, hard: 0, good: 0, easy: 0 },
+  };
+}
+
+/** Grade the top card of the drill queue; 'again' re-queues it 2 cards later (or at the end) and records a miss. */
+export function gradeDrillCard(state: DrillState, grade: DrillGrade): DrillState {
+  if (!state.queue.length) return state;
+  const [currentId, ...rest] = state.queue;
+  const counts = { ...state.counts, [grade]: state.counts[grade] + 1 };
+  const reviewed = state.reviewed + 1;
+
+  if (grade === 'again') {
+    const insertAt = Math.min(2, rest.length);
+    const queue = [...rest.slice(0, insertAt), currentId, ...rest.slice(insertAt)];
+    const missedIds = state.missedIds.includes(currentId) ? state.missedIds : [...state.missedIds, currentId];
+    return { ...state, queue, missedIds, reviewed, counts };
+  }
+
+  const completedIds = state.completedIds.includes(currentId) ? state.completedIds : [...state.completedIds, currentId];
+  return { ...state, queue: rest, completedIds, reviewed, counts };
+}
+
+/** Shuffle remaining cards in an active drill queue. */
+export function shuffleDrillQueue(state: DrillState, random: () => number = Math.random): DrillState {
+  if (state.queue.length <= 1) return state;
+  const queue = [...state.queue];
+  for (let i = queue.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [queue[i], queue[j]] = [queue[j], queue[i]];
+  }
+  return { ...state, queue };
+}
+
+/** Percentage of reviews graded hard/good/easy, or null before the first review. */
+export function drillAccuracy(state: DrillState): number | null {
+  if (state.reviewed === 0) return null;
+  const passed = state.counts.hard + state.counts.good + state.counts.easy;
+  return Math.round((passed / state.reviewed) * 100);
 }
 
 /** What makes two cards the same card, whatever the capitals, spacing or blanks. */

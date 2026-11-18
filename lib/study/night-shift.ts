@@ -156,12 +156,35 @@ export function enterDoor(run: Run, pool: GameQuestion[], index: number) {
   return run;
 }
 
-/** A consult takes away wrong choices, always leaving at least one to fool her. */
+export const unruledCount = (run: Pick<Run, 'hidden'>, q: Pick<GameQuestion, 'choices'>) =>
+  q.choices.length - run.hidden.length;
+
+export function canConsult(run: Pick<Run, 'phase' | 'consults' | 'hidden'>, q: Pick<GameQuestion, 'choices' | 'correct'> | null) {
+  if (run.phase !== 'question' || !q || run.consults <= 0 || run.hidden.length > 0) return false;
+  if (unruledCount(run, q) <= 2) return false;
+  const wrongOpen = q.choices.filter((_, i) => !q.correct.includes(i) && !run.hidden.includes(i));
+  return wrongOpen.length > 1;
+}
+
+export function canOpinion(run: Pick<Run, 'phase' | 'opinions' | 'opinionArmed' | 'hidden'>, q: Pick<GameQuestion, 'choices' | 'correct'> | null) {
+  if (run.phase !== 'question' || run.opinions <= 0 || run.opinionArmed) return false;
+  if (!q) return true;
+  if (q.correct.length > 1) return false;
+  return unruledCount(run, q) > 1;
+}
+
+/** Filter a question pool to an active organ system when a system filter is chosen. */
+export function filterPoolBySystem(pool: GameQuestion[], system?: string | null) {
+  return system ? pool.filter((q) => q.system === system) : pool;
+}
+
+/** A consult takes away wrong choices, always leaving at least two unruled choices (and at least one wrong). */
 export function spendConsult(run: Run, pool: GameQuestion[]) {
   const q = questionOf(pool, run);
-  if (run.phase !== 'question' || !q || run.consults <= 0 || run.hidden.length) return run;
-  const wrong = q.choices.map((_, i) => i).filter((i) => !q.correct.includes(i));
-  const canHide = Math.min(q.correct.length > 1 ? 1 : 2, wrong.length - 1);
+  if (!canConsult(run, q) || !q) return run;
+  const wrong = q.choices.map((_, i) => i).filter((i) => !q.correct.includes(i) && !run.hidden.includes(i));
+  const maxHideByRemaining = unruledCount(run, q) - 2;
+  const canHide = Math.min(q.correct.length > 1 ? 1 : 2, wrong.length - 1, maxHideByRemaining);
   if (canHide <= 0) return run;
   for (let i = 0; i < canHide; i++) {
     const open = wrong.filter((w) => !run.hidden.includes(w));
@@ -171,8 +194,9 @@ export function spendConsult(run: Run, pool: GameQuestion[]) {
   return run;
 }
 
-export function spendOpinion(run: Run) {
-  if (run.phase !== 'question' || run.opinions <= 0 || run.opinionArmed) return run;
+export function spendOpinion(run: Run, pool?: GameQuestion[]) {
+  const q = pool ? questionOf(pool, run) : null;
+  if (!canOpinion(run, q)) return run;
   run.opinions--;
   run.opinionArmed = true;
   return run;
@@ -200,7 +224,7 @@ export function answerQuestion(run: Run, pool: GameQuestion[], answer: number[],
     // Back to the same question, with the wrong answer gone.
     run.opinionArmed = false;
     run.hidden = [...new Set([...run.hidden, ...answer])];
-    if (q.correct.length === 1 && q.choices.length - run.hidden.length >= 2) {
+    if (q.correct.length === 1 && unruledCount(run, q) >= 1) {
       run.message = SECOND_OPINION;
       return record;
     }

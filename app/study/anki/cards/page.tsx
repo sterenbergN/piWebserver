@@ -11,6 +11,7 @@ import { CopyPrompt, PasteReply } from '@/components/study/PromptSteps';
 import { cardKey, CARD_COUNTS, cleanDeckName, LONG_BATCH, parseCardReply, type CardDeck, type CardDepth, type CardStyle, type DeckSummary, type ParsedCards } from '@/lib/study/cards';
 import { buildCardPrompt, type CardSource } from '@/lib/study/prompt';
 import { StudyInputError, type StudySummary } from '@/lib/study/study';
+import './drill.css';
 
 // Make flashcards with her AI: copy a prompt, paste back the reply, take out anything
 // she doesn't want, and save it as a deck to download for Anki. A deck remembers its
@@ -137,14 +138,19 @@ function CardMaker() {
           <h2>Your decks</h2>
           <ul className="pr-list">
             {decks.map((d) => (
-              <li key={d.id}>
-                <Link href={`/study/anki/cards/${d.id}`}>
+              <li key={d.id} className="cd-deck-item">
+                <Link href={`/study/anki/cards/${d.id}`} className="cd-deck-main">
                   <span className="pr-list-main">
                     <strong>{d.title}</strong>
                     <small>{d.count} card{d.count === 1 ? '' : 's'}{d.course ? ` · ${d.course}` : ''}{d.unsent ? ` · ${d.unsent} not in Anki yet` : ' · all downloaded'}</small>
                   </span>
                   <Icon name="chevron" />
                 </Link>
+                {d.count > 0 && (
+                  <Link className="hb-small-btn cd-drill-link" href={`/study/anki/cards/${d.id}?drill=1`}>
+                    🎯 Drill
+                  </Link>
+                )}
               </li>
             ))}
           </ul>

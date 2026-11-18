@@ -4,7 +4,7 @@
 // Pure, so the server, the browser and the tests share it.
 
 import type { DateKey } from '@/lib/habits/dates';
-import type { AnkiData } from './coverage';
+import { leechSystem, type AnkiData, type MapData } from './coverage';
 import { mathToPlain } from './math';
 import { isRight, recordGameMiss, moveMissAlong, type PanceSystem, type ProgressData, type StudyQuestion, type TestsData } from './study';
 
@@ -74,34 +74,54 @@ function shuffled<T>(list: T[], random: () => number) {
   return out;
 }
 
-const clozeAnswer = /\[([^\]]+)\]/;
+const CLOZE_RE = /\[([^\]{}\n]{1,80})\]/;
+const CLOZE_GLOBAL_RE = /\[([^\]{}\n]{1,80})\]/g;
 
-/** The cards she keeps forgetting, as questions. Cards have no wrong answers, so they borrow them from the other cards, from the same deck when they can. */
-export function ankiQuestions(anki: AnkiData | null, random = Math.random): GameQuestion[] {
+export type AnkiQuestionOptions = { random?: () => number; map?: MapData; system?: unknown };
+
+/** The cards she keeps forgetting, as questions. Cards have no wrong answers, so they borrow them from the other cards, from the same deck or system when they can. */
+export function ankiQuestions(
+  anki: AnkiData | null,
+  randomOrOptions: (() => number) | AnkiQuestionOptions = Math.random,
+  extraOptions?: Omit<AnkiQuestionOptions, 'random'>,
+): GameQuestion[] {
   if (!anki) return [];
+  const opts: AnkiQuestionOptions = typeof randomOrOptions === 'function' ? { random: randomOrOptions, ...extraOptions } : randomOrOptions;
+  const random = opts.random ?? Math.random;
+  const systemFilter = typeof opts.system === 'string' ? opts.system : '';
+
   const cards = anki.leeches.flatMap((card, i) => {
-    const cloze = !card.back ? card.front.match(clozeAnswer) : null;
-    const answer = (card.back || cloze?.[1] || '').trim();
+    const cloze = card.front.match(CLOZE_RE);
+    const answer = (cloze ? cloze[1] : card.back).trim();
     if (!answer || answer.length > 200) return [];
-    return [{ key: `anki-${i}`, deck: card.deck, answer, stem: cloze ? card.front.replace(clozeAnswer, '_____') : card.front }];
+    const stem = cloze ? card.front.replace(CLOZE_GLOBAL_RE, '[____]') : card.front;
+    const extra = cloze && card.back.trim() ? card.back.trim() : '';
+    const system = leechSystem(card, anki, opts.map);
+    return [{ key: `anki-${i}`, deck: card.deck, answer, stem, extra, ...(system ? { system } : {}) }];
   });
   const answers = [...new Set(cards.map((c) => c.answer))];
   if (answers.length < 4) return [];
-  return cards.map((card): GameQuestion => {
-    const same = cards.filter((c) => c.deck === card.deck && c.answer !== card.answer).map((c) => c.answer);
-    const others = answers.filter((a) => a !== card.answer && !same.includes(a));
-    const wrong = [...new Set([...shuffled(same, random), ...shuffled(others, random)])].slice(0, 3);
+  const built = cards.map((card): GameQuestion => {
+    const sameDeck = cards.filter((c) => c.deck === card.deck && c.answer !== card.answer).map((c) => c.answer);
+    const sameSystem = card.system
+      ? cards.filter((c) => c.system === card.system && c.deck !== card.deck && c.answer !== card.answer).map((c) => c.answer)
+      : [];
+    const others = answers.filter((a) => a !== card.answer && !sameDeck.includes(a) && !sameSystem.includes(a));
+    const wrong = [...new Set([...shuffled(sameDeck, random), ...shuffled(sameSystem, random), ...shuffled(others, random)])].slice(0, 3);
     const choices = shuffled([card.answer, ...wrong], random);
+    const deckNote = `From your Anki deck, ${anki.decks[card.deck] ?? 'a card you keep forgetting'}. This is one you keep forgetting.`;
     return {
       id: card.key,
       stem: card.stem,
       choices,
       correct: [choices.indexOf(card.answer)],
-      explanation: `From your Anki deck, ${anki.decks[card.deck] ?? 'a card you keep forgetting'}. This is one you keep forgetting.`,
+      explanation: card.extra ? `${card.extra}\n\n${deckNote}` : deckNote,
       topic: 'Anki',
       priority: 2,
+      ...(card.system ? { system: card.system } : {}),
     };
   });
+  return systemFilter ? built.filter((q) => q.system === systemFilter) : built;
 }
 
 /** One question for the party game: four choices at most, one right answer, and the way back to the real question. */

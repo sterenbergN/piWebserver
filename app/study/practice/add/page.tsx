@@ -30,20 +30,20 @@ const KINDS = {
 } as const;
 type Kind = keyof typeof KINDS;
 
-function readAny(kind: Kind, text: string): { found?: string[]; problems?: string[]; error?: string } {
+function readAny(kind: Kind, text: string): { found?: string[]; problems?: string[]; warnings?: string[]; error?: string } {
   if (!text.trim()) return {};
   try {
     if (kind === 'grid') {
-      const { items, problems } = parseGridReply(text);
-      return { found: items.map((g) => `${g.title}: ${g.rows.length} rows, ${g.columns.length} columns`), problems };
+      const { items, problems, warnings } = parseGridReply(text);
+      return { found: items.map((g) => `${g.title}: ${g.rows.length} rows, ${g.columns.length} columns`), problems, warnings };
     }
     if (kind === 'case') {
-      const { items, problems } = parseCaseReply(text);
+      const { items, problems, warnings } = parseCaseReply(text);
       // Not the diagnosis: she's about to practice these.
-      return { found: items.map((c) => `${c.title}: ${c.script.length} answers, ${c.checklist.length} checklist items`), problems };
+      return { found: items.map((c) => `${c.title}: ${c.script.length} answers, ${c.checklist.length} checklist items`), problems, warnings };
     }
-    const { items, problems } = parseDiffReply(text);
-    return { found: [`${items.length} case${items.length === 1 ? '' : 's'}, with what the answers are kept hidden`], problems };
+    const { items, problems, warnings } = parseDiffReply(text);
+    return { found: [`${items.length} case${items.length === 1 ? '' : 's'}, with what the answers are kept hidden`], problems, warnings };
   } catch (error) {
     return { error: error instanceof StudyInputError ? error.message : 'That couldn’t be read.' };
   }
@@ -125,6 +125,7 @@ function AddPractice() {
               <strong>Ready to save:</strong>
               <ul>{parsed.found.map((line) => <li key={line}>{line}</li>)}</ul>
             </div>
+            {parsed.warnings?.map((w) => <p key={w} className="sd-warning">{w}</p>)}
             {!!parsed.problems?.length && (
               <details className="sd-problems" open={parsed.problems.length <= 3}>
                 <summary>{parsed.problems.length} couldn’t be used</summary>

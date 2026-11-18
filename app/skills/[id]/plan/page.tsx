@@ -15,7 +15,7 @@ import { SkillsInputError, parsePlanReply, sameName, type ParsedPlan } from '@/l
 import { LEVELS } from '@/lib/skills/types';
 
 type Done = { topics: number; resources: number; steps: number; roadmap: boolean };
-type Off = { reply: string; topics: Set<string>; resources: Set<number> };
+type Off = { reply: string; topics: Set<string>; resources: Set<number>; steps: Set<number> };
 
 export default function PlanPage() {
   const { id } = useParams<{ id: string }>();
@@ -34,14 +34,14 @@ export default function PlanPage() {
   }, [id]);
   useEffect(() => { void load(); }, [load]);
 
-  if (state === 'loading') return <main className="sk sk-narrow"><Loading /></main>;
-  if (state === 'signedOut') return <main className="sk sk-narrow"><SignedOutCard /></main>;
+  if (state === 'loading') return <div className="sk sk-narrow"><Loading /></div>;
+  if (state === 'signedOut') return <div className="sk sk-narrow"><SignedOutCard /></div>;
   if (state === 'error' || !data) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         <ErrorNote>{error || 'Couldn’t load this subject.'}</ErrorNote>
         <Link className="sk-back" href="/skills">← Back to your skills</Link>
-      </main>
+      </div>
     );
   }
   return <Planner key={id} id={id} data={data} reload={load} />;
@@ -56,7 +56,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
   const [styles, setStyles] = useState<string[]>(['Books', 'Online courses', 'Hands-on projects']);
   const [extra, setExtra] = useState('');
   const [reply, setReply] = useState('');
-  const [off, setOff] = useState<Off>({ reply: '', topics: new Set(), resources: new Set() });
+  const [off, setOff] = useState<Off>({ reply: '', topics: new Set(), resources: new Set(), steps: new Set() });
   const [includeSteps, setIncludeSteps] = useState(true);
   const [replaceSteps, setReplaceSteps] = useState(false);
   const [linkParents, setLinkParents] = useState(false);
@@ -104,20 +104,27 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
 
   const offTopics = off.reply === reply ? off.topics : new Set<string>();
   const offResources = off.reply === reply ? off.resources : new Set<number>();
+  const offSteps = off.reply === reply ? off.steps : new Set<number>();
   const toggleTopic = (key: string) => {
     const next = new Set(offTopics);
     if (!next.delete(key)) next.add(key);
-    setOff({ reply, topics: next, resources: offResources });
+    setOff({ reply, topics: next, resources: offResources, steps: offSteps });
   };
   const toggleResource = (i: number) => {
     const next = new Set(offResources);
     if (!next.delete(i)) next.add(i);
-    setOff({ reply, topics: offTopics, resources: next });
+    setOff({ reply, topics: offTopics, resources: next, steps: offSteps });
+  };
+  const toggleStep = (i: number) => {
+    const next = new Set(offSteps);
+    if (!next.delete(i)) next.add(i);
+    setOff({ reply, topics: offTopics, resources: offResources, steps: next });
   };
 
   const topicKeys = plan ? plan.topics.filter((t) => !t.existingId && !offTopics.has(t.key)).map((t) => t.key) : [];
   const resourceIndexes = plan ? plan.resources.flatMap((r, i) => (!r.existingId && !offResources.has(i) ? [i] : [])) : [];
-  const stepsCount = plan && includeSteps ? plan.steps.length : 0;
+  const stepIndexes = plan && includeSteps ? plan.steps.flatMap((_, i) => (!offSteps.has(i) ? [i] : [])) : [];
+  const stepsCount = stepIndexes.length;
   const roadmapValue: RoadmapChoice = plan?.roadmap ? roadmap : false;
 
   const matchedParentSubjects = useMemo(() => {
@@ -138,8 +145,9 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         reply,
         topicKeys,
         resourceIndexes,
+        stepIndexes,
         roadmap: roadmapValue,
-        includeSteps,
+        includeSteps: includeSteps && stepIndexes.length > 0,
         replaceSteps,
       });
       if (linkParents && matchedParentSubjects.length > 0) {
@@ -181,7 +189,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
       ...(done.steps > 0 ? [`${done.steps} ${done.steps === 1 ? 'step' : 'steps'}`] : []),
     ];
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         {header}
         <section className="sk-card sk-done" role="status">
           <h2>Added {parts.join(', ')}</h2>
@@ -194,7 +202,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
             <Link className="btn btn-secondary" href={`/skills/${id}`}>See the subject</Link>
           </div>
         </section>
-      </main>
+      </div>
     );
   }
 
@@ -206,11 +214,11 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
   ].join(', ');
 
   return (
-    <main className="sk sk-narrow">
+    <div className="sk sk-narrow">
       {header}
 
       <section className="sk-card">
-        <h2><span className="sk-step">0</span> Tell it about you</h2>
+        <h2><span className="sk-step">1</span> Tell it about you</h2>
         <div className="sk-grid-2">
           <div className="sk-readonly"><span>Your goal</span>{subject.goal || 'Not set'}</div>
           <div className="sk-readonly"><span>Where you want to get</span>Level {subject.target}, {LEVELS[Math.min(5, Math.max(0, subject.target))].name}</div>
@@ -238,7 +246,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         </label>
       </section>
 
-      <CopyPrompt title="Copy this into your AI" prompt={prompt}>
+      <CopyPrompt step={2} title="Copy this into your AI" prompt={prompt}>
         <p className="sk-hint">
           {replan
             ? `It includes your ${subject.topics.length} topics and where you stand on each.`
@@ -246,7 +254,7 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         </p>
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={setReply}>
+      <PasteReply step={3} value={reply} onChange={setReply}>
         {parsed.hint && <p className="sk-hint">{parsed.hint}</p>}
       </PasteReply>
 
@@ -258,8 +266,10 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
             allSubjects={data.allSubjects}
             offTopics={offTopics}
             offResources={offResources}
+            offSteps={offSteps}
             onToggleTopic={toggleTopic}
             onToggleResource={toggleResource}
+            onToggleStep={toggleStep}
             includeSteps={includeSteps}
             onIncludeSteps={setIncludeSteps}
             replaceSteps={replaceSteps}
@@ -288,6 +298,6 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
           </div>
         </>
       )}
-    </main>
+    </div>
   );
 }

@@ -7,9 +7,9 @@
 const LATEX_WORDS = new Set([
   'beta', 'bar', 'bf', 'binom', 'begin', 'big', 'bigg', 'bullet', 'boldsymbol',
   'frac', 'forall',
-  'nu', 'neq', 'ne', 'nabla', 'neg', 'ni', 'not',
+  'nu', 'neq', 'ne', 'nabla', 'neg', 'ni', 'not', 'notin',
   'rho', 'right', 'rightarrow', 'rm', 'rangle', 'rfloor', 'rceil',
-  'times', 'text', 'textbf', 'tau', 'theta', 'tan', 'to', 'tilde', 'tfrac', 'top', 'therefore',
+  'times', 'text', 'textbf', 'textit', 'textrm', 'textsf', 'texttt', 'tau', 'theta', 'tan', 'to', 'tilde', 'tfrac', 'top', 'therefore',
 ]);
 
 /** Double the backslashes of LaTeX commands in raw JSON, before it's parsed. Real escapes like a newline are left alone. */

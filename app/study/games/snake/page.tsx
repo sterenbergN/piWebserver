@@ -16,8 +16,10 @@ import { choiceLetter } from '@/lib/study/study';
 // as every other game's, so they count toward her miss bank and PANCE map.
 
 const STEP_MS = 240;
-const KEYS: Record<string, Dir> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right' };
+const KEYS: Record<string, Dir> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
 const BEST_KEY = 'study-snake:best';
+
+const isPausedContext = () => document.hidden || !!document.querySelector('[role="dialog"]');
 
 function readBest() {
   try { return Number(localStorage.getItem(BEST_KEY)) || 0; } catch { return 0; }
@@ -39,9 +41,22 @@ export default function SnakePage() {
   const [pool, setPool] = useState<GameQuestion[]>([]);
   const [run, setRun] = useState<SnakeRun | null>(null);
   const [best, setBest] = useState(0);
+  const [paused, setPaused] = useState(false);
   const runRef = useRef<SnakeRun | null>(null);
   const poolRef = useRef<GameQuestion[]>([]);
   const swipeFrom = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const syncPause = () => setPaused(isPausedContext());
+    syncPause();
+    document.addEventListener('visibilitychange', syncPause);
+    const observer = new MutationObserver(syncPause);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['role'] });
+    return () => {
+      document.removeEventListener('visibilitychange', syncPause);
+      observer.disconnect();
+    };
+  }, []);
 
   /** Every change goes through here, so the timer and the buttons can't trip over each other. */
   const apply = useCallback(<R,>(change: (next: SnakeRun) => R) => {
@@ -83,13 +98,14 @@ export default function SnakePage() {
 
   const moving = run?.phase === 'moving';
   useEffect(() => {
-    if (!moving) return;
+    if (!moving || paused) return;
     const timer = window.setInterval(() => {
+      if (isPausedContext()) return;
       const saved = apply((next) => tick(next, poolRef.current));
       if (saved) saveAnswer(saved.questionId, saved.answer);
     }, STEP_MS);
     return () => window.clearInterval(timer);
-  }, [moving, apply]);
+  }, [moving, paused, apply]);
 
   const score = run?.score ?? 0;
   const over = run?.phase === 'over';
@@ -105,6 +121,15 @@ export default function SnakePage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        isPausedContext() ||
+        target?.closest?.('input, textarea, select, [contenteditable="true"]') ||
+        target?.isContentEditable
+      ) return;
       const dir = KEYS[event.key];
       if (dir) {
         event.preventDefault();
@@ -162,11 +187,11 @@ export default function SnakePage() {
   const cells = Array.from({ length: BOARD * BOARD }, (_, i) => `${i % BOARD}:${Math.floor(i / BOARD)}`);
 
   return (
-    <div className="sd sd-narrow animate-fade-in">
+    <div className="sd sd-narrow sd-snake animate-fade-in">
       {head}
       <div className="pr-snake-bar">
         <span className="pr-hearts" role="img" aria-label={`${run.hearts} hearts left`}>{Array.from({ length: Math.max(0, run.hearts) }, (_, i) => <Icon key={i} name="heart" />)}</span>
-        <span className="sd-count">{run.phase === 'waiting' ? 'Read it, then turn to go' : `${run.right} right · ${run.score} points${best ? ` · best ${best}` : ''}`}</span>
+        <span className="sd-count">{run.phase === 'waiting' ? 'Read it, then turn to go' : paused ? 'Paused' : `${run.right} right · ${run.score} points${best ? ` · best ${best}` : ''}`}</span>
       </div>
 
       {run.phase === 'over' ? (

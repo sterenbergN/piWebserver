@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
+import { isDateKey } from '@/lib/habits/dates';
 import { afterStudying, readPlan, readProgress, readShares, readTests, updateProgress, updateShares, updateTests } from '@/lib/study/store';
 import { shareOf, unshareTest } from '@/lib/study/sharing';
 import { findWorkoutUser, updateUsersData } from '@/lib/workout/users';
@@ -78,7 +79,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true }, { headers: PRIVATE });
       }
       case 'add-test': {
-        const pack = parseTestReply(body.text);
+        const rawPack = parseTestReply(body.text);
+        const skipStems = Array.isArray(body.exclude) ? new Set(body.exclude.filter((s): s is string => typeof s === 'string')) : null;
+        const pickedQuestions = skipStems?.size ? rawPack.questions.filter((q) => !skipStems.has(q.stem)) : rawPack.questions;
+        if (!pickedQuestions.length) throw new StudyInputError('Pick at least one question to save.');
+        const pack = { ...rawPack, questions: pickedQuestions };
         const test = await updateTests(userId, (data) => {
           // A new set is made here, so a failed save doesn't leave an empty one behind.
           const set = body.newSet ? createSet(data, body.newSet, newId, now) : data.sets.find((s) => s.id === body.setId);
@@ -141,16 +146,39 @@ export async function POST(request: Request) {
         });
         return NextResponse.json({ success: true }, { headers: PRIVATE });
       }
-      case 'review': {
+      case 'review':
+      case 'answer-review': {
+        if (body.today !== undefined && body.today !== null && body.today !== '' && !isDateKey(body.today)) {
+          throw new ApiError(400, 'Invalid date.');
+        }
+        if (!isId(body.questionId)) throw new ApiError(400, 'Which question?');
         const tests = await readTests(userId);
+        const testWithQ = tests.tests.find((t) => t.questions.some((q) => q.id === body.questionId));
+        const question = testWithQ?.questions.find((q) => q.id === body.questionId);
         const result = await updateProgress(userId, (progress) => {
-          const miss = isId(body.questionId) ? progress.misses[body.questionId] : undefined;
-          const found = miss ? withQuestions(tests, [miss])[0] : undefined;
-          if (!found) throw new ApiError(404, 'That question isn’t waiting for review.');
-          return answerReview(progress, found.question, cleanAnswer(found.question, body.answer), today);
+          if (!question || !testWithQ) {
+            for (const key of Object.keys(progress.misses)) {
+              if (key === body.questionId || progress.misses[key]?.questionId === body.questionId) {
+                delete progress.misses[key];
+              }
+            }
+            return { right: false, cleared: true, box: 0, dueOn: today, counted: false, miss: undefined };
+          }
+          return answerReview(progress, question, cleanAnswer(question, body.answer), today, {
+            testId: testWithQ.id,
+            now,
+            unsure: body.unsure === true,
+          });
         });
         await afterStudying(userId, today);
-        return NextResponse.json({ success: true, right: result.right, miss: result.miss }, { headers: PRIVATE });
+        return NextResponse.json({
+          success: true,
+          right: result.right,
+          cleared: result.cleared,
+          box: result.box,
+          dueOn: result.dueOn,
+          ...(result.miss ? { miss: result.miss } : {}),
+        }, { headers: PRIVATE });
       }
       case 'edit-question': {
         const question = await updateTests(userId, (data) => updateProgress(userId, (progress) => editQuestion(testFrom(data.tests, body.testId), progress, String(body.questionId), body, today)));

@@ -8,9 +8,9 @@ import JournalMarkdown from '@/components/journal/JournalMarkdown';
 import TalkSheet from '@/components/journal/TalkSheet';
 import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
 import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
-import { MOODS, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
+import { MOODS, MAX_SUMMARY, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
 import { continueList } from '@/lib/journal/markdown';
-import { appendTalkSummary, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
+import { isTalkMode, MAX_TOPIC, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 import '../habits/habits.css';
 import './journal.css';
 
@@ -19,8 +19,17 @@ import './journal.css';
 
 type Mode = 'loading' | 'account' | 'signed-out' | 'error';
 type SaveState = 'idle' | 'loading' | 'unsaved' | 'saving' | 'saved' | 'error';
+type DayView = 'written' | 'talk' | 'split';
 
 const SAVE_DELAY = 900;
+const TALK_MODE_OPTIONS = Object.keys(TALK_MODES) as TalkMode[];
+const QUICK_MODES: { mode: TalkMode; label: string }[] = [
+  { mode: 'explore', label: 'Explore' },
+  { mode: 'debate', label: 'Debate me' },
+  { mode: 'decide', label: 'Make a decision' },
+  { mode: 'brainstorm', label: 'Brainstorm' },
+  { mode: 'reflect', label: 'Look back' },
+];
 const TOOLS: { action: FormatAction; label: string; title: string }[] = [
   { action: 'bold', label: 'B', title: 'Bold (Ctrl+B)' },
   { action: 'italic', label: 'I', title: 'Italic (Ctrl+I)' },
@@ -49,7 +58,17 @@ export default function JournalPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<JournalSummary[] | null>(null);
   const [talks, setTalks] = useState<JournalTalk[]>([]);
-  const [talking, setTalking] = useState(false);
+  const [talkSheet, setTalkSheet] = useState<{ open: boolean; initialMode?: TalkMode }>({ open: false });
+  const [editingTalk, setEditingTalk] = useState<{
+    id: string;
+    topic: string;
+    summary: string;
+    mode: TalkMode | '';
+    saving: boolean;
+    error: string;
+  } | null>(null);
+  const [dayView, setDayView] = useState<DayView>('split');
+  const [isDesktop, setIsDesktop] = useState(true);
   // Written in Markdown, read formatted: the entry shows as it reads until you tap into it.
   const [editing, setEditing] = useState(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,6 +79,19 @@ export default function JournalPage() {
   const queue = useRef(Promise.resolve());
   const area = useRef<HTMLTextAreaElement>(null);
   const measure = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const sync = () => setIsDesktop(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  const effectiveView: DayView = isDesktop ? dayView : (dayView === 'talk' ? 'talk' : 'written');
+  const showWrittenPane = effectiveView === 'written' || effectiveView === 'split';
+  const showTalkPane = effectiveView === 'talk' || effectiveView === 'split';
 
   const putSummary = (date: DateKey, summary: JournalSummary | null) => setEntries((list) => {
     const rest = list.filter((s) => s.date !== date);
@@ -107,7 +139,7 @@ export default function JournalPage() {
     await flush();
     const d = draft.current;
     d.day = date; d.text = ''; d.mood = null; d.version = 0; d.savedVersion = 0;
-    setDay(date); setText(''); setMood(null); setTalks([]); setEditing(false); setSave('loading');
+    setDay(date); setText(''); setMood(null); setTalks([]); setEditingTalk(null); setEditing(false); setSave('loading');
     try {
       const res = await fetch(`/api/journal?date=${date}`, { cache: 'no-store' });
       const json = await res.json();
@@ -143,12 +175,17 @@ export default function JournalPage() {
       const d = draft.current;
       if (d.version === d.savedVersion) return;
       if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-      d.savedVersion = d.version;
+      const date = d.day;
+      const sentVersion = d.version;
       fetch('/api/journal', {
         method: 'PUT',
         keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: d.day, text: d.text, mood: d.mood, today: localToday() }),
+        body: JSON.stringify({ date, text: d.text, mood: d.mood, today: localToday() }),
+      }).then((res) => {
+        if (res.ok && draft.current.day === date) {
+          d.savedVersion = Math.max(d.savedVersion, sentVersion);
+        }
       }).catch(() => {});
     };
     const onVisibility = () => {
@@ -186,7 +223,7 @@ export default function JournalPage() {
 
   useLayoutEffect(() => {
     syncHeight();
-  }, [text, mode, reading, syncHeight]);
+  }, [text, mode, reading, showWrittenPane, syncHeight]);
 
   useEffect(() => {
     const el = area.current;
@@ -194,7 +231,7 @@ export default function JournalPage() {
     const ro = new ResizeObserver(() => syncHeight());
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mode, reading, syncHeight]);
+  }, [mode, reading, showWrittenPane, syncHeight]);
 
   /** Open the entry for writing, with the caret at the end (where most writing goes). */
   const startEditing = () => {
@@ -265,23 +302,28 @@ export default function JournalPage() {
     return () => { clearTimeout(t); ctrl.abort(); };
   }, [query]);
 
-  /** A talked-through conversation's summary joins the entry; the conversation is kept with the day. */
-  const addTalk = async (reply: TalkReply, keep: boolean, mode: TalkMode) => {
+  /** Save a talked-through session into this day's dedicated Talk It Through space without modifying the written entry. */
+  const addTalk = async (reply: TalkReply, keep: boolean, talkMode: TalkMode) => {
     const date = draft.current.day;
-    edit({ text: appendTalkSummary(draft.current.text, reply, mode) });
-    await flush();
-    const d = draft.current;
-    if (d.day !== date || d.version !== d.savedVersion) return false;
-    if (!keep) return true;
     try {
       const res = await fetch('/api/journal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, topic: reply.topic, transcript: reply.transcript, today: localToday() }),
+        body: JSON.stringify({
+          date,
+          mode: talkMode,
+          topic: reply.topic,
+          summary: reply.summary,
+          transcript: keep ? reply.transcript : '',
+          today: localToday(),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!json.success) throw new Error(json.message);
-      if (draft.current.day === date) setTalks((list) => [...list, json.talk]);
+      if (draft.current.day === date) {
+        setTalks((list) => [...list, json.talk]);
+        if (dayView === 'written') setDayView(isDesktop ? 'split' : 'talk');
+      }
       putSummary(date, json.summary);
       return true;
     } catch {
@@ -289,14 +331,60 @@ export default function JournalPage() {
     }
   };
 
+  const startEditTalk = (t: JournalTalk) => {
+    setEditingTalk({
+      id: t.id,
+      topic: t.topic,
+      summary: t.summary ?? '',
+      mode: t.mode && isTalkMode(t.mode) ? t.mode : '',
+      saving: false,
+      error: '',
+    });
+  };
+
+  const saveEditTalk = async (t: JournalTalk) => {
+    if (!editingTalk || editingTalk.id !== t.id) return;
+    if (!editingTalk.summary.trim() && !t.transcript.trim()) {
+      setEditingTalk({ ...editingTalk, error: 'Add a summary before saving (since the conversation isn’t kept).' });
+      return;
+    }
+    const date = draft.current.day;
+    setEditingTalk({ ...editingTalk, saving: true, error: '' });
+    try {
+      const res = await fetch('/api/journal', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date,
+          talkId: t.id,
+          topic: editingTalk.topic,
+          summary: editingTalk.summary,
+          mode: editingTalk.mode || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!json.success) throw new Error(json.message || 'Couldn’t save changes.');
+      if (draft.current.day === date) {
+        setTalks((list) => list.map((item) => (item.id === t.id ? json.talk : item)));
+        setEditingTalk(null);
+      }
+      putSummary(date, json.summary);
+    } catch (err) {
+      setEditingTalk((cur) => (cur && cur.id === t.id ? { ...cur, saving: false, error: err instanceof Error ? err.message : 'Couldn’t save changes.' } : cur));
+    }
+  };
+
   const removeTalk = async (talk: JournalTalk) => {
-    const ok = await confirm({ title: 'Delete this conversation?', message: 'The conversation is removed for good. Its summary stays in the entry.', confirmLabel: 'Delete', danger: true });
+    const ok = await confirm({ title: 'Delete this talk session?', message: 'This talk session (its summary and conversation) is removed for good.', confirmLabel: 'Delete', danger: true });
     if (!ok) return;
     const date = day;
     const res = await fetch(`/api/journal?date=${date}&talk=${encodeURIComponent(talk.id)}`, { method: 'DELETE' }).catch(() => null);
     const json = await res?.json().catch(() => ({}));
     if (!json?.success) { setSave('error'); return; }
-    if (draft.current.day === date) setTalks((list) => list.filter((t) => t.id !== talk.id));
+    if (draft.current.day === date) {
+      setTalks((list) => list.filter((t) => t.id !== talk.id));
+      if (editingTalk?.id === talk.id) setEditingTalk(null);
+    }
     putSummary(date, json.summary);
   };
 
@@ -322,7 +410,16 @@ export default function JournalPage() {
   return (
     <div className="jr animate-fade-in">
       {popup}
-      {talking && <TalkSheet day={day} entryName={entryName} written={text} onClose={() => setTalking(false)} onAdd={addTalk} />}
+      {talkSheet.open && (
+        <TalkSheet
+          day={day}
+          entryName={entryName}
+          written={text}
+          initialMode={talkSheet.initialMode}
+          onClose={() => setTalkSheet({ open: false })}
+          onAdd={addTalk}
+        />
+      )}
       <header className="jr-head">
         <div>
           <h1>Journal</h1>
@@ -347,103 +444,252 @@ export default function JournalPage() {
 
       {mode === 'account' && (
         <div className="jr-layout">
-          <section className="jr-editor" aria-label="Entry">
-            <div className="jr-daybar">
-              <button type="button" className="jr-arrow" aria-label="Previous day" onClick={() => openDay(addDays(day, -1))}>‹</button>
-              <div className="jr-day">
-                <h2>{dayTitle(day, today)}</h2>
-                <label className="jr-date">
-                  <span className="sr-only">Pick a day</span>
-                  <input type="date" value={day} max={today} onChange={(e) => e.target.value && e.target.value <= today && openDay(e.target.value)} />
-                </label>
-              </div>
-              <button type="button" className="jr-arrow" aria-label="Next day" disabled={day >= today} onClick={() => openDay(addDays(day, 1))}>›</button>
-            </div>
-            {day !== today && <button type="button" className="hb-text-btn jr-back" onClick={() => openDay(today)}>Back to today</button>}
-
-            <div className="jr-moods" role="radiogroup" aria-label="Mood">
-              {MOODS.map((face, i) => {
-                const value = (i + 1) as Mood;
-                return (
-                  <button key={face} type="button" role="radio" aria-checked={mood === value} aria-label={['Rough', 'Meh', 'Okay', 'Good', 'Great'][i]}
-                    disabled={save === 'loading'} onClick={() => edit({ mood: mood === value ? null : value })}>{face}</button>
-                );
-              })}
-            </div>
-
-            <div className="jr-tools">
-              {reading ? (
-                <button type="button" className="hb-small-btn" onClick={startEditing}><span aria-hidden>✏️</span> Edit</button>
-              ) : (
-                <div className="jr-format" role="toolbar" aria-label="Formatting">
-                  {TOOLS.map((t) => (
-                    <button key={t.action} type="button" className={`jr-format-${t.action}`} title={t.title} aria-label={t.title} disabled={save === 'loading'}
-                      onMouseDown={(e) => e.preventDefault()} onPointerDown={keepEditing} onClick={() => format(t.action)}>{t.label}</button>
-                  ))}
+          <div className="jr-day-workspace">
+            <header className="jr-day-head-card">
+              <div className="jr-daybar">
+                <button type="button" className="jr-arrow" aria-label="Previous day" onClick={() => openDay(addDays(day, -1))}>‹</button>
+                <div className="jr-day">
+                  <h2>{dayTitle(day, today)}</h2>
+                  <label className="jr-date">
+                    <span className="sr-only">Pick a day</span>
+                    <input type="date" value={day} max={today} onChange={(e) => e.target.value && e.target.value <= today && openDay(e.target.value)} />
+                  </label>
                 </div>
+                <button type="button" className="jr-arrow" aria-label="Next day" disabled={day >= today} onClick={() => openDay(addDays(day, 1))}>›</button>
+              </div>
+              {day !== today && <button type="button" className="hb-text-btn jr-back" onClick={() => openDay(today)}>Back to today</button>}
+
+              <div className="jr-moods" role="radiogroup" aria-label="Mood">
+                {MOODS.map((face, i) => {
+                  const value = (i + 1) as Mood;
+                  return (
+                    <button key={face} type="button" role="radio" aria-checked={mood === value} aria-label={['Rough', 'Meh', 'Okay', 'Good', 'Great'][i]}
+                      disabled={save === 'loading'} onMouseDown={keepEditing} onPointerDown={keepEditing} onClick={() => edit({ mood: mood === value ? null : value })}>{face}</button>
+                  );
+                })}
+              </div>
+
+              <div className="jr-view-tabs" role="tablist" aria-label="Day view">
+                <button type="button" role="tab" aria-selected={effectiveView === 'written'} onClick={() => setDayView('written')}>
+                  <span aria-hidden>✍️</span> Written Entry
+                </button>
+                <button type="button" role="tab" aria-selected={effectiveView === 'talk'} onClick={() => setDayView('talk')}>
+                  <span aria-hidden>🎙️</span> Talk It Through ({talks.length})
+                </button>
+                <button type="button" role="tab" className="jr-view-split-btn" aria-selected={effectiveView === 'split'} onClick={() => setDayView('split')}>
+                  Split
+                </button>
+              </div>
+            </header>
+
+            <div className={`jr-day-panes${effectiveView === 'split' ? ' is-split' : ''}`}>
+              {showWrittenPane && (
+                <section className="jr-editor jr-pane-written" aria-label="Written Entry">
+                  <div className="jr-pane-head">
+                    <h3><span aria-hidden>✍️</span> Written Entry</h3>
+                  </div>
+
+                  <div className="jr-tools">
+                    {reading ? (
+                      <button type="button" className="hb-small-btn" onClick={startEditing}><span aria-hidden>✏️</span> Edit</button>
+                    ) : (
+                      <div className="jr-format" role="toolbar" aria-label="Formatting">
+                        {TOOLS.map((t) => (
+                          <button key={t.action} type="button" className={`jr-format-${t.action}`} title={t.title} aria-label={t.title} disabled={save === 'loading'}
+                            onMouseDown={(e) => e.preventDefault()} onPointerDown={keepEditing} onClick={() => format(t.action)}>{t.label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {reading ? (
+                    // Tapping the words opens them for writing; links in them still open.
+                    <div className="jr-read" onClick={(e) => { if (!(e.target as HTMLElement).closest('a, input')) startEditing(); }}>
+                      <JournalMarkdown text={text} />
+                    </div>
+                  ) : (
+                    <div className="jr-grow">
+                      <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
+                      <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
+                        disabled={save === 'loading'} onChange={(e) => {
+                          const el = e.currentTarget;
+                          if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+                          if (el.scrollTop !== 0) el.scrollTop = 0;
+                          // Typing means writing, even if focus came back without a focus event.
+                          keepEditing();
+                          if (!editing) setEditing(true);
+                          edit({ text: el.value });
+                        }}
+                        onKeyDown={onKeyDown}
+                        onFocus={() => { keepEditing(); setEditing(true); }}
+                        onBlur={() => {
+                          flush();
+                          // A moment's grace, so a tap on the formatting bar doesn't close the editor.
+                          keepEditing();
+                          blurTimer.current = setTimeout(() => { blurTimer.current = null; setEditing(false); }, 250);
+                        }}
+                        spellCheck />
+                    </div>
+                  )}
+
+                  <div className="jr-foot">
+                    <span>{wordCount(text).toLocaleString()} words</span>
+                    <span className={`jr-save is-${save}`} role="status">
+                      {save === 'saving' ? 'Saving…' : save === 'unsaved' ? 'Editing…' : save === 'saved' ? 'Saved' : save === 'error' ? 'Couldn’t save. Keep this tab open and try again.' : ''}
+                    </span>
+                    {save === 'error' && <button type="button" className="hb-small-btn" onClick={() => { draft.current.version++; flush(); }}>Retry</button>}
+                    {hasEntry && save !== 'loading' && <button type="button" className="hb-text-btn jr-delete" onClick={remove}>Delete entry</button>}
+                  </div>
+                </section>
               )}
-              <button type="button" className="hb-small-btn" disabled={save === 'loading'} onClick={() => setTalking(true)}><span aria-hidden>🎙</span> Talk it through</button>
+
+              {showTalkPane && (
+                <section className="jr-talk-space jr-pane-talk" aria-label="Talk It Through">
+                  <div className="jr-talk-space-head">
+                    <div>
+                      <h3><span aria-hidden>🎙️</span> Talk It Through</h3>
+                      <p className="jr-hint">Hands-free AI talks kept in their own space.</p>
+                    </div>
+                    <button type="button" className="btn btn-primary jr-new-talk-btn" disabled={save === 'loading'} onClick={() => setTalkSheet({ open: true })}>
+                      <span aria-hidden>🎙️</span> New Talk Session
+                    </button>
+                  </div>
+
+                  <div className="jr-quickstart" role="group" aria-label="Quick-start talk modes">
+                    {QUICK_MODES.map((item) => (
+                      <button
+                        key={item.mode}
+                        type="button"
+                        className="jr-mode-chip"
+                        disabled={save === 'loading'}
+                        onClick={() => setTalkSheet({ open: true, initialMode: item.mode })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {talks.length === 0 ? (
+                    <div className="jr-talk-empty">
+                      <p className="jr-hint">
+                        No talks saved for {day === today ? 'today' : dayTitle(day, today)} yet. Pick a mode above or start a new talk session — summaries live here without overwriting your written entry.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="jr-talk-cards">
+                      {talks.map((t) => {
+                        const isEditingThis = editingTalk?.id === t.id;
+                        const turns = t.transcript.trim() ? transcriptTurns(t.transcript) : [];
+                        const modeLabel = t.mode && isTalkMode(t.mode) ? TALK_MODES[t.mode].label : null;
+                        return (
+                          <article key={t.id} className="jr-talk-card">
+                            <div className="jr-talk-card-head">
+                              <div className="jr-talk-card-meta">
+                                {modeLabel && <span className="jr-talk-badge">{modeLabel}</span>}
+                                {t.createdAt && (
+                                  <small className="jr-talk-time">
+                                    {new Date(t.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                                  </small>
+                                )}
+                              </div>
+                              {!isEditingThis && (
+                                <div className="jr-talk-card-actions">
+                                  <button type="button" className="jr-talk-action" onClick={() => startEditTalk(t)} aria-label={`Edit ${t.topic || 'talk session'}`}>
+                                    <span aria-hidden>✏️</span> Edit
+                                  </button>
+                                  <button type="button" className="jr-talk-action is-danger" onClick={() => removeTalk(t)} aria-label={`Delete ${t.topic || 'talk session'}`}>
+                                    <span aria-hidden>🗑️</span> Delete
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            {isEditingThis ? (
+                              <div className="jr-talk-edit">
+                                <label className="hb-label" htmlFor={`jr-edit-mode-${t.id}`}>Mode</label>
+                                <select
+                                  id={`jr-edit-mode-${t.id}`}
+                                  className="jr-talk-input"
+                                  value={editingTalk.mode}
+                                  disabled={editingTalk.saving}
+                                  onChange={(e) => setEditingTalk({ ...editingTalk, mode: e.target.value as TalkMode | '' })}
+                                >
+                                  <option value="">No mode</option>
+                                  {TALK_MODE_OPTIONS.map((m) => (
+                                    <option key={m} value={m}>{TALK_MODES[m].label}</option>
+                                  ))}
+                                </select>
+
+                                <label className="hb-label" htmlFor={`jr-edit-topic-${t.id}`}>Topic</label>
+                                <input
+                                  id={`jr-edit-topic-${t.id}`}
+                                  className="jr-talk-input"
+                                  value={editingTalk.topic}
+                                  maxLength={MAX_TOPIC}
+                                  disabled={editingTalk.saving}
+                                  onChange={(e) => setEditingTalk({ ...editingTalk, topic: e.target.value })}
+                                />
+
+                                <label className="hb-label" htmlFor={`jr-edit-summary-${t.id}`}>Summary</label>
+                                <textarea
+                                  id={`jr-edit-summary-${t.id}`}
+                                  className="jr-talk-input"
+                                  rows={Math.min(12, Math.max(4, editingTalk.summary.split('\n').length + 1))}
+                                  maxLength={MAX_SUMMARY}
+                                  value={editingTalk.summary}
+                                  disabled={editingTalk.saving}
+                                  onChange={(e) => setEditingTalk({ ...editingTalk, summary: e.target.value, error: '' })}
+                                />
+
+                                {editingTalk.error && <p className="jr-talk-error" role="alert">{editingTalk.error}</p>}
+
+                                <div className="jr-talk-edit-actions">
+                                  <button type="button" className="hb-small-btn" disabled={editingTalk.saving} onClick={() => setEditingTalk(null)}>
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="hb-small-btn is-primary"
+                                    disabled={editingTalk.saving || (!editingTalk.summary.trim() && !t.transcript.trim())}
+                                    onClick={() => saveEditTalk(t)}
+                                  >
+                                    {editingTalk.saving ? 'Saving…' : 'Save changes'}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <h4 className="jr-talk-topic">{t.topic || 'Untitled talk'}</h4>
+                                {t.summary && (
+                                  <div className="jr-talk-summary">
+                                    <JournalMarkdown text={t.summary} />
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {turns.length > 0 && (
+                              <details className="jr-talk-convo">
+                                <summary>
+                                  <span>💬 Conversation ({turns.length} {turns.length === 1 ? 'turn' : 'turns'})</span>
+                                  <span className="jr-talk-convo-hint" aria-hidden />
+                                </summary>
+                                <ol className="jr-turns">
+                                  {turns.map((turn, i) => (
+                                    <li key={i} className={`is-${turn.who}`}><b>{turn.who === 'me' ? 'Me' : 'AI'}</b>{turn.text}</li>
+                                  ))}
+                                </ol>
+                              </details>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
-
-            {reading ? (
-              // Tapping the words opens them for writing; links in them still open.
-              <div className="jr-read" onClick={(e) => { if (!(e.target as HTMLElement).closest('a, input')) startEditing(); }}>
-                <JournalMarkdown text={text} />
-              </div>
-            ) : (
-              <div className="jr-grow">
-                <textarea ref={measure} className="jr-text jr-measure" value={text} aria-hidden tabIndex={-1} readOnly />
-                <textarea ref={area} className="jr-text" value={text} placeholder={save === 'loading' ? '' : promptFor(day)} aria-label={`Journal entry for ${dayTitle(day, today)}`}
-                  disabled={save === 'loading'} onChange={(e) => {
-                    const el = e.currentTarget;
-                    if (el.scrollHeight > el.clientHeight) el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
-                    if (el.scrollTop !== 0) el.scrollTop = 0;
-                    // Typing means writing, even if focus came back without a focus event.
-                    keepEditing();
-                    if (!editing) setEditing(true);
-                    edit({ text: el.value });
-                  }}
-                  onKeyDown={onKeyDown}
-                  onFocus={() => { keepEditing(); setEditing(true); }}
-                  onBlur={() => {
-                    flush();
-                    // A moment's grace, so a tap on the formatting bar doesn't close the editor.
-                    keepEditing();
-                    blurTimer.current = setTimeout(() => { blurTimer.current = null; setEditing(false); }, 250);
-                  }}
-                  spellCheck />
-              </div>
-            )}
-
-            <div className="jr-foot">
-              <span>{wordCount(text).toLocaleString()} words</span>
-              <span className={`jr-save is-${save}`} role="status">
-                {save === 'saving' ? 'Saving…' : save === 'unsaved' ? 'Editing…' : save === 'saved' ? 'Saved' : save === 'error' ? 'Couldn’t save. Keep this tab open and try again.' : ''}
-              </span>
-              {save === 'error' && <button type="button" className="hb-small-btn" onClick={() => { draft.current.version++; flush(); }}>Retry</button>}
-              {hasEntry && save !== 'loading' && <button type="button" className="hb-text-btn jr-delete" onClick={remove}>Delete entry</button>}
-            </div>
-
-            {talks.length > 0 && (
-              <section className="jr-talks" aria-label="Kept conversations">
-                {talks.map((t) => (
-                  <details key={t.id} className="jr-talk">
-                    <summary>
-                      <span aria-hidden>🎙</span> <strong>{t.topic || 'A conversation'}</strong>
-                      {t.createdAt && <small>{new Date(t.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</small>}
-                      <span className="jr-talk-show">Show the conversation</span>
-                    </summary>
-                    <ol className="jr-turns">
-                      {transcriptTurns(t.transcript).map((turn, i) => (
-                        <li key={i} className={`is-${turn.who}`}><b>{turn.who === 'me' ? 'Me' : 'AI'}</b>{turn.text}</li>
-                      ))}
-                    </ol>
-                    <button type="button" className="hb-text-btn jr-delete" onClick={() => removeTalk(t)}>Delete conversation</button>
-                  </details>
-                ))}
-              </section>
-            )}
-          </section>
+          </div>
 
           <aside className="jr-list" aria-label="Past entries">
             <input type="search" className="jr-search" placeholder="Search your journal" value={query} onChange={(e) => setQuery(e.target.value)} />

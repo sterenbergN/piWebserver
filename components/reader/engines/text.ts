@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { createElement } from 'react';
 import { markupLength, splitParagraphs, textToParagraphs, type BookFormat } from '@/lib/reader/items';
 import type { FlowSource, TocEntry } from '../source';
-import { toSafePage } from './epub';
+import { extractBodyText, toSafePage } from './epub';
 
 // Plain text, Markdown and HTML files, as the same flowing sections as an EPUB chapter.
 // Headings make the contents list; a text file's "Chapter 3" lines count as headings.
@@ -44,7 +44,15 @@ export async function openTextBook(blob: Blob, format: BookFormat): Promise<Flow
 
   return {
     toc,
-    sections: marked.map((doc, i) => ({ length: markupLength(pages[i]), load: async () => toSafePage(doc.cloneNode(true) as Document, []) })),
+    sections: marked.map((doc, i) => ({
+      length: markupLength(pages[i]),
+      load: async () => toSafePage(doc.cloneNode(true) as Document, []),
+      text: async () => {
+        const clone = doc.cloneNode(true) as Document;
+        clone.querySelectorAll('script, iframe, object, embed, applet, base, meta, form, noscript, link, title').forEach((el) => el.remove());
+        return extractBodyText(clone);
+      },
+    })),
     resolve: (from, href) => {
       if (!href.startsWith('#')) return null;
       const fragment = href.slice(1);

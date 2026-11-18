@@ -1,6 +1,6 @@
 'use client';
 
-import { orderBetween, type BookRecord, type Notebook, type PageElement, type PageRecord, type RecordingRecord, type TemplateId } from '@/lib/notes/items';
+import { MAX_TEXT_CHARS, orderBetween, type BookRecord, type Notebook, type PageElement, type PageRecord, type RecordingRecord, type TemplateId, type TextElement } from '@/lib/notes/items';
 import { getElements, getLibraryRecord, listBook, livePages, liveRecordings, putBook, putElements, putLibrary, type StoredBook, type StoredElement } from './db';
 import { scheduleSync } from './sync';
 
@@ -193,6 +193,12 @@ export class NotebookDoc {
     return this.replay(steps, 'after');
   }
 
+  /** Revert uncommitted in-progress steps without adding an undo/redo entry. */
+  revert(steps: Step[]) {
+    if (!steps.length) return [];
+    return this.replay([...steps].reverse(), 'before');
+  }
+
   private replay(steps: Step[], side: 'before' | 'after') {
     const now = Date.now();
     const out: Step[] = [];
@@ -280,6 +286,22 @@ export class NotebookDoc {
     }
     this.apply(steps);
     return copy;
+  }
+
+  /** Add a text box onto a page after ensuring its existing elements are loaded. */
+  async addText(page: string, fields: Omit<TextElement, 'id' | 'kind' | 'createdAt' | 'updatedAt'>): Promise<TextElement> {
+    await this.ensure(page);
+    const now = Date.now();
+    const element: TextElement = {
+      ...fields,
+      id: newId(),
+      kind: 'text',
+      text: fields.text.slice(0, MAX_TEXT_CHARS),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.apply([{ type: 'element', page, before: null, after: element }]);
+    return element;
   }
 
   saveRecording(recording: RecordingRecord) {

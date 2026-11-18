@@ -132,10 +132,23 @@ function DateForm({ planner, deadline, onDone }: { planner: Planner; deadline?: 
 function TaskLine({ task, planner, today }: { task: PlanTask; planner: Planner; today: DateKey }) {
   const { confirm, popup } = useSitePopup();
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(task.title);
   const left = task.pancakes - task.eaten;
   const nextDay = Object.keys(task.plate).filter((d) => d >= today).sort()[0];
+  const eatOne = async () => {
+    if (busy || left <= 0) return;
+    setBusy(true);
+    setError('');
+    try {
+      await planner.post('eat', { id: task.id, count: 1 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That didn’t save.');
+    } finally {
+      setBusy(false);
+    }
+  };
   const resize = (by: number) => planner.post('edit-task', { id: task.id, pancakes: task.pancakes + by }).catch((e) => setError(e.message));
   const remove = async () => {
     if (await confirm({ title: 'Remove this work?', message: `“${task.title}” comes off your plan.`, confirmLabel: 'Remove', danger: true })) planner.post('remove-task', { id: task.id }).catch((e) => setError(e.message));
@@ -163,6 +176,17 @@ function TaskLine({ task, planner, today }: { task: PlanTask; planner: Planner; 
         {error && <small className="sd-warning" role="alert">{error}</small>}
       </span>
       <span className="sd-actions">
+        {left > 0 && (
+          <button
+            type="button"
+            className="hb-small-btn is-primary"
+            disabled={busy}
+            aria-label={`Eat 1 pancake of ${task.title}`}
+            onClick={eatOne}
+          >
+            Eat 1 pancake 🥞
+          </button>
+        )}
         <button type="button" className="hb-small-btn" aria-label={`One fewer pancake for ${task.title}`} disabled={task.pancakes <= Math.max(1, task.eaten)} onClick={() => resize(-1)}>−</button>
         <button type="button" className="hb-small-btn" aria-label={`One more pancake for ${task.title}`} disabled={task.pancakes >= MAX_PANCAKES} onClick={() => resize(1)}>+</button>
         <button type="button" className="hb-small-btn" aria-label={`Rename ${task.title}`} onClick={() => setRenaming(true)}><Icon name="pencil" /></button>
@@ -286,10 +310,15 @@ function Asks({ planner }: { planner: Planner }) {
 
 /** One day in the week list, or under the month when picked. */
 function DayDetail({ planner, day, today }: { planner: Planner; day: DateKey; today: DateKey }) {
+  const [error, setError] = useState('');
   const plan = planner.data!.plan;
   const info = dayPlan(plan, day, today);
   const count = info.items.reduce((n, i) => n + i.count, 0);
   const canOff = day >= today;
+  const toggleOff = (on: boolean) => {
+    setError('');
+    planner.post('day-off', { day, on }).catch((e) => setError(e instanceof Error ? e.message : 'That didn’t save.'));
+  };
   return (
     <div className={`sd-day${day === today ? ' is-today' : ''}${info.off ? ' is-off' : ''}`}>
       <div className="sd-day-head">
@@ -304,9 +333,10 @@ function DayDetail({ planner, day, today }: { planner: Planner; day: DateKey; to
       </div>
       {info.deadlines.map((d) => <p key={d.id} className="sd-day-due sd-title-icon"><Icon name={KIND_GLYPH[d.kind]} /> {d.title}</p>)}
       {info.items.length > 0 && <ul>{info.items.map(({ task, count: n, deadline }) => <li key={task.id}><Pancakes count={n} /> {task.title}{deadline ? ` · ${deadline.title}` : ''}</li>)}</ul>}
+      {error && <p className="sd-warning" role="alert">{error}</p>}
       {canOff && (info.off
-        ? <button type="button" className="hb-text-btn" onClick={() => planner.post('day-off', { day, on: false })}>Studying after all</button>
-        : info.studyDay && <button type="button" className="hb-text-btn" onClick={() => planner.post('day-off', { day, on: true })}>Take this day off</button>)}
+        ? <button type="button" className="hb-text-btn" onClick={() => toggleOff(false)}>Studying after all</button>
+        : info.studyDay && <button type="button" className="hb-text-btn" onClick={() => toggleOff(true)}>Take this day off</button>)}
     </div>
   );
 }

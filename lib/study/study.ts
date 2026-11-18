@@ -4,7 +4,7 @@
 // miss come back on a widening schedule until you've shown you know them. Pure,
 // so the server, the browser and the tests share it.
 
-import { addDays, type DateKey } from '@/lib/habits/dates';
+import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
 import { repairMathEscapes, repairStoredMath } from './math';
 
 /** The PANCE blueprint's organ systems. A question names one so the coverage map can count it. */
@@ -80,6 +80,7 @@ export type Miss = {
   dueOn: DateKey;
   firstOn: DateKey;
   lastSeen: DateKey;
+  lastReviewedOn?: DateKey;
   misses: number;
   rights: number;
   state: MissState;
@@ -91,8 +92,8 @@ export type ProgressData = {
   misses: Record<string, Miss>;
   /** The days you answered reviews. */
   reviewDays: DateKey[];
-  /** Her latest answer to each question in a game, for the map. */
-  gameAnswers: Record<string, { testId: string; answer: number[]; at: string }>;
+  /** Her latest answer to each question in a game or review, for the map. */
+  gameAnswers: Record<string, { testId: string; answer: number[]; at: string; system?: PanceSystem; topic?: string }>;
   /** The Night Shift's running totals. */
   games?: { runs: number; survived: number; best: number; bestHours: number; lastOn?: DateKey };
 };
@@ -129,10 +130,39 @@ export function normalizeTests(raw: Partial<TestsData> | null | undefined): Test
   return { tests, sets: Array.isArray(raw?.sets) ? raw.sets : [] };
 }
 
+function normalizeMisses(raw: unknown): Record<string, Miss> {
+  if (!isRecord(raw)) return {};
+  const out: Record<string, Miss> = {};
+  for (const entry of Object.values(raw)) {
+    if (!isRecord(entry) || typeof entry.questionId !== 'string' || !entry.questionId) continue;
+    const miss = entry as unknown as Miss;
+    const id = miss.questionId;
+    const prev = out[id];
+    if (!prev) {
+      out[id] = { ...miss };
+      continue;
+    }
+    const pickActive = prev.state !== 'active' && miss.state === 'active';
+    const bothActive = prev.state === 'active' && miss.state === 'active';
+    const preferEarlierDue = bothActive && (miss.dueOn || '') < (prev.dueOn || '');
+    const base = pickActive || preferEarlierDue ? miss : prev;
+    const lastReviewedOn = (prev.lastReviewedOn ?? '') >= (miss.lastReviewedOn ?? '') ? prev.lastReviewedOn : miss.lastReviewedOn;
+    out[id] = {
+      ...base,
+      firstOn: prev.firstOn && miss.firstOn ? (prev.firstOn < miss.firstOn ? prev.firstOn : miss.firstOn) : (prev.firstOn || miss.firstOn),
+      lastSeen: prev.lastSeen && miss.lastSeen ? (prev.lastSeen > miss.lastSeen ? prev.lastSeen : miss.lastSeen) : (prev.lastSeen || miss.lastSeen),
+      misses: Math.max(Number(prev.misses) || 0, Number(miss.misses) || 0),
+      rights: Math.max(Number(prev.rights) || 0, Number(miss.rights) || 0),
+      ...(lastReviewedOn ? { lastReviewedOn } : {}),
+    };
+  }
+  return out;
+}
+
 export function normalizeProgress(raw: Partial<ProgressData> | null | undefined): ProgressData {
   return {
     attempts: Array.isArray(raw?.attempts) ? raw.attempts : [],
-    misses: raw?.misses && typeof raw.misses === 'object' ? raw.misses : {},
+    misses: normalizeMisses(raw?.misses),
     reviewDays: Array.isArray(raw?.reviewDays) ? raw.reviewDays : [],
     gameAnswers: raw?.gameAnswers && typeof raw.gameAnswers === 'object' ? raw.gameAnswers : {},
     ...(raw?.games ? { games: raw.games } : {}),
@@ -168,45 +198,234 @@ function completeObjects(text: string) {
   return found;
 }
 
+function scanBalancedEnd(text: string, start: number): number {
+  const stack: string[] = [];
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === '{') stack.push('}');
+    else if (c === '[') stack.push(']');
+    else if (c === '}' || c === ']') {
+      if (!stack.length || stack[stack.length - 1] !== c) return -1;
+      stack.pop();
+      if (!stack.length) return i;
+    }
+  }
+  return -1;
+}
+
+function tryParseJson(slice: string): { ok: true; value: unknown } | { ok: false } {
+  for (const candidate of [slice, slice.replace(/,(\s*[}\]])/g, '$1')]) {
+    try { return { ok: true, value: JSON.parse(candidate) }; } catch { /* try the next */ }
+  }
+  return { ok: false };
+}
+
+const ARRAY_KEYS = new Set(['questions', 'cards', 'cases', 'grids', 'deadlines', 'tasks', 'items']);
+
+function scanStringEnd(text: string, start: number): number {
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === '\\') i++;
+    else if (text[i] === '"') return i;
+  }
+  return -1;
+}
+
+/** Salvage outer metadata fields, any finished arrays, and complete objects inside a truncated root object. */
+function recoverTruncatedObject(text: string): { value: Record<string, unknown>; recovered: number } | null {
+  if (text[0] !== '{') return null;
+  const out: Record<string, unknown> = {};
+  let recovered = 0;
+  let pos = 1;
+  while (pos < text.length) {
+    while (pos < text.length && /[\s,]/.test(text[pos])) pos++;
+    if (pos >= text.length || text[pos] === '}') break;
+    if (text[pos] !== '"') break;
+    const keyEnd = scanStringEnd(text, pos);
+    if (keyEnd < 0) break;
+    const key = tryParseJson(text.slice(pos, keyEnd + 1));
+    if (!key.ok || typeof key.value !== 'string') break;
+    pos = keyEnd + 1;
+    while (pos < text.length && /\s/.test(text[pos])) pos++;
+    if (text[pos] !== ':') break;
+    pos++;
+    while (pos < text.length && /\s/.test(text[pos])) pos++;
+    if (pos >= text.length) break;
+    const ch = text[pos];
+    if (ch === '"') {
+      const end = scanStringEnd(text, pos);
+      if (end < 0) break;
+      const parsed = tryParseJson(text.slice(pos, end + 1));
+      if (parsed.ok) out[key.value] = parsed.value;
+      pos = end + 1;
+    } else if (ch === '{') {
+      const end = scanBalancedEnd(text, pos);
+      if (end < 0) break;
+      const parsed = tryParseJson(text.slice(pos, end + 1));
+      if (parsed.ok) out[key.value] = parsed.value;
+      pos = end + 1;
+    } else if (ch === '[') {
+      const end = scanBalancedEnd(text, pos);
+      if (end >= 0) {
+        const parsed = tryParseJson(text.slice(pos, end + 1));
+        if (parsed.ok) {
+          out[key.value] = parsed.value;
+          if (Array.isArray(parsed.value)) recovered += parsed.value.filter(isRecord).length;
+        }
+        pos = end + 1;
+      } else {
+        const objs = completeObjects(text.slice(pos)).filter(isRecord);
+        out[key.value] = objs;
+        recovered += objs.length;
+        break;
+      }
+    } else {
+      const m = text.slice(pos).match(/^[^,\s}\]]+/);
+      if (!m) break;
+      const parsed = tryParseJson(m[0]);
+      if (parsed.ok) out[key.value] = parsed.value;
+      pos += m[0].length;
+    }
+  }
+  return recovered > 0 ? { value: out, recovered } : null;
+}
+
+function recoverTruncated(text: string): unknown | null {
+  if (text[0] === '{') {
+    const structured = recoverTruncatedObject(text);
+    if (structured) return structured.value;
+  }
+  const markerRe = /"(questions|cards|cases|grids|deadlines|tasks)"\s*:\s*\[/;
+  const marker = markerRe.exec(text);
+  if (marker) {
+    const arrayKey = marker[1];
+    const objects = completeObjects(text.slice(marker.index + marker[0].length - 1)).filter(isRecord);
+    if (objects.length) return { [arrayKey]: objects };
+  }
+  if (text[0] === '[') {
+    const objects = completeObjects(text).filter(isRecord);
+    if (objects.length) return objects;
+  }
+  const objects = completeObjects(text).filter(isRecord);
+  return objects.length && ARRAY_KEYS.size ? { questions: objects } : null;
+}
+
 /** The JSON in an AI's reply: code fences, chatter around it and trailing commas are all forgiven. */
 export function readReply(text: string): { value: unknown; cutOff: boolean } {
   const unfenced = repairMathEscapes(text.replace(/```[a-z]*\s*\n?/gi, '').replace(/```/g, ''));
-  const start = unfenced.search(/[{[]/);
-  if (start < 0) throw new StudyInputError('I couldn’t find any JSON in that. Paste the whole reply, including the part in the code block.');
-  const end = Math.max(unfenced.lastIndexOf('}'), unfenced.lastIndexOf(']'));
-  const body = unfenced.slice(start, end + 1);
-  for (const candidate of [body, body.replace(/,(\s*[}\]])/g, '$1')]) {
-    try { return { value: JSON.parse(candidate), cutOff: false }; } catch { /* try the next */ }
+  let fallback: unknown;
+  let hasFallback = false;
+  let sawStart = false;
+  for (let i = 0; i < unfenced.length; i++) {
+    const c = unfenced[i];
+    if (c !== '{' && c !== '[') continue;
+    sawStart = true;
+    const end = scanBalancedEnd(unfenced, i);
+    if (end >= 0) {
+      const parsed = tryParseJson(unfenced.slice(i, end + 1));
+      if (parsed.ok) {
+        const v = parsed.value;
+        if (isRecord(v) || (Array.isArray(v) && v.some(isRecord))) return { value: v, cutOff: false };
+        if (!hasFallback) { fallback = v; hasFallback = true; }
+        i = end;
+      }
+      continue;
+    }
+    const slice = unfenced.slice(i);
+    if (/^(?:\{\s*"|\[\s*(?:\{|\[|"))/.test(slice)) {
+      const recovered = recoverTruncated(slice);
+      if (recovered !== null) return { value: recovered, cutOff: true };
+    }
   }
-  // Long replies get cut off part way: keep every question that made it through.
-  const marker = unfenced.search(/"(?:questions|cards|cases|grids)"\s*:\s*\[/);
-  const objects = completeObjects(marker >= 0 ? unfenced.slice(unfenced.indexOf('[', marker)) : unfenced.slice(start)).filter(isRecord);
-  if (objects.length) return { value: { questions: objects }, cutOff: true };
+  if (!sawStart) throw new StudyInputError('I couldn’t find any JSON in that. Paste the whole reply, including the part in the code block.');
+  if (hasFallback) return { value: fallback, cutOff: false };
+  const start = unfenced.search(/[{[]/);
+  const fallbackRecovered = start >= 0 ? recoverTruncated(unfenced.slice(start)) : null;
+  if (fallbackRecovered !== null) return { value: fallbackRecovered, cutOff: true };
   throw new StudyInputError('That isn’t valid JSON, and no whole questions could be read from it. Ask the AI to send it again as one JSON code block.');
 }
 
-/** The answer key as indexes: letters ("B", "A, C", ["A","C"]) or a choice's exact text. Bare numbers are ambiguous, so they're refused. */
+const stripLabel = (text: string) =>
+  text
+    .replace(/^(?:\([A-Ha-h1-8]\)|[A-Ha-h1-8]\)|[A-Ha-h1-8][.:]\s+)\s*/, '')
+    .trim();
+
+function resolveAnswerToken(raw: unknown, choices: string[]): number | string {
+  if (typeof raw === 'number') {
+    if (!Number.isInteger(raw)) return 'the answer must be a choice letter or index';
+    if (raw < 0 || raw >= choices.length) return `its answer "${raw}" is past the last choice`;
+    return raw;
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return 'it has no answer';
+  const text = raw.trim();
+  const stripped = stripLabel(text).toLowerCase();
+  const exact = choices.findIndex((c) => c.toLowerCase() === text.toLowerCase() || (!!stripped && c.toLowerCase() === stripped));
+  if (exact >= 0) return exact;
+
+  const letterMatch = text.match(/^(?:(?:option|choice)\s+)?\(?([A-Za-z])\)?(?:$|[.):]|\s+[-–—]\s+)/i);
+  if (letterMatch) {
+    const l = letterMatch[1];
+    const index = l.toUpperCase().charCodeAt(0) - 65;
+    if (index < 0 || index >= choices.length) return `its answer "${l}" is past the last choice`;
+    return index;
+  }
+  const numMatch = text.match(/^(?:(?:option|choice)\s+)?\(?([1-9]\d*)\)?(?:$|[.):]|\s+[-–—]\s+)/i);
+  if (numMatch) {
+    const num = Number(numMatch[1]);
+    const index = num - 1;
+    if (index < 0 || index >= choices.length) return `its answer "${num}" is past the last choice`;
+    return index;
+  }
+  return `its answer "${text.slice(0, 40)}" isn’t one of the choices`;
+}
+
+/** The answer key as indexes: letters ("B", "(B)", "A, B, and C", ["A","C"]), 1-based labels ("1."), 0-based numeric indices (0, [0, 2]), or exact choice text. */
 function readCorrect(value: unknown, choices: string[]): number[] | string {
   const items = Array.isArray(value) ? value : [value];
   const picked = new Set<number>();
   for (const item of items) {
-    if (typeof item === 'number') return 'the answer is a number; it needs the choice’s letter';
+    if (typeof item === 'number') {
+      const idx = resolveAnswerToken(item, choices);
+      if (typeof idx === 'string') return idx;
+      picked.add(idx);
+      continue;
+    }
     if (typeof item !== 'string' || !item.trim()) return 'it has no answer';
     const text = item.trim();
-    const exact = choices.findIndex((c) => c.toLowerCase() === stripLabel(text).toLowerCase());
-    if (exact >= 0) { picked.add(exact); continue; }
-    const letters = text.match(/^[A-Za-z](\s*(,|and|&)\s*[A-Za-z])*$/) ? text.split(/\s*(?:,|and|&)\s*/) : /^[A-Za-z][.):]/.test(text) ? [text[0]] : null;
-    if (!letters) return `its answer "${text.slice(0, 40)}" isn’t one of the choices`;
-    for (const l of letters) {
-      const index = l.toUpperCase().charCodeAt(0) - 65;
-      if (index < 0 || index >= choices.length) return `its answer "${l}" is past the last choice`;
-      picked.add(index);
+    // Exact choice text or single labeled answer ("B. Calcium, magnesium") stays intact before multi-split.
+    const single = resolveAnswerToken(text, choices);
+    if (typeof single === 'number') { picked.add(single); continue; }
+    if (/[,;&\/]|\band\b/i.test(text)) {
+      const parts = text.split(/\s*(?:,|;|&|\/|\band\b)\s*/i).map((s) => s.trim()).filter(Boolean);
+      if (parts.length > 1) {
+        let allValid = true;
+        const multi: number[] = [];
+        for (const part of parts) {
+          const idx = resolveAnswerToken(part, choices);
+          if (typeof idx === 'string') {
+            // If an out-of-range letter/number was given (e.g. "A, F"), report that clear message.
+            if (/past the last choice/.test(idx)) return idx;
+            allValid = false;
+            break;
+          }
+          multi.push(idx);
+        }
+        if (allValid && multi.length) {
+          for (const idx of multi) picked.add(idx);
+          continue;
+        }
+      }
     }
+    return single;
   }
   return picked.size ? [...picked].sort((a, b) => a - b) : 'it has no answer';
 }
-
-const stripLabel = (text: string) => text.replace(/^\(?[A-Ha-h][.):]\s+/, '').trim();
 
 function readChoices(value: unknown): string[] {
   const list = isRecord(value) ? Object.values(value) : Array.isArray(value) ? value : [];
@@ -417,8 +636,20 @@ export function saveAttempt(attempt: Attempt, test: StudyTest, input: { answers?
   if (Number.isFinite(elapsed) && elapsed >= 0) attempt.elapsed = Math.min(Math.round(elapsed), 7 * 24 * 3600);
 }
 
+function missFor(progress: ProgressData, questionId: string): Miss | undefined {
+  const direct = progress.misses[questionId];
+  const entries = Object.entries(progress.misses).filter(([k, m]) => k === questionId || m?.questionId === questionId);
+  if (!entries.length) return undefined;
+  if (entries.length === 1 && entries[0][0] === questionId) return direct;
+  // Migrate any legacy/composite-keyed entries (e.g. "testId:qId") under canonical questionId.
+  const merged = normalizeMisses(Object.fromEntries(entries));
+  for (const [k] of entries) delete progress.misses[k];
+  if (merged[questionId]) progress.misses[questionId] = merged[questionId];
+  return progress.misses[questionId];
+}
+
 function recordMiss(progress: ProgressData, testId: string, questionId: string, today: DateKey, box = 0) {
-  const existing = progress.misses[questionId];
+  const existing = missFor(progress, questionId);
   if (existing) {
     // It's slipped again, wherever it had got to: back to the start, and Anki doesn't get to keep it quiet.
     existing.box = 0;
@@ -450,9 +681,9 @@ export function finishAttempt(progress: ProgressData, attempt: Attempt, test: St
   attempt.finishedOn = today;
   const score = scoreAttempt(attempt, test);
   for (const { question, right, flagged } of score.results) {
-    const existing = progress.misses[question.id];
+    const existing = missFor(progress, question.id);
     if (!right) recordMiss(progress, test.id, question.id, today);
-    else if (existing?.state === 'active' && existing.dueOn <= today) {
+    else if (existing?.state === 'active' && (!isDateKey(existing.dueOn) || existing.dueOn <= today)) {
       moveAlong(existing, today);
       noteReviewDay(progress, today);
     } else if (flagged && !existing) recordMiss(progress, test.id, question.id, today, UNSURE_BOX);
@@ -479,29 +710,69 @@ export function recordGameMiss(progress: ProgressData, testId: string, questionI
 
 /** A right answer in a game: only a miss that's due moves along, same as a review. */
 export function moveMissAlong(progress: ProgressData, questionId: string, today: DateKey) {
-  const miss = progress.misses[questionId];
-  if (miss?.state !== 'active' || miss.dueOn > today) return;
+  const miss = missFor(progress, questionId);
+  if (miss?.state !== 'active' || (isDateKey(miss.dueOn) && miss.dueOn > today) || miss.lastReviewedOn === today) return;
   moveAlong(miss, today);
+  miss.lastReviewedOn = today;
   noteReviewDay(progress, today);
 }
 
 /** What's due today, longest-waiting first, then whatever's been missed most. */
 export function dueMisses(progress: ProgressData, today: DateKey) {
+  const seen = new Set<string>();
   return Object.values(progress.misses)
-    .filter((m) => m.state === 'active' && m.dueOn <= today)
-    .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || b.misses - a.misses || a.questionId.localeCompare(b.questionId));
+    .filter((m) => m && m.state === 'active' && m.lastReviewedOn !== today && (!isDateKey(m.dueOn) || m.dueOn <= today))
+    .sort((a, b) => (a.dueOn || '').localeCompare(b.dueOn || '') || b.misses - a.misses || a.questionId.localeCompare(b.questionId))
+    .filter((m) => {
+      if (seen.has(m.questionId)) return false;
+      seen.add(m.questionId);
+      return true;
+    });
 }
 
-/** Answer one review. A second answer on the same day (another tab, a double tap) doesn't count twice. */
-export function answerReview(progress: ProgressData, question: StudyQuestion, answer: number[], today: DateKey) {
-  const miss = progress.misses[question.id];
-  if (!miss || miss.state !== 'active') throw new StudyInputError('That question isn’t waiting for review.', 'missing');
+export type ReviewOptions = { testId?: string; now?: string; unsure?: boolean };
+export type ReviewOutcome = { right: boolean; miss?: Miss; box: number; dueOn: DateKey; cleared: boolean; counted: boolean };
+
+/** Answer one review. A second answer on the same day or for an already-cleared miss is handled idempotently. */
+export function answerReview(progress: ProgressData, question: StudyQuestion, answer: number[], today: DateKey, options?: ReviewOptions): ReviewOutcome {
+  const miss = missFor(progress, question.id);
   const right = isRight(question, answer);
-  if (miss.dueOn > today) return { right, miss, counted: false };
-  if (right) moveAlong(miss, today);
-  else recordMiss(progress, miss.testId, question.id, today);
+  if (!miss || miss.state !== 'active') {
+    return { right, ...(miss ? { miss } : {}), box: 0, dueOn: today, cleared: true, counted: false };
+  }
+  if ((isDateKey(miss.dueOn) && miss.dueOn > today) || miss.lastReviewedOn === today) {
+    return { right, miss, box: miss.box, dueOn: miss.dueOn, cleared: false, counted: false };
+  }
+  if (right) {
+    if (options?.unsure) {
+      miss.rights++;
+      miss.lastSeen = today;
+      miss.lastReviewedOn = today;
+      miss.state = 'active';
+      miss.box = Math.min(Math.max(miss.box + 1, UNSURE_BOX), UNSURE_BOX);
+      miss.dueOn = addDays(today, REVIEW_DAYS[miss.box]);
+    } else {
+      moveAlong(miss, today);
+      miss.lastReviewedOn = today;
+    }
+  } else {
+    recordMiss(progress, miss.testId, question.id, today);
+    const updatedMiss = progress.misses[question.id];
+    if (updatedMiss) updatedMiss.lastReviewedOn = today;
+  }
   noteReviewDay(progress, today);
-  return { right, miss, counted: true };
+  const current = progress.misses[question.id] ?? miss;
+  const testId = options?.testId ?? current.testId;
+  if (testId) {
+    progress.gameAnswers[question.id] = {
+      testId,
+      answer,
+      at: options?.now ?? `${today}T23:59:59.999Z`,
+      ...(question.system ? { system: question.system } : {}),
+      ...(question.topic ? { topic: question.topic } : {}),
+    };
+  }
+  return { right, miss: current, box: current.box, dueOn: current.dueOn, cleared: current.state === 'cleared', counted: true };
 }
 
 // ── Mending a question the AI got wrong ──────────────────────────────────────

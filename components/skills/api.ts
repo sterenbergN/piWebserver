@@ -81,6 +81,8 @@ export type BoardResponse = { board: BoardSummary; xp: number; reviewDays: strin
 export type ItemRow = {
   id: string; kind: Item['kind']; topicId: string; title: string; difficulty: number; source: Item['source']; createdAt: string;
   retired: boolean; feedback: Item['feedback'] | null; answers: number; lastScore: number | null; lastDay: string | null; due: string | null;
+  searchText?: string;
+  backPreview?: string;
 };
 
 export type SubjectListSummary = {

@@ -101,7 +101,7 @@ export function LevelPicker({ value, onChange, label, allowClear = true }: { val
 
 // ── Copy a prompt, paste the reply ───────────────────────────────────────────
 
-export function CopyPrompt({ title, prompt, children }: { title: string; prompt: string; children?: ReactNode }) {
+export function CopyPrompt({ title, prompt, step = 1, children }: { title: string; prompt: string; step?: number; children?: ReactNode }) {
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -121,20 +121,20 @@ export function CopyPrompt({ title, prompt, children }: { title: string; prompt:
 
   return (
     <section className={`sk-card sk-step-card${copied === 'copied' ? ' is-done' : ''}`}>
-      <h2><span className="sk-step">{copied === 'copied' ? '✓' : 1}</span> {title}</h2>
+      <h2><span className="sk-step">{copied === 'copied' ? '✓' : step}</span> {title}</h2>
       {children}
       <div className="sk-actions">
         <button type="button" className={`btn ${copied === 'copied' ? 'btn-secondary' : 'btn-primary'}`} onClick={copy}>{copied === 'copied' ? 'Copied' : 'Copy prompt'}</button>
         <button type="button" className="sk-text-btn" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide the prompt' : 'Read the prompt'}</button>
       </div>
-      {copied === 'copied' && <p className="sk-hint">Now paste it into your AI app (a thinking model does best), then bring its whole reply back to step 2.</p>}
+      {copied === 'copied' && <p className="sk-hint">Now paste it into your AI app (a thinking model does best), then bring its whole reply back to step {step + 1}.</p>}
       {copied === 'failed' && <p className="sk-warning">Couldn’t reach the clipboard. It’s selected below, so copy it from there.</p>}
       {open && <textarea ref={box} className="sk-mono" readOnly rows={10} value={prompt} aria-label="The prompt to copy" />}
     </section>
   );
 }
 
-export function PasteReply({ value, onChange, children }: { value: string; onChange: (text: string) => void; children?: ReactNode }) {
+export function PasteReply({ value, onChange, step = 2, children }: { value: string; onChange: (text: string) => void; step?: number; children?: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   async function paste() {
@@ -150,7 +150,7 @@ export function PasteReply({ value, onChange, children }: { value: string; onCha
   return (
     <section className="sk-card sk-step-card">
       <div className="sk-card-head">
-        <h2><span className="sk-step">2</span> Paste what it wrote</h2>
+        <h2><span className="sk-step">{step}</span> Paste what it wrote</h2>
         <button type="button" className="sk-small-btn" onClick={paste}>Paste</button>
       </div>
       <textarea ref={box} className="sk-mono" rows={value ? 8 : 4} value={value} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => onChange(e.target.value)} />

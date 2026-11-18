@@ -44,7 +44,7 @@ type Started = {
 };
 
 /** Away longer than this and the iPad has very likely taken the microphone. */
-const AWAY_MS = 3000;
+const AWAY_MS = 15000;
 /** No sound for this long while in front means it has stopped, whatever the recorder says. */
 const STALLED_MS = SLICE_MS * 3;
 const MUTE_GRACE_MS = 1500;
@@ -263,7 +263,14 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
     // A lecture recorded from the back of a room is quiet: bring it up to a level you can hear.
     boostRef.current = await boost.then((attach) => attach?.(audio) ?? null, () => null);
     if (audioRef.current !== audio) { boostRef.current?.close(); boostRef.current = null; return; }
-    audio.currentTime = at / 1000;
+    const targetSec = Math.max(0, at / 1000);
+    if (targetSec > 0) {
+      const applyStart = () => {
+        if (audioRef.current === audio && audio.currentTime < 0.2) audio.currentTime = targetSec;
+      };
+      audio.currentTime = targetSec;
+      audio.addEventListener('loadedmetadata', applyStart, { once: true });
+    }
     const update = () => setPlaying({ record, at: audio.currentTime * 1000, paused: audio.paused });
     audio.addEventListener('timeupdate', update);
     audio.addEventListener('pause', update);
@@ -388,6 +395,7 @@ export function RecordingsPanel({ doc, notebook, title, recorder, currentPage, o
         record={opened}
         recorder={recorder}
         pages={numbered(doc, pagesOf(opened))}
+        currentPage={currentPage}
         onGoToPage={onGoToPage}
         onBack={() => setOpen(null)}
         onClose={onClose}

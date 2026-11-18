@@ -50,11 +50,11 @@ async function fetchPiece(url: string, begin: number, end: number) {
 class HttpRange extends pdfjs.PDFDataRangeTransport {
   private stopped = false;
 
-  constructor(private url: string, size: number, first: Uint8Array) {
+  constructor(private url: string, size: number, first: Uint8Array, private onFatal?: (error: Error) => void) {
     super(size, first);
   }
 
-  /** A dropped connection is waited out: the page that wanted this piece draws when it's back. */
+  /** A dropped connection is waited out briefly, then surfaces a clear error instead of hanging forever. */
   requestDataRange(begin: number, end: number) {
     void (async () => {
       for (let attempt = 0; !this.stopped; attempt++) {
@@ -63,9 +63,17 @@ class HttpRange extends pdfjs.PDFDataRangeTransport {
           if (!this.stopped) this.onDataRange(begin, bytes);
           return;
         } catch (error) {
-          // Refused outright (signed out, or the book was deleted): asking again won't help.
-          if (error instanceof RemoteFileError && error.status < 500) return;
-          await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 500 * 2 ** attempt)));
+          const permanent = error instanceof RemoteFileError && error.status < 500;
+          const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+          if (permanent || offline || attempt >= 2) {
+            this.stopped = true;
+            const err = error instanceof Error
+              ? (error instanceof TypeError ? new Error('No connection to fetch the rest of this PDF.') : error)
+              : new Error('Could not load this PDF.');
+            this.onFatal?.(err);
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, Math.min(3000, 500 * 2 ** attempt)));
         }
       }
     })();
@@ -76,17 +84,25 @@ class HttpRange extends pdfjs.PDFDataRangeTransport {
   }
 }
 
-export async function loadDocument(file: PdfFile) {
+export async function loadDocument(file: PdfFile, onError?: (error: Error) => void) {
   const remote = !(file instanceof Blob);
   const piece = remote ? REMOTE_PIECE_BYTES : PIECE_BYTES;
   let range: InstanceType<typeof pdfjs.PDFDataRangeTransport>;
+  let loadingTask: ReturnType<typeof pdfjs.getDocument> | null = null;
+  let failed = false;
+  const fail = (err: Error) => {
+    if (failed) return;
+    failed = true;
+    void loadingTask?.destroy().catch(() => {});
+    onError?.(err);
+  };
   if (remote) {
     const first = await fetchPiece(file.url, 0, Math.min(piece, Math.max(1, file.size)));
-    range = new HttpRange(file.url, first.total, first.bytes);
+    range = new HttpRange(file.url, first.total, first.bytes, fail);
   } else {
     range = new BlobRange(file, new Uint8Array(await file.slice(0, piece).arrayBuffer()));
   }
-  return pdfjs.getDocument({
+  loadingTask = pdfjs.getDocument({
     range,
     rangeChunkSize: piece,
     disableAutoFetch: true,
@@ -96,7 +112,8 @@ export async function loadDocument(file: PdfFile) {
     standardFontDataUrl: `${PDF_ASSETS}standard_fonts/`,
     wasmUrl: `${PDF_ASSETS}wasm/`,
     iccUrl: `${PDF_ASSETS}iccs/`,
-  }).promise;
+  });
+  return loadingTask.promise;
 }
 
 async function readOutline(doc: PDFDocumentProxy) {
@@ -121,8 +138,8 @@ async function readOutline(doc: PDFDocumentProxy) {
   return entries.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
 }
 
-export async function openPdf(file: PdfFile): Promise<FixedSource> {
-  const doc = await loadDocument(file);
+export async function openPdf(file: PdfFile, onError?: (error: Error) => void): Promise<FixedSource> {
+  const doc = await loadDocument(file, onError);
   const toc = await readOutline(doc);
   const sizes = new Map<number, { width: number; height: number }>();
   return {
@@ -150,6 +167,41 @@ export async function openPdf(file: PdfFile): Promise<FixedSource> {
         return task.promise;
       });
       return { promise: promise.then(() => {}), cancel: () => { cancelled = true; cancelTask(); } };
+    },
+    getText: async (index) => {
+      const page = await doc.getPage(index + 1);
+      const content = await page.getTextContent();
+      let out = '';
+      let prevEndX: number | null = null;
+      let prevY: number | null = null;
+      for (const item of content.items) {
+        if (!('str' in item)) continue;
+        const tx = typeof item.transform?.[4] === 'number' ? item.transform[4] : null;
+        const ty = typeof item.transform?.[5] === 'number' ? item.transform[5] : null;
+        if (prevY !== null && ty !== null && Math.abs(ty - prevY) > 2) {
+          if (out && !out.endsWith('\n')) out += '\n';
+          prevEndX = null;
+        } else if (
+          prevEndX !== null &&
+          tx !== null &&
+          tx - prevEndX > Math.max(1.5, (item.height || 10) * 0.12) &&
+          out &&
+          !/\s$/.test(out) &&
+          !/^\s/.test(item.str)
+        ) {
+          out += ' ';
+        }
+        out += item.str;
+        if (item.hasEOL) {
+          if (!out.endsWith('\n')) out += '\n';
+          prevEndX = null;
+          prevY = null;
+        } else {
+          prevEndX = tx !== null ? tx + (item.width || 0) : null;
+          prevY = ty;
+        }
+      }
+      return out;
     },
     destroy: () => { void doc.loadingTask.destroy(); },
   };

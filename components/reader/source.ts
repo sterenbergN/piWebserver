@@ -8,7 +8,7 @@ export type TocEntry = { label: string; depth: number; section: number; fragment
 export type FlowSource = {
   toc: TocEntry[];
   /** `length` is roughly how many characters the section holds. */
-  sections: { length: number; load: () => Promise<string> }[];
+  sections: { length: number; load: () => Promise<string>; text?: () => Promise<string> }[];
   /** Where a link inside section `from` goes, if it stays in the book. */
   resolve: (from: number, href: string) => { section: number; fragment?: string } | null;
   destroy: () => void;
@@ -23,7 +23,30 @@ export type FixedSource = {
   size: (index: number) => Promise<{ width: number; height: number }>;
   /** Draw a page `pixelWidth` wide onto a canvas. */
   render: (index: number, canvas: HTMLCanvasElement, pixelWidth: number) => { promise: Promise<void>; cancel: () => void };
+  /** Extract readable text for page `index`, if this format carries text (not comics). */
+  getText?: (index: number) => Promise<string>;
   destroy: () => void;
+};
+
+export type BookSearchHit = {
+  anchor: Anchor;
+  chapter?: string;
+  before: string;
+  match: string;
+  after: string;
+};
+
+export type BookSearchOptions = {
+  signal?: AbortSignal;
+  maxHits?: number;
+  onProgress?: (done: number, total: number, hits: BookSearchHit[]) => void;
+};
+
+export type BookSearchResult = {
+  searchable: boolean;
+  reason?: string;
+  hits: BookSearchHit[];
+  truncated?: boolean;
 };
 
 export type ReaderTheme = 'paper' | 'sepia' | 'night';
@@ -44,12 +67,15 @@ export interface Engine {
   readonly kind: 'flow' | 'fixed';
   readonly toc: TocEntry[];
   readonly totalPages: number;
+  readonly searchable: boolean;
   open(at: Anchor | null): Promise<void>;
   next(): Promise<void>;
   prev(): Promise<void>;
   goTo(anchor: Anchor): Promise<void>;
   goToToc(entry: TocEntry): Promise<void>;
   goToFraction(fraction: number): Promise<void>;
+  /** Search readable text in the book; image-only formats report `searchable: false`. */
+  searchText(query: string, options?: BookSearchOptions): Promise<BookSearchResult>;
   /** Where you are now, which notes and reading progress are saved against. */
   here(): Anchor;
   fraction(): number;

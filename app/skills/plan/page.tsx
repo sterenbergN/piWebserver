@@ -195,14 +195,14 @@ export default function InterconnectedPlanPage() {
     }
   }
 
-  if (state === 'signedOut') return <main className="sk sk-narrow"><SignedOutCard /></main>;
-  if (state === 'loading') return <main className="sk sk-narrow"><Loading rows={3} /></main>;
+  if (state === 'signedOut') return <div className="sk sk-narrow"><SignedOutCard /></div>;
+  if (state === 'loading') return <div className="sk sk-narrow"><Loading rows={3} /></div>;
   if (state === 'error' || !graph) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         <Link className="sk-back" href="/skills">← Skills</Link>
         <ErrorNote>{loadError || 'Couldn’t load your skills.'}</ErrorNote>
-      </main>
+      </div>
     );
   }
 
@@ -217,7 +217,7 @@ export default function InterconnectedPlanPage() {
 
   if (done) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         <header className="sk-head">
           <div>
             <Link className="sk-back" href="/skills">← Skills</Link>
@@ -249,12 +249,12 @@ export default function InterconnectedPlanPage() {
             </button>
           </div>
         </section>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="sk sk-narrow sk-planner">
+    <div className="sk sk-narrow sk-planner">
       <header className="sk-head">
         <div>
           <Link className="sk-back" href="/skills">← Skills</Link>
@@ -385,6 +385,7 @@ export default function InterconnectedPlanPage() {
       </section>
 
       <CopyPrompt
+        step={2}
         title={mode === 'schedule' ? 'Copy the schedule prompt' : 'Copy the brainstorm prompt'}
         prompt={prompt}
       >
@@ -393,7 +394,7 @@ export default function InterconnectedPlanPage() {
         </p>
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={setReply}>
+      <PasteReply step={3} value={reply} onChange={setReply}>
         {parsed && !parsed.ok && <p className="sk-warning">{parsed.error}</p>}
       </PasteReply>
 
@@ -672,6 +673,6 @@ export default function InterconnectedPlanPage() {
           </div>
         </section>
       )}
-    </main>
+    </div>
   );
 }

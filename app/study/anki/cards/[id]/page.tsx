@@ -1,15 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { useSitePopup } from '@/components/SitePopup';
 import { SignedOut } from '@/components/study/api';
 import { CardFace } from '@/components/study/CardFace';
 import { Icon } from '@/components/study/Icon';
 import { Loading } from '@/components/study/Ui';
-import { unsentCards, type AnkiCard, type CardDeck } from '@/lib/study/cards';
+import { unsentCards, type AnkiCard, type CardDeck, type DrillScope } from '@/lib/study/cards';
+import { DrillView } from '../DrillView';
+import '../drill.css';
 
 // One deck: get it into Anki, fix what's wrong, and make more. Cards already handed
 // over stay marked, so she can send only what's new and leave her edits in Anki alone.
@@ -74,13 +76,18 @@ function CardRow({ card, deckId, onChanged }: { card: AnkiCard; deckId: string; 
   );
 }
 
-export default function DeckPage() {
+function DeckPageInner() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const drillParam = searchParams.get('drill') === '1';
   const { confirm, popup } = useSitePopup();
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
   const [deck, setDeck] = useState<CardDeck | null>(null);
   const [scope, setScope] = useState<'new' | 'all'>('new');
+  const [drillScope, setDrillScope] = useState<DrillScope>('all');
+  const [drilling, setDrilling] = useState(false);
+  const autoStartedRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
@@ -100,6 +107,14 @@ export default function DeckPage() {
   useEffect(() => {
     load().catch((e) => setState(e instanceof SignedOut ? 'signed-out' : 'error'));
   }, [load]);
+
+  useEffect(() => {
+    if (drillParam && deck && deck.cards.length > 0 && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      setDrillScope('all');
+      setDrilling(true);
+    }
+  }, [drillParam, deck]);
 
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to see this deck">Your decks are only shown to your account.</SignInPrompt></div>;
   const back = <Link className="sd-back" href="/study/anki/cards"><Icon name="left" /> Make flashcards</Link>;
@@ -174,6 +189,13 @@ export default function DeckPage() {
     }
   };
 
+  const saveDrillCard = async (cardId: string, front: string, back: string) => {
+    await post('edit-card', { deckId: id, cardId, front, back });
+    await load();
+  };
+
+  const activeDrillScope: DrillScope = unsent === 0 && drillScope === 'new' ? 'all' : drillScope;
+
   return (
     <div className="sd sd-narrow animate-fade-in">
       {popup}
@@ -183,76 +205,123 @@ export default function DeckPage() {
           <h1>{deck.title}</h1>
           <p>{[deck.course, `${deck.cards.length} card${deck.cards.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}</p>
         </div>
-        <Link className="btn btn-secondary" href={`/study/anki/cards?deck=${deck.id}`}><Icon name="plus" /> Make more</Link>
+        <div className="cd-head-actions">
+          {!drilling && deck.cards.length > 0 && (
+            <>
+              <div className="sd-segments cd-scope-pick" role="radiogroup" aria-label="Drill scope">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={activeDrillScope === 'all'}
+                  onClick={() => setDrillScope('all')}
+                >
+                  All cards
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={activeDrillScope === 'new'}
+                  disabled={unsent === 0}
+                  onClick={() => setDrillScope('new')}
+                >
+                  New only
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setDrilling(true)}
+              >
+                🎯 Practice / Drill ({deck.cards.length} card{deck.cards.length === 1 ? '' : 's'})
+              </button>
+            </>
+          )}
+          <Link className="btn btn-secondary" href={`/study/anki/cards?deck=${deck.id}`}><Icon name="plus" /> Make more</Link>
+        </div>
       </header>
 
-      <section className="sd-card">
-        <h2>Get it into Anki</h2>
-        {deck.cards.length > unsent && unsent > 0 && (
-          <div className="sd-segments" role="radiogroup" aria-label="Which cards">
-            <button type="button" role="radio" aria-checked={chosen === 'new'} onClick={() => setScope('new')}>New since last time ({unsent})</button>
-            <button type="button" role="radio" aria-checked={chosen === 'all'} onClick={() => setScope('all')}>Every card ({deck.cards.length})</button>
-          </div>
-        )}
-        {sent && <p className="sd-outcome"><Icon name="check" /> {sent}</p>}
-        {error && <p className="sd-warning" role="alert">{error}</p>}
-        <button type="button" className="btn btn-primary sd-self-start" disabled={busy || !count} onClick={download}>{busy ? 'Making the file…' : <>Download {count} for Anki</>}</button>
-        {!unsent && deck.cards.length > 0 && <p className="hb-hint">Every card has been downloaded. Importing them again won’t add second copies.</p>}
-        <ol className="sd-howto">
-          <li>Download the file on the computer where you use Anki.</li>
-          <li>In Anki, choose <strong>File → Import</strong> and pick the file.</li>
-          <li>Check it shows note type and deck <strong>from the file</strong>, then click <strong>Import</strong>.</li>
-        </ol>
-        <p className="hb-hint">Sending a card you edited here? Set <strong>Existing notes</strong> to <strong>Update</strong> in Anki’s import window, which also replaces any changes you made to it there.</p>
-        {details ? (
-          <form className="ed-deck-form" onSubmit={(e) => { e.preventDefault(); void saveDetails(); }}>
-            <div className="sd-fields">
-              <label>Name here
-                <input value={details.title} autoFocus maxLength={120} onChange={(e) => setDetails({ ...details, title: e.target.value })} />
-              </label>
-              <label>Class or module
-                <input value={details.course} maxLength={80} onChange={(e) => setDetails({ ...details, course: e.target.value })} />
-              </label>
-              <label className="sd-wide">Deck in Anki
-                <input value={details.deck} maxLength={120} onChange={(e) => setDetails({ ...details, deck: e.target.value })} />
-                <small className="hb-hint">Cards already imported stay where they are. Move them in Anki if you want them to follow.</small>
-              </label>
-            </div>
-            <div className="sd-actions">
-              <button type="submit" className="btn btn-primary" disabled={!details.title.trim()}>Save</button>
-              <button type="button" className="btn btn-secondary" onClick={() => setDetails(null)}>Cancel</button>
-            </div>
-          </form>
-        ) : (
-          <p className="hb-hint">Goes into “{deck.deck}”. <button type="button" className="hb-text-btn" onClick={() => setDetails({ title: deck.title, deck: deck.deck, course: deck.course })}>Edit the deck’s details</button></p>
-        )}
-      </section>
+      {drilling ? (
+        <DrillView
+          deck={deck}
+          initialScope={activeDrillScope}
+          onClose={() => setDrilling(false)}
+          onSaveCard={saveDrillCard}
+        />
+      ) : (
+        <>
+          <section className="sd-card">
+            <h2>Get it into Anki</h2>
+            {deck.cards.length > unsent && unsent > 0 && (
+              <div className="sd-segments" role="radiogroup" aria-label="Which cards">
+                <button type="button" role="radio" aria-checked={chosen === 'new'} onClick={() => setScope('new')}>New since last time ({unsent})</button>
+                <button type="button" role="radio" aria-checked={chosen === 'all'} onClick={() => setScope('all')}>Every card ({deck.cards.length})</button>
+              </div>
+            )}
+            {sent && <p className="sd-outcome"><Icon name="check" /> {sent}</p>}
+            {error && <p className="sd-warning" role="alert">{error}</p>}
+            <button type="button" className="btn btn-primary sd-self-start" disabled={busy || !count} onClick={download}>{busy ? 'Making the file…' : <>Download {count} for Anki</>}</button>
+            {!unsent && deck.cards.length > 0 && <p className="hb-hint">Every card has been downloaded. Importing them again won’t add second copies.</p>}
+            <ol className="sd-howto">
+              <li>Download the file on the computer where you use Anki.</li>
+              <li>In Anki, choose <strong>File → Import</strong> and pick the file.</li>
+              <li>Check it shows note type and deck <strong>from the file</strong>, then click <strong>Import</strong>.</li>
+            </ol>
+            <p className="hb-hint">Sending a card you edited here? Set <strong>Existing notes</strong> to <strong>Update</strong> in Anki’s import window, which also replaces any changes you made to it there.</p>
+            {details ? (
+              <form className="ed-deck-form" onSubmit={(e) => { e.preventDefault(); void saveDetails(); }}>
+                <div className="sd-fields">
+                  <label>Name here
+                    <input value={details.title} autoFocus maxLength={120} onChange={(e) => setDetails({ ...details, title: e.target.value })} />
+                  </label>
+                  <label>Class or module
+                    <input value={details.course} maxLength={80} onChange={(e) => setDetails({ ...details, course: e.target.value })} />
+                  </label>
+                  <label className="sd-wide">Deck in Anki
+                    <input value={details.deck} maxLength={120} onChange={(e) => setDetails({ ...details, deck: e.target.value })} />
+                    <small className="hb-hint">Cards already imported stay where they are. Move them in Anki if you want them to follow.</small>
+                  </label>
+                </div>
+                <div className="sd-actions">
+                  <button type="submit" className="btn btn-primary" disabled={!details.title.trim()}>Save</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setDetails(null)}>Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <p className="hb-hint">Goes into “{deck.deck}”. <button type="button" className="hb-text-btn" onClick={() => setDetails({ title: deck.title, deck: deck.deck, course: deck.course })}>Edit the deck’s details</button></p>
+            )}
+          </section>
 
-      <section className="sd-card">
-        <div className="sd-card-head">
-          <h2>The cards</h2>
-          {!adding && <button type="button" className="hb-small-btn" onClick={() => setAdding(true)}><Icon name="plus" /> Add a card</button>}
-        </div>
-        {adding && (
-          <div className="ed-question">
-            <label className="sd-mend-label">Question, or text with a {'{{c1::blank}}'}
-              <textarea rows={3} value={newFront} autoFocus onChange={(e) => setNewFront(e.target.value)} />
-            </label>
-            <label className="sd-mend-label">Answer (optional for a blank)
-              <textarea rows={2} value={newBack} onChange={(e) => setNewBack(e.target.value)} />
-            </label>
-            <div className="sd-actions">
-              <button type="button" className="btn btn-primary" disabled={!newFront.trim()} onClick={addCard}>Add the card</button>
-              <button type="button" className="btn btn-secondary" onClick={() => setAdding(false)}>Cancel</button>
+          <section className="sd-card">
+            <div className="sd-card-head">
+              <h2>The cards</h2>
+              {!adding && <button type="button" className="hb-small-btn" onClick={() => setAdding(true)}><Icon name="plus" /> Add a card</button>}
             </div>
-          </div>
-        )}
-        {deck.cards.length ? (
-          <ul className="cd-list">{deck.cards.map((card) => <CardRow key={card.id} card={card} deckId={deck.id} onChanged={load} />)}</ul>
-        ) : <p className="hb-hint">No cards left in this deck.</p>}
-      </section>
+            {adding && (
+              <div className="ed-question">
+                <label className="sd-mend-label">Question, or text with a {'{{c1::blank}}'}
+                  <textarea rows={3} value={newFront} autoFocus onChange={(e) => setNewFront(e.target.value)} />
+                </label>
+                <label className="sd-mend-label">Answer (optional for a blank)
+                  <textarea rows={2} value={newBack} onChange={(e) => setNewBack(e.target.value)} />
+                </label>
+                <div className="sd-actions">
+                  <button type="button" className="btn btn-primary" disabled={!newFront.trim()} onClick={addCard}>Add the card</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setAdding(false)}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {deck.cards.length ? (
+              <ul className="cd-list">{deck.cards.map((card) => <CardRow key={card.id} card={card} deckId={deck.id} onChanged={load} />)}</ul>
+            ) : <p className="hb-hint">No cards left in this deck.</p>}
+          </section>
 
-      <button type="button" className="hb-text-btn sd-danger-link sd-self-start" onClick={remove}>Delete this deck</button>
+          <button type="button" className="hb-text-btn sd-danger-link sd-self-start" onClick={remove}>Delete this deck</button>
+        </>
+      )}
     </div>
   );
+}
+
+export default function DeckPage() {
+  return <Suspense><DeckPageInner /></Suspense>;
 }

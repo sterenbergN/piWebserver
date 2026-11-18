@@ -621,3 +621,190 @@ test('scratchOutTargets finds overlapping ink strokes and text elements and igno
   const circle = wobble((t) => [140 + 50 * Math.cos(t * Math.PI * 2), 120 + 40 * Math.sin(t * Math.PI * 2)]);
   assert.deepEqual(scratchOutTargets(circle, 2, elements), { strokes: [], texts: [] });
 });
+
+test('normalizeWorkId leaves <=60-char IDs untouched and deterministically maps 80-char IDs <=64 chars', async () => {
+  const { cleanQuestions, isId, normalizeWorkId } = await import('./items');
+  assert.equal(normalizeWorkId('equilibrium'), 'equilibrium');
+  const id60 = 'a'.repeat(60);
+  assert.equal(normalizeWorkId(id60), id60);
+
+  const id80a = '2026-11-18-controls-second-order-overshoot-damping-ratio-steady-state-error-pt1A';
+  const id80b = '2026-11-18-controls-second-order-overshoot-damping-ratio-steady-state-error-pt1B';
+  assert.equal(id80a.length, 80);
+  const normA = normalizeWorkId(id80a);
+  const normB = normalizeWorkId(id80b);
+  assert.equal(normA, normalizeWorkId(id80a));
+  assert.ok(normA.length <= 64 && isId(normA), `${normA} (${normA.length}) should pass isId`);
+  assert.ok(normB.length <= 64 && isId(normB), `${normB} (${normB.length}) should pass isId`);
+  assert.notEqual(normA, normB);
+
+  const cleaned = cleanQuestions([{ id: id80a, date: '2026-11-18', title: 'Overshoot' }]);
+  assert.equal(cleaned.length, 1);
+  assert.equal(cleaned[0].id, normA);
+});
+
+test('parseTimestamp handles MM:SS, M:SS, HH:MM:SS, bracketed and parenthesized forms and rejects invalid times', async () => {
+  const { parseTimestamp } = await import('./recording-summary');
+  assert.deepEqual(parseTimestamp('01:15'), { raw: '01:15', seconds: 75, ms: 75_000, label: '1:15' });
+  assert.deepEqual(parseTimestamp('1:05'), { raw: '1:05', seconds: 65, ms: 65_000, label: '1:05' });
+  assert.deepEqual(parseTimestamp('00:00'), { raw: '00:00', seconds: 0, ms: 0, label: '0:00' });
+  assert.deepEqual(parseTimestamp('[02:40]'), { raw: '[02:40]', seconds: 160, ms: 160_000, label: '2:40' });
+  assert.deepEqual(parseTimestamp('(05:10)'), { raw: '(05:10)', seconds: 310, ms: 310_000, label: '5:10' });
+  assert.deepEqual(parseTimestamp('01:02:03'), { raw: '01:02:03', seconds: 3723, ms: 3_723_000, label: '1:02:03' });
+  assert.deepEqual(parseTimestamp('[1:00:05]'), { raw: '[1:00:05]', seconds: 3605, ms: 3_605_000, label: '1:00:05' });
+
+  assert.equal(parseTimestamp(''), null);
+  assert.equal(parseTimestamp('01:60'), null);
+  assert.equal(parseTimestamp('1:75:00'), null);
+  assert.equal(parseTimestamp('[01:15)'), null);
+  assert.equal(parseTimestamp('1:5'), null);
+  assert.equal(parseTimestamp('not a time'), null);
+});
+
+test('buildStrictSummaryPrompt includes strict JSON schema, timestamp rules, and transcript markers', async () => {
+  const { buildStrictSummaryPrompt } = await import('./recording-summary');
+  const prompt = buildStrictSummaryPrompt('Cardio Lecture 4', 'Physiology', 1_700_000_000_000, [
+    { start: 0, end: 15_000, text: 'Welcome to preload and afterload.' },
+    { start: 75_000, end: 90_000, text: 'Frank-Starling curve shifts up with contractility.' },
+  ]);
+  assert.match(prompt, /Cardio Lecture 4/);
+  assert.match(prompt, /Physiology/);
+  assert.match(prompt, /```json/);
+  assert.match(prompt, /"overview"/);
+  assert.match(prompt, /"chapters"/);
+  assert.match(prompt, /"keyPoints"/);
+  assert.match(prompt, /"terms"/);
+  assert.match(prompt, /"actionItems"/);
+  assert.match(prompt, /"questions"/);
+  assert.match(prompt, /\[0:00\] Welcome to preload and afterload\./);
+  assert.match(prompt, /\[1:15\] Frank-Starling curve shifts up with contractility\./);
+  assert.match(prompt, /omit nothing structural/i);
+});
+
+test('tokenizeInlineTimestamps splits bracketed and parenthesized timestamps cleanly', async () => {
+  const { tokenizeInlineTimestamps } = await import('./recording-summary');
+  assert.deepEqual(tokenizeInlineTimestamps(''), []);
+  assert.deepEqual(tokenizeInlineTimestamps('No timestamps here.'), [{ type: 'text', text: 'No timestamps here.' }]);
+
+  const tokens = tokenizeInlineTimestamps('Intro at [00:00], curve at (01:15), long [1:02:03], bad [01:99] stays.');
+  assert.equal(tokens.length, 7);
+  assert.deepEqual(tokens[0], { type: 'text', text: 'Intro at ' });
+  assert.equal(tokens[1].type, 'time');
+  if (tokens[1].type === 'time') assert.equal(tokens[1].ts.ms, 0);
+  assert.deepEqual(tokens[2], { type: 'text', text: ', curve at ' });
+  assert.equal(tokens[3].type, 'time');
+  if (tokens[3].type === 'time') assert.equal(tokens[3].ts.ms, 75_000);
+  assert.deepEqual(tokens[4], { type: 'text', text: ', long ' });
+  assert.equal(tokens[5].type, 'time');
+  if (tokens[5].type === 'time') assert.equal(tokens[5].ts.ms, 3_723_000);
+  assert.deepEqual(tokens[6], { type: 'text', text: ', bad [01:99] stays.' });
+});
+
+test('parseRecordingSummary parses strict JSON, truncated JSON, and legacy markdown/text summaries', async () => {
+  const { countSummaryTimestamps, formatSummaryForNotebookPage, parseRecordingSummary } = await import('./recording-summary');
+
+  // 1. Strict fenced JSON with chatter + omitted time scanned from inline text.
+  const strictRaw = [
+    'Sure! Here is your JSON:',
+    '```json',
+    JSON.stringify({
+      overview: 'Covered cardiac preload [00:15] and aortic stenosis [04:00].',
+      chapters: [{ time: '00:00', title: 'Introduction', summary: 'Overview of hemodynamics.' }],
+      keyPoints: [
+        { time: '01:15', text: 'Preload reflects end-diastolic stretch.' },
+        { text: '[02:30] Afterload rises with systemic vascular resistance.' },
+      ],
+      terms: [{ term: 'Preload', definition: 'End-diastolic wall stress', time: '01:15' }],
+      actionItems: [{ task: 'Complete problem set 3', due: 'Friday', time: '05:10' }],
+      questions: [{ question: 'What raises afterload?', answer: 'Increased SVR or aortic stenosis.', time: '02:30' }],
+    }, null, 2),
+    '```',
+  ].join('\n');
+
+  const strict = parseRecordingSummary(strictRaw);
+  assert.equal(strict.format, 'strict');
+  assert.equal(strict.chapters.length, 1);
+  assert.equal(strict.chapters[0].time.seconds, 0);
+  assert.equal(strict.keyPoints.length, 2);
+  assert.equal(strict.keyPoints[1].time?.seconds, 150);
+  assert.equal(strict.terms[0].term, 'Preload');
+  assert.equal(strict.actionItems[0].due, 'Friday');
+  assert.equal(strict.questions[0].answer, 'Increased SVR or aortic stenosis.');
+  assert.equal(countSummaryTimestamps(strict), 8);
+
+  const outline = formatSummaryForNotebookPage('Cardio Lecture 4', strict);
+  assert.match(outline, /^Cardio Lecture 4 — Summary/);
+  assert.match(outline, /Overview/);
+  assert.match(outline, /Key Points/);
+  assert.match(outline, /Terms & Facts/);
+  assert.match(outline, /Action Items/);
+  assert.match(outline, /\(due Friday\)/);
+
+  // 2. Truncated JSON recovery (unclosed string + nested array/object).
+  const truncatedRaw = [
+    '```json',
+    '{',
+    '  "overview": "Covers PID loops [00:10] and gain margins.",',
+    '  "chapters": [',
+    '    { "time": "00:00", "title": "Setup", "summary": "Plant transfer function." },',
+    '    { "time": "02:15", "title": "Integral windup", "summary": "Anti-windup clamps act',
+  ].join('\n');
+
+  const truncated = parseRecordingSummary(truncatedRaw);
+  assert.equal(truncated.format, 'strict');
+  assert.match(truncated.overview, /PID loops/);
+  assert.equal(truncated.chapters.length, 2);
+  assert.equal(truncated.chapters[1].time.seconds, 135);
+  assert.equal(truncated.chapters[1].title, 'Integral windup');
+  assert.equal(truncated.chapters[1].summary, 'Anti-windup clamps act');
+
+  // Truncated right after an incomplete key in an object.
+  const truncatedKeyRaw = '{"overview":"Short recap [0:05].","keyPoints":[{"time":"00:30","text":"Key idea"},{"time":"01:00","tex';
+  const truncatedKey = parseRecordingSummary(truncatedKeyRaw);
+  assert.equal(truncatedKey.format, 'strict');
+  assert.equal(truncatedKey.overview, 'Short recap [0:05].');
+  assert.equal(truncatedKey.keyPoints.length, 1);
+  assert.equal(truncatedKey.keyPoints[0].text, 'Key idea');
+
+  // 3. Legacy numbered/bulleted text summary.
+  const legacyRaw = [
+    '1. Summary: We reviewed control stability [00:20] and Nyquist plots [03:45].',
+    '',
+    '2. Key points:',
+    '- [00:20] Routh table counts right-half-plane poles.',
+    '- Gain margin measures distance to -1 (03:45).',
+    '',
+    '3. Terms and facts to remember:',
+    '- **Phase margin**: Additional phase lag before instability [04:10]',
+    '',
+    '4. To do:',
+    '- Practice Bode plot sketching (due: Monday) [06:00]',
+    '',
+    '5. Questions:',
+    '- Q: When is a system marginally stable? [02:00]',
+    '  A: When simple poles lie on the imaginary axis.',
+  ].join('\n');
+
+  const legacy = parseRecordingSummary(legacyRaw);
+  assert.equal(legacy.format, 'legacy');
+  assert.match(legacy.overview, /control stability \[00:20\]/);
+  assert.equal(legacy.keyPoints.length, 2);
+  assert.equal(legacy.keyPoints[0].time?.seconds, 20);
+  assert.equal(legacy.keyPoints[0].text, 'Routh table counts right-half-plane poles.');
+  assert.equal(legacy.keyPoints[1].time?.seconds, 225);
+  assert.equal(legacy.terms.length, 1);
+  assert.equal(legacy.terms[0].term, 'Phase margin');
+  assert.equal(legacy.terms[0].time?.seconds, 250);
+  assert.equal(legacy.actionItems.length, 1);
+  assert.equal(legacy.actionItems[0].due, 'Monday');
+  assert.equal(legacy.actionItems[0].time?.seconds, 360);
+  assert.equal(legacy.questions.length, 1);
+  assert.equal(legacy.questions[0].question, 'When is a system marginally stable? [02:00]');
+  assert.equal(legacy.questions[0].answer, 'When simple poles lie on the imaginary axis.');
+  assert.equal(legacy.questions[0].time?.seconds, 120);
+
+  // 4. Raw prose fallback without headings.
+  const prose = parseRecordingSummary('Quick voice memo at [00:12] about buying lab notebooks.');
+  assert.equal(prose.format, 'legacy');
+  assert.equal(prose.overview, 'Quick voice memo at [00:12] about buying lab notebooks.');
+});

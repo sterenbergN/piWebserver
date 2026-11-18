@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import type { SolutionWidget, WidgetKind } from '@/lib/daily/types';
 import {
   WIDGETS, bode2At, bode2Metrics, niceCeil, step1Metrics, step1Response, step2Metrics, step2Response, widgetParams, widgetSliders, type Slider,
@@ -280,7 +283,13 @@ export function SolutionWidgetView({ widget }: { widget: SolutionWidget }) {
           </div>
         ))}
       </dl>
-      {widget.caption && <p className="dq-w-caption">{widget.caption}</p>}
+      {widget.caption && (
+        <div className="dq-w-caption">
+          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]} components={{ p: ({ children }) => <p className="dq-w-caption-line">{children}</p> }}>
+            {widget.caption}
+          </ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }

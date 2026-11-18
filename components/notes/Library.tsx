@@ -372,7 +372,24 @@ export default function Library({ online, signedOut, onOpen, onSignIn }: {
         <span className="nt-grow" />
         {sync === 'syncing' && <span className="nt-sync">Saving…</span>}
         {!online && <span className="nt-sync"><Icon name="offline" /> Offline</span>}
-        <button type="button" className="nt-icon-btn" aria-label={theme === 'dark' ? 'Light theme' : 'Dark theme'} onClick={toggleTheme}><Icon name="moon" /></button>
+        <button
+          type="button"
+          className="nt-icon-btn"
+          aria-label="Explore"
+          title="Explore"
+          onClick={() => window.dispatchEvent(new Event('site:open-launcher'))}
+        >
+          <Icon name="compass" />
+        </button>
+        <button
+          type="button"
+          className="nt-icon-btn"
+          aria-label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          title={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          onClick={toggleTheme}
+        >
+          <Icon name="moon" />
+        </button>
         <button type="button" className="nt-btn is-primary" onClick={() => setAdding(true)}><Icon name="plus" /> New</button>
       </header>
 

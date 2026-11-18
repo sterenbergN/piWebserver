@@ -1,5 +1,6 @@
 'use client';
 
+import { buildStrictSummaryPrompt } from '@/lib/notes/recording-summary';
 import { deleteKv, getKv, putKv } from './db';
 import { fmtDuration } from './Recorder';
 
@@ -65,20 +66,5 @@ export const transcriptText = (segments: TranscriptSegment[], times = true) =>
 
 /** The prompt to paste into an AI, with the whole transcript in it. */
 export function summaryPrompt(title: string, notebookTitle: string, startedAt: number, segments: TranscriptSegment[]) {
-  const when = new Date(startedAt).toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  return [
-    `Below is a transcript of a recording from my notes ("${title}", in my notebook "${notebookTitle}", recorded ${when}). It's probably a lecture, class or meeting.`,
-    'It was made by a small speech-recognition model, so some words, especially technical, medical or unusual ones, will be misheard. Work out what was really meant from the context, and fix those words in what you write.',
-    '',
-    'Please write, in plain text (no tables, no markdown headings; simple "-" bullets are fine):',
-    '1. Summary: what it was about, in 3 to 5 sentences.',
-    '2. Key points: the main ideas, as bullets, in the order they came up.',
-    '3. Terms and facts to remember: definitions, numbers, names, formulas.',
-    '4. To do: anything said about assignments, exams, deadlines or what to study. Leave this out if there was nothing.',
-    '',
-    'The times in [brackets] are minutes:seconds into the recording. Mention one next to a point when it would help to go back and listen.',
-    '',
-    'Transcript:',
-    transcriptText(segments),
-  ].join('\n');
+  return buildStrictSummaryPrompt(title, notebookTitle, startedAt, segments);
 }

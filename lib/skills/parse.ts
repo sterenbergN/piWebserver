@@ -10,7 +10,7 @@ import {
   MAX_LEVEL, RESOURCE_KINDS, SKILL_STEP_KINDS, SUBJECT_STATUSES,
   type DraftInquiryAnswer, type DraftNewSubject, type DraftParentLink, type DraftResource,
   type DraftScheduledTask, type DraftStep, type DraftSubjectPlan, type DraftTopic,
-  type InterconnectedPlanDraft, type KnowledgeInquiry, type ParseResult, type Resource,
+  type InquiryStatus, type InterconnectedPlanDraft, type KnowledgeInquiry, type ParseResult, type Resource,
   type ResourceKind, type SkillQuestion, type SkillStepKind, type SkillsData, type Stage,
   type Subject, type SubjectStatus, type Topic,
 } from './types';
@@ -35,7 +35,7 @@ function reply(raw: string) {
 }
 
 export const LIMITS = {
-  name: 100, description: 600, title: 200, author: 160, amount: 160,
+  name: 80, description: 600, title: 200, author: 160, amount: 160,
   detail: 1200, roadmap: 20000, summary: 2000, front: 3000, back: 6000,
   question: 500, context: 2000, answer: 20000, takeaways: 6000, source: 500, tag: 64,
 };
@@ -810,4 +810,396 @@ export function parseInquiryReply(raw: string, data: SkillsData): ParseResult<Dr
   }
 
   return { ok: true, data: out, warnings };
+}
+
+// ── Bulk Q&A Pair Parsing & Knowledge Base Search / Export ───────────────────
+
+export type ParsedBulkQAItem = {
+  question: string;
+  answer?: string;
+};
+
+const Q_LINE_RE = /^(?:Q\d*|Question\s*\d*)\s*:\s*(.*)$/i;
+const A_LINE_RE = /^(?:A\d*|Answer\s*\d*)\s*:\s*(.*)$/i;
+const INLINE_QA_SINGLE_RE = /^(?:Q\d*|Question\s*\d*)\s*:\s*(.+?)\s+(?:A\d*|Answer\s*\d*)\s*:\s*(.+)$/i;
+
+function stripListPrefix(rawLine: string): { line: string; hadBullet: boolean } {
+  let line = rawLine.trim();
+  let hadBullet = false;
+  while (line) {
+    const next = line
+      .replace(/^(?:[-*•◦▪‣]|\d+[.)])(?:\s+|$)/, '')
+      .replace(/^\[(?: |x|X)?\](?:\s+|$)/, '')
+      .trim();
+    if (next === line) break;
+    hadBullet = true;
+    line = next;
+  }
+  return { line, hadBullet };
+}
+
+function cleanQuestionPiece(raw: string): string {
+  const m = Q_LINE_RE.exec(raw.trim());
+  const unwrapped = m ? m[1] : raw;
+  return unwrapped.replace(/\s+/g, ' ').trim().slice(0, LIMITS.question).trim();
+}
+
+function cleanAnswerPiece(raw: string): string {
+  const m = A_LINE_RE.exec(raw.trim());
+  const unwrapped = m ? m[1] : raw;
+  return unwrapped.trim().slice(0, LIMITS.answer).trim();
+}
+
+function splitInlineQA(line: string): ParsedBulkQAItem | null {
+  const inlineQA = INLINE_QA_SINGLE_RE.exec(line);
+  if (inlineQA) {
+    const question = cleanQuestionPiece(inlineQA[1]);
+    const answer = cleanAnswerPiece(inlineQA[2]);
+    if (question && answer) return { question, answer };
+  }
+  for (const sepRe of [/^(.*?)\s+::\s+(.+)$/, /^(.*?)\s+(?:->|→)\s+(.+)$/, /^(.*?)\s+—\s+(.+)$/]) {
+    const m = sepRe.exec(line);
+    if (!m) continue;
+    const question = cleanQuestionPiece(m[1]);
+    const answer = cleanAnswerPiece(m[2]);
+    if (question && answer) return { question, answer };
+  }
+  return null;
+}
+
+/**
+ * Parse pasted bulk lookups / Q&A pairs. Supports:
+ * - Plain list lines (`- What is MCP?`, `* ...`, `1. ...`, `[ ] ...`)
+ * - `Q: ...` / `A: ...` blocks (including multi-line answers)
+ * - Inline Q&A pairs (`Question :: Answer`, `Question -> Answer`, `Question — Answer`)
+ */
+export function parseBulkQAInput(rawText: string): ParsedBulkQAItem[] {
+  if (typeof rawText !== 'string' || !rawText.trim()) return [];
+  const lines = rawText.split(/\r?\n/);
+  const rawItems: ParsedBulkQAItem[] = [];
+
+  type PendingBlock = { qLines: string[]; aLines: string[]; mode: 'q' | 'a'; pendingBlank: boolean };
+  let current: PendingBlock | null = null;
+  let lastWasPlainQuestion = false;
+
+  const flushCurrent = () => {
+    if (!current) return;
+    const question = current.qLines.join(' ').replace(/\s+/g, ' ').trim().slice(0, LIMITS.question).trim();
+    const answer = current.aLines.join('\n').trim().slice(0, LIMITS.answer).trim();
+    if (question) {
+      rawItems.push({ question, ...(answer ? { answer } : {}) });
+    }
+    current = null;
+  };
+
+  const nextNonBlankAfter = (startIdx: number): string | null => {
+    for (let j = startIdx + 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (t) return t;
+    }
+    return null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) {
+      if (current) {
+        const nextRaw = nextNonBlankAfter(i);
+        if (!nextRaw) {
+          flushCurrent();
+        } else {
+          const nextStripped = stripListPrefix(nextRaw);
+          if (current.mode === 'a') {
+            if (
+              !nextStripped.line
+              || nextStripped.hadBullet
+              || Q_LINE_RE.test(nextStripped.line)
+              || !!splitInlineQA(nextStripped.line)
+              || nextStripped.line.endsWith('?')
+            ) {
+              flushCurrent();
+            } else {
+              current.pendingBlank = true;
+            }
+          } else if (A_LINE_RE.test(nextStripped.line)) {
+            // Keep open while awaiting A:
+          } else {
+            flushCurrent();
+          }
+        }
+      }
+      lastWasPlainQuestion = false;
+      continue;
+    }
+
+    const { line, hadBullet } = stripListPrefix(trimmed);
+    if (!line) {
+      flushCurrent();
+      lastWasPlainQuestion = false;
+      continue;
+    }
+
+    const qMatch = Q_LINE_RE.exec(line);
+    if (qMatch) {
+      flushCurrent();
+      const inline = splitInlineQA(line);
+      if (inline) {
+        rawItems.push(inline);
+        lastWasPlainQuestion = false;
+      } else {
+        current = {
+          qLines: qMatch[1].trim() ? [qMatch[1].trim()] : [],
+          aLines: [],
+          mode: 'q',
+          pendingBlank: false,
+        };
+        lastWasPlainQuestion = false;
+      }
+      continue;
+    }
+
+    const aMatch = A_LINE_RE.exec(line);
+    if (aMatch) {
+      const rest = aMatch[1].trim();
+      if (current) {
+        current.mode = 'a';
+        current.pendingBlank = false;
+        if (rest) current.aLines.push(rest);
+      } else if (lastWasPlainQuestion && rawItems.length > 0 && !rawItems[rawItems.length - 1].answer) {
+        const prev = rawItems.pop()!;
+        current = {
+          qLines: [prev.question],
+          aLines: rest ? [rest] : [],
+          mode: 'a',
+          pendingBlank: false,
+        };
+      }
+      lastWasPlainQuestion = false;
+      continue;
+    }
+
+    if (current) {
+      if (current.mode === 'a') {
+        if (hadBullet && (current.aLines.length > 0 || line.endsWith('?'))) {
+          flushCurrent();
+          // Re-process this bulleted line below as a new entry.
+        } else {
+          const inline = splitInlineQA(line);
+          const strongSep = inline && (/\s+::\s+/.test(line) || /\?\s+(?:->|→|—)\s+/.test(line));
+          if (strongSep && inline) {
+            flushCurrent();
+            rawItems.push(inline);
+            lastWasPlainQuestion = false;
+            continue;
+          }
+          if (current.pendingBlank) {
+            current.aLines.push('');
+            current.pendingBlank = false;
+          }
+          current.aLines.push(line);
+          lastWasPlainQuestion = false;
+          continue;
+        }
+      } else {
+        const inline = splitInlineQA(line);
+        if (hadBullet || inline) {
+          flushCurrent();
+          // Re-process below
+        } else {
+          current.qLines.push(line);
+          lastWasPlainQuestion = false;
+          continue;
+        }
+      }
+    }
+
+    const inline = splitInlineQA(line);
+    if (inline) {
+      rawItems.push(inline);
+      lastWasPlainQuestion = false;
+      continue;
+    }
+
+    const clipped = line.replace(/\s+/g, ' ').trim().slice(0, LIMITS.question).trim();
+    if (clipped) {
+      rawItems.push({ question: clipped });
+      lastWasPlainQuestion = true;
+    } else {
+      lastWasPlainQuestion = false;
+    }
+  }
+
+  flushCurrent();
+
+  const seen = new Map<string, number>();
+  const out: ParsedBulkQAItem[] = [];
+  for (const item of rawItems) {
+    const key = item.question.replace(/\s+/g, ' ').toLowerCase();
+    const existingIdx = seen.get(key);
+    if (existingIdx !== undefined) {
+      if (!out[existingIdx].answer && item.answer) {
+        out[existingIdx] = { ...out[existingIdx], answer: item.answer };
+      }
+      continue;
+    }
+    seen.set(key, out.length);
+    out.push(item);
+  }
+  return out;
+}
+
+export type InquirySortMode = 'open-first' | 'newest' | 'recently-answered' | 'alphabetical';
+
+export type InquirySubjectMeta = { name: string; topics?: { id: string; name: string }[] };
+
+export type InquiryFilterOptions = {
+  statusTab?: 'all' | InquiryStatus;
+  search?: string;
+  tagFilter?: string | null;
+  skillFilter?: string;
+  fixedSubjectId?: string;
+  sort?: InquirySortMode;
+  subjectLookup?: Map<string, InquirySubjectMeta>;
+};
+
+export function extractInquirySearchTerms(search: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of search.trim().split(/\s+/)) {
+    if (!raw) continue;
+    let term = raw;
+    if (term.startsWith('[[') && term.endsWith(']]') && term.length > 4) {
+      term = term.slice(2, -2).trim();
+    } else if (term.startsWith('#') && term.length > 1) {
+      term = term.slice(1);
+    }
+    if (!term) continue;
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+  }
+  return out.sort((a, b) => b.length - a.length);
+}
+
+export function inquiryMatchesSearch(
+  item: KnowledgeInquiry,
+  search: string,
+  subjectLookup?: Map<string, InquirySubjectMeta>,
+): boolean {
+  const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const sub = item.subjectId ? subjectLookup?.get(item.subjectId) : undefined;
+  const topic = sub && item.topicId ? sub.topics?.find((t) => t.id === item.topicId) : undefined;
+  const tagsText = (item.tags ?? []).map((t) => `#${t} ${t}`).join(' ');
+  const haystack = [
+    item.question,
+    item.context ?? '',
+    item.answer ?? '',
+    item.takeaways ?? '',
+    ...(item.sources ?? []),
+    tagsText,
+    sub?.name ?? '',
+    topic?.name ?? '',
+  ]
+    .join('\n')
+    .toLowerCase();
+
+  return tokens.every((tok) => {
+    if (haystack.includes(tok)) return true;
+    if (tok.startsWith('[[') && tok.endsWith(']]') && tok.length > 4) {
+      return haystack.includes(tok.slice(2, -2));
+    }
+    return false;
+  });
+}
+
+export function filterAndSortInquiries(
+  inquiries: KnowledgeInquiry[],
+  options: InquiryFilterOptions = {},
+): KnowledgeInquiry[] {
+  const {
+    statusTab = 'all',
+    search = '',
+    tagFilter = null,
+    skillFilter = 'all',
+    fixedSubjectId,
+    sort = 'open-first',
+    subjectLookup,
+  } = options;
+
+  const normalizedTag = tagFilter ? tagFilter.trim().replace(/^#+/, '').toLowerCase() : null;
+
+  const filtered = inquiries.filter((item) => {
+    if (fixedSubjectId) {
+      if (item.subjectId !== fixedSubjectId) return false;
+    } else if (skillFilter === '__unassigned__') {
+      if (item.subjectId) return false;
+    } else if (skillFilter && skillFilter !== 'all') {
+      if (item.subjectId !== skillFilter) return false;
+    }
+    if (statusTab !== 'all' && item.status !== statusTab) return false;
+    if (normalizedTag && !(item.tags ?? []).some((t) => t.toLowerCase() === normalizedTag)) return false;
+    return inquiryMatchesSearch(item, search, subjectLookup);
+  });
+
+  return [...filtered].sort((a, b) => {
+    if (sort === 'alphabetical') {
+      return a.question.localeCompare(b.question, undefined, { sensitivity: 'base' });
+    }
+    if (sort === 'newest') {
+      return (b.createdAt || b.updatedAt).localeCompare(a.createdAt || a.updatedAt)
+        || (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    }
+    if (sort === 'recently-answered') {
+      if (a.status !== b.status) return a.status === 'solved' ? -1 : 1;
+      if (a.status === 'solved') {
+        return (b.solvedAt || b.updatedAt || b.createdAt).localeCompare(a.solvedAt || a.updatedAt || a.createdAt);
+      }
+      return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+    }
+    // 'open-first'
+    if (a.status !== b.status) return a.status === 'open' ? -1 : 1;
+    return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
+  });
+}
+
+export function deckTagCounts(inquiries: KnowledgeInquiry[]): Array<{ tag: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const inq of inquiries) {
+    for (const raw of inq.tags ?? []) {
+      const tag = raw.trim().replace(/^#+/, '').toLowerCase();
+      if (!tag) continue;
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+export function formatInquiriesMarkdown(
+  inquiries: KnowledgeInquiry[],
+  subjectLookup?: Map<string, InquirySubjectMeta>,
+): string {
+  return inquiries
+    .map((inq) => {
+      const sub = inq.subjectId ? subjectLookup?.get(inq.subjectId) : undefined;
+      const topic = sub && inq.topicId ? sub.topics?.find((t) => t.id === inq.topicId) : undefined;
+      const meta: string[] = [];
+      if (sub) meta.push(`Skill: ${sub.name}${topic ? ` · ${topic.name}` : ''}`);
+      meta.push(`Status: ${inq.status === 'solved' ? 'Solved' : 'Open'}`);
+      if (inq.tags?.length) meta.push(`Tags: ${inq.tags.map((t) => `#${t}`).join(', ')}`);
+
+      const sections: string[] = [`### ${inq.question}`, `*${meta.join(' · ')}*`];
+      if (inq.context?.trim()) sections.push(`> Context: ${inq.context.trim()}`);
+      if (inq.answer?.trim()) sections.push(inq.answer.trim());
+      else sections.push('_Open lookup (not answered yet)_');
+      if (inq.takeaways?.trim()) sections.push(`**Key Takeaways:**\n${inq.takeaways.trim()}`);
+      if (inq.sources?.length) {
+        sections.push(`**Sources:**\n${inq.sources.map((s) => `- ${s}`).join('\n')}`);
+      }
+      return sections.join('\n\n');
+    })
+    .join('\n\n---\n\n');
 }

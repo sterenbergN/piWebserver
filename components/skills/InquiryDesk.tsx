@@ -6,6 +6,15 @@ import { useSitePopup } from '@/components/SitePopup';
 import { skillsPost, type KnowledgeSubjectOption } from '@/components/skills/api';
 import { ErrorNote } from '@/components/skills/Ui';
 import WikiTextarea from '@/components/skills/WikiTextarea';
+import {
+  deckTagCounts,
+  extractInquirySearchTerms,
+  filterAndSortInquiries,
+  formatInquiriesMarkdown,
+  normalizeInquiryQuestionKey,
+  parseBulkQAInput,
+  type InquirySortMode,
+} from '@/lib/skills/parse';
 import type { DraftInquiryAnswer, InquiryStatus, KnowledgeInquiry, ParseResult } from '@/lib/skills/types';
 import './knowledge.css';
 
@@ -55,26 +64,55 @@ export function parseSourcesInput(raw: string): string[] {
 }
 
 export function previewRunningList(raw: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const rawLine of raw.split(/\r?\n/)) {
-    let line = rawLine.trim();
-    while (line) {
-      const next = line
-        .replace(/^(?:[-*•◦▪‣]|\d+[.)])(?:\s+|$)/, '')
-        .replace(/^\[(?: |x|X)?\](?:\s+|$)/, '')
-        .trim();
-      if (next === line) break;
-      line = next;
+  return parseBulkQAInput(raw).map((item) => item.question);
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function HighlightText({ text, terms }: { text: string; terms?: string[] }) {
+  const parts = useMemo(() => {
+    if (!text || !terms?.length) return null;
+    const clean = terms.filter((t) => t.trim().length > 0);
+    if (!clean.length) return null;
+    const re = new RegExp(`(${clean.map(escapeRegExp).join('|')})`, 'gi');
+    return text.split(re);
+  }, [text, terms]);
+
+  if (!parts) return <>{text}</>;
+  return (
+    <>
+      {parts.map((part, idx) =>
+        idx % 2 === 1 ? (
+          <mark key={idx} className="inq-highlight">{part}</mark>
+        ) : (
+          <Fragment key={idx}>{part}</Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+function accordionPreviewSnippet(text: string, terms: string[], maxLen = 115): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (!flat) return '';
+  if (terms.length > 0) {
+    const lower = flat.toLowerCase();
+    let firstAt = -1;
+    let firstLen = 0;
+    for (const t of terms) {
+      const idx = lower.indexOf(t.toLowerCase());
+      if (idx >= 0 && (firstAt < 0 || idx < firstAt)) {
+        firstAt = idx;
+        firstLen = t.length;
+      }
     }
-    const cleaned = line.replace(/\s+/g, ' ');
-    if (!cleaned) continue;
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(cleaned);
+    if (firstAt >= 0) {
+      const start = Math.max(0, firstAt - 45);
+      const end = Math.min(flat.length, firstAt + firstLen + 65);
+      return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+    }
   }
-  return out;
+  return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
 }
 
 function localConceptAlias(question: string): string {
@@ -95,6 +133,7 @@ export function RichInquiryText({
   inquiries,
   subjects,
   onFocusInquiry,
+  highlightTerms,
 }: {
   text: string;
   resolveWiki?: (target: string) => string | undefined;
@@ -103,6 +142,7 @@ export function RichInquiryText({
   inquiries?: KnowledgeInquiry[];
   subjects?: KnowledgeSubjectOption[];
   onFocusInquiry?: (inquiryId: string) => void;
+  highlightTerms?: string[];
 }) {
   const tokens = useMemo(() => {
     const list: Array<{ type: 'text' | 'wiki' | 'url' | 'tag'; raw: string; value: string }> = [];
@@ -162,30 +202,38 @@ export function RichInquiryText({
         if (tok.type === 'wiki') {
           const resolved = localResolve(tok.value);
           if (!resolved) {
-            return <span key={idx} className="kv-inline-token is-unresolved">{tok.raw}</span>;
+            return (
+              <span key={idx} className="kv-inline-token is-unresolved">
+                <HighlightText text={tok.raw} terms={highlightTerms} />
+              </span>
+            );
           }
           if (resolved.kind === 'graph' && onSelectGraphNode) {
             return (
               <button key={idx} type="button" className="kv-inline-token" onClick={() => onSelectGraphNode(resolved.id)}>
-                {tok.raw}
+                <HighlightText text={tok.raw} terms={highlightTerms} />
               </button>
             );
           }
           if (resolved.kind === 'inq' && onFocusInquiry) {
             return (
               <button key={idx} type="button" className="kv-inline-token" onClick={() => onFocusInquiry(resolved.id)}>
-                {tok.raw}
+                <HighlightText text={tok.raw} terms={highlightTerms} />
               </button>
             );
           }
           if (resolved.kind === 'subject') {
             return (
               <Link key={idx} className="kv-inline-token" href={`/skills/${resolved.id}`}>
-                {tok.raw}
+                <HighlightText text={tok.raw} terms={highlightTerms} />
               </Link>
             );
           }
-          return <span key={idx} className="kv-inline-token is-unresolved">{tok.raw}</span>;
+          return (
+            <span key={idx} className="kv-inline-token is-unresolved">
+              <HighlightText text={tok.raw} terms={highlightTerms} />
+            </span>
+          );
         }
 
         if (tok.type === 'tag') {
@@ -199,7 +247,7 @@ export function RichInquiryText({
                 else onFilterTag?.(tok.value);
               }}
             >
-              {tok.raw}
+              <HighlightText text={tok.raw} terms={highlightTerms} />
             </button>
           );
         }
@@ -207,12 +255,12 @@ export function RichInquiryText({
         if (tok.type === 'url') {
           return (
             <a key={idx} className="inq-source-link" href={tok.value} target="_blank" rel="noopener noreferrer">
-              {tok.raw}
+              <HighlightText text={tok.raw} terms={highlightTerms} />
             </a>
           );
         }
 
-        return <Fragment key={idx}>{tok.value}</Fragment>;
+        return <HighlightText key={idx} text={tok.value} terms={highlightTerms} />;
       })}
     </>
   );
@@ -441,6 +489,10 @@ export default function InquiryDesk({
   const [qTags, setQTags] = useState('');
   const [qSubjectId, setQSubjectId] = useState(fixedSubjectId ?? '');
   const [qTopicId, setQTopicId] = useState('');
+  const [showCaptureAnswer, setShowCaptureAnswer] = useState(false);
+  const [qAnswer, setQAnswer] = useState('');
+  const [qTakeaway, setQTakeaway] = useState('');
+  const [qCreateCard, setQCreateCard] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
 
   // Bulk import drawer
@@ -461,15 +513,27 @@ export default function InquiryDesk({
   const [aiReply, setAiReply] = useState('');
   const [pasteFailed, setPasteFailed] = useState(false);
   const [parsedReply, setParsedReply] = useState<ParseResult<DraftInquiryAnswer[]> | null>(null);
+  const [offAnswers, setOffAnswers] = useState<Set<number>>(() => new Set());
   const [parseBusy, setParseBusy] = useState(false);
   const [createCards, setCreateCards] = useState(false);
   const [applyAiBusy, setApplyAiBusy] = useState(false);
 
-  // Filter & list state
+  // Filter, explorer & display state
   const [statusTab, setStatusTab] = useState<StatusTab>('all');
   const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [skillFilter, setSkillFilter] = useState<string>('all');
+  const [sortMode, setSortMode] = useState<InquirySortMode>('open-first');
+  const [viewMode, setViewMode] = useState<'cards' | 'accordion'>('cards');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [mdCopyState, setMdCopyState] = useState<'idle' | 'copied'>('idle');
+
+  // Card editing & 1-click inline answer composer
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [inlineAnswerId, setInlineAnswerId] = useState<string | null>(null);
+  const [inlineAnswer, setInlineAnswer] = useState('');
+  const [inlineTakeaway, setInlineTakeaway] = useState('');
+  const [inlineCreateCard, setInlineCreateCard] = useState(false);
   const [cardBusyId, setCardBusyId] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(focusInquiryId ?? null);
 
@@ -496,64 +560,65 @@ export default function InquiryDesk({
   );
   const validBulkTopicId = bulkTopics.some((t) => t.id === bulkTopicId) ? bulkTopicId : '';
 
-  const scopedInquiries = useMemo(() => {
-    const base = fixedSubjectId
-      ? inquiries.filter((q) => q.subjectId === fixedSubjectId)
-      : skillFilter === 'all'
-        ? inquiries
-        : skillFilter === '__unassigned__'
-          ? inquiries.filter((q) => !q.subjectId)
-          : inquiries.filter((q) => q.subjectId === skillFilter);
-
-    return [...base].sort((a, b) => {
-      if (a.status !== b.status) return a.status === 'open' ? -1 : 1;
-      return (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt);
-    });
-  }, [inquiries, fixedSubjectId, skillFilter]);
+  const scopedInquiries = useMemo(
+    () => filterAndSortInquiries(inquiries, {
+      fixedSubjectId,
+      skillFilter,
+      sort: sortMode,
+      subjectLookup: subjectMap,
+    }),
+    [inquiries, fixedSubjectId, skillFilter, sortMode, subjectMap],
+  );
 
   const openCount = useMemo(() => scopedInquiries.filter((q) => q.status === 'open').length, [scopedInquiries]);
   const solvedCount = useMemo(() => scopedInquiries.filter((q) => q.status === 'solved').length, [scopedInquiries]);
+  const availableTags = useMemo(() => deckTagCounts(scopedInquiries), [scopedInquiries]);
+  const searchTerms = useMemo(() => extractInquirySearchTerms(search), [search]);
 
-  const matchesSearch = (item: KnowledgeInquiry, q: string, tagQuery: string): boolean => {
-    if (!q) return true;
-    const inQuestion = item.question.toLowerCase().includes(q);
-    const inContext = item.context?.toLowerCase().includes(q) ?? false;
-    const inAnswer = item.answer?.toLowerCase().includes(q) ?? false;
-    const inTakeaways = item.takeaways?.toLowerCase().includes(q) ?? false;
-    const inSources = item.sources?.some((s) => s.toLowerCase().includes(q)) ?? false;
-    const inTags = item.tags?.some((t) => t.toLowerCase().includes(tagQuery)) ?? false;
-    return inQuestion || inContext || inAnswer || inTakeaways || inSources || inTags;
-  };
+  const filteredInquiries = useMemo(
+    () => filterAndSortInquiries(inquiries, {
+      fixedSubjectId,
+      skillFilter,
+      statusTab,
+      tagFilter,
+      search,
+      sort: sortMode,
+      subjectLookup: subjectMap,
+    }),
+    [inquiries, fixedSubjectId, skillFilter, statusTab, tagFilter, search, sortMode, subjectMap],
+  );
 
-  const filteredInquiries = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const tagQuery = q.replace(/^#+/, '');
-    return scopedInquiries.filter((item) => {
-      if (statusTab !== 'all' && item.status !== statusTab) return false;
-      return matchesSearch(item, q, tagQuery);
-    });
-  }, [scopedInquiries, statusTab, search]);
-
-  const filteredOpenInquiries = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const tagQuery = q.replace(/^#+/, '');
-    return scopedInquiries.filter((item) => item.status === 'open' && matchesSearch(item, q, tagQuery));
-  }, [scopedInquiries, search]);
+  const filteredOpenInquiries = useMemo(
+    () => filterAndSortInquiries(inquiries, {
+      fixedSubjectId,
+      skillFilter,
+      statusTab: 'open',
+      tagFilter,
+      search,
+      sort: sortMode,
+      subjectLookup: subjectMap,
+    }),
+    [inquiries, fixedSubjectId, skillFilter, tagFilter, search, sortMode, subjectMap],
+  );
 
   const selectedAiIds = useMemo(
     () => filteredOpenInquiries.filter((q) => !excludedAiIds.has(q.id)).map((q) => q.id),
     [filteredOpenInquiries, excludedAiIds],
   );
 
-  // Live preview of running list lines
-  const parsedRunningItems = useMemo(() => previewRunningList(bulkText), [bulkText]);
+  // Live preview of running list / Q&A pairs
+  const parsedBulkItems = useMemo(() => parseBulkQAInput(bulkText), [bulkText]);
+  const answeredBulkCount = useMemo(
+    () => parsedBulkItems.filter((item) => !!item.answer?.trim()).length,
+    [parsedBulkItems],
+  );
   const existingQuestionKeys = useMemo(
-    () => new Set(inquiries.map((q) => q.question.trim().replace(/\s+/g, ' ').toLowerCase())),
+    () => new Set(inquiries.map((q) => normalizeInquiryQuestionKey(q.question))),
     [inquiries],
   );
-  const newRunningCount = useMemo(
-    () => parsedRunningItems.filter((line) => !existingQuestionKeys.has(line.toLowerCase())).length,
-    [parsedRunningItems, existingQuestionKeys],
+  const newBulkCount = useMemo(
+    () => parsedBulkItems.filter((item) => !existingQuestionKeys.has(normalizeInquiryQuestionKey(item.question))).length,
+    [parsedBulkItems, existingQuestionKeys],
   );
 
   // Focus inquiry when prop changes
@@ -561,6 +626,11 @@ export default function InquiryDesk({
     if (!focusInquiryId) return;
     setHighlightedId(focusInquiryId);
     setStatusTab('all');
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(focusInquiryId);
+      return next;
+    });
     const el = document.getElementById(`inq-card-${focusInquiryId}`);
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -569,6 +639,7 @@ export default function InquiryDesk({
 
   // Debounced preview of pasted AI reply
   useEffect(() => {
+    setOffAnswers(new Set());
     const trimmed = aiReply.trim();
     if (!trimmed) {
       setParsedReply(null);
@@ -580,7 +651,10 @@ export default function InquiryDesk({
     const timer = window.setTimeout(async () => {
       try {
         const res = await skillsPost<{ parsed: ParseResult<DraftInquiryAnswer[]> }>('parse-inquiry-reply', { reply: aiReply });
-        if (!cancelled) setParsedReply(res.parsed);
+        if (!cancelled) {
+          setOffAnswers(new Set());
+          setParsedReply(res.parsed);
+        }
       } catch (e) {
         if (!cancelled) {
           setParsedReply({
@@ -599,26 +673,39 @@ export default function InquiryDesk({
     };
   }, [aiReply]);
 
-  async function handleQuickAdd(e: React.FormEvent) {
-    e.preventDefault();
+  async function submitQuickAdd() {
     if (captureBusy || !qInput.trim()) return;
     setCaptureBusy(true);
     setError('');
     setNotice('');
     try {
       const tags = parseTagsInput(qTags);
+      const hasAnswer = !!qAnswer.trim();
+      const hasCard = hasAnswer && qCreateCard && !!effectiveQuickSubjectId && !!validQuickTopicId;
       await skillsPost('add-inquiry', {
         question: qInput.trim(),
         ...(qContext.trim() ? { context: qContext.trim() } : {}),
+        ...(hasAnswer ? { answer: qAnswer.trim() } : {}),
+        ...(qTakeaway.trim() ? { takeaway: qTakeaway.trim() } : {}),
         ...(tags.length ? { tags } : {}),
         ...(effectiveQuickSubjectId ? { subjectId: effectiveQuickSubjectId } : {}),
         ...(validQuickTopicId ? { topicId: validQuickTopicId } : {}),
-        status: 'open',
+        ...(hasCard ? { createCard: true } : {}),
+        status: hasAnswer ? 'solved' : 'open',
       });
       setQInput('');
       setQContext('');
       setQTags('');
-      setNotice('Jotted down to your lookups list.');
+      setQAnswer('');
+      setQTakeaway('');
+      setQCreateCard(false);
+      setNotice(
+        hasAnswer
+          ? hasCard
+            ? 'Saved Q&A to Knowledge Base and created recall flashcard.'
+            : 'Saved Q&A straight to Knowledge Base as Solved.'
+          : 'Jotted down to your lookups list.',
+      );
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add lookup.');
@@ -627,9 +714,14 @@ export default function InquiryDesk({
     }
   }
 
+  function handleQuickAdd(e: React.FormEvent) {
+    e.preventDefault();
+    void submitQuickAdd();
+  }
+
   async function handleBulkImport(e: React.FormEvent) {
     e.preventDefault();
-    if (bulkBusy || parsedRunningItems.length === 0) return;
+    if (bulkBusy || parsedBulkItems.length === 0) return;
     setBulkBusy(true);
     setError('');
     setNotice('');
@@ -644,9 +736,15 @@ export default function InquiryDesk({
       setBulkText('');
       setBulkTags('');
       setShowBulk(false);
-      const addedLen = Array.isArray(res.added) ? res.added.length : 0;
+      const addedArr = Array.isArray(res.added) ? res.added : [];
+      const addedLen = addedArr.length;
+      const solvedAdded = addedArr.filter((q) => q.status === 'solved').length;
       const skippedLen = typeof res.skipped === 'number' ? res.skipped : 0;
-      setNotice(`Imported ${addedLen} lookup${addedLen === 1 ? '' : 's'}${skippedLen > 0 ? ` (${skippedLen} duplicate${skippedLen === 1 ? '' : 's'} skipped)` : ''}.`);
+      setNotice(
+        `Imported ${addedLen} lookup${addedLen === 1 ? '' : 's'}`
+          + `${solvedAdded > 0 ? ` (${solvedAdded} saved as Solved)` : ''}`
+          + `${skippedLen > 0 ? ` · ${skippedLen} duplicate${skippedLen === 1 ? '' : 's'} skipped` : ''}.`,
+      );
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not import lookups.');
@@ -694,18 +792,31 @@ export default function InquiryDesk({
     }
   }
 
+  const parsedAnswers = parsedReply?.ok ? parsedReply.data : [];
+  const selectedAnswers = parsedAnswers.filter((_, idx) => !offAnswers.has(idx));
+
+  function toggleAnswer(idx: number) {
+    setOffAnswers((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
   async function handleApplyAiAnswers() {
-    if (applyAiBusy || !aiReply.trim()) return;
+    if (applyAiBusy || !parsedReply?.ok || selectedAnswers.length === 0) return;
     setApplyAiBusy(true);
     setError('');
     setNotice('');
     try {
       const res = await skillsPost<{ updated: number; created: number; cardsCreated: number }>('apply-inquiry-answers', {
-        reply: aiReply,
+        answers: selectedAnswers,
         createCards,
       });
       setAiReply('');
       setParsedReply(null);
+      setOffAnswers(new Set());
       setShowAiPanel(false);
       setNotice(
         `Applied AI answers: ${res.updated} updated, ${res.created} added${res.cardsCreated > 0 ? `, ${res.cardsCreated} flashcard${res.cardsCreated === 1 ? '' : 's'} created` : ''}.`,
@@ -775,10 +886,96 @@ export default function InquiryDesk({
     }
   }
 
+  function openInlineAnswer(inq: KnowledgeInquiry) {
+    if (inlineAnswerId === inq.id) {
+      setInlineAnswerId(null);
+      return;
+    }
+    setEditingId(null);
+    setInlineAnswerId(inq.id);
+    setInlineAnswer(inq.answer ?? '');
+    setInlineTakeaway(inq.takeaways ?? '');
+    setInlineCreateCard(false);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(inq.id);
+      return next;
+    });
+  }
+
+  async function saveInlineAnswer(inq: KnowledgeInquiry) {
+    const ans = inlineAnswer.trim();
+    if (!ans || cardBusyId) return;
+    setCardBusyId(inq.id);
+    setError('');
+    setNotice('');
+    try {
+      await skillsPost('edit-inquiry', {
+        inquiryId: inq.id,
+        changes: {
+          answer: ans,
+          takeaways: inlineTakeaway.trim(),
+          status: 'solved',
+        },
+      });
+      let madeCard = false;
+      if (inlineCreateCard && inq.subjectId && inq.topicId && !inq.cardItemId) {
+        await skillsPost('promote-inquiry-to-card', {
+          inquiryId: inq.id,
+          subjectId: inq.subjectId,
+          topicId: inq.topicId,
+        });
+        madeCard = true;
+      }
+      setInlineAnswerId(null);
+      setInlineAnswer('');
+      setInlineTakeaway('');
+      setInlineCreateCard(false);
+      setNotice(
+        madeCard
+          ? `Saved answer for "${inq.question}" and created recall flashcard.`
+          : `Saved answer for "${inq.question}".`,
+      );
+      await onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save answer.');
+    } finally {
+      setCardBusyId(null);
+    }
+  }
+
+  async function handleCopyMarkdown() {
+    if (!filteredInquiries.length) return;
+    const md = formatInquiriesMarkdown(filteredInquiries, subjectMap);
+    try {
+      await navigator.clipboard.writeText(md);
+      setMdCopyState('copied');
+      setNotice(`Copied ${filteredInquiries.length} Knowledge Base ${filteredInquiries.length === 1 ? 'entry' : 'entries'} as Markdown.`);
+      window.setTimeout(() => setMdCopyState('idle'), 2200);
+    } catch {
+      setError('Clipboard access was blocked — could not copy Markdown.');
+    }
+  }
+
+  function toggleAccordion(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function focusLocalInquiry(id: string) {
     setStatusTab('all');
     setSearch('');
+    setTagFilter(null);
     setHighlightedId(id);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     window.setTimeout(() => {
       document.getElementById(`inq-card-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }, 40);
@@ -792,7 +989,7 @@ export default function InquiryDesk({
           <div>
             <h2>Things to look up</h2>
             <p className="sk-hint">
-              Jot down anything you hear and want to understand later. Link it to a skill or to
+              Jot down anything you hear and want to understand later. Link it to a skill or to{' '}
               <code>[[a topic]]</code>, and have your AI answer a batch at once.
             </p>
           </div>
@@ -822,7 +1019,16 @@ export default function InquiryDesk({
           </div>
         </div>
 
-        <form className="inq-capture-form" onSubmit={(e) => void handleQuickAdd(e)}>
+        <form
+          className="inq-capture-form"
+          onSubmit={(e) => void handleQuickAdd(e)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && qInput.trim()) {
+              e.preventDefault();
+              void submitQuickAdd();
+            }
+          }}
+        >
           <div className="inq-capture-main">
             <input
               type="text"
@@ -834,7 +1040,7 @@ export default function InquiryDesk({
               onChange={(e) => setQInput(e.target.value)}
             />
             <button type="submit" className="btn btn-primary" disabled={captureBusy || !qInput.trim()}>
-              {captureBusy ? 'Saving…' : 'Jot down'}
+              {captureBusy ? 'Saving…' : qAnswer.trim() ? 'Save Q&A' : 'Jot down'}
             </button>
           </div>
           <div className="inq-capture-extras">
@@ -885,13 +1091,72 @@ export default function InquiryDesk({
               onChange={(e) => setQContext(e.target.value)}
             />
           </div>
+          <div className="inq-capture-answer-bar">
+            <button
+              type="button"
+              className="sk-small-btn"
+              aria-expanded={showCaptureAnswer}
+              aria-pressed={showCaptureAnswer}
+              onClick={() => setShowCaptureAnswer((v) => !v)}
+            >
+              {showCaptureAnswer
+                ? '▾ Hide Answer / Explanation'
+                : qAnswer.trim()
+                  ? '✍️ Answer added — edit'
+                  : '✍️ Answer / Explanation (optional — saves straight to Knowledge Base as Solved)'}
+            </button>
+            {qAnswer.trim() && (
+              <span className="inq-status-pill is-solved">Saves as Solved</span>
+            )}
+          </div>
+          {showCaptureAnswer && (
+            <div className="inq-capture-answer-panel">
+              <label className="sk-field">
+                <span>✍️ Answer / Explanation (optional — saves straight to Knowledge Base as Solved)</span>
+                <WikiTextarea
+                  rows={3}
+                  value={qAnswer}
+                  placeholder="Write it in your own words. Type [[ to link a concept or skill, # for a tag. (Cmd/Ctrl+Enter to save)"
+                  onChange={(e) => setQAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && qInput.trim()) {
+                      e.preventDefault();
+                      void submitQuickAdd();
+                    }
+                  }}
+                />
+              </label>
+              <div className="inq-capture-answer-row">
+                <label className="sk-field">
+                  <span>💡 Key takeaway (optional)</span>
+                  <input
+                    type="text"
+                    value={qTakeaway}
+                    maxLength={600}
+                    placeholder="1-line core takeaway to remember…"
+                    onChange={(e) => setQTakeaway(e.target.value)}
+                  />
+                </label>
+                {effectiveQuickSubjectId && validQuickTopicId && (
+                  <label className="sk-check inq-capture-card-check">
+                    <input
+                      type="checkbox"
+                      checked={qCreateCard}
+                      onChange={(e) => setQCreateCard(e.target.checked)}
+                    />
+                    <span>Also create a review flashcard 🃏</span>
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
         </form>
 
         {error && <ErrorNote>{error}</ErrorNote>}
         {notice && <p className="inq-notice" role="status">{notice}</p>}
       </section>
 
-      {/* Paste Running List Bulk Import Drawer */}
+      {/* Paste Running List / Q&A Pairs Bulk Import Drawer */}
       {showBulk && (
         <section className="inq-drawer" aria-label="Paste running list bulk import">
           <div className="inq-drawer-head">
@@ -901,33 +1166,44 @@ export default function InquiryDesk({
             </button>
           </div>
           <p className="sk-hint">
-            Paste bullet points, checkboxes, or numbered lines (one lookup per line). Duplicates are skipped automatically.
+            Paste plain bullet lists or Q&amp;A pairs (<code>Q: / A:</code>, <code>Question :: Answer</code>,{' '}
+            <code>Question -&gt; Answer</code>, or <code>Question — Answer</code>). Answered pairs save straight to your Knowledge Base as Solved.
           </p>
           <form className="sk-inline-form" onSubmit={(e) => void handleBulkImport(e)}>
             <label className="sk-field">
-              <span>Running list</span>
+              <span>Questions or Q&amp;A pairs</span>
               <textarea
-                rows={5}
+                rows={6}
                 value={bulkText}
-                placeholder={'- what is MCP\n- what is R1 Redundancy\n- how does Raft consensus work'}
+                placeholder={'- What is MCP?\nWhat is Raft? :: Consensus algorithm for replicated logs\nQ: What is gRPC?\nA: High-performance RPC over HTTP/2'}
                 onChange={(e) => setBulkText(e.target.value)}
               />
             </label>
             <div className="inq-preview-meta">
-              <strong>{parsedRunningItems.length}</strong> parsed item{parsedRunningItems.length === 1 ? '' : 's'}
-              {parsedRunningItems.length > 0 && (
+              <span>
+                <strong>{parsedBulkItems.length}</strong> question{parsedBulkItems.length === 1 ? '' : 's'}
+                {' · '}
+                <strong>{answeredBulkCount}</strong> already answered
+              </span>
+              {parsedBulkItems.length > 0 && (
                 <span>
-                  ({newRunningCount} new · {parsedRunningItems.length - newRunningCount} already in list)
+                  ({newBulkCount} new · {parsedBulkItems.length - newBulkCount} already in list)
                 </span>
               )}
             </div>
-            {parsedRunningItems.length > 0 && (
+            {parsedBulkItems.length > 0 && (
               <div className="sk-chips">
-                {parsedRunningItems.slice(0, 8).map((line) => (
-                  <span key={line} className="sk-chip">{line}</span>
+                {parsedBulkItems.slice(0, 8).map((item) => (
+                  <span
+                    key={item.question}
+                    className={`sk-chip${item.answer ? ' is-strong' : ''}`}
+                    title={item.answer ? `Answer: ${item.answer}` : 'Open lookup'}
+                  >
+                    {item.answer ? '💡 ' : ''}{item.question}
+                  </span>
                 ))}
-                {parsedRunningItems.length > 8 && (
-                  <span className="sk-chip">+{parsedRunningItems.length - 8} more</span>
+                {parsedBulkItems.length > 8 && (
+                  <span className="sk-chip">+{parsedBulkItems.length - 8} more</span>
                 )}
               </div>
             )}
@@ -977,9 +1253,13 @@ export default function InquiryDesk({
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={bulkBusy || parsedRunningItems.length === 0}
+                disabled={bulkBusy || parsedBulkItems.length === 0}
               >
-                {bulkBusy ? 'Importing…' : `Import ${parsedRunningItems.length} lookup${parsedRunningItems.length === 1 ? '' : 's'}`}
+                {bulkBusy
+                  ? 'Importing…'
+                  : answeredBulkCount > 0
+                    ? `Import ${parsedBulkItems.length} (${answeredBulkCount} Solved)`
+                    : `Import ${parsedBulkItems.length} lookup${parsedBulkItems.length === 1 ? '' : 's'}`}
               </button>
               <button type="button" className="sk-text-btn" onClick={() => setShowBulk(false)}>
                 Cancel
@@ -1131,7 +1411,27 @@ export default function InquiryDesk({
           {parsedReply?.ok && (
             <div className="sk-field">
               <div className="inq-preview-meta">
-                <strong>Preview:</strong> {parsedReply.data.length} parsed answer{parsedReply.data.length === 1 ? '' : 's'} ready
+                <span>
+                  <strong>Preview:</strong> {selectedAnswers.length} of {parsedAnswers.length} parsed answer{parsedAnswers.length === 1 ? '' : 's'} selected
+                </span>
+                {parsedAnswers.length > 0 && (
+                  <div className="sk-actions">
+                    <button
+                      type="button"
+                      className="sk-text-btn"
+                      onClick={() => setOffAnswers(new Set())}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="sk-text-btn"
+                      onClick={() => setOffAnswers(new Set(parsedAnswers.map((_, i) => i)))}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
               </div>
               {parsedReply.warnings.map((w, i) => (
                 <p key={i} className="sk-warning">{w}</p>
@@ -1139,6 +1439,15 @@ export default function InquiryDesk({
               <ul className="inq-preview-list">
                 {parsedReply.data.map((ans, idx) => (
                   <li key={`${ans.inquiryId ?? ans.question}-${idx}`} className="inq-preview-item">
+                    <label className="inq-ai-select-row">
+                      <input
+                        type="checkbox"
+                        checked={!offAnswers.has(idx)}
+                        onChange={() => toggleAnswer(idx)}
+                        aria-label={`Include ${ans.question}`}
+                      />
+                      <strong>{ans.question}</strong>
+                    </label>
                     <div className="inq-card-badges">
                       <span className={`inq-status-pill ${ans.inquiryId ? 'is-solved' : 'is-open'}`}>
                         {ans.inquiryId ? 'Updates existing' : 'New lookup'}
@@ -1150,7 +1459,6 @@ export default function InquiryDesk({
                       )}
                       {ans.flashcard && <span className="sk-chip">🃏 Flashcard ready</span>}
                     </div>
-                    <strong>{ans.question}</strong>
                     <p>{ans.answer.length > 260 ? `${ans.answer.slice(0, 260)}…` : ans.answer}</p>
                     {ans.takeaways && <p className="sk-muted">Takeaways: {ans.takeaways}</p>}
                     {ans.tags.length > 0 && (
@@ -1179,76 +1487,188 @@ export default function InquiryDesk({
             <button
               type="button"
               className="btn btn-primary"
-              disabled={applyAiBusy || !parsedReply?.ok || parsedReply.data.length === 0}
+              disabled={applyAiBusy || !parsedReply?.ok || selectedAnswers.length === 0}
               onClick={() => void handleApplyAiAnswers()}
             >
-              {applyAiBusy ? 'Applying…' : 'Apply Answers to Knowledge Base'}
+              {applyAiBusy
+                ? 'Applying…'
+                : `Apply ${selectedAnswers.length === 1 ? '1 Answer' : `${selectedAnswers.length} Answers`} to Knowledge Base`}
             </button>
           </div>
         </section>
       )}
 
-      {/* Search & Status Filters */}
-      <div className="inq-filter-bar">
-        <div className="inq-status-tabs" role="tablist" aria-label="Lookup status filter">
+      {/* Searchable Knowledge Base Explorer */}
+      <div className="inq-explorer-bar">
+        <div className="inq-explorer-search-row">
+          <div className="inq-search-wrap">
+            <input
+              type="search"
+              className="inq-filter-search"
+              value={search}
+              placeholder="🔍 Search questions, answers, [[concepts]], #tags, or sources…"
+              aria-label="Search Knowledge Base"
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                className="inq-search-clear"
+                aria-label="Clear search"
+                onClick={() => setSearch('')}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <span className="inq-result-count" aria-live="polite">
+            {filteredInquiries.length} {filteredInquiries.length === 1 ? 'result' : 'results'}
+            {filteredInquiries.length !== scopedInquiries.length && ` of ${scopedInquiries.length}`}
+          </span>
+          <div className="inq-view-toggle" role="group" aria-label="Display mode">
+            <button
+              type="button"
+              className={`inq-view-btn${viewMode === 'cards' ? ' is-active' : ''}`}
+              aria-pressed={viewMode === 'cards'}
+              onClick={() => setViewMode('cards')}
+            >
+              🃏 Cards
+            </button>
+            <button
+              type="button"
+              className={`inq-view-btn${viewMode === 'accordion' ? ' is-active' : ''}`}
+              aria-pressed={viewMode === 'accordion'}
+              onClick={() => setViewMode('accordion')}
+            >
+              📖 Compact Accordion
+            </button>
+          </div>
           <button
             type="button"
-            role="tab"
-            className="inq-status-tab"
-            aria-selected={statusTab === 'all'}
-            onClick={() => setStatusTab('all')}
+            className="sk-small-btn"
+            disabled={filteredInquiries.length === 0}
+            onClick={() => void handleCopyMarkdown()}
           >
-            All ({scopedInquiries.length})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="inq-status-tab"
-            aria-selected={statusTab === 'open'}
-            onClick={() => setStatusTab('open')}
-          >
-            To look up ({openCount})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="inq-status-tab"
-            aria-selected={statusTab === 'solved'}
-            onClick={() => setStatusTab('solved')}
-          >
-            Answered ({solvedCount})
+            {mdCopyState === 'copied' ? '✓ Copied (.md)' : '📋 Copy Filtered (.md)'}
           </button>
         </div>
 
-        <div className="inq-filter-controls">
-          <input
-            type="search"
-            className="inq-filter-search"
-            value={search}
-            placeholder="Search questions, answers, takeaways, #tags…"
-            aria-label="Search lookups"
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {!fixedSubjectId && (
-            <select
-              className="inq-filter-skill"
-              aria-label="Filter by skill"
-              value={skillFilter}
-              onChange={(e) => setSkillFilter(e.target.value)}
+        <div className="inq-filter-bar-row">
+          <div className="inq-status-tabs" role="tablist" aria-label="Lookup status filter">
+            <button
+              type="button"
+              role="tab"
+              className="inq-status-tab"
+              aria-selected={statusTab === 'all'}
+              onClick={() => setStatusTab('all')}
             >
-              <option value="all">All skills</option>
-              <option value="__unassigned__">Unassigned</option>
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.icon} {s.name}
-                </option>
-              ))}
+              All ({scopedInquiries.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="inq-status-tab"
+              aria-selected={statusTab === 'open'}
+              onClick={() => setStatusTab('open')}
+            >
+              To look up ({openCount})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="inq-status-tab"
+              aria-selected={statusTab === 'solved'}
+              onClick={() => setStatusTab('solved')}
+            >
+              Answered ({solvedCount})
+            </button>
+          </div>
+
+          <div className="inq-filter-controls">
+            {!fixedSubjectId && (
+              <select
+                className="inq-filter-skill"
+                aria-label="Filter by skill"
+                value={skillFilter}
+                onChange={(e) => setSkillFilter(e.target.value)}
+              >
+                <option value="all">All skills</option>
+                <option value="__unassigned__">Unassigned</option>
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.icon} {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
+              className="inq-filter-sort"
+              aria-label="Sort lookups"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as InquirySortMode)}
+            >
+              <option value="open-first">Sort: Open first</option>
+              <option value="newest">Sort: Newest</option>
+              <option value="recently-answered">Sort: Recently answered</option>
+              <option value="alphabetical">Sort: Alphabetical</option>
             </select>
-          )}
+            {viewMode === 'accordion' && filteredInquiries.length > 1 && (
+              <div className="sk-actions">
+                <button
+                  type="button"
+                  className="sk-text-btn"
+                  onClick={() => setExpandedIds(new Set(filteredInquiries.map((q) => q.id)))}
+                >
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  className="sk-text-btn"
+                  onClick={() => setExpandedIds(new Set())}
+                >
+                  Collapse all
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {availableTags.length > 0 && (
+          <div className="inq-tag-filter-row" role="group" aria-label="Filter by tag">
+            <span className="inq-tag-filter-label">Tags:</span>
+            {availableTags.map(({ tag, count }) => {
+              const active = tagFilter === tag;
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`inq-tag-chip${active ? ' is-active' : ''}`}
+                  aria-pressed={active}
+                  onClick={() => setTagFilter((cur) => (cur === tag ? null : tag))}
+                >
+                  #{tag} <span className="inq-tag-count">{count}</span>
+                </button>
+              );
+            })}
+            {(tagFilter || search || statusTab !== 'all' || (!fixedSubjectId && skillFilter !== 'all')) && (
+              <button
+                type="button"
+                className="sk-text-btn"
+                onClick={() => {
+                  setSearch('');
+                  setTagFilter(null);
+                  setStatusTab('all');
+                  if (!fixedSubjectId) setSkillFilter('all');
+                }}
+              >
+                Reset filters
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Inquiry Cards List */}
+      {/* Inquiry Cards / Compact Accordion List */}
       {filteredInquiries.length === 0 ? (
         <p className="sk-empty">
           {scopedInquiries.length === 0
@@ -1256,49 +1676,23 @@ export default function InquiryDesk({
             : 'No lookups match those filters.'}
         </p>
       ) : (
-        <ul className="inq-list">
+        <ul className={`inq-list${viewMode === 'accordion' ? ' is-accordion' : ''}`}>
           {filteredInquiries.map((inq) => {
             const sub = inq.subjectId ? subjectMap.get(inq.subjectId) : undefined;
             const topic = sub && inq.topicId ? sub.topics.find((t) => t.id === inq.topicId) : undefined;
             const isEditing = editingId === inq.id;
+            const isInlineAnswering = inlineAnswerId === inq.id;
             const isFocused = highlightedId === inq.id;
             const isBusy = cardBusyId === inq.id;
+            const isExpanded = viewMode === 'cards' || expandedIds.has(inq.id) || isEditing || isInlineAnswering;
             const canPromoteCard = !inq.cardItemId && !!inq.subjectId && !!inq.topicId && !!(inq.answer?.trim() || inq.takeaways?.trim());
 
-            return (
-              <li
-                key={inq.id}
-                id={`inq-card-${inq.id}`}
-                className={`inq-card ${inq.status === 'open' ? 'is-open' : 'is-solved'}${isFocused ? ' is-focused' : ''}`}
-              >
-                <div className="inq-card-head">
-                  <div className="inq-card-title-wrap">
-                    <div className="inq-card-badges">
-                      <span className={`inq-status-pill ${inq.status === 'open' ? 'is-open' : 'is-solved'}`}>
-                        {inq.status === 'open' ? '❓ To Solve' : '💡 Knowledge'}
-                      </span>
-                      {sub && (
-                        <Link className="inq-skill-badge" href={`/skills/${sub.id}`}>
-                          <span aria-hidden>{sub.icon}</span>
-                          <span>{sub.name}{topic ? ` · ${topic.name}` : ''}</span>
-                        </Link>
-                      )}
-                      {inq.cardItemId && (
-                        <Link
-                          className="sk-chip"
-                          href={sub ? `/skills/${sub.id}?tab=questions` : '/skills'}
-                        >
-                          🃏 Flashcard
-                        </Link>
-                      )}
-                    </div>
-                    <h3 className="inq-card-question">{inq.question}</h3>
-                  </div>
-                </div>
-
+            const renderDetailsAndActions = () => (
+              <>
                 {inq.context && (
                   <p className="inq-card-context">
-                    <strong>Context:</strong> {inq.context}
+                    <strong>Context:</strong>{' '}
+                    <HighlightText text={inq.context} terms={searchTerms} />
                   </p>
                 )}
 
@@ -1308,10 +1702,11 @@ export default function InquiryDesk({
                       text={inq.answer}
                       resolveWiki={resolveWiki}
                       onSelectGraphNode={onSelectGraphNode}
-                      onFilterTag={(t) => setSearch(`#${t}`)}
+                      onFilterTag={(t) => setTagFilter((cur) => (cur === t ? null : t))}
                       inquiries={inquiries}
                       subjects={subjects}
                       onFocusInquiry={focusLocalInquiry}
+                      highlightTerms={searchTerms}
                     />
                   </div>
                 )}
@@ -1323,10 +1718,11 @@ export default function InquiryDesk({
                       text={inq.takeaways}
                       resolveWiki={resolveWiki}
                       onSelectGraphNode={onSelectGraphNode}
-                      onFilterTag={(t) => setSearch(`#${t}`)}
+                      onFilterTag={(t) => setTagFilter((cur) => (cur === t ? null : t))}
                       inquiries={inquiries}
                       subjects={subjects}
                       onFocusInquiry={focusLocalInquiry}
+                      highlightTerms={searchTerms}
                     />
                   </div>
                 )}
@@ -1337,10 +1733,12 @@ export default function InquiryDesk({
                     {inq.sources.map((src, i) =>
                       /^https?:\/\//i.test(src) ? (
                         <a key={`${src}-${i}`} className="inq-source-link" href={src} target="_blank" rel="noopener noreferrer">
-                          {src}
+                          <HighlightText text={src} terms={searchTerms} />
                         </a>
                       ) : (
-                        <span key={`${src}-${i}`} className="sk-chip">{src}</span>
+                        <span key={`${src}-${i}`} className="sk-chip">
+                          <HighlightText text={src} terms={searchTerms} />
+                        </span>
                       ),
                     )}
                   </div>
@@ -1352,11 +1750,8 @@ export default function InquiryDesk({
                       <button
                         key={tag}
                         type="button"
-                        className="inq-tag-chip"
-                        onClick={() => {
-                          if (onSelectGraphNode) onSelectGraphNode(`tag:${tag}`);
-                          else setSearch((prev) => (prev === `#${tag}` ? '' : `#${tag}`));
-                        }}
+                        className={`inq-tag-chip${tagFilter === tag ? ' is-active' : ''}`}
+                        onClick={() => setTagFilter((cur) => (cur === tag ? null : tag))}
                       >
                         #{tag}
                       </button>
@@ -1365,11 +1760,25 @@ export default function InquiryDesk({
                 )}
 
                 <div className="sk-actions">
+                  {inq.status === 'open' && (
+                    <button
+                      type="button"
+                      className="sk-small-btn inq-write-answer-btn"
+                      aria-expanded={isInlineAnswering}
+                      onClick={() => openInlineAnswer(inq)}
+                    >
+                      {isInlineAnswering ? 'Cancel answer' : '✍️ Write answer'}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     className="sk-small-btn"
                     aria-expanded={isEditing}
-                    onClick={() => setEditingId(isEditing ? null : inq.id)}
+                    onClick={() => {
+                      setInlineAnswerId(null);
+                      setEditingId(isEditing ? null : inq.id);
+                    }}
                   >
                     {isEditing ? 'Close editor' : inq.status === 'open' ? 'Solve / Edit' : 'Edit'}
                   </button>
@@ -1427,6 +1836,71 @@ export default function InquiryDesk({
                   </button>
                 </div>
 
+                {isInlineAnswering && (
+                  <div className="inq-inline-answer-box">
+                    <label className="sk-field">
+                      <span>✍️ Answer</span>
+                      <WikiTextarea
+                        rows={3}
+                        value={inlineAnswer}
+                        autoFocus
+                        placeholder="Write the answer in your own words. Type [[ to link a concept, # for a tag. (Cmd/Ctrl+Enter to save)"
+                        onChange={(e) => setInlineAnswer(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && inlineAnswer.trim()) {
+                            e.preventDefault();
+                            void saveInlineAnswer(inq);
+                          }
+                        }}
+                      />
+                    </label>
+                    <label className="sk-field">
+                      <span>💡 Takeaway (optional)</span>
+                      <input
+                        type="text"
+                        value={inlineTakeaway}
+                        maxLength={600}
+                        placeholder="Optional 1-line key takeaway…"
+                        onChange={(e) => setInlineTakeaway(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && inlineAnswer.trim()) {
+                            e.preventDefault();
+                            void saveInlineAnswer(inq);
+                          }
+                        }}
+                      />
+                    </label>
+                    {sub && topic && !inq.cardItemId && (
+                      <label className="sk-check">
+                        <input
+                          type="checkbox"
+                          checked={inlineCreateCard}
+                          onChange={(e) => setInlineCreateCard(e.target.checked)}
+                        />
+                        <span>🃏 Create flashcard in {sub.name} · {topic.name}</span>
+                      </label>
+                    )}
+                    <div className="sk-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={isBusy || !inlineAnswer.trim()}
+                        onClick={() => void saveInlineAnswer(inq)}
+                      >
+                        {isBusy ? 'Saving…' : 'Save Answer'}
+                      </button>
+                      <button
+                        type="button"
+                        className="sk-text-btn"
+                        disabled={isBusy}
+                        onClick={() => setInlineAnswerId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {isEditing && (
                   <InquiryEditForm
                     inquiry={inq}
@@ -1439,6 +1913,106 @@ export default function InquiryDesk({
                     onCancel={() => setEditingId(null)}
                   />
                 )}
+              </>
+            );
+
+            if (viewMode === 'accordion') {
+              const previewSource = inq.answer?.trim() || inq.takeaways?.trim() || inq.context?.trim() || '';
+              const previewText = previewSource ? accordionPreviewSnippet(previewSource, searchTerms) : '';
+
+              return (
+                <li
+                  key={inq.id}
+                  id={`inq-card-${inq.id}`}
+                  className={`inq-acc-item ${inq.status === 'open' ? 'is-open' : 'is-solved'}${isExpanded ? ' is-expanded' : ''}${isFocused ? ' is-focused' : ''}`}
+                >
+                  <div className="inq-acc-head">
+                    <button
+                      type="button"
+                      className="inq-acc-trigger"
+                      aria-expanded={isExpanded}
+                      onClick={() => toggleAccordion(inq.id)}
+                    >
+                      <span className="inq-acc-chevron" aria-hidden>{isExpanded ? '▾' : '▸'}</span>
+                      <span className={`inq-status-pill ${inq.status === 'open' ? 'is-open' : 'is-solved'}`}>
+                        {inq.status === 'open' ? '❓' : '💡'}
+                      </span>
+                      <span className="inq-acc-title-block">
+                        <span className="inq-acc-question">
+                          <HighlightText text={inq.question} terms={searchTerms} />
+                        </span>
+                        {!isExpanded && previewText && (
+                          <span className="inq-acc-snippet">
+                            <HighlightText text={previewText} terms={searchTerms} />
+                          </span>
+                        )}
+                      </span>
+                      <span className="inq-acc-meta">
+                        {sub && (
+                          <span className="inq-skill-badge">
+                            <span aria-hidden>{sub.icon}</span>
+                            <span>{sub.name}{topic ? ` · ${topic.name}` : ''}</span>
+                          </span>
+                        )}
+                        {inq.cardItemId && <span className="sk-chip">🃏</span>}
+                        {(inq.tags ?? []).slice(0, 2).map((t) => (
+                          <span key={t} className="inq-tag-chip">#{t}</span>
+                        ))}
+                      </span>
+                    </button>
+                    {inq.status === 'open' && !isInlineAnswering && (
+                      <button
+                        type="button"
+                        className="sk-small-btn inq-write-answer-btn"
+                        onClick={() => openInlineAnswer(inq)}
+                      >
+                        ✍️ Write answer
+                      </button>
+                    )}
+                  </div>
+                  {isExpanded && (
+                    <div className="inq-acc-body">
+                      {renderDetailsAndActions()}
+                    </div>
+                  )}
+                </li>
+              );
+            }
+
+            return (
+              <li
+                key={inq.id}
+                id={`inq-card-${inq.id}`}
+                className={`inq-card ${inq.status === 'open' ? 'is-open' : 'is-solved'}${isFocused ? ' is-focused' : ''}`}
+              >
+                <div className="inq-card-head">
+                  <div className="inq-card-title-wrap">
+                    <div className="inq-card-badges">
+                      <span className={`inq-status-pill ${inq.status === 'open' ? 'is-open' : 'is-solved'}`}>
+                        {inq.status === 'open' ? '❓ To Solve' : '💡 Knowledge'}
+                      </span>
+                      {sub && (
+                        <Link className="inq-skill-badge" href={`/skills/${sub.id}`}>
+                          <span aria-hidden>{sub.icon}</span>
+                          <span>{sub.name}{topic ? ` · ${topic.name}` : ''}</span>
+                        </Link>
+                      )}
+                      {inq.cardItemId && (
+                        <Link
+                          className="sk-chip"
+                          href={sub ? `/skills/${sub.id}?tab=questions` : '/skills'}
+                        >
+                          🃏 Flashcard
+                        </Link>
+                      )}
+                    </div>
+                    <h3 className="inq-card-question">
+                      <HighlightText text={inq.question} terms={searchTerms} />
+                    </h3>
+                  </div>
+                </div>
+
+                {renderDetailsAndActions()}
               </li>
             );
           })}

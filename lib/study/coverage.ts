@@ -106,6 +106,13 @@ export function setMatch(data: MapData, kind: unknown, name: unknown, value: unk
   else throw new MapInputError('That isn’t an organ system.');
 }
 
+/** Remove a saved tag skip (or remap it directly to an organ system). */
+export function unskipTag(data: MapData, tag: unknown, value?: unknown) {
+  if (typeof tag !== 'string' || !tag || tag.length > 300) throw new MapInputError('That tag can’t be updated.');
+  if (value !== undefined && value !== null && value !== '') setMatch(data, 'tag', tag, value);
+  else delete data.tagMatches[tag];
+}
+
 // ── What the Anki import keeps ───────────────────────────────────────────────
 
 /** Cards that share a deck and tags, added up. Grouping keeps the file small, and lets a changed match recount without a new import. */
@@ -187,6 +194,36 @@ export function deckRows(anki: AnkiData, map: MapData): DeckRow[] {
     match: deckMatch(name, map.deckMatches),
     saved: !!map.deckMatches[name],
   }));
+}
+
+/** Which PANCE organ system an Anki card or leech maps to (via its deck or tags), if any. */
+export function leechSystem(card: Pick<AnkiLeech, 'deck' | 'tags'>, anki: AnkiData, map?: MapData): PanceSystem | undefined {
+  const resolved = map ?? emptyMap();
+  const byDeck = deckMatch(anki.decks[card.deck] ?? '', resolved.deckMatches);
+  if (byDeck) return byDeck === 'skip' ? undefined : byDeck;
+  for (const index of card.tags) {
+    const byTag = tagMatch(anki.tags[index] ?? '', resolved.tagMatches);
+    if (byTag && byTag !== 'skip') return byTag;
+  }
+  return undefined;
+}
+
+export type SavedTagRow = { tag: string; match: Match; cards: number };
+
+/** Every saved tag match (both organ systems and "skip"), with how many imported cards carry it. */
+export function savedTags(anki: AnkiData | null | undefined, map: MapData): SavedTagRow[] {
+  const counts = new Map<string, number>();
+  if (anki && Array.isArray(anki.groups)) {
+    for (const group of anki.groups) {
+      for (const index of group.tags) {
+        const tag = anki.tags[index];
+        if (tag) counts.set(tag, (counts.get(tag) ?? 0) + group.cards);
+      }
+    }
+  }
+  return Object.entries(map.tagMatches)
+    .map(([tag, match]) => ({ tag, match, cards: counts.get(tag) ?? 0 }))
+    .sort((a, b) => Number(b.match === 'skip') - Number(a.match === 'skip') || b.cards - a.cards || a.tag.localeCompare(b.tag));
 }
 
 /** The commonest tags on cards nothing has matched yet: where a match would help most. */

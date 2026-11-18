@@ -1,6 +1,6 @@
-import type { Anchor } from '@/lib/reader/items';
+import { findTextSnippets, type Anchor } from '@/lib/reader/items';
 import { isImageName, naturalSort, ZipReader } from '@/lib/reader/zip';
-import type { Engine, FixedSource, InkOrigin, ReaderSettings, TocEntry } from '../source';
+import type { BookSearchHit, BookSearchOptions, BookSearchResult, Engine, FixedSource, InkOrigin, ReaderSettings, TocEntry } from '../source';
 
 // Real pages (PDFs and comics): one canvas, fitted to the screen, that pinches and pans.
 // While a pinch is going the canvas is only stretched, and it's drawn again sharply
@@ -17,6 +17,7 @@ export class FixedEngine implements Engine {
   readonly kind = 'fixed';
   readonly toc: TocEntry[];
   readonly totalPages: number;
+  readonly searchable: boolean;
   private host: HTMLDivElement;
   private index = 0;
   private zoom = 1;
@@ -29,10 +30,12 @@ export class FixedEngine implements Engine {
   private cancels = new Map<number, () => void>();
   private sharp: { cancel: () => void } | null = null;
   private generation = 0;
+  private textCache = new Map<number, string>();
 
   constructor(stage: HTMLElement, private source: FixedSource, private settings: ReaderSettings, private onChange: () => void) {
     this.toc = source.toc;
     this.totalPages = source.pageCount;
+    this.searchable = typeof source.getText === 'function';
     this.host = document.createElement('div');
     this.host.className = 'rd-fixed';
     stage.appendChild(this.host);
@@ -154,6 +157,50 @@ export class FixedEngine implements Engine {
     return this.show(Math.round(fraction * (this.source.pageCount - 1)));
   }
 
+  async searchText(query: string, options?: BookSearchOptions): Promise<BookSearchResult> {
+    const getText = this.source.getText;
+    if (!getText) {
+      return { searchable: false, reason: 'This book is made of images, so there is no text to search.', hits: [] };
+    }
+    if (!query.trim()) return { searchable: true, hits: [] };
+    const maxHits = options?.maxHits ?? 80;
+    const hits: BookSearchHit[] = [];
+    let truncated = false;
+    const total = this.source.pageCount;
+
+    for (let i = 0; i < total; i++) {
+      if (options?.signal?.aborted) break;
+      let text = this.textCache.get(i);
+      if (text === undefined) {
+        text = await getText(i).catch(() => '');
+        this.textCache.set(i, text);
+      }
+      if (options?.signal?.aborted) break;
+      const remaining = maxHits - hits.length;
+      const found = findTextSnippets(text, query, remaining + 1);
+      const chapter = this.chapterOf(i + 1);
+      for (const h of found) {
+        if (hits.length >= maxHits) {
+          truncated = true;
+          break;
+        }
+        hits.push({
+          anchor: { page: i + 1, ...(chapter ? { chapter } : {}) },
+          chapter,
+          before: h.before,
+          match: h.match,
+          after: h.after,
+        });
+      }
+      if (truncated) break;
+      if (i % 4 === 3 || found.length > 0 || i === total - 1) {
+        options?.onProgress?.(i + 1, total, [...hits]);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+    return { searchable: true, hits, truncated };
+  }
+
   private chapterOf(page: number) {
     let label: string | undefined;
     for (const entry of this.toc) {
@@ -269,6 +316,7 @@ export class FixedEngine implements Engine {
     this.sharp?.cancel();
     for (const cancel of this.cancels.values()) cancel();
     this.host.remove();
+    this.textCache.clear();
     this.source.destroy();
   }
 }

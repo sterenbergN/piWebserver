@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTheme } from '@/components/ThemeProvider';
 import type { Anchor, BookMeta, Folder } from '@/lib/reader/items';
 import AudioView from './AudioView';
 import BookView from './BookView';
@@ -142,9 +143,40 @@ export default function ReaderApp() {
     void showBooks();
   };
 
-  const changeSettings = (next: ReaderSettings) => {
+  const { theme: siteTheme, toggleTheme: toggleSiteTheme } = useTheme();
+  const settingsRef = useRef<ReaderSettings | null>(null);
+  const lastDomThemeRef = useRef<string | null>(null);
+
+  const changeSettings = useCallback((next: ReaderSettings) => {
+    settingsRef.current = next;
     setSettings(next);
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* It still applies for now. */ }
+  }, []);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    const domTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    if (lastDomThemeRef.current === null) {
+      lastDomThemeRef.current = domTheme;
+      return;
+    }
+    if (domTheme === lastDomThemeRef.current) return;
+    lastDomThemeRef.current = domTheme;
+    const target = domTheme === 'light' ? 'paper' : 'night';
+    if (settingsRef.current && settingsRef.current.theme !== target) {
+      changeSettings({ ...settingsRef.current, theme: target });
+    }
+  }, [siteTheme, changeSettings]);
+
+  const toggleTheme = () => {
+    if (!settings) return;
+    const nextReader = settings.theme === 'night' ? 'paper' : 'night';
+    changeSettings({ ...settings, theme: nextReader });
+    const nextSite = nextReader === 'night' ? 'dark' : 'light';
+    if (siteTheme !== nextSite) toggleSiteTheme();
   };
 
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));
@@ -176,7 +208,7 @@ export default function ReaderApp() {
       {settings && phase === 'guest' && (
         openedBook
           ? <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} onSettings={changeSettings} onExit={closeBook} onSignedOut={closeBook} />
-          : <GuestShelf library={guestLibrary} theme={settings.theme} onOpen={openBook} onSignIn={signIn} />
+          : <GuestShelf library={guestLibrary} theme={settings.theme} onOpen={openBook} onSignIn={signIn} onToggleTheme={toggleTheme} />
       )}
       {settings && phase === 'ready' && (
         openedBook?.format === 'audio' ? (
@@ -184,7 +216,7 @@ export default function ReaderApp() {
         ) : openedBook ? (
           <BookView key={openedBook.id} book={openedBook} startAt={open.at} settings={settings} other={otherForm} onSwitch={switchTo} onSettings={changeSettings} onExit={closeBook} onSignedOut={() => { closeBook(); setSignedOut(true); }} />
         ) : (
-          <Library books={books} folders={folders} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} />
+          <Library books={books} folders={folders} theme={settings.theme} online={online} signedOut={signedOut} onChanged={refresh} onOpen={openBook} onSignIn={signIn} onToggleTheme={toggleTheme} />
         )
       )}
     </div>

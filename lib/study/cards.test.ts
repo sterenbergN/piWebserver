@@ -1,6 +1,28 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { addCard, addCards, cardFile, cardFileName, cardId, cardKey, clozeParts, cleanDeckName, deckSummary, editCard, editDeck, isCloze, newDeck, parseCardReply, unsentCards } from './cards';
+import {
+  addCard,
+  addCards,
+  cardFile,
+  cardFileName,
+  cardId,
+  cardKey,
+  clozeParts,
+  cleanDeckName,
+  deckSummary,
+  drillAccuracy,
+  drillCardFaces,
+  editCard,
+  editDeck,
+  gradeDrillCard,
+  initDrillQueue,
+  isCloze,
+  newDeck,
+  parseCardReply,
+  shuffleDrillQueue,
+  unsentCards,
+  type AnkiCard,
+} from './cards';
 import { ankiField } from './anki';
 import { buildCardPrompt } from './prompt';
 import { StudyInputError } from './study';
@@ -178,4 +200,107 @@ test('the prompt follows the options', () => {
 
 test('the key ignores blanks and punctuation', () => {
   assert.equal(cardKey('The {{c1::RCA}}, it is!'), 'the rca it is');
+});
+
+test('drillCardFaces masks {{c1::...::hint}}, [...], and basic cards', () => {
+  const curlyHint: AnkiCard = {
+    id: 'c1',
+    kind: 'cloze',
+    front: 'The {{c1::RCA::artery}} supplies {{c2::the inferior wall}}.',
+    back: 'Leads II, III, aVF.',
+    topic: 'ACS',
+  };
+  assert.deepEqual(drillCardFaces(curlyHint), {
+    frontHtmlOrText: 'The [artery] supplies [____].',
+    blanks: ['RCA', 'the inferior wall'],
+    revealAnswer: 'The <mark>RCA</mark> supplies <mark>the inferior wall</mark>.',
+    extra: 'Leads II, III, aVF.',
+  });
+
+  const curlyMath: AnkiCard = {
+    id: 'c2',
+    kind: 'cloze',
+    front: 'Low {{c1::$P_{a_{O_2}}$::arterial tension}} indicates hypoxemia.',
+    back: '',
+    topic: 'Pulm',
+  };
+  assert.deepEqual(drillCardFaces(curlyMath), {
+    frontHtmlOrText: 'Low [arterial tension] indicates hypoxemia.',
+    blanks: ['$P_{a_{O_2}}$'],
+    revealAnswer: 'Low <mark>$P_{a_{O_2}}$</mark> indicates hypoxemia.',
+    extra: '',
+  });
+
+  const bracketCloze: AnkiCard = {
+    id: 'c3',
+    kind: 'cloze',
+    front: 'Most common cause of acute pancreatitis is [gallstones].',
+    back: 'I GET SMASHED pearl',
+    topic: 'GI',
+  };
+  assert.deepEqual(drillCardFaces(bracketCloze), {
+    frontHtmlOrText: 'Most common cause of acute pancreatitis is [____].',
+    blanks: ['gallstones'],
+    revealAnswer: 'Most common cause of acute pancreatitis is <mark>gallstones</mark>.',
+    extra: 'I GET SMASHED pearl',
+  });
+
+  const basicCard: AnkiCard = {
+    id: 'b1',
+    kind: 'basic',
+    front: 'First-line drug class for HFrEF?',
+    back: 'ARNI',
+    topic: 'HF',
+  };
+  assert.deepEqual(drillCardFaces(basicCard), {
+    frontHtmlOrText: 'First-line drug class for HFrEF?',
+    blanks: [],
+    revealAnswer: 'ARNI',
+    extra: '',
+  });
+});
+
+test('initDrillQueue filters scope and gradeDrillCard re-queues Again cards', () => {
+  const cards: AnkiCard[] = [
+    { id: 'a', kind: 'basic', front: 'Q1', back: 'A1', topic: 'T', exportedAt: NOW },
+    { id: 'b', kind: 'basic', front: 'Q2', back: 'A2', topic: 'T' },
+    { id: 'c', kind: 'basic', front: 'Q3', back: 'A3', topic: 'T' },
+    { id: 'd', kind: 'basic', front: 'Q4', back: 'A4', topic: 'T' },
+  ];
+
+  const onlyNew = initDrillQueue(cards, { scope: 'new' });
+  assert.deepEqual(onlyNew.queue, ['b', 'c', 'd']);
+  assert.equal(onlyNew.totalCards, 3);
+
+  let state = initDrillQueue(cards, { scope: 'all' });
+  assert.deepEqual(state.queue, ['a', 'b', 'c', 'd']);
+  assert.equal(drillAccuracy(state), null);
+
+  // 'again' on 'a' with 3 remaining inserts 'a' 2 cards later -> ['b', 'c', 'a', 'd']
+  state = gradeDrillCard(state, 'again');
+  assert.deepEqual(state.queue, ['b', 'c', 'a', 'd']);
+  assert.deepEqual(state.missedIds, ['a']);
+  assert.deepEqual(state.completedIds, []);
+  assert.equal(state.reviewed, 1);
+  assert.equal(drillAccuracy(state), 0);
+
+  state = gradeDrillCard(state, 'good'); // 'b'
+  state = gradeDrillCard(state, 'easy'); // 'c'
+  assert.deepEqual(state.queue, ['a', 'd']);
+
+  // 'again' again on 'a' with only 1 remaining puts 'a' at the end -> ['d', 'a'], without duplicating missedIds
+  state = gradeDrillCard(state, 'again');
+  assert.deepEqual(state.queue, ['d', 'a']);
+  assert.deepEqual(state.missedIds, ['a']);
+
+  state = gradeDrillCard(state, 'hard'); // 'd'
+  state = gradeDrillCard(state, 'good'); // 'a'
+  assert.deepEqual(state.queue, []);
+  assert.deepEqual(state.completedIds, ['b', 'c', 'd', 'a']);
+  assert.equal(state.reviewed, 6);
+  assert.deepEqual(state.counts, { again: 2, hard: 1, good: 2, easy: 1 });
+  assert.equal(drillAccuracy(state), 67);
+
+  const shuffled = shuffleDrillQueue(initDrillQueue(cards), () => 0);
+  assert.equal(shuffled.queue.length, 4);
 });

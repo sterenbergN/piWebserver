@@ -64,6 +64,26 @@ test('a grid reply is read, with bad rows reported', () => {
   assert.throws(() => parseGridReply(gridReply({ rows: [{ name: 'Just one', cells: ['a', 'b'] }] })), /2 complete rows/);
 });
 
+test('cut-off grids, patient cases, and differential replies keep whole items and warn', () => {
+  const twoGrids = JSON.stringify({ grids: [JSON.parse(gridReply()), JSON.parse(gridReply({ title: 'Cut off grid' }))] });
+  const gridCut = parseGridReply(twoGrids.slice(0, twoGrids.lastIndexOf('{') + 12));
+  assert.equal(gridCut.items.length, 1);
+  assert.equal(gridCut.cutOff, true);
+  assert.match(gridCut.warnings?.[0] ?? '', /cut off/i);
+
+  const twoCases = JSON.stringify({ cases: [JSON.parse(caseReply()), JSON.parse(caseReply({ opening: 'Cut off case' }))] });
+  const caseCut = parseCaseReply(twoCases.slice(0, twoCases.lastIndexOf('Cut off')));
+  assert.equal(caseCut.items.length, 1);
+  assert.equal(caseCut.cutOff, true);
+  assert.match(caseCut.warnings?.[0] ?? '', /cut off/i);
+
+  const twoPuzzles = JSON.stringify({ cases: [puzzleReply('PE'), puzzleReply('Pneumothorax')] });
+  const diffCut = parseDiffReply(twoPuzzles.slice(0, twoPuzzles.lastIndexOf('Pneumothorax') + 3));
+  assert.equal(diffCut.items.length, 1);
+  assert.equal(diffCut.cutOff, true);
+  assert.match(diffCut.warnings?.[0] ?? '', /cut off/i);
+});
+
 test('hidden cells favor what she’s missed, and never hide nothing', () => {
   const data = emptyPractice();
   const [grid] = addGrids(data, parseGridReply(gridReply()).items, makeId, NOW);

@@ -18,6 +18,14 @@ export default function TopicNotes({ topic, pages, act, busy }: { topic: Topic; 
   const [picking, setPicking] = useState(false);
   const [choices, setChoices] = useState<Choice[] | null>(null);
   const [notebook, setNotebook] = useState('');
+  const [from, setFrom] = useState('');
+  const [standalone, setStandalone] = useState(false);
+
+  useEffect(() => {
+    setFrom(`${window.location.pathname}${window.location.search}`);
+    const nav = navigator as { standalone?: boolean };
+    setStandalone(window.matchMedia('(display-mode: standalone)').matches || Boolean(nav.standalone));
+  }, []);
 
   useEffect(() => {
     if (!picking || choices) return;
@@ -44,7 +52,13 @@ export default function TopicNotes({ topic, pages, act, busy }: { topic: Topic; 
         <ul className="sk-topic-pages">
           {pages.map((p) => (
             <li key={p.page}>
-              <a href={p.href} target="_blank" rel="noopener">✏️ {p.label} ↗</a>
+              <a
+                href={from ? `${p.href}${p.href.includes('?') ? '&' : '?'}from=${encodeURIComponent(from)}` : p.href}
+                target={standalone ? undefined : '_blank'}
+                rel={standalone ? undefined : 'noopener'}
+              >
+                ✏️ {p.label} {standalone ? '→' : '↗'}
+              </a>
               <button type="button" className="sk-text-btn" disabled={busy} aria-label={`Untie ${p.label}`} onClick={() => act('topic-notes-untie', { topicId: topic.id, page: p.page })}>Untie</button>
             </li>
           ))}

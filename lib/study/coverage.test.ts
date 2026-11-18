@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
-  BLUEPRINT, coverageMap, deckMatch, deckRows, emptyMap, MapInputError, MIN_PROVEN, saveClass, setMatch, suggestSystem, unmatchedTags, WEIGHT_TOTAL,
+  BLUEPRINT, coverageMap, deckMatch, deckRows, emptyMap, leechSystem, MapInputError, MIN_PROVEN, saveClass, savedTags, setMatch, suggestSystem, unmatchedTags, unskipTag, WEIGHT_TOTAL,
   type AnkiData, type AnkiGroup,
 } from './coverage';
 import { addTest, emptyProgress, emptyTests, finishAttempt, parseTestReply, PANCE_SYSTEMS, saveAttempt, startAttempt, type ProgressData, type StudyTest } from './study';
@@ -133,6 +133,21 @@ test('Anki counts go to the matched system, once each, and "skip" stays out', ()
   assert.equal(coverageMap(emptyTests(), emptyProgress(), matches, data).systems.find((s) => s.system === 'Dermatologic')?.studied.cards, 4);
   assert.equal(unmatchedTags(data, matches).cards, 0);
   assert.deepEqual(deckRows(data, matches).map((r) => r.name), ['Cardio', 'Misc', 'Notes', 'Pharm']);
+
+  setMatch(matches, 'tag', 'high_yield', 'skip');
+  assert.deepEqual(savedTags(data, matches), [
+    { tag: 'high_yield', match: 'skip', cards: 0 },
+    { tag: 'other', match: 'Dermatologic', cards: 4 },
+  ]);
+  unskipTag(matches, 'high_yield');
+  assert.throws(() => unskipTag(matches, ''), MapInputError);
+  assert.equal(matches.tagMatches.high_yield, undefined);
+  assert.equal(leechSystem({ deck: 0, tags: [0] }, data, matches), 'Cardiovascular');
+  assert.equal(leechSystem({ deck: 2, tags: [1] }, data, matches), 'Dermatologic');
+  unskipTag(matches, 'other', 'Pulmonary');
+  assert.equal(matches.tagMatches.other, 'Pulmonary');
+  setMatch(matches, 'deck', 'Misc', 'skip');
+  assert.equal(leechSystem({ deck: 2, tags: [1] }, data, matches), undefined);
 });
 
 test('proven takes enough recent answers, and getting better shows', () => {

@@ -19,10 +19,16 @@ export const SKILLS_XP = {
 /** Answers in a day that make it a review day (for XP and for a linked habit). */
 export const REVIEW_DAY_ANSWERS = 3;
 
-/** Days with at least REVIEW_DAY_ANSWERS answers, oldest first. */
+/** Days with at least REVIEW_DAY_ANSWERS distinct items answered, oldest first. */
 export function reviewDays(progress: ProgressData) {
+  const seen = new Set<string>();
   const counts = new Map<string, number>();
-  for (const a of progress.attempts) counts.set(a.day, (counts.get(a.day) ?? 0) + 1);
+  for (const a of progress.attempts) {
+    const key = `${a.itemId}|${a.day}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts.set(a.day, (counts.get(a.day) ?? 0) + 1);
+  }
   return [...counts].filter(([, n]) => n >= REVIEW_DAY_ANSWERS).map(([day]) => day).sort();
 }
 

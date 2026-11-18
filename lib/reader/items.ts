@@ -8,7 +8,7 @@
 
 import { spoken, type AudioInfo } from './audio';
 
-/** `audio`: a listening book (AAC in an .m4a), made on the server from a YouTube video. */
+/** `audio`: a listening book (AAC in an .m4a from YouTube, or an uploaded audio file). */
 export type BookFormat = 'epub' | 'pdf' | 'cbz' | 'txt' | 'md' | 'html' | 'audio';
 
 export type BookMeta = {
@@ -243,6 +243,7 @@ export const isId = (value: unknown): value is string => typeof value === 'strin
 
 const FORMAT_BY_EXTENSION: Record<string, BookFormat> = {
   epub: 'epub', pdf: 'pdf', cbz: 'cbz', txt: 'txt', text: 'txt', md: 'md', markdown: 'md', html: 'html', htm: 'html', xhtml: 'html',
+  mp3: 'audio', m4a: 'audio', m4b: 'audio', ogg: 'audio', wav: 'audio', flac: 'audio', aac: 'audio',
 };
 
 export function formatFromName(name: string): BookFormat | null {
@@ -254,6 +255,13 @@ export function matchesFormat(format: BookFormat, head: Uint8Array) {
   const text = String.fromCharCode(...head.subarray(0, 1024));
   if (format === 'pdf') return text.includes('%PDF-');
   if (format === 'epub' || format === 'cbz') return text.startsWith('PK');
+  if (format === 'audio') {
+    if (head.length < 3) return false;
+    if (text.startsWith('ID3') || text.startsWith('OggS') || text.startsWith('fLaC') || text.startsWith('ADIF')) return true;
+    if (head.length >= 8 && text.slice(4, 8) === 'ftyp') return true;
+    if (head.length >= 12 && text.startsWith('RIFF') && text.slice(8, 12) === 'WAVE') return true;
+    return head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
+  }
   return !head.includes(0);
 }
 
@@ -355,6 +363,49 @@ export function markedPages(items: ReaderItem[]) {
     if (item.kind === 'ink' && !item.deleted && !pages.has(item.anchor.page)) pages.set(item.anchor.page, item.anchor);
   }
   return [...pages.values()].sort(compareAnchors);
+}
+
+export const BOOKMARK_PREFIX = '🔖 Bookmark';
+
+export function isBookmarkItem(item: Pick<ReaderItem, 'kind' | 'deleted' | 'text'>): boolean {
+  if (item.deleted || item.kind !== 'note' || !item.text) return false;
+  const trimmed = item.text.trim();
+  return trimmed.startsWith(BOOKMARK_PREFIX) || /^Bookmark(?:\s*·|\b)/i.test(trimmed);
+}
+
+export function formatBookmarkText(anchor: Anchor): string {
+  return anchor.chapter
+    ? `${BOOKMARK_PREFIX} · p. ${anchor.page} · ${anchor.chapter}`
+    : `${BOOKMARK_PREFIX} · p. ${anchor.page}`;
+}
+
+/** Seconds for an audio note/progress anchor (stored in `o` ms if set, else `page` seconds). */
+export function audioTimeSeconds(anchor: Pick<Anchor, 'page' | 'o'>): number {
+  return anchor.o !== undefined ? anchor.o / 1000 : anchor.page;
+}
+
+export type TextSnippetHit = { offset: number; before: string; match: string; after: string };
+
+/** Find case-insensitive occurrences of `query` in `text` with surrounding snippet context. */
+export function findTextSnippets(text: string, query: string, maxHits = 50): TextSnippetHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle || !text || maxHits <= 0) return [];
+  const lower = text.toLowerCase();
+  const hits: TextSnippetHit[] = [];
+  let pos = 0;
+  while (hits.length < maxHits) {
+    const idx = lower.indexOf(needle, pos);
+    if (idx < 0) break;
+    const end = idx + needle.length;
+    const startCtx = Math.max(0, idx - 42);
+    const endCtx = Math.min(text.length, end + 72);
+    const before = `${startCtx > 0 ? '…' : ''}${text.slice(startCtx, idx).replace(/\s+/g, ' ')}`;
+    const match = text.slice(idx, end).replace(/\s+/g, ' ');
+    const after = `${text.slice(end, endCtx).replace(/\s+/g, ' ')}${endCtx < text.length ? '…' : ''}`;
+    hits.push({ offset: idx, before, match, after });
+    pos = end;
+  }
+  return hits;
 }
 
 /** One screen's worth of characters: how flowing books get page numbers every device agrees on. */

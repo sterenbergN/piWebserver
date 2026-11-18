@@ -551,11 +551,13 @@ export type SkillEdit =
       context?: string;
       answer?: string;
       takeaways?: string;
+      takeaway?: string;
       sources?: string[];
       tags?: string[];
       status?: InquiryStatus;
       subjectId?: string;
       topicId?: string;
+      createCard?: boolean;
     }
   | {
       op: 'import-inquiries';

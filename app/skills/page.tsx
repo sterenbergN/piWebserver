@@ -369,9 +369,9 @@ export default function SkillsBoardPage() {
     };
   }, [board]);
 
-  if (signedOut) return <main className="sk sk-board"><SignedOutCard /></main>;
-  if (error) return <main className="sk sk-board"><ErrorNote>{error}</ErrorNote></main>;
-  if (!board) return <main className="sk sk-board"><Loading /></main>;
+  if (signedOut) return <div className="sk sk-board"><SignedOutCard /></div>;
+  if (error) return <div className="sk sk-board"><ErrorNote>{error}</ErrorNote></div>;
+  if (!board) return <div className="sk sk-board"><Loading /></div>;
 
   // The tree needs links between skills to show; without any, it's the same as by area.
   const shownGroup: GroupKey = groupBy === 'tree' && !hasInterconnections ? 'area' : groupBy;
@@ -390,7 +390,7 @@ export default function SkillsBoardPage() {
   ];
 
   return (
-    <main className="sk sk-board">
+    <div className="sk sk-board">
       <header className="sk-head">
         <div>
           <h1>Skills</h1>
@@ -556,6 +556,6 @@ export default function SkillsBoardPage() {
       )}
 
       {view === 'board' && <HowLevelsWork />}
-    </main>
+    </div>
   );
 }

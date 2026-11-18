@@ -2,6 +2,7 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { ankiFile } from './anki';
 import { buildTestPrompt } from './prompt';
+import { coverageMap, emptyMap } from './coverage';
 import {
   addTest, answerReview, choiceOrder, cleanAnswer, dueMisses, emptyProgress, emptyTests, addQuestion, editQuestion, finishAttempt, parseTestReply,
   PANCE_SYSTEMS, readSystem, removeQuestion, removeTest, REVIEW_DAYS, saveAttempt, scoreAttempt, startAttempt, studyDays, studySummary,
@@ -70,15 +71,49 @@ test('a bad question is reported and the rest are kept', () => {
     question({ stem: '' }),
     question({ stem: 'Too few', choices: ['Only one'] }),
     question({ stem: 'Past the end', correct: 'F' }),
-    question({ stem: 'A number is ambiguous', correct: 1 }),
+    question({ stem: 'Out of range index', correct: 9 }),
     question({ stem: 'Same choices', choices: ['x', 'X'] }),
     question({ stem: 'Not a choice', correct: 'Aspirin' }),
     question(),
   ]));
   assert.equal(pack.questions.length, 1);
   assert.equal(pack.problems.length, 7);
-  assert.match(pack.problems[3], /Question 5: .*letter/);
+  assert.match(pack.problems[3], /Question 5: .*past the last choice/);
   assert.match(pack.problems[6], /repeats question 1/);
+});
+
+test('balanced JSON scanner ignores prose brackets and supports (B), 1., indices, and Oxford comma multi-answers', () => {
+  const pack = parseTestReply(
+    'Note [from PANCE blueprint] before JSON [1]:\n' +
+    JSON.stringify({
+      title: 'Mixed formats',
+      course: 'Clin Med',
+      questions: [
+        question({ stem: 'Q1', choices: ['1. First', '2) Second', '(3) Third'], correct: '1.' }),
+        question({ stem: 'Q2', choices: ['Alpha', 'Beta', 'Gamma'], correct: '(B)' }),
+        question({ stem: 'Q3', choices: ['Zero', 'One', 'Two'], correct: 2 }),
+        question({ stem: 'Q4', choices: ['Alpha', 'Beta', 'Gamma'], correct: [0, 2] }),
+        question({ stem: 'Q5', choices: ['Alpha', 'Beta', 'Gamma', 'Delta'], correct: 'A, B, and C' }),
+      ],
+    }) +
+    '\nTrailing note [see guideline].',
+  );
+  assert.equal(pack.title, 'Mixed formats');
+  assert.deepEqual(pack.questions[0].choices, ['First', 'Second', 'Third']);
+  assert.deepEqual(pack.questions.map((q) => q.correct), [[0], [1], [2], [0, 2], [0, 1, 2]]);
+});
+
+test('a cut-off test reply keeps outer metadata alongside whole questions', () => {
+  const raw = JSON.stringify({
+    title: 'Cut-off Title',
+    course: 'Renal',
+    questions: [question({ stem: 'Whole 1' }), question({ stem: 'Whole 2' }), question({ stem: 'Partial 3' })],
+  });
+  const pack = parseTestReply(raw.slice(0, raw.lastIndexOf('{') + 15));
+  assert.equal(pack.questions.length, 2);
+  assert.equal(pack.title, 'Cut-off Title');
+  assert.equal(pack.course, 'Renal');
+  assert.match(pack.warnings[0], /cut off/);
 });
 
 test('a reply cut off part way keeps every whole question', () => {
@@ -196,24 +231,61 @@ test('a miss climbs the schedule and clears, and a slip starts it over', () => {
   takeAndFinish(progress, t, { [q.id]: [1] });
   let day = addDays(TODAY, 1);
   for (let i = 0; i < REVIEW_DAYS.length - 1; i++) {
-    const { right, miss } = answerReview(progress, q, [0], day);
+    const { right, miss, dueOn } = answerReview(progress, q, [0], day);
     assert.ok(right);
-    assert.equal(miss.dueOn, addDays(day, REVIEW_DAYS[i + 1]));
-    day = miss.dueOn;
+    assert.ok(miss);
+    assert.equal(dueOn, addDays(day, REVIEW_DAYS[i + 1]));
+    day = dueOn;
   }
   // A slip near the end goes right back to tomorrow.
-  const slipped = answerReview(progress, q, [2], day).miss;
+  const slipped = answerReview(progress, q, [2], day).miss!;
   assert.equal(slipped.dueOn, addDays(day, 1));
   assert.equal(slipped.box, 0);
   assert.equal(slipped.misses, 2);
   day = slipped.dueOn;
   for (let i = 0; i < REVIEW_DAYS.length; i++) {
-    const { miss } = answerReview(progress, q, [0], day);
-    day = miss.dueOn;
+    const { dueOn } = answerReview(progress, q, [0], day);
+    day = dueOn;
   }
   assert.equal(progress.misses[q.id].state, 'cleared');
   assert.deepEqual(dueMisses(progress, addDays(day, 100)), []);
-  assert.throws(() => answerReview(progress, q, [0], addDays(day, 100)), /isn’t waiting/);
+  const alreadyCleared = answerReview(progress, q, [0], addDays(day, 100));
+  assert.deepEqual(
+    { cleared: alreadyCleared.cleared, box: alreadyCleared.box, dueOn: alreadyCleared.dueOn, counted: alreadyCleared.counted },
+    { cleared: true, box: 0, dueOn: addDays(day, 100), counted: false },
+  );
+  // Idempotent when a question was never in misses or cleared concurrently.
+  const other = makeTest(1).questions[0];
+  assert.equal(answerReview(progress, other, [0], TODAY).cleared, true);
+});
+
+test('composite miss keys normalize cleanly, lastReviewedOn hides answered items on reload, unsure keeps active, and coverageMap updates', () => {
+  const data = emptyTests();
+  const pack = parseTestReply(reply([question({ stem: 'Composite miss', system: 'Renal', topic: 'AKI' })]));
+  const t = addTest(data, pack, { course: 'Clin Med' }, makeId, NOW);
+  const q = t.questions[0];
+  const progress = emptyProgress();
+  // Seed a composite miss key alongside malformed dueOn to match legacy data.
+  progress.misses[`${t.id}:${q.id}`] = {
+    questionId: q.id, testId: t.id, box: 0, dueOn: TODAY, firstOn: TODAY, lastSeen: TODAY, state: 'active', misses: 1, rights: 0,
+  };
+  assert.equal(dueMisses(progress, TODAY).length, 1);
+  // Step through a correct review today.
+  const step1 = answerReview(progress, q, [0], TODAY, { now: NOW });
+  assert.deepEqual([step1.right, step1.cleared, progress.misses[q.id].lastReviewedOn], [true, false, TODAY]);
+  assert.equal(progress.misses[`${t.id}:${q.id}`], undefined, 'composite key normalized to canonical questionId');
+  assert.deepEqual(dueMisses(progress, TODAY), [], 'reloading same day never resurfaces already-reviewed item');
+  assert.deepEqual(progress.gameAnswers[q.id]?.answer, [0]);
+  assert.equal(progress.gameAnswers[q.id]?.system, 'Renal');
+  const map = coverageMap(data, progress, emptyMap(), null);
+  assert.equal(map.systems.find((s) => s.system === 'Renal')?.proven.right, 1);
+
+  // Answering with unsure keeps miss active (does not clear even at top box).
+  progress.misses[q.id].box = REVIEW_DAYS.length - 1;
+  const unsureDay = progress.misses[q.id].dueOn;
+  const stepUnsure = answerReview(progress, q, [0], unsureDay, { unsure: true, now: NOW });
+  assert.deepEqual([stepUnsure.right, stepUnsure.cleared, progress.misses[q.id].state], [true, false, 'active']);
+  assert.equal(progress.misses[q.id].box, 1);
 });
 
 test('answering twice in a day only counts once', () => {

@@ -6,9 +6,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
 import { SignedOut, studyGet, studyPost } from '@/components/study/api';
 import { CopyPrompt, PasteReply } from '@/components/study/PromptSteps';
+import { InlineMath } from '@/components/study/InlineMath';
 import { ALL_RESULTS, buildTestPrompt, DIFFICULTIES, type PromptSource, type PromptStyle, type ResultChoices } from '@/lib/study/prompt';
 import { dropRepeats, suggestDifficulty, type SetBrief, type SetSummary } from '@/lib/study/sets';
-import { parseTestReply, StudyInputError, type ParsedPack, type StudySummary } from '@/lib/study/study';
+import { choiceLetter, parseTestReply, StudyInputError, type ParsedPack, type StudySummary } from '@/lib/study/study';
 
 // Two steps, because the AI lives elsewhere: copy a prompt into it with your
 // notes, then paste what it wrote back here. The reply is checked as you paste,
@@ -77,6 +78,7 @@ export default function AddTestPage() {
   const [useWeak, setUseWeak] = useState(true);
   const [use, setUse] = useState(ALL_RESULTS);
   const [reply, setReply] = useState('');
+  const [excluded, setExcluded] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -130,18 +132,20 @@ export default function AddTestPage() {
     ...(brief ? { brief } : {}),
   }), [source, course, focus, count, style, difficulty, use, useWeak, offerOverall, weakTopics, brief]);
   const { pack, error } = useMemo(() => readPack(reply, brief?.stems ?? []), [reply, brief]);
+  const keptQuestions = useMemo(() => (pack ? pack.questions.filter((q) => !excluded.includes(q.stem)) : []), [pack, excluded]);
   const nudge = brief ? suggestDifficulty(brief, difficulty) : null;
   const level = DIFFICULTIES[difficulty - 1] ?? DIFFICULTIES[2];
   const sameName = target === NEW_SET ? sets.find((s) => s.title.toLowerCase() === setName.trim().toLowerCase()) : undefined;
 
   async function save() {
-    if (!pack || saving) return;
+    if (!pack || !keptQuestions.length || saving) return;
     setSaving(true);
     setSaveError('');
     const settings = { course, focus, style, count, difficulty };
     try {
       const body = await studyPost<{ id: string }>('add-test', {
         text: reply,
+        exclude: excluded,
         title,
         course: course || pack.course,
         ...(source === 'notes' ? { difficulty } : {}),
@@ -157,8 +161,8 @@ export default function AddTestPage() {
 
   if (signedOut) return <div className="sd"><SignInPrompt title="Sign in to add tests">Your tests are only shown to your account.</SignInPrompt></div>;
 
-  const topics = pack ? [...new Set(pack.questions.map((q) => q.topic))] : [];
-  const selectAll = pack ? pack.questions.filter((q) => q.correct.length > 1).length : 0;
+  const topics = [...new Set(keptQuestions.map((q) => q.topic))];
+  const selectAll = keptQuestions.filter((q) => q.correct.length > 1).length;
   const titleHint = brief ? `Test ${brief.testCount + 1}` : target === NEW_SET ? 'Test 1' : pack?.title || 'Practice test';
   return (
     <div className="sd sd-narrow animate-fade-in">
@@ -236,13 +240,13 @@ export default function AddTestPage() {
         {source === 'notes' && brief && brief.testCount > 0 && <Tailoring brief={brief} use={use} onChange={setUse} />}
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={(text) => { setReply(text); setSaveError(''); }}>
+      <PasteReply value={reply} onChange={(text) => { setReply(text); setExcluded([]); setSaveError(''); }}>
         {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
         {pack && (
           <div className="sd-preview">
             <p className="sd-found">
-              <strong>{pack.questions.length} question{pack.questions.length === 1 ? '' : 's'} ready</strong>
-              {' '}across {topics.length} topic{topics.length === 1 ? '' : 's'}{selectAll ? `, ${selectAll} select-all` : ''}.
+              <strong>{keptQuestions.length} of {pack.questions.length} question{pack.questions.length === 1 ? '' : 's'} included</strong>
+              {keptQuestions.length > 0 && <> across {topics.length} topic{topics.length === 1 ? '' : 's'}{selectAll ? `, ${selectAll} select-all` : ''}</>}.
             </p>
             {pack.warnings.map((w) => <p key={w} className="sd-warning">{w}</p>)}
             {pack.problems.length > 0 && (
@@ -251,13 +255,38 @@ export default function AddTestPage() {
                 <ul>{pack.problems.map((p) => <li key={p}>{p}</li>)}</ul>
               </details>
             )}
+            <div className="sd-actions">
+              <button type="button" className="hb-small-btn" disabled={!excluded.length} onClick={() => setExcluded([])}>Include all</button>
+              <button type="button" className="hb-small-btn" disabled={!keptQuestions.length} onClick={() => setExcluded(pack.questions.map((q) => q.stem))}>Uncheck all</button>
+            </div>
+            <ul className="sd-preview-list" aria-label="Questions to include">
+              {pack.questions.map((q, i) => {
+                const included = !excluded.includes(q.stem);
+                return (
+                  <li key={q.stem} className={included ? '' : 'is-excluded'}>
+                    <label className="sd-check">
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={(e) => setExcluded((list) => (e.target.checked ? list.filter((s) => s !== q.stem) : [...list, q.stem]))}
+                      />
+                      <span className="sd-test-main">
+                        <strong>Q{i + 1}{q.topic !== 'General' ? ` · ${q.topic}` : ''}{q.system ? ` · ${q.system}` : ''}</strong>
+                        <span className="sd-preview-stem"><InlineMath>{q.stem}</InlineMath></span>
+                        <small>Answer: {q.correct.map((idx) => `${choiceLetter(idx)}. ${q.choices[idx]}`).join(', ')}</small>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
             <div className="sd-fields">
               <label className="sd-wide">Name (optional)
                 <input value={title} maxLength={120} placeholder={titleHint} onChange={(e) => setTitle(e.target.value)} />
               </label>
             </div>
             {saveError && <div className="hb-banner is-error" role="alert"><span>{saveError}</span></div>}
-            <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save and open the test'}</button>
+            <button type="button" className="btn btn-primary" disabled={saving || !keptQuestions.length} onClick={save}>{saving ? 'Saving…' : 'Save and open the test'}</button>
           </div>
         )}
       </PasteReply>

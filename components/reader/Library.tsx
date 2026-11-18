@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
+import { useTheme } from '@/components/ThemeProvider';
 import {
   booksInProgress, entrySeries, formatFromName, inSeriesOrder, MAX_BOOK_BYTES, notesByChapter, progressText, readingState, seriesOnShelf, shelfEntries,
   type Anchor, type BookMeta, type Folder, type ReaderItem, type ReadingState, type ShelfEntry,
@@ -30,6 +31,7 @@ import { useBookItems } from './useBookItems';
 // in a series stand together as one stack on the main shelf, and open out in their order.
 
 type View = 'all' | 'reading' | 'finished' | 'device' | 'library' | `folder:${string}` | `series:${string}`;
+type ShelfSort = 'recent' | 'title' | 'progress';
 type Dialog =
   | { kind: 'add' }
   | { kind: 'youtube' }
@@ -50,6 +52,7 @@ type Entry = ShelfEntry<BookMeta>;
 type Shown = { kind: 'entry'; entry: Entry; number?: number } | { kind: 'stack'; name: string; entries: Entry[] };
 
 const VIEW_KEY = 'reader-shelf-view';
+const SORT_KEY = 'reader-shelf-sort';
 
 function fmtDay(ms: number) {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -149,7 +152,7 @@ function BookNotes({ book, theme, onOpenAt, onClose }: { book: BookMeta; theme: 
           <button type="button" className="rd-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         </div>
         <div className="rd-sheet-body">
-          <NotesPanel items={items} theme={theme} onJump={onOpenAt} onEdit={editNote} onDelete={remove} onMakeTyped={makeTyped} />
+          <NotesPanel items={items} theme={theme} isAudio={book.format === 'audio'} onJump={onOpenAt} onEdit={editNote} onDelete={remove} onMakeTyped={makeTyped} />
         </div>
       </aside>
     </div>
@@ -173,7 +176,7 @@ function FolderForm({ title, start, action, onSave, onCancel }: { title: string;
 }
 
 
-export default function Library({ books, folders, theme, online, signedOut, onChanged, onOpen, onSignIn }: {
+export default function Library({ books, folders, theme, online, signedOut, onChanged, onOpen, onSignIn, onToggleTheme }: {
   books: BookMeta[];
   folders: Folder[];
   theme: ReaderSettings['theme'];
@@ -182,7 +185,11 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   onChanged: () => Promise<void>;
   onOpen: (book: BookMeta, at?: Anchor) => void;
   onSignIn: () => void;
+  onToggleTheme?: () => void;
 }) {
+  const { toggleTheme: toggleSiteTheme } = useTheme();
+  const handleToggleTheme = onToggleTheme ?? toggleSiteTheme;
+  const isDarkTheme = theme === 'night';
   const [covers, setCovers] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<Record<string, StoredProgress>>({});
   const [kept, setKept] = useState<Set<string>>(new Set());
@@ -200,6 +207,8 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const [dragging, setDragging] = useState(false);
   const [noteCounts, setNoteCounts] = useState<Record<string, number>>({});
   const [view, setViewState] = useState<View>('all');
+  const [shelfQuery, setShelfQuery] = useState('');
+  const [shelfSort, setShelfSort] = useState<ShelfSort>('recent');
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -232,12 +241,30 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
 
   useEffect(() => {
     // /library used to be its own page, and now lands here.
+    try {
+      const savedSort = localStorage.getItem(SORT_KEY);
+      if (savedSort === 'recent' || savedSort === 'title' || savedSort === 'progress') setShelfSort(savedSort);
+    } catch { /* ignore */ }
     if (new URLSearchParams(window.location.search).get('shelf') === 'library') { setViewState('library'); return; }
     try {
       const saved = localStorage.getItem(VIEW_KEY);
       if (saved) setViewState(saved as View);
     } catch { /* Private browsing: start on All. */ }
   }, []);
+
+  useEffect(() => {
+    if (!dialog && !menuFor && !notesFor && !chaptersFor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      if (chaptersFor) setChaptersFor(null);
+      else if (notesFor) setNotesFor(null);
+      else if (menuFor) { setMenuFor(null); setRenaming(null); setConfirmDelete(false); }
+      else if (dialog) setDialog(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dialog, menuFor, notesFor, chaptersFor]);
 
   const setView = (next: View) => {
     setViewState(next);
@@ -274,7 +301,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     for (const file of files) {
       const id = Date.now() + Math.random();
       if (!formatFromName(file.name)) {
-        setUploads((u) => [...u, { id, name: file.name, fraction: 0, error: 'Books can be EPUB, PDF, CBZ, TXT, Markdown or HTML.' }]);
+        setUploads((u) => [...u, { id, name: file.name, fraction: 0, error: 'Books can be EPUB, PDF, CBZ, TXT, Markdown, HTML or audio (MP3, M4A, M4B, OGG, WAV, FLAC, AAC).' }]);
         continue;
       }
       if (file.size > MAX_BOOK_BYTES) {
@@ -361,12 +388,33 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
     setConfirmDelete(false);
   };
 
-  // What you were last reading, first.
+  // What you were last reading, first (or sorted by user choice).
   const ordered = useMemo(() => [...books].sort((a, b) => {
     const at = (book: BookMeta) => progress[book.id]?.at ?? Date.parse(book.addedAt);
     return at(b) - at(a);
   }), [books, progress]);
   const entries = useMemo(() => shelfEntries(ordered), [ordered]);
+
+  const sortedEntries = useMemo(() => {
+    const entryRecent = (entry: Entry) =>
+      Math.max(...entry.books.map((b) => progress[b.id]?.at ?? (Date.parse(b.addedAt) || 0)));
+    const entryProgressScore = (entry: Entry) =>
+      Math.max(...entry.books.map((b) => {
+        const st = readingState(progress[b.id]);
+        if (st === 'finished') return 1;
+        if (st === 'reading') return Math.max(0.001, progress[b.id]?.pct ?? 0.001);
+        return -1;
+      }));
+    const list = [...entries];
+    if (shelfSort === 'title') {
+      list.sort((a, b) => a.books[0].title.localeCompare(b.books[0].title, undefined, { numeric: true, sensitivity: 'base' }));
+    } else if (shelfSort === 'progress') {
+      list.sort((a, b) => entryProgressScore(b) - entryProgressScore(a) || entryRecent(b) - entryRecent(a));
+    } else {
+      list.sort((a, b) => entryRecent(b) - entryRecent(a));
+    }
+    return list;
+  }, [entries, progress, shelfSort]);
 
   const canAdd = online && !signedOut;
 
@@ -385,12 +433,28 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const notesTotal = Object.values(noteCounts).reduce((sum, n) => sum + n, 0);
   const continuing = booksInProgress(ordered, progress);
 
+  const normalizedQuery = shelfQuery.trim().toLowerCase();
+  const matchesQuery = (entry: Entry) =>
+    !normalizedQuery ||
+    entry.books.some((b) =>
+      b.title.toLowerCase().includes(normalizedQuery) ||
+      (b.author ?? '').toLowerCase().includes(normalizedQuery) ||
+      (b.series ?? '').toLowerCase().includes(normalizedQuery)
+    );
+
   const shown: Shown[] = (() => {
-    if (currentSeries) return inSeries(currentSeries).map((entry, i) => ({ kind: 'entry' as const, entry, number: i + 1 }));
+    if (currentSeries) {
+      return inSeries(currentSeries)
+        .filter(matchesQuery)
+        .map((entry, i) => ({ kind: 'entry' as const, entry, number: i + 1 }));
+    }
     if (shownView === 'all') {
+      if (normalizedQuery) {
+        return sortedEntries.filter(matchesQuery).map((entry) => ({ kind: 'entry' as const, entry }));
+      }
       const out: Shown[] = [];
       const stacked = new Set<string>();
-      for (const entry of entries) {
+      for (const entry of sortedEntries) {
         const series = entrySeries(entry);
         const together = series ? inSeries(series.name) : [];
         if (!series || together.length < 2) out.push({ kind: 'entry', entry });
@@ -406,7 +470,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
       if (shownView === 'reading' || shownView === 'finished') return stateOf(entry) === shownView;
       return entry.books.some((book) => book.folder === currentFolder?.id);
     };
-    return entries.filter(belongs).map((entry) => ({ kind: 'entry' as const, entry }));
+    return sortedEntries.filter((e) => belongs(e) && matchesQuery(e)).map((entry) => ({ kind: 'entry' as const, entry }));
   })();
   const shownBooks = shown.flatMap((item) => (item.kind === 'entry' ? item.entry.books : item.entries.flatMap((entry) => entry.books)));
 
@@ -428,7 +492,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
   const dialogSeries = dialog?.kind === 'series' ? [...new Set(books.filter((book) => dialog.books.includes(book.id)).map((book) => book.series))] : [];
 
   const describe = (entry: Entry) => {
-    const kinds = entry.books.map((book) => (book.format === 'audio' ? `Audio · ${spoken(book.audio?.duration ?? 0)}` : book.format.toUpperCase()));
+    const kinds = entry.books.map((book) => (book.format === 'audio' ? (book.audio?.duration ? `Audio · ${spoken(book.audio.duration)}` : 'Audio') : book.format.toUpperCase()));
     return `${kinds.join(' + ')} · ${fmtSize(entry.books.reduce((sum, book) => sum + book.size, 0))}`;
   };
 
@@ -532,7 +596,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
       }}
     >
       <header className="rd-lib-head">
-        <div>
+        <div className="rd-lib-title">
           <a className="rd-home" href="/today"><Icon name="chevron" className="is-flipped" /> Noah Stuf</a>
           <h1>Reader</h1>
           {books.length > 0 && (
@@ -540,7 +604,28 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
           )}
         </div>
         <span className="rd-grow" />
-        <button type="button" className="rd-btn is-primary" disabled={!canAdd} onClick={() => setDialog({ kind: 'add' })}><Icon name="plus" /> Add a book</button>
+        <div className="rd-lib-actions">
+          <button
+            type="button"
+            className="rd-icon-btn"
+            aria-label="Explore"
+            title="Explore"
+            onClick={() => window.dispatchEvent(new Event('site:open-launcher'))}
+          >
+            <Icon name="compass" />
+          </button>
+          <button
+            type="button"
+            className="rd-icon-btn"
+            aria-label={isDarkTheme ? 'Light theme' : 'Dark theme'}
+            title={isDarkTheme ? 'Light theme' : 'Dark theme'}
+            aria-pressed={!isDarkTheme}
+            onClick={handleToggleTheme}
+          >
+            <Icon name="moon" />
+          </button>
+          <button type="button" className="rd-btn is-primary" disabled={!canAdd} onClick={() => setDialog({ kind: 'add' })}><Icon name="plus" /> Add a book</button>
+        </div>
         {/* No `accept`: iPhones grey out file types they don't recognise, like .cbz. Checked after picking instead. */}
         <input
           ref={fileInput} type="file" multiple hidden aria-label="Choose books"
@@ -586,7 +671,7 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
         <div className="rd-welcome">
           <Icon name="book" size="2.5em" />
           <h2>Nothing on the shelf yet</h2>
-          <p>Add an EPUB, PDF, CBZ, text, Markdown or HTML file, or read something from the Library. What you add is saved to your account, so it’s on your phone and your iPad, and only you can see it.</p>
+          <p>Add an EPUB, PDF, CBZ, text, Markdown, HTML or audio file, or read something from the Library. What you add is saved to your account, so it’s on your phone and your iPad, and only you can see it.</p>
           <button type="button" className="rd-btn" onClick={() => setView('library')}><Icon name="book" /> Open the Library</button>
         </div>
       )}
@@ -677,14 +762,52 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
         </div>
       )}
 
+      {books.length > 0 && shownView !== 'library' && (
+        <div className="rd-shelf-controls">
+          <input
+            type="search"
+            className="rd-input"
+            value={shelfQuery}
+            onChange={(e) => setShelfQuery(e.target.value)}
+            placeholder="Search books by title or author"
+            aria-label="Search books"
+          />
+          <select
+            className="rd-input rd-sort-select"
+            value={shelfSort}
+            aria-label="Sort books"
+            onChange={(e) => {
+              const next = e.target.value as ShelfSort;
+              setShelfSort(next);
+              try { localStorage.setItem(SORT_KEY, next); } catch { /* ignore */ }
+            }}
+          >
+            <option value="recent">Sort: Recent</option>
+            <option value="title">Sort: Title</option>
+            <option value="progress">Sort: Progress</option>
+          </select>
+        </div>
+      )}
+
       {shownView === 'library' && (
-        <PublicLibrary library={publicLibrary} books={books} guest={false} canAdd={canAdd} onOpen={onOpen} onChanged={onChanged} onSignIn={onSignIn} />
+        <PublicLibrary library={publicLibrary} books={books} guest={false} canAdd={canAdd} online={online} onOpen={onOpen} onChanged={onChanged} onSignIn={onSignIn} />
       )}
 
       {books.length > 0 && !shown.length && shownView !== 'library' && (
-        <p className="rd-empty">
-          {currentFolder ? 'Nothing in this folder yet. Use Select, or a book’s ⋯ menu, to move books here.' : shownView === 'reading' ? 'Nothing on the go. Open a book to start it.' : 'Nothing finished yet. A book counts when you reach its last page, or mark it in its ⋯ menu.'}
-        </p>
+        <div className="rd-empty">
+          <p>
+            {normalizedQuery
+              ? `No books match “${shelfQuery.trim()}”.`
+              : currentFolder
+                ? 'Nothing in this folder yet. Use Select, or a book’s ⋯ menu, to move books here.'
+                : shownView === 'reading'
+                  ? 'Nothing on the go. Open a book to start it.'
+                  : 'Nothing finished yet. A book counts when you reach its last page, or mark it in its ⋯ menu.'}
+          </p>
+          {normalizedQuery && (
+            <button type="button" className="rd-btn is-small" onClick={() => setShelfQuery('')}>Clear search</button>
+          )}
+        </div>
       )}
 
       {shownView !== 'library' && (
@@ -710,7 +833,10 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
 
       {dialog && (
         <div className="rd-sheet-wrap is-center" onClick={() => setDialog(null)}>
-          <div className="rd-menu" role="dialog" aria-label="Your shelves" onClick={(e) => e.stopPropagation()}>
+          <div className="rd-menu" role="dialog" aria-modal="true" aria-label="Your shelves" onClick={(e) => e.stopPropagation()}>
+            <div className="rd-menu-close-row">
+              <button type="button" className="rd-icon-btn" aria-label="Close" onClick={() => setDialog(null)}><Icon name="x" /></button>
+            </div>
             {dialog.kind === 'add' && (
               <>
                 <p className="rd-menu-title">Add a book{currentFolder && <small>To {currentFolder.name}</small>}</p>
@@ -830,7 +956,10 @@ export default function Library({ books, folders, theme, online, signedOut, onCh
 
       {menuFor && (
         <div className="rd-sheet-wrap is-center" onClick={closeMenu}>
-          <div className="rd-menu" role="dialog" aria-label={menuFor.title} onClick={(e) => e.stopPropagation()}>
+          <div className="rd-menu" role="dialog" aria-modal="true" aria-label={menuFor.title} onClick={(e) => e.stopPropagation()}>
+            <div className="rd-menu-close-row">
+              <button type="button" className="rd-icon-btn" aria-label="Close" onClick={closeMenu}><Icon name="x" /></button>
+            </div>
             {renaming ? (
               <form onSubmit={(e) => { e.preventDefault(); void saveRename(); }}>
                 <label className="rd-label" htmlFor="rd-title">Title</label>

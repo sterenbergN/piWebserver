@@ -1,11 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import type { RecordingPage, RecordingRecord } from '@/lib/notes/items';
+import { isDark, type RecordingPage, type RecordingRecord } from '@/lib/notes/items';
+import {
+  countSummaryTimestamps,
+  formatSummaryForNotebookPage,
+  parseRecordingSummary,
+  slugifyNotebookTag,
+  tokenizeInlineTimestamps,
+  type SummaryTimestamp,
+} from '@/lib/notes/recording-summary';
 import { getFile } from './db';
 import type { NotebookDoc } from './doc';
 import { safeFileName, shareOrSave } from './export';
+import { elementBox, TEXT_LINE_HEIGHT, textHeight } from './ink';
 import { fmtDuration, type Recorder } from './Recorder';
 import { fetchFile, sendAgain, syncNow } from './sync';
 import { getTranscript, removeTranscript, startTranscript, summaryPrompt, transcriptText, type TranscriptInfo } from './transcripts';
@@ -17,9 +26,28 @@ import { getTranscript, removeTranscript, startTranscript, summaryPrompt, transc
 
 const POLL_MS = 4000;
 
-export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder, pages, onGoToPage, onBack, onClose }: {
-  doc: NotebookDoc; notebook: string; notebookTitle: string; record: RecordingRecord; recorder: Recorder; pages: (RecordingPage & { number: number })[];
-  onGoToPage: (page: string) => void; onBack: () => void; onClose: () => void;
+export function RecordingDetail({
+  doc,
+  notebook,
+  notebookTitle,
+  record,
+  recorder,
+  pages,
+  currentPage,
+  onGoToPage,
+  onBack,
+  onClose,
+}: {
+  doc: NotebookDoc;
+  notebook: string;
+  notebookTitle: string;
+  record: RecordingRecord;
+  recorder: Recorder;
+  pages: (RecordingPage & { number: number })[];
+  currentPage?: string;
+  onGoToPage: (page: string) => void;
+  onBack: () => void;
+  onClose: () => void;
 }) {
   const [name, setName] = useState(record.title);
   const [confirming, setConfirming] = useState(false);
@@ -96,7 +124,31 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
     onBack();
   };
 
+  const playAt = useCallback((ms: number) => {
+    const clamped = record.duration > 0
+      ? Math.max(0, Math.min(ms, record.duration))
+      : Math.max(0, ms);
+    const liveIds = new Set(doc.pages.map((p) => p.id));
+    const timedPages = (record.pages?.length ? record.pages : pages)
+      .filter((p) => liveIds.has(p.page))
+      .slice()
+      .sort((a, b) => a.at - b.at);
+
+    let targetPage: string | undefined;
+    for (const p of timedPages) {
+      if (p.at <= clamped + 1500) targetPage = p.page;
+    }
+    if (!targetPage) {
+      if (record.page && liveIds.has(record.page)) targetPage = record.page;
+      else targetPage = pages.find((p) => liveIds.has(p.page))?.page;
+    }
+    if (targetPage) onGoToPage(targetPage);
+    void recorder.play(record, clamped);
+    onClose();
+  }, [doc.pages, onClose, onGoToPage, pages, record, recorder]);
+
   const recorded = new Date(record.startedAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const hasTranscriptSegments = transcript?.status === 'done' && transcript.segments.length > 0;
 
   return (
     <>
@@ -141,7 +193,7 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
                   key={p.page}
                   className="nt-chip"
                   aria-label={`Go to page ${p.number} and play from ${fmtDuration(p.at)}`}
-                  onClick={() => { onGoToPage(p.page); void recorder.play(record, Math.max(0, Math.min(p.at, record.duration) - 1500)); }}
+                  onClick={() => { onGoToPage(p.page); void recorder.play(record, Math.max(0, Math.min(p.at, record.duration) - 1500)); onClose(); }}
                 >
                   <Icon name="play" /> Page {p.number} <small>{fmtDuration(Math.min(p.at, record.duration))}</small>
                 </button>
@@ -152,6 +204,18 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
         )}
 
         <h3 className="nt-label nt-rec-section">What was said</h3>
+        {!hasTranscriptSegments && record.summary && (
+          <Summary
+            key={record.id}
+            doc={doc}
+            record={record}
+            notebookTitle={notebookTitle}
+            transcript={null}
+            pages={pages}
+            currentPage={currentPage}
+            onPlayAt={playAt}
+          />
+        )}
         {!loaded ? (
           <p className="nt-hint">Asking the Pi…</p>
         ) : !transcript && !onPi ? (
@@ -168,7 +232,7 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
         ) : transcript.status === 'waiting' || transcript.status === 'working' ? (
           <>
             <Progress transcript={transcript} />
-            {transcript.segments.length > 0 && <Lines transcript={transcript} partial onPlay={(at) => { void recorder.play(record, Math.max(0, at - 1000)); onClose(); }} onRedo={() => {}} />}
+            {transcript.segments.length > 0 && <Lines transcript={transcript} partial onPlay={(at) => playAt(Math.max(0, at - 1000))} onRedo={() => {}} />}
           </>
         ) : transcript.status === 'failed' ? (
           <>
@@ -178,8 +242,17 @@ export function RecordingDetail({ doc, notebook, notebookTitle, record, recorder
         ) : (
           <>
             {offline && <p className="nt-hint nt-tight">The copy kept on this device: the Pi can’t be reached.</p>}
-            <Summary doc={doc} record={record} notebookTitle={notebookTitle} transcript={transcript} />
-            <Lines transcript={transcript} onPlay={(at) => { void recorder.play(record, Math.max(0, at - 1000)); onClose(); }} onRedo={() => void start(true)} />
+            <Summary
+              key={record.id}
+              doc={doc}
+              record={record}
+              notebookTitle={notebookTitle}
+              transcript={transcript}
+              pages={pages}
+              currentPage={currentPage}
+              onPlayAt={playAt}
+            />
+            <Lines transcript={transcript} onPlay={(at) => playAt(Math.max(0, at - 1000))} onRedo={() => void start(true)} />
           </>
         )}
         {problem && <p className="nt-hint is-error">{problem}</p>}
@@ -239,18 +312,115 @@ function Lines({ transcript, partial, onPlay, onRedo }: { transcript: Transcript
   );
 }
 
-function Summary({ doc, record, notebookTitle, transcript }: { doc: NotebookDoc; record: RecordingRecord; notebookTitle: string; transcript: TranscriptInfo }) {
+function TimeChip({ ts, onPlay }: { ts: SummaryTimestamp; onPlay: (ms: number) => void }) {
+  return (
+    <button
+      type="button"
+      className="nt-time-chip"
+      aria-label={`Play from ${ts.label}`}
+      onClick={() => onPlay(ts.ms)}
+    >
+      <Icon name="play" size="0.78em" />
+      <span>{ts.label}</span>
+    </button>
+  );
+}
+
+function RichSummaryText({
+  text,
+  onPlay,
+  skipLeadingSeconds,
+}: {
+  text: string;
+  onPlay: (ms: number) => void;
+  skipLeadingSeconds?: number;
+}) {
+  const tokens = useMemo(() => tokenizeInlineTimestamps(text), [text]);
+  if (!tokens.length) return null;
+
+  let startIdx = 0;
+  if (
+    skipLeadingSeconds !== undefined &&
+    tokens[0]?.type === 'time' &&
+    tokens[0].ts.seconds === skipLeadingSeconds
+  ) {
+    startIdx = 1;
+  }
+
+  return (
+    <>
+      {tokens.slice(startIdx).map((token, idx) => {
+        if (token.type === 'time') {
+          return <TimeChip key={`t-${idx}-${token.ts.seconds}`} ts={token.ts} onPlay={onPlay} />;
+        }
+        const chunk = idx === 0 && startIdx === 1 ? token.text.replace(/^\s*[-–—:]?\s*/, '') : token.text;
+        return chunk ? <span key={`s-${idx}`}>{chunk}</span> : null;
+      })}
+    </>
+  );
+}
+
+const hasInlineTime = (text: string, ts?: SummaryTimestamp) =>
+  !!ts && tokenizeInlineTimestamps(text).some((tok) => tok.type === 'time' && tok.ts.seconds === ts.seconds);
+
+function Summary({
+  doc,
+  record,
+  notebookTitle,
+  transcript,
+  pages,
+  currentPage,
+  onPlayAt,
+}: {
+  doc: NotebookDoc;
+  record: RecordingRecord;
+  notebookTitle: string;
+  transcript: TranscriptInfo | null;
+  pages: (RecordingPage & { number: number })[];
+  currentPage?: string;
+  onPlayAt: (ms: number) => void;
+}) {
+  const canEdit = !!transcript && transcript.segments.length > 0;
   const [editing, setEditing] = useState(!record.summary);
   const [reply, setReply] = useState('');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [copiedSummary, setCopiedSummary] = useState(false);
   const [pasteFailed, setPasteFailed] = useState(false);
+  const [openQAs, setOpenQAs] = useState<Record<number, boolean>>({});
+  const [inserting, setInserting] = useState(false);
+  const [pageNotice, setPageNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sendingSkills, setSendingSkills] = useState(false);
+  const [skillsSentFor, setSkillsSentFor] = useState<string | null>(null);
+  const [skillsNotice, setSkillsNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
   const promptBox = useRef<HTMLTextAreaElement>(null);
   const replyBox = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (record.summary) setEditing(false); }, [record.summary]);
-  if (!transcript.segments.length) return null;
 
-  const prompt = summaryPrompt(record.title, notebookTitle, record.startedAt, transcript.segments);
+  useEffect(() => {
+    if (record.summary) setEditing(false);
+  }, [record.summary]);
+
+  const parsed = useMemo(
+    () => (record.summary ? parseRecordingSummary(record.summary) : null),
+    [record.summary],
+  );
+  const preview = useMemo(
+    () => (reply.trim() ? parseRecordingSummary(reply) : null),
+    [reply],
+  );
+  const previewTimestamps = useMemo(
+    () => (preview ? countSummaryTimestamps(preview) : 0),
+    [preview],
+  );
+
+  if (!canEdit && !record.summary) return null;
+
+  const prompt = canEdit
+    ? summaryPrompt(record.title, notebookTitle, record.startedAt, transcript.segments)
+    : '';
+
   const copyPrompt = async () => {
+    if (!prompt) return;
     try {
       await navigator.clipboard.writeText(prompt);
       setCopied('copied');
@@ -259,6 +429,7 @@ function Summary({ doc, record, notebookTitle, transcript }: { doc: NotebookDoc;
       setTimeout(() => { promptBox.current?.focus(); promptBox.current?.select(); }, 0);
     }
   };
+
   const paste = async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -269,24 +440,354 @@ function Summary({ doc, record, notebookTitle, transcript }: { doc: NotebookDoc;
       replyBox.current?.focus();
     }
   };
+
   const save = () => {
     const summary = reply.trim();
     if (!summary) return;
     doc.updateRecording(record, { summary });
     setReply('');
     setCopied('idle');
+    setOpenQAs({});
+    setPageNotice(null);
+    setSkillsNotice(null);
+    setSkillsSentFor(null);
     setEditing(false);
   };
 
-  if (!editing && record.summary) {
+  const copySummaryText = async () => {
+    if (!record.summary || !parsed) return;
+    const text = parsed.format === 'strict'
+      ? formatSummaryForNotebookPage(record.title, parsed)
+      : record.summary;
+    try {
+      await navigator.clipboard.writeText(text || record.summary);
+      setCopiedSummary(true);
+      setTimeout(() => setCopiedSummary(false), 1800);
+    } catch { /* User can select text directly. */ }
+  };
+
+  const targetPageId =
+    (currentPage && doc.pages.some((p) => p.id === currentPage) ? currentPage : undefined)
+    ?? pages.find((p) => doc.pages.some((dp) => dp.id === p.page))?.page
+    ?? (record.page && doc.pages.some((p) => p.id === record.page) ? record.page : undefined)
+    ?? doc.pages[0]?.id;
+
+  const insertOnPage = async () => {
+    if (!parsed || !targetPageId || inserting) return;
+    setInserting(true);
+    setPageNotice(null);
+    try {
+      const formatted = formatSummaryForNotebookPage(record.title, parsed).trim();
+      const text = formatted || record.summary?.trim() || '';
+      if (!text) return;
+
+      await doc.ensure(targetPageId);
+      const page = doc.pages.find((p) => p.id === targetPageId);
+      const pageW = page?.w ?? 612;
+      const pageH = page?.h ?? 792;
+      const margin = Math.min(40, Math.round(pageW * 0.08));
+      const boxW = Math.max(180, pageW - margin * 2);
+      const size = 11;
+      const font = 'sans' as const;
+      const color = page && isDark(page.paper) ? '#f4f3ef' : '#1d1f27';
+      const h = Math.max(size * TEXT_LINE_HEIGHT, textHeight({ text, w: boxW, size, font }));
+
+      const existing = doc.elementsOf(targetPageId).filter((el) => !el.deleted);
+      const maxBottom = existing.reduce((max, el) => {
+        const b = elementBox(el);
+        return Math.max(max, b.y + b.h);
+      }, 0);
+      const maxY = Math.max(margin, pageH - margin - Math.min(h, pageH - margin * 2));
+      const y = existing.length === 0 ? margin : maxBottom + 16 <= maxY ? maxBottom + 16 : margin;
+
+      await doc.addText(targetPageId, {
+        x: margin,
+        y,
+        w: boxW,
+        h,
+        rot: 0,
+        text,
+        size,
+        color,
+        font,
+      });
+
+      const pageNumber = doc.pages.findIndex((p) => p.id === targetPageId) + 1;
+      setPageNotice({ ok: true, text: `Added summary to Page ${Math.max(1, pageNumber)}.` });
+    } catch (error) {
+      setPageNotice({
+        ok: false,
+        text: error instanceof Error ? error.message : 'Couldn’t add the summary to the page.',
+      });
+    } finally {
+      setInserting(false);
+    }
+  };
+
+  const skillsEntries = useMemo(() => {
+    if (!parsed) return [];
+    const list: { question: string; answer: string; context: string }[] = [];
+    const seen = new Set<string>();
+    const addEntry = (question: string, answer: string, timeLabel?: string) => {
+      const q = question.trim();
+      const a = answer.trim();
+      if (!q || !a) return;
+      const key = q.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push({
+        question: q,
+        answer: a,
+        context: `Recording "${record.title}" in "${notebookTitle}"${timeLabel ? ` (${timeLabel})` : ''}`,
+      });
+    };
+    for (const t of parsed.terms) {
+      addEntry(t.term, t.definition || t.term, t.time?.label);
+    }
+    for (const qa of parsed.questions) {
+      addEntry(qa.question, qa.answer || 'Review from recording summary.', qa.time?.label);
+    }
+    return list;
+  }, [notebookTitle, parsed, record.title]);
+
+  const sendToSkills = async () => {
+    if (!skillsEntries.length || sendingSkills) return;
+    setSendingSkills(true);
+    setSkillsNotice(null);
+    const notebookSlug = slugifyNotebookTag(notebookTitle);
+    const tags = notebookSlug ? ['notes-recording', notebookSlug] : ['notes-recording'];
+    let sent = 0;
+
+    try {
+      for (const entry of skillsEntries) {
+        const res = await fetch('/api/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'add-inquiry',
+            question: entry.question,
+            answer: entry.answer,
+            context: entry.context,
+            status: 'solved',
+            tags,
+          }),
+        });
+        const body = await res.json().catch(() => ({})) as { success?: boolean; message?: string };
+        if (res.status === 401) {
+          setSkillsNotice({
+            ok: false,
+            text: sent > 0
+              ? `Saved ${sent} item${sent === 1 ? '' : 's'} before your session ended. Sign in to send the rest to Skills.`
+              : 'Sign in to save terms and Q&As to your Skills Knowledge Base.',
+          });
+          return;
+        }
+        if (!res.ok || !body.success) {
+          throw new Error(body.message || 'Couldn’t save to Skills.');
+        }
+        sent += 1;
+      }
+      setSkillsSentFor(record.summary ?? '');
+      setSkillsNotice({
+        ok: true,
+        text: `Sent ${sent} item${sent === 1 ? '' : 's'} to your Skills Knowledge Base.`,
+      });
+    } catch (error) {
+      setSkillsNotice({
+        ok: false,
+        text: sent > 0
+          ? `Sent ${sent} of ${skillsEntries.length} before an error: ${error instanceof Error ? error.message : 'Couldn’t reach Skills.'}`
+          : error instanceof Error ? error.message : 'Couldn’t reach the Pi to save to Skills.',
+      });
+    } finally {
+      setSendingSkills(false);
+    }
+  };
+
+  if ((!editing || !canEdit) && record.summary && parsed) {
+    const alreadySentSkills = skillsSentFor === record.summary;
+    const hasSkillsButton = skillsEntries.length > 0;
+
+    const skillsButtonBlock = hasSkillsButton && (
+      <div className="nt-summary-skills-bar">
+        <button
+          type="button"
+          className="nt-btn is-small"
+          disabled={sendingSkills || alreadySentSkills}
+          onClick={() => void sendToSkills()}
+        >
+          <Icon name={alreadySentSkills ? 'check' : 'book'} />{' '}
+          {sendingSkills
+            ? 'Sending…'
+            : alreadySentSkills
+              ? `Sent ${skillsEntries.length} to Skills`
+              : 'Send to Skills Knowledge Base'}
+        </button>
+        {skillsNotice && (
+          <p className={`nt-summary-notice${skillsNotice.ok ? ' is-ok' : ' is-error'}`} role="status">
+            {skillsNotice.text}
+          </p>
+        )}
+      </div>
+    );
+
     return (
       <section className="nt-summary">
-        <div className="nt-row nt-tight-row">
+        <div className="nt-summary-header">
           <strong className="nt-grow">Summary</strong>
-          <button type="button" className="nt-btn is-small" onClick={() => void navigator.clipboard.writeText(record.summary!).catch(() => {})}><Icon name="copy" /> Copy</button>
-          <button type="button" className="nt-btn is-small" onClick={() => setEditing(true)}>Redo</button>
+          <div className="nt-summary-actions">
+            {targetPageId && (
+              <button
+                type="button"
+                className="nt-btn is-small is-primary"
+                disabled={inserting}
+                onClick={() => void insertOnPage()}
+              >
+                <Icon name="note" /> {inserting ? 'Adding…' : 'Insert on Page'}
+              </button>
+            )}
+            <button type="button" className="nt-btn is-small" onClick={() => void copySummaryText()}>
+              <Icon name={copiedSummary ? 'check' : 'copy'} /> {copiedSummary ? 'Copied' : 'Copy'}
+            </button>
+            {canEdit && (
+              <button type="button" className="nt-btn is-small" onClick={() => setEditing(true)}>Redo</button>
+            )}
+          </div>
         </div>
-        <div className="nt-summary-text">{record.summary}</div>
+
+        {pageNotice && (
+          <p className={`nt-summary-notice${pageNotice.ok ? ' is-ok' : ' is-error'}`} role="status">
+            {pageNotice.text}
+          </p>
+        )}
+
+        {parsed.overview && (
+          <div className="nt-summary-block">
+            <h4 className="nt-summary-heading">Overview</h4>
+            <p className="nt-summary-overview">
+              <RichSummaryText text={parsed.overview} onPlay={onPlayAt} />
+            </p>
+          </div>
+        )}
+
+        {parsed.chapters.length > 0 && (
+          <div className="nt-summary-block">
+            <h4 className="nt-summary-heading">Chapters Timeline</h4>
+            <ol className="nt-chapters">
+              {parsed.chapters.map((ch, i) => (
+                <li key={`${ch.time.seconds}-${i}`} className="nt-chapter-item">
+                  <div className="nt-chapter-head">
+                    <TimeChip ts={ch.time} onPlay={onPlayAt} />
+                    <strong>{ch.title}</strong>
+                  </div>
+                  {ch.summary && (
+                    <p className="nt-chapter-desc">
+                      <RichSummaryText text={ch.summary} onPlay={onPlayAt} skipLeadingSeconds={ch.time.seconds} />
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {parsed.keyPoints.length > 0 && (
+          <div className="nt-summary-block">
+            <h4 className="nt-summary-heading">Key Points</h4>
+            <ul className="nt-key-points">
+              {parsed.keyPoints.map((kp, i) => (
+                <li key={i} className="nt-key-point">
+                  {kp.time && <TimeChip ts={kp.time} onPlay={onPlayAt} />}
+                  <span className="nt-grow">
+                    <RichSummaryText text={kp.text} onPlay={onPlayAt} skipLeadingSeconds={kp.time?.seconds} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {parsed.terms.length > 0 && (
+          <div className="nt-summary-block">
+            <div className="nt-summary-block-head">
+              <h4 className="nt-summary-heading">Terms &amp; Facts</h4>
+            </div>
+            <ul className="nt-terms">
+              {parsed.terms.map((term, i) => (
+                <li key={i} className="nt-term-item">
+                  <div className="nt-term-head">
+                    <strong><RichSummaryText text={term.term} onPlay={onPlayAt} /></strong>
+                    {term.time && !hasInlineTime(term.term, term.time) && !hasInlineTime(term.definition, term.time) && (
+                      <TimeChip ts={term.time} onPlay={onPlayAt} />
+                    )}
+                  </div>
+                  {term.definition && (
+                    <p className="nt-term-def">
+                      <RichSummaryText text={term.definition} onPlay={onPlayAt} />
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {skillsButtonBlock}
+          </div>
+        )}
+
+        {parsed.actionItems.length > 0 && (
+          <div className="nt-summary-block">
+            <h4 className="nt-summary-heading">Action Items</h4>
+            <ul className="nt-actions-list">
+              {parsed.actionItems.map((item, i) => (
+                <li key={i} className="nt-action-item">
+                  {item.time && !hasInlineTime(item.task, item.time) && (
+                    <TimeChip ts={item.time} onPlay={onPlayAt} />
+                  )}
+                  <span className="nt-grow">
+                    <RichSummaryText text={item.task} onPlay={onPlayAt} skipLeadingSeconds={item.time?.seconds} />
+                  </span>
+                  {item.due && <span className="nt-due-badge">{item.due}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {parsed.questions.length > 0 && (
+          <div className="nt-summary-block">
+            <h4 className="nt-summary-heading">Self-Test Review Q&amp;As</h4>
+            <div className="nt-qa-list">
+              {parsed.questions.map((qa, i) => {
+                const open = !!openQAs[i];
+                return (
+                  <div key={i} className="nt-qa-item">
+                    <div className="nt-qa-head">
+                      <button
+                        type="button"
+                        className="nt-qa-toggle"
+                        aria-expanded={open}
+                        onClick={() => setOpenQAs((prev) => ({ ...prev, [i]: !prev[i] }))}
+                      >
+                        <Icon name="chevron" size="0.95em" className={`nt-qa-caret${open ? ' is-open' : ''}`} />
+                        <span>{qa.question}</span>
+                      </button>
+                      {qa.time && <TimeChip ts={qa.time} onPlay={onPlayAt} />}
+                    </div>
+                    {open && (
+                      <div className="nt-qa-answer">
+                        {qa.answer ? (
+                          <RichSummaryText text={qa.answer} onPlay={onPlayAt} skipLeadingSeconds={qa.time?.seconds} />
+                        ) : (
+                          <span className="nt-muted">No answer included in the summary.</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {parsed.terms.length === 0 && skillsButtonBlock}
+          </div>
+        )}
       </section>
     );
   }
@@ -307,8 +808,40 @@ function Summary({ doc, record, notebookTitle, transcript }: { doc: NotebookDoc;
             <span className="nt-grow">Paste its reply here</span>
             <button type="button" className="nt-btn is-small" onClick={() => void paste()}><Icon name="paste" /> Paste</button>
           </div>
-          <textarea ref={replyBox} className="nt-input nt-gap" rows={reply ? 8 : 3} value={reply} placeholder="The AI’s summary" aria-label="The AI’s summary" onChange={(e) => setReply(e.target.value)} />
+          <textarea
+            ref={replyBox}
+            className="nt-input nt-gap"
+            rows={reply ? 8 : 3}
+            value={reply}
+            placeholder="Paste the AI’s JSON or text summary"
+            aria-label="The AI’s summary"
+            onChange={(e) => setReply(e.target.value)}
+          />
           {pasteFailed && <p className="nt-hint nt-tight">This browser wants you to paste by hand: hold in the box.</p>}
+          {preview && (
+            <div className={`nt-parse-preview ${preview.format === 'strict' ? 'is-strict' : 'is-legacy'}`} role="status" aria-live="polite">
+              {preview.format === 'strict' ? (
+                <>
+                  <strong>
+                    ✓ Strict JSON parsed: {preview.chapters.length} chapter{preview.chapters.length === 1 ? '' : 's'} · {preview.keyPoints.length} point{preview.keyPoints.length === 1 ? '' : 's'} · {preview.terms.length} term{preview.terms.length === 1 ? '' : 's'} · {preview.questions.length} Q&amp;A{preview.questions.length === 1 ? '' : 's'}
+                  </strong>
+                  <small>
+                    {preview.actionItems.length > 0 ? `${preview.actionItems.length} action item${preview.actionItems.length === 1 ? '' : 's'} · ` : ''}
+                    {previewTimestamps} clickable timestamp{previewTimestamps === 1 ? '' : 's'} found
+                  </small>
+                </>
+              ) : (
+                <>
+                  <strong>
+                    Legacy text summary detected: {preview.keyPoints.length} point{preview.keyPoints.length === 1 ? '' : 's'} · {preview.terms.length} term{preview.terms.length === 1 ? '' : 's'} · {preview.actionItems.length} action{preview.actionItems.length === 1 ? '' : 's'}
+                  </strong>
+                  <small>
+                    {previewTimestamps} clickable timestamp{previewTimestamps === 1 ? '' : 's'} found
+                  </small>
+                </>
+              )}
+            </div>
+          )}
           <div className="nt-row">
             {record.summary && <button type="button" className="nt-btn is-small" onClick={() => { setEditing(false); setReply(''); }}>Cancel</button>}
             <span className="nt-grow" />

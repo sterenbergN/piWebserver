@@ -11,12 +11,16 @@ import {
   rebuildScheduleFromSteps, removeInquiry, removeProjectLog, removeScheduleTask, removeStep, removeSubject, removeTopic,
   saveCard, setParents, setSchedule, shiftSchedule, SkillsInputError, toggleInquiry, toggleScheduleTask, toggleStep,
 } from './edit';
+import { buildKnowledgeGraph } from './links';
 import {
-  boardSummary, buildQueue, expectedScore, fadedLevel, fitLevel, freeResourceSearchLinks, generateScheduleFromSteps, gradedScore, levelHistory,
-  nextSchedule, nextSteps, parentSkillsOf, retentionAfter, scheduleByDay, shiftScheduleToToday, stabilityDays, stepProgress, subjectStats,
-  subskillsOf, tierOf, wouldCreateSkillCycle,
+  boardSummary, buildQueue, expectedScore, fadedLevel, fitLevel, freeResourceSearchLinks, generateScheduleFromSteps, gradedScore,
+  itemSearchText, levelHistory, nextSchedule, nextSteps, parentSkillsOf, retentionAfter, scheduleByDay, shiftScheduleToToday,
+  stabilityDays, stepProgress, subjectStats, subskillsOf, summarizeAnswer, tierOf, wouldCreateSkillCycle,
 } from './model';
-import { parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply } from './parse';
+import {
+  LIMITS, deckTagCounts, extractInquirySearchTerms, filterAndSortInquiries, formatInquiriesMarkdown, parseBulkQAInput,
+  parseInquiryReply, parseInterconnectedPlanReply, parsePlanReply, parseQuestionsReply,
+} from './parse';
 import { buildInquiryPrompt, buildInterconnectedPlanPrompt, buildPlanPrompt, buildQuestionsPrompt } from './prompts';
 import { readSkills, updateSkills } from './store';
 import { FRESH_TARGET, WEEKLY_CAP, topUpRequest } from './topup';
@@ -85,6 +89,11 @@ test('scheduling grows on success and resets on failure', () => {
   assert.ok(failed.ease < s.ease);
   assert.equal(nextSchedule(undefined, 1, TODAY, 'easy').interval, 4);
   assert.ok(nextSchedule(undefined, 0.5, TODAY).interval >= 1);
+  // Rating 'hard' on a 1-day interval advances to 2 days instead of looping forever at 1.
+  const hardFromNew = nextSchedule(undefined, 0.5, TODAY, 'hard');
+  assert.equal(hardFromNew.interval, 2);
+  const hardFromOne = nextSchedule({ due: TODAY, interval: 1, ease: 2.5, reps: 0, lapses: 1, last: TODAY }, 0.5, TODAY, 'hard');
+  assert.equal(hardFromOne.interval, 2);
 });
 
 test('subjects, topics and resources are edited safely', () => {
@@ -270,22 +279,28 @@ test('prompts include where I stand', () => {
   assert.ok(questions.includes('$\\\\frac{a}{b}$'));
 });
 
-test('XP: once per question per day, review days, finished resources', () => {
+test('XP: once per question per day, distinct review days, finished resources', () => {
   const { data, progress, subject, basics } = setup();
   saveCard(subject, { topicId: basics.id, front: 'a', back: 'b', difficulty: 3 }, makeId, NOW);
-  const card = subject.items[0];
+  saveCard(subject, { topicId: basics.id, front: 'c', back: 'd', difficulty: 2 }, makeId, NOW);
+  saveCard(subject, { topicId: basics.id, front: 'e', back: 'f', difficulty: 2 }, makeId, NOW);
+  const [card, card2, card3] = subject.items;
   assert.equal(skillsXp(data, progress), 0);
   rateCard(subject, card, progress, 'again', makeId, TODAY, NOW);
   rateCard(subject, card, progress, 'good', makeId, TODAY, NOW);
-  // Twice the same day: the better go counts, once.
+  // Twice on the same card in one day: the better go counts once, and repeated reviews of 1 card do not trigger a review day.
   assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3);
-  assert.deepEqual(reviewDays(progress), []);
   rateCard(subject, card, progress, 'good', makeId, TODAY, NOW);
+  assert.deepEqual(reviewDays(progress), []);
+  // Answering 3 distinct items on the same day earns the review-day bonus.
+  rateCard(subject, card2, progress, 'good', makeId, TODAY, NOW);
+  rateCard(subject, card3, progress, 'good', makeId, TODAY, NOW);
+  const xpBeforeReviewDay = (SKILLS_XP.answered + SKILLS_XP.right) * 3 + 3 + 2 + 2;
   assert.deepEqual(reviewDays(progress), [TODAY]);
-  assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3 + SKILLS_XP.reviewDay);
+  assert.equal(skillsXp(data, progress), xpBeforeReviewDay + SKILLS_XP.reviewDay);
   const project = addResource(subject, { title: 'Thrust stand', kind: 'project' }, makeId, TODAY, NOW);
   editResource(subject, project, { status: 'done' }, TODAY, NOW);
-  assert.equal(skillsXp(data, progress), SKILLS_XP.answered + SKILLS_XP.right + 3 + SKILLS_XP.reviewDay + SKILLS_XP.resource.project);
+  assert.equal(skillsXp(data, progress), xpBeforeReviewDay + SKILLS_XP.reviewDay + SKILLS_XP.resource.project);
 });
 
 test('weekly top-up: only switched-on subjects, low topics first, capped', () => {
@@ -1004,6 +1019,238 @@ test('store.ts preserves inquiries during updateSkills and readSkills', async ()
     assert.equal(loaded.inquiries?.length, 1);
     assert.equal(loaded.inquiries![0].question, 'What is MCP?');
     assert.deepEqual(loaded.inquiries![0].tags, ['mcp']);
+  } finally {
+    process.chdir(orig);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('LIMITS.name is 80 and importPlan honors stepIndexes', () => {
+  assert.equal(LIMITS.name, 80);
+  const data = emptySkills();
+  const longName = 'A'.repeat(95);
+  const sub = addSubject(data, { name: longName, target: 3 }, makeId, NOW);
+  assert.equal(sub.name.length, 80);
+
+  const reply = JSON.stringify({
+    topics: [{ key: 't1', name: 'Intro', stage: 1 }],
+    resources: [],
+    steps: [
+      { title: 'Step zero', kind: 'read', topic: 't1', minutes: 20 },
+      { title: 'Step one', kind: 'practice', topic: 't1', minutes: 25 },
+      { title: 'Step two', kind: 'project', topic: 't1', minutes: 30 },
+    ],
+  });
+  const imported = importPlan(sub, reply, { stepIndexes: [0, 2] }, makeId, NOW);
+  assert.deepEqual(imported, { topics: 1, resources: 0, roadmap: false, steps: 2 });
+  assert.deepEqual(sub.steps?.map((s) => s.title), ['Step zero', 'Step two']);
+});
+
+test('addInquiry with answer saves immediately as solved, stores takeaway, and optionally creates a linked card', () => {
+  const { data, subject, basics } = setup();
+
+  // Direct Q&A entry without status automatically saves as solved with solvedAt = now
+  const direct = addInquiry(data, {
+    question: 'What is specific impulse?',
+    answer: 'Thrust per unit propellant weight flow rate, in seconds.',
+    takeaway: 'Higher Isp means better propellant efficiency.',
+    tags: ['#propulsion'],
+  }, makeId, NOW);
+  assert.equal(direct.status, 'solved');
+  assert.equal(direct.solvedAt, NOW);
+  assert.equal(direct.answer, 'Thrust per unit propellant weight flow rate, in seconds.');
+  assert.equal(direct.takeaways, 'Higher Isp means better propellant efficiency.');
+  assert.equal(direct.cardItemId, undefined);
+
+  // createCard: true without topicId does not throw or create a card
+  const noTopic = addInquiry(data, {
+    question: 'What is ablative cooling?',
+    answer: 'Cooling via controlled charring/vaporization of liner material.',
+    subjectId: subject.id,
+    createCard: true,
+  }, makeId, NOW);
+  assert.equal(noTopic.status, 'solved');
+  assert.equal(noTopic.cardItemId, undefined);
+  assert.equal(subject.items.length, 0);
+
+  // Via applySkillEdit with subjectId + topicId + answer + createCard: true -> solved + linked CardItem
+  const withCard = applySkillEdit(data, {
+    op: 'add-inquiry',
+    question: 'What is the Tsiolkovsky rocket equation?',
+    answer: '$\\Delta v = v_e \\ln(m_0 / m_f)$ connecting mass ratio and exhaust velocity.',
+    takeaway: 'Logarithmic in mass ratio.',
+    subjectId: subject.id,
+    topicId: basics.id,
+    createCard: true,
+  }, makeId, TODAY, NOW) as { id: string; status: string; solvedAt?: string; takeaways?: string; cardItemId?: string };
+
+  assert.equal(withCard.status, 'solved');
+  assert.equal(withCard.solvedAt, NOW);
+  assert.equal(withCard.takeaways, 'Logarithmic in mass ratio.');
+  assert.ok(withCard.cardItemId);
+  assert.equal(subject.items.length, 1);
+  const createdCard = subject.items[0];
+  assert.equal(createdCard.kind, 'card');
+  if (createdCard.kind === 'card') {
+    assert.equal(createdCard.id, withCard.cardItemId);
+    assert.equal(createdCard.topicId, basics.id);
+    assert.equal(createdCard.front, 'What is the Tsiolkovsky rocket equation?');
+    assert.equal(createdCard.back, '$\\Delta v = v_e \\ln(m_0 / m_f)$ connecting mass ratio and exhaust velocity.');
+  }
+});
+
+test('parseBulkQAInput parses plain bullets, Q:/A: multiline blocks, ::, ->, —, and importInquiries saves solved pairs', () => {
+  const raw = [
+    '- What is MCP?',
+    '1. What is std::vector? :: Dynamic contiguous array in C++',
+    'What is a->b in C?',
+    'What is Raft? -> Consensus protocol for replicated state machines',
+    'What is eBPF? — In-kernel sandboxed bytecode runtime',
+    '',
+    'Q: How does OAuth 2.0 work?',
+    'A: Client -> Auth Server -> Access Token.',
+    'Tokens are scoped and short-lived.',
+    '',
+    'Paragraph two of OAuth answer.',
+    '',
+    'Q: What is CAP theorem?',
+    'A: Pick consistency or availability under network partitions.',
+    '- What is gRPC?',
+    '   what is mcp? :: Model Context Protocol for tool calls',
+  ].join('\n');
+
+  const parsed = parseBulkQAInput(raw);
+  assert.deepEqual(parsed, [
+    { question: 'What is MCP?', answer: 'Model Context Protocol for tool calls' },
+    { question: 'What is std::vector?', answer: 'Dynamic contiguous array in C++' },
+    { question: 'What is a->b in C?' },
+    { question: 'What is Raft?', answer: 'Consensus protocol for replicated state machines' },
+    { question: 'What is eBPF?', answer: 'In-kernel sandboxed bytecode runtime' },
+    {
+      question: 'How does OAuth 2.0 work?',
+      answer: 'Client -> Auth Server -> Access Token.\nTokens are scoped and short-lived.\n\nParagraph two of OAuth answer.',
+    },
+    {
+      question: 'What is CAP theorem?',
+      answer: 'Pick consistency or availability under network partitions.',
+    },
+    { question: 'What is gRPC?' },
+  ]);
+  assert.deepEqual(parseBulkQAInput('  \n\n '), []);
+
+  const { data, subject, basics } = setup();
+  const imported = importInquiries(data, {
+    text: [
+      '- What is open question one?',
+      'What is solved inline? :: Inline answer',
+      'Q: Multi-line Q?',
+      'A: Line one',
+      'Line two',
+    ].join('\n'),
+    subjectId: subject.id,
+    topicId: basics.id,
+    tags: ['#bulk'],
+  }, makeId, NOW);
+
+  assert.equal(imported.skipped, 0);
+  assert.equal(imported.added.length, 3);
+  assert.equal(imported.added[0].status, 'open');
+  assert.equal(imported.added[0].solvedAt, undefined);
+  assert.equal(imported.added[1].status, 'solved');
+  assert.equal(imported.added[1].answer, 'Inline answer');
+  assert.equal(imported.added[1].solvedAt, NOW);
+  assert.equal(imported.added[2].status, 'solved');
+  assert.equal(imported.added[2].answer, 'Line one\nLine two');
+  assert.deepEqual(imported.added[2].tags, ['bulk']);
+});
+
+test('KnowledgeResponse graph/inquiries, KB search/filter/sort/markdown export, and quiz itemSearchText', async () => {
+  const orig = process.cwd();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-kb-search-'));
+  try {
+    process.chdir(dir);
+    const { data, subject, basics } = setup();
+    const other = addSubject(data, { name: 'Distributed Systems', area: 'CS', target: 4 }, makeId, NOW);
+
+    const q1 = addInquiry(data, {
+      question: 'What is Raft consensus?',
+      answer: 'Leader election and log replication using [[Quorum]].',
+      takeaway: 'Requires majority quorum.',
+      sources: ['https://raft.github.io'],
+      tags: ['consensus', 'distributed'],
+      subjectId: other.id,
+    }, makeId, '2026-11-10T10:00:00.000Z');
+    const q2 = addInquiry(data, {
+      question: 'What is Choked Flow?',
+      answer: 'Mass flow rate stops increasing when throat reaches Mach 1.',
+      tags: ['aerospace', 'consensus'],
+      subjectId: subject.id,
+      topicId: basics.id,
+    }, makeId, '2026-11-12T10:00:00.000Z');
+    const q3 = addInquiry(data, {
+      question: 'Alpha Open Question?',
+      context: 'From systems lecture',
+      tags: ['distributed'],
+    }, makeId, '2026-11-11T10:00:00.000Z');
+
+    const kbResp = await buildKnowledgeGraph('kb-search-user', data);
+    assert.equal(kbResp.bundle.inquiries.length, 3);
+    assert.ok(kbResp.bundle.ownKnowledge.some((m) => m.id === `ok-inq:${q1.id}` && m.sourceKind === 'inquiry-solved'));
+
+    const subjectLookup = new Map(data.subjects.map((s) => [s.id, { name: s.name, topics: s.topics }]));
+
+    // Search across [[concepts]], #tags, sources, and multi-word terms
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { search: '[[Quorum]] raft.github.io', subjectLookup }).map((q) => q.id),
+      [q1.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { search: '#aerospace Mach', subjectLookup }).map((q) => q.id),
+      [q2.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { skillFilter: '__unassigned__', subjectLookup }).map((q) => q.id),
+      [q3.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { tagFilter: 'distributed', sort: 'alphabetical', subjectLookup }).map((q) => q.id),
+      [q3.id, q1.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { sort: 'newest', subjectLookup }).map((q) => q.id),
+      [q2.id, q3.id, q1.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { sort: 'recently-answered', subjectLookup }).map((q) => q.id),
+      [q2.id, q1.id, q3.id],
+    );
+    assert.deepEqual(
+      filterAndSortInquiries(data.inquiries!, { sort: 'open-first', subjectLookup }).map((q) => q.id),
+      [q3.id, q2.id, q1.id],
+    );
+
+    assert.deepEqual(extractInquirySearchTerms('[[Quorum]] #consensus raft'), ['consensus', 'Quorum', 'raft']);
+    assert.deepEqual(deckTagCounts(data.inquiries!), [
+      { tag: 'consensus', count: 2 },
+      { tag: 'distributed', count: 2 },
+      { tag: 'aerospace', count: 1 },
+    ]);
+
+    const md = formatInquiriesMarkdown([q2, q3], subjectLookup);
+    assert.ok(md.includes('### What is Choked Flow?'));
+    assert.ok(md.includes('Mass flow rate stops increasing'));
+    assert.ok(md.includes('### Alpha Open Question?'));
+    assert.ok(md.includes('_Open lookup (not answered yet)_'));
+
+    // Quiz itemSearchText & summarizeAnswer
+    importQuestions(subject, GRADED_REPLY, {}, makeId, NOW);
+    const gradedItem = subject.items.find((i) => i.kind === 'graded')!;
+    const cardItem = subject.items.find((i) => i.kind === 'card')!;
+    const gradedHay = itemSearchText(gradedItem);
+    const cardHay = itemSearchText(cardItem);
+    assert.ok(gradedHay.includes('2942 m/s') && gradedHay.includes('mass ratio'));
+    assert.ok(cardHay.includes('convergent-divergent') && cardHay.includes('Mach 1'));
+    assert.equal(summarizeAnswer({ type: 'choice', options: ['A', 'B'], correct: 1 }), 'B');
   } finally {
     process.chdir(orig);
     await fs.rm(dir, { recursive: true, force: true });

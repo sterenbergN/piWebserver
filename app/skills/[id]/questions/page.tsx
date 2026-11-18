@@ -16,7 +16,7 @@ import { SkillsInputError, parseQuestionsReply, type ParsedQuestions } from '@/l
 import { LEVELS, STAGES } from '@/lib/skills/types';
 
 export default function QuestionsPage() {
-  return <Suspense fallback={<main className="sk sk-narrow"><Loading /></main>}><Loader /></Suspense>;
+  return <Suspense fallback={<div className="sk sk-narrow"><Loading /></div>}><Loader /></Suspense>;
 }
 
 function Loader() {
@@ -36,14 +36,14 @@ function Loader() {
   }, [id]);
   useEffect(() => { void load(); }, [load]);
 
-  if (state === 'loading') return <main className="sk sk-narrow"><Loading /></main>;
-  if (state === 'signedOut') return <main className="sk sk-narrow"><SignedOutCard /></main>;
+  if (state === 'loading') return <div className="sk sk-narrow"><Loading /></div>;
+  if (state === 'signedOut') return <div className="sk sk-narrow"><SignedOutCard /></div>;
   if (state === 'error' || !data) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         <ErrorNote>{error || 'Couldn’t load this subject.'}</ErrorNote>
         <Link className="sk-back" href="/skills">← Back to your skills</Link>
-      </main>
+      </div>
     );
   }
   return <Writer key={id} id={id} data={data} reload={load} />;
@@ -143,19 +143,19 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
 
   if (!topicStats.length) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         {header}
         <div className="sk-empty">
           <p>Questions are tied to topics, and {subject.name} has none yet.</p>
           <Link className="btn btn-primary" href={`/skills/${id}/plan`}>Plan it with AI first</Link>
         </div>
-      </main>
+      </div>
     );
   }
 
   if (added) {
     return (
-      <main className="sk sk-narrow">
+      <div className="sk sk-narrow">
         {header}
         <section className="sk-card sk-done" role="status">
           <h2>Added {added.added} {added.added === 1 ? 'question' : 'questions'}</h2>
@@ -166,12 +166,12 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
             <Link className="btn btn-secondary" href={`/skills/${id}`}>Back to {subject.name}</Link>
           </div>
         </section>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="sk sk-narrow">
+    <div className="sk sk-narrow">
       {header}
 
       <section className="sk-card">
@@ -274,6 +274,6 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
           </div>
         </section>
       )}
-    </main>
+    </div>
   );
 }

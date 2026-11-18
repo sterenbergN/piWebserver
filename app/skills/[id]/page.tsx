@@ -117,14 +117,14 @@ function SubjectPage() {
     }
   }
 
-  if (state === 'signed-out') return <main className="sk"><SignedOutCard /></main>;
-  if (state === 'loading') return <main className="sk"><Loading rows={3} /></main>;
+  if (state === 'signed-out') return <div className="sk"><SignedOutCard /></div>;
+  if (state === 'loading') return <div className="sk"><Loading rows={3} /></div>;
   if (state === 'error' || !data) {
     return (
-      <main className="sk">
+      <div className="sk">
         <Link className="sk-back" href="/skills">← Skills</Link>
         <ErrorNote>{error || 'Couldn’t load that subject.'}</ErrorNote>
-      </main>
+      </div>
     );
   }
 
@@ -142,7 +142,7 @@ function SubjectPage() {
   const openInquiriesCount = (data.inquiries ?? []).filter((q) => q.status === 'open').length;
 
   return (
-    <main className="sk">
+    <div className="sk">
       <header className="sk-subject-head">
         <Link className="sk-back" href="/skills">← Skills</Link>
         <div className="sk-subject-title">
@@ -226,7 +226,19 @@ function SubjectPage() {
       </div>
       <p className="sk-tab-hint">{TABS.find((t) => t.id === tab)?.hint}</p>
       <div id="sk-panel" role="tabpanel" aria-labelledby={`sk-tab-${tab}`} className="sk-panel">
-        {tab === 'overview' && <Overview {...tabProps} goto={goto} setTab={setTab} onOpenEditor={() => setEditing(true)} />}
+        {tab === 'overview' && (
+          <Overview
+            {...tabProps}
+            goto={goto}
+            setTab={setTab}
+            onOpenEditor={() => {
+              setEditing(true);
+              requestAnimationFrame(() => {
+                document.getElementById('sk-subject-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              });
+            }}
+          />
+        )}
         {tab === 'steps' && <Steps data={data} reload={load} onOpenPlan={() => router.push(`/skills/${id}/plan`)} />}
         {tab === 'topics' && <Topics {...tabProps} />}
         {tab === 'resources' && <Resources {...tabProps} />}
@@ -241,7 +253,7 @@ function SubjectPage() {
         )}
       </div>
       {popup}
-    </main>
+    </div>
   );
 }
 

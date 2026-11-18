@@ -4,6 +4,7 @@ import { isDateKey } from '@/lib/habits/dates';
 import { scoreAll } from '@/lib/daily/progress';
 import { analyze, partRate } from '@/lib/daily/analysis';
 import { analysisAttempts, clampToday, findQuestion, gradingMap, listUserIds, practiceSet, questionIndex, readFeedback, readUserDaily, requireDailyManager, updateFeedback, type Feedback } from '@/lib/daily/store';
+import { generatedQuestion } from '@/lib/daily/generated';
 import { REPORT_KINDS } from '@/lib/daily/types';
 
 /** Rate a question you've answered, or report a problem with it. One entry per person per question. */
@@ -54,9 +55,9 @@ export async function GET(request: Request) {
     const since = new URL(request.url).searchParams.get('since');
     const from = isDateKey(since) ? since : '0000-00-00';
     const [index, practice, { entries }, ids, questions] = await Promise.all([questionIndex(), practiceSet(), readFeedback(), listUserIds(), gradingMap()]);
-    // Practice-only questions have no day; they're listed with date "practice" (and always included).
+    // Practice-only and generated questions have no day; they're listed with date "practice" (and always included).
     const lookup = (id: string) => index.get(id) ?? (() => {
-      const q = practice.questions.find((x) => x.id === id);
+      const q = practice.questions.find((x) => x.id === id) ?? generatedQuestion(id)?.question;
       return q ? { question: q, date: 'practice', core: false } : undefined;
     })();
 
@@ -66,7 +67,7 @@ export async function GET(request: Request) {
     const rows = new Map<string, Row>();
     const row = (id: string): Row | null => {
       const at = lookup(id);
-      if (!at || at.date < from) return null;
+      if (!at || (at.date !== 'practice' && at.date < from)) return null;
       if (!rows.has(id)) rows.set(id, {
         questionId: id, date: at.date, title: at.question.title, track: at.question.track, topic: at.question.topic, difficulty: at.question.difficulty, core: at.core,
         answered: 0, solved: 0, partial: 0, wrong: 0, studied: 0, hintsUsed: 0, up: 0, down: 0, easy: 0, right: 0, hard: 0, reports: [],

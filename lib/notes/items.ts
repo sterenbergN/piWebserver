@@ -27,7 +27,26 @@ export type QuestionLink = {
 };
 
 /** The only other place a question link may point. */
-export const SKILLS_QUESTION_HREF = /^\/skills\/review\?item=[\w-]{1,64}$/;
+export const SKILLS_QUESTION_HREF = /^\/skills\/review\?item=[\w-]{1,80}$/;
+
+/**
+ * Deterministic ID normalization for WorkInNotes question/topic IDs: Daily permits IDs up to 80
+ * chars while reader/notes `isId` caps IDs at 64 chars. Any ID > 60 chars is mapped
+ * deterministically into a <= 64-char `[\w-]+` string; shorter IDs pass through unchanged.
+ */
+export function normalizeWorkId(id: string): string {
+  if (id.length <= 60) return id;
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < id.length; i++) {
+    const c = id.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  const suffix = (h1.toString(36).padStart(7, '0') + h2.toString(36).padStart(7, '0')).slice(0, 14);
+  const prefix = id.slice(0, 64 - 1 - suffix.length).replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${prefix}_${suffix}`;
+}
 
 export type Notebook = Synced & {
   kind: 'notebook';
@@ -243,8 +262,9 @@ export function cleanQuestions(raw: unknown): QuestionLink[] {
   const out: QuestionLink[] = [];
   for (const value of raw) {
     const q = value as { id?: unknown; date?: unknown; title?: unknown; href?: unknown } | null;
-    if (!q || !isId(q.id) || typeof q.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(q.date) || out.some((held) => held.id === q.id)) continue;
-    out.push({ id: q.id, date: q.date, title: cleanName(q.title) || 'Daily question', ...(typeof q.href === 'string' && SKILLS_QUESTION_HREF.test(q.href) ? { href: q.href } : {}) });
+    const id = typeof q?.id === 'string' ? normalizeWorkId(q.id) : '';
+    if (!q || !isId(id) || typeof q.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(q.date) || out.some((held) => held.id === id)) continue;
+    out.push({ id, date: q.date, title: cleanName(q.title) || 'Daily question', ...(typeof q.href === 'string' && SKILLS_QUESTION_HREF.test(q.href) ? { href: q.href } : {}) });
     if (out.length >= MAX_QUESTION_LINKS) break;
   }
   return out;

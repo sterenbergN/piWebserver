@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { clampToday } from '@/lib/daily/store';
 import { publicQuestion, revealedQuestion } from '@/lib/daily/grade';
-import { boardSummary, buildQueue, levelHistory, nextSteps, subjectStats, wouldCreateSkillCycle, type ReviewMode } from '@/lib/skills/model';
+import { boardSummary, buildQueue, itemSearchText, levelHistory, nextSteps, subjectStats, wouldCreateSkillCycle, type ReviewMode } from '@/lib/skills/model';
 import { readSkills, readSkillsProgress, updateBoth, updateSkills, updateSkillsProgress } from '@/lib/skills/store';
 import {
   SkillsInputError, addResource, addSubject, addTopic, answerGraded, applySkillEdit, asDailyQuestion, editResource, editSubject, editTopic,
@@ -29,7 +29,7 @@ const newId = () => crypto.randomBytes(9).toString('base64url');
 
 const ok = (body: Record<string, unknown> = {}) => NextResponse.json({ success: true, ...body }, { headers: PRIVATE });
 
-/** A question in a list: enough to show it, without the answer. */
+/** A question in a list: enough to show and search it, without heavy solution figures. */
 function itemRow(item: Item, progress: ProgressData) {
   const attempts = progress.attempts.filter((a) => a.itemId === item.id);
   const last = attempts[attempts.length - 1];
@@ -38,6 +38,8 @@ function itemRow(item: Item, progress: ProgressData) {
     id: item.id, kind: item.kind, topicId: item.topicId, title: itemTitle(item), difficulty: itemDifficulty(item), source: item.source,
     createdAt: item.createdAt, retired: !!item.retired, feedback: item.feedback ?? null,
     answers: attempts.length, lastScore: last?.score ?? null, lastDay: last?.day ?? null, due: schedule?.due ?? null,
+    searchText: itemSearchText(item),
+    ...(item.kind === 'card' ? { backPreview: item.back.slice(0, 180) } : {}),
   };
 }
 
@@ -188,9 +190,14 @@ export async function POST(request: Request) {
       case 'move-topic':
         await updateSkills(userId, (data) => moveTopic(findSubject(data, body.subjectId), body.topicId, body.direction));
         return ok();
-      case 'remove-topic':
-        await updateBoth(userId, (data, progress) => removeTopic(findSubject(data, body.subjectId), progress, body.topicId, now));
-        return ok();
+      case 'remove-topic': {
+        const result = await updateBoth(userId, (data, progress) => {
+          const subject = findSubject(data, body.subjectId);
+          removeTopic(subject, progress, body.topicId, now, data);
+          return { subject, stats: subjectStats(subject, progress, today) };
+        });
+        return ok({ data: result });
+      }
 
       // ── Notes pages on topics ──
       case 'topic-notes-new': {
@@ -317,8 +324,15 @@ export async function POST(request: Request) {
 
       // ── Knowledge lookups & running inbox ──
       case 'add-inquiry': {
-        const inquiry = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'add-inquiry' } as unknown as SkillEdit, newId, today, now) as KnowledgeInquiry);
-        return ok({ id: inquiry.id, inquiry });
+        const result = await updateSkills(userId, (data) => {
+          const inquiry = applySkillEdit(data, { ...body, op: 'add-inquiry' } as unknown as SkillEdit, newId, today, now) as KnowledgeInquiry;
+          return {
+            id: inquiry.id,
+            inquiry,
+            ...(inquiry.cardItemId ? { cardId: inquiry.cardItemId } : {}),
+          };
+        });
+        return ok(result);
       }
       case 'import-inquiries': {
         const result = await updateSkills(userId, (data) => applySkillEdit(data, { ...body, op: 'import-inquiries' } as unknown as SkillEdit, newId, today, now) as Record<string, unknown>);

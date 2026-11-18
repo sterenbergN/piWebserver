@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
+import { useTheme } from '@/components/ThemeProvider';
 import { formatFromName, publicLibraryFile, type BookMeta } from '@/lib/reader/items';
 import type { LibraryDocument } from '@/lib/site-content';
 import { uploadWithProgress } from '@/lib/upload-client';
@@ -25,16 +26,32 @@ export function usePublicLibrary(enabled: boolean) {
   const [docs, setDocs] = useState<PublicDoc[] | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [failed, setFailed] = useState(false);
-  const reload = useCallback(() => fetch('/api/library', { cache: 'no-store' })
-    .then((res) => res.json())
-    .then((body) => {
-      setDocs(Array.isArray(body.documents) ? body.documents : []);
-      setIsAdmin(body.isAdmin === true);
+  const [errorMessage, setErrorMessage] = useState('');
+  const reload = useCallback(async () => {
+    try {
+      const res = await fetch('/api/library', { cache: 'no-store' });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.success === false) {
+        const msg = res.status === 401
+          ? 'Please sign in to access the Library.'
+          : res.status === 404
+            ? 'The Library could not be found.'
+            : body?.message || 'The Library couldn’t be reached right now.';
+        setErrorMessage(msg);
+        setFailed(true);
+        return;
+      }
+      setDocs(Array.isArray(body?.documents) ? body.documents : []);
+      setIsAdmin(body?.isAdmin === true);
       setFailed(false);
-    })
-    .catch(() => setFailed(true)), []);
+      setErrorMessage('');
+    } catch {
+      setErrorMessage('The Library couldn’t be reached. Try again when you’re online.');
+      setFailed(true);
+    }
+  }, []);
   useEffect(() => { if (enabled) void reload(); }, [enabled, reload]);
-  return { docs, setDocs, isAdmin, failed, reload };
+  return { docs, setDocs, isAdmin, failed, errorMessage, reload };
 }
 
 export type PublicLibraryState = ReturnType<typeof usePublicLibrary>;
@@ -124,7 +141,7 @@ function DocForm({ start, categories, onSaved, onCancel }: { start: Form; catego
   );
 }
 
-export default function PublicLibrary({ library, books, guest, canAdd, folder, onOpen, onChanged, onSignIn }: {
+export default function PublicLibrary({ library, books, guest, canAdd, online = true, folder, onOpen, onChanged, onSignIn }: {
   library: PublicLibraryState;
   /** Your own shelf, to tell which of these you already have. */
   books: BookMeta[];
@@ -132,6 +149,7 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
   guest: boolean;
   /** Whether your shelf can be added to right now (signed in, with a connection). */
   canAdd: boolean;
+  online?: boolean;
   /** Where new books land: the folder you were looking at. */
   folder?: string;
   onOpen: (book: BookMeta) => void;
@@ -139,7 +157,7 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
   onChanged: () => Promise<void>;
   onSignIn: () => void;
 }) {
-  const { docs, setDocs, isAdmin, failed } = library;
+  const { docs, setDocs, isAdmin, failed, errorMessage, reload } = library;
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -147,6 +165,19 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
   const [menuFor, setMenuFor] = useState<PublicDoc | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [deleting, setDeleting] = useState<PublicDoc | null>(null);
+
+  useEffect(() => {
+    if (!menuFor && !form && !deleting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      if (deleting) setDeleting(null);
+      else if (form && !form.file) setForm(null);
+      else if (menuFor) setMenuFor(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuFor, form, deleting]);
 
   const mine = useMemo(() => new Map(books.filter((book) => book.source).map((book) => [book.source as string, book])), [books]);
   const categories = useMemo(() => {
@@ -241,8 +272,18 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
         </div>
       )}
 
-      {failed && !docs && <p className="rd-empty">The Library couldn’t be reached. Try again when you’re online.</p>}
-      {!docs && !failed && <p className="rd-empty">Opening the Library…</p>}
+      {!docs && !online && (
+        <div className="rd-empty">
+          <p>You’re offline. Connect to browse the Library.</p>
+        </div>
+      )}
+      {failed && !docs && online && (
+        <div className="rd-empty">
+          <p>{errorMessage || 'The Library couldn’t be reached. Try again when you’re online.'}</p>
+          <button type="button" className="rd-btn" onClick={() => void reload()}>Try again</button>
+        </div>
+      )}
+      {!docs && !failed && online && <p className="rd-empty">Opening the Library…</p>}
       {docs && !docs.length && <p className="rd-empty">{isAdmin ? 'Nothing in the Library yet. Add the first PDF.' : 'There’s nothing in the Library yet.'}</p>}
       {docs && docs.length > 0 && !visible.length && <p className="rd-empty">Nothing matches that.</p>}
 
@@ -255,7 +296,17 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
 
       {(menuFor || form || deleting) && (
         <div className="rd-sheet-wrap is-center" onClick={() => { setMenuFor(null); setDeleting(null); if (!form?.file) setForm(null); }}>
-          <div className="rd-menu" role="dialog" aria-label="The Library" onClick={(e) => e.stopPropagation()}>
+          <div className="rd-menu" role="dialog" aria-modal="true" aria-label="The Library" onClick={(e) => e.stopPropagation()}>
+            <div className="rd-menu-close-row">
+              <button
+                type="button"
+                className="rd-icon-btn"
+                aria-label="Close"
+                onClick={() => { setMenuFor(null); setDeleting(null); setForm(null); }}
+              >
+                <Icon name="x" />
+              </button>
+            </div>
             {form ? (
               <DocForm
                 start={form} categories={categories.map(([name]) => name).filter((name) => name !== UNCATEGORIZED)} onCancel={() => setForm(null)}
@@ -288,14 +339,45 @@ export default function PublicLibrary({ library, books, guest, canAdd, folder, o
 }
 
 /** The Reader for someone with no account: the Library, and a way to sign in for the rest. */
-export function GuestShelf({ library, theme, onOpen, onSignIn }: { library: PublicLibraryState; theme: ReaderSettings['theme']; onOpen: (book: BookMeta) => void; onSignIn: () => void }) {
+export function GuestShelf({ library, theme, onOpen, onSignIn, onToggleTheme }: {
+  library: PublicLibraryState;
+  theme: ReaderSettings['theme'];
+  onOpen: (book: BookMeta) => void;
+  onSignIn: () => void;
+  onToggleTheme?: () => void;
+}) {
+  const { toggleTheme: toggleSiteTheme } = useTheme();
+  const handleToggleTheme = onToggleTheme ?? toggleSiteTheme;
+  const isDarkTheme = theme === 'night';
   return (
     <div className="rd-library" data-rd-theme={theme}>
       <header className="rd-lib-head">
-        <div>
+        <div className="rd-lib-title">
           <Link className="rd-home" href="/"><Icon name="chevron" className="is-flipped" /> Noah Stuf</Link>
           <h1>Reader</h1>
           <p className="rd-lib-stats">The Library{library.docs ? ` · ${library.docs.length} to read` : ''}</p>
+        </div>
+        <span className="rd-grow" />
+        <div className="rd-lib-actions">
+          <button
+            type="button"
+            className="rd-icon-btn"
+            aria-label="Explore"
+            title="Explore"
+            onClick={() => window.dispatchEvent(new Event('site:open-launcher'))}
+          >
+            <Icon name="compass" />
+          </button>
+          <button
+            type="button"
+            className="rd-icon-btn"
+            aria-label={isDarkTheme ? 'Light theme' : 'Dark theme'}
+            title={isDarkTheme ? 'Light theme' : 'Dark theme'}
+            aria-pressed={!isDarkTheme}
+            onClick={handleToggleTheme}
+          >
+            <Icon name="moon" />
+          </button>
         </div>
       </header>
       <div className="rd-banner">

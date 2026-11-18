@@ -84,11 +84,11 @@ function NewSubject() {
     }
   }
 
-  if (signedOut) return <main className="sk sk-narrow sk-new"><SignedOutCard /></main>;
-  if (!loaded) return <main className="sk sk-narrow sk-new"><Loading rows={2} /></main>;
+  if (signedOut) return <div className="sk sk-narrow sk-new"><SignedOutCard /></div>;
+  if (!loaded) return <div className="sk sk-narrow sk-new"><Loading rows={2} /></div>;
 
   return (
-    <main className="sk sk-narrow sk-new">
+    <div className="sk sk-narrow sk-new">
       <header className="sk-head">
         <div>
           <Link href="/skills" className="sk-back">← Skills</Link>
@@ -189,7 +189,7 @@ function NewSubject() {
           <Link href="/skills" className="sk-text-btn">Cancel</Link>
         </div>
       </form>
-    </main>
+    </div>
   );
 }
 

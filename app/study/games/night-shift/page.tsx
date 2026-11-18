@@ -12,7 +12,7 @@ import { localToday } from '@/lib/habits/dates';
 import { BLUEPRINT } from '@/lib/study/coverage';
 import type { GameQuestion } from '@/lib/study/games';
 import {
-  answerQuestion, clockFor, defibResult, defibZone, DOORS, enterDoor, MAX_COFFEE, proceed, QUICK_SECONDS, questionOf, SECOND_OPINION, SHIFT_ROOMS, spendConsult, spendOpinion, startRun, type Run,
+  answerQuestion, canConsult, canOpinion, clockFor, defibResult, defibZone, DOORS, enterDoor, filterPoolBySystem, MAX_COFFEE, proceed, QUICK_SECONDS, questionOf, SECOND_OPINION, SHIFT_ROOMS, spendConsult, spendOpinion, startRun, type Run,
 } from '@/lib/study/night-shift';
 import type { PanceSystem } from '@/lib/study/study';
 
@@ -87,7 +87,10 @@ function Defib({ hour, onDone }: { hour: number; onDone: (hit: boolean) => void 
   }, [result, zone]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); shock(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"]') || (e.target as HTMLElement)?.closest?.('input, textarea, select')) return;
+      if (e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); shock(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [shock]);
@@ -150,8 +153,8 @@ function QuestionRoom({ run, pool, seed, onAnswer, onConsult, onOpinion }: {
       <Choices key={`${question.id}:${run.hidden.join()}`} question={question} seed={seed} answer={answer} hidden={run.hidden} onChange={setAnswer} />
       <div className="sd-actions ns-actions">
         <button type="button" className="btn btn-primary" disabled={!answer.length} onClick={submit}>{multi ? 'Answer' : 'Lock it in'}</button>
-        <button type="button" className="hb-small-btn" disabled={run.consults <= 0 || run.hidden.length > 0} onClick={onConsult} title="Take away some wrong choices">📟 Consult ({run.consults})</button>
-        <button type="button" className="hb-small-btn" disabled={run.opinions <= 0 || run.opinionArmed || multi} onClick={onOpinion} title="If you’re wrong, get another try">{run.opinionArmed ? '🧑‍⚕️ Second opinion ready' : `🧑‍⚕️ Second opinion (${run.opinions})`}</button>
+        <button type="button" className="hb-small-btn" disabled={!canConsult(run, question)} onClick={onConsult} title="Take away some wrong choices">📟 Consult ({run.consults})</button>
+        <button type="button" className="hb-small-btn" disabled={!canOpinion(run, question)} onClick={onOpinion} title="If you’re wrong, get another try">{run.opinionArmed ? '🧑‍⚕️ Second opinion ready' : `🧑‍⚕️ Second opinion (${run.opinions})`}</button>
       </div>
     </section>
   );
@@ -188,11 +191,12 @@ export default function NightShiftPage() {
       const body = await res.json().catch(() => ({}));
       if (cancelled) return;
       if (!res.ok || !body.success) { setStatus('error'); return; }
-      if (!body.questions.length) { setStatus('empty'); return; }
-      setPool(body.questions);
+      const filtered = filterPoolBySystem(body.questions, params.get('system'));
+      if (!filtered.length) { setStatus('empty'); return; }
+      setPool(filtered);
       setBossSystem(body.bossSystem);
       setStatus('ready');
-      begin(body.questions, body.bossSystem);
+      begin(filtered, body.bossSystem);
     })().catch(() => { if (!cancelled) setStatus('error'); });
     return () => { cancelled = true; };
   }, [begin]);
@@ -267,7 +271,7 @@ export default function NightShiftPage() {
 
         {run.phase === 'question' && question && (
           <QuestionRoom key={`${question.id}:${run.right + run.wrong}`} run={run} pool={pool} seed={seed} onAnswer={onAnswer}
-            onConsult={() => change((next) => spendConsult(next, pool))} onOpinion={() => change((next) => spendOpinion(next))} />
+            onConsult={() => change((next) => spendConsult(next, pool))} onOpinion={() => change((next) => spendOpinion(next, pool))} />
         )}
 
         {run.phase === 'feedback' && question && run.last && (

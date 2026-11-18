@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
 import { clock, MAX_CHAPTERS, readClock, sharedTitle, spoken, type AudioChapter } from '@/lib/reader/audio';
 import type { BookMeta } from '@/lib/reader/items';
@@ -163,6 +163,14 @@ export function ChapterEditor({ book, now, onSaved, onClose }: { book: BookMeta;
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
   const duration = book.audio?.duration ?? 0;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const change = (key: number, patch: Partial<Row>) => setRows((held) => held.map((row) => (row.key === key ? { ...row, ...patch } : row)));
   const add = (at: number) => {

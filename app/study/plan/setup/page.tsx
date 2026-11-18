@@ -200,6 +200,7 @@ function Syllabus({ planner }: { planner: Planner }) {
       {pack && (
         <div className="sd-preview">
           <p className="sd-found"><strong>{pack.deadlines.length} date{pack.deadlines.length === 1 ? '' : 's'}</strong> and {pack.tasks.length} piece{pack.tasks.length === 1 ? '' : 's'} of work:</p>
+          {pack.warnings?.map((w) => <p key={w} className="sd-warning">{w}</p>)}
           <ul className="sd-setup-list">
             {pack.deadlines.map((d) => (
               <li key={`${d.title}${d.dueOn}`}>

@@ -113,7 +113,7 @@ export async function POST(request: Request) {
       case 'syllabus': {
         const pack = parseSyllabusReply(body.text, today);
         const added = await change((plan) => addSyllabus(plan, pack, newId, today));
-        return await answer(userId, today, { added, problems: pack.problems });
+        return await answer(userId, today, { added, problems: pack.problems, warnings: pack.warnings ?? [] });
       }
       case 'calendar-connect': {
         if (!isGoogleIcalUrl(body.url)) throw new ApiError(400, 'That isn’t a Google Calendar secret address. It should start with https://calendar.google.com/calendar/ical/ and end in .ics.');

@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { Icon } from '@/components/study/Icon';
 import { Loading, ScoreRing, scoreTone } from '@/components/study/Ui';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import SignInPrompt from '@/components/journal/SignInPrompt';
+import { MatchedTagsSection } from '@/components/study/AnkiImport';
 import type { MapResponse } from '@/components/study/MapTypes';
 import { pct } from '@/components/study/TestRow';
 import { MIN_PROVEN, type SystemCoverage } from '@/lib/study/coverage';
@@ -94,21 +95,51 @@ function SystemRow({ c }: { c: SystemCoverage }) {
 export default function MapPage() {
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
   const [data, setData] = useState<MapResponse | null>(null);
+  const [savingTag, setSavingTag] = useState(false);
+  const [tagError, setTagError] = useState('');
+
+  const load = useCallback(async () => {
+    const res = await fetch('/api/study/map', { cache: 'no-store' });
+    if (res.status === 401) { setState('signed-out'); return; }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.success) { setState('error'); return; }
+    setData(body);
+    setState('ready');
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await fetch('/api/study/map', { cache: 'no-store' });
-      if (cancelled) return;
-      if (res.status === 401) { setState('signed-out'); return; }
+    void load().catch(() => setState('error'));
+  }, [load]);
+
+  const matchTag = async (tag: string, value: string) => {
+    setSavingTag(true);
+    setTagError('');
+    try {
+      const res = await fetch('/api/study/map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'match', kind: 'tag', name: tag, value: value || null }) });
       const body = await res.json().catch(() => ({}));
-      if (cancelled) return;
-      if (!res.ok || !body.success) { setState('error'); return; }
-      setData(body);
-      setState('ready');
-    })().catch(() => { if (!cancelled) setState('error'); });
-    return () => { cancelled = true; };
-  }, []);
+      if (!res.ok || !body.success) throw new Error(body.message);
+      await load();
+    } catch (e) {
+      setTagError(e instanceof Error && e.message ? e.message : 'That didn’t save. Try again.');
+    } finally {
+      setSavingTag(false);
+    }
+  };
+
+  const unskipTag = async (tag: string) => {
+    setSavingTag(true);
+    setTagError('');
+    try {
+      const res = await fetch('/api/study/map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'unskip-tag', tag }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) throw new Error(body.message);
+      await load();
+    } catch (e) {
+      setTagError(e instanceof Error && e.message ? e.message : 'That didn’t save. Try again.');
+    } finally {
+      setSavingTag(false);
+    }
+  };
 
   if (state === 'signed-out') return <div className="sd"><SignInPrompt title="Sign in to see your map">Your map is only shown to your account.</SignInPrompt></div>;
 
@@ -179,6 +210,9 @@ export default function MapPage() {
           )}
 
           <ul className="sd-system-list">{coverage.systems.map((c) => <SystemRow key={c.system} c={c} />)}</ul>
+
+          {tagError && <div className="hb-banner is-error" role="alert"><span>{tagError}</span></div>}
+          <MatchedTagsSection tags={data?.savedTags ?? []} saving={savingTag} onMatch={matchTag} onUnskip={unskipTag} />
 
           {coverage.unassigned > 0 && <p className="hb-hint">{coverage.unassigned} answer{coverage.unassigned === 1 ? '' : 's'} came from questions with no organ system, so they aren’t counted here.</p>}
           <p className="hb-hint">Weights are from NCCPA’s 2025 PANCE content blueprint, and add up to 94%.</p>

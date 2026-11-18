@@ -9,6 +9,7 @@ import { Icon } from './Icon';
 import { QuestionEditor } from './QuestionEditor';
 import { Choices, Explanation } from './QuestionView';
 import { ScoreRing, scoreTone } from './Ui';
+import WorkInNotes from './WorkInNotes';
 
 // Taking a test and seeing how it went. Shared by her own tests and by a shared
 // test someone takes without an account, which saves to their browser instead.
@@ -56,6 +57,11 @@ export function Runner({ test, attempt, onLeave, onFinished, saver = accountSave
   const [savedOnce, setSavedOnce] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState('');
+  const [fromPath, setFromPath] = useState('/study/tests');
+
+  useEffect(() => {
+    setFromPath(`${window.location.pathname}${window.location.search}`);
+  }, []);
 
   // What to send: kept in a ref so the timer and the send on leaving see the latest.
   const latest = useRef({ answers, flagged, elapsed, dirty: false });
@@ -63,15 +69,17 @@ export function Runner({ test, attempt, onLeave, onFinished, saver = accountSave
   const flush = useCallback(async () => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     const l = latest.current;
-    if (!l.dirty) return;
+    if (!l.dirty) return true;
     l.dirty = false;
     try {
       await saver.save({ attemptId: attempt.id, answers: l.answers, flagged: l.flagged, elapsed: l.elapsed });
       setSaveFailed(false);
       setSavedOnce(true);
+      return true;
     } catch {
       l.dirty = true;
       setSaveFailed(true);
+      return false;
     }
   }, [attempt.id, saver]);
   const change = useCallback((next: Partial<{ answers: Record<string, number[]>; flagged: string[] }>) => {
@@ -124,7 +132,7 @@ export function Runner({ test, attempt, onLeave, onFinished, saver = accountSave
   // Keys, for a long test at a desk: a letter or number picks that choice, arrows move, Enter goes on.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!question || e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
+      if (!question || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]') || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
       if (e.key === 'ArrowRight') { go(index + 1); return; }
       if (e.key === 'ArrowLeft') { go(index - 1); return; }
       if (e.key === 'Enter') {
@@ -178,7 +186,7 @@ export function Runner({ test, attempt, onLeave, onFinished, saver = accountSave
       {popup}
       <div className="sd-runner-top">
         <div className="sd-runner-bar">
-          <button type="button" className="hb-text-btn sd-with-icon" onClick={async () => { latest.current.dirty = true; await flush(); await onLeave(); }}><Icon name="left" /> Save and leave</button>
+          <button type="button" className="hb-text-btn sd-with-icon" onClick={async () => { latest.current.dirty = true; if (await flush()) await onLeave(); }}><Icon name="left" /> Save and leave</button>
           <span className="sd-runner-tools">
             {savedOnce && !saveFailed && <span className="sd-saved">Saved</span>}
             <span className="sd-clock" aria-label={`Time ${clock(elapsed)}`}><Icon name="clock" /> {clock(elapsed)}</span>
@@ -203,6 +211,20 @@ export function Runner({ test, attempt, onLeave, onFinished, saver = accountSave
           <MathText className="sd-stem">{question.stem}</MathText>
           <Choices question={question} seed={attempt.seed} answer={answer} reveal={revealed} onChange={revealed ? undefined : (value) => setAnswer(question, value)} />
           {revealed && <Explanation question={question} answer={answer} />}
+          {revealed && (
+            <WorkInNotes
+              questionId={question.id}
+              title={question.topic !== 'General' ? `${test.title}: ${question.topic}` : question.stem}
+              from={fromPath}
+              signedIn={saver === accountSaver}
+              onBeforeOpen={() => {
+                const l = latest.current;
+                if (!l.dirty) return;
+                saver.onPageHide({ attemptId: attempt.id, answers: l.answers, flagged: l.flagged, elapsed: l.elapsed });
+                l.dirty = false;
+              }}
+            />
+          )}
         </div>
         <div className="sd-actions sd-question-nav">
           <button type="button" className="btn btn-secondary" disabled={index === 0} onClick={() => go(index - 1)}>Back</button>

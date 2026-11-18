@@ -178,9 +178,10 @@ export function readCollection(file: string, fileName: string, format: AnkiData[
       if (leeches.length >= MAX_LEECHES) break;
       if (usedNotes.has(card.nid)) continue;
       usedNotes.add(card.nid);
-      const parts = String(fields.get(card.nid)?.flds ?? '').split('\x1f').map(plainField).filter(Boolean);
-      if (!parts.length) continue;
-      leeches.push({ deck: card.deck, tags: card.tags, front: parts[0], back: parts[1] ?? '', lapses: card.lapses });
+      const parts = String(fields.get(card.nid)?.flds ?? '').split('\x1f').map(plainField);
+      const front = parts[0] ?? '';
+      if (!front) continue;
+      leeches.push({ deck: card.deck, tags: card.tags, front, back: parts[1] ?? '', lapses: card.lapses });
     }
 
     return { importedAt: now, fileName: fileName.slice(0, 120), format, hasHistory: reviewedAny, decks, tags, groups: [...groups.values()], leeches };

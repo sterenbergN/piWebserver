@@ -4,7 +4,7 @@ import { publicQuestion } from '@/lib/daily/grade';
 import { findQuestion } from '@/lib/daily/store';
 import type { Formula, Question } from '@/lib/daily/types';
 import { skillQuestionForNotes } from '@/lib/skills/links';
-import { orderBetween, type LibraryRecord, type Notebook, type PageRecord } from './items';
+import { normalizeWorkId, orderBetween, type LibraryRecord, type Notebook, type PageRecord } from './items';
 import { layoutQuestionSheet, SHEET_PAGE, type Measure } from './question-sheet';
 import { appendUpload, finishUpload, pagesTiedTo, readLibrary, syncBook, syncLibrary, syncPage, type TiedPage } from './store';
 
@@ -46,7 +46,8 @@ async function storeFigure(userId: string, notebook: string, svg: string) {
 
 /** The page for this question: the one already tied to it, or a new one in the questions notebook. */
 export async function pageForQuestion(userId: string, question: string, askedOn: string): Promise<TiedPage | null> {
-  const [already] = await pagesTiedTo(userId, [question]);
+  const norm = normalizeWorkId(question);
+  const [already] = await pagesTiedTo(userId, norm === question ? [question] : [norm, question]);
   if (already) return already;
   const found = await findQuestion(question);
   if (found) return makeSheet(userId, await dailyNotebook(userId), found.question, found.formulas, found.date ?? askedOn);
@@ -68,7 +69,7 @@ async function dailyNotebook(userId: string) {
 
 /** A new page in `notebookId` with the question laid out at the top, tied to it. */
 async function makeSheet(userId: string, notebookId: string, q: Question, formulas: Formula[], date: string, href?: string): Promise<TiedPage | null> {
-  const question = q.id;
+  const question = normalizeWorkId(q.id);
   const title = q.title;
   const now = Date.now();
   const notebook = { id: notebookId };

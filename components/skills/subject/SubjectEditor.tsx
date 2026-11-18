@@ -78,10 +78,10 @@ export default function SubjectEditor({ data, reload, onDone, onDelete, deleting
   }
 
   return (
-    <form className="sk-card sk-editor" onSubmit={save}>
+    <form id="sk-subject-editor" className="sk-card sk-editor" onSubmit={save}>
       <h2>Edit this subject</h2>
       <div className="sk-grid-2">
-        <label className="sk-field"><span>Name</span><input value={name} maxLength={100} required onChange={(e) => setName(e.target.value)} /></label>
+        <label className="sk-field"><span>Name</span><input value={name} maxLength={80} required onChange={(e) => setName(e.target.value)} /></label>
         <label className="sk-field"><span>Icon</span><input value={icon} maxLength={8} onChange={(e) => setIcon(e.target.value)} /><small>One emoji is plenty.</small></label>
         <label className="sk-field" htmlFor={`${uid}-area`}><span>Area</span>
           <input id={`${uid}-area`} list={`${uid}-areas`} value={area} maxLength={60} onChange={(e) => setArea(e.target.value)} />

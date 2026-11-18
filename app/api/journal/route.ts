@@ -4,7 +4,7 @@ import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { addDays, isDateKey } from '@/lib/habits/dates';
-import { addTalk, emptyJournal, JournalInputError, listEntries, normalizeJournal, removeTalk, saveEntry, searchEntries, summarize, type JournalData, type JournalTalk } from '@/lib/journal/journal';
+import { addTalk, emptyJournal, JournalInputError, listEntries, normalizeJournal, removeTalk, saveEntry, searchEntries, summarize, updateTalk, type JournalData, type JournalTalk } from '@/lib/journal/journal';
 
 // The private journal of the signed-in account, one file per user in
 // .data/journal (kept by backups). Every request reads or writes only the
@@ -69,7 +69,7 @@ export async function PUT(request: Request) {
   }
 }
 
-/** Keep a talked-through conversation with a day: `{ date, topic, transcript, today }`. */
+/** Keep a talked-through conversation with a day: `{ date, topic, summary?, mode?, transcript?, today }`. */
 export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
@@ -80,7 +80,10 @@ export async function POST(request: Request) {
     const result = await updateJson<JournalData, { talk: JournalTalk; summary: ReturnType<typeof summarize> }>(journalFile(userId), emptyJournal(), (stored) => {
       const data = normalizeJournal(stored);
       try {
-        const talk = addTalk(data, body.date, body.topic, body.transcript, today, now, crypto.randomUUID());
+        const talk = addTalk(data, body.date, body.topic, body.transcript ?? '', today, now, crypto.randomUUID(), {
+          mode: body.mode,
+          summary: body.summary,
+        });
         stored.entries = data.entries;
         return { talk, summary: summarize(body.date, data.entries[body.date]) };
       } catch (error) {
@@ -91,6 +94,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, ...result }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Keep conversation failed');
+  }
+}
+
+/** Update a kept talk session's topic, summary or mode: `{ date, talkId, topic?, summary?, mode? }`. */
+export async function PATCH(request: Request) {
+  try {
+    const userId = await requireWorkoutUserId();
+    const body = await readJsonObject(request);
+    const now = new Date().toISOString();
+
+    const result = await updateJson<JournalData, { talk: JournalTalk; summary: ReturnType<typeof summarize> }>(journalFile(userId), emptyJournal(), (stored) => {
+      const data = normalizeJournal(stored);
+      try {
+        const talk = updateTalk(
+          data,
+          body.date,
+          body.talkId,
+          { topic: body.topic, summary: body.summary, mode: body.mode },
+          now,
+        );
+        stored.entries = data.entries;
+        return { talk, summary: summarize(body.date, data.entries[body.date]) };
+      } catch (error) {
+        if (error instanceof JournalInputError) throw new ApiError(400, error.message);
+        throw error;
+      }
+    });
+    return NextResponse.json({ success: true, ...result }, { headers: PRIVATE });
+  } catch (error) {
+    return handleApiError(error, 'Update conversation failed');
   }
 }
 

@@ -77,16 +77,18 @@ export function normalizePractice(raw: Partial<PracticeData> | null | undefined)
 }
 
 /** The list inside a reply, whether it's `{ "cases": [...] }`, a bare list, or one item by itself. */
-function itemsIn(text: unknown, key: string) {
+function itemsIn(text: unknown, key: string): { rawItems: unknown[]; cutOff: boolean } {
   if (typeof text !== 'string' || !text.trim()) throw new StudyInputError('Paste the AI’s reply first.');
-  const { value } = readReply(text);
-  if (Array.isArray(value)) return value;
-  if (isRecord(value) && Array.isArray(value[key])) return value[key] as unknown[];
-  if (isRecord(value) && Array.isArray(value.questions)) return value.questions as unknown[]; // What's left of a reply cut off part way.
-  return [value];
+  const { value, cutOff } = readReply(text);
+  if (Array.isArray(value)) return { rawItems: value, cutOff };
+  if (isRecord(value) && Array.isArray(value[key])) return { rawItems: value[key] as unknown[], cutOff };
+  if (isRecord(value) && Array.isArray(value.questions)) return { rawItems: value.questions as unknown[], cutOff }; // Fallback for bare object recovery.
+  return { rawItems: [value], cutOff };
 }
 
-export type Parsed<T> = { items: T[]; problems: string[] };
+export type Parsed<T> = { items: T[]; problems: string[]; warnings?: string[]; cutOff?: boolean };
+const cutOffWarnings = (cutOff: boolean, noun: string) =>
+  cutOff ? [`The reply looks cut off. Every whole ${noun} was kept; ask the AI to continue if you want the rest.`] : [];
 
 // ── Comparison grids ─────────────────────────────────────────────────────────
 
@@ -95,7 +97,8 @@ export type DraftGrid = Pick<CompareGrid, 'title' | 'course' | 'columns' | 'rows
 
 export function parseGridReply(text: unknown): Parsed<DraftGrid> {
   const problems: string[] = [];
-  const items = itemsIn(text, 'grids').flatMap((raw, i): DraftGrid[] => {
+  const { rawItems, cutOff } = itemsIn(text, 'grids');
+  const items = rawItems.flatMap((raw, i): DraftGrid[] => {
     if (!isRecord(raw)) { problems.push(`Grid ${i + 1}: not a grid.`); return []; }
     const title = clip(raw.title, 120) || `Grid ${i + 1}`;
     const columns = listOf(raw.columns).map((c) => clip(c, 80)).filter(Boolean);
@@ -114,7 +117,7 @@ export function parseGridReply(text: unknown): Parsed<DraftGrid> {
     return [{ title, course: clip(raw.course, 80), columns, rows }];
   });
   if (!items.length) throw new StudyInputError(`No grids could be used. ${problems.slice(0, 3).join(' ')}`);
-  return { items, problems };
+  return { items, problems, warnings: cutOffWarnings(cutOff, 'grid'), cutOff };
 }
 
 export function addGrids(data: PracticeData, drafts: DraftGrid[], makeId: () => string, now: string) {
@@ -237,14 +240,15 @@ function readCase(raw: Record<string, unknown>): { draft: DraftCase; missing: st
 
 export function parseCaseReply(text: unknown): Parsed<DraftCase> {
   const problems: string[] = [];
-  const items = itemsIn(text, 'cases').flatMap((raw, i): DraftCase[] => {
+  const { rawItems, cutOff } = itemsIn(text, 'cases');
+  const items = rawItems.flatMap((raw, i): DraftCase[] => {
     if (!isRecord(raw)) { problems.push(`Case ${i + 1}: not a case.`); return []; }
     const { draft, missing } = readCase(raw);
     if (missing.length) { problems.push(`Case ${i + 1}: it needs ${missing.join(', ')}.`); return []; }
     return [draft];
   });
   if (!items.length) throw new StudyInputError(`No cases could be used. ${problems.slice(0, 3).join(' ')}`);
-  return { items, problems };
+  return { items, problems, warnings: cutOffWarnings(cutOff, 'case'), cutOff };
 }
 
 /** Change a case. Past runs stay as they were, so what they missed reads as it did then. */
@@ -304,7 +308,8 @@ function readPuzzle(raw: Record<string, unknown>, label: string): DraftPuzzle | 
 export function parseDiffReply(text: unknown): Parsed<DraftPuzzle> {
   const problems: string[] = [];
   const seen = new Set<string>();
-  const items = itemsIn(text, 'cases').flatMap((raw, i): DraftPuzzle[] => {
+  const { rawItems, cutOff } = itemsIn(text, 'cases');
+  const items = rawItems.flatMap((raw, i): DraftPuzzle[] => {
     if (!isRecord(raw)) { problems.push(`Case ${i + 1}: not a case.`); return []; }
     const puzzle = readPuzzle(raw, `Case ${i + 1}`);
     if (typeof puzzle === 'string') { problems.push(puzzle); return []; }
@@ -314,7 +319,7 @@ export function parseDiffReply(text: unknown): Parsed<DraftPuzzle> {
     return [puzzle];
   });
   if (!items.length) throw new StudyInputError(`No cases could be used. ${problems.slice(0, 3).join(' ')}`);
-  return { items, problems };
+  return { items, problems, warnings: cutOffWarnings(cutOff, 'case'), cutOff };
 }
 
 /** Change a case. If she's already played it, how that went stays on the record. */

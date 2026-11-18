@@ -13,13 +13,14 @@ import { Icon } from '@/components/study/Icon';
 import { PartnerLink, useLiveSession } from '@/components/study/PartnerLink';
 import { fmtDay } from '@/components/study/TestRow';
 import { formatSeconds } from '@/lib/study/practice';
-import type { OwnerSessionView } from '@/lib/study/partner';
-import type { PatientCaseForHer } from '@/lib/study/practice';
+import type { CaseRun, OwnerSessionView } from '@/lib/study/partner';
+import type { PatientCase, PatientCaseForHer } from '@/lib/study/practice';
 
-// Her side of the mock patient: what's on the door, and nothing else until it's
-// over. The server only ever sends her the door chart before she's played it.
+// Her side of the mock patient: partner link mode (server hides script until over)
+// OR Solo practice mode (interactive progressive history/exam reveal + self-score checklist).
 
 type LiveCase = Extract<OwnerSessionView, { caseId?: string }>;
+type SoloPhase = 'idle' | 'encounter' | 'score' | 'done';
 
 export default function PatientPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,12 +28,24 @@ export default function PatientPage() {
   const { confirm, popup } = useSitePopup();
   const { session, setSession, loaded, signedOut } = useLiveSession();
   const [item, setItem] = useState<PatientCaseForHer | null>(null);
+  const [fullCase, setFullCase] = useState<PatientCase | null>(null);
+  const [solo, setSolo] = useState(false);
+  const [soloPhase, setSoloPhase] = useState<SoloPhase>('idle');
+  const [askedScript, setAskedScript] = useState<number[]>([]);
+  const [checkedExam, setCheckedExam] = useState<number[]>([]);
+  const [ticked, setTicked] = useState<number[]>([]);
+  const [soloSeconds, setSoloSeconds] = useState(0);
+  const [soloRun, setSoloRun] = useState<CaseRun | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const live = session?.kind === 'patient' && 'caseId' in session && session.caseId === id ? (session as LiveCase) : null;
   const finished = !!live?.finished;
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('solo') === '1') setSolo(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +57,57 @@ export default function PatientPage() {
     return () => { cancelled = true; };
     // Again when a run finishes, for the history.
   }, [id, finished]);
+
+  useEffect(() => {
+    if (soloPhase !== 'encounter') return;
+    const timer = window.setInterval(() => setSoloSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [soloPhase]);
+
+  const startSolo = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const data = fullCase ?? (await practiceGet<{ case: PatientCase }>(`case=${encodeURIComponent(id)}&full=1`)).case;
+      setFullCase(data);
+      setAskedScript([]);
+      setCheckedExam([]);
+      setTicked([]);
+      setSoloSeconds(0);
+      setSoloRun(null);
+      setSoloPhase('encounter');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t load the case for solo practice.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSoloScore = async () => {
+    if (!fullCase || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const body = await practicePost<{ run: CaseRun; case: PatientCase }>('record-case-run', { id, ticked, seconds: soloSeconds });
+      setSoloRun(body.run);
+      setFullCase(body.case);
+      setItem({
+        id: body.case.id,
+        title: body.case.title,
+        course: body.case.course,
+        door: body.case.door,
+        createdAt: body.case.createdAt,
+        runs: body.case.runs,
+        diagnosis: body.case.diagnosis,
+        teaching: body.case.teaching,
+      });
+      setSoloPhase('done');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t save your score. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const start = async () => {
     setBusy(true);
@@ -128,9 +192,128 @@ export default function PatientPage() {
 
           {loaded && !live && (
             <section className="sd-card">
-              <p className="hb-hint">Get someone to play the patient. They’ll get the script and the checklist on their phone, with no account needed.</p>
-              {session && !session.finished && <p className="sd-warning">You have another link open, and this will end it.</p>}
-              <button type="button" className="btn btn-primary sd-self-start" disabled={busy} onClick={start}>{busy ? 'Starting…' : 'Get a link'}</button>
+              {soloPhase === 'idle' && (
+                <div className="sd-segments" role="radiogroup" aria-label="Mock patient practice mode">
+                  <button type="button" role="radio" aria-checked={!solo} onClick={() => setSolo(false)}>With a partner</button>
+                  <button type="button" role="radio" aria-checked={solo} onClick={() => setSolo(true)}>Solo practice mode</button>
+                </div>
+              )}
+              {!solo ? (
+                <>
+                  <p className="hb-hint">Get someone to play the patient. They’ll get the script and the checklist on their phone, with no account needed.</p>
+                  {session && !session.finished && <p className="sd-warning">You have another link open, and this will end it.</p>}
+                  <button type="button" className="btn btn-primary sd-self-start" disabled={busy} onClick={start}>{busy ? 'Starting…' : 'Get a link'}</button>
+                </>
+              ) : soloPhase === 'idle' ? (
+                <>
+                  <p className="hb-hint">Practice on your own: reveal history answers and physical exam findings as you ask, then score yourself against the OSCE checklist.</p>
+                  <button type="button" className="btn btn-primary sd-self-start" disabled={busy} onClick={startSolo}>{busy ? 'Loading…' : 'Start solo practice'}</button>
+                </>
+              ) : null}
+            </section>
+          )}
+
+          {solo && !live && fullCase && soloPhase === 'encounter' && (
+            <>
+              <div className="pr-timer"><span>Solo encounter</span><strong>{formatSeconds(soloSeconds)}</strong></div>
+              <section className="sd-card">
+                <h2>Patient opens with</h2>
+                <p className="pr-say">“<InlineMath>{fullCase.opening}</InlineMath>”</p>
+              </section>
+              <section className="sd-card">
+                <h2>Take a history</h2>
+                <p className="hb-hint">Tap a prompt to reveal what the patient says.</p>
+                <ul className="sd-step-list">
+                  {fullCase.script.map((line, i) => {
+                    const open = askedScript.includes(i);
+                    return (
+                      <li key={i} className="pr-solo-item">
+                        <button
+                          type="button"
+                          className="hb-small-btn sd-self-start"
+                          aria-expanded={open}
+                          onClick={() => setAskedScript((list) => (open ? list : [...list, i]))}
+                        >
+                          {open ? '✓ ' : ''}Ask: <InlineMath>{line.ask}</InlineMath>
+                        </button>
+                        {open && <p className="pr-say">“<InlineMath>{line.say}</InlineMath>”</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+              {fullCase.exam.length > 0 && (
+                <section className="sd-card">
+                  <h2>Physical exam</h2>
+                  <p className="hb-hint">Tap a maneuver to check the finding.</p>
+                  <ul className="sd-step-list">
+                    {fullCase.exam.map((line, i) => {
+                      const open = checkedExam.includes(i);
+                      return (
+                        <li key={i} className="pr-solo-item">
+                          <button
+                            type="button"
+                            className="hb-small-btn sd-self-start"
+                            aria-expanded={open}
+                            onClick={() => setCheckedExam((list) => (open ? list : [...list, i]))}
+                          >
+                            {open ? '✓ ' : ''}Examine: <InlineMath>{line.maneuver}</InlineMath>
+                          </button>
+                          {open && <p className="pr-door-line"><InlineMath>{line.finding}</InlineMath></p>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+              <div className="sd-actions">
+                <button type="button" className="btn btn-primary" onClick={() => setSoloPhase('score')}>Finish &amp; self-score</button>
+                <button type="button" className="hb-text-btn" onClick={() => setSoloPhase('idle')}>Cancel</button>
+              </div>
+            </>
+          )}
+
+          {solo && !live && fullCase && soloPhase === 'score' && (
+            <section className="sd-card sd-done">
+              <h2>Self-score your encounter ({formatSeconds(soloSeconds)})</h2>
+              <p className="pr-door-line"><strong>Diagnosis:</strong> <InlineMath>{fullCase.diagnosis}</InlineMath></p>
+              {fullCase.teaching && <MathText>{fullCase.teaching}</MathText>}
+              <p className="sd-setup-title">Tick what you asked or performed</p>
+              <div className="pr-checklist">
+                {fullCase.checklist.map((step, i) => (
+                  <label key={step} className="sd-check">
+                    <input
+                      type="checkbox"
+                      checked={ticked.includes(i)}
+                      onChange={() => setTicked((list) => (list.includes(i) ? list.filter((n) => n !== i) : [...list, i]))}
+                    />
+                    <span><InlineMath>{step}</InlineMath></span>
+                  </label>
+                ))}
+              </div>
+              <div className="sd-actions">
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={saveSoloScore}>{busy ? 'Saving…' : 'Save score'}</button>
+                <button type="button" className="hb-text-btn" disabled={busy} onClick={() => setSoloPhase('encounter')}>Back to encounter</button>
+              </div>
+            </section>
+          )}
+
+          {solo && !live && fullCase && soloPhase === 'done' && soloRun && (
+            <section className="sd-card sd-done">
+              <h2>{soloRun.right} of {soloRun.total} on the checklist</h2>
+              {soloRun.seconds > 0 && <p className="hb-hint">In {formatSeconds(soloRun.seconds)}.</p>}
+              <p className="pr-door-line"><strong>Diagnosis:</strong> <InlineMath>{fullCase.diagnosis}</InlineMath></p>
+              {soloRun.missed.length > 0 && (
+                <>
+                  <p className="sd-setup-title">What you missed</p>
+                  <ul className="pr-missed">{soloRun.missed.map((m) => <li key={m}><InlineMath>{m}</InlineMath></li>)}</ul>
+                </>
+              )}
+              {fullCase.teaching && <MathText>{fullCase.teaching}</MathText>}
+              <div className="sd-actions">
+                <button type="button" className="btn btn-primary" onClick={startSolo}>Practice again</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setSoloPhase('idle')}>Done</button>
+              </div>
             </section>
           )}
 

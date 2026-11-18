@@ -11,10 +11,10 @@ import { bookFileUrl, downloadBook } from './sync';
 /** A book to open: its file on this device, or (a PDF only) where to read it from on the Pi, a piece at a time. */
 export type BookFile = Blob | { url: string; size: number };
 
-export async function openEngine(format: BookFormat, file: BookFile, stage: HTMLElement, settings: ReaderSettings, onChange: () => void): Promise<Engine> {
+export async function openEngine(format: BookFormat, file: BookFile, stage: HTMLElement, settings: ReaderSettings, onChange: () => void, onError?: (error: Error) => void): Promise<Engine> {
   if (format === 'pdf') {
     const [{ FixedEngine }, pdf] = await Promise.all([loadFixed(), loadPdf()]);
-    return new FixedEngine(stage, await pdf.openPdf(file), settings, onChange);
+    return new FixedEngine(stage, await pdf.openPdf(file, onError), settings, onChange);
   }
   if (!(file instanceof Blob)) throw new Error('This kind of book has to be on this device to open.');
   const blob = file;

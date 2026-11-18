@@ -14,16 +14,18 @@ import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES
 const MODE_KEY = 'journal:talk-mode';
 const MODES = Object.keys(TALK_MODES) as TalkMode[];
 
-export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
+export default function TalkSheet({ day, entryName, written, initialMode, onClose, onAdd }: {
   day: DateKey;
   /** "today’s entry", "yesterday’s entry"… */
   entryName: string;
   /** What's written in the day's entry so far, offered to the AI as context. */
   written: string;
+  /** Optional mode preselected when launched from a quick-start chip. */
+  initialMode?: TalkMode;
   onClose: () => void;
   onAdd: (reply: TalkReply, keepConversation: boolean, mode: TalkMode) => Promise<boolean>;
 }) {
-  const [mode, setModeState] = useState<TalkMode>('explore');
+  const [mode, setModeState] = useState<TalkMode>(() => (initialMode && isTalkMode(initialMode) ? initialMode : 'explore'));
   const [picked, setPicked] = useState<string>('');
   const [own, setOwn] = useState('');
   const [share, setShare] = useState(false);
@@ -40,13 +42,17 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (initialMode && isTalkMode(initialMode)) {
+      setModeState(initialMode);
+      return;
+    }
     try {
       const saved = localStorage.getItem(MODE_KEY);
       if (isTalkMode(saved)) setModeState(saved);
     } catch {
       // No storage (private window): start from Explore.
     }
-  }, []);
+  }, [initialMode]);
 
   const setMode = (next: TalkMode) => {
     setModeState(next);
@@ -112,7 +118,7 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
       footer={reply ? (
         <>
           <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setReply(null)}>Back</button>
-          <button type="button" className="btn btn-primary" disabled={saving || !reply.summary.trim()} onClick={add}>{saving ? 'Saving…' : `Add to ${entryName}`}</button>
+          <button type="button" className="btn btn-primary" disabled={saving || !reply.summary.trim()} onClick={add}>{saving ? 'Saving…' : 'Save to Talk It Through'}</button>
         </>
       ) : (
         <>
@@ -131,7 +137,7 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
           </select>
           <label className="hb-label" htmlFor="jr-talk-topic">Topic</label>
           <input id="jr-talk-topic" className="jr-talk-input" value={reply.topic} maxLength={300} onChange={(e) => setReply({ ...reply, topic: e.target.value })} />
-          <label className="hb-label" htmlFor="jr-talk-summary">Summary, added to the end of the entry</label>
+          <label className="hb-label" htmlFor="jr-talk-summary">Summary, saved to this day’s Talk It Through space</label>
           <textarea id="jr-talk-summary" className="jr-talk-input" rows={Math.min(12, reply.summary.split('\n').length + 2)} value={reply.summary} onChange={(e) => setReply({ ...reply, summary: e.target.value })} />
           <div className="jr-talk-preview" aria-label="How it will read">
             <JournalMarkdown text={reply.summary} />
@@ -139,12 +145,12 @@ export default function TalkSheet({ day, entryName, written, onClose, onAdd }: {
           {reply.transcript ? (
             <label className="jr-talk-toggle">
               <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
-              <span>Keep the conversation with the day<small>{turns} {turns === 1 ? 'turn' : 'turns'}, folded away under the entry. Only you can read it.</small></span>
+              <span>Keep the full conversation<small>{turns} {turns === 1 ? 'turn' : 'turns'}, tucked inside this talk card. Uncheck to save only the topic and summary.</small></span>
             </label>
           ) : (
-            <p className="jr-hint">There’s no conversation in what you pasted, so only the summary is added.</p>
+            <p className="jr-hint">There’s no conversation in what you pasted, so only the topic and summary will be saved.</p>
           )}
-          <p className="jr-hint">You can edit it or keep writing in the entry afterwards.</p>
+          <p className="jr-hint">Saved to {entryName} in Talk It Through — your written entry stays untouched, and you can edit this summary anytime.</p>
         </div>
       ) : (
         <>

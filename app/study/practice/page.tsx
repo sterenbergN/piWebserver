@@ -17,6 +17,7 @@ export default function PracticePage() {
   const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
   const [grids, setGrids] = useState<GridSummary[]>([]);
   const [cases, setCases] = useState<PatientCaseForHer[]>([]);
+  const [soloMode, setSoloMode] = useState(false);
   const { session } = useLiveSession();
 
   useEffect(() => {
@@ -80,18 +81,27 @@ export default function PracticePage() {
           </section>
 
           <section className="sd-card">
-            <CardHead icon="stethoscope" title="Mock patient">OSCE practice. Someone plays the patient from a script that only gives things away if you ask, and scores you on a checklist.</CardHead>
+            <CardHead icon="stethoscope" title="Mock patient">
+              {soloMode
+                ? 'Solo OSCE practice. Reveal history and exam findings step by step, then score yourself on the checklist.'
+                : 'OSCE practice. Someone plays the patient from a script that only gives things away if you ask, and scores you on a checklist.'}
+            </CardHead>
+            <div className="sd-segments" role="radiogroup" aria-label="Mock patient practice mode">
+              <button type="button" role="radio" aria-checked={!soloMode} onClick={() => setSoloMode(false)}>With a partner</button>
+              <button type="button" role="radio" aria-checked={soloMode} onClick={() => setSoloMode(true)}>Solo practice mode</button>
+            </div>
             {cases.length > 0 && (
               <ul className="pr-list">
                 {cases.map((c) => {
                   const last = c.runs[c.runs.length - 1];
                   return (
                     <li key={c.id}>
-                      <Link href={`/study/practice/patient/${c.id}`}>
+                      <Link href={soloMode ? `/study/practice/patient/${c.id}?solo=1` : `/study/practice/patient/${c.id}`}>
                         <span className="pr-list-main">
                           <strong>{c.title}</strong>
                           <small>{c.course ? `${c.course} · ` : ''}{last ? `last ${last.right} of ${last.total} on ${fmtDay(last.on)}` : 'not tried yet'}</small>
                         </span>
+                        {soloMode && <span className="td-chip">Solo</span>}
                         <Icon name="chevron" />
                       </Link>
                     </li>

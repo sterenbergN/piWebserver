@@ -218,3 +218,15 @@ test('questionStats tallies tracks, topics and achievements', () => {
   assert.equal(stats.xpThisWeek, 63); // two solves and one studied
   assert.equal(attemptMeta(validateDay(day()).day!.core, true, true).boss, true);
 });
+
+test('achievements exclude gen-* and practice attempts from Clean sweep and Overachiever', () => {
+  const genSolved = [
+    attempt({ questionId: 'gen-1', date: '2026-10-21', answeredOn: '2026-10-21', meta: { ...attempt().meta, core: true } }),
+    attempt({ questionId: 'gen-2', date: '2026-10-21', answeredOn: '2026-10-21', meta: { ...attempt().meta, core: false } }),
+    attempt({ questionId: 'gen-3', date: '2026-10-21', answeredOn: '2026-10-21', meta: { ...attempt().meta, core: false, practice: true } }),
+    attempt({ questionId: 'custom-practice', date: '2026-10-20', answeredOn: '2026-10-20', meta: { ...attempt().meta, core: false, practice: true } }),
+  ];
+  const stats = questionStats(scoreAll(genSolved, new Map()), '2026-10-21');
+  assert.equal(stats.achievements.find((a) => a.id === 'sweep')!.earned, false);
+  assert.deepEqual(stats.achievements.find((a) => a.id === 'bonus')!.progress, [0, 20]);
+});

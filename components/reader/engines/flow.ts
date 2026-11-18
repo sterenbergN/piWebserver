@@ -1,5 +1,6 @@
-import { flowPage, type Anchor } from '@/lib/reader/items';
-import { THEME_COLORS, type Engine, type FlowSource, type InkOrigin, type ReaderSettings, type TocEntry } from '../source';
+import { findTextSnippets, flowPage, type Anchor } from '@/lib/reader/items';
+import { THEME_COLORS, type BookSearchHit, type BookSearchOptions, type BookSearchResult, type Engine, type FlowSource, type InkOrigin, type ReaderSettings, type TocEntry } from '../source';
+import { extractBodyText } from './epub';
 
 // Flowing text, one screen at a time. Each chapter sits in its own iframe, laid out in
 // columns exactly one screen wide, and turning a page slides the frame along. The frame
@@ -69,11 +70,13 @@ export class FlowEngine implements Engine {
   readonly kind = 'flow';
   readonly toc: TocEntry[];
   readonly totalPages: number;
+  readonly searchable = true;
   private host: HTMLDivElement;
   private starts: number[] = [];
   private total = 0;
   private frames = new Map<number, Frame>();
   private loading = new Map<number, Promise<Frame>>();
+  private sectionTextCache = new Map<number, string>();
   private cur: Frame | null = null;
   private page = 0;
   private width = 0;
@@ -296,6 +299,61 @@ export class FlowEngine implements Engine {
     await this.goTo({ page: flowPage(chars), s: section, o: Math.round(chars - this.starts[section]) });
   }
 
+  private async sectionText(section: number): Promise<string> {
+    const frame = this.frames.get(section);
+    if (frame) return frame.nodes.map((n) => n.data).join('');
+    const cached = this.sectionTextCache.get(section);
+    if (cached !== undefined) return cached;
+    const item = this.source.sections[section];
+    let text = '';
+    if (item.text) {
+      text = await item.text();
+    } else {
+      const html = await item.load();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      text = extractBodyText(doc);
+    }
+    this.sectionTextCache.set(section, text);
+    return text;
+  }
+
+  async searchText(query: string, options?: BookSearchOptions): Promise<BookSearchResult> {
+    if (!query.trim()) return { searchable: true, hits: [] };
+    const maxHits = options?.maxHits ?? 80;
+    const hits: BookSearchHit[] = [];
+    let truncated = false;
+    const total = this.source.sections.length;
+
+    for (let s = 0; s < total; s++) {
+      if (options?.signal?.aborted) break;
+      const text = await this.sectionText(s).catch(() => '');
+      if (options?.signal?.aborted) break;
+      const remaining = maxHits - hits.length;
+      const found = findTextSnippets(text, query, remaining + 1);
+      const chapter = this.chapterOf(s);
+      for (const h of found) {
+        if (hits.length >= maxHits) {
+          truncated = true;
+          break;
+        }
+        const page = flowPage(this.starts[s] + h.offset);
+        hits.push({
+          anchor: { page, s, o: h.offset, ...(chapter ? { chapter } : {}) },
+          chapter,
+          before: h.before,
+          match: h.match,
+          after: h.after,
+        });
+      }
+      if (truncated) break;
+      if (s % 3 === 2 || found.length > 0 || s === total - 1) {
+        options?.onProgress?.(s + 1, total, [...hits]);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+    return { searchable: true, hits, truncated };
+  }
+
   async next() {
     const frame = this.cur;
     if (!frame) return;
@@ -449,6 +507,7 @@ export class FlowEngine implements Engine {
     this.generation += 1;
     this.host.remove();
     this.frames.clear();
+    this.sectionTextCache.clear();
     this.source.destroy();
   }
 }

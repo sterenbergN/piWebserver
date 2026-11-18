@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
 import { useWakeLock } from '@/components/useWakeLock';
-import { roundStroke, strokeTouches, type Anchor, type BookMeta, type InkColor, type ReaderItem } from '@/lib/reader/items';
+import { formatBookmarkText, isBookmarkItem, roundStroke, strokeTouches, type Anchor, type BookMeta, type InkColor, type ReaderItem } from '@/lib/reader/items';
 import { openEngine, type BookFile } from './bookinfo';
 import { getFile, getProgress } from './db';
 import { drawPixels, drawStroke, inkColor, MARKER_COLORS, MARKER_PIXELS, PEN_COLORS, PEN_PIXELS, sizeCanvas } from './ink';
 import NotesPanel from './NotesPanel';
-import type { Engine, ReaderSettings } from './source';
+import type { BookSearchHit, Engine, ReaderSettings } from './source';
 import { bookFileUrl, downloadBook, flushNow, ReaderSignedOut, saveProgressHere } from './sync';
 import { useBookItems } from './useBookItems';
 
@@ -25,7 +25,7 @@ type Tool = 'pen' | 'marker' | 'eraser';
  * be more than a phone will hold. Smaller ones are fetched whole and kept, so they open offline.
  */
 const READ_FROM_PI_BYTES = 20 * 1024 * 1024;
-type Panel = 'contents' | 'notes' | 'notes-here' | 'look' | null;
+type Panel = 'contents' | 'search' | 'notes' | 'notes-here' | 'look' | null;
 type Undo = { kind: 'added' | 'removed'; item: ReaderItem };
 
 const SWIPE_PIXELS = 44;
@@ -77,6 +77,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
   const [chrome, setChrome] = useState(true);
   const [panel, setPanel] = useState<Panel>(null);
   const [drawMode, setDrawMode] = useState(false);
+  const [pencilOnly, setPencilOnly] = useState(false);
   const [tool, setTool] = useState<Tool>('pen');
   const [penColor, setPenColor] = useState<InkColor>('ink');
   const [markerColor, setMarkerColor] = useState<InkColor>('yellow');
@@ -85,6 +86,13 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
   const [canFull, setCanFull] = useState(false);
   const [dragFraction, setDragFraction] = useState<number | null>(null);
   const [toast, setToast] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHits, setSearchHits] = useState<BookSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchProgress, setSearchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searchReason, setSearchReason] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const say = useCallback((text: string, ms = 1400) => {
     setToast(text);
@@ -189,7 +197,12 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
       setPhase('opening');
       const at = startAt ?? (await getProgress(book.id))?.anchor ?? null;
       if (at) lastPlace = placeKey(at);
-      const engine = await openEngine(book.format, file, stageRef.current!, settingsRef.current, pageChanged);
+      const engine = await openEngine(book.format, file, stageRef.current!, settingsRef.current, pageChanged, (err) => {
+        if (!live) return;
+        if ((err as { status?: number })?.status === 401) { onSignedOut(); return; }
+        setPhase('error');
+        setErrorText(err.message || 'This book couldn’t be loaded.');
+      });
       if (!live) { engine.destroy(); return; }
       engineRef.current = engine;
       fitCanvases();
@@ -248,9 +261,9 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
 
   // ── Touch, pencil, mouse and keys ────────────────────────────────────────────
 
-  const drawRef = useRef({ drawMode, tool, penColor, markerColor, panel, chrome });
+  const drawRef = useRef({ drawMode, tool, penColor, markerColor, panel, chrome, pencilOnly });
   useLayoutEffect(() => {
-    drawRef.current = { drawMode, tool, penColor, markerColor, panel, chrome };
+    drawRef.current = { drawMode, tool, penColor, markerColor, panel, chrome, pencilOnly };
     if (tool !== 'eraser') lastInk.current = tool;
   });
 
@@ -276,7 +289,6 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
 
     type Touch = { x: number; y: number; startX: number; startY: number; at: number };
     const touches = new Map<number, Touch>();
-    let penSeen = false;
     let stroke: { pointer: number; points: number[]; tool: 'pen' | 'marker'; color: InkColor; width: number; fromPen: boolean } | null = null;
     let erasing: number | null = null;
     /** Two fingers down: a pinch once they've spread or closed enough, otherwise maybe a tap or swipe. */
@@ -302,7 +314,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
     const switchTool = () => {
       if (readOnly) return;
       const state = drawRef.current;
-      if (!state.drawMode && !penSeen) {
+      if (!state.drawMode && !state.pencilOnly) {
         setDrawMode(true);
         setChrome(false);
         if (state.tool === 'eraser') setTool(lastInk.current);
@@ -415,16 +427,19 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
       try { layer.setPointerCapture?.(e.pointerId); } catch { /* Then it just isn't captured. */ }
       const { x, y } = position(e);
       if (e.pointerType === 'pen' && !readOnly) {
-        // The pencil always writes, and a palm that landed first stops counting.
-        penSeen = true;
+        // The pencil always writes, and switches to Pencil-only unless the user toggles back.
+        if (!drawRef.current.pencilOnly) {
+          drawRef.current.pencilOnly = true;
+          setPencilOnly(true);
+        }
         lastPenAt = Date.now();
         touches.clear();
         pinch = null;
         startMark(e);
         return;
       }
-      // Fingers write only in draw mode, and not once a pencil is about.
-      if (drawRef.current.drawMode && !penSeen && !touches.size && !stroke && erasing === null) {
+      // Fingers write only in draw mode, and not when Pencil-only is active.
+      if (drawRef.current.drawMode && !drawRef.current.pencilOnly && !touches.size && !stroke && erasing === null) {
         touches.set(e.pointerId, { x, y, startX: x, startY: y, at: Date.now() });
         startMark(e);
         return;
@@ -528,10 +543,10 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
         // Pulled in from the right edge: the notes, in draw mode or out of it.
         setChrome(false);
         setPanel('notes');
-      } else if (drawRef.current.drawMode) return;
-      else if (!engine?.zoomed() && Math.abs(dx) > SWIPE_PIXELS && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      } else if (drawRef.current.drawMode && !drawRef.current.pencilOnly) return;
+      else if (!engine?.zoomed() && Date.now() - lastPenAt >= PEN_QUIET_MS && Math.abs(dx) > SWIPE_PIXELS && Math.abs(dx) > Math.abs(dy) * 1.4) {
         void (dx < 0 ? engine?.next() : engine?.prev());
-        setChrome(false);
+        if (!drawRef.current.drawMode) setChrome(false);
       }
     };
 
@@ -539,7 +554,14 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
       const engine = engineRef.current;
       if (!engine) return;
       const state = drawRef.current;
-      if (state.drawMode) return;
+      if (state.drawMode) {
+        if (!state.pencilOnly || Date.now() - lastPenAt < PEN_QUIET_MS) return;
+        if (engine.tap(x, y)) return;
+        const share = x / stage.clientWidth;
+        if (share < SIDE_ZONE) void engine.prev();
+        else if (share > 1 - SIDE_ZONE) void engine.next();
+        return;
+      }
       if (state.chrome) { setChrome(false); return; }
       if (engine.tap(x, y)) return;
       const share = x / stage.clientWidth;
@@ -566,8 +588,18 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
     let wheelTimer = 0;
 
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setChrome(false);
+        setPanel('search');
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        if (e.key === 'Escape' && drawRef.current.panel === 'search') setPanel(null);
+        return;
+      }
       const engine = engineRef.current;
       if (e.key === 'Escape') {
         if (drawRef.current.panel) setPanel(null);
@@ -616,8 +648,73 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
   const items = useMemo(() => all(), [all, version]);
   const isOnPage = useCallback((anchor: Anchor) => engineRef.current?.onScreen(anchor) ?? false, []);
   const notesHere = ready ? items.filter((item) => (item.kind === 'note' || item.kind === 'sketch') && !item.deleted && engine.onScreen(item.anchor)).length : 0;
+  const bookmarkHere = ready && !readOnly ? items.find((item) => isBookmarkItem(item) && engine.onScreen(item.anchor)) : undefined;
   const fraction = dragFraction ?? (ready ? engine.fraction() : 0);
   const pageLabel = ready && here ? `${engine.kind === 'fixed' ? '' : 'p. '}${here.page} of ${engine.totalPages}` : '';
+
+  useEffect(() => {
+    if (panel !== 'search' || !ready) return;
+    if (!engine.searchable) {
+      setSearching(false);
+      setSearchHits([]);
+      setSearchProgress(null);
+      setSearchTruncated(false);
+      void engine.searchText('').then((r) => setSearchReason(r.reason || 'This book cannot be searched.'));
+      return;
+    }
+    setSearchReason('');
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearching(false);
+      setSearchHits([]);
+      setSearchProgress(null);
+      setSearchTruncated(false);
+      return;
+    }
+
+    const ac = new AbortController();
+    setSearching(true);
+    setSearchHits([]);
+    setSearchProgress(null);
+    setSearchTruncated(false);
+    const timer = setTimeout(() => {
+      void engine.searchText(q, {
+        signal: ac.signal,
+        maxHits: 80,
+        onProgress: (done, total, hits) => {
+          if (ac.signal.aborted) return;
+          setSearchProgress({ done, total });
+          setSearchHits(hits);
+        },
+      }).then((res) => {
+        if (ac.signal.aborted) return;
+        setSearchHits(res.hits);
+        setSearchTruncated(!!res.truncated);
+        setSearchReason(res.reason || '');
+        setSearching(false);
+        setSearchProgress(null);
+      }).catch(() => {
+        if (!ac.signal.aborted) setSearching(false);
+      });
+    }, 220);
+
+    return () => {
+      clearTimeout(timer);
+      ac.abort();
+    };
+  }, [panel, ready, engine, searchQuery]);
+
+  const toggleBookmark = () => {
+    const eng = engineRef.current;
+    if (!eng || readOnly) return;
+    if (bookmarkHere) {
+      remove(bookmarkHere);
+      say('Bookmark removed');
+    } else {
+      addNote(eng.here(), formatBookmarkText(eng.here()));
+      say('Bookmarked');
+    }
+  };
 
   const jump = (anchor: Anchor) => {
     setPanel(null);
@@ -685,6 +782,20 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
             {here?.chapter && <span>{here.chapter}</span>}
           </div>
           {other && onSwitch && <button type="button" className="rd-icon-btn" onClick={() => onSwitch(other)} aria-label="Listen to the audio book"><Icon name="play" /></button>}
+          <button type="button" className="rd-icon-btn" onClick={() => setPanel('search')} aria-label="Search in book" title="Search in book (Ctrl+F)" disabled={!ready}><Icon name="search" /></button>
+          {!readOnly && (
+            <button
+              type="button"
+              className={`rd-icon-btn rd-bookmark-btn${bookmarkHere ? ' is-on' : ''}`}
+              aria-pressed={!!bookmarkHere}
+              onClick={toggleBookmark}
+              aria-label={bookmarkHere ? 'Remove bookmark' : 'Bookmark this page'}
+              title={bookmarkHere ? 'Remove bookmark' : 'Bookmark this page'}
+              disabled={!ready}
+            >
+              <Icon name="bookmark" />
+            </button>
+          )}
           <button type="button" className="rd-icon-btn" onClick={() => setPanel('contents')} aria-label="Contents" disabled={!ready}><Icon name="list" /></button>
           {!readOnly && <button type="button" className="rd-icon-btn" onClick={() => setPanel('notes')} aria-label="Notes" disabled={!ready}><Icon name="note" /></button>}
           <button type="button" className="rd-icon-btn" onClick={() => setPanel('look')} aria-label="How the page looks" disabled={!ready}><Icon name="text" /></button>
@@ -699,6 +810,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
             value={Math.round(fraction * 1000)}
             onChange={(e) => setDragFraction(Number(e.target.value) / 1000)}
             onPointerUp={() => { if (dragFraction !== null) { void engine.goToFraction(dragFraction); setDragFraction(null); } }}
+            onPointerCancel={() => setDragFraction(null)}
             onKeyUp={() => { if (dragFraction !== null) { void engine.goToFraction(dragFraction); setDragFraction(null); } }}
           />
           <span className="rd-bar-page">{pageLabel}</span>
@@ -723,6 +835,20 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
             );
           })}
           <span className="rd-tools-gap" />
+          <button
+            type="button"
+            className={`rd-btn is-small${!pencilOnly ? ' is-primary' : ''}`}
+            aria-pressed={!pencilOnly}
+            title={pencilOnly ? 'Pencil only (fingers turn pages). Tap to allow finger drawing.' : 'Finger + Pencil can draw. Tap to switch to Pencil only.'}
+            onClick={() => {
+              const next = !pencilOnly;
+              setPencilOnly(next);
+              drawRef.current.pencilOnly = next;
+              say(next ? 'Pencil only — fingers turn pages' : 'Finger + Pencil can draw');
+            }}
+          >
+            {pencilOnly ? '✏️ Pencil only' : '👆 Finger + Pencil'}
+          </button>
           <button type="button" className="rd-icon-btn" aria-label="Undo" disabled={!undoCount} onClick={undo}><Icon name="undo" /></button>
           <button type="button" className="rd-btn is-primary" onClick={() => { setDrawMode(false); if (tool === 'eraser') setTool(lastInk.current); }}>Done</button>
         </div>
@@ -733,7 +859,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
           <aside
             className="rd-sheet"
             onClick={(e) => e.stopPropagation()}
-            aria-label={panel === 'contents' ? 'Contents' : panel === 'look' ? 'How the page looks' : 'Notes'}
+            aria-label={panel === 'contents' ? 'Contents' : panel === 'search' ? 'Search in book' : panel === 'look' ? 'How the page looks' : 'Notes'}
             onPointerDown={(e) => {
               // Not from anything that uses a drag for itself: the handwriting card, a text box, the sliders.
               const own = (e.target as Element).closest('canvas, textarea, input');
@@ -748,6 +874,7 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
             <div className="rd-sheet-head">
               <div className="rd-tabs">
                 <button type="button" className={panel === 'contents' ? 'is-on' : ''} onClick={() => setPanel('contents')}>Contents</button>
+                <button type="button" className={panel === 'search' ? 'is-on' : ''} onClick={() => setPanel('search')}>Search</button>
                 {!readOnly && <button type="button" className={panel === 'notes' || panel === 'notes-here' ? 'is-on' : ''} onClick={() => setPanel('notes')}>Notes</button>}
                 <button type="button" className={panel === 'look' ? 'is-on' : ''} onClick={() => setPanel('look')}>Page</button>
               </div>
@@ -755,6 +882,57 @@ export default function BookView({ book, startAt, settings, other, onSwitch, onS
               <button type="button" className="rd-icon-btn" onClick={() => setPanel(null)} aria-label="Close"><Icon name="x" /></button>
             </div>
             <div className="rd-sheet-body">
+              {panel === 'search' && (
+                <div className="rd-search-panel">
+                  {!engine.searchable ? (
+                    <p className="rd-empty">{searchReason || 'This book is made of images, so there is no text to search.'}</p>
+                  ) : (
+                    <>
+                      <input
+                        ref={searchInputRef}
+                        type="search"
+                        className="rd-input"
+                        placeholder="Search in this book…"
+                        aria-label="Search in this book"
+                        autoFocus
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                      />
+                      {searchQuery.trim().length > 0 && searchQuery.trim().length < 2 && (
+                        <p className="rd-hint">Type at least 2 characters to search.</p>
+                      )}
+                      {searching && (
+                        <p className="rd-search-status" role="status">
+                          {searchProgress ? `Searching ${searchProgress.done} / ${searchProgress.total}… (${searchHits.length} found)` : 'Searching…'}
+                        </p>
+                      )}
+                      {!searching && searchQuery.trim().length >= 2 && (
+                        <p className="rd-search-status" role="status">
+                          {searchHits.length
+                            ? `${searchHits.length}${searchTruncated ? '+' : ''} match${searchHits.length === 1 ? '' : 'es'}`
+                            : 'No matches found.'}
+                        </p>
+                      )}
+                      {searchHits.length > 0 && (
+                        <ul className="rd-notes-results rd-search-results">
+                          {searchHits.map((hit, i) => (
+                            <li key={`${hit.anchor.page}-${hit.anchor.s ?? 0}-${hit.anchor.o ?? i}-${i}`}>
+                              <button type="button" className="rd-search-hit" onClick={() => jump(hit.anchor)}>
+                                <small>{hit.chapter ? `${hit.chapter} · p. ${hit.anchor.page}` : `p. ${hit.anchor.page}`}</small>
+                                <span>
+                                  {hit.before}
+                                  <mark>{hit.match}</mark>
+                                  {hit.after}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               {panel === 'contents' && (
                 engine.toc.length ? (
                   <ul className="rd-toc">

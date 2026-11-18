@@ -1,6 +1,6 @@
 'use client';
 
-import { orderBetween, type MarkElement, type Notebook, type PageElement, type PageRecord, type QuestionLink, type TextElement } from '@/lib/notes/items';
+import { normalizeWorkId, orderBetween, type MarkElement, type Notebook, type PageElement, type PageRecord, type QuestionLink, type TextElement } from '@/lib/notes/items';
 import { localToday } from '@/lib/habits/dates';
 import { layoutQuestionSheet, OPEN_QUESTION, svgSize, type SheetFormula, type SheetQuestion } from '@/lib/notes/question-sheet';
 import { listBook, listLibrary, livePages, putBook, putElements, putLibrary, type StoredBook, type StoredElement, type StoredLibrary } from './db';
@@ -67,8 +67,11 @@ function questionOf(url: string) {
   }
 }
 
-export const linksToQuestion = (element: PageElement, question: string) =>
-  element.kind === 'mark' && element.role === 'link' && !element.deleted && !!element.target && 'url' in element.target && questionOf(element.target.url) === question;
+export const linksToQuestion = (element: PageElement, question: string) => {
+  if (element.kind !== 'mark' || element.role !== 'link' || element.deleted || !element.target || !('url' in element.target)) return false;
+  const linked = questionOf(element.target.url);
+  return linked ? normalizeWorkId(linked) === normalizeWorkId(question) : false;
+};
 
 /** A link over the question's title on its page, the same kind as one you'd make yourself. */
 function titleLink(heading: TextElement, link: QuestionLink): MarkElement {
@@ -117,11 +120,12 @@ async function figurePicture(svg: string) {
 
 /** The pages, anywhere, already tied to a question. */
 async function tiedPages(question: string) {
+  const target = normalizeWorkId(question);
   const out: { notebook: string; page: string }[] = [];
   for (const record of await listLibrary()) {
     if (record.kind !== 'notebook' || record.deleted || record.trashedAt) continue;
     for (const page of livePages(await listBook(record.id))) {
-      if (page.questions?.some((link) => link.id === question)) out.push({ notebook: record.id, page: page.id });
+      if (page.questions?.some((link) => normalizeWorkId(link.id) === target)) out.push({ notebook: record.id, page: page.id });
     }
   }
   return out;
@@ -149,8 +153,9 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   let asked: PublicQuestion | null = null;
   let formulas: SheetFormula[] = [];
   try {
+    const target = normalizeWorkId(question);
     const { day } = await fetchDay(date);
-    const found = day && [day.core, ...day.bonus].find((q) => q.id === question);
+    const found = day && [day.core, ...day.bonus].find((q) => normalizeWorkId(q.id) === target);
     if (found) {
       asked = found;
       const used = new Set(found.formulas ?? []);
@@ -163,6 +168,7 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
     if (asked) title = asked.title;
   } catch { /* Offline: the page still gets made, with the title it was given. */ }
 
+  const normalizedId = normalizeWorkId(asked?.id ?? question);
   const notebook = await dailyNotebook();
   const pages = livePages(await listBook(notebook));
   const now = Date.now();
@@ -170,7 +176,7 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   const blankFirst = pages.length === 1 && !pages[0].questions?.length && !pages[0].title ? pages[0] : null;
   const page: StoredBook = {
     ...(blankFirst ?? { id: newId(), kind: 'page', notebook, order: orderBetween(pages[pages.length - 1]?.order, undefined), w: 612, h: 792, template: 'engineering', paper: '#ffffff', createdAt: now }),
-    kind: 'page', notebook, title, questions: [{ id: question, date, title }], updatedAt: now, dirty: true,
+    kind: 'page', notebook, title, questions: [{ id: normalizedId, date, title }], updatedAt: now, dirty: true,
   } as StoredBook;
   await putBook([page]);
 
@@ -186,7 +192,7 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   }
   const measure = ({ text, w, size, bold }: { text: string; w: number; size: number; bold?: boolean }) =>
     layoutText({ text, w, size, font: 'sans', bold }).length * size * TEXT_LINE_HEIGHT;
-  const link = { id: question, date, title };
+  const link = { id: normalizedId, date, title };
   const elements: StoredElement[] = [];
   for (const box of layoutQuestionSheet(sheet, formulas, dateLabel, measure, picture ?? undefined)) {
     if (box.kind === 'figure') {

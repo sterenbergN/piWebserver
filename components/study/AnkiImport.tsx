@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { BLUEPRINT } from '@/lib/study/coverage';
-import type { DeckRow } from '@/lib/study/coverage';
+import type { DeckRow, SavedTagRow } from '@/lib/study/coverage';
 import type { MapResponse } from './MapTypes';
 
 // Bringing her Anki decks in: the export steps, the upload, matching decks to
@@ -51,9 +51,57 @@ function DeckLine({ deck, saving, onMatch }: { deck: DeckRow; saving: boolean; o
   );
 }
 
+const systemLabel = (match: string) =>
+  match === 'skip' ? 'Skipped (not on PANCE)' : BLUEPRINT.find((b) => b.system === match)?.label ?? match;
+
+export function MatchedTagsSection({
+  tags,
+  saving,
+  onMatch,
+  onUnskip,
+}: {
+  tags: SavedTagRow[];
+  saving: boolean;
+  onMatch: (tag: string, value: string) => void;
+  onUnskip: (tag: string) => void;
+}) {
+  if (!tags.length) return null;
+  const skipped = tags.filter((t) => t.match === 'skip').length;
+  return (
+    <details className="sd-card sd-setup">
+      <summary>
+        <h2>Matched &amp; skipped tags ({tags.length}{skipped ? ` · ${skipped} skipped` : ''})</h2>
+      </summary>
+      <p className="hb-hint">Tags you’ve matched to an organ system or skipped. Restore a skipped tag so it can be matched again.</p>
+      <ul className="sd-match-list">
+        {tags.map(({ tag, match, cards }) => (
+          <li key={tag} className="sd-match">
+            <span className="sd-test-main">
+              <strong>{tag}</strong>
+              <small>
+                {cards > 0 ? `${cards.toLocaleString()} card${cards === 1 ? '' : 's'} · ` : ''}
+                {systemLabel(match)}
+              </small>
+            </span>
+            <div className="sd-actions">
+              <MatchSelect label={`Organ system for saved tag ${tag}`} value={match} saving={saving} onChange={(value) => onMatch(tag, value)} />
+              {match === 'skip' ? (
+                <button type="button" className="hb-small-btn" disabled={saving} onClick={() => onUnskip(tag)}>Restore</button>
+              ) : (
+                <button type="button" className="hb-text-btn" disabled={saving} onClick={() => onUnskip(tag)}>Clear</button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
   const { confirm, popup } = useSitePopup();
   const [data, setData] = useState<MapResponse['anki'] | undefined>(undefined);
+  const [savedTags, setSavedTags] = useState<SavedTagRow[]>([]);
   const [progress, setProgress] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState('');
@@ -66,6 +114,7 @@ export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.success) throw new Error(body.message || 'Couldn’t load your Anki decks.');
     setData(body.anki);
+    setSavedTags(Array.isArray(body.savedTags) ? body.savedTags : []);
   }, []);
   useEffect(() => { load().catch((e) => setError(e instanceof Error ? e.message : 'Couldn’t load your Anki decks.')); }, [load]);
 
@@ -99,6 +148,22 @@ export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
     setError('');
     try {
       const res = await fetch('/api/study/map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'match', kind, name, value: value || null }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) throw new Error(body.message);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'That didn’t save. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const unskip = async (tag: string) => {
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/study/map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'unskip-tag', tag }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) throw new Error(body.message);
       await load();
@@ -184,6 +249,13 @@ export default function AnkiImport({ onChanged }: { onChanged?: () => void }) {
           )}
         </section>
       )}
+
+      <MatchedTagsSection
+        tags={savedTags}
+        saving={saving}
+        onMatch={(tag, value) => match('tag', tag, value)}
+        onUnskip={unskip}
+      />
 
       {data && data.leeches.length > 0 && (
         <section className="sd-card">

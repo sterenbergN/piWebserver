@@ -9,6 +9,7 @@ import { Icon } from '@/components/study/Icon';
 import { QuestionEditor } from '@/components/study/QuestionEditor';
 import { Choices, Explanation } from '@/components/study/QuestionView';
 import { EmptyState, Loading } from '@/components/study/Ui';
+import WorkInNotes from '@/components/study/WorkInNotes';
 import { choiceOrder, REVIEW_DAYS, type Miss, type StudyQuestion, type StudySummary } from '@/lib/study/study';
 
 // The miss bank: everything due today, one at a time with the answer straight after.
@@ -16,12 +17,12 @@ import { choiceOrder, REVIEW_DAYS, type Miss, type StudyQuestion, type StudySumm
 type Item = { miss: Miss; question: StudyQuestion; testTitle: string; course: string };
 
 /** Where a review just left a question. */
-function outcome(miss: Miss | undefined, right: boolean) {
+function outcome(miss: Miss | undefined, right: boolean, cleared = false, unsure = false) {
+  if (cleared || miss?.state === 'cleared') return 'Cleared. You won’t see this one again unless you miss it on a test.';
   if (!miss) return '';
-  if (miss.state === 'cleared') return 'Cleared. You won’t see this one again unless you miss it on a test.';
   if (!right) return 'Back tomorrow.';
   const days = REVIEW_DAYS[miss.box];
-  return `Back in ${days} days.`;
+  return unsure ? `Marked “Not sure” — back in ${days} days.` : `Back in ${days} days.`;
 }
 
 export default function ReviewPage() {
@@ -30,7 +31,8 @@ export default function ReviewPage() {
   const [summary, setSummary] = useState<StudySummary | null>(null);
   const [index, setIndex] = useState(0);
   const [answer, setAnswer] = useState<number[]>([]);
-  const [result, setResult] = useState<{ right: boolean; miss?: Miss } | null>(null);
+  const [unsure, setUnsure] = useState(false);
+  const [result, setResult] = useState<{ right: boolean; miss?: Miss; cleared?: boolean; unsure?: boolean } | null>(null);
   const [tally, setTally] = useState({ right: 0, wrong: 0 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -56,19 +58,20 @@ export default function ReviewPage() {
     setBusy(true);
     setError('');
     try {
-      const body = await studyPost<{ right: boolean; miss: Miss }>('review', { questionId: item.question.id, answer });
-      setResult({ right: body.right, miss: body.miss });
+      const body = await studyPost<{ right: boolean; miss?: Miss; cleared?: boolean }>('answer-review', { questionId: item.question.id, answer, unsure });
+      setResult({ right: body.right, miss: body.miss, cleared: body.cleared, unsure });
       setTally((t) => (body.right ? { ...t, right: t.right + 1 } : { ...t, wrong: t.wrong + 1 }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That didn’t save. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [item, busy, answer]);
+  }, [item, busy, answer, unsure]);
 
   const next = useCallback(() => {
     setIndex((i) => i + 1);
     setAnswer([]);
+    setUnsure(false);
     setResult(null);
     setEditing(false);
     window.scrollTo({ top: 0 });
@@ -78,7 +81,7 @@ export default function ReviewPage() {
   useEffect(() => {
     if (!item || editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]') || (e.target as HTMLElement).closest?.('input, textarea, select')) return;
       if (e.key === 'Enter') {
         if ((e.target as HTMLElement).closest?.('button, a')) return;
         if (result) next();
@@ -121,7 +124,20 @@ export default function ReviewPage() {
         <section className="sd-card sd-question">
           <div className="sd-question-head">
             <span className="sd-count">{[item.question.topic !== 'General' ? item.question.topic : '', item.testTitle].filter(Boolean).join(' · ')}</span>
-            {item.miss.misses > 1 && <span className="td-chip">Missed {item.miss.misses} times</span>}
+            <div className="sd-actions">
+              {item.miss.misses > 1 && <span className="td-chip">Missed {item.miss.misses} times</span>}
+              {!editing && (
+                <button
+                  type="button"
+                  className={`sd-flag${unsure ? ' is-on' : ''}`}
+                  aria-pressed={unsure}
+                  disabled={!!result || busy}
+                  onClick={() => setUnsure((u) => !u)}
+                >
+                  <Icon name="flag" /> Not sure
+                </button>
+              )}
+            </div>
           </div>
           {editing ? (
             <QuestionEditor question={item.question} onCancel={() => setEditing(false)} onSave={async (input) => {
@@ -134,7 +150,12 @@ export default function ReviewPage() {
               <MathText className="sd-stem">{item.question.stem}</MathText>
               <Choices question={item.question} seed={seed} answer={answer} reveal={!!result} onChange={result ? undefined : setAnswer} />
               {result && <Explanation question={item.question} answer={answer} />}
-              {result && <p className="sd-outcome"><Icon name="clock" /> {outcome(result.miss, result.right)}</p>}
+              {result && <p className="sd-outcome"><Icon name="clock" /> {outcome(result.miss, result.right, result.cleared, result.unsure)}</p>}
+              <WorkInNotes
+                questionId={item.question.id}
+                title={item.question.topic !== 'General' ? `${item.testTitle}: ${item.question.topic}` : item.question.stem}
+                from="/study/review"
+              />
               {result && <button type="button" className="hb-text-btn sd-with-icon sd-self-start" onClick={() => setEditing(true)}><Icon name="pencil" /> Something wrong? Edit this question</button>}
             </div>
           )}

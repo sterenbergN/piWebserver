@@ -37,9 +37,9 @@
 .sk-text-btn { background: none; border: none; padding: 0; color: var(--accent-light); font: inherit; font-size: 0.88rem; cursor: pointer; text-align: left; }
 .sk-text-btn:hover { text-decoration: underline; }
 .sk-text-btn.is-danger { color: var(--danger); }
-.sk-small-btn { border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); border-radius: 999px; padding: 0.3rem 0.8rem; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer; }
+.sk-small-btn { border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); border-radius: 999px; padding: 0.3rem 0.8rem; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer; }
 .sk-small-btn:hover { border-color: var(--accent-light); }
-.sk-small-btn[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--primary-fg); }
+.sk-small-btn[aria-pressed='true'] { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
 .sk-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem !important; line-height: 1.45; resize: vertical; }
 .sk-empty { padding: 1.5rem 1rem; text-align: center; color: var(--muted); border: 1px dashed var(--surface-border); border-radius: 14px; }
 
@@ -50,7 +50,7 @@
 @media (prefers-reduced-motion: reduce) { .sk-skeleton span { animation: none; } }
 
 /* Level bar: 0–5, with step ticks, the faded part and a target tick */
-.sk-bar { position: relative; display: block; width: 100%; height: 10px; border-radius: 999px; background: var(--input-bg); overflow: visible; }
+.sk-bar { position: relative; display: block; width: 100%; height: 10px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: visible; }
 .sk-bar.is-sm { height: 6px; }
 .sk-bar.is-lg { height: 14px; }
 .sk-bar-fill, .sk-bar-faded { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }
@@ -82,13 +82,13 @@
 .sk-scale li span { color: var(--muted); }
 .sk-scale li.is-on { background: color-mix(in srgb, var(--sk-level) 15%, transparent); }
 .sk-picker { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
-.sk-picker button { min-width: 2.1rem; height: 2.1rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); font: inherit; font-weight: 700; cursor: pointer; }
-.sk-picker button[aria-checked='true'] { background: var(--sk-level); border-color: var(--sk-level); color: #fff; }
+.sk-picker button { min-width: 2.1rem; height: 2.1rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font: inherit; font-weight: 700; cursor: pointer; }
+.sk-picker button[aria-checked='true'] { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
 .sk-picker .sk-picker-clear { min-width: 2.1rem; color: var(--muted); font-weight: 400; }
 
 /* Copy prompt / paste reply */
-.sk-step { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; margin-right: 0.35rem; border-radius: 50%; background: var(--accent); color: var(--primary-fg); font-size: 0.85rem; font-weight: 700; }
-.sk-step-card.is-done .sk-step { background: var(--success); }
+.sk-step { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; margin-right: 0.35rem; border-radius: 50%; background: var(--primary-bg); color: var(--primary-fg); font-size: 0.85rem; font-weight: 700; }
+.sk-step-card.is-done .sk-step { background: var(--success); color: var(--primary-fg); }
 
 /* Tabs */
 .sk-tabs { display: flex; gap: 0.25rem; overflow-x: auto; border-bottom: 1px solid var(--surface-border); scrollbar-width: none; }
@@ -99,10 +99,10 @@
 .sk-tabs button[aria-selected='true'] .sk-tab-badge { color: var(--foreground); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 
 /* View & mode switcher */
-.sk-view-switch { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.3rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--surface-glass); align-self: flex-start; max-width: 100%; }
+.sk-view-switch { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.3rem; border-radius: 14px; border: 1px solid var(--surface-border); background: var(--input-bg); align-self: flex-start; max-width: 100%; }
 .sk-view-btn { border: 1px solid transparent; border-radius: 10px; padding: 0.45rem 0.95rem; background: transparent; color: var(--muted); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background-color 0.15s, color 0.15s, border-color 0.15s; }
 .sk-view-btn:hover { color: var(--foreground); background: var(--surface-hover); }
-.sk-view-btn.is-active { background: var(--accent); color: var(--primary-fg); border-color: var(--accent); }
+.sk-view-btn.is-active { background: var(--primary-bg); color: var(--primary-fg); border-color: var(--primary-bg); }
 
 /* Schedule & step amount / duration badges */
 .sk-sched-amount { background: color-mix(in srgb, var(--accent) 14%, var(--background)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--foreground); }

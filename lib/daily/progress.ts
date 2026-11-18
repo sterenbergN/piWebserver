@@ -129,9 +129,12 @@ function achievements(scored: ScoredAttempt[], best: number): Achievement[] {
     cleanRun = a.status === 'solved' && a.hints === 0 && (a.tries ?? 1) === 1 ? cleanRun + 1 : 0;
     bestClean = Math.max(bestClean, cleanRun);
   }
+  const isPractice = (a: ScoredAttempt) => Boolean(a.meta.practice || a.questionId.startsWith('gen-'));
   const byDay = new Map<DateKey, ScoredAttempt[]>();
-  for (const a of scored) byDay.set(a.date, [...(byDay.get(a.date) ?? []), a]);
-  const sweptDay = [...byDay.values()].some((list) => list.length >= 3 && list.every((a) => a.status === 'solved'));
+  for (const a of scored) {
+    if (!isPractice(a)) byDay.set(a.date, [...(byDay.get(a.date) ?? []), a]);
+  }
+  const sweptDay = [...byDay.values()].some((list) => list.some((a) => a.meta.core) && list.length >= 3 && list.every((a) => a.status === 'solved'));
   const late = scored.filter((a) => a.answeredOn > a.date && a.status !== 'studied').length;
   const xp = scored.reduce((sum, a) => sum + a.xp, 0);
   const count = (id: string, icon: string, title: string, description: string, have: number, need: number): Achievement =>
@@ -145,7 +148,7 @@ function achievements(scored: ScoredAttempt[], best: number): Achievement[] {
     count('controls', '📈', 'Closed loop', 'Solve 10 controls questions.', solvedIn('controls'), 10),
     count('automation', '🤖', 'PLC whisperer', 'Solve 10 automation questions.', solvedIn('automation'), 10),
     count('clean', '🧼', 'No training wheels', 'Solve 5 in a row first time, without hints.', bestClean, 5),
-    count('bonus', '🎁', 'Overachiever', 'Solve 20 bonus questions.', solved.filter((a) => !a.meta.core).length, 20),
+    count('bonus', '🎁', 'Overachiever', 'Solve 20 bonus questions.', solved.filter((a) => !a.meta.core && !isPractice(a)).length, 20),
     { id: 'sweep', icon: '🏆', title: 'Clean sweep', description: 'Solve the core and every bonus question of a day (3 or more).', earned: sweptDay },
     count('catchup', '🔁', 'Catching up', 'Answer 5 questions from earlier days.', late, 5),
     count('xp', '💎', 'Thousand club', 'Earn 1,000 XP from questions.', xp, 1000),

@@ -203,3 +203,18 @@ test('deck rows from a real read include parents', async () => {
   assert.equal(rows[2].match, null);
   await fs.rm(folder, { recursive: true });
 });
+
+test('empty Extra field does not shift a later Source field into back', async () => {
+  const folder = await makeFolder();
+  const dbFile = path.join(folder, 'db');
+  const db = new sqlite.DatabaseSync(dbFile);
+  db.exec(`${SHARED} CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT);`);
+  db.prepare('INSERT INTO col (id, decks) VALUES (1, ?)').run(JSON.stringify({ 1: { id: 1, name: 'PA::GI' } }));
+  fill(db, [[1, ' gi ', '{{c1::Gallstones}} are common\x1f\x1fFirst Aid p.390']], [{ id: 1, nid: 1, did: 1, type: 2, lapses: 4 }], []);
+  db.close();
+  const data = await readApkg(await zipUp(folder, { 'collection.anki21': await fs.readFile(dbFile) }), 'cloze.apkg', NOW);
+  assert.equal(data.leeches.length, 1);
+  assert.equal(data.leeches[0].front, '[Gallstones] are common');
+  assert.equal(data.leeches[0].back, '');
+  await fs.rm(folder, { recursive: true });
+});

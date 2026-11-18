@@ -1,17 +1,25 @@
 import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
-import { MAX_TOPIC, MAX_TRANSCRIPT } from './talk';
+import { isTalkMode, MAX_TOPIC, MAX_TRANSCRIPT, type TalkMode } from './talk';
 
 // A private journal: one entry per calendar day, owned by a single account.
 // Pure logic shared by the API route and the page; the route does the storage.
 
 export const MAX_TEXT = 50_000;
 export const MAX_TALKS = 20;
+export const MAX_SUMMARY = 20_000;
 /** Mood 1 (rough) … 5 (great), shown as these faces. */
 export const MOODS = ['😞', '😕', '😐', '🙂', '😄'] as const;
 export type Mood = 1 | 2 | 3 | 4 | 5;
 
-/** A conversation talked through with an AI, kept with the day its summary went into. */
-export type JournalTalk = { id: string; topic: string; transcript: string; createdAt: string };
+/** A conversation talked through with an AI, kept with the day in its own space. */
+export type JournalTalk = {
+  id: string;
+  topic: string;
+  transcript: string;
+  createdAt: string;
+  mode?: TalkMode;
+  summary?: string;
+};
 export type JournalEntry = { text: string; mood?: Mood; talks?: JournalTalk[]; createdAt: string; updatedAt: string };
 export type JournalData = { entries: Record<DateKey, JournalEntry> };
 /** What the entry list shows, without sending every entry's full text. */
@@ -26,9 +34,19 @@ const isMood = (value: unknown): value is Mood => typeof value === 'number' && N
 function normalizeTalks(raw: unknown): JournalTalk[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((t) => t && typeof t.id === 'string' && typeof t.transcript === 'string')
+    .filter((t) => t && typeof t.id === 'string' && (typeof t.transcript === 'string' || typeof t.summary === 'string'))
     .slice(0, MAX_TALKS)
-    .map((t) => ({ id: t.id, topic: typeof t.topic === 'string' ? t.topic.slice(0, MAX_TOPIC) : '', transcript: t.transcript.slice(0, MAX_TRANSCRIPT), createdAt: typeof t.createdAt === 'string' ? t.createdAt : '' }));
+    .map((t) => {
+      const summary = typeof t.summary === 'string' ? t.summary.slice(0, MAX_SUMMARY) : '';
+      return {
+        id: t.id,
+        topic: typeof t.topic === 'string' ? t.topic.slice(0, MAX_TOPIC) : '',
+        transcript: typeof t.transcript === 'string' ? t.transcript.slice(0, MAX_TRANSCRIPT) : '',
+        createdAt: typeof t.createdAt === 'string' ? t.createdAt : '',
+        ...(isTalkMode(t.mode) ? { mode: t.mode } : {}),
+        ...(summary ? { summary } : {}),
+      };
+    });
 }
 
 export function normalizeJournal(raw: unknown): JournalData {
@@ -69,7 +87,15 @@ export function markdownToPlain(md: string) {
     .replace(/`([^`]+)`/g, '$1');
 }
 
-export function summarize(date: DateKey, entry: JournalEntry, preview = entry.text): JournalSummary {
+function defaultPreview(entry: JournalEntry): string {
+  if (entry.text.trim()) return entry.text;
+  const first = entry.talks?.[0];
+  if (!first) return '';
+  const summaryPlain = first.summary ? markdownToPlain(first.summary) : '';
+  return [first.topic, summaryPlain].filter(Boolean).join(' — ');
+}
+
+export function summarize(date: DateKey, entry: JournalEntry, preview = defaultPreview(entry)): JournalSummary {
   return {
     date,
     ...(entry.mood ? { mood: entry.mood } : {}),
@@ -85,17 +111,23 @@ export function listEntries(data: JournalData): JournalSummary[] {
   return Object.keys(data.entries).sort().reverse().map((d) => summarize(d, data.entries[d]));
 }
 
-/** Entries containing every word of the query, with the preview starting near the first match. */
+/** Entries containing every word of the query (in the entry body or kept talks), with the preview starting near the first match. */
 export function searchEntries(data: JournalData, query: string): JournalSummary[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return listEntries(data);
   return listEntries(data).flatMap((s) => {
-    const text = data.entries[s.date].text;
-    const lower = text.toLowerCase();
+    const entry = data.entries[s.date];
+    const talkTexts = (entry.talks ?? []).flatMap((t) => [t.topic, t.summary, t.transcript]).filter((v): v is string => Boolean(v));
+    const haystack = [entry.text, ...talkTexts].filter(Boolean).join('\n');
+    const lower = haystack.toLowerCase();
     if (!terms.every((t) => lower.includes(t))) return [];
-    const at = lower.indexOf(terms[0]);
-    const start = at > 40 ? lower.lastIndexOf(' ', at - 30) + 1 : 0;
-    return [summarize(s.date, data.entries[s.date], `${start > 0 ? '…' : ''}${text.slice(start)}`)];
+    const textLower = entry.text.toLowerCase();
+    const atText = textLower.indexOf(terms[0]);
+    const source = atText >= 0 ? entry.text : talkTexts.join('\n');
+    const sourceLower = atText >= 0 ? textLower : source.toLowerCase();
+    const at = atText >= 0 ? atText : sourceLower.indexOf(terms[0]);
+    const start = at > 40 ? sourceLower.lastIndexOf(' ', at - 30) + 1 : 0;
+    return [summarize(s.date, entry, `${start > 0 ? '…' : ''}${source.slice(start)}`)];
   });
 }
 
@@ -120,18 +152,113 @@ export function saveEntry(data: JournalData, date: unknown, text: unknown, mood:
   return entry;
 }
 
-/** Keep a conversation with the day, starting the day's entry if there isn't one yet. */
-export function addTalk(data: JournalData, date: unknown, topic: unknown, transcript: unknown, today: DateKey, now: string, id: string): JournalTalk {
+/** Keep a talked-through session with the day, starting the day's entry if there isn't one yet. */
+export function addTalk(
+  data: JournalData,
+  date: unknown,
+  topic: unknown,
+  transcript: unknown,
+  today: DateKey,
+  now: string,
+  id: string,
+  opts?: { mode?: TalkMode; summary?: string },
+): JournalTalk {
   if (!isDateKey(date)) throw new JournalInputError('Invalid date');
   if (date > today) throw new JournalInputError('That day hasn’t happened yet');
-  if (typeof transcript !== 'string' || !transcript.trim()) throw new JournalInputError('Missing conversation');
-  if (transcript.length > MAX_TRANSCRIPT) throw new JournalInputError('That conversation is too long to keep');
+  const rawTranscript = transcript === undefined || transcript === null ? '' : transcript;
+  if (typeof rawTranscript !== 'string') throw new JournalInputError('Invalid conversation');
+  if (rawTranscript.length > MAX_TRANSCRIPT) throw new JournalInputError('That conversation is too long to keep');
+
+  if (opts?.mode !== undefined && opts.mode !== null && !isTalkMode(opts.mode)) {
+    throw new JournalInputError('Invalid talk mode');
+  }
+  if (opts?.summary !== undefined && opts.summary !== null && typeof opts.summary !== 'string') {
+    throw new JournalInputError('Invalid summary');
+  }
+  const rawSummary = typeof opts?.summary === 'string' ? opts.summary : '';
+  if (rawSummary.length > MAX_SUMMARY) {
+    throw new JournalInputError(`Summaries are limited to ${MAX_SUMMARY.toLocaleString()} characters`);
+  }
+
+  const cleanTranscript = rawTranscript.trim();
+  const cleanSummary = rawSummary.trim();
+  if (!cleanTranscript && !cleanSummary) throw new JournalInputError('Missing conversation');
+
   const entry = data.entries[date] ?? { text: '', createdAt: now, updatedAt: now };
   const talks = entry.talks ?? [];
   if (talks.length >= MAX_TALKS) throw new JournalInputError(`A day keeps up to ${MAX_TALKS} conversations`);
-  const talk: JournalTalk = { id, topic: typeof topic === 'string' ? topic.trim().slice(0, MAX_TOPIC) : '', transcript: transcript.trim(), createdAt: now };
+
+  const talk: JournalTalk = {
+    id,
+    topic: typeof topic === 'string' ? topic.trim().slice(0, MAX_TOPIC) : '',
+    transcript: cleanTranscript,
+    createdAt: now,
+    ...(isTalkMode(opts?.mode) ? { mode: opts.mode } : {}),
+    ...(cleanSummary ? { summary: cleanSummary } : {}),
+  };
   data.entries[date] = { ...entry, talks: [...talks, talk], updatedAt: now };
   return talk;
+}
+
+/** Update a kept talk session's topic, summary or mode. */
+export function updateTalk(
+  data: JournalData,
+  date: unknown,
+  talkId: unknown,
+  patch: { topic?: unknown; summary?: unknown; mode?: unknown },
+  now: string,
+): JournalTalk {
+  if (!isDateKey(date)) throw new JournalInputError('Invalid date');
+  if (typeof talkId !== 'string' || !talkId) throw new JournalInputError('Conversation not found');
+  const entry = data.entries[date];
+  const talks = entry?.talks;
+  const idx = talks?.findIndex((t) => t.id === talkId) ?? -1;
+  if (!entry || !talks || idx < 0) throw new JournalInputError('That conversation isn’t there any more');
+
+  const current = talks[idx];
+  let nextTopic = current.topic;
+  if (patch.topic !== undefined) {
+    if (patch.topic === null) nextTopic = '';
+    else if (typeof patch.topic === 'string') nextTopic = patch.topic.trim().slice(0, MAX_TOPIC);
+    else throw new JournalInputError('Invalid topic');
+  }
+
+  let nextSummary = current.summary;
+  if (patch.summary !== undefined) {
+    if (patch.summary === null) {
+      nextSummary = undefined;
+    } else if (typeof patch.summary === 'string') {
+      if (patch.summary.length > MAX_SUMMARY) {
+        throw new JournalInputError(`Summaries are limited to ${MAX_SUMMARY.toLocaleString()} characters`);
+      }
+      const trimmed = patch.summary.trim();
+      nextSummary = trimmed || undefined;
+    } else {
+      throw new JournalInputError('Invalid summary');
+    }
+  }
+  if (!nextSummary && !current.transcript.trim()) {
+    throw new JournalInputError('Missing summary or conversation');
+  }
+
+  let nextMode = current.mode;
+  if (patch.mode !== undefined) {
+    if (patch.mode === null || patch.mode === '') nextMode = undefined;
+    else if (isTalkMode(patch.mode)) nextMode = patch.mode;
+    else throw new JournalInputError('Invalid talk mode');
+  }
+
+  const updated: JournalTalk = {
+    id: current.id,
+    topic: nextTopic,
+    transcript: current.transcript,
+    createdAt: current.createdAt,
+    ...(nextMode ? { mode: nextMode } : {}),
+    ...(nextSummary ? { summary: nextSummary } : {}),
+  };
+  const nextTalks = talks.map((t, i) => (i === idx ? updated : t));
+  data.entries[date] = { ...entry, talks: nextTalks, updatedAt: now };
+  return updated;
 }
 
 /** Let go of one kept conversation. The day goes too if nothing else is left in it. */

@@ -209,6 +209,11 @@ test('handing in a linked test eats its whole task', () => {
   assert.equal(other.eaten, 0);
   assert.equal(eatTest(plan, 't1', TODAY), 0);
   assert.equal(eatTest(plan, 'unknown', TODAY), 0);
+
+  const expired = addDeadline(plan, { title: 'Past quiz', kind: 'quiz', dueOn: later(-2) }, makeId);
+  const pastLinked = addTask(plan, { title: 'Old linked test', pancakes: 2, deadlineId: expired.id, testId: 't-old' }, makeId, later(-5));
+  assert.equal(eatTest(plan, 't-old', TODAY), 0, 'expired deadlines are not silently eaten');
+  assert.equal(pastLinked.eaten, 0);
 });
 
 test('editing a task keeps the books straight', () => {
@@ -332,6 +337,22 @@ test('a syllabus reply is read, with the bad parts reported', () => {
   assert.throws(() => parseSyllabusReply('no json here', TODAY), /JSON/);
 });
 
+test('truncated syllabus retains course and outer deadlines, and fuzzy deadline names match', () => {
+  const partial = `{"course":"Clin Med II","deadlines":[{"title":"Cardiology Exam 1","kind":"exam","dueOn":"${later(12)}"}],"tasks":[{"title":"HF lecture","pancakes":2,"forDeadline":"Cardiology"},{"title":"Unfinished"`;
+  const pack = parseSyllabusReply(partial, TODAY);
+  assert.equal(pack.cutOff, true);
+  assert.match(pack.warnings?.[0] ?? '', /cut off/i);
+  assert.equal(pack.deadlines.length, 1);
+  assert.equal(pack.deadlines[0].course, 'Clin Med II');
+  assert.equal(pack.tasks.length, 1);
+  assert.equal(pack.tasks[0].forDeadline, 'Cardiology Exam 1');
+
+  const plan = emptyPlan();
+  const added = addSyllabus(plan, pack, makeId, TODAY);
+  assert.deepEqual(added, { dates: 1, work: 1 });
+  assert.equal(plan.tasks[0].deadlineId, plan.deadlines[0].id);
+});
+
 test('the syllabus prompt describes a reply the parser reads, and gives today’s date', () => {
   const prompt = buildSyllabusPrompt({ course: 'Clin Med II', today: TODAY });
   assert.ok(prompt.includes(TODAY));
@@ -437,6 +458,12 @@ test('a moved exam moves its countdown and work; a cancelled one only gets asked
 
   editDeadline(plan, deadline.id, { dueOn: later(25) }, TODAY);
   assert.equal(deadline.movedFrom, undefined, 'moving it herself needs no notice');
+
+  // A title edited manually by the student stays intact across future calendar syncs.
+  editDeadline(plan, deadline.id, { title: 'My cardio exam' }, TODAY);
+  sync(plan, [event('a', later(26), 'Cardio final updated')]);
+  assert.equal(deadline.dueOn, later(26));
+  assert.equal(deadline.title, 'My cardio exam');
 });
 
 const chore = (id: string, assignee: string | null, due: string | null, archivedOn?: string): Chore => ({ id, name: id, emoji: '🧹', color: 1, repeat: null, due, fromDone: false, effort: 1, assignee, notes: '', createdOn: TODAY, ...(archivedOn ? { archivedOn } : {}) });

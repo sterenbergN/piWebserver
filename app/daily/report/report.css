@@ -7,7 +7,7 @@
 .rp-note { margin: -0.4rem 0 0.75rem !important; font-size: 0.82rem; }
 
 .rp-ability { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 7rem; }
-.rp-ability-track { flex: 1; height: 8px; border-radius: 999px; background: var(--input-bg); overflow: hidden; min-width: 3.5rem; }
+.rp-ability-track { flex: 1; height: 8px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; min-width: 3.5rem; }
 .rp-ability-track i { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); }
 .rp-ability strong { font-size: 0.85rem; min-width: 1.8rem; text-align: right; }
 
@@ -20,7 +20,7 @@
 .rp-focus .btn { float: right; padding: 0.35rem 0.9rem; font-size: 0.85rem; }
 
 .rp-tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.6rem; }
-.rp-track { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0.85rem; border-radius: 12px; background: var(--input-bg); border-left: 4px solid var(--dq-track, var(--accent)); }
+.rp-track { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0.85rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); border-left: 4px solid var(--dq-track, var(--accent)); }
 .rp-track small { color: var(--muted); font-size: 0.8rem; }
 
 .rp-table-wrap { overflow-x: auto; margin: 0 -0.25rem; }
@@ -32,16 +32,16 @@
 .rp-track-tag { font-size: 0.72rem; color: var(--dq-track) !important; }
 .rp-table tr.is-weakness td:first-child strong { color: var(--danger); }
 .rp-table tr.is-strength td:first-child strong { color: var(--success); }
-.rp-label { white-space: nowrap; font-size: 0.8rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--input-bg); }
-.rp-label.is-strength { background: rgba(var(--success-rgb), 0.18); }
-.rp-label.is-weakness { background: rgba(var(--danger-rgb), 0.16); }
+.rp-label { white-space: nowrap; font-size: 0.8rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); }
+.rp-label.is-strength { background: rgba(var(--success-rgb), 0.18); border-color: rgba(var(--success-rgb), 0.45); color: var(--success); }
+.rp-label.is-weakness { background: rgba(var(--danger-rgb), 0.16); border-color: rgba(var(--danger-rgb), 0.45); color: var(--danger); }
 .rp-practice { margin-left: 0.5rem; font-size: 0.8rem; }
 
 .rp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 1rem; }
 .rp-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 .rp-bars li { display: grid; grid-template-columns: 8.5rem 1fr 5.5rem; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
 .rp-bars small { color: var(--muted); text-align: right; }
-.rp-bar { height: 10px; border-radius: 999px; background: var(--input-bg); overflow: hidden; }
+.rp-bar { height: 10px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); overflow: hidden; }
 .rp-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent-light); }
 .rp-dim { opacity: 0.25; }
 

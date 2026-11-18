@@ -124,7 +124,7 @@ function Review() {
   };
 
   return (
-    <main className="sk sk-narrow sk-review">
+    <div className="sk sk-narrow sk-review">
       <header className="sk-head">
         <div>
           {scoped ? <Link href={`/skills/${subject}`} className="sk-back">← {scope.subjectIcon} {scope.subjectName}</Link> : <Link href="/skills" className="sk-back">← Skills</Link>}
@@ -194,7 +194,7 @@ function Review() {
       )}
 
       {done && <SessionSummary outcomes={outcomes} subjectId={scoped ? subject : undefined} subjectName={scope.subjectName} onKeepGoing={keepGoing} />}
-    </main>
+    </div>
   );
 }
 

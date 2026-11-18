@@ -4,7 +4,7 @@ import { clampToday } from '@/lib/daily/store';
 import { createRoom, setStudyDeck } from '@/lib/party/engine';
 import { ankiQuestions, emptyGameStats, gamePool, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, triviaDeck, triviaUsable, weakestSystem } from '@/lib/study/games';
 import { eatGame } from '@/lib/study/plan';
-import { afterStudying, readAnki, readProgress, readTests, updatePlan, updateProgress } from '@/lib/study/store';
+import { afterStudying, readAnki, readMap, readProgress, readTests, updatePlan, updateProgress } from '@/lib/study/store';
 import { cleanAnswer } from '@/lib/study/study';
 
 // The study games. Questions go only to their own account, or into a room that
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     if (params.get('options') !== null) {
       const all = gamePool(tests, progress, {}, today);
       const systems = [...new Set(all.flatMap((q) => (q.system ? [q.system] : [])))].sort();
-      const anki = await readAnki(userId);
+      const [anki, map] = await Promise.all([readAnki(userId), readMap(userId)]);
       const stats = progress.games ?? emptyGameStats();
       return NextResponse.json({
         success: true,
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
         }),
         shortQuestions: triviaUsable(all, true).length,
         systems,
-        ankiCards: ankiQuestions(anki).length,
+        ankiCards: ankiQuestions(anki, { map }).length,
         stats,
         rank: rankFor(stats.best),
       }, { headers: PRIVATE });
@@ -49,7 +49,11 @@ export async function GET(request: Request) {
 
     const filter = { course: params.get('course') ?? '', system: params.get('system') ?? '', missesOnly: params.get('misses') === '1' };
     const pool = gamePool(tests, progress, filter, today);
-    const anki = params.get('anki') === '1' ? ankiQuestions(await readAnki(userId)) : [];
+    let anki: ReturnType<typeof ankiQuestions> = [];
+    if (params.get('anki') === '1') {
+      const [ankiData, mapData] = await Promise.all([readAnki(userId), readMap(userId)]);
+      anki = ankiQuestions(ankiData, { map: mapData, system: filter.system });
+    }
     return NextResponse.json({ success: true, questions: [...pool, ...anki], bossSystem: weakestSystem(pool, tests, progress) }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load games failed');

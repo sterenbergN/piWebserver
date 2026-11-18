@@ -10,6 +10,7 @@ import { scoreAttempt, type Attempt } from './progress';
 import { gradeQuestion, revealedQuestion } from './grade';
 import { generatedQuestion } from './generated';
 import type { AnalysisAttempt } from './analysis';
+import { normalizeWorkId } from '@/lib/notes/items';
 import type { DailyDay, Formula, PracticeSet, Question } from './types';
 
 // Daily questions on disk, all under .data/daily (kept by backups):
@@ -136,14 +137,15 @@ export type FoundQuestion = {
 /** Any question by id: from a day, the practice set, or a generator. */
 export async function findQuestion(id: unknown): Promise<FoundQuestion | null> {
   if (typeof id !== 'string') return null;
-  const at = (await questionIndex()).get(id);
+  const index = await questionIndex();
+  const at = index.get(id) ?? [...index.values()].find((entry) => normalizeWorkId(entry.question.id) === id);
   if (at) {
     const used = new Set(at.question.formulas ?? []);
     const day = await readDay(at.date);
     return { question: at.question, date: at.date, core: at.core, boss: at.boss, practice: false, generated: false, formulas: (day?.formulas ?? []).filter((f) => used.has(f.id)) };
   }
   const practice = await practiceSet();
-  const q = practice.questions.find((x) => x.id === id);
+  const q = practice.questions.find((x) => x.id === id || normalizeWorkId(x.id) === id);
   if (q) {
     const used = new Set(q.formulas ?? []);
     return { question: q, date: null, core: false, boss: false, practice: true, generated: false, formulas: practice.formulas.filter((f) => used.has(f.id)) };

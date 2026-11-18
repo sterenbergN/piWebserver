@@ -5,6 +5,7 @@
 // Everything is worked out again from the history, so nothing derived is stored.
 // The reasoning is in docs/skills/PLAN.md.
 
+import type { Answer } from '@/lib/daily/types';
 import { addDays, daysBetween, isDateKey, type DateKey } from '@/lib/habits/dates';
 import {
   CARD_SCORE, LEVELS, MAX_LEVEL, itemDifficulty,
@@ -561,7 +562,7 @@ export function nextSchedule(prev: Schedule | undefined, score: number, day: Dat
     interval = 1;
     ease = Math.max(1.3, ease - 0.2);
   } else if (band === 'hard') {
-    interval = Math.max(1, Math.round(interval * 1.2));
+    interval = interval <= 1 ? 2 : Math.max(interval + 1, Math.round(interval * 1.2));
     ease = Math.max(1.3, ease - 0.15);
   } else {
     reps += 1;
@@ -767,3 +768,35 @@ export function boardSummary(data: SkillsData, progress: ProgressData, today: Da
   };
 }
 export type BoardSummary = ReturnType<typeof boardSummary>;
+
+/** One line saying what the right answer is for a daily/skill question part. */
+export function summarizeAnswer(a: Answer): string {
+  switch (a.type) {
+    case 'numeric': return `${a.value}${a.unit ? ` ${a.unit}` : ''}${a.tolerance ? ` (within ${a.tolerance * 100}%)` : ''}`;
+    case 'choice': return a.options[a.correct] ?? '';
+    case 'multi': return a.correct.map((i) => a.options[i]).filter(Boolean).join('; ');
+    case 'range': return `${a.min ?? '−∞'} to ${a.max ?? '∞'}`;
+    case 'coefficients': return `numerator [${a.numerator.join(', ')}], denominator [${a.denominator.join(', ')}]`;
+    case 'order': return a.items.join(' → ');
+  }
+}
+
+/** Searchable text for a quiz item row (title, prompt, choices/numeric/answer summary, front/back). */
+export function itemSearchText(item: Item): string {
+  if (item.kind === 'card') {
+    return [item.front, item.back].filter(Boolean).join('\n').slice(0, 4000);
+  }
+  const partTexts = item.question.parts.flatMap((p) => {
+    const pieces: string[] = [];
+    if (p.prompt) pieces.push(p.prompt);
+    pieces.push(summarizeAnswer(p.answer));
+    if (p.answer.type === 'choice' || p.answer.type === 'multi') {
+      pieces.push(...p.answer.options);
+    }
+    return pieces;
+  });
+  return [item.question.title, item.question.prompt, ...partTexts]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 4000);
+}

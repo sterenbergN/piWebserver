@@ -18,6 +18,8 @@ const BUFFER_DAYS: Record<DeadlineKind, number> = { exam: 2, practical: 2, quiz:
 export type Deadline = {
   id: string;
   title: string;
+  /** True once the user explicitly renamed a calendar-linked deadline, so re-syncing ICS keeps their title. */
+  titleEdited?: boolean;
   kind: DeadlineKind;
   course: string;
   dueOn: DateKey;
@@ -199,6 +201,7 @@ export function editDeadline(plan: PlanData, id: unknown, input: { title?: unkno
   if (typeof input.title === 'string') {
     const title = clip(input.title, 120);
     if (!title) throw new PlanInputError('Give it a name.');
+    if (title !== deadline.title) deadline.titleEdited = true;
     deadline.title = title;
   }
   if (input.kind !== undefined) deadline.kind = readKind(input.kind);
@@ -312,10 +315,10 @@ export function uneat(plan: PlanData, id: unknown, today: DateKey) {
   }
 }
 
-/** Handing in a test eats whatever's left of the tasks tied to it. */
+/** Handing in a test eats whatever's left of live tasks tied to it, skipping expired past deadlines. */
 export function eatTest(plan: PlanData, testId: string, today: DateKey) {
   let eaten = 0;
-  for (const task of plan.tasks) if (task.testId === testId && task.eaten < task.pancakes) eaten += eat(plan, task.id, today, task.pancakes - task.eaten);
+  for (const task of plan.tasks) if (task.testId === testId && isLive(plan, task, today)) eaten += eat(plan, task.id, today, task.pancakes - task.eaten);
   return eaten;
 }
 
@@ -551,14 +554,34 @@ export type SyllabusPack = {
   deadlines: { title: string; kind: DeadlineKind; course: string; dueOn: DateKey }[];
   tasks: { title: string; pancakes: number; forDeadline: string }[];
   problems: string[];
+  warnings?: string[];
+  cutOff?: boolean;
 };
+
+const normTitle = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function matchDeadlineTitle(forDeadline: string, titles: string[]): string | undefined {
+  const exact = titles.find((t) => t.toLowerCase() === forDeadline.toLowerCase());
+  if (exact) return exact;
+  const target = normTitle(forDeadline);
+  if (!target) return undefined;
+  const normalized = titles.find((t) => normTitle(t) === target);
+  if (normalized) return normalized;
+  if (target.length < 3) return undefined;
+  const sub = titles.filter((t) => {
+    const nt = normTitle(t);
+    return nt.length >= 3 && (nt.includes(target) || target.includes(nt));
+  });
+  return sub.length === 1 ? sub[0] : sub.sort((a, b) => Math.abs(normTitle(a).length - target.length) - Math.abs(normTitle(b).length - target.length))[0];
+}
 
 /** Dates and work from an AI's reply. Only a reply with nothing usable is an error. */
 export function parseSyllabusReply(text: string, today: DateKey): SyllabusPack {
   if (typeof text !== 'string' || !text.trim()) throw new PlanInputError('Paste the AI’s reply first.');
   let value: unknown;
+  let cutOff = false;
   try {
-    ({ value } = readReply(text));
+    ({ value, cutOff } = readReply(text));
   } catch (error) {
     throw new PlanInputError(error instanceof Error ? error.message : 'That couldn’t be read.');
   }
@@ -575,18 +598,20 @@ export function parseSyllabusReply(text: string, today: DateKey): SyllabusPack {
     if (dueOn < today) { problems.push(`${title}: it’s already past.`); return; }
     deadlines.push({ title, kind: readKind(raw?.kind), course: clip(raw?.course, 80) || course, dueOn });
   });
-  const names = new Set(deadlines.map((d) => d.title.toLowerCase()));
+  const titles = deadlines.map((d) => d.title);
   const tasks: SyllabusPack['tasks'] = [];
   (Array.isArray(root.tasks) ? root.tasks : []).slice(0, 400).forEach((raw: any) => {
     const title = clip(raw?.title, 160);
-    const forDeadline = clip(raw?.for ?? raw?.deadline, 120);
+    const forDeadline = clip(raw?.for ?? raw?.forDeadline ?? raw?.deadline, 120);
     const size = Math.round(Number(raw?.pancakes));
     if (!title) return;
-    if (!names.has(forDeadline.toLowerCase())) { problems.push(`${title}: "${forDeadline.slice(0, 60)}" isn’t one of the dates.`); return; }
-    tasks.push({ title, forDeadline, pancakes: Number.isFinite(size) && size >= 1 ? Math.min(size, MAX_PANCAKES) : 2 });
+    const matched = matchDeadlineTitle(forDeadline, titles);
+    if (!matched) { problems.push(`${title}: "${forDeadline.slice(0, 60)}" isn’t one of the dates.`); return; }
+    tasks.push({ title, forDeadline: matched, pancakes: Number.isFinite(size) && size >= 1 ? Math.min(size, MAX_PANCAKES) : 2 });
   });
   if (!deadlines.length) throw new PlanInputError(problems.length ? `None of those dates could be used. ${problems.slice(0, 3).join(' ')}` : 'That reply has no dates in it.');
-  return { deadlines, tasks, problems };
+  const warnings = cutOff ? ['The reply looks cut off. Every whole date and task was kept; ask the AI to continue if you want the rest.'] : [];
+  return { deadlines, tasks, problems, warnings, cutOff };
 }
 
 /** Add what a syllabus gave, skipping anything already here. */
@@ -600,8 +625,10 @@ export function addSyllabus(plan: PlanData, pack: SyllabusPack, makeId: () => st
     if (!same) dates++;
     byTitle.set(d.title.toLowerCase(), deadline);
   }
+  const addedTitles = pack.deadlines.map((d) => d.title);
   for (const t of pack.tasks) {
-    const deadline = byTitle.get(t.forDeadline.toLowerCase());
+    const resolvedTitle = byTitle.has(t.forDeadline.toLowerCase()) ? t.forDeadline : matchDeadlineTitle(t.forDeadline, addedTitles);
+    const deadline = resolvedTitle ? byTitle.get(resolvedTitle.toLowerCase()) : undefined;
     if (!deadline || plan.tasks.some((x) => x.deadlineId === deadline.id && x.title.toLowerCase() === t.title.toLowerCase())) continue;
     addTask(plan, { title: t.title, pancakes: t.pancakes, deadlineId: deadline.id }, makeId, today);
     work++;
@@ -623,7 +650,7 @@ export function syncCalendar(plan: PlanData, events: CalEvent[], today: DateKey,
     const event = byUid.get(deadline.calendarUid);
     if (event) {
       delete deadline.gone;
-      deadline.title = event.title.slice(0, 120);
+      if (!deadline.titleEdited) deadline.title = event.title.slice(0, 120);
       if (event.on !== deadline.dueOn) {
         const was = deadline.dueOn;
         moveDeadline(plan, deadline, event.on, today);

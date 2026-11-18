@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import { useSitePopup } from '@/components/SitePopup';
-import type { Answer } from '@/lib/daily/types';
+import { summarizeAnswer } from '@/lib/skills/model';
 import type { Topic } from '@/lib/skills/types';
-import { skillsGet, type ItemResponse, type ItemRow } from '../api';
+import { skillsGet, skillsPost, type ItemResponse, type ItemRow } from '../api';
 import { ErrorNote } from '../Ui';
 import { dueText, longDay, useAct, type TabProps } from './shared';
 
@@ -23,16 +23,13 @@ function Dots({ n }: { n: number }) {
   );
 }
 
-/** One line per part saying what the right answer is. */
-function summarize(a: Answer): string {
-  switch (a.type) {
-    case 'numeric': return `${a.value}${a.unit ? ` ${a.unit}` : ''}${a.tolerance ? ` (within ${a.tolerance * 100}%)` : ''}`;
-    case 'choice': return a.options[a.correct] ?? '';
-    case 'multi': return a.correct.map((i) => a.options[i]).filter(Boolean).join('; ');
-    case 'range': return `${a.min ?? '−∞'} to ${a.max ?? '∞'}`;
-    case 'coefficients': return `numerator [${a.numerator.join(', ')}], denominator [${a.denominator.join(', ')}]`;
-    case 'order': return a.items.join(' → ');
-  }
+function searchSnippet(text: string, needle: string, radius = 55): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) return flat.length > radius * 2 ? `${flat.slice(0, radius * 2)}…` : flat;
+  const start = Math.max(0, at - radius);
+  const end = Math.min(flat.length, at + needle.length + radius);
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
 }
 
 export default function Questions({ data, reload }: TabProps) {
@@ -41,8 +38,25 @@ export default function Questions({ data, reload }: TabProps) {
   const [topic, setTopic] = useState('');
   const [kind, setKind] = useState<'all' | 'graded' | 'card'>('all');
   const [showRetired, setShowRetired] = useState(false);
+  const [query, setQuery] = useState('');
   const retired = items.filter((i) => i.retired).length;
-  const shown = items.filter((i) => (!topic || i.topicId === topic) && (kind === 'all' || i.kind === kind) && (showRetired || !i.retired));
+
+  const topicNameById = useMemo(() => new Map(subject.topics.map((t) => [t.id, t.name])), [subject.topics]);
+  const qTokens = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query]);
+
+  const shown = useMemo(() => items.filter((i) => {
+    if (topic && i.topicId !== topic) return false;
+    if (kind !== 'all' && i.kind !== kind) return false;
+    if (!showRetired && i.retired) return false;
+    if (!qTokens.length) return true;
+    const hay = [
+      i.title,
+      i.searchText ?? '',
+      i.backPreview ?? '',
+      topicNameById.get(i.topicId) ?? '',
+    ].join('\n').toLowerCase();
+    return qTokens.every((tok) => hay.includes(tok));
+  }), [items, topic, kind, showRetired, qTokens, topicNameById]);
 
   return (
     <>
@@ -51,7 +65,10 @@ export default function Questions({ data, reload }: TabProps) {
           <h2>Questions</h2>
           <Link className="btn btn-primary" href={`/skills/${subject.id}/questions`}>Write questions with AI</Link>
         </div>
-        <p className="sk-hint">{stats.liveItems} live, {stats.due} due, {retired} retired. Retired ones are never asked and don’t count toward your level.</p>
+        <p className="sk-hint">
+          {stats.liveItems} live, {stats.due} due, {retired} retired. Retired ones are never asked and don’t count toward your level.
+          {qTokens.length > 0 && ` Showing ${shown.length} matching item${shown.length === 1 ? '' : 's'}.`}
+        </p>
         <label className="sk-weekly">
           <input type="checkbox" checked={!!subject.autoTopUp} disabled={busy} onChange={(e) => act('edit-subject', { changes: { autoTopUp: e.target.checked } })} />
           <span>
@@ -63,6 +80,28 @@ export default function Questions({ data, reload }: TabProps) {
           </span>
         </label>
         <div className="sk-filters">
+          <label className="sk-field sk-q-search-field">
+            <span>Search</span>
+            <div className="sk-search-input-wrap">
+              <input
+                type="search"
+                value={query}
+                placeholder="🔍 Search questions & answers…"
+                aria-label="Search questions and answers"
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              {query && (
+                <button
+                  type="button"
+                  className="sk-search-clear"
+                  aria-label="Clear search"
+                  onClick={() => setQuery('')}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </label>
           <label className="sk-field"><span>Topic</span>
             <select value={topic} onChange={(e) => setTopic(e.target.value)}>
               <option value="">All topics</option>
@@ -79,14 +118,14 @@ export default function Questions({ data, reload }: TabProps) {
         {error && <ErrorNote>{error}</ErrorNote>}
         {shown.length === 0
           ? <p className="sk-empty">{items.length ? 'Nothing matches those filters.' : 'No questions yet. Write some with AI, or add a card by hand below.'}</p>
-          : <ul className="sk-rows">{shown.map((row) => <QuestionRow key={row.id} row={row} topics={subject.topics} subjectId={subject.id} act={act} busy={busy} />)}</ul>}
+          : <ul className="sk-rows">{shown.map((row) => <QuestionRow key={row.id} row={row} topics={subject.topics} subjectId={subject.id} act={act} busy={busy} searchNeedle={qTokens[0]} />)}</ul>}
       </section>
-      {subject.topics.length > 0 && <AddCard topics={subject.topics} act={act} busy={busy} />}
+      {subject.topics.length > 0 && <AddCard subjectId={subject.id} topics={subject.topics} reload={reload} parentBusy={busy} />}
     </>
   );
 }
 
-function QuestionRow({ row, topics, subjectId, act, busy }: { row: ItemRow; topics: Topic[]; subjectId: string; act: Act; busy: boolean }) {
+function QuestionRow({ row, topics, act, busy, searchNeedle }: { row: ItemRow; topics: Topic[]; subjectId: string; act: Act; busy: boolean; searchNeedle?: string }) {
   const { confirm, popup } = useSitePopup();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -117,6 +156,9 @@ function QuestionRow({ row, topics, subjectId, act, busy }: { row: ItemRow; topi
   }
 
   const report = row.feedback?.report;
+  const matchPreview = searchNeedle && row.searchText && !row.title.toLowerCase().includes(searchNeedle)
+    ? searchSnippet(row.searchText, searchNeedle)
+    : '';
 
   return (
     <li className={`sk-q${row.retired ? ' is-retired' : ''}`}>
@@ -131,6 +173,7 @@ function QuestionRow({ row, topics, subjectId, act, busy }: { row: ItemRow; topi
           {row.lastScore !== null && <span className="sk-muted">last {Math.round(row.lastScore * 100)}%</span>}
           {!row.retired && <span className="sk-muted">{dueText(row.due)}</span>}
         </div>
+        {matchPreview && <p className="sk-hint">Match: {matchPreview}</p>}
         {report && <p className="sk-hint">Reported{report.note ? `: ${report.note}` : '.'}</p>}
       </div>
       <div className="sk-row-actions">
@@ -167,7 +210,7 @@ function Detail({ detail }: { detail: ItemResponse }) {
           <h4>Answer</h4>
           <ul className="sk-answers">
             {item.question.parts.map((p, i) => (
-              <li key={p.id}>{item.question.parts.length > 1 && <strong>Part {i + 1}: </strong>}{p.prompt && <span className="sk-muted">{p.prompt} </span>}{summarize(p.answer)}</li>
+              <li key={p.id}>{item.question.parts.length > 1 && <strong>Part {i + 1}: </strong>}{p.prompt && <span className="sk-muted">{p.prompt} </span>}{summarizeAnswer(p.answer)}</li>
             ))}
           </ul>
           <h4>Solution</h4>
@@ -193,8 +236,8 @@ function Detail({ detail }: { detail: ItemResponse }) {
 
 type CardValues = { topicId: string; front: string; back: string; difficulty: number };
 
-function CardForm({ topics, initial, busy, submitLabel, onSubmit, onCancel }: {
-  topics: Topic[]; initial?: CardValues; busy: boolean; submitLabel: string; onSubmit: (v: CardValues) => void | Promise<void>; onCancel?: () => void;
+function CardForm({ topics, initial, busy, submitLabel, onSubmit, onCancel, extraField }: {
+  topics: Topic[]; initial?: CardValues; busy: boolean; submitLabel: string; onSubmit: (v: CardValues) => void | Promise<void>; onCancel?: () => void; extraField?: ReactNode;
 }) {
   const [topicId, setTopicId] = useState(initial?.topicId ?? topics[0]?.id ?? '');
   const [front, setFront] = useState(initial?.front ?? '');
@@ -222,6 +265,7 @@ function CardForm({ topics, initial, busy, submitLabel, onSubmit, onCancel }: {
       </div>
       <label className="sk-field"><span>Front</span><textarea rows={3} value={front} maxLength={3000} required onChange={(e) => setFront(e.target.value)} placeholder="The question or prompt" /><small>Markdown and $math$ both work.</small></label>
       <label className="sk-field"><span>Back</span><textarea rows={4} value={back} maxLength={6000} required onChange={(e) => setBack(e.target.value)} placeholder="The answer" /></label>
+      {extraField}
       <div className="sk-actions">
         <button type="submit" className="btn btn-primary" disabled={busy || !front.trim() || !back.trim()}>{busy ? 'Saving…' : submitLabel}</button>
         {onCancel && <button type="button" className="sk-text-btn" onClick={onCancel}>Cancel</button>}
@@ -230,14 +274,71 @@ function CardForm({ topics, initial, busy, submitLabel, onSubmit, onCancel }: {
   );
 }
 
-function AddCard({ topics, act, busy }: { topics: Topic[]; act: Act; busy: boolean }) {
+function AddCard({ subjectId, topics, reload, parentBusy }: { subjectId: string; topics: Topic[]; reload: () => Promise<void>; parentBusy: boolean }) {
   const [round, setRound] = useState(0);
+  const [alsoSaveToKb, setAlsoSaveToKb] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  async function handleAdd(v: CardValues) {
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await skillsPost('save-card', { subjectId, ...v });
+      if (alsoSaveToKb) {
+        try {
+          await skillsPost('add-inquiry', {
+            question: v.front.trim(),
+            answer: v.back.trim(),
+            status: 'solved',
+            subjectId,
+            topicId: v.topicId,
+          });
+        } catch (kbErr) {
+          await reload();
+          setRound((r) => r + 1);
+          setError(
+            `Card saved, but saving to Knowledge Base failed: ${kbErr instanceof Error ? kbErr.message : 'Unknown error'}`,
+          );
+          return;
+        }
+      }
+      await reload();
+      setRound((r) => r + 1);
+      setNotice(alsoSaveToKb ? 'Card added and saved to Knowledge Base.' : 'Card added.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="sk-card">
       <h2>Add a card by hand</h2>
       <p className="sk-hint">For things you can say but not calculate, like how a turbopump works. You’ll rate yourself Again, Hard, Good or Easy when it comes up.</p>
-      <CardForm key={round} topics={topics} busy={busy} submitLabel="Add card"
-        onSubmit={async (v) => { if (await act('save-card', { ...v })) setRound(round + 1); }} />
+      {error && <ErrorNote>{error}</ErrorNote>}
+      {notice && <p className="sk-hint" role="status">{notice}</p>}
+      <CardForm
+        key={round}
+        topics={topics}
+        busy={saving || parentBusy}
+        submitLabel="Add card"
+        extraField={(
+          <label className="sk-check">
+            <input
+              type="checkbox"
+              checked={alsoSaveToKb}
+              onChange={(e) => setAlsoSaveToKb(e.target.checked)}
+            />
+            <span>💡 Also save to Knowledge Base</span>
+          </label>
+        )}
+        onSubmit={handleAdd}
+      />
     </section>
   );
 }

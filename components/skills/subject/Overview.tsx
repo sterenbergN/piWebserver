@@ -281,7 +281,7 @@ export default function Overview({ data, reload, goto, setTab, onOpenEditor }: P
         )}
       </section>
 
-      {!hasConnections && interconnectedCard}
+      {interconnectedCard}
     </>
   );
 }

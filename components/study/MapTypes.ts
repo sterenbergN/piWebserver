@@ -1,10 +1,12 @@
-import type { ClassEntry, CoverageMap, DeckRow, Match } from '@/lib/study/coverage';
+import type { ClassEntry, CoverageMap, DeckRow, Match, SavedTagRow } from '@/lib/study/coverage';
 
 /** What /api/study/map answers with. */
 export type MapResponse = {
   coverage: CoverageMap;
   classes: ClassEntry[];
   courses: string[];
+  tagMatches?: Record<string, Match>;
+  savedTags?: SavedTagRow[];
   anki: null | {
     importedAt: string;
     fileName: string;
@@ -18,4 +20,4 @@ export type MapResponse = {
   };
 };
 
-export type { Match };
+export type { Match, SavedTagRow };

@@ -5,7 +5,7 @@ import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '
 import { gamePool } from '@/lib/study/games';
 import { newSession, ownerView, quizPick, QUIZ_SIZES, type PartnerSession } from '@/lib/study/partner';
 import {
-  addCases, addGrids, addPuzzles, caseForHer, diffOptions, diffStats, editCase, editGrid, editPuzzle, finishPuzzle, gridSummary, nextPuzzle, parseCaseReply, parseDiffReply, parseGridReply, recordGrid, todaysPuzzle, type DiffCase, type PracticeData,
+  addCases, addGrids, addPuzzles, caseForHer, diffOptions, diffStats, editCase, editGrid, editPuzzle, finishPuzzle, gridSummary, nextPuzzle, parseCaseReply, parseDiffReply, parseGridReply, recordCaseRun, recordGrid, todaysPuzzle, type DiffCase, type PracticeData,
 } from '@/lib/study/practice';
 import { endSessionsOf, liveSessionOf, noteStudied, readPractice, readProgress, readTests, updatePractice, writeNewSession } from '@/lib/study/store';
 import { StudyInputError } from '@/lib/study/study';
@@ -88,19 +88,19 @@ export async function POST(request: Request) {
 
     switch (body.action) {
       case 'add-grids': {
-        const { items, problems } = parseGridReply(body.text);
+        const { items, problems, warnings } = parseGridReply(body.text);
         const made = await updatePractice(userId, (data) => addGrids(data, items, makeId, stamp));
-        return json({ id: made[0].id, added: made.length, problems });
+        return json({ id: made[0].id, added: made.length, problems, warnings: warnings ?? [] });
       }
       case 'add-cases': {
-        const { items, problems } = parseCaseReply(body.text);
+        const { items, problems, warnings } = parseCaseReply(body.text);
         const made = await updatePractice(userId, (data) => addCases(data, items, makeId, stamp));
-        return json({ added: made.length, problems });
+        return json({ added: made.length, problems, warnings: warnings ?? [] });
       }
       case 'add-puzzles': {
-        const { items, problems } = parseDiffReply(body.text);
+        const { items, problems, warnings } = parseDiffReply(body.text);
         const made = await updatePractice(userId, (data) => addPuzzles(data, items, makeId, stamp));
-        return json({ added: made.length, problems });
+        return json({ added: made.length, problems, warnings: warnings ?? [] });
       }
       case 'delete-grid':
         await updatePractice(userId, (data) => { data.grids = data.grids.filter((g) => g.id !== body.id); });
@@ -162,6 +162,16 @@ export async function POST(request: Request) {
         await endSessionsOf(userId, now);
         await writeNewSession(session);
         return json({ session: await sessionView(session) });
+      }
+      case 'record-case-run': {
+        const updated = await updatePractice(userId, (data) => {
+          const item = data.cases.find((c) => c.id === body.id);
+          if (!item) throw new ApiError(404, 'That case isn’t here any more.');
+          const run = recordCaseRun(item, body.ticked, body.seconds, today);
+          return { run, case: item };
+        });
+        await noteStudied(userId, today);
+        return json(updated);
       }
       case 'end-session':
         await endSessionsOf(userId, now);

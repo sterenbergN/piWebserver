@@ -20,25 +20,30 @@ function rememberedUser() {
   try { return localStorage.getItem(USER_KEY); } catch { return null; }
 }
 
+const safeReturnUrl = (raw: string | null) => (raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : null);
+
 /** ?work=<question>&date=<day>&title=<title>, from a daily question's "Work it out in Notes". */
 const workAsked = () => {
   const params = new URLSearchParams(window.location.search);
   const question = params.get('work');
   const date = params.get('date');
-  return question && date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { question, date, title: params.get('title') ?? '' } : null;
+  return question && date && /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? { question, date, title: params.get('title') ?? '', from: safeReturnUrl(params.get('from')) }
+    : null;
 };
 
 const addressed = () => {
   const params = new URLSearchParams(window.location.search);
   const notebook = params.get('notebook');
-  return notebook ? { notebook, page: params.get('page') } : null;
+  return notebook ? { notebook, page: params.get('page'), returnUrl: safeReturnUrl(params.get('from')) } : null;
 };
 
 export default function NotesApp() {
   const [phase, setPhase] = useState<Phase>('starting');
   const [signedOut, setSignedOut] = useState(false);
   const [online, setOnline] = useState(true);
-  const [open, setOpen] = useState<{ notebook: string; page: string | null; from?: Place | null } | null>(null);
+  const [open, setOpen] = useState<{ notebook: string; page: string | null; from?: Place | null; returnUrl?: string | null } | null>(null);
+  const [pageReturnUrl, setPageReturnUrl] = useState<string | null>(null);
   const userRef = useRef<string | null>(null);
 
   /** Ask the server who's here, and settle what state the page should be in. */
@@ -70,10 +75,14 @@ export default function NotesApp() {
 
   useEffect(() => {
     setOpen(addressed());
+    setPageReturnUrl(safeReturnUrl(new URLSearchParams(window.location.search).get('from')));
     void refresh();
     void prepareOffline().catch(() => {});
 
-    const onPop = () => setOpen(addressed());
+    const onPop = () => {
+      setOpen(addressed());
+      setPageReturnUrl(safeReturnUrl(new URLSearchParams(window.location.search).get('from')));
+    };
     const onOnline = () => { void refresh(); };
     const onOffline = () => setOnline(false);
     // A tablet rarely closes an app: it comes back to it. Send what's waiting when it leaves, and catch up when it returns.
@@ -107,24 +116,28 @@ export default function NotesApp() {
     workStarted.current = true;
     setWorking(true);
     void pageForQuestion(work.question, work.date, work.title).then(({ notebook, page }) => {
-      window.history.replaceState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}&page=${encodeURIComponent(page)}`);
-      setOpen({ notebook, page });
+      const fromQuery = work.from ? `&from=${encodeURIComponent(work.from)}` : '';
+      window.history.replaceState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}&page=${encodeURIComponent(page)}${fromQuery}`);
+      setOpen({ notebook, page, returnUrl: work.from });
     }).catch(() => {
-      window.history.replaceState(null, '', '/notes');
+      window.history.replaceState(null, '', work.from ? `/notes?from=${encodeURIComponent(work.from)}` : '/notes');
     }).finally(() => setWorking(false));
   }, [phase]);
 
   /** `from` is where a link was followed from, so the notebook can offer the way back. */
   const openNotebook = useCallback((notebook: string, page: string | null = null, from: Place | null = null) => {
-    window.history.pushState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}${page ? `&page=${encodeURIComponent(page)}` : ''}`);
-    setOpen({ notebook, page, from });
-  }, []);
+    const returnUrl = open?.returnUrl ?? pageReturnUrl;
+    const fromQuery = returnUrl ? `&from=${encodeURIComponent(returnUrl)}` : '';
+    window.history.pushState(null, '', `/notes?notebook=${encodeURIComponent(notebook)}${page ? `&page=${encodeURIComponent(page)}` : ''}${fromQuery}`);
+    setOpen({ notebook, page, from, returnUrl });
+  }, [open?.returnUrl, pageReturnUrl]);
 
   const closeNotebook = useCallback(() => {
-    if (addressed()) window.history.pushState(null, '', '/notes');
+    const returnUrl = open?.returnUrl ?? pageReturnUrl;
+    if (addressed()) window.history.pushState(null, '', returnUrl ? `/notes?from=${encodeURIComponent(returnUrl)}` : '/notes');
     setOpen(null);
     void syncNow();
-  }, []);
+  }, [open?.returnUrl, pageReturnUrl]);
 
   if (phase === 'signed-out') {
     return (
@@ -153,9 +166,12 @@ export default function NotesApp() {
       {working && <div className="nt-status"><p>Getting the page ready…</p></div>}
       {phase === 'ready' && !working && (
         open ? (
-          <NotebookView key={open.notebook} notebook={open.notebook} startPage={open.page} returnTo={open.from ?? null} onExit={closeNotebook} onOpen={openNotebook} />
+          <NotebookView key={open.notebook} notebook={open.notebook} startPage={open.page} returnTo={open.from ?? null} returnUrl={open.returnUrl ?? pageReturnUrl} onExit={closeNotebook} onOpen={openNotebook} />
         ) : (
-          <Library online={online} signedOut={signedOut} onOpen={openNotebook} onSignIn={() => window.dispatchEvent(new Event('site:sign-in'))} />
+          <>
+            {pageReturnUrl && <a className="nt-home nt-lib-return" href={pageReturnUrl}>← Back</a>}
+            <Library online={online} signedOut={signedOut} onOpen={openNotebook} onSignIn={() => window.dispatchEvent(new Event('site:sign-in'))} />
+          </>
         )
       )}
     </div>

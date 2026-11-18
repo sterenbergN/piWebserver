@@ -3,7 +3,8 @@
 import { findInText } from '@/lib/notes/search';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
-import { markedPages, notesByChapter, roundStroke, type Anchor, type ReaderItem, type Stroke } from '@/lib/reader/items';
+import { clock } from '@/lib/reader/audio';
+import { audioTimeSeconds, isBookmarkItem, markedPages, notesByChapter, roundStroke, type Anchor, type ReaderItem, type Stroke } from '@/lib/reader/items';
 import { drawPixels, inkColor, sizeCanvas, strokePath } from './ink';
 import type { ReaderTheme } from './source';
 
@@ -104,8 +105,9 @@ function SketchPad({ theme, onSave, onCancel }: { theme: ReaderTheme; onSave: (s
   );
 }
 
-function NoteCard({ item, onJump, onEdit, onDelete, onMakeTyped }: {
+function NoteCard({ item, isAudio, onJump, onEdit, onDelete, onMakeTyped }: {
   item: ReaderItem;
+  isAudio?: boolean;
   onJump: (anchor: Anchor) => void;
   onEdit: (item: ReaderItem, text: string) => void;
   onDelete: (item: ReaderItem) => void;
@@ -114,10 +116,12 @@ function NoteCard({ item, onJump, onEdit, onDelete, onMakeTyped }: {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(item.text ?? '');
   const [confirming, setConfirming] = useState(false);
+  const bookmarked = isBookmarkItem(item);
+  const placeText = isAudio ? `▶ ${clock(audioTimeSeconds(item.anchor))}` : `p. ${item.anchor.page}`;
   return (
-    <li className="rd-note">
+    <li className={`rd-note${bookmarked ? ' is-bookmark' : ''}`}>
       <div className="rd-note-head">
-        <button type="button" className="rd-note-page" onClick={() => onJump(item.anchor)}>p. {item.anchor.page}</button>
+        <button type="button" className="rd-note-page" onClick={() => onJump(item.anchor)}>{placeText}</button>
         <span className="rd-note-date">{fmtDate(item.createdAt)}</span>
         <span className="rd-grow" />
         {(item.kind === 'note' || (item.kind === 'sketch' && item.text)) && !editing && (
@@ -148,6 +152,10 @@ function NoteCard({ item, onJump, onEdit, onDelete, onMakeTyped }: {
             <p className="rd-note-reads is-waiting">It’s read when there’s a connection, so it can be searched.</p>
           )}
         </>
+      ) : bookmarked ? (
+        <button type="button" className="rd-note-jump rd-note-bookmark" onClick={() => onJump(item.anchor)}>
+          {item.text}
+        </button>
       ) : (
         <p className="rd-note-text">{item.text}</p>
       )}
@@ -158,6 +166,7 @@ function NoteCard({ item, onJump, onEdit, onDelete, onMakeTyped }: {
 export type NotesPanelProps = {
   items: ReaderItem[];
   theme: ReaderTheme;
+  isAudio?: boolean;
   /** The page you're on. Without one (from the shelf) this is only for reading the notes. */
   here?: Anchor;
   isOnPage?: (anchor: Anchor) => boolean;
@@ -171,18 +180,24 @@ export type NotesPanelProps = {
   onMakeTyped?: (item: ReaderItem, text: string) => void;
 };
 
-export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, onJump, onAddNote, onAddSketch, onEdit, onDelete, onMakeTyped }: NotesPanelProps) {
+export default function NotesPanel({ items, theme, isAudio, here, isOnPage, startOnPage, onJump, onAddNote, onAddSketch, onEdit, onDelete, onMakeTyped }: NotesPanelProps) {
   const [draft, setDraft] = useState('');
   const [writing, setWriting] = useState(false);
-  const [onlyHere, setOnlyHere] = useState(!!startOnPage);
+  const [filter, setFilter] = useState<'all' | 'here' | 'bookmarks'>(startOnPage ? 'here' : 'all');
   const [query, setQuery] = useState('');
 
+  const bookmarkCount = useMemo(() => items.filter((item) => isBookmarkItem(item)).length, [items]);
+
   const shown = useMemo(() => {
-    const placed = onlyHere && isOnPage ? items.filter((item) => isOnPage(item.anchor)) : items;
+    const placed = filter === 'here' && isOnPage
+      ? items.filter((item) => isOnPage(item.anchor))
+      : filter === 'bookmarks'
+        ? items.filter((item) => isBookmarkItem(item))
+        : items;
     if (!query.trim()) return placed;
     // Handwriting was read by a machine, so a word a letter or two off still counts there.
     return placed.filter((item) => item.text && findInText(item.text, query, item.kind === 'sketch'));
-  }, [items, onlyHere, isOnPage, query]);
+  }, [items, filter, isOnPage, query]);
   const groups = useMemo(() => notesByChapter(shown), [shown]);
   const marks = useMemo(() => markedPages(items), [items]);
   const total = useMemo(() => notesByChapter(items).reduce((n, g) => n + g.notes.length, 0), [items]);
@@ -209,25 +224,40 @@ export default function NotesPanel({ items, theme, here, isOnPage, startOnPage, 
         <input className="rd-input rd-note-search" type="search" placeholder="Search these notes" aria-label="Search these notes" value={query} onChange={(e) => setQuery(e.target.value)} />
       )}
 
-      {isOnPage && total > 0 && (
-        <div className="rd-tabs" role="group" aria-label="Which notes">
-          <button type="button" className={!onlyHere ? 'is-on' : ''} aria-pressed={!onlyHere} onClick={() => setOnlyHere(false)}>All {total}</button>
-          <button type="button" className={onlyHere ? 'is-on' : ''} aria-pressed={onlyHere} onClick={() => setOnlyHere(true)}>This page</button>
+      {total > 0 && (
+        <div className="rd-tabs rd-note-filters" role="group" aria-label="Which notes">
+          <button type="button" className={filter === 'all' ? 'is-on' : ''} aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All {total}</button>
+          {isOnPage && (
+            <button type="button" className={filter === 'here' ? 'is-on' : ''} aria-pressed={filter === 'here'} onClick={() => setFilter('here')}>This page</button>
+          )}
+          <button type="button" className={filter === 'bookmarks' ? 'is-on' : ''} aria-pressed={filter === 'bookmarks'} onClick={() => setFilter('bookmarks')}>
+            🔖 Bookmarks {bookmarkCount}
+          </button>
         </div>
       )}
 
-      {!groups.length && <p className="rd-empty">{query.trim() ? 'No note says that. Handwritten notes are found once they’ve been read.' : onlyHere ? 'No notes on this page yet.' : 'No notes yet. They’ll collect here, in the order of the book.'}</p>}
+      {!groups.length && (
+        <p className="rd-empty">
+          {query.trim()
+            ? 'No note says that. Handwritten notes are found once they’ve been read.'
+            : filter === 'bookmarks'
+              ? 'No bookmarks yet. Tap the bookmark button in the top bar while reading.'
+              : filter === 'here'
+                ? 'No notes on this page yet.'
+                : 'No notes yet. They’ll collect here, in the order of the book.'}
+        </p>
+      )}
 
       {groups.map((group, i) => (
         <section key={`${group.chapter}-${i}`} className="rd-note-group">
           {group.chapter && <h3>{group.chapter}</h3>}
           <ul>
-            {group.notes.map((item) => <NoteCard key={item.id} item={item} onJump={onJump} onEdit={onEdit} onDelete={onDelete} onMakeTyped={onMakeTyped} />)}
+            {group.notes.map((item) => <NoteCard key={item.id} item={item} isAudio={isAudio} onJump={onJump} onEdit={onEdit} onDelete={onDelete} onMakeTyped={onMakeTyped} />)}
           </ul>
         </section>
       ))}
 
-      {!onlyHere && !query.trim() && marks.length > 0 && (
+      {filter === 'all' && !query.trim() && marks.length > 0 && (
         <section className="rd-note-group">
           <h3>Pages you’ve marked</h3>
           <div className="rd-chips">

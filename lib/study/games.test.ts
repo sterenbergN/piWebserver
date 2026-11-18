@@ -1,10 +1,10 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { addDays } from '../habits/dates';
-import { coverageMap, emptyMap, type AnkiData } from './coverage';
+import { coverageMap, emptyMap, setMatch, type AnkiData } from './coverage';
 import { ankiQuestions, gamePool, isShort, MIN_TRIVIA_QUESTIONS, rankFor, recordGameAnswer, recordRun, SHORT_STEM, triviaDeck, triviaUsable, weakestSystem, type GameQuestion } from './games';
 import {
-  answerQuestion, clockFor, defibResult, defibZone, enterDoor, MAX_COFFEE, proceed, questionOf, SECOND_OPINION, SHIFT_ROOMS, startRun, spendConsult, spendOpinion, type Run,
+  answerQuestion, canConsult, canOpinion, clockFor, defibResult, defibZone, enterDoor, filterPoolBySystem, MAX_COFFEE, proceed, questionOf, SECOND_OPINION, SHIFT_ROOMS, startRun, spendConsult, spendOpinion, type Run,
 } from './night-shift';
 import { addTask, eat, emptyPlan, eatGame, GAME_TASK } from './plan';
 import { createSet } from './sets';
@@ -123,11 +123,39 @@ test('Anki leeches become questions with borrowed wrong answers', () => {
     assert.equal(new Set(q.choices).size, 4);
     assert.equal(q.testId, undefined, 'never saved, since it isn’t a test question');
   }
-  const cloze = questions.find((q) => q.stem.includes('_____'))!;
-  assert.equal(cloze.stem, '_____ is a loop diuretic');
+  const cloze = questions.find((q) => q.stem.includes('[____]'))!;
+  assert.equal(cloze.stem, '[____] is a loop diuretic');
   assert.equal(cloze.choices[cloze.correct[0]], 'Furosemide');
   assert.deepEqual(ankiQuestions(null), []);
   assert.deepEqual(ankiQuestions({ ...anki, leeches: anki.leeches.slice(0, 2) }), [], 'too few to fill the choices');
+});
+
+test('Cloze cards with Extra pearls still mask [answer] and filter by Anki system', () => {
+  const map = emptyMap();
+  setMatch(map, 'tag', 'gi_tag', 'Gastrointestinal/Nutritional');
+  setMatch(map, 'tag', 'pulm_tag', 'Pulmonary');
+  const anki: AnkiData = {
+    importedAt: NOW, fileName: 'x', format: 'legacy', hasHistory: true,
+    decks: ['Misc', 'Misc'], tags: ['gi_tag', 'pulm_tag'], groups: [],
+    leeches: [
+      { deck: 0, tags: [0], front: 'Most common cause of acute pancreatitis is [gallstones]', back: 'I GET SMASHED pearl', lapses: 6 },
+      { deck: 0, tags: [0], front: 'Best initial test for biliary colic is [RUQ ultrasound]', back: 'Murphy sign', lapses: 5 },
+      { deck: 0, tags: [0], front: 'Painless jaundice + weight loss suggests [pancreatic cancer]', back: 'Courvoisier sign', lapses: 5 },
+      { deck: 0, tags: [0], front: 'Antibiotic associated colitis toxin: [C. difficile]', back: 'Oral vancomycin', lapses: 4 },
+      { deck: 1, tags: [1], front: 'Currant jelly sputum organism', back: 'Klebsiella', lapses: 4 },
+    ],
+  };
+  const all = ankiQuestions(anki, { random: fixedRandom, map });
+  assert.equal(all.length, 5);
+  const clozeWithExtra = all.find((q) => q.explanation.includes('I GET SMASHED pearl'))!;
+  assert.equal(clozeWithExtra.stem, 'Most common cause of acute pancreatitis is [____]');
+  assert.equal(clozeWithExtra.choices[clozeWithExtra.correct[0]], 'gallstones');
+  assert.ok(!clozeWithExtra.stem.includes('gallstones'));
+
+  const giOnly = ankiQuestions(anki, { random: fixedRandom, map, system: 'Gastrointestinal/Nutritional' });
+  assert.equal(giOnly.length, 4);
+  assert.ok(giOnly.every((q) => q.system === 'Gastrointestinal/Nutritional'));
+  assert.equal(filterPoolBySystem(all, 'Gastrointestinal/Nutritional').length, 4);
 });
 
 test('a game can draw from one set', () => {
@@ -326,7 +354,8 @@ test('a second opinion gives one more try, but the first answer is what’s save
   const p = pool(10);
   const run = startRun(p, 5);
   enterWork(run, p);
-  spendOpinion(run);
+  assert.equal(canOpinion(run, questionOf(p, run)), true);
+  spendOpinion(run, p);
   assert.equal(run.opinions, 0);
   const first = answerWrong(run, p);
   assert.ok(first, 'the wrong answer still counts for the miss bank');
@@ -337,6 +366,32 @@ test('a second opinion gives one more try, but the first answer is what’s save
   const second = answerRight(run, p);
   assert.equal(second, null, 'the retry isn’t saved');
   assert.deepEqual([run.right, run.phase], [1, 'feedback']);
+});
+
+test('Consult and Second Opinion disable when too few unruled choices remain', () => {
+  // 3-choice question: Consult hides 1 leaving 2 unruled -> Consult becomes disabled, Second Opinion stays enabled.
+  const three = pool(10, { choices: ['a', 'b', 'c'] });
+  const r3 = startRun(three, 5);
+  enterWork(r3, three);
+  const q3 = questionOf(three, r3)!;
+  assert.equal(canConsult(r3, q3), true);
+  assert.equal(canOpinion(r3, q3), true);
+  spendConsult(r3, three);
+  assert.equal(r3.hidden.length, 1);
+  assert.equal(canConsult(r3, q3), false);
+  assert.equal(canOpinion(r3, q3), true);
+
+  // 2-choice question: <= 2 unruled disables Consult; once only 1 unruled remains, Second Opinion disables too.
+  const two = pool(10, { choices: ['a', 'b'] });
+  const r2 = startRun(two, 5);
+  enterWork(r2, two);
+  const q2 = questionOf(two, r2)!;
+  assert.equal(canConsult(r2, q2), false);
+  assert.equal(canOpinion(r2, q2), true);
+  r2.hidden = [1];
+  assert.equal(canOpinion(r2, q2), false);
+  spendOpinion(r2, two);
+  assert.equal(r2.opinions, 1, 'not spent when <= 1 unruled choice remains');
 });
 
 test('quick answers and streaks score more, and slow ones are never punished', () => {

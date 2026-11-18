@@ -17,8 +17,10 @@ export function PlanPreview({
   allSubjects,
   offTopics,
   offResources,
+  offSteps,
   onToggleTopic,
   onToggleResource,
+  onToggleStep,
   includeSteps = true,
   onIncludeSteps,
   replaceSteps = false,
@@ -31,8 +33,10 @@ export function PlanPreview({
   allSubjects?: SubjectResponse['allSubjects'];
   offTopics: Set<string>;
   offResources: Set<number>;
+  offSteps?: Set<number>;
   onToggleTopic: (key: string) => void;
   onToggleResource: (index: number) => void;
+  onToggleStep?: (index: number) => void;
   includeSteps?: boolean;
   onIncludeSteps?: (include: boolean) => void;
   replaceSteps?: boolean;
@@ -126,7 +130,7 @@ export function PlanPreview({
 
       {plan.steps.length > 0 && (
         <div className="sk-pp-group sk-pp-steps">
-          <h3>Explicit study steps ({plan.steps.length})</h3>
+          <h3>Explicit study steps ({includeSteps ? plan.steps.filter((_, idx) => !offSteps?.has(idx)).length : 0} of {plan.steps.length})</h3>
           {onIncludeSteps && (
             <label className="sk-pp-choices">
               <input
@@ -134,7 +138,7 @@ export function PlanPreview({
                 checked={includeSteps}
                 onChange={(e) => onIncludeSteps(e.target.checked)}
               />
-              Include {plan.steps.length} explicit study step{plan.steps.length === 1 ? '' : 's'}
+              Include explicit study steps
             </label>
           )}
           {includeSteps && existingStepsCount > 0 && onReplaceSteps && (
@@ -161,7 +165,16 @@ export function PlanPreview({
           )}
           <ol className={`sk-pp-list${!includeSteps ? ' is-have' : ''}`}>
             {plan.steps.map((st, idx) => (
-              <li key={idx} className="sk-pp-row">
+              <li key={idx} className={`sk-pp-row${offSteps?.has(idx) ? ' is-have' : ''}`}>
+                {onToggleStep && (
+                  <input
+                    type="checkbox"
+                    checked={includeSteps && !offSteps?.has(idx)}
+                    disabled={!includeSteps}
+                    onChange={() => onToggleStep(idx)}
+                    aria-label={`Add step ${idx + 1}: ${st.title}`}
+                  />
+                )}
                 <span className="sk-pp-step-num">{idx + 1}.</span>
                 <div className="sk-pp-body">
                   <div className="sk-pp-step-head">

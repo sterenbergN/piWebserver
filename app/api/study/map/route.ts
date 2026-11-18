@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
-import { coverageMap, deckRows, MapInputError, saveClass, setMatch, unmatchedTags } from '@/lib/study/coverage';
+import { coverageMap, deckRows, MapInputError, saveClass, savedTags, setMatch, unmatchedTags, unskipTag } from '@/lib/study/coverage';
 import { readAnki, readMap, readProgress, readTests, removeAnki, updateMap } from '@/lib/study/store';
 
 // The signed-in account's PANCE map: her classes, how her Anki decks match up
@@ -22,6 +22,8 @@ export async function GET() {
       success: true,
       coverage,
       classes: map.classes,
+      tagMatches: map.tagMatches,
+      savedTags: savedTags(anki, map),
       // Classes named on her tests that she hasn't added yet, to offer in one tap.
       courses: [...new Set(tests.tests.map((t) => t.course).filter(Boolean))].filter((c) => !listed.has(c.toLowerCase())).sort(),
       anki: anki && {
@@ -56,6 +58,10 @@ export async function POST(request: Request) {
       }
       case 'match': {
         await updateMap(userId, (map) => setMatch(map, body.kind, body.name, body.value));
+        return NextResponse.json({ success: true }, { headers: PRIVATE });
+      }
+      case 'unskip-tag': {
+        await updateMap(userId, (map) => unskipTag(map, body.tag ?? body.name, body.value));
         return NextResponse.json({ success: true }, { headers: PRIVATE });
       }
       case 'remove-anki': {

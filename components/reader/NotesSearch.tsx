@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { findInText } from '@/lib/notes/search';
-import type { Anchor, BookMeta } from '@/lib/reader/items';
+import { clock } from '@/lib/reader/audio';
+import { audioTimeSeconds, type Anchor, type BookMeta } from '@/lib/reader/items';
 import { getItems } from './db';
 
 // Searching every book's notes from the shelf: typed notes, and handwritten ones once the server
@@ -50,7 +51,11 @@ export default function NotesSearch({ books, onOpen }: { books: BookMeta[]; onOp
               <li key={`${hit.book.id}/${i}`}>
                 <button type="button" onClick={() => onOpen(hit.book, hit.anchor)}>
                   <strong>{hit.book.title}</strong>
-                  <small>p. {hit.anchor.page}{hit.anchor.chapter ? ` · ${hit.anchor.chapter}` : ''}{hit.handwritten ? ' · handwritten' : ''}</small>
+                  <small>
+                    {hit.book.format === 'audio' ? `▶ ${clock(audioTimeSeconds(hit.anchor))}` : `p. ${hit.anchor.page}`}
+                    {hit.anchor.chapter ? ` · ${hit.anchor.chapter}` : ''}
+                    {hit.handwritten ? ' · handwritten' : ''}
+                  </small>
                   <span>{hit.text}</span>
                 </button>
               </li>
