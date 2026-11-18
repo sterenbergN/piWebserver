@@ -5,7 +5,8 @@ import { findQuestion } from '@/lib/daily/store';
 import type { Formula, Question } from '@/lib/daily/types';
 import { skillQuestionForNotes } from '@/lib/skills/links';
 import { normalizeWorkId, orderBetween, type LibraryRecord, type Notebook, type PageRecord } from './items';
-import { layoutQuestionSheet, SHEET_PAGE, type Measure } from './question-sheet';
+import { mathPicture, mathPng } from './math-picture';
+import { layoutQuestionSheet, SHEET_PAGE, type MathSize, type Measure } from './question-sheet';
 import { appendUpload, finishUpload, pagesTiedTo, readLibrary, syncBook, syncLibrary, syncPage, type TiedPage } from './store';
 
 // A daily question's page in Notes, made from the question itself, so it can be started on one
@@ -30,19 +31,26 @@ const roughHeight: Measure = ({ text, w, size, bold }) => {
 
 const shortDate = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
+/** A picture kept in the notebook, by its new file id. */
+async function storePicture(userId: string, notebook: string, png: Buffer) {
+  const file = newId();
+  await appendUpload(userId, notebook, file, 0, new Blob([new Uint8Array(png)]).stream());
+  await finishUpload(userId, notebook, file);
+  return file;
+}
+
 /** The question's figure as a PNG in the notebook (Notes keeps only PNG and JPEG pictures). */
 async function storeFigure(userId: string, notebook: string, svg: string) {
   try {
     // Twice the drawn size, so it stays sharp when zoomed in on.
     const png = await sharp(Buffer.from(svg), { density: 192 }).flatten({ background: '#ffffff' }).png().toBuffer({ resolveWithObject: true });
-    const file = newId();
-    await appendUpload(userId, notebook, file, 0, new Blob([new Uint8Array(png.data)]).stream());
-    await finishUpload(userId, notebook, file);
-    return { file, w: png.info.width / 2, h: png.info.height / 2 };
+    return { file: await storePicture(userId, notebook, png.data), w: png.info.width / 2, h: png.info.height / 2 };
   } catch {
     return null; // The page is still worth having without it.
   }
 }
+
+const mathSize: MathSize = (latex, size) => mathPicture(latex, { size });
 
 /** The page for this question: the one already tied to it, or a new one in the questions notebook. */
 export async function pageForQuestion(userId: string, question: string, askedOn: string): Promise<TiedPage | null> {
@@ -74,21 +82,28 @@ async function makeSheet(userId: string, notebookId: string, q: Question, formul
   const now = Date.now();
   const notebook = { id: notebookId };
 
+  const asked = publicQuestion(q);
+  const figure = asked.figure ? await storeFigure(userId, notebook.id, asked.figure) : null;
+  const { boxes, h } = layoutQuestionSheet(asked, formulas, shortDate(date), roughHeight, { figure: figure ?? undefined, math: mathSize });
+
   const pages = (await syncBook(userId, notebook.id, 0, [], now)).items
     .filter((item): item is PageRecord => item.kind === 'page' && !item.deleted)
     .sort((a, b) => a.order - b.order);
   const page: PageRecord = {
-    id: newId(), kind: 'page', order: orderBetween(pages[pages.length - 1]?.order, undefined), ...PAGE, template: 'engineering', paper: '#ffffff',
+    id: newId(), kind: 'page', order: orderBetween(pages[pages.length - 1]?.order, undefined), ...PAGE, h, template: 'engineering', paper: '#ffffff',
     title, questions: [{ id: question, date, title, ...(href ? { href } : {}) }], createdAt: now, updatedAt: now,
   };
   await syncBook(userId, notebook.id, Number.MAX_SAFE_INTEGER, [page], now);
 
-  const asked = publicQuestion(q);
-  const figure = asked.figure ? await storeFigure(userId, notebook.id, asked.figure) : null;
-  const boxes = layoutQuestionSheet(asked, formulas, shortDate(date), roughHeight, figure ?? undefined);
-  const elements = boxes.map((box) => box.kind === 'figure'
-    ? { id: newId(), kind: 'image', x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, file: figure!.file, createdAt: now, updatedAt: now }
-    : { id: newId(), kind: 'text', x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, text: box.text, size: box.size, color: box.color, font: 'sans', ...(box.bold ? { bold: true } : {}), createdAt: now, updatedAt: now });
+  const elements: Record<string, unknown>[] = [];
+  for (const box of boxes) {
+    const at = { id: newId(), x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, createdAt: now, updatedAt: now };
+    if (box.kind === 'figure') elements.push({ ...at, kind: 'image', file: figure!.file });
+    else if (box.kind === 'math') {
+      const png = await mathPng(box.latex, box.size).catch(() => null);
+      if (png) elements.push({ ...at, kind: 'image', file: await storePicture(userId, notebook.id, png) });
+    } else elements.push({ ...at, kind: 'text', text: box.text, size: box.size, color: box.color, font: 'sans', ...(box.bold ? { bold: true } : {}) });
+  }
   await syncPage(userId, notebook.id, page.id, Number.MAX_SAFE_INTEGER, elements, now);
 
   const [made] = await pagesTiedTo(userId, [question]);

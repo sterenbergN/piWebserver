@@ -116,7 +116,21 @@ function checkFormula(raw: any, where: string, errors: Errors): Formula | null {
     errors.push(`${where} (${raw.id}): latex doesn't render: ${(error as Error).message.split('\n')[0]}`);
   }
   if (raw.note) checkMath(raw.note, where, errors);
-  return { id: raw.id, name: raw.name, latex: raw.latex, source: raw.source, ...(raw.note ? { note: raw.note } : {}) };
+  let symbols: Formula['where'] = undefined;
+  if (raw.where !== undefined) {
+    const ok = Array.isArray(raw.where) && raw.where.length <= 16 && raw.where.every((s: any) => isText(s?.symbol, 80) && isText(s?.meaning, 200));
+    if (!ok) errors.push(`${where} (${raw.id}): where must be a list of up to 16 { symbol, meaning }`);
+    else {
+      symbols = raw.where.map((s: any) => ({ symbol: s.symbol, meaning: s.meaning }));
+      for (const [i, s] of symbols!.entries()) {
+        try { katex.renderToString(s.symbol, { throwOnError: true }); } catch (error) {
+          errors.push(`${where} (${raw.id}).where[${i}]: symbol doesn't render: ${(error as Error).message.split('\n')[0]}`);
+        }
+        checkMath(s.meaning, `${where} (${raw.id}).where[${i}]`, errors);
+      }
+    }
+  }
+  return { id: raw.id, name: raw.name, latex: raw.latex, source: raw.source, ...(raw.note ? { note: raw.note } : {}), ...(symbols?.length ? { where: symbols } : {}) };
 }
 
 export function checkQuestion(raw: any, where: string, formulaIds: Set<string>, errors: Errors): Question | null {

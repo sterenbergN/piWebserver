@@ -149,6 +149,17 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   const [already] = await tiedPages(question);
   if (already) return already;
 
+  // Made on the server when it can be: it typesets the formulas as pictures, where this can
+  // only write them as text. The page then comes down with everything else.
+  try {
+    const res = await fetch('/api/notes/work', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, date }) });
+    if (res.ok) {
+      await syncNow();
+      const [made] = await tiedPages(question);
+      if (made) return made;
+    }
+  } catch { /* Offline: made here instead. */ }
+
   let title = fallbackTitle || 'Daily question';
   let asked: PublicQuestion | null = null;
   let formulas: SheetFormula[] = [];
@@ -170,16 +181,7 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
 
   const normalizedId = normalizeWorkId(asked?.id ?? question);
   const notebook = await dailyNotebook();
-  const pages = livePages(await listBook(notebook));
   const now = Date.now();
-  // A brand-new notebook's first, empty page is used rather than left blank at the front.
-  const blankFirst = pages.length === 1 && !pages[0].questions?.length && !pages[0].title ? pages[0] : null;
-  const page: StoredBook = {
-    ...(blankFirst ?? { id: newId(), kind: 'page', notebook, order: orderBetween(pages[pages.length - 1]?.order, undefined), w: 612, h: 792, template: 'engineering', paper: '#ffffff', createdAt: now }),
-    kind: 'page', notebook, title, questions: [{ id: normalizedId, date, title }], updatedAt: now, dirty: true,
-  } as StoredBook;
-  await putBook([page]);
-
   const dateLabel = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const sheet: SheetQuestion = asked ?? { title, prompt: '', parts: [] };
   let picture: { file: string; w: number; h: number } | null = null;
@@ -192,9 +194,21 @@ export async function pageForQuestion(question: string, date: string, fallbackTi
   }
   const measure = ({ text, w, size, bold }: { text: string; w: number; size: number; bold?: boolean }) =>
     layoutText({ text, w, size, font: 'sans', bold }).length * size * TEXT_LINE_HEIGHT;
+  const layout = layoutQuestionSheet(sheet, formulas, dateLabel, measure, { figure: picture ?? undefined });
+
+  const pages = livePages(await listBook(notebook));
+  // A brand-new notebook's first, empty page is used rather than left blank at the front.
+  const blankFirst = pages.length === 1 && !pages[0].questions?.length && !pages[0].title ? pages[0] : null;
+  const page: StoredBook = {
+    ...(blankFirst ?? { id: newId(), kind: 'page', notebook, order: orderBetween(pages[pages.length - 1]?.order, undefined), w: 612, template: 'engineering', paper: '#ffffff', createdAt: now }),
+    h: layout.h, kind: 'page', notebook, title, questions: [{ id: normalizedId, date, title }], updatedAt: now, dirty: true,
+  } as StoredBook;
+  await putBook([page]);
+
   const link = { id: normalizedId, date, title };
   const elements: StoredElement[] = [];
-  for (const box of layoutQuestionSheet(sheet, formulas, dateLabel, measure, picture ?? undefined)) {
+  for (const box of layout.boxes) {
+    if (box.kind === 'math') continue; // Not asked for here: math is written as text.
     if (box.kind === 'figure') {
       elements.push({ id: newId(), kind: 'image', x: box.x, y: box.y, w: box.w, h: box.h, rot: 0, file: picture!.file, createdAt: now, updatedAt: now, notebook, page: page.id, dirty: true } as StoredElement);
       continue;

@@ -154,7 +154,15 @@ solution should read** (working, meaning, real-world use, computed diagrams, a s
   clause number, edition detail or product behaviour you are sure of; if
   unsure, leave the fact out of the question.
 - **Formulas**: the day's formula sheet holds every formula the questions use
-  (`formulas: [ids]` on each question), each with its source.
+  (`formulas: [ids]` on each question), each with its source. Every formula
+  (and the formula of the day) also gets `where`: what each symbol in its
+  `latex` stands for, in order of first appearance, so the problem can be
+  worked from the Notes page alone:
+  ``where: [{ symbol: R`\Delta T_h`, meaning: 'full width of the hysteresis band (°C)' }, …]``.
+  `symbol` is LaTeX without dollars, written as in the formula; `meaning` is
+  short (under 120 characters), starts lower-case, ends with the SI unit in
+  brackets when it has one, and may hold $math$ (then use ``R`...` ``). Skip
+  numbers, π, e and function names; at most 16 entries; never an answer.
 - **Figures** (optional): SVG markup with `xmlns`, dark lines on white, at
   most 500 px wide, all text inside the viewBox, arrow markers that point along
   their line, and a `figureAlt` that says everything the figure shows. The

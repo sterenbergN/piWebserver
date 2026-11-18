@@ -230,3 +230,13 @@ test('achievements exclude gen-* and practice attempts from Clean sweep and Over
   assert.equal(stats.achievements.find((a) => a.id === 'sweep')!.earned, false);
   assert.deepEqual(stats.achievements.find((a) => a.id === 'bonus')!.progress, [0, 20]);
 });
+
+test('a formula may say what its symbols stand for, and each symbol must typeset', () => {
+  const formula = (where: unknown) => ({ id: 'f', name: 'F', latex: 'x = vt', source: 'S', where });
+  const pack = (f: unknown) => ({ version: 1, days: [], practice: { formulas: [f], questions: [{ id: 'q', track: 'controls', topic: 'T', difficulty: 1, title: 'Q', prompt: 'P', parts: [{ id: 'a', answer: { type: 'numeric', value: 1 } }], solution: 'S', sources: [{ title: 'B' }], formulas: ['f'] }] } });
+  const ok = validatePack(pack(formula([{ symbol: 'v', meaning: 'speed (m/s)', extra: 1 }, { symbol: 't', meaning: 'time $t$ (s)' }])));
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.pack!.practice!.formulas[0].where, [{ symbol: 'v', meaning: 'speed (m/s)' }, { symbol: 't', meaning: 'time $t$ (s)' }]);
+  assert.match(validatePack(pack(formula([{ symbol: '\frac{1}{', meaning: 'x' }]))).errors.join(), /symbol doesn't render/);
+  assert.match(validatePack(pack(formula('v is speed'))).errors.join(), /where must be a list/);
+});
