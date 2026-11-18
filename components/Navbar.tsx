@@ -52,6 +52,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const pinsRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const pinWidthsRef = useRef<Map<string, number>>(new Map());
+  const fontsMeasuredRef = useRef(false);
   const celebratedRef = useRef<string>('');
   const launcherOpenRef = useRef(false);
   const keyBufRef = useRef<{ str: string; at: number }>({ str: '', at: 0 });
@@ -133,12 +134,17 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(computeFit) : null;
     ro?.observe(container);
     let cancelled = false;
-    document.fonts?.ready.then(() => {
-      if (!cancelled) {
+    // Widths taken before the web font loaded are re-measured once. Only once: this effect re-runs on
+    // every visiblePinCount change, and clearing the cache each time showed every pin again to measure
+    // it, which changed the count, which ran this again — an endless render loop when pins overflow.
+    if (!fontsMeasuredRef.current) {
+      document.fonts?.ready.then(() => {
+        if (cancelled || fontsMeasuredRef.current) return;
+        fontsMeasuredRef.current = true;
         pinWidthsRef.current.clear();
         computeFit();
-      }
-    }).catch(() => {});
+      }).catch(() => {});
+    }
     return () => {
       cancelled = true;
       ro?.disconnect();
@@ -207,7 +213,10 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key.toLowerCase() === 'c' || e.code === 'KeyC')) {
+      // In a text field Alt+C is left alone (on a Mac, Option+C types "ç"), except in the calculator itself.
+      const inTextField = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key.toLowerCase() === 'c' || e.code === 'KeyC')
+        && (!inTextField || !!target?.closest('.dq-calc'))) {
         e.preventDefault();
         setLauncher(false);
         window.dispatchEvent(new CustomEvent('site:open-calculator', { detail: { toggle: true } }));

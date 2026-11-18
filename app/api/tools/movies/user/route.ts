@@ -85,7 +85,8 @@ export async function GET(request: Request) {
     }
 
     if (targetUserId && targetUserId !== callerUserId) {
-      if (!allowedUserIds.has(targetUserId)) {
+      // The admin sees every account's list; others only their household's.
+      if (callerUserId !== 'admin' && !allowedUserIds.has(targetUserId)) {
         return NextResponse.json(
           { success: false, error: 'Forbidden' },
           { status: 403, headers: { 'Cache-Control': 'no-store' } }

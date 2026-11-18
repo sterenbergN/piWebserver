@@ -7,7 +7,7 @@
     "build": "node scripts/run-next.mjs build --turbo",
     "start": "node scripts/run-next.mjs start",
     "lint": "eslint",
-    "test": "tsx --test \"lib/**/*.test.ts\"",
+    "test": "tsx --test \"lib/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "test:e2e": "playwright test",
     "seed:workout": "tsx scripts/seed-workout-dev.ts",
     "daily:validate": "tsx scripts/daily-pack.ts validate",

@@ -465,6 +465,17 @@ test('API route GET and POST functionality', async () => {
       assert.equal(resQuery.status, 403);
       const dataQuery = await resQuery.json();
       assert.equal(dataQuery.success, false);
+
+      // The admin can read any account's list.
+      const { createAdminAuthToken } = await import('@/lib/security/auth');
+      const adminQueryReq = new NextRequest(`http://localhost/api/tools/movies/user?userId=${targetUserId}`, {
+        headers: { cookie: `pi_auth=${createAdminAuthToken()}` },
+      });
+      const resAdmin = await moviesGET(adminQueryReq);
+      assert.equal(resAdmin.status, 200);
+      const dataAdmin = await resAdmin.json();
+      assert.equal(dataAdmin.success, true);
+      assert.deepEqual(dataAdmin.publicState.watched, ['tt0167260']);
     } finally {
       await fs.rm(targetFile, { force: true }).catch(() => {});
     }
