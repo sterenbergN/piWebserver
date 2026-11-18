@@ -3,13 +3,18 @@ import test from 'node:test';
 import {
   aisleFor,
   applyKitchenAction,
+  buildGroceryRunChorePayload,
   buildPrepSession,
   buildShoppingList,
+  buildWeekKitchenChoresPayloads,
   currentWeek,
   dayInfo,
   emptyKitchen,
+  filterNewChores,
+  findOpenGroceryRunChore,
   freshToUse,
   groceriesLeft,
+  isPantryFood,
   missingIngredients,
   haveSet,
   mergeKitchens,
@@ -26,6 +31,7 @@ import {
   type KitchenState,
   type PlanEntry,
 } from './kitchen';
+import { applyChoreAction, emptyChoresData, type Chore } from '../chores/chores';
 import { DEFAULT_RECIPES, cookOrder, extractIngredients, formatBomAmount, madeKey, normalizeRecipe, type Amount, type Recipe } from './recipes';
 
 const WEEK = '2026-10-26';
@@ -381,4 +387,186 @@ test('a prep session merges recipes into one cook order, each at its own scale',
   assert.equal(session.recipe.sections[2].readyBy, '1:2');
   assert.equal(session.recipe.sections[chicken.sections.length].readyBy, `${chicken.sections.length + 1}:0`);
   assert.equal(cookOrder(session.schedule).length, 7 + 5);
+});
+
+test('isPantryFood distinguishes food from non-food Also items and kitchen actions cap servings at 48', () => {
+  assert.equal(isPantryFood('Paper towels'), false);
+  assert.equal(isPantryFood('Dish soap'), false);
+  assert.equal(isPantryFood('Lemon dish soap'), false);
+  assert.equal(isPantryFood('Trash bags'), false);
+  assert.equal(isPantryFood('Aluminum foil'), false);
+  assert.equal(isPantryFood('Sponges'), false);
+  assert.equal(isPantryFood('2 cups rice'), true);
+  assert.equal(isPantryFood('Milk'), true);
+  assert.equal(isPantryFood('Olive oil'), true);
+
+  const afterNonFood = applyKitchenAction(
+    applyAll(emptyKitchen(), [
+      { type: 'list-item', id: 'tp', text: 'Paper towels' },
+      { type: 'got', key: 'tp', on: true },
+    ]),
+    { type: 'put-away', id: 'pa1', items: [], got: [], listItems: ['tp'] },
+  );
+  assert.deepEqual(afterNonFood.have, []);
+  assert.deepEqual(afterNonFood.pantry, {});
+  assert.deepEqual(afterNonFood.listItems, []);
+  assert.deepEqual(afterNonFood.got, []);
+
+  const capped = applyAll(emptyKitchen(), [
+    { type: 'plan-add', week: WEEK, entry: { id: 'p1', recipeId: 'stew', servings: 200, day: 0 } },
+    { type: 'list-recipe', recipeId: 'stew', servings: 99 },
+    { type: 'cook', id: 'c99', recipeId: 'stew', servings: 120, used: [] },
+  ]);
+  assert.equal(capped.plans[WEEK][0].servings, 48);
+  assert.equal(capped.listRecipes[0].servings, 48);
+  assert.equal(capped.log[0].servings, 48);
+});
+
+test('buildGroceryRunChorePayload builds a valid Household Chores payload grouped by section', () => {
+  const payload = buildGroceryRunChorePayload(
+    [
+      { label: '2 onions', section: 'Produce' },
+      { label: '1 lb beef', section: 'Meat & seafood' },
+      { label: '2 onions', section: 'Produce' },
+      { label: 'Paper towels', section: 'Also' },
+    ],
+    '2026-10-29',
+  );
+  assert.equal(payload.type, 'save');
+  assert.equal(payload.chore.name, '🛒 Grocery run (3 items)');
+  assert.equal(payload.chore.emoji, '🛒');
+  assert.equal(payload.chore.due, '2026-10-29');
+  assert.equal(payload.chore.repeat, null);
+  assert.equal(payload.chore.effort, 1);
+  assert.match(payload.chore.notes, /Produce: 2 onions/);
+  assert.match(payload.chore.notes, /Meat & seafood: 1 lb beef/);
+  assert.match(payload.chore.notes, /Also: Paper towels/);
+
+  // Larger run increases effort to 2 and applies cleanly in chores reducer.
+  const large = buildGroceryRunChorePayload(
+    Array.from({ length: 9 }, (_, i) => ({ label: `Item ${i + 1}`, section: 'Produce' })),
+    '2026-10-29',
+  );
+  assert.equal(large.chore.effort, 2);
+  assert.ok(large.chore.notes.length <= 300);
+
+  const choresData = applyChoreAction(emptyChoresData(), payload, '2026-10-29', () => 'gen1');
+  assert.equal(choresData.chores.length, 1);
+  assert.equal(choresData.chores[0].name, '🛒 Grocery run (3 items)');
+});
+
+test('buildWeekKitchenChoresPayloads builds deduplicated prep and dinner chores, skipping cooked ones', () => {
+  const kitchen: KitchenState = {
+    ...emptyKitchen(),
+    have: ['salt'],
+    plans: {
+      [WEEK]: [
+        { id: 'p1', recipeId: 'stew', servings: 4, day: null },
+        { id: 'p2', recipeId: 'stew', servings: 4, day: null }, // duplicate prep entry
+        { id: 'd1', recipeId: 'stir-fry', servings: 4, day: 2 },
+        { id: 'd2', recipeId: 'stew', servings: 2, day: 0, cooked: true }, // already cooked
+      ],
+    },
+  };
+  const payloads = buildWeekKitchenChoresPayloads([stew, stirFry], kitchen, WEEK, '2026-10-27');
+  assert.equal(payloads.length, 2);
+
+  const prep = payloads.find((p) => p.chore.emoji === '🍱')!;
+  assert.equal(prep.chore.name, '🍱 Meal prep: stew');
+  assert.equal(prep.chore.due, '2026-10-27');
+  assert.equal(prep.chore.effort, 2);
+  assert.match(prep.chore.notes, /4 servings/);
+  assert.match(prep.chore.notes, /Need: .*Beef/);
+
+  const dinner = payloads.find((p) => p.chore.emoji === '🍳')!;
+  assert.equal(dinner.chore.name, '🍳 Cook: stir-fry');
+  assert.equal(dinner.chore.due, '2026-10-28'); // WEEK (Mon Oct 26) + 2 = Wed Oct 28
+  assert.ok(dinner.chore.effort === 1 || dinner.chore.effort === 2);
+  assert.match(dinner.chore.notes, /4 servings/);
+});
+
+test('filterNewChores skips matching open chores by normalized name + due date and ignores archived chores', () => {
+  const candidates = [
+    buildGroceryRunChorePayload([{ label: 'Milk', section: 'Dairy' }], '2026-10-29'),
+    {
+      type: 'save' as const,
+      newId: 'c2',
+      chore: {
+        name: '🍳 Cook: stir-fry',
+        emoji: '🍳',
+        color: 2,
+        repeat: null,
+        due: '2026-10-28',
+        fromDone: false,
+        effort: 1 as const,
+        assignee: null,
+        notes: '4 servings',
+      },
+    },
+    {
+      type: 'save' as const,
+      newId: 'c3',
+      chore: {
+        name: '🍱 Meal prep: stew',
+        emoji: '🍱',
+        color: 5,
+        repeat: null,
+        due: '2026-10-29',
+        fromDone: false,
+        effort: 2 as const,
+        assignee: null,
+        notes: '4 servings',
+      },
+    },
+  ];
+
+  const existing: Chore[] = [
+    {
+      id: 'e1',
+      name: '  🍳   cook:  STIR-FRY ',
+      emoji: '🍳',
+      color: 2,
+      repeat: null,
+      due: '2026-10-28',
+      fromDone: false,
+      effort: 1,
+      assignee: null,
+      notes: '',
+      createdOn: '2026-10-26',
+    },
+    {
+      id: 'e2',
+      name: '🍱 Meal prep: stew',
+      emoji: '🍱',
+      color: 5,
+      repeat: null,
+      due: '2026-10-29',
+      fromDone: false,
+      effort: 2,
+      assignee: null,
+      notes: '',
+      createdOn: '2026-10-26',
+      archivedOn: '2026-10-29', // archived: should NOT block re-sync
+    },
+    {
+      id: 'e3',
+      name: '🛒 Grocery run (4 items)',
+      emoji: '🛒',
+      color: 3,
+      repeat: null,
+      due: '2026-10-29',
+      fromDone: false,
+      effort: 1,
+      assignee: null,
+      notes: '',
+      createdOn: '2026-10-29',
+    },
+  ];
+
+  const filtered = filterNewChores(candidates, existing);
+  assert.deepEqual(filtered.map((c) => c.chore.name), ['🛒 Grocery run (1 item)', '🍱 Meal prep: stew']);
+
+  const foundRun = findOpenGroceryRunChore(existing, '2026-10-29');
+  assert.equal(foundRun?.id, 'e3');
+  assert.equal(findOpenGroceryRunChore(existing, '2026-10-30'), undefined);
 });

@@ -52,22 +52,20 @@ export function useRecipeTimers() {
   const [now, setNow] = useState(() => Date.now());
   const timersRef = useRef(timers);
   const audioRef = useRef<AudioContext | null>(null);
+  const loadedRef = useRef(false);
 
   const ringOnce = useCallback(() => {
     vibrate([300, 150, 300, 150, 300]);
     playBeep(audioRef.current, 3);
   }, []);
 
-  useEffect(() => {
-    setTimers(readSavedTimers());
-  }, []);
-
   // Redrawn while any run, and each one alarms at the moment it's due (not on
   // the next tick). A timer that went off while the phone slept is shown as
-  // done without a late beep.
+  // done without a late beep. Guarded by loadedRef so initial mount doesn't
+  // overwrite stored timers with `{}` before hydration completes.
   useEffect(() => {
     timersRef.current = timers;
-    savePref(TIMERS_PREF, JSON.stringify(timers));
+    if (loadedRef.current) savePref(TIMERS_PREF, JSON.stringify(timers));
     const running = Object.values(timers).filter(isRunning);
     if (!running.length) return;
     const finish = (id: string) => {
@@ -85,6 +83,14 @@ export function useRecipeTimers() {
       window.clearInterval(tick);
     };
   }, [timers, ringOnce]);
+
+  useEffect(() => {
+    setTimers(readSavedTimers());
+    loadedRef.current = true;
+    return () => {
+      loadedRef.current = false;
+    };
+  }, []);
 
   // Keep ringing until acknowledged (or a minute has gone by).
   const anyRinging = Object.values(timers).some((t) => t.ringing);

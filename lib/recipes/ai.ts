@@ -4,7 +4,7 @@
 
 import { buildSections } from './import';
 import { DAY_NAMES, newKitchenId, type KitchenState } from './kitchen';
-import { CATEGORY_LABELS, RECIPE_CATEGORIES, normalizeRecipe, type Recipe, type RecipeCategory } from './recipes';
+import { CATEGORY_LABELS, MAX_SERVINGS, RECIPE_CATEGORIES, extractIngredients, normalizeRecipe, type Recipe, type RecipeCategory, type RecipeSection } from './recipes';
 
 export type AiRequest = {
   /** What you're after, in your own words. */
@@ -54,11 +54,18 @@ const EXAMPLE_RECIPE = `{
       ]
     }`;
 
-function kitchenContext(kitchen: Pick<KitchenState, 'have' | 'pantry'>, recipes: Recipe[], options: AiRequest) {
+function kitchenContext(
+  kitchen: Pick<KitchenState, 'have' | 'pantry'> & { equipment?: string[] },
+  recipes: Recipe[],
+  options: AiRequest,
+) {
   const lines: string[] = [];
   if (options.usePantry) {
     const shelf = kitchen.have.filter((key) => !key.startsWith('made:')).map((key) => kitchen.pantry[key]?.name || key);
     if (shelf.length) lines.push(`What I already have at home (use these where they fit, but don't feel limited to them): ${shelf.join(', ')}.`);
+  }
+  if (kitchen.equipment && kitchen.equipment.length > 0) {
+    lines.push(`Kitchen equipment I have (use these and avoid equipment I didn't list): ${kitchen.equipment.join(', ')}.`);
   }
   if (options.useMine && recipes.length) {
     lines.push(`Recipes I already have (don't write these out again): ${recipes.map((r) => r.title).join('; ')}.`);
@@ -67,7 +74,11 @@ function kitchenContext(kitchen: Pick<KitchenState, 'have' | 'pantry'>, recipes:
 }
 
 /** A prompt for one or more new recipes. */
-export function buildRecipePrompt(options: AiRequest & { count: number }, kitchen: Pick<KitchenState, 'have' | 'pantry'>, recipes: Recipe[]) {
+export function buildRecipePrompt(
+  options: AiRequest & { count: number },
+  kitchen: Pick<KitchenState, 'have' | 'pantry'> & { equipment?: string[] },
+  recipes: Recipe[],
+) {
   const count = options.count === 1 ? 'a recipe' : `${options.count} recipes`;
   return [
     `Write ${count} for me${options.ask.trim() ? `: ${options.ask.trim()}` : '.'} Each should serve about ${options.servings}.`,
@@ -86,7 +97,11 @@ export function buildRecipePrompt(options: AiRequest & { count: number }, kitche
 }
 
 /** A prompt for a whole week: a plan, and any recipes it needs that I don't have yet. */
-export function buildWeekPrompt(options: AiRequest & { meals: number; prep: number; weekLabel: string }, kitchen: Pick<KitchenState, 'have' | 'pantry'>, recipes: Recipe[]) {
+export function buildWeekPrompt(
+  options: AiRequest & { meals: number; prep: number; weekLabel: string },
+  kitchen: Pick<KitchenState, 'have' | 'pantry'> & { equipment?: string[] },
+  recipes: Recipe[],
+) {
   const prep = options.prep > 0 ? ` Make ${options.prep} of them meal prep, cooked ahead and eaten through the week.` : '';
   return [
     `Plan my meals for the week of ${options.weekLabel}: ${options.meals} ${options.meals === 1 ? 'meal' : 'meals'}, ${options.servings} servings each.${prep}${options.ask.trim() ? ` ${options.ask.trim()}` : ''}`,
@@ -142,6 +157,7 @@ function wholeObjects(text: string): unknown[] {
       if (c === '\\') i++;
       else if (c === '"') inString = false;
     } else if (c === '"') inString = true;
+    else if (c === ']' && depth === 0) break;
     else if (c === '{') {
       if (depth++ === 0) start = i;
     } else if (c === '}' && depth > 0 && --depth === 0) {
@@ -168,9 +184,15 @@ function readJson(text: string): { value: unknown; cutOff: boolean } {
       /* try the next */
     }
   }
-  const marker = clean.search(/"recipes"\s*:\s*\[/);
-  const objects = marker >= 0 ? wholeObjects(clean.slice(clean.indexOf('[', marker) + 1)) : [];
-  if (objects.length) return { value: { recipes: objects }, cutOff: true };
+  const arrayObjects = (key: string): unknown[] => {
+    const marker = clean.search(new RegExp(`"${key}"\\s*:\\s*\\[`));
+    if (marker < 0) return [];
+    const open = clean.indexOf('[', marker);
+    return open >= 0 ? wholeObjects(clean.slice(open + 1)) : [];
+  };
+  const recipes = arrayObjects('recipes');
+  const plan = arrayObjects('plan');
+  if (recipes.length || plan.length) return { value: { recipes, plan }, cutOff: true };
   throw new AiReplyError('That isn’t valid JSON. Ask the AI to send it again as one JSON code block.');
 }
 
@@ -188,7 +210,7 @@ export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4)
   const root = isRecord(value) ? value : { recipes: value };
   const rawRecipes: unknown[] = Array.isArray(root.recipes) ? root.recipes : isRecord(value) && typeof value.title === 'string' ? [value] : [];
   const notes: string[] = [];
-  if (cutOff) notes.push('The reply was cut off, so the plan and the last recipe were lost. Ask the AI to continue if you need the rest.');
+  if (cutOff) notes.push('The reply was cut off, so whatever came after the break was lost. Ask the AI to continue if you need the rest.');
 
   // Titles first, so a recipe can link to one written later in the reply.
   const wanted: { raw: Record<string, unknown>; id: string; title: string }[] = [];
@@ -211,7 +233,7 @@ export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4)
       if (!isRecord(part)) return [];
       if (typeof part.recipe === 'string') {
         const recipeId = idFor(part.recipe);
-        if (recipeId && recipeId !== id) return [{ name: '', steps: [], sub: { recipeId, servings: Number(part.servings) || 1 } }];
+        if (recipeId && recipeId !== id) return [{ name: '', steps: [], sub: { recipeId, servings: Math.min(MAX_SERVINGS, Math.max(1, Math.round(Number(part.servings)) || 1)) } }];
         notes.push(`${title} uses ${part.recipe}, which wasn’t in the reply, so that part was left out.`);
         return [];
       }
@@ -255,7 +277,7 @@ export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4)
       continue;
     }
     if (day === undefined) notes.push(`${raw.recipe} had no day I could read, so it went into meal prep.`);
-    plan.push({ recipeId, title: raw.recipe, servings: Math.min(48, Math.max(1, Math.round(Number(raw.servings)) || fallbackServings)), day: day ?? null });
+    plan.push({ recipeId, title: raw.recipe, servings: Math.min(MAX_SERVINGS, Math.max(1, Math.round(Number(raw.servings)) || fallbackServings)), day: day ?? null });
   }
 
   if (!recipes.length && !plan.length) throw new AiReplyError('I couldn’t find any recipes or a plan in that. Paste the whole reply.');
@@ -264,3 +286,202 @@ export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4)
 
 /** "Dinner", for showing a recipe in the check-over list. */
 export const categoryLabel = (recipe: Pick<Recipe, 'category'>) => CATEGORY_LABELS[recipe.category]?.label ?? '';
+
+// ─── Editing an existing recipe with AI ───────────────────────────────────────
+
+export const AI_EDIT_PRESETS: { id: string; label: string; prompt: string }[] = [
+  {
+    id: 'cook-notes',
+    label: '📝 Apply my cook notes',
+    prompt: 'Update ingredients, quantities, times, and steps to incorporate my cook notes and past cook log feedback.',
+  },
+  {
+    id: 'my-gear',
+    label: '🍳 Use only my kitchen gear',
+    prompt: 'Adapt the cooking method and steps so this recipe only uses the kitchen equipment I have at home.',
+  },
+  {
+    id: 'high-protein',
+    label: '💪 Boost protein',
+    prompt: 'Modify this recipe to significantly increase protein per serving while keeping great flavor.',
+  },
+  {
+    id: 'faster',
+    label: '⚡ Make it faster (<25m)',
+    prompt: 'Streamline the prep and cooking steps so the whole recipe finishes in under 25 minutes.',
+  },
+  {
+    id: 'one-pan',
+    label: '🥘 One-pan / sheet-pan',
+    prompt: 'Convert this recipe into a one-pan or sheet-pan method to minimize cleanup.',
+  },
+  {
+    id: 'air-fryer',
+    label: '🌬️ Air fryer version',
+    prompt: 'Adapt the cooking steps, times, and temperatures for an air fryer.',
+  },
+  {
+    id: 'lighter',
+    label: '🥗 Lighter / lower calorie',
+    prompt: 'Reduce calories and fat per serving with smart swaps while keeping it satisfying.',
+  },
+  {
+    id: 'vegetarian',
+    label: '🌱 Make vegetarian',
+    prompt: 'Convert this recipe into a flavorful vegetarian version with good protein.',
+  },
+];
+
+/** A prompt asking an AI to revise an existing recipe or draft, optionally folding in cook notes and kitchen gear. */
+export function buildEditRecipePrompt(
+  recipe: Partial<Recipe> & { title: string; sections: RecipeSection[] },
+  options: {
+    ask: string;
+    servings?: number;
+    includeNotes?: boolean;
+    usePantry?: boolean;
+    useEquipment?: boolean;
+  },
+  kitchen?: Pick<KitchenState, 'have' | 'pantry'> & { equipment?: string[] },
+  allRecipes?: Recipe[],
+): string {
+  const byId = allRecipes ? new Map(allRecipes.map((r) => [r.id, r])) : null;
+  const targetServings = options.servings ?? recipe.servings ?? 4;
+  const ask = options.ask.trim() || 'Improve this recipe while keeping its core character.';
+
+  const parts = recipe.sections.map((sec) => {
+    if (sec.sub) {
+      const subTitle = byId?.get(sec.sub.recipeId)?.title || sec.from?.title || sec.sub.recipeId;
+      return { recipe: subTitle, servings: sec.sub.servings };
+    }
+    return {
+      name: sec.name || 'Main',
+      steps: sec.steps,
+      ...(sec.readyBy ? { readyBy: sec.readyBy } : {}),
+    };
+  });
+
+  const currentJson = {
+    title: recipe.title,
+    ...(recipe.summary ? { summary: recipe.summary } : {}),
+    category: recipe.category ?? 'dinner',
+    servings: targetServings,
+    equipment: recipe.equipment ?? [],
+    tags: recipe.tags ?? [],
+    ...(recipe.macros ? { macros: recipe.macros } : {}),
+    parts,
+  };
+
+  const contextLines: string[] = [];
+  if (options.includeNotes !== false) {
+    const noteLines: string[] = [];
+    if (recipe.notes?.trim()) noteLines.push(`- Pinned note: ${recipe.notes.trim()}`);
+    for (const entry of (recipe.cookLog || []).filter((e) => e.note?.trim()).slice(0, 5)) {
+      const date = entry.cookedAt ? entry.cookedAt.slice(0, 10) : 'past cook';
+      const rated = entry.rating ? `, rated ${entry.rating}/10` : '';
+      noteLines.push(`- Cook log (${date}${rated}): ${entry.note!.trim()}`);
+    }
+    if (noteLines.length) {
+      contextLines.push(`My cook notes & feedback from making this recipe:\n${noteLines.join('\n')}`);
+    }
+  }
+  if (options.useEquipment !== false && kitchen?.equipment && kitchen.equipment.length > 0) {
+    contextLines.push(`Kitchen equipment I have (use these and avoid equipment I didn't list): ${kitchen.equipment.join(', ')}.`);
+  }
+  if (options.usePantry && kitchen?.have?.length) {
+    const shelf = kitchen.have.filter((key) => !key.startsWith('made:')).map((key) => kitchen.pantry[key]?.name || key);
+    if (shelf.length) contextLines.push(`What I already have at home (use these where they fit, but don't feel limited to them): ${shelf.join(', ')}.`);
+  }
+
+  return [
+    `Update this recipe for me (${targetServings} ${targetServings === 1 ? 'serving' : 'servings'}): ${ask}`,
+    ...contextLines,
+    `Here is the current recipe to edit:\n\n\`\`\`json\n${JSON.stringify(currentJson, null, 2)}\n\`\`\``,
+    `Reply with one JSON code block and nothing else, in exactly this shape:
+
+\`\`\`json
+{
+  "recipes": [
+    {
+      "title": "...",
+      "summary": "...",
+      "category": "${currentJson.category}",
+      "servings": ${targetServings},
+      "equipment": ["Pan"],
+      "tags": ["Weeknight"],
+      "macros": { "calories": 500, "protein": 35, "carbs": 45, "fat": 18 },
+      "parts": [
+        { "name": "Main", "steps": ["..."] }
+      ]
+    }
+  ]
+}
+\`\`\``,
+    STEP_RULES,
+  ].join('\n\n');
+}
+
+/** Parse an AI reply editing an existing recipe, keeping the original's identity and cook history. */
+export function parseAiEditReply(
+  text: string,
+  original: Partial<Recipe>,
+  allRecipes: Recipe[] = [],
+): { recipe: Recipe; summary: string[]; notes: string[] } {
+  const origTitle = original.title?.trim().toLowerCase() ?? '';
+  const otherRecipes = allRecipes.filter(
+    (r) => r.id !== original.id && (!origTitle || r.title.trim().toLowerCase() !== origTitle),
+  );
+  const parsed = parseAiReply(text, otherRecipes, original.servings ?? 4);
+  if (!parsed.recipes.length) {
+    throw new AiReplyError('No updated recipe was found in that reply. Ask the AI to send the updated recipe inside one JSON code block.');
+  }
+
+  const next = parsed.recipes[0];
+  const recipe: Recipe = {
+    ...next,
+    id: original.id || next.id,
+    slug: original.slug || next.slug,
+    ...(original.photo ? { photo: original.photo } : {}),
+    ...(next.emoji || original.emoji ? { emoji: next.emoji || original.emoji } : {}),
+    ...(original.rating !== undefined ? { rating: original.rating } : {}),
+    timesCooked: original.timesCooked ?? 0,
+    ...(original.lastCookedAt ? { lastCookedAt: original.lastCookedAt } : {}),
+    ...(original.cookLog ? { cookLog: original.cookLog } : {}),
+    ...(next.notes || original.notes ? { notes: next.notes || original.notes } : {}),
+    private: original.private ?? true,
+    ...(original.ownerId ? { ownerId: original.ownerId } : {}),
+    ...(original.createdAt ? { createdAt: original.createdAt } : {}),
+  };
+
+  const summary: string[] = [];
+  if (original.title && recipe.title.trim() !== original.title.trim()) {
+    summary.push(`Title: ${original.title} → ${recipe.title}`);
+  }
+  if (original.servings !== undefined && recipe.servings !== original.servings) {
+    summary.push(`Servings: ${original.servings} → ${recipe.servings}`);
+  }
+  const origEquip = original.equipment ?? [];
+  const sameEquip =
+    origEquip.length === recipe.equipment.length &&
+    origEquip.every((e, i) => e.toLowerCase() === recipe.equipment[i]?.toLowerCase());
+  if (!sameEquip) {
+    summary.push(`Equipment: ${recipe.equipment.length ? recipe.equipment.join(', ') : 'none'}`);
+  }
+  const newIngCount = extractIngredients(recipe).length;
+  const oldIngCount = original.sections ? extractIngredients({ sections: original.sections }).length : null;
+  summary.push(
+    oldIngCount !== null && oldIngCount !== newIngCount
+      ? `Ingredients: ${oldIngCount} → ${newIngCount}`
+      : `${newIngCount} ${newIngCount === 1 ? 'ingredient' : 'ingredients'}`,
+  );
+  const countSteps = (secs: RecipeSection[]) => secs.reduce((n, s) => n + s.steps.length, 0);
+  const newSteps = countSteps(recipe.sections);
+  const oldSteps = original.sections ? countSteps(original.sections) : null;
+  summary.push(
+    oldSteps !== null && oldSteps !== newSteps
+      ? `Steps: ${oldSteps} → ${newSteps}`
+      : `${newSteps} ${newSteps === 1 ? 'step' : 'steps'}`,
+  );
+
+  return { recipe, summary, notes: parsed.notes };
+}

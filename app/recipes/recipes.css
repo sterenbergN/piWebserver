@@ -312,28 +312,34 @@ button.rc-pill-label { cursor: pointer; }
 }
 .rc-resume > span:first-child { display: flex; flex-direction: column; min-width: 0; }
 
-/* ── Finished timers: over everything, including cook mode ── */
+/* ── Finished timers: over everything, including cook mode, clear of the top bar ── */
 .rc-alerts {
   position: fixed;
-  top: env(safe-area-inset-top);
-  left: 0;
-  right: 0;
+  top: calc(3.75rem + env(safe-area-inset-top));
+  left: 0.5rem;
+  right: 0.5rem;
   z-index: 300;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0.35rem;
+  max-width: 640px;
+  margin: 0 auto;
+  pointer-events: none;
 }
 
 .rc-alert {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   width: 100%;
-  min-height: 64px;
+  min-height: 60px;
   padding: 0.5rem 1rem;
   background: var(--success);
   border: none;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   color: var(--background);
   font: inherit;
   text-align: left;
@@ -559,10 +565,12 @@ button.rc-pill-label { cursor: pointer; }
 
 .rc-constraint {
   display: grid;
-  grid-template-columns: 1fr 6rem;
+  grid-template-columns: minmax(0, 1fr) minmax(6.5rem, auto);
   gap: 0.5rem;
   padding-bottom: 0.5rem;
 }
+.rc-constraint select { min-width: 0; }
+.rc-constraint input { min-width: 5.5rem; }
 
 .rc-facts {
   margin-top: 0.25rem;
@@ -667,7 +675,28 @@ button.rc-pill-label { cursor: pointer; }
 .rc-tl-key { width: 14px; height: 10px; background: var(--accent-light); border-radius: 2px; }
 .rc-tl-key.is-wait { background: color-mix(in srgb, var(--accent-light) 35%, transparent); }
 
-/* ── Wider screens: everything side by side, no tabs or dock button ── */
+/* ── Above 768px (matches .site-dock): hide mobile dock bar, keep active timers as a corner pill ── */
+@media (min-width: 769px) {
+  .rc-page { padding-bottom: 4rem; }
+  .rc-start-wide { display: flex; width: 100%; margin-top: 0.75rem; }
+  .rc-start-phone { display: none; }
+  .rc-dock {
+    left: auto;
+    right: 1rem;
+    bottom: 1rem;
+    max-width: min(640px, calc(100vw - 2rem));
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    padding: 0.5rem;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+  }
+  .rc-dock:not(:has(> :not(.rc-start-phone))),
+  .rc-dock:empty { display: none; }
+  .rc-sheet { border-radius: 16px; margin-bottom: 2rem; }
+  .rc-sheet-backdrop { align-items: center; }
+}
+
+/* ── Wider screens: everything side by side, no tabs ── */
 @media (min-width: 860px) {
   .rc-head h1 { font-size: 1.9rem; }
   .rc-summary { display: block; max-width: 42rem; font-size: 1rem; cursor: text; }
@@ -691,21 +720,6 @@ button.rc-pill-label { cursor: pointer; }
   .rc-panel-ingredients { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 76px; }
   .rc-panel-steps { grid-column: 2; }
   .rc-panel-timeline { grid-column: 2; margin-top: 1.75rem; }
-  .rc-start-wide { display: flex; width: 100%; margin-top: 0.75rem; }
-  .rc-start-phone { display: none; }
-  .rc-dock {
-    left: auto;
-    right: 1rem;
-    bottom: 1rem;
-    max-width: min(640px, calc(100vw - 2rem));
-    border: 1px solid var(--surface-border);
-    border-radius: 12px;
-    padding: 0.5rem;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
-  }
-  .rc-dock:not(:has(> :not(.rc-start-phone))) { display: none; }
-  .rc-sheet { border-radius: 16px; margin-bottom: 2rem; }
-  .rc-sheet-backdrop { align-items: center; }
 }
 
 /* ── Cook mode: the whole screen, one step ── */
@@ -722,12 +736,16 @@ button.rc-pill-label { cursor: pointer; }
 }
 
 .rc-cook-top {
+  position: relative;
+  z-index: 2;
   flex: none;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
+  min-height: 52px;
   padding: calc(0.25rem + env(safe-area-inset-top)) 0.5rem 0.25rem;
 }
+.rc-cook-top .rc-meta { white-space: nowrap; }
 
 .rc-cook-peek { justify-self: end; padding: 0 0.5rem; font-size: 0.9rem; }
 
@@ -1523,7 +1541,7 @@ button.rc-pill-label { cursor: pointer; }
 
 .rc-prep-card {
   position: relative;
-  margin-bottom: 1rem;
+  margin: 0.25rem 0 1rem;
   padding: 0.75rem 0.85rem;
   background: var(--rc-paper);
   border-radius: 4px;
@@ -1539,6 +1557,19 @@ button.rc-pill-label { cursor: pointer; }
   background: color-mix(in srgb, var(--accent-light) 34%, rgba(255, 255, 255, 0.3));
   box-shadow: 0 1px 1px rgba(0, 0, 0, 0.14);
   transform: translateX(-50%) rotate(-1.5deg);
+}
+@media (max-width: 768px) {
+  .rc-prep-card::before {
+    top: 0;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 3px;
+    background: var(--accent-light);
+    border-radius: 4px 4px 0 0;
+    box-shadow: none;
+    transform: none;
+  }
 }
 .rc-prep-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .rc-prep-head h2 { font-size: 1.05rem; font-weight: 650; }
@@ -1984,7 +2015,7 @@ span.rc-source-chip { cursor: default; }
 .rc-ranout .rc-have-chips { justify-content: center; padding-bottom: 0; }
 
 /* ── Your AI ── */
-.rc-week-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.rc-week-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.85rem; }
 .rc-week-tools .rc-copy-week { margin: 0; }
 .rc-ai-sheet { min-height: 0; }
 .rc-ai-body { display: flex; flex-direction: column; flex: 1; gap: 0.6rem; min-height: 0; overflow-y: auto; padding: 0.1rem 0.1rem 0.4rem; }
@@ -2105,3 +2136,821 @@ span.rc-source-chip { cursor: default; }
 .rc-household-sheet .rc-meta { margin: 0.2rem 0 0.9rem; }
 .rc-household-sheet .hh-section:last-child { margin-bottom: 0; }
 .rc-household-sheet .hh-section { flex-shrink: 0; }
+
+/* ── Household Chores bridge ── */
+.rc-chores-sync {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.rc-chores-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.rc-chores-status.is-ok {
+  color: var(--success-light, var(--success));
+  font-weight: 550;
+}
+
+.rc-chores-status.is-error {
+  color: var(--danger);
+}
+
+/* ── Ratings, Cook Notes & History ── */
+.rc-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.rc-log-btn {
+  min-height: 34px;
+  padding: 0 0.75rem;
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.rc-log-btn:hover {
+  background: color-mix(in srgb, var(--accent-light) 14%, transparent);
+}
+
+.rc-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  margin-top: 0.15rem;
+}
+
+.rc-rate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 28px;
+  padding: 0.1rem 0.6rem;
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface-hover));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--surface-border));
+  border-radius: 999px;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+button.rc-rate-badge:hover {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 24%, var(--surface-hover));
+}
+.rc-rate-badge.is-unrated {
+  background: var(--surface-hover);
+  border-color: var(--surface-border);
+  color: var(--muted);
+  font-weight: 550;
+}
+button.rc-rate-badge.is-unrated:hover {
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+}
+
+.rc-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+/* Quick rating / notes filter strip on RecipeList */
+.rc-quick-strip {
+  margin-top: 0.6rem;
+  margin-bottom: 0;
+  padding-top: 0.1rem;
+  padding-bottom: 0.1rem;
+}
+.rc-box .rc-quick-strip {
+  margin-inline: -0.7rem;
+  padding-inline: 0.7rem;
+}
+
+.rc-filter-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+}
+@media (min-width: 520px) {
+  .rc-filter-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.rc-card-rating {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.45rem;
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 999px;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.rc-card-note {
+  padding-right: 0.25rem;
+  color: var(--accent-light);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+/* Shared 1–10 Rating Picker & Tweak Chips */
+.rc-rate-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.rc-rate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+}
+
+.rc-rate-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+.rc-rate-stars button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--surface-border);
+  font-size: 1.45rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.rc-rate-stars button.is-on {
+  color: var(--warning);
+}
+.rc-rate-stars button.is-half {
+  color: color-mix(in srgb, var(--warning) 55%, var(--surface-border));
+}
+.rc-rate-stars button:disabled {
+  cursor: default;
+}
+
+.rc-rate-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.rc-rate-label {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--foreground);
+}
+.rc-rate-label.is-empty {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.rc-rate-clear {
+  min-height: 30px !important;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.rc-rate-pills {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 0.25rem;
+  width: 100%;
+}
+
+.rc-rate-pill {
+  min-height: 36px;
+  padding: 0;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.rc-rate-pill:hover:not(:disabled) {
+  border-color: var(--accent-light);
+  color: var(--foreground);
+}
+.rc-rate-pill.is-active {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+  box-shadow: var(--rc-highlight);
+}
+.rc-rate-pill:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+@media (max-width: 400px) {
+  .rc-rate-pills {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+.rc-tweak-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.rc-tweak-chip {
+  min-height: 32px;
+  padding: 0 0.7rem;
+  font-size: 0.8rem;
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+.rc-tweak-chip:hover:not(:disabled) {
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+}
+
+/* RecipeView: Rating & Cook Notes Card */
+.rc-notes-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1.15rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--rc-paper);
+  border: 1px solid var(--surface-border);
+  border-top: 3px solid var(--accent-light);
+  border-radius: 6px;
+  box-shadow: var(--rc-highlight), var(--rc-lift);
+}
+
+.rc-notes-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.rc-notes-card-head h2 {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.rc-pinned-notes,
+.rc-cooklog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rc-rule);
+}
+
+.rc-notes-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.rc-notes-subhead h3 {
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.rc-inline-btn {
+  min-height: 32px;
+  font-size: 0.85rem;
+}
+
+.rc-notes-text {
+  color: var(--foreground);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.rc-notes-placeholder {
+  font-style: italic;
+}
+
+.rc-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rc-inline-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.rc-cooklog-add {
+  min-height: 32px;
+  padding: 0 0.7rem;
+  font-size: 0.8rem;
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+}
+
+.rc-cooklog-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.rc-cooklog-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+}
+
+.rc-cooklog-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.rc-cooklog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.rc-cooklog-meta strong {
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+.rc-cooklog-rating {
+  padding: 0.05rem 0.4rem;
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  border-radius: 999px;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.rc-cooklog-note {
+  color: var(--foreground);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.rc-cooklog-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex: none;
+}
+.rc-cooklog-actions .rc-icon-btn {
+  width: 34px;
+  height: 34px;
+  font-size: 1rem;
+}
+
+/* Post-Cook Rating & Notes Sheet */
+.rc-postcook-sheet {
+  gap: 0.75rem;
+}
+
+.rc-postcook-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0.1rem 0;
+}
+
+/* CookMode: Top Actions, Mid-Cook Quick Note & Finish Card */
+.rc-cook-top-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rc-cook-note-btn {
+  min-height: 36px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  font-size: 0.84rem;
+}
+
+.rc-cook-finish {
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
+}
+.rc-cook-finish > h2,
+.rc-cook-finish > .rc-meta {
+  text-align: center;
+}
+
+.rc-cook-finish-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+}
+
+.rc-cook-finish-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.rc-cook-finish-head h3 {
+  font-size: 0.98rem;
+  font-weight: 650;
+}
+
+.rc-cook-finish-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--success);
+  font-weight: 600;
+}
+
+.rc-pinned-toggle {
+  min-height: 34px !important;
+  align-self: flex-start;
+  font-size: 0.85rem;
+}
+
+.rc-pinned-preview {
+  padding: 0.45rem 0.65rem;
+  background: var(--input-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-finish-cta {
+  width: 100%;
+  min-height: 46px;
+}
+
+.rc-note-existing {
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-hover);
+  border-radius: 8px;
+  font-size: 0.84rem;
+}
+
+/* ── Global Kitchen Equipment & Week Drag-and-Drop ── */
+.rc-dividers-wrap {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+.rc-dividers-wrap .rc-dividers {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 620px) {
+  .rc-dividers-wrap {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .rc-dividers-wrap .rc-dividers {
+    flex: 1 1 100%;
+    order: 2;
+    padding: 0 0.35rem;
+  }
+  .rc-dividers button {
+    padding: 0 0.35rem;
+    font-size: 0.85rem;
+    gap: 0.25rem;
+  }
+  .rc-dividers-wrap .rc-kitchen-btn {
+    order: 1;
+    margin-left: auto;
+    margin-bottom: 0;
+  }
+}
+
+.rc-kitchen-btn {
+  flex: none;
+  min-height: 36px;
+  margin-bottom: 0.3rem;
+  padding: 0 0.75rem;
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rc-kitchen-btn:hover {
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+}
+.rc-kitchen-btn.is-configured {
+  border-color: color-mix(in srgb, var(--accent-light) 55%, var(--surface-border));
+}
+
+.rc-gear-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin-top: 0.4rem;
+}
+.rc-gear-row .rc-gear {
+  margin-top: 0;
+}
+.rc-gear li.is-owned {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--surface-border));
+  color: var(--foreground);
+}
+.rc-gear li.is-missing {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warning) 60%, var(--surface-border));
+  color: var(--warning);
+}
+.rc-gear-chip {
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rc-ai-edit-btn {
+  min-height: 34px;
+  padding: 0 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.rc-ai-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.rc-ai-summary-list {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.25rem;
+  color: var(--foreground);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.rc-sheet-actions-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 520px) {
+  .rc-sheet-actions-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rc-editor-ai-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+}
+
+.rc-equip-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem 0.85rem;
+  background: var(--rc-paper);
+  border: 1px solid var(--surface-border);
+  border-top: 3px solid var(--accent-light);
+  border-radius: 6px;
+  box-shadow: var(--rc-highlight), var(--rc-lift);
+}
+
+.rc-equip-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.rc-equip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.rc-equip-chip {
+  min-height: 36px;
+  padding: 0.25rem 0.75rem;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+.rc-equip-chip:hover {
+  border-color: var(--accent-light);
+  color: var(--foreground);
+}
+.rc-equip-chip.is-active {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+}
+
+.rc-equip-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.rc-equip-form .rc-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Week Drag-and-Drop & Recipe Tray */
+.rc-drag-handle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-height: 34px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: -0.08em;
+  cursor: grab;
+  user-select: none;
+}
+.rc-plan-row[draggable="true"]:active .rc-drag-handle {
+  cursor: grabbing;
+}
+.rc-plan-row[draggable="true"] {
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.rc-day.is-drop-target,
+.rc-prep-card.is-drop-target {
+  outline: 2px dashed var(--accent-light);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent-light) 10%, var(--rc-paper));
+}
+
+.rc-plan-row.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent-light);
+}
+
+.rc-day-move-select {
+  flex: none;
+  min-height: 32px;
+  max-width: 4.5rem;
+  padding: 0 0.35rem;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.rc-day-move-select:focus {
+  outline: none;
+  border-color: var(--accent-light);
+  color: var(--foreground);
+}
+
+.rc-week-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+  padding: 0.75rem;
+  background: var(--rc-paper);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: var(--rc-highlight), var(--rc-lift);
+}
+
+.rc-tray-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.4rem;
+  max-height: 210px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.1rem 0;
+}
+
+.rc-tray-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0.25rem 0.65rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  border-radius: 9px;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: grab;
+}
+.rc-tray-chip:hover {
+  border-color: var(--accent-light);
+}
+.rc-tray-chip:active {
+  cursor: grabbing;
+}
+.rc-tray-chip .rc-meta {
+  flex: none;
+  font-size: 0.75rem;
+}
+
+.rc-equip-card-head,
+.rc-tray-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.65rem;
+}
+
+.rc-equip-sheet {
+  gap: 0.65rem;
+}
+
+.rc-equip-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0.1rem 0;
+}
+
+.rc-tray-chip-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

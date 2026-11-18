@@ -70,6 +70,14 @@ export type SectionSource = {
   unavailable?: boolean;
 };
 
+export interface CookLogEntry {
+  id: string;
+  cookedAt: string;
+  servings?: number;
+  rating?: number;
+  note?: string;
+}
+
 export type Recipe = {
   id: string;
   slug: string;
@@ -89,6 +97,7 @@ export type Recipe = {
   notes?: string;
   timesCooked: number;
   lastCookedAt?: string;
+  cookLog?: CookLogEntry[];
   sections: RecipeSection[];
   /** The page it was imported from. */
   sourceUrl?: string;
@@ -305,22 +314,33 @@ const UNIT_ALIASES: Record<string, string> = {
   pieces: 'pieces',
 };
 
+export const MAX_SERVINGS = 48;
+
+/** Clamp servings to the allowed 1–48 range. */
+export function clampServings(n: unknown, fallback = 4): number {
+  const num = Number(n);
+  return Math.min(MAX_SERVINGS, Math.max(1, Math.round((Number.isFinite(num) ? num : 0) || fallback)));
+}
+
 /** Grams per US cup for common dry/viscous ingredients so volume converts to weight accurately. */
 const GRAMS_PER_CUP: [RegExp, number][] = [
-  [/flour|cornstarch|cocoa/i, 120],
-  [/brown sugar/i, 215],
-  [/powdered sugar|confectioners/i, 120],
-  [/sugar/i, 200],
-  [/butter/i, 227],
-  [/honey|maple syrup|molasses/i, 340],
-  [/oats/i, 90],
-  [/rice/i, 185],
-  [/milk|cream|buttermilk|yogurt|water|broth|stock/i, 240],
-  [/oil/i, 218],
-  [/cheese|parmesan|cheddar|mozzarella/i, 110],
+  [/\b(?:flour(?!\s+tortillas?\b)|cornstarch|cocoa)\b/i, 120],
+  [/\bbrown sugar\b/i, 215],
+  [/\b(?:powdered sugar|confectioners)\b/i, 120],
+  [/\bsugar\b(?!\s+(?:snap|peas)\b)/i, 200],
+  [/\bbutter\b(?!\s+(?:beans?|lettuce)\b)/i, 227],
+  [/\b(?:honey|maple syrup|molasses)\b/i, 340],
+  [/\boats\b/i, 90],
+  [/\brice\b(?!\s+(?:vinegar|wine|milk|oil|bran|noodles?|vermicelli|paper|cakes?|cereal|krispies|pudding|syrup|malt|crackers?|flour|starch|pasta|drink|water)\b)/i, 185],
+  [/\b(?:milk|cream(?!\s+cheese\b)|buttermilk|yogurt|yoghurt|water(?!\s+chestnuts?\b)|broth|stock)\b/i, 240],
+  [/\boil\b/i, 218],
+  [/\b(?:cheeses?|parmesan|cheddar|mozzarella)\b/i, 110],
 ];
 
 function gramsPerCupFor(name: string): number | null {
+  if (/\b(?:peanut|almond|cashew|sunflower|nut|seed|apple|cocoa|cookie|pumpkin|shea)\s+butter\b/i.test(name)) {
+    return null;
+  }
   for (const [re, grams] of GRAMS_PER_CUP) {
     if (re.test(name)) return grams;
   }
@@ -991,12 +1011,63 @@ function slugify(text: string): string {
     .slice(0, 60) || 'recipe';
 }
 
+/** Parse a rating in 1–10 (rounded to 1 decimal place), or undefined when missing/out of range. */
+export function normalizeRating(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  const n = typeof value === 'number' ? value : value.trim() ? Number(value.trim()) : NaN;
+  if (!Number.isFinite(n) || n < 1 || n > 10) return undefined;
+  return Math.round(n * 10) / 10;
+}
+
+/** Format a numeric rating as a star label, or '' when unrated. */
+export function formatRatingStars(rating?: number): string {
+  return typeof rating === 'number' && Number.isFinite(rating) && rating > 0 ? `★ ${rating.toFixed(1)}` : '';
+}
+
+const MAX_COOK_LOG_ENTRIES = 50;
+
+/** Sanitize cook log entries (max 50, newest-first order preserved). */
+export function normalizeCookLog(raw: unknown): CookLogEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const entries: CookLogEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const id = typeof rec.id === 'string' ? rec.id.trim().slice(0, 64) : '';
+    const cookedAtRaw = typeof rec.cookedAt === 'string' ? rec.cookedAt.trim() : '';
+    const parsedTime = cookedAtRaw ? Date.parse(cookedAtRaw) : NaN;
+    if (!id || Number.isNaN(parsedTime) || seen.has(id)) continue;
+    seen.add(id);
+
+    const rawServings = rec.servings;
+    const servingsNum =
+      typeof rawServings === 'number' || (typeof rawServings === 'string' && rawServings.trim() !== '')
+        ? Number(rawServings)
+        : NaN;
+    const servings =
+      Number.isFinite(servingsNum) && servingsNum > 0 ? Math.round(servingsNum * 100) / 100 || undefined : undefined;
+    const rating = normalizeRating(rec.rating);
+    const note = typeof rec.note === 'string' ? rec.note.trim().slice(0, 1000) : '';
+
+    entries.push({
+      id,
+      cookedAt: new Date(parsedTime).toISOString(),
+      ...(servings !== undefined ? { servings } : {}),
+      ...(rating !== undefined ? { rating } : {}),
+      ...(note ? { note } : {}),
+    });
+    if (entries.length >= MAX_COOK_LOG_ENTRIES) break;
+  }
+  return entries.length ? entries : undefined;
+}
+
 export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().toISOString()): Recipe {
   const title = typeof input?.title === 'string' ? input.title.trim().slice(0, 100) : '';
   if (!title) throw new RecipeInputError('Give the recipe a title.');
   const summary = typeof input?.summary === 'string' ? input.summary.trim().slice(0, 240) : '';
   const category: RecipeCategory = RECIPE_CATEGORIES.includes(input?.category) ? input.category : 'dinner';
-  const servings = Math.min(48, Math.max(1, Math.round(Number(input?.servings) || 4)));
+  const servings = clampServings(input?.servings, 4);
 
   // Empty steps and sections are dropped, so `readyBy` (written against the
   // editor's indices) is mapped onto the kept ones, or dropped if its step went.
@@ -1064,9 +1135,9 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
 
   // A rating sent as null (or out of range) clears it; one left out keeps the old one.
   const ratingInput = input && 'rating' in input ? input.rating : existing?.rating;
-  const rating =
-    Number(ratingInput) >= 1 && Number(ratingInput) <= 10 ? Math.round(Number(ratingInput) * 10) / 10 : undefined;
-  const notes = typeof input?.notes === 'string' ? input.notes.trim().slice(0, 1000) : existing?.notes;
+  const rating = normalizeRating(ratingInput);
+  const notes = typeof input?.notes === 'string' ? input.notes.trim().slice(0, 2000) : existing?.notes?.trim().slice(0, 2000);
+  const cookLog = normalizeCookLog(Array.isArray(input?.cookLog) ? input.cookLog : existing?.cookLog);
   const photo = isRecipePhotoSrc(input?.photo) ? input.photo : undefined;
   const emoji = typeof input?.emoji === 'string' ? cleanRecipeEmoji(input.emoji) : existing?.emoji;
   const sourceUrl = typeof input?.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(input.sourceUrl.trim()) ? input.sourceUrl.trim().slice(0, 500) : undefined;
@@ -1093,6 +1164,7 @@ export function normalizeRecipe(input: any, existing?: Recipe, now = new Date().
     ...(notes ? { notes } : {}),
     timesCooked: Math.max(0, Math.round(Number(existing?.timesCooked ?? input?.timesCooked ?? 0))),
     ...(existing?.lastCookedAt || input?.lastCookedAt ? { lastCookedAt: existing?.lastCookedAt || input?.lastCookedAt } : {}),
+    ...(cookLog ? { cookLog } : {}),
     sections,
     ...(sourceUrl ? { sourceUrl } : {}),
     ...(isPrivate ? { private: true } : {}),
@@ -1112,7 +1184,7 @@ export function isRecipePhotoSrc(src: unknown): src is string {
 
 const cleanSubLink = (raw: any): SubRecipeLink | undefined =>
   typeof raw?.recipeId === 'string' && /^[\w-]{1,60}$/.test(raw.recipeId)
-    ? { recipeId: raw.recipeId, servings: Math.min(48, Math.max(1, Math.round(Number(raw.servings)) || 1)) }
+    ? { recipeId: raw.recipeId, servings: clampServings(raw.servings, 1) }
     : undefined;
 
 // ─── Sub-recipes ──────────────────────────────────────────────────────────────

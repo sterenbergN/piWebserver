@@ -102,3 +102,33 @@ test('what can’t be used is said plainly, and nothing usable is an error', () 
   assert.throws(() => parseAiReply('{ "recipes": [] }', []), AiReplyError);
   assert.throws(() => parseAiReply('{ "recipes": [', []), AiReplyError);
 });
+
+test('a cut-off week reply keeps valid plan entries without bleeding across arrays', () => {
+  const mine = DEFAULT_RECIPES[0];
+  const cutPlanBeforeRecipes = `{
+    "plan": [
+      { "day": "Mon", "recipe": "Eggs", "servings": 2 },
+      { "day": "Tue", "recipe": ${JSON.stringify(mine.title)}, "servings": 4 },
+      { "day": "Wed", "recipe": "Toast", "servings": 2 }
+    ],
+    "recipes": [
+      { "title": "Eggs", "parts": [{ "name": "Main", "steps": ["Cook [1 egg]."] }] },
+      { "title": "Toast", "parts": [{ "name": "Main", "steps": ["Toa`;
+  const parsed = parseAiReply(cutPlanBeforeRecipes, [mine]);
+  assert.deepEqual(parsed.recipes.map((r) => r.title), ['Eggs']);
+  assert.deepEqual(parsed.plan.map((p) => [p.title, p.day, p.servings]), [
+    ['Eggs', 0, 2],
+    [mine.title, 1, 4],
+  ]);
+  assert.ok(parsed.notes.some((n) => /cut off/i.test(n)));
+  assert.ok(parsed.notes.some((n) => /Toast/.test(n)));
+
+  const cutMidPlan = `{
+    "recipes": [{ "title": "Eggs", "parts": [{ "name": "Main", "steps": ["Cook [1 egg]."] }] }],
+    "plan": [
+      { "day": "Fri", "recipe": "Eggs", "servings": 99 },
+      { "day": "Sat", "rec`;
+  const parsedMid = parseAiReply(cutMidPlan, []);
+  assert.deepEqual(parsedMid.recipes.map((r) => r.title), ['Eggs']);
+  assert.deepEqual(parsedMid.plan.map((p) => [p.title, p.day, p.servings]), [['Eggs', 4, 48]]);
+});

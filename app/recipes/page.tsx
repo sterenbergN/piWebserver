@@ -9,7 +9,9 @@ import { madeKey, recipesUsing, type Recipe, type UnitMode } from '@/lib/recipes
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import AddRecipeSheet from './AddRecipeSheet';
 import AiSheet from './AiSheet';
+import { RatingPicker, TweakChips, appendTweakNote, type CookFeedback } from './CookMode';
 import HouseholdSheet, { HouseholdBar } from './HouseholdSheet';
+import KitchenEquipmentSheet from './KitchenEquipmentSheet';
 import PantryView from './PantryView';
 import PlanSheet from './PlanSheet';
 import RecipeEditor, { emptyDraft, importedToDraft, recipeToDraft, type EditorDraft } from './RecipeEditor';
@@ -49,6 +51,7 @@ function Recipes() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [canEdit, setCanEdit] = useState(false);
+  const [editableIds, setEditableIds] = useState<string[]>([]);
   const [deletableIds, setDeletableIds] = useState<string[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [view, setView] = useState<View>('recipes');
@@ -56,13 +59,16 @@ function Recipes() {
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [showHousehold, setShowHousehold] = useState(false);
-  const [aiMode, setAiMode] = useState<'recipes' | 'week' | null>(null);
+  const [showEquipment, setShowEquipment] = useState(false);
+  const [aiMode, setAiMode] = useState<'recipes' | 'edit' | 'week' | null>(null);
+  const [aiEditRecipe, setAiEditRecipe] = useState<Recipe | null>(null);
   const [planning, setPlanning] = useState<{ recipe: Recipe; servings?: number } | null>(null);
   const [openServings, setOpenServings] = useState<number | undefined>();
   const [unitMode, setUnitMode] = useState<UnitMode>('us');
   const [flash, setFlash] = useState('');
   /** The last cook logged here, so a mistaken tap can be taken back for a few seconds. */
   const [lastCook, setLastCook] = useState<{ id: string; previous?: string; kitchenId: string } | null>(null);
+  const [postCook, setPostCook] = useState<{ recipeId: string; cookEntryId?: string; justLogged?: boolean } | null>(null);
   const timers = useRecipeTimers();
   const kitchen = useKitchen(canEdit);
 
@@ -82,9 +88,12 @@ function Recipes() {
         if (!Array.isArray(data?.recipes)) throw new Error('No recipes');
         setRecipes(data.recipes);
         setCanEdit(Boolean(data.canEdit));
-        setDeletableIds(Array.isArray(data.deletableIds) ? data.deletableIds : []);
+        const delIds = Array.isArray(data.deletableIds) ? data.deletableIds : [];
+        const edIds = Array.isArray(data.editableIds) ? data.editableIds : delIds;
+        setDeletableIds(delIds);
+        setEditableIds(edIds);
         setLoadState('ready');
-        savePref(RECIPES_COPY, JSON.stringify({ recipes: data.recipes, canEdit: Boolean(data.canEdit) }));
+        savePref(RECIPES_COPY, JSON.stringify({ recipes: data.recipes, canEdit: Boolean(data.canEdit), deletableIds: delIds, editableIds: edIds }));
       })
       .catch(() => {
         try {
@@ -92,6 +101,9 @@ function Recipes() {
           if (!Array.isArray(copy?.recipes)) throw new Error('No copy');
           setRecipes(copy.recipes);
           setCanEdit(Boolean(copy.canEdit));
+          const delIds = Array.isArray(copy.deletableIds) ? copy.deletableIds : [];
+          setDeletableIds(delIds);
+          setEditableIds(Array.isArray(copy.editableIds) ? copy.editableIds : delIds);
           setLoadState('ready');
           setFlash('Offline: showing your saved recipes');
         } catch {
@@ -165,38 +177,113 @@ function Recipes() {
   };
 
   // The count on the recipe is shared; what it took off the shelf is this household's.
-  const logCook = async (recipe: Recipe, undo = false, servings?: number) => {
+  const logCook = async (
+    recipe: Recipe,
+    undo = false,
+    servings?: number,
+    extra?: { rating?: number | null; notes?: string; cookNote?: string; openSheet?: boolean },
+  ): Promise<Recipe | null> => {
+    const plan = !undo ? planEntryFor(kitchen.state, recipe.id) : null;
+    const servingsUsed = servings ?? plan?.entry.servings ?? recipe.servings;
+    let updatedRecipe: Recipe | null = null;
     try {
       if (canEdit) {
-        const { res, data } = await postRecipe(
-          undo ? { type: 'uncooked', id: recipe.id, previousLastCookedAt: lastCook?.previous } : { type: 'cooked', id: recipe.id },
-        );
-        if (!res.ok || !data?.recipe) {
+        const body = undo
+          ? { type: 'cooked', id: recipe.id, undo: true, previousLastCookedAt: lastCook?.previous }
+          : {
+              type: 'cooked',
+              id: recipe.id,
+              ...(servingsUsed ? { servings: servingsUsed } : {}),
+              ...(extra?.rating !== undefined ? { rating: extra.rating } : {}),
+              ...(extra?.notes !== undefined ? { notes: extra.notes } : {}),
+              ...(extra?.cookNote !== undefined ? { cookNote: extra.cookNote } : {}),
+            };
+        const { res, data } = await postRecipe(body);
+        const saved = (data?.data ?? data?.recipe) as Recipe | undefined;
+        if (!res.ok || !saved) {
           await showAlert(data?.message || 'Could not update the cook log.');
-          return;
+          return null;
         }
-        setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? data.recipe : r)));
+        updatedRecipe = saved;
+        setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? saved : r)));
       }
       if (undo) {
         if (lastCook) kitchen.undoCook(lastCook.kitchenId);
         setLastCook(null);
       } else {
-        const plan = planEntryFor(kitchen.state, recipe.id);
-        const kitchenId = kitchen.cook(recipe, servings ?? plan?.entry.servings ?? recipe.servings, plan ?? undefined);
+        const kitchenId = kitchen.cook(recipe, servingsUsed, plan ?? undefined);
         setLastCook({ id: recipe.id, previous: recipe.lastCookedAt, kitchenId });
+        const shouldOpenSheet = extra?.openSheet ?? !extra;
+        if (canEdit && shouldOpenSheet) {
+          const target = updatedRecipe ?? recipe;
+          setPostCook({
+            recipeId: target.id,
+            cookEntryId: updatedRecipe?.cookLog?.[0]?.id,
+            justLogged: true,
+          });
+        }
       }
+      return updatedRecipe;
     } catch {
       await showAlert('Could not update the cook log.');
+      return null;
     }
   };
 
-  const rateRecipe = async (recipe: Recipe, rating: number) => {
-    try {
-      const { res, data } = await postRecipe({ type: 'rate', id: recipe.id, rating });
-      if (res.ok && data?.recipe) setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? data.recipe : r)));
-    } catch {
-      /* the rating just doesn't stick */
+  const saveRecipeFeedback = async (
+    recipe: Recipe,
+    payload: {
+      rating?: number | null;
+      notes?: string;
+      cookNote?: string;
+      cookEntryId?: string;
+      deleteLogEntryId?: string;
+      addLogEntry?: boolean;
+      servings?: number;
+    },
+  ): Promise<Recipe | null> => {
+    if (!canEdit) {
+      await showAlert('Sign in to save ratings and notes.');
+      return null;
     }
+    const isRate = payload.rating !== undefined;
+    try {
+      const { res, data } = await postRecipe({
+        type: isRate ? 'rate' : 'notes',
+        id: recipe.id,
+        ...payload,
+      });
+      const saved = (data?.data ?? data?.recipe) as Recipe | undefined;
+      if (!res.ok || !saved) {
+        await showAlert(data?.message || 'Could not save feedback.');
+        return null;
+      }
+      setRecipes((prev) => prev.map((r) => (r.id === recipe.id ? saved : r)));
+      setFlash(isRate ? 'Saved rating & notes' : 'Saved notes');
+      return saved;
+    } catch {
+      await showAlert('Could not save feedback.');
+      return null;
+    }
+  };
+
+  const completeCookFromMode = async (recipe: Recipe, feedback: CookFeedback, servings: number) => {
+    if (lastCook?.id === recipe.id) {
+      await saveRecipeFeedback(recipe, {
+        rating: feedback.rating,
+        cookNote: feedback.cookNote,
+        ...(feedback.notes !== undefined ? { notes: feedback.notes } : {}),
+        ...(recipe.cookLog?.[0]?.id ? { cookEntryId: recipe.cookLog[0].id } : { addLogEntry: true, servings }),
+      });
+      return;
+    }
+    const updated = await logCook(recipe, false, servings, {
+      rating: feedback.rating,
+      cookNote: feedback.cookNote,
+      ...(feedback.notes !== undefined ? { notes: feedback.notes } : {}),
+      openSheet: false,
+    });
+    if (updated) setFlash('Saved rating & notes');
   };
 
   const deleteRecipe = async (recipe: Recipe) => {
@@ -227,7 +314,10 @@ function Recipes() {
 
   const keepRecipe = (saved: Recipe, canDelete: boolean) => {
     setRecipes((prev) => (prev.some((r) => r.id === saved.id) ? prev.map((r) => (r.id === saved.id ? saved : r)) : [saved, ...prev]));
-    if (canDelete) setDeletableIds((prev) => (prev.includes(saved.id) ? prev : [...prev, saved.id]));
+    if (canDelete) {
+      setDeletableIds((prev) => (prev.includes(saved.id) ? prev : [...prev, saved.id]));
+      setEditableIds((prev) => (prev.includes(saved.id) ? prev : [...prev, saved.id]));
+    }
   };
 
   const handleSaved = (saved: Recipe, canDelete: boolean) => {
@@ -237,11 +327,29 @@ function Recipes() {
     go({ recipe: saved.slug, view });
   };
 
+  const postCookRecipe = useMemo(
+    () => (postCook ? cookable.find((r) => r.id === postCook.recipeId) ?? recipes.find((r) => r.id === postCook.recipeId) ?? null : null),
+    [postCook, cookable, recipes],
+  );
+
   const sheets = (
     <>
       {popup}
       <TimerAlerts timers={timers} />
       {flash && <div className="rc-flash" role="status">{flash}</div>}
+      {postCook && postCookRecipe && (
+        <PostCookSheet
+          key={`${postCookRecipe.id}:${postCook.cookEntryId ?? 'manual'}`}
+          recipe={postCookRecipe}
+          cookEntryId={postCook.cookEntryId}
+          justLogged={postCook.justLogged}
+          onClose={() => setPostCook(null)}
+          onSave={async (payload) => {
+            const saved = await saveRecipeFeedback(postCookRecipe, payload);
+            return Boolean(saved);
+          }}
+        />
+      )}
       {planning && (
         <PlanSheet
           recipe={planning.recipe}
@@ -252,23 +360,44 @@ function Recipes() {
           onDone={setFlash}
         />
       )}
+      {showEquipment && (
+        <KitchenEquipmentSheet kitchen={kitchen} onClose={() => setShowEquipment(false)} onFlash={setFlash} />
+      )}
       {aiMode && (
         <AiSheet
           mode={aiMode}
           recipes={recipes}
           kitchen={kitchen}
           week={week}
-          onClose={() => setAiMode(null)}
+          initialRecipe={aiEditRecipe ?? undefined}
+          canEditRecipe={aiEditRecipe ? editableIds.includes(aiEditRecipe.id) : false}
+          editableIds={editableIds}
+          onClose={() => {
+            setAiMode(null);
+            setAiEditRecipe(null);
+          }}
           onSaved={(saved, message) => {
             // Yours to delete: you added them, whatever wrote them.
             for (const recipe of saved) keepRecipe(recipe, true);
             if (!message) return; // saved some, and the sheet is showing what went wrong with the rest
+            const wasEdit = aiMode === 'edit';
             setAiMode(null);
+            setAiEditRecipe(null);
             setFlash(message);
+            if (wasEdit && saved.length === 1) {
+              go({ recipe: saved[0].slug, view });
+            }
           }}
           onCheckOne={(recipe) => {
             setAiMode(null);
+            setAiEditRecipe(null);
             setDraft({ ...recipeToDraft(recipe), id: undefined, isPrivate: true });
+          }}
+          onEditDraft={(edited, replaceOriginal) => {
+            setAiMode(null);
+            setAiEditRecipe(null);
+            const nextDraft = recipeToDraft(edited);
+            setDraft(replaceOriginal ? nextDraft : { ...nextDraft, id: undefined, isPrivate: true });
           }}
         />
       )}
@@ -287,6 +416,7 @@ function Recipes() {
           initial={draft}
           recipes={recipes}
           timers={timers}
+          kitchen={kitchen}
           onCancel={() => setDraft(null)}
           onSaved={handleSaved}
           onCreatedPart={keepRecipe}
@@ -305,6 +435,7 @@ function Recipes() {
           recipe={activeRecipe}
           initialServings={openServings}
           canEdit={canEdit}
+          canEditRecipe={editableIds.includes(activeRecipe.id)}
           canDelete={deletableIds.includes(activeRecipe.id)}
           kitchen={kitchen}
           usedBy={recipesUsing(activeRecipe.id, recipes)}
@@ -318,8 +449,23 @@ function Recipes() {
           onPlan={(servings) => setPlanning({ recipe: activeRecipe, servings })}
           onEdit={() => setDraft(recipeToDraft(recipes.find((r) => r.id === activeRecipe.id) ?? activeRecipe))}
           onDelete={() => deleteRecipe(activeRecipe)}
-          onLogCook={(undo, servings) => logCook(activeRecipe, undo, servings)}
-          onRate={(rating) => rateRecipe(activeRecipe, rating)}
+          onLogCook={(undo, servings, skipSheet) => logCook(activeRecipe, undo, servings, skipSheet ? { openSheet: false } : undefined)}
+          onRate={async (rating) => {
+            await saveRecipeFeedback(activeRecipe, { rating });
+          }}
+          onSaveNotes={async (notes) => {
+            await saveRecipeFeedback(activeRecipe, { notes });
+          }}
+          onDeleteLogEntry={async (deleteLogEntryId) => {
+            await saveRecipeFeedback(activeRecipe, { deleteLogEntryId });
+          }}
+          onOpenRateNotes={(cookEntryId) => setPostCook({ recipeId: activeRecipe.id, cookEntryId, justLogged: false })}
+          onCompleteCook={(feedback, servings) => completeCookFromMode(activeRecipe, feedback, servings)}
+          onOpenEquipment={() => setShowEquipment(true)}
+          onEditWithAi={() => {
+            setAiEditRecipe(recipes.find((r) => r.id === activeRecipe.id) ?? activeRecipe);
+            setAiMode('edit');
+          }}
           onFlash={setFlash}
           showAlert={showAlert}
         />
@@ -332,20 +478,30 @@ function Recipes() {
       {sheets}
       <div className={`rc-page${view === 'recipes' ? '' : ' rc-narrow'}`}>
         {/* Dividers in the recipe box. */}
-        <nav className="rc-dividers" aria-label="Recipes sections">
-          <button type="button" className={view === 'recipes' ? 'is-active' : ''} aria-current={view === 'recipes' ? 'page' : undefined} onClick={() => go({ view: 'recipes' })}>
-            Recipes
+        <div className="rc-dividers-wrap">
+          <nav className="rc-dividers" aria-label="Recipes sections">
+            <button type="button" className={view === 'recipes' ? 'is-active' : ''} aria-current={view === 'recipes' ? 'page' : undefined} onClick={() => go({ view: 'recipes' })}>
+              Recipes
+            </button>
+            <button type="button" className={view === 'week' ? 'is-active' : ''} aria-current={view === 'week' ? 'page' : undefined} onClick={() => go({ view: 'week' })}>
+              Week
+            </button>
+            <button type="button" className={view === 'list' ? 'is-active' : ''} aria-current={view === 'list' ? 'page' : undefined} onClick={() => go({ view: 'list' })}>
+              Shopping{toBuy ? <span className="rc-divider-count">{toBuy}</span> : null}
+            </button>
+            <button type="button" className={view === 'pantry' ? 'is-active' : ''} aria-current={view === 'pantry' ? 'page' : undefined} onClick={() => go({ view: 'pantry' })}>
+              Pantry{toCheck ? <span className="rc-divider-count">{toCheck}</span> : null}
+            </button>
+          </nav>
+          <button
+            type="button"
+            className={`rc-kitchen-btn${kitchen.state.equipment.length > 0 ? ' is-configured' : ''}`}
+            onClick={() => setShowEquipment(true)}
+            title="Choose cookware and appliances you own"
+          >
+            🍳 Kitchen{kitchen.state.equipment.length > 0 ? ` (${kitchen.state.equipment.length})` : ''}
           </button>
-          <button type="button" className={view === 'week' ? 'is-active' : ''} aria-current={view === 'week' ? 'page' : undefined} onClick={() => go({ view: 'week' })}>
-            Week
-          </button>
-          <button type="button" className={view === 'list' ? 'is-active' : ''} aria-current={view === 'list' ? 'page' : undefined} onClick={() => go({ view: 'list' })}>
-            Shopping{toBuy ? <span className="rc-divider-count">{toBuy}</span> : null}
-          </button>
-          <button type="button" className={view === 'pantry' ? 'is-active' : ''} aria-current={view === 'pantry' ? 'page' : undefined} onClick={() => go({ view: 'pantry' })}>
-            Pantry{toCheck ? <span className="rc-divider-count">{toCheck}</span> : null}
-          </button>
-        </nav>
+        </div>
 
         <div className="rc-divider-page">
           {view !== 'recipes' && <HouseholdBar kitchen={kitchen} canEdit={canEdit} onOpen={() => setShowHousehold(true)} />}
@@ -360,6 +516,7 @@ function Recipes() {
               onAdd={() => setShowAddSheet(true)}
               onPlan={(recipe) => setPlanning({ recipe })}
               onDismissNotFound={() => go({ view: 'recipes' })}
+              onOpenEquipment={() => setShowEquipment(true)}
             />
           )}
           {view === 'week' && (
@@ -384,6 +541,7 @@ function Recipes() {
               onCooked={(recipe, servings) => logCook(recipe, false, servings)}
               onShowList={() => go({ view: 'list' })}
               onFlash={setFlash}
+              onOpenEquipment={() => setShowEquipment(true)}
             />
           )}
           {view === 'list' && (
@@ -428,5 +586,131 @@ function Recipes() {
         />
       )}
     </>
+  );
+}
+
+const POST_COOK_CHIPS = [
+  'Spot on',
+  'Needs more salt',
+  'Cooked faster',
+  'Cooked longer',
+  'Doubled sauce',
+  'Crowd favorite',
+  'Make again soon',
+] as const;
+
+function PostCookSheet({
+  recipe,
+  cookEntryId,
+  justLogged,
+  onClose,
+  onSave,
+}: {
+  recipe: Recipe;
+  cookEntryId?: string;
+  justLogged?: boolean;
+  onClose: () => void;
+  onSave: (payload: {
+    rating?: number | null;
+    notes?: string;
+    cookNote?: string;
+    cookEntryId?: string;
+    addLogEntry?: boolean;
+  }) => Promise<boolean>;
+}) {
+  const linkedEntry = cookEntryId ? recipe.cookLog?.find((e) => e.id === cookEntryId) : undefined;
+  const initialRating = linkedEntry?.rating ?? recipe.rating ?? null;
+  const [rating, setRating] = useState<number | null>(initialRating);
+  const [cookNote, setCookNote] = useState(linkedEntry?.note ?? '');
+  const [pinnedNotes, setPinnedNotes] = useState(recipe.notes ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const includeRating = rating !== null || initialRating !== null;
+      const trimmedCookNote = cookNote.trim();
+      const ok = await onSave({
+        ...(includeRating ? { rating: rating ?? null } : {}),
+        notes: pinnedNotes,
+        ...(cookEntryId
+          ? { cookEntryId, cookNote: trimmedCookNote }
+          : trimmedCookNote
+            ? { cookNote: trimmedCookNote, addLogEntry: true }
+            : {}),
+      });
+      if (ok) onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rc-sheet-backdrop" onClick={onClose}>
+      <div
+        className="rc-sheet rc-postcook-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Rate and note ${recipe.title}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="rc-sheet-head">
+          <div>
+            <p className="rc-meta">{justLogged ? 'Cook logged' : 'Rate & cook notes'}</p>
+            <h2>{recipe.title}</h2>
+          </div>
+          <button type="button" className="rc-icon-btn" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <div className="rc-postcook-body">
+          <RatingPicker value={rating} onChange={setRating} disabled={saving} />
+
+          <div className="rc-field">
+            <label htmlFor="rc-postcook-note">
+              How did it turn out? <span className="rc-meta">(cook log note)</span>
+            </label>
+            <TweakChips
+              chips={POST_COOK_CHIPS}
+              disabled={saving}
+              onPick={(chip) => setCookNote((prev) => appendTweakNote(prev, chip))}
+            />
+            <textarea
+              id="rc-postcook-note"
+              className="rc-input"
+              rows={2}
+              placeholder="How was the flavor, timing, or texture this time?"
+              value={cookNote}
+              onChange={(e) => setCookNote(e.target.value)}
+            />
+          </div>
+
+          <div className="rc-field">
+            <label htmlFor="rc-postcook-pinned">
+              Pinned recipe notes <span className="rc-meta">(always shown on recipe)</span>
+            </label>
+            <textarea
+              id="rc-postcook-pinned"
+              className="rc-input"
+              rows={3}
+              placeholder="Permanent tweaks, substitutions, or temperature notes…"
+              value={pinnedNotes}
+              onChange={(e) => setPinnedNotes(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="rc-sheet-actions">
+          <button type="button" className="btn btn-secondary" disabled={saving} onClick={onClose}>
+            {justLogged ? 'Skip' : 'Done'}
+          </button>
+          <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

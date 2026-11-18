@@ -11,8 +11,9 @@ import {
   pantryChecks,
   pendingCooks,
 } from '@/lib/recipes/kitchen';
-import { parseIngredientLine, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
+import { MAX_SERVINGS, parseIngredientLine, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
 import PantrySheet from './PantrySheet';
+import KitchenEquipmentSheet from './KitchenEquipmentSheet';
 import { stockLabel } from './shared';
 import type { Kitchen } from './useKitchen';
 
@@ -32,6 +33,7 @@ export default function PantryView({
   onCooked,
   onShowList,
   onFlash,
+  onOpenEquipment,
 }: {
   recipes: Recipe[];
   kitchen: Kitchen;
@@ -41,6 +43,7 @@ export default function PantryView({
   onCooked: (recipe: Recipe, servings: number) => void;
   onShowList: () => void;
   onFlash: (message: string) => void;
+  onOpenEquipment?: () => void;
 }) {
   const { state } = kitchen;
   const today = localToday();
@@ -49,6 +52,8 @@ export default function PantryView({
   const [skipped, setSkipped] = useState<string[]>([]);
   const [open, setOpen] = useState<{ key: string; name: string } | null>(null);
   const [cooking, setCooking] = useState(false);
+  const [showEquip, setShowEquip] = useState(false);
+  const openEquipment = onOpenEquipment ?? (() => setShowEquip(true));
 
   const checks = useMemo(() => pantryChecks(state, today).filter((c) => !skipped.includes(c.key)), [state, today, skipped]);
   const pending = useMemo(() => pendingCooks(recipes, state, today), [recipes, state, today]);
@@ -138,6 +143,31 @@ export default function PantryView({
           </button>
         </section>
       )}
+
+      <section className="rc-ask-card rc-equip-card" aria-label="Kitchen Equipment">
+        <div className="rc-equip-card-head">
+          <p>
+            <strong>Kitchen Equipment</strong>
+            <small>
+              {state.equipment.length
+                ? `${state.equipment.length} ${state.equipment.length === 1 ? 'tool' : 'tools'} listed`
+                : 'No equipment listed yet — add your pots, pans & appliances'}
+            </small>
+          </p>
+          <button type="button" className="rc-paper-btn" onClick={openEquipment}>
+            Edit equipment
+          </button>
+        </div>
+        {state.equipment.length > 0 && (
+          <div className="rc-have-chips">
+            {state.equipment.map((item) => (
+              <span key={item} className="rc-chip rc-equip-chip is-active">
+                {item}
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
 
       {soon.length > 0 && (
         <section className="rc-pantry-note" aria-label="Use soon">
@@ -255,6 +285,8 @@ export default function PantryView({
         </details>
       )}
 
+      {showEquip && <KitchenEquipmentSheet kitchen={kitchen} onClose={() => setShowEquip(false)} onFlash={onFlash} />}
+
       {open && <PantrySheet itemKey={open.key} name={open.name} kitchen={kitchen} unitMode={unitMode} onClose={() => setOpen(null)} onFlash={onFlash} />}
 
       {cooking && (
@@ -296,7 +328,7 @@ function CookedSheet({ recipes, onClose, onDone }: { recipes: Recipe[]; onClose:
               <span>
                 {servings} {servings === 1 ? 'serving' : 'servings'}
               </span>
-              <button type="button" aria-label="More servings" onClick={() => setServings((s) => Math.min(48, s + 1))}>
+              <button type="button" aria-label="More servings" disabled={servings >= MAX_SERVINGS} onClick={() => setServings((s) => Math.min(MAX_SERVINGS, s + 1))}>
                 +
               </button>
             </div>
@@ -319,7 +351,7 @@ function CookedSheet({ recipes, onClose, onDone }: { recipes: Recipe[]; onClose:
                     type="button"
                     onClick={() => {
                       setPicked(recipe);
-                      setServings(recipe.servings);
+                      setServings(Math.min(MAX_SERVINGS, Math.max(1, recipe.servings)));
                     }}
                   >
                     <span className="rc-row-title">{recipe.title}</span>

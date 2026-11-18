@@ -2,8 +2,18 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { addDays, daysBetween, localToday, type DateKey } from '@/lib/habits/dates';
-import { AiReplyError, buildRecipePrompt, buildWeekPrompt, categoryLabel, parseAiReply, type AiReply } from '@/lib/recipes/ai';
-import { currentWeek, dayInfo, weekLabel } from '@/lib/recipes/kitchen';
+import {
+  AI_EDIT_PRESETS,
+  AiReplyError,
+  buildEditRecipePrompt,
+  buildRecipePrompt,
+  buildWeekPrompt,
+  categoryLabel,
+  parseAiEditReply,
+  parseAiReply,
+  type AiReply,
+} from '@/lib/recipes/ai';
+import { currentWeek, dayInfo, newKitchenId, weekLabel } from '@/lib/recipes/kitchen';
 import { buildSchedule, extractIngredients, resolveRecipes, type Recipe } from '@/lib/recipes/recipes';
 import { formatMinutes } from './shared';
 import type { Kitchen } from './useKitchen';
@@ -30,28 +40,39 @@ export default function AiSheet({
   recipes,
   kitchen,
   week: initialWeek,
+  initialRecipe,
+  canEditRecipe,
+  editableIds,
   onClose,
   onSaved,
   onCheckOne,
+  onEditDraft,
 }: {
-  mode: 'recipes' | 'week';
+  mode: 'recipes' | 'edit' | 'week';
   /** As stored, not resolved. */
   recipes: Recipe[];
   kitchen: Kitchen;
   week: DateKey;
+  initialRecipe?: Recipe;
+  canEditRecipe?: boolean;
+  editableIds?: string[];
   onClose: () => void;
   onSaved: (saved: Recipe[], message: string) => void;
   /** One recipe and no plan: open it in the editor to read over. */
   onCheckOne: (recipe: Recipe) => void;
+  onEditDraft?: (recipe: Recipe, replaceOriginal: boolean) => void;
 }) {
-  const [mode, setMode] = useState(initialMode);
+  const [mode, setMode] = useState<'recipes' | 'edit' | 'week'>(initialMode);
+  const [selectedEditId, setSelectedEditId] = useState(() => initialRecipe?.id ?? recipes[0]?.id ?? '');
   const [ask, setAsk] = useState('');
   const [count, setCount] = useState(1);
   const [meals, setMeals] = useState(5);
   const [prep, setPrep] = useState(0);
-  const [servings, setServings] = useState(4);
+  const [servings, setServings] = useState(() => initialRecipe?.servings ?? 4);
   const [usePantry, setUsePantry] = useState(true);
   const [useMine, setUseMine] = useState(true);
+  const [includeNotes, setIncludeNotes] = useState(true);
+  const [useEquipment, setUseEquipment] = useState(true);
   // Late in the week, "this week" is mostly gone, so planning starts from the next one.
   const [week, setWeek] = useState(() => {
     const now = currentWeek();
@@ -65,18 +86,57 @@ export default function AiSheet({
 
   const [replyText, setReplyText] = useState('');
   const [reply, setReply] = useState<AiReply | null>(null);
+  const [editResult, setEditResult] = useState<{ recipe: Recipe; summary: string[]; notes: string[] } | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const selectedRecipe = useMemo(
+    () => recipes.find((r) => r.id === selectedEditId) ?? initialRecipe ?? recipes[0] ?? null,
+    [recipes, selectedEditId, initialRecipe],
+  );
+
+  const canOverwrite = Boolean(
+    selectedRecipe &&
+      ((selectedRecipe.id === initialRecipe?.id && canEditRecipe) || editableIds?.includes(selectedRecipe.id)),
+  );
+
   const prompt = useMemo(() => {
+    if (mode === 'edit') {
+      if (!selectedRecipe) return '';
+      return buildEditRecipePrompt(
+        selectedRecipe,
+        { ask, servings, includeNotes, usePantry, useEquipment },
+        kitchen.state,
+        recipes,
+      );
+    }
     const options = { ask, servings, usePantry, useMine };
     return mode === 'recipes'
       ? buildRecipePrompt({ ...options, count }, kitchen.state, recipes)
       : buildWeekPrompt({ ...options, meals, prep, weekLabel: weekLabel(week) }, kitchen.state, recipes);
-  }, [mode, ask, servings, usePantry, useMine, count, meals, prep, week, kitchen.state, recipes]);
+  }, [mode, selectedRecipe, ask, servings, includeNotes, usePantry, useEquipment, useMine, count, meals, prep, week, kitchen.state, recipes]);
+
+  const switchMode = (next: 'recipes' | 'edit' | 'week') => {
+    setMode(next);
+    setReply(null);
+    setEditResult(null);
+    setError('');
+    setCopied('idle');
+  };
+
+  const applyPreset = (presetPrompt: string) => {
+    setAsk((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed) return presetPrompt;
+      if (trimmed.includes(presetPrompt)) return trimmed;
+      return `${trimmed} ${presetPrompt}`;
+    });
+    setCopied('idle');
+  };
 
   const copy = async () => {
+    if (!prompt) return;
     try {
       await navigator.clipboard.writeText(prompt);
       setCopied('copied');
@@ -94,8 +154,20 @@ export default function AiSheet({
   const read = () => {
     setError('');
     try {
+      if (mode === 'edit') {
+        if (!selectedRecipe) {
+          setError('Choose a recipe to edit first.');
+          return;
+        }
+        setEditResult(parseAiEditReply(replyText, selectedRecipe, recipes));
+        return;
+      }
       const parsed = parseAiReply(replyText, recipes, servings);
-      const singleToCheck = parsed.recipes.length === 1 && !parsed.plan.length && !parsed.recipes[0].sections.some((s) => s.sub);
+      const singleToCheck =
+        parsed.recipes.length === 1 &&
+        !parsed.plan.length &&
+        !parsed.notes.length &&
+        !parsed.recipes[0].sections.some((s) => s.sub);
       if (singleToCheck) onCheckOne(parsed.recipes[0]);
       else setReply(parsed);
     } catch (err) {
@@ -112,6 +184,16 @@ export default function AiSheet({
       return { recipe, ingredients: extractIngredients(full).length, minutes: buildSchedule(full).totalMinutes };
     });
   }, [reply, recipes]);
+
+  const editPreview = useMemo(() => {
+    if (!editResult) return null;
+    const all = resolveRecipes([...recipes.filter((r) => r.id !== editResult.recipe.id), editResult.recipe]);
+    const full = all.find((r) => r.id === editResult.recipe.id) ?? editResult.recipe;
+    return {
+      ingredients: extractIngredients(full).length,
+      minutes: buildSchedule(full).totalMinutes,
+    };
+  }, [editResult, recipes]);
 
   const save = async () => {
     if (!reply) return;
@@ -148,13 +230,59 @@ export default function AiSheet({
     }
   };
 
+  const saveEdit = async (asVariation: boolean) => {
+    if (!editResult || !selectedRecipe || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const sameTitle = editResult.recipe.title.trim().toLowerCase() === selectedRecipe.title.trim().toLowerCase();
+      const payloadRecipe: Recipe = asVariation
+        ? {
+            ...editResult.recipe,
+            id: newKitchenId(),
+            title: sameTitle ? `${editResult.recipe.title} (AI Edit)` : editResult.recipe.title,
+            private: true,
+            rating: undefined,
+            timesCooked: 0,
+            lastCookedAt: undefined,
+            cookLog: undefined,
+          }
+        : {
+            ...editResult.recipe,
+            id: selectedRecipe.id,
+            private: selectedRecipe.private,
+          };
+
+      const res = await fetch('/api/recipes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'save', recipe: payloadRecipe }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.recipe) throw new Error(data?.message || `Couldn’t save ${payloadRecipe.title}.`);
+      onSaved([data.recipe], asVariation ? `Saved variation "${data.recipe.title}"` : `Updated "${data.recipe.title}"`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const dayName = (day: number | null) => (day === null ? 'Meal prep' : dayInfo(week, day).name);
 
   return (
     <div className="rc-sheet-backdrop" onClick={onClose}>
       <div className="rc-sheet rc-ai-sheet" role="dialog" aria-modal="true" aria-label="Use your AI" onClick={(e) => e.stopPropagation()}>
         <div className="rc-sheet-head">
-          <h2>{reply ? 'Check it over' : mode === 'week' ? 'Plan a week with your AI' : 'Write recipes with your AI'}</h2>
+          <h2>
+            {reply || editResult
+              ? 'Check it over'
+              : mode === 'week'
+                ? 'Plan a week with your AI'
+                : mode === 'edit'
+                  ? 'Edit a recipe with your AI'
+                  : 'Write recipes with your AI'}
+          </h2>
           <button type="button" className="rc-icon-btn" onClick={onClose} aria-label="Close">
             ×
           </button>
@@ -163,7 +291,44 @@ export default function AiSheet({
         <div className="rc-ai-body">
           {error && <p className="rc-sheet-error" role="alert">{error}</p>}
 
-          {reply ? (
+          {editResult && selectedRecipe ? (
+            <>
+              <div className="rc-ai-week">
+                <h3 className="rc-ai-head">Updated recipe</h3>
+                <button type="button" className="rc-link-small" onClick={() => setEditResult(null)}>
+                  ‹ Edit prompt or reply
+                </button>
+              </div>
+              <p className="rc-row-title">{editResult.recipe.title}</p>
+              {editPreview && (
+                <p className="rc-meta">
+                  {categoryLabel(editResult.recipe)} · {formatMinutes(editPreview.minutes)} · {editPreview.ingredients} ingredients · serves {editResult.recipe.servings}
+                </p>
+              )}
+              {editResult.summary.length > 0 && (
+                <>
+                  <h3 className="rc-ai-head">What changed</h3>
+                  <ul className="rc-ai-summary-list">
+                    {editResult.summary.map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {editResult.notes.length > 0 && (
+                <ul className="rc-ai-notes">
+                  {editResult.notes.map((note, i) => (
+                    <li key={i}>{note}</li>
+                  ))}
+                </ul>
+              )}
+              {!canOverwrite && (
+                <p className="rc-meta">
+                  This is a built-in or read-only recipe, so save your changes as a new variation or open it in the editor.
+                </p>
+              )}
+            </>
+          ) : reply ? (
             <>
               {reply.notes.length > 0 && (
                 <ul className="rc-ai-notes">
@@ -217,20 +382,65 @@ export default function AiSheet({
           ) : (
             <>
               <div className="rc-seg rc-seg-wide" role="group" aria-label="What to ask for">
-                <button type="button" className={mode === 'recipes' ? 'is-active' : ''} aria-pressed={mode === 'recipes'} onClick={() => setMode('recipes')}>
+                <button type="button" className={mode === 'recipes' ? 'is-active' : ''} aria-pressed={mode === 'recipes'} onClick={() => switchMode('recipes')}>
                   Recipes
                 </button>
-                <button type="button" className={mode === 'week' ? 'is-active' : ''} aria-pressed={mode === 'week'} onClick={() => setMode('week')}>
+                {recipes.length > 0 && (
+                  <button type="button" className={mode === 'edit' ? 'is-active' : ''} aria-pressed={mode === 'edit'} onClick={() => switchMode('edit')}>
+                    Edit recipe
+                  </button>
+                )}
+                <button type="button" className={mode === 'week' ? 'is-active' : ''} aria-pressed={mode === 'week'} onClick={() => switchMode('week')}>
                   A week’s meals
                 </button>
               </div>
 
+              {mode === 'edit' && (
+                <>
+                  <label className="rc-field">
+                    Recipe to edit
+                    <select
+                      className="rc-input"
+                      value={selectedRecipe?.id ?? ''}
+                      onChange={(e) => {
+                        const next = recipes.find((r) => r.id === e.target.value);
+                        setSelectedEditId(e.target.value);
+                        if (next) setServings(next.servings);
+                        setCopied('idle');
+                      }}
+                    >
+                      {recipes.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="rc-field">
+                    Quick presets
+                    <div className="rc-ai-presets">
+                      {AI_EDIT_PRESETS.map((preset) => (
+                        <button key={preset.id} type="button" className="rc-chip" onClick={() => applyPreset(preset.prompt)}>
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
               <label className="rc-field">
-                What are you after?
+                {mode === 'edit' ? 'How should the AI change it?' : 'What are you after?'}
                 <textarea
                   className="rc-input"
                   rows={2}
-                  placeholder={mode === 'week' ? 'High protein, no mushrooms, quick on Tuesday and Thursday' : 'A Greek beef bowl with homemade tzatziki'}
+                  placeholder={
+                    mode === 'week'
+                      ? 'High protein, no mushrooms, quick on Tuesday and Thursday'
+                      : mode === 'edit'
+                        ? 'Apply my cook notes, swap butter for olive oil, and boost protein'
+                        : 'A Greek beef bowl with homemade tzatziki'
+                  }
                   value={ask}
                   onChange={(e) => setAsk(e.target.value)}
                 />
@@ -246,9 +456,10 @@ export default function AiSheet({
               )}
 
               <div className="rc-ai-steppers">
-                {mode === 'recipes' ? (
+                {mode === 'recipes' && (
                   <Stepper label="How many recipes" unit={['recipe', 'recipes']} value={count} min={1} max={10} onChange={setCount} />
-                ) : (
+                )}
+                {mode === 'week' && (
                   <>
                     <Stepper label="How many meals" unit={['meal', 'meals']} value={meals} min={1} max={21} onChange={setMeals} />
                     <Stepper label="How many of them are meal prep" unit={['meal prep', 'meal prep']} value={prep} min={0} max={Math.min(5, meals)} onChange={setPrep} />
@@ -257,27 +468,61 @@ export default function AiSheet({
                 <Stepper label="Servings" unit={['serving', 'servings']} value={servings} min={1} max={48} onChange={setServings} />
               </div>
 
+              {mode === 'edit' && (
+                <>
+                  <label className="rc-toggle">
+                    <input type="checkbox" checked={includeNotes} onChange={(e) => setIncludeNotes(e.target.checked)} />
+                    <span>
+                      Fold in cook notes &amp; log
+                      <small>
+                        {selectedRecipe?.notes?.trim() || selectedRecipe?.cookLog?.some((e) => e.note?.trim())
+                          ? 'Sends your pinned notes and past cook feedback'
+                          : 'No notes on this recipe yet'}
+                      </small>
+                    </span>
+                  </label>
+                  <label className="rc-toggle">
+                    <input type="checkbox" checked={useEquipment} onChange={(e) => setUseEquipment(e.target.checked)} />
+                    <span>
+                      Use only my kitchen gear
+                      <small>
+                        {kitchen.state.equipment.length
+                          ? `${kitchen.state.equipment.length} ${kitchen.state.equipment.length === 1 ? 'tool' : 'tools'} selected`
+                          : 'No kitchen gear selected yet'}
+                      </small>
+                    </span>
+                  </label>
+                </>
+              )}
+
               <label className="rc-toggle">
                 <input type="checkbox" checked={usePantry} onChange={(e) => setUsePantry(e.target.checked)} />
                 <span>
                   Tell it what’s in my pantry
-                  <small>{kitchen.state.have.length ? `${kitchen.state.have.length} things, so it can use them up` : 'Nothing marked yet'}</small>
+                  <small>
+                    {kitchen.state.have.length
+                      ? `${kitchen.state.have.length} ${kitchen.state.have.length === 1 ? 'thing' : 'things'}, so it can use ${kitchen.state.have.length === 1 ? 'it' : 'them'} up`
+                      : 'Nothing marked yet'}
+                  </small>
                 </span>
               </label>
-              <label className="rc-toggle">
-                <input type="checkbox" checked={useMine} onChange={(e) => setUseMine(e.target.checked)} />
-                <span>
-                  Tell it the recipes I have
-                  <small>{mode === 'week' ? 'So it mixes them in instead of rewriting them' : 'So it doesn’t write them again'}</small>
-                </span>
-              </label>
+
+              {mode !== 'edit' && (
+                <label className="rc-toggle">
+                  <input type="checkbox" checked={useMine} onChange={(e) => setUseMine(e.target.checked)} />
+                  <span>
+                    Tell it the recipes I have
+                    <small>{mode === 'week' ? 'So it mixes them in instead of rewriting them' : 'So it doesn’t write them again'}</small>
+                  </span>
+                </label>
+              )}
 
               <section className={`rc-ai-step${copied === 'copied' ? ' is-done' : ''}`}>
                 <h3>
                   <span className="rc-ai-num">{copied === 'copied' ? '✓' : 1}</span> Copy this into your AI
                 </h3>
                 <div className="rc-ai-actions">
-                  <button type="button" className={`btn ${copied === 'copied' ? 'btn-secondary' : 'btn-primary'}`} onClick={copy}>
+                  <button type="button" className={`btn ${copied === 'copied' ? 'btn-secondary' : 'btn-primary'}`} disabled={!prompt} onClick={copy}>
                     {copied === 'copied' ? 'Copied' : 'Copy prompt'}
                   </button>
                   <button type="button" className="rc-text-btn" aria-expanded={showPrompt} onClick={() => setShowPrompt((v) => !v)}>
@@ -308,8 +553,27 @@ export default function AiSheet({
           )}
         </div>
 
-        <div className="rc-sheet-actions">
-          {reply ? (
+        <div className={`rc-sheet-actions${editResult ? ' rc-sheet-actions-3' : ''}`}>
+          {editResult ? (
+            <>
+              {canOverwrite && (
+                <button type="button" className="btn btn-primary" disabled={saving} onClick={() => saveEdit(false)}>
+                  {saving ? 'Saving…' : 'Save to recipe'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={saving}
+                onClick={() => (onEditDraft ? onEditDraft(editResult.recipe, canOverwrite) : onCheckOne(editResult.recipe))}
+              >
+                Review in editor
+              </button>
+              <button type="button" className={canOverwrite ? 'btn btn-secondary' : 'btn btn-primary'} disabled={saving} onClick={() => saveEdit(true)}>
+                {saving ? 'Saving…' : 'Save as variation'}
+              </button>
+            </>
+          ) : reply ? (
             <>
               <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setReply(null)}>
                 Back

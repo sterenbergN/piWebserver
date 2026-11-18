@@ -2,9 +2,11 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { mediaSrc } from '@/lib/media-url';
+import { AI_EDIT_PRESETS, AiReplyError, buildEditRecipePrompt, parseAiEditReply } from '@/lib/recipes/ai';
 import {
   CATEGORY_LABELS,
   EQUIPMENT_OPTIONS,
+  MAX_SERVINGS,
   RECIPE_CATEGORIES,
   buildSchedule,
   canonicalEquipment,
@@ -24,6 +26,7 @@ import {
 } from '@/lib/recipes/recipes';
 import type { ImportedRecipe } from '@/lib/recipes/import';
 import { TimerPills } from './shared';
+import type { Kitchen } from './useKitchen';
 import type { RecipeTimers } from './useRecipeTimers';
 
 export type EditorDraft = {
@@ -158,6 +161,7 @@ export default function RecipeEditor({
   initial,
   recipes,
   timers,
+  kitchen,
   onCancel,
   onSaved,
   onCreatedPart,
@@ -167,6 +171,7 @@ export default function RecipeEditor({
   /** Every recipe as stored, to use as parts. */
   recipes: Recipe[];
   timers: RecipeTimers;
+  kitchen?: Kitchen;
   onCancel: () => void;
   onSaved: (recipe: Recipe, canDelete: boolean) => void;
   /** A part was split off into a recipe of its own, without leaving this one. */
@@ -184,6 +189,7 @@ export default function RecipeEditor({
   const [showEmojis, setShowEmojis] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  const [showAiEdit, setShowAiEdit] = useState(false);
 
   // The last focused step and caret, so the token buttons insert at the cursor.
   const focusedStepRef = useRef<{ sIdx: number; stIdx: number; caret: number } | null>(null);
@@ -419,6 +425,13 @@ export default function RecipeEditor({
       </div>
 
       <div className="rc-form">
+        <div className="rc-editor-ai-bar">
+          <span className="rc-meta">Revise steps, macros, or gear with AI</span>
+          <button type="button" className="rc-chip rc-ai-edit-btn" onClick={() => setShowAiEdit(true)}>
+            ✨ Edit draft with AI
+          </button>
+        </div>
+
         {!draft.id && draft.sourceUrl && (
           <p className="rc-import-note">
             Imported from {draft.sourceUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}. Give it a quick read: amounts were matched to the steps automatically.
@@ -452,10 +465,10 @@ export default function RecipeEditor({
               type="number"
               inputMode="numeric"
               min={1}
-              max={48}
+              max={MAX_SERVINGS}
               className="rc-input"
               value={draft.servings}
-              onChange={(e) => update('servings', Math.max(1, Number(e.target.value) || 1))}
+              onChange={(e) => update('servings', Math.min(MAX_SERVINGS, Math.max(1, Number(e.target.value) || 1)))}
             />
           </label>
         </div>
@@ -574,7 +587,7 @@ export default function RecipeEditor({
                   <span>
                     {sec.sub.servings} {sec.sub.servings === 1 ? 'serving' : 'servings'} of it
                   </span>
-                  <button type="button" aria-label="More servings" onClick={() => setSection(sIdx, { ...sec, sub: { ...sec.sub!, servings: Math.min(48, sec.sub!.servings + 1) } })}>
+                  <button type="button" aria-label="More servings" disabled={sec.sub.servings >= MAX_SERVINGS} onClick={() => setSection(sIdx, { ...sec, sub: { ...sec.sub!, servings: Math.min(MAX_SERVINGS, sec.sub!.servings + 1) } })}>
                     +
                   </button>
                 </div>
@@ -859,6 +872,283 @@ export default function RecipeEditor({
           </div>
         </div>
       )}
+
+      {showAiEdit && (
+        <EditorAiSheet
+          draft={draft}
+          recipes={recipes}
+          kitchen={kitchen}
+          onClose={() => setShowAiEdit(false)}
+          onApply={(edited) => {
+            focusedStepRef.current = null;
+            setDraft((prev) => ({
+              ...prev,
+              title: edited.title,
+              summary: edited.summary,
+              category: edited.category,
+              servings: edited.servings,
+              prepMinutes: edited.prepMinutes ? String(edited.prepMinutes) : '',
+              cookMinutes: edited.cookMinutes ? String(edited.cookMinutes) : '',
+              equipment: edited.equipment,
+              tagsText: edited.tags.join(', '),
+              emoji: edited.emoji || prev.emoji,
+              calories: edited.macros?.calories !== undefined ? String(edited.macros.calories) : '',
+              protein: edited.macros?.protein !== undefined ? String(edited.macros.protein) : '',
+              carbs: edited.macros?.carbs !== undefined ? String(edited.macros.carbs) : '',
+              fat: edited.macros?.fat !== undefined ? String(edited.macros.fat) : '',
+              notes: edited.notes || prev.notes,
+              sections: edited.sections.length ? edited.sections.map((s) => ({ ...s, steps: [...s.steps] })) : prev.sections,
+            }));
+            setShowAiEdit(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditorAiSheet({
+  draft,
+  recipes,
+  kitchen,
+  onClose,
+  onApply,
+}: {
+  draft: EditorDraft;
+  recipes: Recipe[];
+  kitchen?: Kitchen;
+  onClose: () => void;
+  onApply: (edited: Recipe) => void;
+}) {
+  const [ask, setAsk] = useState('');
+  const [includeNotes, setIncludeNotes] = useState(true);
+  const [useEquipment, setUseEquipment] = useState(true);
+  const [usePantry, setUsePantry] = useState(false);
+  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState<{ recipe: Recipe; summary: string[]; notes: string[] } | null>(null);
+  const promptBox = useRef<HTMLTextAreaElement>(null);
+
+  const draftRecipe = useMemo<Partial<Recipe> & { title: string; sections: RecipeSection[] }>(() => {
+    const existing = draft.id ? recipes.find((r) => r.id === draft.id) : undefined;
+    const tags = draft.tagsText.split(',').map((s) => s.trim()).filter(Boolean);
+    const macros = {
+      ...(draft.calories ? { calories: Number(draft.calories) } : {}),
+      ...(draft.protein !== '' ? { protein: Number(draft.protein) } : {}),
+      ...(draft.carbs !== '' ? { carbs: Number(draft.carbs) } : {}),
+      ...(draft.fat !== '' ? { fat: Number(draft.fat) } : {}),
+    };
+    return {
+      ...(draft.id ? { id: draft.id } : {}),
+      title: draft.title.trim() || 'Untitled recipe',
+      summary: draft.summary.trim(),
+      category: draft.category,
+      servings: draft.servings,
+      equipment: draft.equipment,
+      tags,
+      ...(Object.keys(macros).length ? { macros } : {}),
+      notes: draft.notes,
+      ...(existing?.cookLog ? { cookLog: existing.cookLog } : {}),
+      sections: draft.sections.map((s) => ({
+        ...s,
+        steps: s.steps.filter((step) => step.trim()),
+      })),
+    };
+  }, [draft, recipes]);
+
+  const prompt = useMemo(
+    () =>
+      buildEditRecipePrompt(
+        draftRecipe,
+        { ask, servings: draft.servings, includeNotes, usePantry, useEquipment },
+        kitchen?.state,
+        recipes,
+      ),
+    [draftRecipe, ask, draft.servings, includeNotes, usePantry, useEquipment, kitchen?.state, recipes],
+  );
+
+  const applyPreset = (presetPrompt: string) => {
+    setAsk((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed) return presetPrompt;
+      if (trimmed.includes(presetPrompt)) return trimmed;
+      return `${trimmed} ${presetPrompt}`;
+    });
+    setCopied('idle');
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied('copied');
+    } catch {
+      setShowPrompt(true);
+      setCopied('failed');
+      window.setTimeout(() => {
+        promptBox.current?.focus();
+        promptBox.current?.select();
+      }, 0);
+    }
+  };
+
+  const read = () => {
+    setError('');
+    try {
+      setPreview(parseAiEditReply(replyText, draftRecipe, recipes));
+    } catch (err) {
+      setError(err instanceof AiReplyError ? err.message : 'I couldn’t read that. Ask the AI to send it again as one JSON code block.');
+    }
+  };
+
+  return (
+    <div className="rc-sheet-backdrop" onClick={onClose}>
+      <div className="rc-sheet rc-ai-sheet" role="dialog" aria-modal="true" aria-label="Edit draft with AI" onClick={(e) => e.stopPropagation()}>
+        <div className="rc-sheet-head">
+          <h2>{preview ? 'Apply AI changes' : 'Edit draft with AI'}</h2>
+          <button type="button" className="rc-icon-btn" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <div className="rc-ai-body">
+          {error && <p className="rc-sheet-error" role="alert">{error}</p>}
+
+          {preview ? (
+            <>
+              <p className="rc-row-title">{preview.recipe.title}</p>
+              {preview.summary.length > 0 && (
+                <>
+                  <h3 className="rc-ai-head">What changed</h3>
+                  <ul className="rc-ai-summary-list">
+                    {preview.summary.map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {preview.notes.length > 0 && (
+                <ul className="rc-ai-notes">
+                  {preview.notes.map((note, i) => (
+                    <li key={i}>{note}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="rc-field">
+                Quick presets
+                <div className="rc-ai-presets">
+                  {AI_EDIT_PRESETS.map((preset) => (
+                    <button key={preset.id} type="button" className="rc-chip" onClick={() => applyPreset(preset.prompt)}>
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="rc-field">
+                How should the AI change this draft?
+                <textarea
+                  className="rc-input"
+                  rows={2}
+                  placeholder="Boost protein, adapt for an air fryer, or fold in my cook notes"
+                  value={ask}
+                  onChange={(e) => setAsk(e.target.value)}
+                />
+              </label>
+
+              <label className="rc-toggle">
+                <input type="checkbox" checked={includeNotes} onChange={(e) => setIncludeNotes(e.target.checked)} />
+                <span>
+                  Fold in cook notes &amp; log
+                  <small>Includes your draft notes and past cook feedback</small>
+                </span>
+              </label>
+
+              {kitchen && (
+                <>
+                  <label className="rc-toggle">
+                    <input type="checkbox" checked={useEquipment} onChange={(e) => setUseEquipment(e.target.checked)} />
+                    <span>
+                      Use only my kitchen gear
+                      <small>
+                        {kitchen.state.equipment.length
+                          ? `${kitchen.state.equipment.length} tools selected`
+                          : 'No kitchen gear selected yet'}
+                      </small>
+                    </span>
+                  </label>
+                  <label className="rc-toggle">
+                    <input type="checkbox" checked={usePantry} onChange={(e) => setUsePantry(e.target.checked)} />
+                    <span>
+                      Tell it what’s in my pantry
+                      <small>{kitchen.state.have.length ? `${kitchen.state.have.length} items marked` : 'Nothing marked yet'}</small>
+                    </span>
+                  </label>
+                </>
+              )}
+
+              <section className={`rc-ai-step${copied === 'copied' ? ' is-done' : ''}`}>
+                <h3>
+                  <span className="rc-ai-num">{copied === 'copied' ? '✓' : 1}</span> Copy this into your AI
+                </h3>
+                <div className="rc-ai-actions">
+                  <button type="button" className={`btn ${copied === 'copied' ? 'btn-secondary' : 'btn-primary'}`} onClick={copy}>
+                    {copied === 'copied' ? 'Copied' : 'Copy prompt'}
+                  </button>
+                  <button type="button" className="rc-text-btn" aria-expanded={showPrompt} onClick={() => setShowPrompt((v) => !v)}>
+                    {showPrompt ? 'Hide the prompt' : 'Read the prompt'}
+                  </button>
+                </div>
+                {copied === 'failed' && <p className="rc-sheet-error">Couldn’t reach the clipboard. It’s selected below, so copy it from there.</p>}
+                {showPrompt && <textarea ref={promptBox} className="rc-input rc-ai-prompt" readOnly rows={7} value={prompt} aria-label="The prompt to copy" />}
+              </section>
+
+              <section className="rc-ai-step">
+                <h3>
+                  <span className="rc-ai-num">2</span> Paste what it wrote
+                </h3>
+                <textarea
+                  className="rc-input"
+                  rows={replyText ? 6 : 3}
+                  placeholder="Paste the whole reply here"
+                  aria-label="The AI’s reply"
+                  value={replyText}
+                  onChange={(e) => {
+                    setReplyText(e.target.value);
+                    setError('');
+                  }}
+                />
+              </section>
+            </>
+          )}
+        </div>
+
+        <div className="rc-sheet-actions">
+          {preview ? (
+            <>
+              <button type="button" className="btn btn-secondary" onClick={() => setPreview(null)}>
+                Back
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => onApply(preview.recipe)}>
+                Apply to editor
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn btn-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" disabled={!replyText.trim()} onClick={read}>
+                Read the reply
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

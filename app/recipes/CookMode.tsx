@@ -77,6 +77,122 @@ function BigTimer({ id, seg, label, recipeSlug, timers }: { id: string; seg: Tim
   );
 }
 
+const COOK_FINISH_CHIPS = ['Spot on', 'More seasoning', 'Less time', 'More time', 'Keeper'] as const;
+
+export function ratingDescriptor(rating?: number | null): string {
+  if (!rating || rating <= 0) return '';
+  if (rating >= 9.8) return 'Perfect';
+  if (rating >= 9) return 'Favorite';
+  if (rating >= 8) return 'Great';
+  if (rating >= 7) return 'Very good';
+  if (rating >= 6) return 'Good';
+  if (rating >= 5) return 'Okay';
+  if (rating >= 3) return 'Fair';
+  return 'Needs work';
+}
+
+export function formatScoreLabel(rating?: number | null): string {
+  if (!rating || rating <= 0) return 'Unrated';
+  const num = Number.isInteger(rating) ? String(rating) : rating.toFixed(1);
+  return `★ ${num} · ${ratingDescriptor(rating)}`;
+}
+
+export function appendTweakNote(current: string, chip: string): string {
+  const trimmed = current.trim();
+  if (!trimmed) return chip;
+  if (trimmed.toLowerCase().endsWith(chip.toLowerCase())) return trimmed;
+  const sep = /[.!?]$/.test(trimmed) || /[,;]$/.test(trimmed) ? ' ' : ', ';
+  return `${trimmed}${sep}${chip}`;
+}
+
+/** Combined 5-star and 1–10 pill rating control with descriptor label and clear action. */
+export function RatingPicker({
+  value,
+  onChange,
+  disabled,
+  label = 'Rating from 1 to 10',
+}: {
+  value?: number | null;
+  onChange: (next: number | null) => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  const current = value && value > 0 ? value : 0;
+  return (
+    <div className="rc-rate-box">
+      <div className="rc-rate-head">
+        <div className="rc-rate-stars" role="group" aria-label="Star rating">
+          {[1, 2, 3, 4, 5].map((star) => {
+            const full = current >= star * 2;
+            const half = !full && current >= star * 2 - 1;
+            return (
+              <button
+                key={star}
+                type="button"
+                className={full ? 'is-on' : half ? 'is-half' : ''}
+                disabled={disabled}
+                aria-label={`${star} of 5 stars (${star * 2} of 10)`}
+                onClick={() => onChange(star * 2)}
+              >
+                ★
+              </button>
+            );
+          })}
+        </div>
+        <div className="rc-rate-meta">
+          <span className={`rc-rate-label${current ? '' : ' is-empty'}`}>{formatScoreLabel(current)}</span>
+          {current > 0 && !disabled && (
+            <button type="button" className="rc-text-btn rc-rate-clear" onClick={() => onChange(null)}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="rc-rate-pills" role="group" aria-label={label}>
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={`rc-rate-pill${current === n ? ' is-active' : ''}`}
+            aria-pressed={current === n}
+            disabled={disabled}
+            onClick={() => onChange(n)}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One-tap chips that append quick cooking observations into a note field. */
+export function TweakChips({
+  chips,
+  onPick,
+  disabled,
+}: {
+  chips: readonly string[];
+  onPick: (chip: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rc-tweak-chips">
+      {chips.map((chip) => (
+        <button key={chip} type="button" className="rc-chip rc-tweak-chip" disabled={disabled} onClick={() => onPick(chip)}>
+          + {chip}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export type CookFeedback = {
+  rating: number | null;
+  cookNote: string;
+  notes?: string;
+};
+
 /**
  * One step at a time, filling the screen, with the buttons where a thumb
  * reaches: every part of the recipe merged in the order to do things, so a
@@ -99,6 +215,8 @@ export default function CookMode({
   onStep,
   onClose,
   onLogCook,
+  onSaveNotes,
+  onCompleteCook,
   kitchen,
   keepsBatch,
 }: {
@@ -119,12 +237,35 @@ export default function CookMode({
   onStep: (step: number) => void;
   onClose: () => void;
   onLogCook: (undo?: boolean) => void;
+  onSaveNotes?: (notes: string) => Promise<void> | void;
+  onCompleteCook?: (feedback: CookFeedback) => Promise<void> | void;
   kitchen?: Kitchen;
   /** Other recipes use this one as a part, so a batch of it is worth keeping track of. */
   keepsBatch?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [showIngredients, setShowIngredients] = useState(false);
+  const [showQuickNote, setShowQuickNote] = useState(false);
+  const [quickNoteText, setQuickNoteText] = useState('');
+  const [savingQuickNote, setSavingQuickNote] = useState(false);
+
+  const [finishRating, setFinishRating] = useState<number | null>(rating ?? null);
+  const [ratingDirty, setRatingDirty] = useState(false);
+  const [finishCookNote, setFinishCookNote] = useState('');
+  const [finishPinnedNotes, setFinishPinnedNotes] = useState(recipe.notes || '');
+  const [pinnedDirty, setPinnedDirty] = useState(false);
+  const [showPinnedNotes, setShowPinnedNotes] = useState(false);
+  const [savingFinish, setSavingFinish] = useState(false);
+  const [finishSaved, setFinishSaved] = useState(false);
+
+  useEffect(() => {
+    if (!ratingDirty) setFinishRating(rating ?? null);
+  }, [rating, ratingDirty]);
+
+  useEffect(() => {
+    if (!pinnedDirty) setFinishPinnedNotes(recipe.notes || '');
+  }, [recipe.notes, pinnedDirty]);
+
   const finished = step >= order.length;
   const block = finished ? null : order[step];
   const text = block ? recipe.sections[block.sectionIndex]?.steps[block.stepIndex] ?? '' : '';
@@ -141,18 +282,26 @@ export default function CookMode({
     };
   }, []);
 
-  const stepRef = useRef({ step, finished, showIngredients });
+  const stepRef = useRef({ step, finished, showIngredients, showQuickNote });
   useEffect(() => {
-    stepRef.current = { step, finished, showIngredients };
-  }, [step, finished, showIngredients]);
+    stepRef.current = { step, finished, showIngredients, showQuickNote };
+  }, [step, finished, showIngredients, showQuickNote]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const cur = stepRef.current;
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      const typing = targetTag === 'TEXTAREA' || targetTag === 'INPUT';
+      if (cur.showQuickNote) {
+        if (e.key === 'Escape') setShowQuickNote(false);
+        return;
+      }
       if (cur.showIngredients) {
         if (e.key === 'Escape') setShowIngredients(false);
-      } else if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowRight' && !cur.finished) onStep(cur.step + 1);
-      else if (e.key === 'ArrowLeft' && cur.step > 0) onStep(cur.step - 1);
+        return;
+      }
+      if (e.key === 'Escape') onClose();
+      else if (!typing && e.key === 'ArrowRight' && !cur.finished) onStep(cur.step + 1);
+      else if (!typing && e.key === 'ArrowLeft' && cur.step > 0) onStep(cur.step - 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -163,6 +312,7 @@ export default function CookMode({
   const onTouchEnd = (e: React.TouchEvent) => {
     const start = touchStart.current;
     touchStart.current = null;
+    if (showIngredients || showQuickNote) return;
     const touch = e.changedTouches[0];
     if (!start || !touch) return;
     const dx = touch.clientX - start.x;
@@ -170,6 +320,39 @@ export default function CookMode({
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
     if (dx < 0 && !finished) onStep(step + 1);
     if (dx > 0 && step > 0) onStep(step - 1);
+  };
+
+  const openQuickNote = () => {
+    setQuickNoteText(finished ? '' : `Step ${step + 1}: `);
+    setShowQuickNote(true);
+  };
+
+  const saveQuickNote = async () => {
+    const trimmed = quickNoteText.trim();
+    if (!trimmed || !onSaveNotes || savingQuickNote) return;
+    setSavingQuickNote(true);
+    try {
+      const nextNotes = recipe.notes?.trim() ? `${recipe.notes.trim()}\n${trimmed}` : trimmed;
+      await onSaveNotes(nextNotes);
+      setShowQuickNote(false);
+    } finally {
+      setSavingQuickNote(false);
+    }
+  };
+
+  const handleCompleteCook = async () => {
+    if (!onCompleteCook || savingFinish) return;
+    setSavingFinish(true);
+    try {
+      await onCompleteCook({
+        rating: finishRating,
+        cookNote: finishCookNote.trim(),
+        notes: pinnedDirty || showPinnedNotes ? finishPinnedNotes : undefined,
+      });
+      setFinishSaved(true);
+    } finally {
+      setSavingFinish(false);
+    }
   };
 
   // Timers from this step sit under it; any others stay in view along the bottom.
@@ -189,6 +372,11 @@ export default function CookMode({
       aria-label={`Cooking ${recipe.title}`}
       tabIndex={-1}
       onTouchStart={(e) => {
+        const tag = (e.target as HTMLElement | null)?.tagName;
+        if (tag === 'TEXTAREA' || tag === 'INPUT') {
+          touchStart.current = null;
+          return;
+        }
         const touch = e.touches[0];
         touchStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
       }}
@@ -199,9 +387,16 @@ export default function CookMode({
           ×
         </button>
         <span className="rc-meta">{finished ? 'Finished' : `Step ${step + 1} of ${order.length}`}</span>
-        <button type="button" className="rc-text-btn rc-cook-peek" onClick={() => setShowIngredients(true)}>
-          Ingredients
-        </button>
+        <div className="rc-cook-top-actions">
+          {onSaveNotes && (
+            <button type="button" className="rc-text-btn rc-cook-note-btn" onClick={openQuickNote}>
+              📝 Note
+            </button>
+          )}
+          <button type="button" className="rc-text-btn rc-cook-peek" onClick={() => setShowIngredients(true)}>
+            Ingredients
+          </button>
+        </div>
       </div>
       <div className="rc-cook-progress" aria-hidden="true">
         <div style={{ width: `${(Math.min(step, order.length) / Math.max(1, order.length)) * 100}%` }} />
@@ -228,40 +423,119 @@ export default function CookMode({
         <div className="rc-cook-body rc-cook-finish">
           <h2>All done</h2>
           <p className="rc-meta">Enjoy your {recipe.title.toLowerCase()}.</p>
-          {canLog &&
-            (cookLogged ? (
-              <button type="button" className="btn btn-secondary" onClick={() => onLogCook(true)}>
-                ✓ Logged · Undo
+          {canLog && onCompleteCook ? (
+            <div className="rc-cook-finish-card">
+              <div className="rc-cook-finish-head">
+                <h3>Rate &amp; note this cook</h3>
+                {cookLogged && (
+                  <span className="rc-cook-finish-status">
+                    ✓ Logged
+                    <button type="button" className="rc-text-btn rc-rate-clear" onClick={() => onLogCook(true)}>
+                      Undo
+                    </button>
+                  </span>
+                )}
+              </div>
+              <RatingPicker
+                value={finishRating}
+                disabled={savingFinish}
+                onChange={(nextRating) => {
+                  setFinishRating(nextRating);
+                  setRatingDirty(true);
+                  setFinishSaved(false);
+                }}
+              />
+              <TweakChips
+                chips={COOK_FINISH_CHIPS}
+                disabled={savingFinish}
+                onPick={(chip) => {
+                  setFinishCookNote((prev) => appendTweakNote(prev, chip));
+                  setFinishSaved(false);
+                }}
+              />
+              <label className="rc-field">
+                Notes for this cook
+                <textarea
+                  className="rc-input"
+                  rows={2}
+                  placeholder="How did it turn out? Any tweaks or timing observations?"
+                  value={finishCookNote}
+                  onChange={(e) => {
+                    setFinishCookNote(e.target.value);
+                    setFinishSaved(false);
+                  }}
+                />
+              </label>
+              <button type="button" className="rc-text-btn rc-pinned-toggle" onClick={() => setShowPinnedNotes((v) => !v)}>
+                {showPinnedNotes
+                  ? '▾ Hide recipe notes for next time'
+                  : `▸ Recipe notes for next time${recipe.notes ? ' (edit)' : ' (add)'}`}
               </button>
-            ) : (
-              <button type="button" className="btn btn-secondary" onClick={() => onLogCook()}>
-                Log this cook
+              {!showPinnedNotes && recipe.notes && <p className="rc-meta rc-pinned-preview">{recipe.notes}</p>}
+              {showPinnedNotes && (
+                <label className="rc-field">
+                  Recipe notes for next time
+                  <textarea
+                    className="rc-input"
+                    rows={2}
+                    placeholder="Permanent notes always shown on this recipe…"
+                    value={finishPinnedNotes}
+                    onChange={(e) => {
+                      setFinishPinnedNotes(e.target.value);
+                      setPinnedDirty(true);
+                      setFinishSaved(false);
+                    }}
+                  />
+                </label>
+              )}
+              <button type="button" className="btn btn-primary rc-finish-cta" disabled={savingFinish} onClick={handleCompleteCook}>
+                {savingFinish
+                  ? 'Saving…'
+                  : cookLogged
+                    ? finishSaved
+                      ? '✓ Saved rating & notes'
+                      : 'Save rating & notes'
+                    : 'Log cook & save'}
               </button>
-            ))}
+            </div>
+          ) : (
+            <>
+              {canLog &&
+                (cookLogged ? (
+                  <button type="button" className="btn btn-secondary" onClick={() => onLogCook(true)}>
+                    ✓ Logged · Undo
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-secondary" onClick={() => onLogCook()}>
+                    Log this cook
+                  </button>
+                ))}
+              {onRate && (
+                <div className="rc-rate" role="group" aria-label="Rate this recipe">
+                  <span className="rc-meta">How was it?</span>
+                  <div>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        className={(rating || 0) >= star * 2 ? 'is-on' : ''}
+                        aria-label={`${star} of 5 stars`}
+                        onClick={() => onRate(star * 2)}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           {kitchen && keepsBatch && (
             <button type="button" className="rc-paper-btn" onClick={() => kitchen.setMade(recipe, !kitchen.state.have.includes(madeKey(recipe.id)))}>
               {kitchen.state.have.includes(madeKey(recipe.id)) ? '✓ The rest is in the pantry' : 'Keep the rest for other recipes'}
             </button>
           )}
           {kitchen && <RanOutChips bom={bom} kitchen={kitchen} />}
-          {onRate && (
-            <div className="rc-rate" role="group" aria-label="Rate this recipe">
-              <span className="rc-meta">How was it?</span>
-              <div>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    key={star}
-                    type="button"
-                    className={(rating || 0) >= star * 2 ? 'is-on' : ''}
-                    aria-label={`${star} of 5 stars`}
-                    onClick={() => onRate(star * 2)}
-                  >
-                    ★
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -299,6 +573,46 @@ export default function CookMode({
               </button>
             </div>
             <IngredientRows items={bom} scale={scale} unitMode={unitMode} isChecked={isIngredientUsed} isStruck={isIngredientUsed} />
+          </div>
+        </div>
+      )}
+
+      {showQuickNote && (
+        <div
+          className="rc-sheet-backdrop"
+          onClick={() => setShowQuickNote(false)}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
+          <div className="rc-sheet rc-postcook-sheet" role="dialog" aria-modal="true" aria-label="Mid-cook quick note" onClick={(e) => e.stopPropagation()}>
+            <div className="rc-sheet-head">
+              <h2>Quick note</h2>
+              <button type="button" className="rc-icon-btn" onClick={() => setShowQuickNote(false)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            {recipe.notes && <p className="rc-meta rc-note-existing">Pinned notes: {recipe.notes}</p>}
+            <textarea
+              className="rc-input"
+              rows={3}
+              placeholder="Jot down a tweak, heat adjustment, or timing note…"
+              value={quickNoteText}
+              onChange={(e) => setQuickNoteText(e.target.value)}
+              autoFocus
+            />
+            <div className="rc-sheet-actions">
+              <button type="button" className="btn btn-secondary" disabled={savingQuickNote} onClick={() => setShowQuickNote(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!quickNoteText.trim() || savingQuickNote}
+                onClick={saveQuickNote}
+              >
+                {savingQuickNote ? 'Saving…' : 'Save note'}
+              </button>
+            </div>
           </div>
         </div>
       )}

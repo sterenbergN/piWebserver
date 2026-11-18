@@ -1,6 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useCallback, useEffect } from 'react';
+import type { Chore, ChoreAction } from '@/lib/chores/chores';
+import type { DateKey } from '@/lib/habits/dates';
 import { readPref } from '@/lib/workout/device-prefs';
 import {
   formatBomAmount,
@@ -256,4 +259,73 @@ export async function copyShoppingList(items: BomItem[], scale: number, unitMode
   } catch {
     return false;
   }
+}
+
+export type ChoreSyncStatus =
+  | { kind: 'idle' }
+  | { kind: 'syncing' }
+  | { kind: 'synced'; message: string }
+  | { kind: 'signed-out' }
+  | { kind: 'error'; message: string };
+
+export async function fetchHouseholdChores(
+  today: DateKey,
+): Promise<{ ok: true; chores: Chore[] } | { ok: false; signedOut?: boolean; message: string }> {
+  try {
+    const res = await fetch(`/api/chores?today=${encodeURIComponent(today)}`, { cache: 'no-store' });
+    if (res.status === 401) return { ok: false, signedOut: true, message: 'Sign in to sync with Household Chores' };
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body?.success) return { ok: false, message: body?.message || 'Could not load Household Chores.' };
+    return { ok: true, chores: Array.isArray(body?.data?.chores) ? (body.data.chores as Chore[]) : [] };
+  } catch {
+    return { ok: false, message: 'Could not reach Household Chores.' };
+  }
+}
+
+export async function saveHouseholdChore(
+  action: ChoreAction,
+  today: DateKey,
+): Promise<{ ok: true } | { ok: false; signedOut?: boolean; message: string }> {
+  try {
+    const res = await fetch('/api/chores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, today }),
+    });
+    if (res.status === 401) return { ok: false, signedOut: true, message: 'Sign in to sync with Household Chores' };
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body?.success) return { ok: false, message: body?.message || 'Could not save to Household Chores.' };
+    return { ok: true };
+  } catch {
+    return { ok: false, message: 'Could not reach Household Chores.' };
+  }
+}
+
+export function ChoreSyncNotice({ status }: { status: ChoreSyncStatus }) {
+  if (status.kind === 'idle' || status.kind === 'syncing') return null;
+  if (status.kind === 'signed-out') {
+    return (
+      <p className="rc-chores-status" role="status">
+        <span>Sign in to sync with Household Chores</span>
+        <button type="button" className="rc-link-small" onClick={() => window.dispatchEvent(new Event('site:sign-in'))}>
+          Sign in
+        </button>
+      </p>
+    );
+  }
+  if (status.kind === 'error') {
+    return (
+      <p className="rc-chores-status is-error" role="alert">
+        {status.message}
+      </p>
+    );
+  }
+  return (
+    <p className="rc-chores-status is-ok" role="status">
+      <span>{status.message}</span>
+      <Link className="rc-link-small" href="/chores">
+        Open Chores ›
+      </Link>
+    </p>
+  );
 }

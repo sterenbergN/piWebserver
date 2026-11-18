@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { savePref } from '@/lib/workout/device-prefs';
 import { applyKitchenAction, emptyKitchen, madeItem, newKitchenId, normalizeKitchen, usedIn, type KitchenAction, type KitchenState, type PlanEntry, type PutAwayItem } from '@/lib/recipes/kitchen';
-import type { Amount, Recipe } from '@/lib/recipes/recipes';
+import { canonicalEquipment, type Amount, type Recipe } from '@/lib/recipes/recipes';
 import { clearSentChanges, isEmptyKitchen as isEmpty, KITCHEN_CHANGED, KITCHEN_PREF, queueChange, readLocalKitchen as readLocal, readOutbox } from '@/lib/recipes/grocery-client';
 import type { HouseholdInfo } from '@/components/chores/useChores';
 import type { DateKey } from '@/lib/habits/dates';
@@ -34,6 +34,7 @@ export function useKitchen(signedIn: boolean) {
   const sending = useRef(false);
   /** Counts confirmed saves: a load that began before one may not include it. */
   const saves = useRef(0);
+  const loadedRef = useRef(false);
 
   const show = useCallback((next: KitchenState) => {
     if (JSON.stringify(next) === JSON.stringify(current.current)) return;
@@ -72,13 +73,19 @@ export function useKitchen(signedIn: boolean) {
     if (sent && readOutbox().length) void send();
   }, [show]);
 
+  // Persist only after localStorage hydration finishes so mount never overwrites saved data.
   useEffect(() => {
-    show(readLocal());
-  }, [show]);
-
-  useEffect(() => {
+    if (!loadedRef.current) return;
     savePref(KITCHEN_PREF, JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => {
+    show(readLocal());
+    loadedRef.current = true;
+    return () => {
+      loadedRef.current = false;
+    };
+  }, [show]);
 
   const pull = useCallback(async () => {
     const started = saves.current;
@@ -202,12 +209,21 @@ export function useKitchen(signedIn: boolean) {
       dispatch({ type: 'plan-add', week, entry: { id: newKitchenId(), recipeId, servings, day } }),
     updateEntry: (week: DateKey, id: string, patch: Partial<PlanEntry>) => dispatch({ type: 'plan-change', week, ids: [id], patch }),
     removeEntry: (week: DateKey, id: string) => dispatch({ type: 'plan-remove', week, id }),
+    movePlanEntry: (week: DateKey, entryId: string, targetDay: number | null, beforeEntryId?: string | null) =>
+      dispatch({ type: 'plan-reorder', week, entryId, targetDay, beforeEntryId }),
     copyWeek: (from: DateKey, to: DateKey) =>
       dispatch({
         type: 'plan-copy',
         week: to,
         entries: (current.current.plans[from] || []).map((e) => ({ id: newKitchenId(), recipeId: e.recipeId, servings: e.servings, day: e.day })),
       }),
+    toggleEquipment: (item: string) => {
+      const clean = canonicalEquipment(item);
+      if (!clean) return;
+      const on = !current.current.equipment.some((e) => canonicalEquipment(e).toLowerCase() === clean.toLowerCase());
+      dispatch({ type: 'equipment-toggle', item: clean, on });
+    },
+    setEquipment: (items: string[]) => dispatch({ type: 'equipment-set', items }),
     addListRecipe: (recipeId: string, servings: number) => dispatch({ type: 'list-recipe', recipeId, servings }),
     removeListRecipe: (recipeId: string) => dispatch({ type: 'list-recipe-remove', recipeId }),
     addListItem: (text: string) => dispatch({ type: 'list-item', id: newKitchenId(), text, by: me.current }),

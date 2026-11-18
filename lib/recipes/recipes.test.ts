@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DEFAULT_RECIPES,
+  MAX_SERVINGS,
   amountRatio,
   buildSchedule,
   canonicalEquipment,
   canonicalIngredientKey,
+  clampServings,
   cleanRecipeEmoji,
   cookOrder,
   detachSubRecipe,
@@ -445,4 +447,41 @@ test('normalizeRecipe keeps a web source and the private flag', () => {
   assert.equal(normalizeRecipe({ ...base, sourceUrl: 'javascript:alert(1)' }).sourceUrl, undefined);
   assert.equal(normalizeRecipe(base, imported).private, true);
   assert.equal(normalizeRecipe({ ...base, private: false }, imported).private, undefined);
+});
+
+test('grams-per-cup matching uses word boundaries and skips look-alike liquids/produce', () => {
+  const metricOf = (tokenText: string) => {
+    const tok = parseStepTokens(`[${tokenText}]`)[0];
+    assert.ok(tok.kind === 'ingredient', tokenText);
+    return `${tok.metricQty} ${tok.metricUnit}`;
+  };
+  assert.equal(metricOf('1 cup butter'), '227 g');
+  assert.equal(metricOf('1 cup unsalted butter'), '227 g');
+  assert.equal(metricOf('1 cup butternut squash'), '240 ml');
+  assert.equal(metricOf('1 cup buttermilk'), '240 g');
+  assert.equal(metricOf('1 cup peanut butter'), '240 ml');
+
+  assert.equal(metricOf('1 cup rice'), '185 g');
+  assert.equal(metricOf('1 cup jasmine rice'), '185 g');
+  assert.equal(metricOf('1 cup rice vinegar'), '240 ml');
+  assert.equal(metricOf('1 cup seasoned rice vinegar'), '240 ml');
+  assert.equal(metricOf('1 cup rice wine'), '240 ml');
+  assert.equal(metricOf('1 cup rice milk'), '240 g');
+  assert.equal(metricOf('1 cup rice bran oil'), '218 g');
+  assert.equal(metricOf('1 cup rice flour'), '120 g');
+  assert.equal(metricOf('1 cup riced cauliflower'), '240 ml');
+
+  assert.equal(metricOf('1 cup sugar'), '200 g');
+  assert.equal(metricOf('1 cup sugar snap peas'), '240 ml');
+  assert.equal(metricOf('1 cup watermelon'), '240 ml');
+  assert.equal(metricOf('1 cup boiled potatoes'), '240 ml');
+  assert.equal(metricOf('1 cup honeydew'), '240 ml');
+});
+
+test('clampServings enforces the 1-48 servings cap', () => {
+  assert.equal(MAX_SERVINGS, 48);
+  assert.equal(clampServings(100), 48);
+  assert.equal(clampServings(0, 4), 4);
+  assert.equal(clampServings(-3), 1);
+  assert.equal(clampServings(12.4), 12);
 });

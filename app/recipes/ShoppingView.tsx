@@ -1,10 +1,20 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { addDays, type DateKey } from '@/lib/habits/dates';
-import { buildShoppingList, currentWeek, restockKey, weekLabel, type PutAwayItem, type ShoppingItem } from '@/lib/recipes/kitchen';
+import { useEffect, useMemo, useState } from 'react';
+import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
+import {
+  buildGroceryRunChorePayload,
+  buildShoppingList,
+  currentWeek,
+  findOpenGroceryRunChore,
+  isPantryFood,
+  restockKey,
+  weekLabel,
+  type PutAwayItem,
+  type ShoppingItem,
+} from '@/lib/recipes/kitchen';
 import { canonicalIngredientKey, formatBomAmount, parseIngredientLine, type Recipe, type UnitMode } from '@/lib/recipes/recipes';
-import { stockLabel } from './shared';
+import { ChoreSyncNotice, fetchHouseholdChores, saveHouseholdChore, stockLabel, type ChoreSyncStatus } from './shared';
 import type { Kitchen } from './useKitchen';
 
 /** Plan items are checked off per week, so buying beef this week doesn't tick next week's. */
@@ -39,11 +49,59 @@ export default function ShoppingView({
 }) {
   const { state, household } = kitchen;
   const [newItem, setNewItem] = useState('');
+  const [choreStatus, setChoreStatus] = useState<ChoreSyncStatus>({ kind: 'idle' });
+  useEffect(() => {
+    setChoreStatus({ kind: 'idle' });
+  }, [week]);
   /** Who else put something on the list. */
   const addedBy = (id?: string) => (id && id !== household?.me ? household?.members.find((m) => m.id === id)?.name : undefined);
   const list = useMemo(() => buildShoppingList(recipes, state, week), [recipes, state, week]);
 
   const got = useMemo(() => new Set(state.got), [state.got]);
+  const leftItems = useMemo(() => {
+    const out: Array<{ label: string; section: string }> = [];
+    for (const group of list.groups) {
+      for (const item of group.items) {
+        if (got.has(gotKey(week, item.key))) continue;
+        const amount = formatBomAmount(item, 1, unitMode);
+        out.push({ label: amount ? `${amount} ${item.name}` : item.name, section: group.aisle });
+      }
+    }
+    for (const item of list.restock) {
+      if (got.has(restockKey(item.key))) continue;
+      out.push({ label: item.name, section: 'Restock' });
+    }
+    for (const item of state.listItems) {
+      if (got.has(item.id)) continue;
+      out.push({ label: item.text, section: 'Also' });
+    }
+    return out;
+  }, [list.groups, list.restock, state.listItems, got, week, unitMode]);
+
+  const sendToChores = async () => {
+    if (!leftItems.length || choreStatus.kind === 'syncing') return;
+    setChoreStatus({ kind: 'syncing' });
+    const today = localToday();
+    const loaded = await fetchHouseholdChores(today);
+    if (!loaded.ok) {
+      setChoreStatus(loaded.signedOut ? { kind: 'signed-out' } : { kind: 'error', message: loaded.message });
+      return;
+    }
+    const payload = buildGroceryRunChorePayload(leftItems, today);
+    const existing = findOpenGroceryRunChore(loaded.chores, today);
+    const action = existing
+      ? {
+          type: 'save' as const,
+          chore: { ...payload.chore, id: existing.id, color: existing.color, assignee: existing.assignee },
+        }
+      : payload;
+    const saved = await saveHouseholdChore(action, today);
+    if (!saved.ok) {
+      setChoreStatus(saved.signedOut ? { kind: 'signed-out' } : { kind: 'error', message: saved.message });
+      return;
+    }
+    setChoreStatus({ kind: 'synced', message: '✓ Synced to Chores' });
+  };
   const planCount = (state.plans[week] || []).filter((e) => !e.cooked).length;
   const oneOffs = state.listRecipes.flatMap((r) => {
     const recipe = recipes.find((x) => x.id === r.recipeId);
@@ -56,21 +114,27 @@ export default function ShoppingView({
     list.restock.filter((i) => got.has(restockKey(i.key))).length +
     state.listItems.filter((i) => got.has(i.id)).length;
 
-  // Home from the store: everything ticked goes on the shelf and comes off the list.
+  // Home from the store: everything ticked comes off the list; food goes on the shelf, non-food stays out of the pantry.
   const putAway = () => {
     const bought = list.need.filter((i) => got.has(gotKey(week, i.key)));
     const restocked = list.restock.filter((i) => got.has(restockKey(i.key)));
     const typed = state.listItems.filter((i) => got.has(i.id));
+    const typedFood = typed.flatMap((i) => {
+      const { key, name, amount } = parseIngredientLine(i.text);
+      return key && isPantryFood(i.text) && isPantryFood(name) ? [{ key, name, amount }] : [];
+    });
     const items: PutAwayItem[] = [
       ...bought.map(({ key, name, usQty, usUnit, metricQty, metricUnit }) => ({ key, name, amount: { usQty, usUnit, metricQty, metricUnit } })),
       ...restocked.map(({ key, name }) => ({ key, name })),
-      ...typed.flatMap((i) => {
-        const { key, name, amount } = parseIngredientLine(i.text);
-        return key ? [{ key, name, amount }] : [];
-      }),
+      ...typedFood,
     ];
     kitchen.putAway(items, [...bought.map((i) => gotKey(week, i.key)), ...restocked.map((i) => restockKey(i.key))], typed.map((i) => i.id));
-    onFlash(`Put away ${items.length} ${items.length === 1 ? 'thing' : 'things'}`);
+    const cleared = typed.length - typedFood.length;
+    onFlash(
+      items.length
+        ? `Put away ${items.length} ${items.length === 1 ? 'thing' : 'things'}${cleared ? `, cleared ${cleared}` : ''}`
+        : `Cleared ${cleared} ${cleared === 1 ? 'thing' : 'things'} from the list`,
+    );
   };
 
   const listText = () => {
@@ -299,6 +363,22 @@ export default function ShoppingView({
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {(leftItems.length > 0 || choreStatus.kind !== 'idle') && (
+        <div className="rc-chores-sync">
+          {leftItems.length > 0 && (
+            <button
+              type="button"
+              className="rc-chip"
+              disabled={choreStatus.kind === 'syncing'}
+              onClick={sendToChores}
+            >
+              {choreStatus.kind === 'syncing' ? 'Syncing…' : '🧹 Send Grocery Run to Chores'}
+            </button>
+          )}
+          <ChoreSyncNotice status={choreStatus} />
         </div>
       )}
 

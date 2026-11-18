@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { addDays, type DateKey } from '@/lib/habits/dates';
 import { dayInfo, weekLabel } from '@/lib/recipes/kitchen';
-import type { Recipe } from '@/lib/recipes/recipes';
+import { MAX_SERVINGS, type Recipe } from '@/lib/recipes/recipes';
 import type { Kitchen } from './useKitchen';
 
 const DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -24,7 +24,7 @@ export default function PlanSheet({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
-  const [servings, setServings] = useState(initialServings ?? recipe.servings);
+  const [servings, setServings] = useState(Math.min(MAX_SERVINGS, Math.max(1, initialServings ?? recipe.servings)));
   const [week, setWeek] = useState(initialWeek);
   const [day, setDay] = useState<number | null>(null);
 
@@ -52,7 +52,7 @@ export default function PlanSheet({
             <span>
               {servings} {servings === 1 ? 'serving' : 'servings'}
             </span>
-            <button type="button" aria-label="More servings" onClick={() => setServings((s) => Math.min(48, s + 1))}>
+            <button type="button" aria-label="More servings" disabled={servings >= MAX_SERVINGS} onClick={() => setServings((s) => Math.min(MAX_SERVINGS, s + 1))}>
               +
             </button>
           </div>

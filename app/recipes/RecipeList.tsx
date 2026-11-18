@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { missingIngredients } from '@/lib/recipes/kitchen';
+import { missingEquipment, missingIngredients } from '@/lib/recipes/kitchen';
 import { mediaSrc } from '@/lib/media-url';
 import {
   CATEGORY_LABELS,
@@ -16,15 +16,29 @@ import HomeScreenNote from './HomeScreenNote';
 import { formatMinutes, readSavedCook } from './shared';
 import type { Kitchen } from './useKitchen';
 
-type SortMode = 'rating' | 'fastest' | 'fewest_ing' | 'most_cooked' | 'protein_efficiency' | 'newest';
+type SortMode = 'rating' | 'recently_cooked' | 'most_cooked' | 'fastest' | 'fewest_ing' | 'protein_efficiency' | 'newest';
 
 const QUICK_FILTERS = [
   { id: 'ready', label: 'Have it all' },
   { id: 'almost', label: 'Missing 1–2' },
+  { id: 'my-gear', label: '🍳 Matches my kitchen' },
   { id: 'fast', label: 'Under 25 min' },
   { id: 'one-pan', label: 'One pan' },
   { id: 'high-protein', label: 'High protein' },
   { id: 'untried', label: 'Not cooked yet' },
+  { id: 'made-before', label: 'Made before' },
+  { id: 'top-rated', label: '★ 8+ Favorites' },
+  { id: 'rated', label: '★ Rated' },
+  { id: 'needs-rating', label: '☆ Needs rating' },
+  { id: 'has-notes', label: '📝 Has notes' },
+];
+
+const QUICK_STRIP_FILTERS: { id: string | null; label: string }[] = [
+  { id: null, label: 'All' },
+  { id: 'top-rated', label: '★ 8+' },
+  { id: 'has-notes', label: '📝 Has notes' },
+  { id: 'needs-rating', label: '☆ Needs rating' },
+  { id: 'made-before', label: 'Made before' },
 ];
 
 // A hand-filed look: each card sits a touch off square, the same way every time.
@@ -41,6 +55,7 @@ export default function RecipeList({
   onAdd,
   onPlan,
   onDismissNotFound,
+  onOpenEquipment,
 }: {
   recipes: Recipe[];
   loadState: 'ready' | 'error';
@@ -51,11 +66,13 @@ export default function RecipeList({
   onAdd: () => void;
   onPlan: (recipe: Recipe) => void;
   onDismissNotFound: () => void;
+  onOpenEquipment?: () => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<RecipeCategory | 'all'>('all');
   const [quickFilter, setQuickFilter] = useState<string | null>(null);
   const [gearFilter, setGearFilter] = useState<string | null>(null);
+  const [minRating, setMinRating] = useState<number>(0);
   const [sortMode, setSortMode] = useState<SortMode>('rating');
   const [showFilters, setShowFilters] = useState(false);
   const [savedCook] = useState(readSavedCook);
@@ -68,12 +85,19 @@ export default function RecipeList({
       recipes.map((recipe) => {
         const proteinEfficiency =
           recipe.macros?.protein && recipe.macros?.calories ? (recipe.macros.protein * 100) / recipe.macros.calories : 0;
+        const pinnedNote = recipe.notes?.trim() || '';
+        const logNotes = (recipe.cookLog || []).map((c) => c.note?.trim() || '').filter(Boolean);
+        const notePreview = pinnedNote || logNotes[0] || '';
+        const noteCount = (pinnedNote ? 1 : 0) + logNotes.length;
         return {
           recipe,
           bom: extractIngredients(recipe),
           schedule: buildSchedule(recipe),
           missing: missingIngredients(recipe, kitchen.state),
           proteinEfficiency,
+          hasNotes: Boolean(notePreview),
+          notePreview,
+          noteCount,
         };
       }),
     [recipes, kitchen.state],
@@ -81,22 +105,44 @@ export default function RecipeList({
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = enriched.filter(({ recipe, bom, schedule, missing }) => {
+    const list = enriched.filter(({ recipe, bom, schedule, missing, hasNotes }) => {
       if (categoryFilter !== 'all' && recipe.category !== categoryFilter) return false;
       if (quickFilter === 'ready' && missing.length > 0) return false;
       if (quickFilter === 'almost' && (missing.length === 0 || missing.length > 2)) return false;
+      if (quickFilter === 'my-gear' && missingEquipment(recipe, kitchen.state).length > 0) return false;
       if (quickFilter === 'fast' && schedule.totalMinutes > 25) return false;
       if (quickFilter === 'one-pan' && !recipe.equipment.some((e) => /one-pan|one-pot|sheet pan/i.test(e))) return false;
       if (quickFilter === 'high-protein' && (recipe.macros?.protein || 0) < 30) return false;
       if (quickFilter === 'untried' && recipe.timesCooked > 0) return false;
+      if (quickFilter === 'made-before' && !(recipe.timesCooked > 0)) return false;
+      if (quickFilter === 'top-rated' && (recipe.rating || 0) < 8) return false;
+      if (quickFilter === 'rated' && !(recipe.rating && recipe.rating > 0)) return false;
+      if (quickFilter === 'needs-rating' && Boolean(recipe.rating && recipe.rating > 0)) return false;
+      if (quickFilter === 'has-notes' && !hasNotes) return false;
+      if (minRating > 0 && (recipe.rating || 0) < minRating) return false;
       if (gearFilter && !recipe.equipment.includes(gearFilter)) return false;
       if (!q) return true;
-      const hay = [recipe.title, recipe.summary, recipe.category, ...recipe.equipment, ...recipe.tags, ...bom.map((b) => b.name)]
+      const hay = [
+        recipe.title,
+        recipe.summary,
+        recipe.category,
+        recipe.notes || '',
+        ...(recipe.cookLog || []).map((c) => c.note || ''),
+        ...recipe.equipment,
+        ...recipe.tags,
+        ...bom.map((b) => b.name),
+      ]
         .join(' ')
         .toLowerCase();
       return q.split(/\s+/).every((term) => hay.includes(term));
     });
     return list.sort((a, b) => {
+      if (sortMode === 'recently_cooked') {
+        return (
+          (b.recipe.lastCookedAt || '').localeCompare(a.recipe.lastCookedAt || '') ||
+          (b.recipe.timesCooked || 0) - (a.recipe.timesCooked || 0)
+        );
+      }
       if (sortMode === 'fastest') return a.schedule.totalMinutes - b.schedule.totalMinutes;
       if (sortMode === 'fewest_ing') return a.bom.length - b.bom.length;
       if (sortMode === 'most_cooked') return (b.recipe.timesCooked || 0) - (a.recipe.timesCooked || 0);
@@ -104,12 +150,12 @@ export default function RecipeList({
       if (sortMode === 'newest') return b.recipe.createdAt.localeCompare(a.recipe.createdAt);
       return (b.recipe.rating || 0) - (a.recipe.rating || 0);
     });
-  }, [enriched, searchQuery, categoryFilter, quickFilter, gearFilter, sortMode]);
+  }, [enriched, searchQuery, categoryFilter, quickFilter, gearFilter, minRating, sortMode, kitchen.state]);
 
   // Only categories that have something in them are worth a chip.
   const categories = RECIPE_CATEGORIES.filter((c) => recipes.some((r) => r.category === c));
   const resumable = savedCook && savedCook.step > 0 && recipes.some((r) => r.slug === savedCook.slug) ? savedCook : null;
-  const activeFilterCount = (quickFilter ? 1 : 0) + (gearFilter ? 1 : 0) + (sortMode !== 'rating' ? 1 : 0);
+  const activeFilterCount = (quickFilter ? 1 : 0) + (gearFilter ? 1 : 0) + (minRating > 0 ? 1 : 0) + (sortMode !== 'rating' ? 1 : 0);
 
   return (
     <>
@@ -130,8 +176,8 @@ export default function RecipeList({
         <input
           type="search"
           className="rc-input"
-          placeholder="Look up a recipe…"
-          aria-label="Search recipes or ingredients"
+          placeholder="Look up a recipe, ingredient, or note…"
+          aria-label="Search recipes, ingredients, or notes"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -149,6 +195,32 @@ export default function RecipeList({
           </button>
         )}
       </div>
+
+      {recipes.length > 0 && (
+        <div className="rc-chips rc-quick-strip" role="group" aria-label="Quick rating and note filters">
+          {QUICK_STRIP_FILTERS.map((qf) => {
+            const active = qf.id === null ? quickFilter === null && minRating === 0 : quickFilter === qf.id;
+            return (
+              <button
+                key={qf.label}
+                type="button"
+                className={`rc-chip${active ? ' is-active' : ''}`}
+                aria-pressed={active}
+                onClick={() => {
+                  if (qf.id === null) {
+                    setQuickFilter(null);
+                    setMinRating(0);
+                  } else {
+                    setQuickFilter(quickFilter === qf.id ? null : qf.id);
+                  }
+                }}
+              >
+                {qf.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {resumable && (
         <button type="button" className="rc-resume" onClick={() => onOpen(resumable.slug)}>
@@ -176,35 +248,66 @@ export default function RecipeList({
             ))}
           </div>
           {!tracksHave && <p className="rc-meta">Mark what you already have on any recipe, and “Have it all” finds what you can make right now.</p>}
-          {gearInUse.length > 0 && (
+          {quickFilter === 'my-gear' && kitchen.state.equipment.length === 0 && (
+            <p className="rc-meta">
+              No kitchen equipment selected yet — showing all recipes.{' '}
+              {onOpenEquipment && (
+                <button type="button" className="rc-link-small" onClick={onOpenEquipment}>
+                  Set up my kitchen gear
+                </button>
+              )}
+            </p>
+          )}
+          {(gearInUse.length > 0 || onOpenEquipment) && (
             <div className="rc-field">
-              Cooks with
-              <div className="rc-chips rc-chips-wrap">
-                {gearInUse.map((gear) => (
-                  <button
-                    key={gear}
-                    type="button"
-                    className={`rc-chip${gearFilter === gear ? ' is-active' : ''}`}
-                    aria-pressed={gearFilter === gear}
-                    onClick={() => setGearFilter(gearFilter === gear ? null : gear)}
-                  >
-                    {gear}
+              <div className="rc-notes-subhead">
+                <span>Cooks with</span>
+                {onOpenEquipment && (
+                  <button type="button" className="rc-link-small" onClick={onOpenEquipment}>
+                    Edit my kitchen equipment ({kitchen.state.equipment.length})
                   </button>
-                ))}
+                )}
               </div>
+              {gearInUse.length > 0 && (
+                <div className="rc-chips rc-chips-wrap">
+                  {gearInUse.map((gear) => (
+                    <button
+                      key={gear}
+                      type="button"
+                      className={`rc-chip${gearFilter === gear ? ' is-active' : ''}`}
+                      aria-pressed={gearFilter === gear}
+                      onClick={() => setGearFilter(gearFilter === gear ? null : gear)}
+                    >
+                      {gear}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-          <label className="rc-field">
-            Sort by
-            <select className="rc-input" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
-              <option value="rating">Highest rated</option>
-              <option value="newest">Newest</option>
-              <option value="fastest">Fastest</option>
-              <option value="fewest_ing">Fewest ingredients</option>
-              <option value="protein_efficiency">Most protein per calorie</option>
-              <option value="most_cooked">Most cooked</option>
-            </select>
-          </label>
+          <div className="rc-filter-row">
+            <label className="rc-field">
+              Minimum rating
+              <select className="rc-input" value={String(minRating)} onChange={(e) => setMinRating(Number(e.target.value) || 0)}>
+                <option value="0">Any rating</option>
+                <option value="7">★ 7+</option>
+                <option value="8">★ 8+</option>
+                <option value="9">★ 9+</option>
+              </select>
+            </label>
+            <label className="rc-field">
+              Sort by
+              <select className="rc-input" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
+                <option value="rating">Highest rated</option>
+                <option value="recently_cooked">Recently cooked</option>
+                <option value="most_cooked">Most cooked</option>
+                <option value="fastest">Fastest</option>
+                <option value="fewest_ing">Fewest ingredients</option>
+                <option value="protein_efficiency">Most protein per calorie</option>
+                <option value="newest">Newest</option>
+              </select>
+            </label>
+          </div>
         </div>
       )}
       </div>
@@ -242,7 +345,7 @@ export default function RecipeList({
       )}
 
       <ul className="rc-cards">
-        {filtered.map(({ recipe, bom, schedule, missing }, index) => (
+        {filtered.map(({ recipe, bom, schedule, missing, notePreview, noteCount }, index) => (
           <li key={recipe.id} className="rc-card" style={{ '--rc-tilt': `${TILTS[index % TILTS.length]}deg` } as React.CSSProperties}>
             <a
               className="rc-card-link"
@@ -272,6 +375,11 @@ export default function RecipeList({
                 {recipe.timesCooked > 0 ? `Made ${recipe.timesCooked}×` : ''}
                 {recipe.private ? ' · Private' : ''}
               </span>
+              {notePreview ? (
+                <span className="rc-card-line rc-card-note" title={notePreview}>
+                  📝 {noteCount > 1 ? `(${noteCount}) ` : ''}{notePreview}
+                </span>
+              ) : null}
               <span className="rc-snapshot" aria-hidden="true">
                 {recipe.photo ? (
                   <img src={mediaSrc(recipe.photo, 400)} alt="" loading="lazy" decoding="async" />

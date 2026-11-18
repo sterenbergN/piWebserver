@@ -3,12 +3,16 @@
 // on the device, and signed-in households sync it through /api/recipes/kitchen,
 // one small change at a time so two people editing at once both keep theirs.
 
+import type { Chore, ChoreEffort, ChoreRepeat } from '../chores/chores';
 import { addDays, daysBetween, isDateKey, localToday, weekStart, type DateKey } from '../habits/dates';
 import {
   ALWAYS_HAVE,
+  EQUIPMENT_OPTIONS,
+  MAX_SERVINGS,
   addAmounts,
   amountRatio,
   buildSchedule,
+  canonicalEquipment,
   extractIngredients,
   madeKey,
   mergeBoms,
@@ -81,16 +85,33 @@ export type KitchenState = {
   listItems: { id: string; text: string; by?: string }[];
   /** Ingredient keys and typed-item ids already in the basket. */
   got: string[];
+  /** Cookware and appliances kept in this kitchen; empty means don't filter recipes by equipment. */
+  equipment: string[];
 };
 
 export function emptyKitchen(): KitchenState {
-  return { version: 1, have: [], pantry: {}, log: [], plans: {}, listRecipes: [], listItems: [], got: [] };
+  return { version: 1, have: [], pantry: {}, log: [], plans: {}, listRecipes: [], listItems: [], got: [], equipment: [] };
 }
 
 const WEEKS_KEPT = 26;
 const LOG_KEPT = 60;
-const clampServings = (n: unknown) => Math.min(48, Math.max(1, Math.round(Number(n)) || 1));
+const clampServings = (n: unknown) => Math.min(MAX_SERVINGS, Math.max(1, Math.round(Number(n)) || 1));
 const shortString = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const cleanEquipmentList = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of v) {
+    const clean = canonicalEquipment(shortString(raw, 60));
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+    if (result.length >= 100) break;
+  }
+  return result;
+};
 
 export const newKitchenId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -198,6 +219,7 @@ export function normalizeKitchen(raw: unknown, today = localToday()): KitchenSta
     listRecipes,
     listItems,
     got: strings(source.got, 100, 500),
+    equipment: cleanEquipmentList(source.equipment),
   };
 }
 
@@ -227,6 +249,9 @@ export type KitchenAction =
   | { type: 'plan-change'; week: DateKey; ids: string[]; patch: Partial<Pick<PlanEntry, 'servings' | 'day' | 'cooked'>> }
   | { type: 'plan-remove'; week: DateKey; id: string }
   | { type: 'plan-copy'; week: DateKey; entries: PlanEntry[] }
+  | { type: 'plan-reorder'; week: DateKey; entryId: string; targetDay: number | null; beforeEntryId?: string | null }
+  | { type: 'equipment-toggle'; item: string; on: boolean }
+  | { type: 'equipment-set'; items: string[] }
   | { type: 'list-recipe'; recipeId: string; servings: number }
   | { type: 'list-recipe-remove'; recipeId: string }
   | { type: 'list-item'; id: string; text: string; by?: string }
@@ -349,7 +374,7 @@ export function applyKitchenAction(k: KitchenState, action: KitchenAction): Kitc
         at: today,
         recipeId: action.recipeId,
         ...(action.title ? { title: action.title } : {}),
-        servings: action.servings,
+        servings: clampServings(action.servings),
         ...(spent.length ? { spent } : {}),
         ...(action.entry ? { entry: action.entry } : {}),
       };
@@ -371,20 +396,57 @@ export function applyKitchenAction(k: KitchenState, action: KitchenAction): Kitc
     }
     case 'got':
       return { ...k, got: switched(k.got, action.key, action.on) };
-    case 'plan-add':
-      return setPlan(action.week, (entries) => (entries.some((e) => e.id === action.entry?.id) ? entries : [...entries, action.entry]));
+    case 'plan-add': {
+      const entry = action.entry && typeof action.entry === 'object' ? { ...action.entry, servings: clampServings(action.entry.servings) } : action.entry;
+      return setPlan(action.week, (entries) => (entries.some((e) => e.id === entry?.id) ? entries : [...entries, entry]));
+    }
     case 'plan-change': {
       const ids = listOf<string>(action.ids);
       const { servings, day, cooked } = action.patch ?? {};
-      const patch = { ...(servings !== undefined ? { servings } : {}), ...(day !== undefined ? { day } : {}), ...(cooked !== undefined ? { cooked } : {}) };
+      const patch = { ...(servings !== undefined ? { servings: clampServings(servings) } : {}), ...(day !== undefined ? { day } : {}), ...(cooked !== undefined ? { cooked } : {}) };
       return setPlan(action.week, (entries) => entries.map((e) => (ids.includes(e.id) ? { ...e, ...patch } : e)));
     }
     case 'plan-remove':
       return setPlan(action.week, (entries) => entries.filter((e) => e.id !== action.id));
     case 'plan-copy':
-      return setPlan(action.week, () => listOf<PlanEntry>(action.entries));
+      return setPlan(action.week, () => listOf<PlanEntry>(action.entries).map((e) => (e && typeof e === 'object' ? { ...e, servings: clampServings(e.servings) } : e)));
+    case 'plan-reorder': {
+      if (typeof action.entryId !== 'string' || !action.entryId) return k;
+      return setPlan(action.week, (entries) => {
+        const target = entries.find((e) => e.id === action.entryId);
+        if (!target) return entries;
+        const targetDay =
+          Number.isInteger(action.targetDay) && (action.targetDay as number) >= 0 && (action.targetDay as number) <= 6
+            ? (action.targetDay as number)
+            : null;
+        const rest = entries.filter((e) => e.id !== action.entryId);
+        const updated: PlanEntry = { ...target, day: targetDay };
+        if (typeof action.beforeEntryId === 'string' && action.beforeEntryId) {
+          const idx = rest.findIndex((e) => e.id === action.beforeEntryId);
+          if (idx >= 0) {
+            const next = [...rest];
+            next.splice(idx, 0, updated);
+            return next;
+          }
+        }
+        return [...rest, updated];
+      });
+    }
+    case 'equipment-toggle': {
+      const clean = canonicalEquipment(shortString(action.item, 60));
+      if (!clean) return k;
+      const key = clean.toLowerCase();
+      const current = k.equipment || [];
+      if (action.on) {
+        return current.some((e) => e.toLowerCase() === key) ? k : { ...k, equipment: [...current, clean].slice(0, 100) };
+      }
+      const next = current.filter((e) => e.toLowerCase() !== key);
+      return next.length === current.length ? k : { ...k, equipment: next };
+    }
+    case 'equipment-set':
+      return Array.isArray(action.items) ? { ...k, equipment: cleanEquipmentList(action.items) } : k;
     case 'list-recipe':
-      return { ...k, listRecipes: [...k.listRecipes.filter((r) => r.recipeId !== action.recipeId), { recipeId: action.recipeId, servings: action.servings }] };
+      return { ...k, listRecipes: [...k.listRecipes.filter((r) => r.recipeId !== action.recipeId), { recipeId: action.recipeId, servings: clampServings(action.servings) }] };
     case 'list-recipe-remove':
       return { ...k, listRecipes: k.listRecipes.filter((r) => r.recipeId !== action.recipeId) };
     case 'list-item':
@@ -424,6 +486,7 @@ export function mergeKitchens(into: KitchenState, from: KitchenState): KitchenSt
     listRecipes: [...into.listRecipes, ...from.listRecipes.filter((r) => !into.listRecipes.some((m) => m.recipeId === r.recipeId))],
     listItems: [...into.listItems, ...from.listItems.filter((i) => !ids.has(i.id) && !openTexts.has(i.text.toLowerCase()))],
     got: [...new Set([...into.got, ...from.got])],
+    equipment: cleanEquipmentList([...(into.equipment || []), ...(from.equipment || [])]),
   };
 }
 
@@ -480,6 +543,36 @@ export function missingIngredients(recipe: Pick<Recipe, 'sections'>, kitchen: Pi
   return extractIngredients(recipe).filter((item) => stockFor(item, kitchen, scale).status !== 'have');
 }
 
+export const COMMON_KITCHEN_EQUIPMENT: string[] = [
+  ...new Set([
+    ...EQUIPMENT_OPTIONS,
+    'Rice cooker',
+    'Immersion blender',
+    'Stand mixer',
+    'Toaster oven',
+    'Waffle iron',
+    'Pizza stone',
+    'Thermometer',
+  ]),
+];
+
+export const BASIC_KITCHEN_EQUIPMENT: string[] = [
+  'Oven',
+  'Stovetop',
+  'Pan',
+  'Pot',
+  'Saucepan',
+  'Sheet pan',
+  'Microwave',
+];
+
+/** Equipment a recipe calls for that isn't in this kitchen yet (empty kitchen equipment means no restriction). */
+export function missingEquipment(recipe: Pick<Recipe, 'equipment'>, kitchen: Pick<KitchenState, 'equipment'>): string[] {
+  if (!kitchen.equipment || kitchen.equipment.length === 0) return [];
+  const owned = new Set(kitchen.equipment.map((e) => canonicalEquipment(e).toLowerCase()));
+  return recipe.equipment.filter((item) => !owned.has(canonicalEquipment(item).toLowerCase()));
+}
+
 /** Ingredient amounts as a cook uses them, for taking them off the shelf. */
 export function usedIn(recipe: Pick<Recipe, 'sections' | 'servings'>, servings: number): UsedIngredient[] {
   const scale = servings / recipe.servings;
@@ -524,6 +617,16 @@ export function aisleFor(name: string): string {
   const lower = name.toLowerCase();
   for (const [aisle, rule] of AISLE_RULES) if (rule.test(lower)) return aisle;
   return 'Other';
+}
+
+const NON_FOOD_RE =
+  /\b(soap|detergent|paper\s+towels?|toilet\s+paper|wax\s+paper|parchment\s+paper|tissue\s+paper|tissues?|napkins?|(?<!cake\s)(?:dish|scrub|cleaning)?\s*sponges?(?!\s+cake)|bleach|cleaners?|wipes?|sanitizer|shampoo|conditioner|toothpaste|toothbrush|deodorant|lotion|sunscreen|sunblock|razors?|batteries|battery|light\s*bulbs?|candles?|charcoal|litter|shaving\s+cream|baby\s+oil|(?:pet|dog|cat)\s+food|dishwasher|dishwashing|laundry|dryer\s+sheets?|fabric\s+softener|(?:trash|garbage|sandwich|freezer|storage|ziploc|grocery|bin)\s+bags?|(?:plastic|saran|cling)\s+wrap|(?:aluminum|tin)\s+foil|foil|parchment)\b/i;
+
+/** Whether a typed shopping-list item looks like food that belongs in the pantry (not paper towels, soap, etc.). */
+export function isPantryFood(name: string): boolean {
+  const clean = name.trim();
+  if (!clean || NON_FOOD_RE.test(clean)) return false;
+  return aisleFor(clean) !== 'Other';
 }
 
 // ─── Shopping list ────────────────────────────────────────────────────────────
@@ -764,3 +867,186 @@ function ovenClash(recipes: Recipe[]): number[] {
 
 /** Where a made batch of a recipe is kept. */
 export const madeItem = (recipe: Pick<Recipe, 'id' | 'title'>) => ({ key: madeKey(recipe.id), name: recipe.title });
+
+// ─── Household Chores bridge ──────────────────────────────────────────────────
+
+const MAX_CHORE_NAME = 60;
+const MAX_CHORE_NOTES = 300;
+
+export type KitchenChoreDraft = {
+  name: string;
+  emoji: string;
+  color: number;
+  repeat: ChoreRepeat;
+  due: DateKey | null;
+  fromDone: boolean;
+  effort: ChoreEffort;
+  assignee: string | null;
+  notes: string;
+};
+
+export type KitchenChorePayload = {
+  type: 'save';
+  chore: KitchenChoreDraft;
+  newId: string;
+};
+
+function clipChoreText(value: string, max: number): string {
+  const clean = value.trim().replace(/\s+/g, ' ');
+  if (clean.length <= max) return clean;
+  const chars = [...clean];
+  while (chars.length > 0 && `${chars.join('')}…`.length > max) chars.pop();
+  return `${chars.join('').trimEnd()}…`;
+}
+
+export function normalizeChoreName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Build a one-off Household Chores save payload for remaining grocery items. */
+export function buildGroceryRunChorePayload(
+  leftItems: Array<{ label: string; section: string }>,
+  today: DateKey,
+): KitchenChorePayload {
+  const seen = new Set<string>();
+  const unique: Array<{ label: string; section: string }> = [];
+  for (const item of leftItems) {
+    const label = item.label.trim().replace(/\s+/g, ' ');
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ label, section: item.section.trim() });
+  }
+
+  const bySection = new Map<string, string[]>();
+  for (const item of unique) {
+    const list = bySection.get(item.section) ?? [];
+    list.push(item.label);
+    bySection.set(item.section, list);
+  }
+
+  const noteParts = [...bySection.entries()].map(([section, labels]) =>
+    section ? `${section}: ${labels.join(', ')}` : labels.join(', '),
+  );
+  const count = unique.length;
+  const name = clipChoreText(`🛒 Grocery run (${count} ${count === 1 ? 'item' : 'items'})`, MAX_CHORE_NAME);
+  const notes = clipChoreText(noteParts.join(' · '), MAX_CHORE_NOTES);
+
+  return {
+    type: 'save',
+    chore: {
+      name,
+      emoji: '🛒',
+      color: 3,
+      repeat: null,
+      due: today,
+      fromDone: false,
+      effort: count >= 8 ? 2 : 1,
+      assignee: null,
+      notes,
+    },
+    newId: newKitchenId(),
+  };
+}
+
+/** Build deduplicated Household Chores save payloads for un-cooked meal prep and scheduled dinners of a week. */
+export function buildWeekKitchenChoresPayloads(
+  rawRecipes: Recipe[],
+  kitchen: KitchenState,
+  week: DateKey,
+  today: DateKey,
+): KitchenChorePayload[] {
+  const resolved = recipesFor(rawRecipes, kitchen);
+  const byId = new Map(resolved.map((r) => [r.id, r]));
+  const entries = kitchen.plans[week] || [];
+  const weekEnd = addDays(week, 6);
+  const prepDue = today < week ? week : today > weekEnd ? weekEnd : today;
+  const deduped = new Map<string, KitchenChorePayload>();
+
+  for (const entry of entries) {
+    if (entry.cooked) continue;
+    const recipe = byId.get(entry.recipeId);
+    if (!recipe) continue;
+
+    const isPrep = entry.day === null;
+    const due = isPrep ? prepDue : addDays(week, entry.day!);
+    const emoji = isPrep ? '🍱' : '🍳';
+    const prefix = isPrep ? '🍱 Meal prep: ' : '🍳 Cook: ';
+    const name = clipChoreText(`${prefix}${recipe.title}`, MAX_CHORE_NAME);
+    const dedupeKey = `${normalizeChoreName(name)}|${due}`;
+    if (deduped.has(dedupeKey)) continue;
+
+    const schedule = buildSchedule(recipe);
+    const effort: ChoreEffort = isPrep || schedule.totalMinutes >= 45 ? 2 : 1;
+    const scale = entry.servings / (recipe.servings || 1);
+    const missing = missingIngredients(recipe, kitchen, scale);
+    const allIng = extractIngredients(recipe);
+    const ingList = missing.length ? missing : allIng;
+    const ingLabel = missing.length ? 'Need' : 'Ingredients';
+    const ingNote = ingList.length
+      ? `${ingLabel}: ${ingList.slice(0, 5).map((i) => i.name).join(', ')}${ingList.length > 5 ? ` (+${ingList.length - 5})` : ''}`
+      : '';
+    const notes = clipChoreText(
+      [
+        `${entry.servings} ${entry.servings === 1 ? 'serving' : 'servings'}`,
+        schedule.totalMinutes > 0 ? `${schedule.totalMinutes} min` : '',
+        ingNote,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      MAX_CHORE_NOTES,
+    );
+
+    deduped.set(dedupeKey, {
+      type: 'save',
+      chore: {
+        name,
+        emoji,
+        color: isPrep ? 5 : 2,
+        repeat: null,
+        due,
+        fromDone: false,
+        effort,
+        assignee: null,
+        notes,
+      },
+      newId: newKitchenId(),
+    });
+  }
+
+  return [...deduped.values()];
+}
+
+/** Keep only candidate chores that do not match an existing open (!archivedOn) chore by normalized name + due date. */
+export function filterNewChores<T extends { chore: Pick<KitchenChoreDraft, 'name' | 'due'> }>(
+  candidates: readonly T[],
+  existingOpenChores: ReadonlyArray<Pick<Chore, 'name' | 'due' | 'archivedOn'>>,
+): T[] {
+  const existingKeys = new Set(
+    existingOpenChores
+      .filter((c) => !c.archivedOn)
+      .map((c) => `${normalizeChoreName(c.name)}|${c.due ?? ''}`),
+  );
+  const result: T[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${normalizeChoreName(candidate.chore.name)}|${candidate.chore.due ?? ''}`;
+    if (existingKeys.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    result.push(candidate);
+  }
+  return result;
+}
+
+/** Find an open "🛒 Grocery run" chore due today so repeated syncs update its count/notes in place. */
+export function findOpenGroceryRunChore(
+  chores: ReadonlyArray<Pick<Chore, 'id' | 'name' | 'due' | 'archivedOn' | 'color' | 'assignee'>>,
+  today: DateKey,
+) {
+  return chores.find((c) => {
+    if (c.archivedOn || c.due !== today) return false;
+    const normalized = normalizeChoreName(c.name).replace(/^🛒\s*/u, '');
+    return normalized.startsWith('grocery run');
+  });
+}
