@@ -44,6 +44,10 @@ export default function RoundScreen({ golf, me, go, popup, roundId, sunlight, se
   const mine = playerFor(round, me);
   const unit = unitFor(round.sport, golf.data.user.units);
   const edit = (ops: RoundOp[]) => golf.edit(round.id, ops);
+  const pickHole = (next: number) => {
+    setHole(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   const toggleDetails = () => { setDetails(!details); try { localStorage.setItem(DETAILS_KEY, details ? '0' : '1'); } catch { /* blocked */ } };
 
   return (
@@ -65,15 +69,15 @@ export default function RoundScreen({ golf, me, go, popup, roundId, sunlight, se
       </div>
 
       {tab === 'hole' && (
-        <HoleView round={round} h={h} setHole={setHole} edit={edit} mine={mine} gps={gps} unit={unit} details={details} toggleDetails={toggleDetails}
+        <HoleView round={round} h={h} setHole={pickHole} edit={edit} mine={mine} gps={gps} unit={unit} details={details} toggleDetails={toggleDetails}
           target={courseHole?.target || null} tee={courseHole?.tee || null} length={courseHole?.length}
           bag={golf.data.user} onFinish={() => setSheet('finish')}
           learn={(change) => { if (course && layout) golf.setHole(course.id, { layoutId: layout.id, n: h + 1, ...change }); }}
           go={go} popup={popup} />
       )}
-      {tab === 'card' && <CardView round={round} onPick={(i) => { setHole(i); setTab('hole'); }} me={me} />}
+      {tab === 'card' && <CardView round={round} onPick={(i) => { pickHole(i); setTab('hole'); }} me={me} />}
       {tab === 'map' && (
-        <HoleMap round={round} h={h} setHole={setHole} me={me} gps={gps.fix} rounds={golf.data.rounds} unit={unit}
+        <HoleMap round={round} h={h} setHole={pickHole} me={me} gps={gps.fix} rounds={golf.data.rounds} unit={unit}
           tee={courseHole?.tee || null} target={courseHole?.target || null}
           onMove={course && layout ? (change) => golf.setHole(course.id, { layoutId: layout.id, n: h + 1, ...change }) : null} />
       )}
@@ -119,7 +123,13 @@ function scoreOp(round: Round, player: Player, h: number, change: Partial<HoleSc
   if (change === null) return { type: 'score', playerId: player.id, hole: h, score: null, at };
   const prev = round.scores[player.id]?.[h];
   const base: HoleScore = prev ? { ...prev } : { strokes: round.pars[h], at };
-  return { type: 'score', playerId: player.id, hole: h, score: { ...base, ...change, at }, at };
+  const next: HoleScore = { ...base, ...change, at };
+  const activePutts = round.sport === 'golf' ? (next.putts ?? 0) : 0;
+  const activePenalties = next.penalties ?? 0;
+  if (next.strokes < activePutts + activePenalties) {
+    next.strokes = Math.min(20, activePutts + activePenalties);
+  }
+  return { type: 'score', playerId: player.id, hole: h, score: next, at };
 }
 
 type Gps = ReturnType<typeof useGps>;
@@ -144,7 +154,10 @@ function HoleView({ round, h, setHole, edit, mine, gps, unit, details, toggleDet
         if (!start || (e.target as HTMLElement).closest('.golf-stepper, input, select, .golf-map')) return;
         const t = e.changedTouches[0];
         const dx = t.clientX - start.x;
-        if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(t.clientY - start.y)) setHole(Math.max(0, Math.min(round.pars.length - 1, h + (dx < 0 ? 1 : -1))));
+        if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(t.clientY - start.y)) {
+          const next = Math.max(0, Math.min(round.pars.length - 1, h + (dx < 0 ? 1 : -1)));
+          if (next !== h) setHole(next);
+        }
       }}
     >
       <div className="golf-hole-head">
@@ -179,7 +192,18 @@ function HoleView({ round, h, setHole, edit, mine, gps, unit, details, toggleDet
                 </div>
                 <div className="golf-player-score">
                   {name && <span className={`golf-badge is-${name}`}>{name}</span>}
-                  <Stepper big label={`${p.name} strokes`} value={s?.strokes} placeholder={par} onChange={(v) => edit([scoreOp(round, p, h, { strokes: v })])} />
+                  <Stepper big label={`${p.name} strokes`} value={s?.strokes} placeholder={par} onChange={(v) => {
+                    const patch: Partial<HoleScore> = { strokes: v };
+                    const curPutts = round.sport === 'golf' ? (s?.putts ?? 0) : 0;
+                    const curPenalties = s?.penalties ?? 0;
+                    if (v < curPutts + curPenalties) {
+                      const nextPenalties = Math.min(curPenalties, v);
+                      const nextPutts = Math.min(curPutts, v - nextPenalties);
+                      if (s?.penalties !== undefined) patch.penalties = nextPenalties;
+                      if (round.sport === 'golf' && s?.putts !== undefined) patch.putts = nextPutts;
+                    }
+                    edit([scoreOp(round, p, h, patch)]);
+                  }} />
                 </div>
               </div>
               {details && <ScoreDetails round={round} player={p} h={h} score={s} edit={edit} />}
@@ -220,10 +244,17 @@ function ScoreDetails({ round, player, h, score, edit }: { round: Round; player:
   const par = round.pars[h];
   const set = (change: Partial<HoleScore>) => edit([scoreOp(round, player, h, change)]);
   const strokes = score?.strokes ?? par;
+  const curPutts = round.sport === 'golf' ? (score?.putts ?? 0) : 0;
+  const curPenalties = score?.penalties ?? 0;
+  const maxPutts = Math.max(0, 20 - curPenalties);
+  const maxPenalties = Math.max(0, 20 - curPutts);
   return (
     <div className="golf-details">
       {round.sport === 'golf' && (
-        <div className="golf-detail"><span>Putts</span><Stepper label="Putts" value={score?.putts} min={0} max={strokes} placeholder={2} onChange={(v) => set({ putts: v })} /></div>
+        <div className="golf-detail"><span>Putts</span><Stepper label="Putts" value={score?.putts} min={0} max={maxPutts} placeholder={Math.min(2, maxPutts)} onChange={(v) => {
+          const putts = Math.max(0, Math.min(v, maxPutts));
+          set({ putts, strokes: Math.max(strokes, putts + curPenalties) });
+        }} /></div>
       )}
       {round.sport === 'golf' && par >= 4 && (
         <div className="golf-detail"><span>Tee shot</span>
@@ -236,7 +267,10 @@ function ScoreDetails({ round, player, h, score, edit }: { round: Round; player:
           <PuttCircle label="Circle 2 (10–20 m)" value={score?.c2} max={strokes} onChange={(v) => set({ c2: v })} />
         </>
       )}
-      <div className="golf-detail"><span>Penalty strokes</span><Stepper label="Penalties" value={score?.penalties ?? null} min={0} max={strokes} placeholder={0} onChange={(v) => set({ penalties: v })} /></div>
+      <div className="golf-detail"><span>Penalty strokes</span><Stepper label="Penalties" value={score?.penalties ?? null} min={0} max={maxPenalties} placeholder={0} onChange={(v) => {
+        const penalties = Math.max(0, Math.min(v, maxPenalties));
+        set({ penalties, strokes: Math.max(strokes, curPutts + penalties) });
+      }} /></div>
       {score && <button type="button" className="golf-btn is-quiet is-small" onClick={() => edit([scoreOp(round, player, h, null)])}>Clear this hole</button>}
     </div>
   );

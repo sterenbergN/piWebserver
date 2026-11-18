@@ -2,7 +2,7 @@ import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { addDays, eachDay } from './dates';
 import { applyHabitAction, emptyHabitsData, type HabitInput, type HabitsData } from './habits';
-import { completion, dayStatus, freezeState, habitStreak, habitXp, perfectStreak, plantState, weekdayRates, XP } from './stats';
+import { completion, dayStatus, freezeState, habitMeta, habitStreak, habitXp, perfectStreak, plantState, weekdayRates, XP } from './stats';
 import { levelFromXp, xpForLevel } from '../progress/levels';
 
 const TODAY = '2026-10-20'; // Tuesday
@@ -149,4 +149,10 @@ test('levels: thresholds and progress within a level', () => {
   assert.equal(l.size, 300);
   assert.equal(l.toNext, 250);
   assert.equal(l.title, 'Sprout');
+});
+
+test('habitMeta includes study link label', () => {
+  const { data, habit } = withHabit({ name: 'Review decks', link: 'study' }, 2);
+  const { frozen } = freezeState(data, TODAY);
+  assert.ok(habitMeta(habit, data.log, TODAY, TODAY, frozen).includes('auto from study'));
 });

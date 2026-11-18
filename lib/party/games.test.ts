@@ -1598,3 +1598,373 @@ test('Kart Clash: laps and bot difficulty reach the race and survive a return to
   };
   assert.ok(raceTime('mean') < raceTime('chill'), 'Mean bots are faster than Chill bots');
 });
+
+test('Quip Clash settings.rounds and VIP gating reject non-VIP host actions', async () => {
+  await savePrompts(normalizePrompts({ quipClash: ['q1', 'q2', 'q3', 'q4'], theFaker: ['x'], bracketBattles: ['y'] }));
+  // Default when settings.rounds is unset -> 3 rounds; explicit settings.rounds overrides cleanly
+  const defaultState = makeState('quip-clash', 3);
+  await quipClashLogic.onStart(defaultState);
+  assert.equal(defaultState.gameData.targetRounds, 3, 'defaults safely to 3 rounds when unset');
+
+  const customState = makeState('quip-clash', 3);
+  customState.settings = { rounds: 2 };
+  await quipClashLogic.onStart(customState);
+  assert.equal(customState.gameData.targetRounds, 2, 'honors room.settings.rounds');
+
+  // VIP joins with hostId; non-VIP joins without hostId
+  const { roomCode, hostId } = await engine.createRoom('quip-clash', { phonesOnly: true, rounds: 2 });
+  const vip = (await engine.joinRoom(roomCode, 'VipHost', { hostId })) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'Guest1')) as { playerId: string };
+  const p3 = (await engine.joinRoom(roomCode, 'Guest2')) as { playerId: string };
+
+  let state = (await engine.getGameState(roomCode))!;
+  const vipPub = engine.resolvePlayerKey(state, vip.playerId)!;
+  const p2Pub = engine.resolvePlayerKey(state, p2.playerId)!;
+  assert.equal(state.vipId, vipPub);
+  assert.equal(state.players[vipPub].isVip, true);
+  assert.equal(state.players[p2Pub].isVip, undefined);
+
+  // Non-VIP cannot start/skip/return to lobby via API or engine
+  const { POST: postAction } = await import('../../app/api/party/action/route');
+  const blockedRes = await postAction(new Request('http://localhost/api/party/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomCode, playerId: p2.playerId, action: { type: 'START_GAME' } }),
+  }));
+  assert.equal(blockedRes.status, 403);
+
+  // VIP can start, force-skip voting, and return to lobby using their key
+  assert.equal((await engine.processAction(roomCode, vip.playerId, { type: 'START_GAME' })).success, true);
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'PROMPTING');
+  assert.equal(state.gameData.targetRounds, 2);
+
+  const p2Skip = await engine.processAction(roomCode, p2.playerId, { type: 'FORCE_VOTING' });
+  assert.equal(p2Skip.success, false);
+  assert.equal((await engine.processAction(roomCode, vip.playerId, { type: 'FORCE_VOTING' })).success, true);
+  assert.equal((await engine.getGameState(roomCode))!.phase, 'VOTING');
+
+  assert.equal((await engine.processAction(roomCode, p3.playerId, { type: 'QUIT_GAME' })).success, false);
+  assert.equal((await engine.processAction(roomCode, vip.playerId, { type: 'QUIT_GAME' })).success, true);
+  assert.equal((await engine.getGameState(roomCode))!.phase, 'LOBBY');
+});
+
+test('Kart Physics seq <= 5 reload reset and kart-input keyCache invalidation on kick', async () => {
+  const { getKartSimulation, updateKartInput, stopKartSimulation } = await import('./kart-physics');
+  const { POST: postKartInput } = await import('../../app/api/party/kart-input/route');
+
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'ReloadRacer')) as { playerId: string };
+  const p2 = (await engine.joinRoom(roomCode, 'KickedRacer')) as { playerId: string };
+
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+  const state = (await engine.getGameState(roomCode))!;
+  const id1 = engine.resolvePlayerKey(state, p1.playerId)!;
+  const id2 = engine.resolvePlayerKey(state, p2.playerId)!;
+  const sim = getKartSimulation(roomCode)!;
+
+  // Normal high sequence number, then stale mid-race packet > 5 must NOT overwrite or refresh updatedAt
+  assert.equal(updateKartInput(roomCode, id1, { seq: 40, steer: 0.5, isHorizontal: true }), true);
+  sim.inputs[id1].updatedAt = 12345;
+  assert.equal(updateKartInput(roomCode, id1, { seq: 20, steer: -0.9 }), true);
+  assert.equal(sim.inputs[id1].steer, 0.5, 'mid-stream stale packet ignored');
+  assert.equal(sim.inputs[id1].updatedAt, 12345, 'stale packet does not artificially refresh updatedAt');
+
+  // Phone reload restarts seq at 1 (<= 5): must accept and reset seq tracking
+  assert.equal(updateKartInput(roomCode, id1, { seq: 1, steer: -0.75, drift: true }), true);
+  assert.equal(sim.inputs[id1].seq, 1, 'reconnect seq <= 5 resets seq tracking');
+  assert.equal(sim.inputs[id1].steer, -0.75, 'reconnect packet steering accepted');
+  assert.equal(sim.inputs[id1].drift, true);
+
+  // Cache p2 in kart-input route, then kick p2 and verify cached key is rejected immediately
+  const okRes = await postKartInput(new Request('http://localhost/api/party/kart-input', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomCode, playerKey: p2.playerId, steer: 0.4, seq: 1 }),
+  }));
+  assert.equal(okRes.status, 200);
+  assert.equal((await okRes.json()).ok, true);
+
+  await engine.processAction(roomCode, hostId, { type: 'KICK_PLAYER', targetId: id2 });
+  const kickedRes = await postKartInput(new Request('http://localhost/api/party/kart-input', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomCode, playerKey: p2.playerId, steer: -0.8, seq: 2 }),
+  }));
+  assert.equal(kickedRes.status, 403, 'kicked player cannot continue driving via cached key');
+  assert.equal(sim.karts[id2].autopilot, true);
+  stopKartSimulation(roomCode);
+});
+
+test('Kart Clash ranks bots alongside humans so 6th DNF behind bots does not award 1st place or raceWins', async () => {
+  const { getKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const { roomCode, hostId } = await engine.createRoom('kart-clash');
+  const p1 = (await engine.joinRoom(roomCode, 'SlowHuman')) as { playerId: string };
+  await engine.processAction(roomCode, hostId, { type: 'SET_KART_CONFIG', format: 'grand-prix', totalRaces: 2, aiBots: true });
+  await engine.processAction(roomCode, hostId, { type: 'START_GAME' });
+  await engine.processAction(roomCode, hostId, { type: 'LOCK_TRACK_VOTE' });
+
+  let state = (await engine.getGameState(roomCode))!;
+  const humanId = engine.resolvePlayerKey(state, p1.playerId)!;
+  const sim = getKartSimulation(roomCode)!;
+  // Put 5 bots finished ahead of the single DNF human in 6th
+  const bots = Object.values(sim.karts).filter((k) => k.isBot);
+  bots.forEach((b, idx) => {
+    b.finished = true;
+    b.dnf = false;
+    b.finishRank = idx + 1;
+    b.rank = idx + 1;
+    b.finishTimeMs = 40_000 + idx * 1000;
+  });
+  sim.karts[humanId].finished = false;
+  sim.karts[humanId].dnf = true;
+  sim.karts[humanId].rank = 6;
+  bots[5].rank = 7;
+
+  await engine.processAction(roomCode, hostId, { type: 'FINISH_KART_RACE' });
+  state = (await engine.getGameState(roomCode))!;
+  assert.equal(state.phase, 'RACE_RESULTS');
+  assert.equal(state.playerData[humanId].myRank, 6);
+  assert.equal(state.playerData[humanId].myCupRank, 6, 'cup rank places bots ahead of 6th-place human');
+  assert.equal(state.hostData.winnerIsBot, true);
+  assert.ok(state.hostData.cupStandings[0].isBot, '1st place in tournament totals belongs to top bot');
+  assert.equal(state.gameData?.stats?.raceWins?.[humanId] || 0, 0, '6th DNF human is not credited with a race win');
+  stopKartSimulation(roomCode);
+});
+
+test('Trivia Death fixes Final Escape auto-win, duplicate correct stat, and Seance emoji match', async () => {
+  const { triviaDeathLogic } = await import('./games/trivia-death');
+  const triviaQs = Array.from({ length: 15 }, (_, i) => ({
+    question: `Q${i}?`,
+    choices: ['A', 'B', 'C', 'D'] as [string, string, string, string],
+    answer: 0,
+  }));
+  await savePrompts(normalizePrompts({ quipClash: ['a'], theFaker: ['x'], bracketBattles: ['y'], triviaQuestions: triviaQs }));
+
+  const state = makeState('trivia-death', 5);
+  await triviaDeathLogic.onStart(state);
+  // 1st question: p0 answers right -> correct stat bumped once (not twice)
+  await triviaDeathLogic.processAction(state, 'p0', { type: 'SUBMIT_TRIVIA_ANSWER', answer: 0 });
+  await triviaDeathLogic.processAction(state, 'host', { type: 'FORCE_TRIVIA_REVEAL' });
+  assert.equal(state.gameData.stats.correct.p0, 1, 'correct stat incremented once per right answer');
+
+  // Séance ('memory'): emoji with VS-16 like 🕷️ matches both full emoji and stripped variant
+  state.gameData.killingFloorPlayers = ['p1', 'p2'];
+  state.gameData.killingFloorMiniGame = 'memory';
+  state.gameData.killingFloorData = { type: 'memory', grid: ['🕷️', '💀', '🕯️', '🕷️', '💀', '🕯️'] };
+  state.phase = 'KILLING_FLOOR';
+  await triviaDeathLogic.processAction(state, 'p1', { type: 'SUBMIT_KILLING_FLOOR_ANSWER', answer: '🕷️' });
+  await triviaDeathLogic.processAction(state, 'p2', { type: 'SUBMIT_KILLING_FLOOR_ANSWER', answer: '🦇' });
+  await triviaDeathLogic.processAction(state, 'host', { type: 'FORCE_KILLING_FLOOR_RESOLVE' });
+  assert.equal(state.playerData.p1.isDead, false, 'full multi-codepoint emoji survives Seance');
+  assert.equal(state.playerData.p2.isDead, true, 'wrong symbol still dies in Seance');
+
+  // Fast-forward into Final Escape with 5 players having distinct money totals
+  state.gameData.round = state.gameData.totalRounds;
+  state.gameData.money = { p0: 100, p1: 200, p2: 300, p3: 400, p4: 500 };
+  state.phase = 'KILLING_FLOOR_RESULTS';
+  await triviaDeathLogic.processAction(state, 'host', { type: 'NEXT_TRIVIA_ROUND' });
+  assert.equal(state.phase, 'FINAL_ESCAPE');
+  for (const pid of state.playerOrder) {
+    assert.ok(state.gameData.escapeProgress[pid] < 4, `${pid} starts strictly below 4 steps in 5-player Final Escape`);
+  }
+  // 1st place (p4) answering WRONG on Q1 must NOT escape/win
+  const escQ = state.gameData.currentEscapeQuestion;
+  const wrongIdx = (escQ.answer + 1) % 4;
+  await triviaDeathLogic.processAction(state, 'p4', { type: 'SUBMIT_ESCAPE_ANSWER', answer: wrongIdx });
+  await triviaDeathLogic.processAction(state, 'host', { type: 'FORCE_ESCAPE_ADVANCE' });
+  assert.equal(state.phase, 'FINAL_ESCAPE', '1st place wrong answer on Q1 does not auto-win');
+  assert.equal(state.gameData.playerStatuses.p4, 'alive');
+});
+
+test('The Faker rotates fakerId each round across active players', async () => {
+  await savePrompts(normalizePrompts({ quipClash: ['a'], theFaker: ['Act 1', 'Act 2', 'Act 3'], bracketBattles: ['y'] }));
+  const state = makeState('the-faker', 4);
+  await fakerLogic.onStart(state);
+  const f1 = state.gameData.fakerId;
+
+  // Round 1 finishes in a tie (nobody eliminated) -> Round 2 must pick a DIFFERENT faker
+  await fakerLogic.processAction(state, 'host', { type: 'PROCEED_TO_ACTION' });
+  await fakerLogic.processAction(state, 'host', { type: 'PROCEED_TO_VOTING' });
+  await fakerLogic.processAction(state, 'host', { type: 'FORCE_FAKER_RESULTS' });
+  await fakerLogic.processAction(state, 'host', { type: 'NEXT_FAKER_ROUND' });
+  const f2 = state.gameData.fakerId;
+  assert.notEqual(f2, f1, 'Round 2 rotates away from Round 1 faker');
+
+  await fakerLogic.processAction(state, 'host', { type: 'PROCEED_TO_ACTION' });
+  await fakerLogic.processAction(state, 'host', { type: 'PROCEED_TO_VOTING' });
+  await fakerLogic.processAction(state, 'host', { type: 'FORCE_FAKER_RESULTS' });
+  await fakerLogic.processAction(state, 'host', { type: 'NEXT_FAKER_ROUND' });
+  const f3 = state.gameData.fakerId;
+  assert.notEqual(f3, f2, 'Round 3 rotates away from Round 2 faker');
+  assert.notEqual(f3, f1, 'Round 3 picks an unused active player when available');
+});
+
+test('Ready Set Bet respects bettingClosed on prop bets and counts 2/3 & 11/12 in odd/even props', async () => {
+  const { readySetBetLogic } = await import('./games/ready-set-bet');
+  const state = makeState('ready-set-bet', 2);
+  await readySetBetLogic.onStart(state);
+
+  // When bettingClosed is true, prop bets are rejected
+  state.gameData.bettingClosed = true;
+  await readySetBetLogic.processAction(state, 'p0', { type: 'SUBMIT_PROP_BET', choice: true });
+  assert.equal(state.gameData.propBetAnswers.p0, undefined, 'prop bet ignored after bettingClosed');
+
+  // When open, accept and pay out when 2/3 or 11/12 wins odd_win / even_win
+  state.gameData.bettingClosed = false;
+  await readySetBetLogic.processAction(state, 'p0', { type: 'SUBMIT_PROP_BET', choice: true });
+  await readySetBetLogic.processAction(state, 'p1', { type: 'SUBMIT_PROP_BET', choice: true });
+  state.gameData.propBet = { id: 'odd_win', desc: 'Will the winner be an odd numbered horse?' };
+  state.gameData.positions['2/3'] = 16;
+  state.gameData.positions['5'] = 15;
+  state.gameData.positions['7'] = 15;
+  state.gameData.finishers = ['2/3', '5', '7'];
+  // Trigger race finish by advancing final finisher tick via internal helper path: simulate 3rd finisher crossing
+  state.gameData.finishers = ['2/3', '5'];
+  // Re-test via direct RACE_TICK would roll dice; test even_win / odd_win payout via a controlled 3rd finisher tick if needed,
+  // or verify through full state transition: set all horses except '4' behind, wait — easier: roll until 3rd crosses?
+  // Even cleaner: set two finishers and check finishRace through any 3rd finisher reaching finish on next RACE_TICK?
+  // Wait: rollDice is random, so set EVERY horse >= 15 and finishers = ['2/3', '11/12']? Let's set all non-finishers >= 15!
+  // Set all non-finisher horses to TRACK_LENGTH (15) so the next non-finisher roll finishes the race
+  for (const h of ['4', '5', '6', '7', '8', '9', '10', '11/12']) state.gameData.positions[h] = 15;
+  for (let t = 0; t < 60 && state.phase === 'RACING'; t++) {
+    await readySetBetLogic.processAction(state, 'host', { type: 'RACE_TICK' });
+  }
+  assert.equal(state.phase, 'RACE_RESULTS');
+  assert.equal(state.gameData.money.p0, 150, '2/3 winning satisfies odd_win and awards +$150');
+
+  // Test 11/12 with even_win (plus confirm incorrect prop choice pays nothing)
+  const state2 = makeState('ready-set-bet', 2);
+  await readySetBetLogic.onStart(state2);
+  await readySetBetLogic.processAction(state2, 'p0', { type: 'SUBMIT_PROP_BET', choice: true });
+  await readySetBetLogic.processAction(state2, 'p1', { type: 'SUBMIT_PROP_BET', choice: false });
+  state2.gameData.propBet = { id: 'even_win', desc: 'Will the winner be an even numbered horse?' };
+  state2.gameData.positions['11/12'] = 16;
+  state2.gameData.finishers = ['11/12', '5'];
+  for (const h of ['2/3', '4', '6', '7', '8', '9', '10']) state2.gameData.positions[h] = 15;
+  for (let t = 0; t < 60 && state2.phase === 'RACING'; t++) {
+    await readySetBetLogic.processAction(state2, 'host', { type: 'RACE_TICK' });
+  }
+  assert.equal(state2.phase, 'RACE_RESULTS');
+  assert.equal(state2.gameData.money.p0, 150, '11/12 winning satisfies even_win and awards +$150');
+  assert.equal(state2.gameData.money.p1, 0, 'false choice loses prop bet (clamped to $0)');
+
+  // Test 11/12 with odd_win and 2/3 with even_win (combined horses cover both parities)
+  const state3 = makeState('ready-set-bet', 1);
+  await readySetBetLogic.onStart(state3);
+  await readySetBetLogic.processAction(state3, 'p0', { type: 'SUBMIT_PROP_BET', choice: true });
+  state3.gameData.propBet = { id: 'odd_win', desc: 'Will the winner be an odd numbered horse?' };
+  state3.gameData.positions['11/12'] = 16;
+  state3.gameData.finishers = ['11/12', '4'];
+  for (const h of ['2/3', '5', '6', '7', '8', '9', '10']) state3.gameData.positions[h] = 15;
+  for (let t = 0; t < 60 && state3.phase === 'RACING'; t++) {
+    await readySetBetLogic.processAction(state3, 'host', { type: 'RACE_TICK' });
+  }
+  assert.equal(state3.phase, 'RACE_RESULTS');
+  assert.equal(state3.gameData.money.p0, 150, '11/12 winning satisfies odd_win');
+
+  const state4 = makeState('ready-set-bet', 1);
+  await readySetBetLogic.onStart(state4);
+  await readySetBetLogic.processAction(state4, 'p0', { type: 'SUBMIT_PROP_BET', choice: true });
+  state4.gameData.propBet = { id: 'even_win', desc: 'Will the winner be an even numbered horse?' };
+  state4.gameData.positions['2/3'] = 16;
+  state4.gameData.finishers = ['2/3', '7'];
+  for (const h of ['4', '5', '6', '8', '9', '10', '11/12']) state4.gameData.positions[h] = 15;
+  for (let t = 0; t < 60 && state4.phase === 'RACING'; t++) {
+    await readySetBetLogic.processAction(state4, 'host', { type: 'RACE_TICK' });
+  }
+  assert.equal(state4.phase, 'RACE_RESULTS');
+  assert.equal(state4.gameData.money.p0, 150, '2/3 winning satisfies even_win');
+});
+
+test('Herd Mentality clears Pink Cow when outlier joins majority or tie breaks', async () => {
+  const { herdMentalityLogic } = await import('./games/herd-mentality');
+  await savePrompts(normalizePrompts({ quipClash: ['a'], theFaker: ['x'], bracketBattles: ['y'], herdMentality: ['P1', 'P2', 'P3'] }));
+  const state = makeState('herd-mentality', 3);
+  await herdMentalityLogic.onStart(state);
+
+  // Round 1: p2 is sole outlier -> gets Pink Cow
+  await herdMentalityLogic.processAction(state, 'p0', { type: 'SUBMIT_ANSWER', answer: 'Cats' });
+  await herdMentalityLogic.processAction(state, 'p1', { type: 'SUBMIT_ANSWER', answer: 'Cats' });
+  await herdMentalityLogic.processAction(state, 'p2', { type: 'SUBMIT_ANSWER', answer: 'Dogs' });
+  assert.equal(state.hostData.pinkCowHolder, 'p2');
+
+  // Round 2: everyone agrees (p2 moves into majority) -> Pink Cow cleared
+  await herdMentalityLogic.processAction(state, 'host', { type: 'NEXT_HERD_ROUND' });
+  await herdMentalityLogic.processAction(state, 'p0', { type: 'SUBMIT_ANSWER', answer: 'Taco' });
+  await herdMentalityLogic.processAction(state, 'p1', { type: 'SUBMIT_ANSWER', answer: 'Taco' });
+  await herdMentalityLogic.processAction(state, 'p2', { type: 'SUBMIT_ANSWER', answer: 'Taco' });
+  assert.equal(state.hostData.pinkCowHolder, null, 'Pink Cow clears when previous outlier matches the herd');
+  assert.equal(state.playerData.p2.hasPinkCow, false);
+
+  // Round 3: p0 gets Pink Cow; in a 3-way split, Pink Cow clears instead of sticking
+  await herdMentalityLogic.processAction(state, 'host', { type: 'NEXT_HERD_ROUND' });
+  await herdMentalityLogic.processAction(state, 'p0', { type: 'SUBMIT_ANSWER', answer: 'Sole' });
+  await herdMentalityLogic.processAction(state, 'p1', { type: 'SUBMIT_ANSWER', answer: 'Herd' });
+  await herdMentalityLogic.processAction(state, 'p2', { type: 'SUBMIT_ANSWER', answer: 'Herd' });
+  assert.equal(state.hostData.pinkCowHolder, 'p0');
+  state.gameData.totalRounds = 5;
+  state.gameData.prompts.push('P4');
+  await herdMentalityLogic.processAction(state, 'host', { type: 'NEXT_HERD_ROUND' });
+  await herdMentalityLogic.processAction(state, 'p0', { type: 'SUBMIT_ANSWER', answer: 'Red' });
+  await herdMentalityLogic.processAction(state, 'p1', { type: 'SUBMIT_ANSWER', answer: 'Blue' });
+  await herdMentalityLogic.processAction(state, 'p2', { type: 'SUBMIT_ANSWER', answer: 'Green' });
+  assert.equal(state.hostData.pinkCowHolder, null, 'Pink Cow clears when no sole outlier exists');
+});
+
+test('Player SSE buildPlayerPayload strips hostData and masks secret voting info', async () => {
+  const { buildPlayerPayload } = await import('./player-stream');
+  await savePrompts(normalizePrompts({ quipClash: ['q1', 'q2', 'q3'], theFaker: ['x'], bracketBattles: ['y'] }));
+
+  const state = makeState('quip-clash', 3);
+  state.vipId = 'p0';
+  state.players.p0.isVip = true;
+  await quipClashLogic.onStart(state);
+  await quipClashLogic.processAction(state, 'p0', { type: 'SUBMIT_ANSWER', promptIndex: 0, answer: 'Joke A' });
+  await quipClashLogic.processAction(state, 'host', { type: 'FORCE_VOTING' });
+
+  const nonVipPayload = buildPlayerPayload(state, 'p1') as Record<string, any>;
+  assert.equal('hostData' in nonVipPayload, false, 'raw hostData is stripped from player stream');
+  assert.equal(nonVipPayload.me.isVip, false);
+  assert.equal(nonVipPayload.autoAdvanceAction, null, 'non-VIP does not get autoAdvanceAction');
+  assert.ok(Array.isArray(nonVipPayload.publicData.answers), 'author can still see prompt text safely');
+  for (const a of nonVipPayload.publicData.answers) {
+    assert.equal('id' in a, false, 'author IDs are masked in publicData during Quip Clash voting');
+  }
+
+  const vipPayload = buildPlayerPayload(state, 'p0') as Record<string, any>;
+  assert.equal('hostData' in vipPayload, false);
+  assert.equal(vipPayload.me.isVip, true);
+  assert.equal(vipPayload.autoAdvanceAction, 'FORCE_NEXT_VOTE');
+});
+
+test('Quip Clash keeps hostData.round and hostData.totalRounds as actual rounds during voting and results', async () => {
+  await savePrompts(normalizePrompts({ quipClash: ['q1', 'q2', 'q3', 'q4'], theFaker: ['x'], bracketBattles: ['y'] }));
+  const state = makeState('quip-clash', 3);
+  state.settings = { rounds: 1 };
+  await quipClashLogic.onStart(state);
+  assert.equal(state.hostData.round, 1);
+  assert.equal(state.hostData.totalRounds, 1);
+
+  await quipClashLogic.processAction(state, 'host', { type: 'FORCE_VOTING' });
+  assert.equal(state.phase, 'VOTING');
+  assert.equal(state.hostData.round, 1);
+  assert.equal(state.hostData.totalRounds, 1);
+  assert.equal(state.hostData.promptNumber, 1);
+  assert.equal(state.hostData.totalPrompts, 3);
+
+  await quipClashLogic.processAction(state, 'host', { type: 'FORCE_NEXT_VOTE' });
+  assert.equal(state.phase, 'ROUND_RESULTS');
+  assert.equal(state.hostData.round, 1);
+  assert.equal(state.hostData.totalRounds, 1);
+  assert.equal(state.hostData.promptNumber, 1);
+  assert.equal(state.hostData.totalPrompts, 3);
+
+  await quipClashLogic.processAction(state, 'host', { type: 'NEXT_PROMPT' });
+  assert.equal(state.phase, 'VOTING');
+  assert.equal(state.hostData.round, 1);
+  assert.equal(state.hostData.totalRounds, 1);
+  assert.equal(state.hostData.promptNumber, 2);
+  assert.equal(state.hostData.totalPrompts, 3);
+});

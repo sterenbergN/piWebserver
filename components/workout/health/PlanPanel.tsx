@@ -47,7 +47,7 @@ function RestingCard({ resting }: { resting: NonNullable<ReturnType<typeof resti
         <div className="is-best">
           <span>⌚ Apple Watch</span>
           <strong>{resting.watch.toLocaleString()} <small>kcal a day at rest</small></strong>
-          <small>average of {resting.days} days you wore it (last 30)</small>
+          <small>average of {resting.days} day{resting.days === 1 ? '' : 's'} you wore it (last 30)</small>
         </div>
         {resting.formulas.map((f) => {
           const d = resting.watch - f.kcal;
@@ -207,10 +207,10 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
   const progress = useMemo(() => (plan ? planProgress(plan, weighIns, today) : null), [plan, weighIns, today]);
 
   const chosenLevel = plan?.activityLevel ?? calorie.activityLevel ?? 'moderate';
-  const formula = profile ? Math.round(calculateMifflinStJeor({ ...profile, activityLevel: chosenLevel }).maintenanceCalories / 10) * 10 : null;
+  const formula = profile ? Math.round(calculateMifflinStJeor({ ...profile, activityLevel: chosenLevel }).maintenanceCalories) : null;
   const estimates = [
     progress?.realMaintenance ? { key: 'weighins', label: 'From your weigh-ins', kcal: progress.realMaintenance.kcal, note: `trend since ${fmtDate(plan!.startDate).replace(/, \d{4}$/, '')}, if you ate the plan's calories` } : null,
-    measured?.maintenance && measured.basis === 'calories' ? { key: 'health', label: 'From Apple Health', kcal: measured.maintenance, note: `resting + active, last ${measured.days} days` } : null,
+    measured?.maintenance && measured.basis === 'calories' ? { key: 'health', label: 'From Apple Health', kcal: measured.maintenance, note: `resting + active, last ${measured.days} day${measured.days === 1 ? '' : 's'}` } : null,
     formula ? { key: 'formula', label: 'From the formula', kcal: formula, note: `your size and ${ACTIVITY_LEVELS.find((l) => l.value === chosenLevel)?.label} activity` } : null,
   ].filter((e): e is { key: string; label: string; kcal: number; note: string } => !!e);
   const best = estimates[0];

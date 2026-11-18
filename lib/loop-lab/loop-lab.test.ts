@@ -19,7 +19,7 @@ import { driftedPlants, runDrifted, worstOf } from './drift';
 import { TUNING_RULES } from './tuning';
 import { exportCode, exportReference, pidCompactParams, real } from './export';
 import { decodeExperiment, defaultExperiment, encodeExperiment } from './setup';
-import { BLOCK_TEMPLATES, benchExport, cleanDiagram, clampParam, decodeDiagram, encodeDiagram, readLoop, simulateBlockDiagram, type BlockDiagramModel } from './block-sim';
+import { BLOCK_TEMPLATES, benchExport, cleanDiagram, clampParam, decodeDiagram, diagramFromExperiment, encodeDiagram, readLoop, simulateBlockDiagram, type BlockDiagramModel } from './block-sim';
 
 const close = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b}, got ${a}`);
 const pid = (o: Partial<typeof DEFAULT_PID>): ControllerConfig => ({ kind: 'pid', pid: { ...DEFAULT_PID, ...o } });
@@ -1616,4 +1616,51 @@ test('saved diagrams: one per id, newest first, at most 30; a browser list merge
   assert.deepEqual(withSaved(list, e('a', 9)).map((x) => [x.id, x.savedAt]), [['a', 9], ['b', 3]]);
   // A browser's list brought into the account: what the account lacks, nothing twice.
   assert.deepEqual(mergeSaved(list, [e('b', 100), e('z', 5)]).map((x) => x.id), ['z', 'b', 'a']);
+});
+
+test('block diagram: theta === 0 has 0 sample delay across deadtime, fopdt, and sopdt', () => {
+  const stepAt0 = { id: 's', kind: 'step' as const, label: 'S', x: 0, y: 0, params: { y0: 0, y1: 10, tStep: 0 } };
+  const dt = 0.1;
+
+  const delay0 = simulateBlockDiagram({
+    id: 'dt0', name: 'dt0', description: '', duration: 2, dt,
+    nodes: [stepAt0, { id: 'd', kind: 'deadtime', label: 'D', x: 0, y: 0, params: { theta: 0, y0: 0 } }],
+    wires: [{ id: 'w', fromBlock: 's', fromPort: 0, toBlock: 'd', toPort: 0 }],
+  });
+  assert.equal(delay0.nodeOutputs.d[0], 10);
+
+  const fopdt0 = simulateBlockDiagram({
+    id: 'f0', name: 'f0', description: '', duration: 2, dt,
+    nodes: [stepAt0, { id: 'p', kind: 'fopdt', label: 'P', x: 0, y: 0, params: { K: 1, tau: 1, theta: 0, y0: 0 } }],
+    wires: [{ id: 'w', fromBlock: 's', fromPort: 0, toBlock: 'p', toPort: 0 }],
+  });
+  assert.ok(fopdt0.nodeOutputs.p[1] > 0.9, `expected immediate response at k=1, got ${fopdt0.nodeOutputs.p[1]}`);
+
+  const sopdt0 = simulateBlockDiagram({
+    id: 's0', name: 's0', description: '', duration: 2, dt,
+    nodes: [stepAt0, { id: 'p', kind: 'sopdt', label: 'P', x: 0, y: 0, params: { K: 1, tau1: 1, tau2: 1, theta: 0, y0: 0 } }],
+    wires: [{ id: 'w', fromBlock: 's', fromPort: 0, toBlock: 'p', toPort: 0 }],
+  });
+  assert.ok(sopdt0.nodeOutputs.p[1] > 0.08, `expected immediate 2nd-order response at k=1, got ${sopdt0.nodeOutputs.p[1]}`);
+});
+
+test('export & bench -> studio: ADRC state count interpolates and diagramFromExperiment preserves tuning', () => {
+  const proc = getProcess('batch');
+  const params = defaultParams(proc);
+  const adrc = defaultController('adrc', proc);
+  assert.ok(adrc.kind === 'adrc');
+  const rows = pidCompactParams(proc, adrc, params);
+  assert.ok(rows);
+  const note = rows.find((r) => r.name === 'PID_Compact')?.note ?? '';
+  assert.ok(!note.includes('${'), `unexpected template placeholder in note: ${note}`);
+  assert.match(note, new RegExp(`observer of ${adrc.order + 1} states`));
+
+  const exp = defaultExperiment('flow');
+  assert.ok(exp.controller.kind === 'pid');
+  exp.controller.pid.Kc = 3.25;
+  exp.controller.pid.Ti = 4.5;
+  const model = diagramFromExperiment(exp);
+  const pidNode = model.nodes.find((n) => n.kind === 'pid');
+  assert.equal(pidNode?.params.Kc, 3.25);
+  assert.equal(pidNode?.params.Ti, 4.5);
 });

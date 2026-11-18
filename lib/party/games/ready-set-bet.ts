@@ -80,6 +80,7 @@ export const readySetBetLogic = {
 
       case 'SUBMIT_PROP_BET': {
         if (state.phase !== 'RACING') return;
+        if (state.gameData.bettingClosed) return;
         if (state.gameData.propBetAnswers[playerId] !== undefined || typeof action.choice !== 'boolean') return;
         
         state.gameData.propBetAnswers[playerId] = action.choice;
@@ -243,8 +244,8 @@ function finishRace(state: GameState) {
   let propResult = false;
   
   if (propBet) {
-    if (propBet.id === 'odd_win') propResult = ['5','7','9'].includes(first);
-    else if (propBet.id === 'even_win') propResult = ['4','6','8','10'].includes(first);
+    if (propBet.id === 'odd_win') propResult = ['2/3', '5', '7', '9', '11/12'].includes(first);
+    else if (propBet.id === 'even_win') propResult = ['2/3', '4', '6', '8', '10', '11/12'].includes(first);
     else if (propBet.id === 'seven_place') propResult = (first === '7' || second === '7');
     else if (propBet.id === 'longshot_show') propResult = ['2/3','11/12'].some(h => [first,second,third].includes(h));
     else if (propBet.id === 'no_seven_show') propResult = !([first,second,third].includes('7'));

@@ -14,7 +14,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    const result = await joinRoom(body?.roomCode, body?.playerName, { asAudience: body?.asAudience === true, avatar: body?.avatar });
+    const result = await joinRoom(body?.roomCode, body?.playerName, {
+      asAudience: body?.asAudience === true,
+      avatar: body?.avatar,
+      hostId: typeof body?.hostId === 'string' ? body.hostId : undefined,
+    });
     if ('error' in result) {
       return NextResponse.json({ error: result.error, audienceAvailable: result.audienceAvailable === true }, { status: 400 });
     }

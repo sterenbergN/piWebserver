@@ -103,7 +103,7 @@
 .golf-round-title { flex: 1; min-width: 0; }
 .golf-round-title h1 { font-size: 1.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .golf-round-title small { color: var(--muted); font-size: 0.8rem; }
-.golf-tabs { display: flex; gap: 0.3rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); position: sticky; top: 0.5rem; z-index: 5; }
+.golf-tabs { display: flex; gap: 0.3rem; padding: 0.25rem; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--surface-border); position: sticky; top: 56px; z-index: 30; }
 .golf-tabs button { flex: 1; min-height: 40px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-weight: 700; cursor: pointer; }
 .golf-tabs button[aria-selected="true"] { background: var(--card-bg); color: var(--foreground); box-shadow: 0 0 0 1px var(--surface-border); }
 
@@ -166,7 +166,7 @@
 .golf-players-edit[open] { display: flex; flex-direction: column; gap: 0.4rem; }
 
 /* Map */
-.golf-map { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.golf-map { position: relative; isolation: isolate; z-index: 0; border-radius: 14px; overflow: hidden; border: 1px solid var(--surface-border); background: var(--input-bg); }
 .golf-map-canvas { height: 300px; width: 100%; }
 .golf-map.is-tall .golf-map-canvas { height: min(62vh, 520px); }
 .golf-map-note { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 0.9rem; pointer-events: none; }

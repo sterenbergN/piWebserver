@@ -59,7 +59,7 @@ export default function SharedGymPage() {
       <div className="workout-tile">
         <div className="workout-hint">Shared with you</div>
         <h1 style={{ margin: '0.2rem 0', fontSize: '1.5rem' }}>{gym.emoji} {gym.name}</h1>
-        <p className="workout-hint">{gym.stations.length} stations · {liftCount} lifts</p>
+        <p className="workout-hint">{gym.stations.length} station{gym.stations.length === 1 ? '' : 's'} · {liftCount} lift{liftCount === 1 ? '' : 's'}</p>
       </div>
       {gym.stations.map((s) => (
         <div key={s.id} className="workout-list-row" style={{ marginBottom: '0.5rem', flexDirection: 'column', alignItems: 'flex-start' }}>

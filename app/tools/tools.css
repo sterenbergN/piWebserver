@@ -120,7 +120,11 @@
   border: 1px solid var(--surface-border); margin-bottom: 1.25rem;
 }
 .tl-filter-toggle {
-  display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;
+  display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+}
+.tl-filter-toggle-btn {
+  flex: 1 1 auto; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+  background: none; border: none; padding: 0; color: var(--foreground); font: inherit; cursor: pointer; text-align: left;
 }
 .tl-filter-toggle h3 { margin: 0; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; gap: 0.4rem; }
 .tl-filter-body { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.9rem; }
@@ -434,3 +438,4 @@
 .tl-price-tag { width: 1.6rem; text-align: center; color: var(--muted); }
 .tl-price-per { flex: 1 1 6rem; display: flex; flex-direction: column; align-items: flex-end; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .tl-price-per small { font-size: 0.72rem; font-weight: 700; color: var(--success-light); }
+.tl-price-per small.tl-muted { color: var(--muted); }

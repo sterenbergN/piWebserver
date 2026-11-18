@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
-import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { normalizeGolfUser } from '@/lib/golf/course';
 import { readGolfUser, readLegacyRounds, updateGolfUser } from '@/lib/golf/store';
 import { findWorkoutUser } from '@/lib/workout/users';
@@ -11,11 +11,17 @@ import { findWorkoutUser } from '@/lib/workout/users';
  */
 export async function GET() {
   try {
-    const userId = await requireWorkoutUserId();
+    const userId = await getAuthenticatedWorkoutUserId();
+    if (!userId) {
+      return NextResponse.json(
+        { success: true, authenticated: false, user: null },
+        { headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
     const [user, account, isAdmin] = await Promise.all([readGolfUser(userId), findWorkoutUser(userId), isAdminAuthenticated()]);
     const legacy = isAdmin ? await readLegacyRounds() : null;
     return NextResponse.json(
-      { success: true, userId, name: String(account?.name || account?.username || 'Me').slice(0, 40), user, legacy: legacy ? { count: legacy.length, names: legacyNames(legacy) } : null },
+      { success: true, authenticated: true, userId, name: String(account?.name || account?.username || 'Me').slice(0, 40), user, legacy: legacy ? { count: legacy.length, names: legacyNames(legacy) } : null },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {

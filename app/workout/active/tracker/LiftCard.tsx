@@ -10,7 +10,7 @@ import type { useRestTimer } from './hooks';
 // Performance score colour: green = too easy, yellow = about right, red = struggled.
 function scoreColor(score: number) {
   if (score > 1.05) return 'var(--success)';
-  if (score >= 0.95) return '#ecc94b';
+  if (score >= 0.95) return 'var(--warning)';
   return 'var(--danger)';
 }
 
@@ -93,7 +93,7 @@ export default function LiftCard(props: LiftCardProps) {
             <div style={{ fontSize: '0.65rem', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>Superset partner</div>
             <div style={{ fontWeight: 700, fontSize: compact ? '0.82rem' : '0.92rem' }}>{partner.name}</div>
             <div style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>
-              {partner.logged}/{partner.target} sets logged{partner.upNext ? ' • up next after this set' : ''}
+              {partner.logged}/{partner.target} set{partner.target === 1 ? '' : 's'} logged{partner.upNext ? ' • up next after this set' : ''}
             </div>
           </div>
           <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem', borderRadius: '999px', flexShrink: 0 }} onClick={partner.onSwitch}>Switch</button>
@@ -104,7 +104,7 @@ export default function LiftCard(props: LiftCardProps) {
       <div className="tracker-target">
         <div style={{ minWidth: 0, textAlign: 'left' }}>
           <span className="tracker-target-label">Target</span>
-          <strong>{target.loading ? 'Calculating…' : `${target.weight} lbs × ${target.reps} × ${target.sets} sets`}</strong>
+          <strong>{target.loading ? 'Calculating…' : `${target.weight} lbs × ${target.reps} × ${target.sets} set${target.sets === 1 ? '' : 's'}`}</strong>
         </div>
         <button type="button" className="tracker-target-toggle" aria-expanded={showDetails} onClick={() => setShowDetails((value) => !value)}>
           {showDetails ? 'Hide' : 'Details'} <span aria-hidden style={{ display: 'inline-block', transform: showDetails ? 'rotate(180deg)' : 'none' }}>▾</span>
@@ -122,7 +122,7 @@ export default function LiftCard(props: LiftCardProps) {
           {suggestion?.reason && <div style={{ color: 'var(--accent)' }}>💡 {suggestion.reason}</div>}
           {props.calibrationNote && <div>{props.calibrationNote}</div>}
           {historic && (
-            <div>Best last time: <strong>{historic.prevWeight} lbs × {historic.prevReps}</strong> ({historic.prevSets} sets) · est. 1RM <strong>{historic.est1RM} lbs</strong></div>
+            <div>Best last time: <strong>{historic.prevWeight} lbs × {historic.prevReps}</strong> ({historic.prevSets} set{historic.prevSets === 1 ? '' : 's'}) · est. 1RM <strong>{historic.est1RM} lbs</strong></div>
           )}
           <div>This lift {formatClock(props.liftSecs)} · workout {formatClock(props.workoutSecs)}</div>
           {breakdown && (
@@ -131,7 +131,7 @@ export default function LiftCard(props: LiftCardProps) {
             </button>
           )}
           {showBreakdown && breakdown && (
-            <div style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px' }}>
+            <div style={{ padding: '0.5rem', background: 'var(--input-bg)', borderRadius: '8px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.3rem 1rem' }}>
                 <div>Overload: <strong style={{ color: breakdown.overloadRatio >= 1 ? 'var(--success)' : 'var(--danger)' }}>{((breakdown.overloadRatio - 1) * 100).toFixed(1)}%</strong></div>
                 <div>e1RM: <strong>{Math.round(breakdown.e1RM)} lbs</strong></div>
@@ -147,7 +147,7 @@ export default function LiftCard(props: LiftCardProps) {
               {breakdown.performanceAdjustment && <div style={{ marginTop: '0.3rem', fontStyle: 'italic' }}>{breakdown.performanceAdjustment}</div>}
             </div>
           )}
-          <div style={{ padding: '0.5rem 0.8rem', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+          <div style={{ padding: '0.5rem 0.8rem', background: 'var(--input-bg)', borderRadius: '10px' }}>
             <IntensitySlider value={props.intensity} onChange={props.onIntensity} />
           </div>
         </div>

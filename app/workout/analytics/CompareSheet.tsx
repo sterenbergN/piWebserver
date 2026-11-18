@@ -55,8 +55,8 @@ export default function CompareSheet({ workout, history, lifts, onClose }: Compa
               {result.lifts.map((row) => (
                 <tr key={row.key}>
                   <th scope="row">{row.name}</th>
-                  <td>{row.a ? <>{row.a.top.weight}×{row.a.top.reps}<small>{row.a.sets} sets</small></> : '—'}</td>
-                  <td>{row.b ? <>{row.b.top.weight}×{row.b.top.reps}<small>{row.b.sets} sets</small></> : '—'}</td>
+                  <td>{row.a ? <>{row.a.top.weight}×{row.a.top.reps}<small>{row.a.sets} set{row.a.sets === 1 ? '' : 's'}</small></> : '—'}</td>
+                  <td>{row.b ? <>{row.b.top.weight}×{row.b.top.reps}<small>{row.b.sets} set{row.b.sets === 1 ? '' : 's'}</small></> : '—'}</td>
                   <td className={row.change === null ? '' : row.change > 0 ? 'is-up' : row.change < 0 ? 'is-down' : ''}>
                     {row.change === null ? (row.a ? 'new' : '') : row.change === 0 ? '=' : `${row.change > 0 ? '+' : ''}${row.change}`}
                   </td>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Tracker from './Tracker';
 import { AddExerciseForGym } from '@/components/workout/AddExerciseFlow';
@@ -16,6 +16,14 @@ import { DEMO_GYMS, DEMO_HISTORY, DEMO_TYPES, DEMO_USER_ID } from '@/lib/workout
 const FREESTYLE_TYPE = { name: 'Freestyle', muscles: [] as string[], intensity: 75, minReps: 8, maxReps: 12, sets: 3 };
 
 export default function ActiveWorkoutPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted)' }}>Loading workout...</div>}>
+      <ActiveWorkoutContent />
+    </Suspense>
+  );
+}
+
+function ActiveWorkoutContent() {
   const searchParams = useSearchParams();
   const gymParam = searchParams.get('gym');
   const typeId = searchParams.get('type');
@@ -143,7 +151,7 @@ export default function ActiveWorkoutPage() {
           availableLifts.push(
             { id: '1', name: 'Barbell Bench Press', primaryMuscle: 'Chest', station: mockStation },
             { id: '2', name: 'Barbell Squat', primaryMuscle: 'Quads', station: mockStation },
-            { id: '3', name: 'Deadlift', primaryMuscle: 'Hamstrings', station: mockStation },
+            { id: '3', name: 'Deadlift', primaryMuscle: 'Back', secondaryMuscle: 'Hamstrings', station: mockStation },
           );
         }
 

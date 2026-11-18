@@ -48,12 +48,16 @@ export default function WorkoutUsersPanel() {
     else setError(`Could not delete ${u.username}.`);
   };
 
-  const describe = (u: WorkoutUser) => [
-    u.gender !== 'unspecified' ? u.gender : '',
-    u.weight ? `${u.weight} lb` : '',
-    u.height,
-    u.birthdate ? `born ${normalizeBirthdate(u.birthdate)}` : '',
-  ].filter(Boolean).join(' · ') || 'No profile details';
+  const describe = (u: WorkoutUser) => {
+    const rawHeight = String(u.height || '').trim();
+    const formattedHeight = rawHeight ? (/^\d+(\.\d+)?$/.test(rawHeight) ? `${rawHeight} in` : rawHeight) : '';
+    return [
+      u.gender !== 'unspecified' ? u.gender : '',
+      u.weight ? `${u.weight} lb` : '',
+      formattedHeight,
+      u.birthdate ? `born ${normalizeBirthdate(u.birthdate)}` : '',
+    ].filter(Boolean).join(' · ') || 'No profile details';
+  };
 
   const set = (patch: Partial<WorkoutUser>) => editing && setEditing({ ...editing, ...patch });
 

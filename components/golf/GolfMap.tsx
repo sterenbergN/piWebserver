@@ -18,8 +18,30 @@ type MapConfig = { satellite: Tiles | null; streets: Tiles };
 let configPromise: Promise<MapConfig | null> | null = null;
 /** Asked once per visit; the answer depends on the Pi's settings, not on the page. */
 function mapConfig() {
-  configPromise ||= fetch('/api/golf/map', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!configPromise) {
+    configPromise = fetch('/api/golf/map', { cache: 'no-store' })
+      .then(async (r) => {
+        if (!r.ok) return null;
+        const data = (await r.json()) as MapConfig;
+        return data && data.streets?.url ? data : null;
+      })
+      .catch(() => null)
+      .then((cfg) => {
+        // Don't keep a failed config cached so retries can recover once connected.
+        if (!cfg) configPromise = null;
+        return cfg;
+      });
+  }
   return configPromise;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const tone = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(`--golf-${name}`).trim() || '#88c0d0';
@@ -100,13 +122,13 @@ export default function GolfMap({ points = [], lines = [], areas = [], me, fit, 
     }
     for (const p of points) {
       if (p.onDrag) {
-        const icon = leaflet.divIcon({ className: `golf-pin is-${p.tone}`, html: `<span>${p.label ?? ''}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] });
+        const icon = leaflet.divIcon({ className: `golf-pin is-${p.tone}`, html: `<span>${escapeHtml(p.label ?? '')}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] });
         const marker = leaflet.marker([p.at.lat, p.at.lon], { icon, draggable: true, keyboard: false }).addTo(group);
         marker.on('dragend', () => { const ll = marker.getLatLng(); p.onDrag!({ lat: ll.lat, lon: ll.lng }); });
       } else {
         const big = p.tone === 'tee' || p.tone === 'target';
         const c = leaflet.circleMarker([p.at.lat, p.at.lon], { radius: big ? 8 : p.tone === 'old' ? 3.5 : 5, color: '#fff', weight: big ? 2 : 1, fillColor: tone(p.tone), fillOpacity: 1, interactive: !!p.label });
-        if (p.label) c.bindTooltip(p.label, { direction: 'top', offset: [0, -6] });
+        if (p.label) c.bindTooltip(escapeHtml(p.label), { direction: 'top', offset: [0, -6] });
         c.addTo(group);
       }
     }

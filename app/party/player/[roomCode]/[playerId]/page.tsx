@@ -126,13 +126,20 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   }, [roomCode, searchParams]);
 
   // Prompt packs for VIP lobby controls
+  const isVipPlayer = Boolean(
+    state?.me && ((state?.vipId && state.me.id === state.vipId) || state.me.isVip === true),
+  );
   const [packs, setPacks] = useState<{ id: string; name: string; emoji: string; counts: Record<string, number> }[]>([]);
   useEffect(() => {
-    if (!hostId) return;
+    if (!isVipPlayer) return;
     fetch('/api/party/packs').then(r => r.json()).then(d => { if (d.success) setPacks(d.packs); }).catch(() => {});
-  }, [hostId]);
+  }, [isVipPlayer]);
 
-  const { secondsLeft, pct } = useCountdown(state?.hostData?.timerStart, state?.hostData?.timerDuration, state?.paused?.at);
+  const { secondsLeft, pct } = useCountdown(
+    state?.timerStart ?? state?.publicData?.timerStart ?? state?.hostData?.timerStart,
+    state?.timerDuration ?? state?.publicData?.timerDuration ?? state?.hostData?.timerDuration,
+    state?.paused?.at,
+  );
 
   // Vibrate when a new screen asks for input.
   const inputPhases = [
@@ -205,12 +212,14 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   };
 
   const sendHostAction = useCallback(async (action: any): Promise<boolean> => {
-    if (!hostId) return false;
+    if (!isVipPlayer) return false;
+    const credential = hostId || playerId;
+    if (!credential) return false;
     try {
       const res = await fetch('/api/party/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode, playerId: hostId, action }),
+        body: JSON.stringify({ roomCode, playerId: credential, action }),
       });
       if (res.ok) { setSendError(''); return true; }
       const data = await res.json().catch(() => ({}));
@@ -219,18 +228,20 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       setSendError('Connection problem — try again');
     }
     return false;
-  }, [roomCode, hostId]);
+  }, [roomCode, hostId, playerId, isVipPlayer]);
 
   // Fallback client auto-advance timer for VIP hosts
+  const autoAdvanceAt = state?.autoAdvanceAt ?? state?.hostData?.autoAdvanceAt;
+  const autoAdvanceAction = state?.autoAdvanceAction ?? state?.hostData?.autoAdvanceAction;
   useEffect(() => {
-    if (!hostId || !state?.hostData?.autoAdvanceAt || !state?.hostData?.autoAdvanceAction) return;
-    const delay = Math.max(state.hostData.autoAdvanceAt - Date.now(), 250);
+    if (!isVipPlayer || !autoAdvanceAt || !autoAdvanceAction) return;
+    const delay = Math.max(autoAdvanceAt - Date.now(), 250);
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
     autoTimerRef.current = setTimeout(() => {
-      sendHostAction({ type: state.hostData.autoAdvanceAction, deadline: state.hostData.autoAdvanceAt });
+      sendHostAction({ type: autoAdvanceAction, deadline: autoAdvanceAt });
     }, delay);
     return () => { if (autoTimerRef.current) clearTimeout(autoTimerRef.current); };
-  }, [hostId, state?.hostData?.autoAdvanceAt, state?.hostData?.autoAdvanceAction, sendHostAction]);
+  }, [isVipPlayer, autoAdvanceAt, autoAdvanceAction, sendHostAction]);
 
   const submitOnce = async (action: any) => {
     setVoted(true);
@@ -262,22 +273,25 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   );
 
   const me = state.me;
+  const isVip = Boolean(me && ((state?.vipId && me.id === state.vipId) || me.isVip === true));
+  const vipHostToken = isVip ? (hostId || playerId) : null;
   const pd = state.data;
-  const hd = state.hostData || {};
+  const hd = state.publicData || state.hostData || {};
   const myScore = pd?.money !== undefined ? pd.money : (state.players?.[me.id]?.score ?? 0);
   const activePlayers = (Object.values(state.players || {}) as any[]).filter((p) => !p.left);
   const others = activePlayers.filter((p) => p.id !== me.id);
   const takenAvatars = others.map((p) => p.avatar).filter(Boolean) as string[];
   const standings = [...activePlayers].sort((a, b) => b.score - a.score);
   const myRank = standings.findIndex((p) => p.id === me.id) + 1;
+  const waitingOthers = (state.waitingOn || []).filter((n: string) => n !== me.name);
 
   const isPlaying = state.phase !== 'LOBBY' && state.phase !== 'FINAL_RESULTS';
   const skipAction = state.gameType === 'kart-clash' && state.phase === 'RACING'
     ? 'FINISH_KART_RACE'
-    : hd?.autoAdvanceAction;
-  const canSkip = !!hostId && isPlaying && skipAction && skipAction !== 'RACE_TICK';
+    : (state.autoAdvanceAction ?? hd?.autoAdvanceAction);
+  const canSkip = isVip && isPlaying && skipAction && skipAction !== 'RACE_TICK';
   const paused = !!state.paused;
-  const canPause = !!hostId && isPlaying && state.gameType === 'trivia-death' && (paused || hd?.autoAdvanceAt);
+  const canPause = isVip && isPlaying && state.gameType === 'trivia-death' && (paused || autoAdvanceAt);
   const currentGameInfo = ALL_GAMES.find((g) => g.id === state.gameType) || ALL_GAMES[0];
   const PACK_LIST_KEY: Record<string, string> = {
     'quip-clash': 'quipClash',
@@ -317,7 +331,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           <div className="player-header-name" style={{ color: me.avatarColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {me.name} {pd?.status === 'ghost' ? '👻' : ''}
           </div>
-          {hostId && (
+          {isVip && (
             <span style={{ background: 'rgba(6, 182, 212, 0.2)', border: '1px solid var(--party-cyan)', color: 'var(--party-cyan)', borderRadius: '999px', padding: '0.15rem 0.45rem', fontSize: '0.68rem', fontWeight: 900, whiteSpace: 'nowrap', flexShrink: 0 }}>
               👑 VIP
             </span>
@@ -342,7 +356,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       )}
 
       {/* Live Countdown & VIP Action Strip during Gameplay */}
-      {!isKartRacing && isPlaying && (secondsLeft !== null || hostId || (state.waitingOn?.length > 0 && !state.waitingOn.includes(me.name))) && (
+      {!isKartRacing && isPlaying && (secondsLeft !== null || isVip || waitingOthers.length > 0) && (
         <div style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid var(--party-border)', padding: '0.45rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', zIndex: 5 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--party-text-muted)' }}>
             {currentGameInfo.label}
@@ -358,12 +372,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               </span>
             </div>
           )}
-          {state.waitingOn?.length > 0 && !state.waitingOn.includes(me.name) && (
+          {waitingOthers.length > 0 && (
             <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--party-yellow)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>
-              ⏳ Waiting on: {state.waitingOn.join(', ')}
+              ⏳ Waiting on: {waitingOthers.join(', ')}
             </div>
           )}
-          {hostId && (
+          {isVip && (
             <div style={{ display: 'flex', gap: '0.4rem', marginLeft: 'auto' }}>
               {canPause && (
                 <button
@@ -398,7 +412,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       {paused && (
         <div className="party-paused party-content" role="status">
           <strong>⏸️ Paused</strong>
-          <span>{hostId ? 'Tap Resume when you’re ready. The clock picks up where it stopped.' : 'Answers are locked until the host starts the clock again.'}</span>
+          <span>{isVip ? 'Tap Resume when you’re ready. The clock picks up where it stopped.' : 'Answers are locked until the host starts the clock again.'}</span>
         </div>
       )}
       {reconnecting && (
@@ -569,7 +583,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                       {p.avatar} {p.name}{p.id === me.id ? ' (You)' : ''}
                       {p.score > 0 ? ` · 🏆 ${p.score.toLocaleString()}` : ''}
                     </span>
-                    {hostId && p.id !== me.id && (
+                    {isVip && p.id !== me.id && (
                       <button
                         type="button"
                         onClick={() => sendHostAction({ type: 'KICK_PLAYER', targetId: p.id })}
@@ -593,7 +607,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                     {standings.slice(0, 3).map((p, i) => `${['🥇', '🥈', '🥉'][i]} ${p.name} (${p.score.toLocaleString()})`).join(' · ')}
                   </div>
                 </div>
-                {hostId && (
+                {isVip && (
                   <button
                     type="button"
                     onClick={() => sendHostAction({ type: 'RESET_SCORES' })}
@@ -606,7 +620,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             )}
 
             {/* VIP Host Lobby Controls */}
-            {hostId ? (
+            {isVip ? (
               <div style={{ width: '100%', marginTop: '1.25rem', background: 'rgba(6, 182, 212, 0.07)', border: '2px solid rgba(6, 182, 212, 0.35)', borderRadius: '18px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontWeight: 900, fontSize: '0.9rem', color: 'var(--party-cyan)' }}>👑 VIP Host Controls</span>
@@ -622,14 +636,16 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 {(state.gameType === 'quip-clash' || state.gameType === 'debate-duel') && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Rounds:</span>
-                    {[1, 2, 3].map((r) => (
+                    {[1, 2, 3].map((r) => {
+                      const activeRounds = state.settings?.rounds ?? state.targetRounds ?? (state.gameType === 'quip-clash' ? 3 : 1);
+                      return (
                       <button
                         key={r}
                         type="button"
                         onClick={() => sendHostAction({ type: 'SET_QUIP_ROUNDS', rounds: r })}
                         style={{
-                          background: (state.targetRounds || 1) === r ? 'var(--party-yellow)' : 'transparent',
-                          color: (state.targetRounds || 1) === r ? '#000' : '#fff',
+                          background: activeRounds === r ? 'var(--party-yellow)' : 'transparent',
+                          color: activeRounds === r ? '#000' : '#fff',
                           border: '2px solid var(--party-yellow)',
                           padding: '0.25rem 0.75rem',
                           borderRadius: '8px',
@@ -639,7 +655,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                       >
                         {r}
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1152,16 +1169,16 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 )}
                 {pd.miniGame === 'memory' && (
                   <div style={{ textAlign: 'center', width: '100%' }}>
-                    {hd.grid && (
+                    {(pd.grid || hd.grid) && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 56px)', gap: '0.4rem', justifyContent: 'center', marginBottom: '1rem' }}>
-                        {hd.grid.map((sym: string, i: number) => (
+                        {(pd.grid || hd.grid).map((sym: string, i: number) => (
                           <div key={i} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid var(--party-border)', borderRadius: '8px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>{sym}</div>
                         ))}
                       </div>
                     )}
                     <div style={{ marginBottom: '1rem', color: 'var(--party-text-muted)', fontSize: '0.9rem' }}>Type the FIRST symbol you saw</div>
                     <div className="player-answer-row">
-                      <input type="text" className="party-input" value={kfAnswer} onChange={e => setKfAnswer(e.target.value)} placeholder="e.g. 🦇" maxLength={2} style={{ textAlign: 'center', fontSize: '2rem' }} />
+                      <input type="text" className="party-input" value={kfAnswer} onChange={e => setKfAnswer(e.target.value)} placeholder="e.g. 🦇" maxLength={8} style={{ textAlign: 'center', fontSize: '2rem' }} />
                       <button disabled={voted || !kfAnswer} className="party-btn party-btn-primary" onClick={() => submitOnce({ type: 'SUBMIT_KILLING_FLOOR_ANSWER', answer: kfAnswer })}>GO</button>
                     </div>
                   </div>
@@ -1324,8 +1341,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 <div className="player-prop-bet-label">💰 Prop Bet</div>
                 <div className="player-prop-bet-desc">{pd.propBet.desc}</div>
                 <div className="player-prop-btns">
-                  <button className={`player-prop-btn ${pd.propBetChoice === true ? 'selected-yes' : ''}`} onClick={() => sendAction({ type: 'SUBMIT_PROP_BET', choice: true })} disabled={pd.propBetAnswered}>YES</button>
-                  <button className={`player-prop-btn ${pd.propBetChoice === false ? 'selected-no' : ''}`} onClick={() => sendAction({ type: 'SUBMIT_PROP_BET', choice: false })} disabled={pd.propBetAnswered}>NO</button>
+                  <button className={`player-prop-btn ${pd.propBetChoice === true ? 'selected-yes' : ''}`} onClick={() => sendAction({ type: 'SUBMIT_PROP_BET', choice: true })} disabled={pd.propBetAnswered || pd.bettingClosed}>YES</button>
+                  <button className={`player-prop-btn ${pd.propBetChoice === false ? 'selected-no' : ''}`} onClick={() => sendAction({ type: 'SUBMIT_PROP_BET', choice: false })} disabled={pd.propBetAnswered || pd.bettingClosed}>NO</button>
                 </div>
               </div>
             )}
@@ -2083,7 +2100,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             state={state}
             roomCode={roomCode}
             playerKey={playerId}
-            hostId={hostId}
+            hostId={vipHostToken}
+            isVip={isVip}
             sendAction={sendAction}
             sendHostAction={sendHostAction}
           />
@@ -2147,7 +2165,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               awards: (state.awards || []).map((a: any) => ({ emoji: a.emoji, title: a.title, detail: a.detail, names: a.playerIds.map((id: string) => state.players[id]?.name || '?') })),
             })}>📸 Share results</button>
 
-            {hostId && (
+            {isVip && (
               <div style={{ width: '100%', marginTop: '0.75rem', background: 'rgba(6, 182, 212, 0.08)', border: '2px solid rgba(6, 182, 212, 0.35)', borderRadius: '18px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div style={{ fontWeight: 900, fontSize: '0.9rem', color: 'var(--party-cyan)' }}>👑 VIP Next Match</div>
                 <button
@@ -2194,9 +2212,9 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         <HowToPlayModal
           initialGameType={state.gameType}
           onClose={() => setShowRulesModal(false)}
-          onAction={hostId ? (g) => { if (g !== state.gameType && !(state.settings?.phonesOnly && GAME_INFO[g].tvOnly)) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
+          onAction={isVip ? (g) => { if (g !== state.gameType && !(state.settings?.phonesOnly && GAME_INFO[g].tvOnly)) sendHostAction({ type: 'SWITCH_GAME', gameType: g }); } : undefined}
           phonesOnly={Boolean(state.settings?.phonesOnly)}
-          actionLabel={hostId ? 'Switch to This Game 🎮' : undefined}
+          actionLabel={isVip ? 'Switch to This Game 🎮' : undefined}
         />
       )}
     </div>

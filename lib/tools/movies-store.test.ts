@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import {
   emptyUserMovieState,
   normalizeUserMovieState,
@@ -443,7 +445,7 @@ test('API route GET and POST functionality', async () => {
     assert.ok(dataMerge.state.watched.includes('tt0468569'));
     assert.equal(dataMerge.state.reviews['tt0468569'].rating, 9);
 
-    // 6. Signed in GET with ?userId=<targetId> returns target user's public state
+    // 6. GET with ?userId=<targetId> enforces authentication and household authorization
     const targetUserId = 'target-user-test';
     const targetFile = userMovieFile(targetUserId);
     try {
@@ -452,17 +454,50 @@ test('API route GET and POST functionality', async () => {
         watched: ['tt0167260'],
       });
 
+      const unauthQueryReq = new NextRequest(`http://localhost/api/tools/movies/user?userId=${targetUserId}`);
+      const resUnauth = await moviesGET(unauthQueryReq);
+      assert.equal(resUnauth.status, 401);
+
       const queryReq = new NextRequest(`http://localhost/api/tools/movies/user?userId=${targetUserId}`, {
         headers: { cookie: `workout_auth=${token}` },
       });
       const resQuery = await moviesGET(queryReq);
+      assert.equal(resQuery.status, 403);
       const dataQuery = await resQuery.json();
-      assert.equal(dataQuery.success, true);
-      assert.equal(dataQuery.authenticated, true);
-      assert.equal(dataQuery.state.userId, targetUserId);
-      assert.deepEqual(dataQuery.state.watched, ['tt0167260']);
+      assert.equal(dataQuery.success, false);
     } finally {
       await fs.rm(targetFile, { force: true }).catch(() => {});
+    }
+
+    // 7. Household mate can read ?userId=<mateId>
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'movies-household-'));
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      await fs.mkdir(path.join(tmpDir, '.data', 'chores'), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, '.data', 'chores', 'households.json'),
+        JSON.stringify({
+          households: [{ id: 'hh-1', members: [testUserId, 'mate-user-test'], invite: null, createdOn: '' }],
+        }),
+      );
+      await saveUserMovieData('mate-user-test', {
+        ...emptyUserMovieState('mate-user-test', 'MateUser'),
+        watched: ['tt0167260'],
+      });
+      const mateQueryReq = new NextRequest('http://localhost/api/tools/movies/user?userId=mate-user-test', {
+        headers: { cookie: `workout_auth=${token}` },
+      });
+      const resMate = await moviesGET(mateQueryReq);
+      assert.equal(resMate.status, 200);
+      const dataMate = await resMate.json();
+      assert.equal(dataMate.success, true);
+      assert.equal(dataMate.authenticated, true);
+      assert.equal(dataMate.state.userId, 'mate-user-test');
+      assert.deepEqual(dataMate.state.watched, ['tt0167260']);
+    } finally {
+      process.chdir(origCwd);
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
   } finally {
     await fs.rm(userFile, { force: true }).catch(() => {});

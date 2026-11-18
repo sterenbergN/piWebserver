@@ -191,6 +191,7 @@ export interface KartRaceSim {
   announcement: string | null;
   announcementUntil: number;
   stats: KartRaceStats;
+  revokedPlayers?: Set<string>;
   timer?: ReturnType<typeof setInterval>;
   onFinish?: (sim: KartRaceSim) => void;
 }
@@ -656,13 +657,33 @@ export function forceStartCountdown(roomCode: string): boolean {
   return true;
 }
 
+export function revokeKartPlayer(roomCode: string, playerId: string): void {
+  const sim = activeSims.get(roomCode);
+  if (!sim) return;
+  (sim.revokedPlayers ??= new Set()).add(playerId);
+  if (sim.karts[playerId]) {
+    sim.karts[playerId].autopilot = true;
+  }
+}
+
+export function isKartPlayerRevoked(roomCode: string, playerId: string): boolean {
+  const sim = activeSims.get(roomCode);
+  return Boolean(sim?.revokedPlayers?.has(playerId));
+}
+
 export function updateKartInput(roomCode: string, playerId: string, raw: Partial<KartInputState>): boolean {
   const sim = activeSims.get(roomCode);
-  if (!sim || !sim.karts[playerId]) return false;
+  if (!sim || !sim.karts[playerId] || sim.revokedPlayers?.has(playerId)) return false;
   const prev = sim.inputs[playerId] || { steer: 0, drift: false, brake: false, useItem: false, honk: false, isHorizontal: false, isReady: false, updatedAt: 0 };
   // Phones post over plain HTTP, so packets can overtake each other. Taps are always
   // honoured, but stale held state (steering, drift) must not overwrite newer state.
-  const stale = typeof raw.seq === 'number' && typeof prev.seq === 'number' && raw.seq < prev.seq;
+  // A low sequence number (<= 5) lower than prev.seq indicates a phone reload/reconnect
+  // whose local packet counter restarted at 1; accept it and reset seq tracking.
+  const stale =
+    typeof raw.seq === 'number' &&
+    typeof prev.seq === 'number' &&
+    raw.seq < prev.seq &&
+    raw.seq > 5;
   const steer = !stale && typeof raw.steer === 'number' && Number.isFinite(raw.steer)
     ? clamp(raw.steer, -1, 1)
     : prev.steer;
@@ -689,7 +710,7 @@ export function updateKartInput(roomCode: string, playerId: string, raw: Partial
     isHorizontal,
     isReady,
     seq: !stale && typeof raw.seq === 'number' ? raw.seq : prev.seq,
-    updatedAt: Date.now(),
+    updatedAt: stale ? prev.updatedAt : Date.now(),
   };
   return true;
 }

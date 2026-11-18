@@ -60,25 +60,33 @@ export default function SnakeGame() {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  const typingName = game.status === 'over' && !nameSubmitted;
+  const isEligibleHighScore = game.status === 'over' && !nameSubmitted && qualifies(game.score);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return; // let the name field work
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return; // let the name field work
       const direction = KEY_DIRECTIONS[e.key];
       if (direction && game.status !== 'over') {
         e.preventDefault();
         turn(direction);
-      } else if (e.key === ' ' && game.status === 'playing') {
+      } else if (e.key === ' ') {
+        if (game.status === 'playing') {
+          e.preventDefault();
+          setPaused((p) => !p);
+        } else if (game.status === 'ready') {
+          e.preventDefault();
+          turn(game.direction);
+        } else if (!(e.target instanceof HTMLButtonElement)) {
+          e.preventDefault();
+        }
+      } else if (e.key === 'Enter' && game.status === 'over' && !isEligibleHighScore) {
         e.preventDefault();
-        setPaused((p) => !p);
-      } else if (e.key === 'Enter' && game.status === 'over' && !typingName) {
         restart();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [game.status, turn, restart, typingName]);
+  }, [game.status, game.direction, turn, restart, isEligibleHighScore]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
@@ -101,7 +109,6 @@ export default function SnakeGame() {
   };
 
   const { snake, food, score, status } = game;
-  const isEligibleHighScore = status === 'over' && !nameSubmitted && qualifies(score);
 
   const handleNameSubmit = async (name: string) => {
     if (await submit(name, score)) setNameSubmitted(true);

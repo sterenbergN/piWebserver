@@ -9,23 +9,24 @@ import { loginRetryAfter, recordLoginFailure, recordLoginSuccess, tooManyAttempt
 
 export async function POST(request: Request) {
   try {
-    const wait = loginRetryAfter(request, 'workout');
-    if (wait) {
-      return NextResponse.json({ success: false, message: tooManyAttemptsMessage(wait) }, { status: 429, headers: { 'Retry-After': String(wait) } });
-    }
     const { username, password } = await readJsonObject(request);
     if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
       throw new ApiError(400, 'Username and password required');
     }
 
-    const usersData = await loadUsersData();
     const normalizedUsername = username.trim().toLowerCase();
+    const wait = loginRetryAfter(request, 'workout', normalizedUsername);
+    if (wait) {
+      return NextResponse.json({ success: false, message: tooManyAttemptsMessage(wait) }, { status: 429, headers: { 'Retry-After': String(wait) } });
+    }
+
+    const usersData = await loadUsersData();
     const user = usersData.users.find(
       (u) => typeof u.username === 'string' && u.username.toLowerCase() === normalizedUsername
     );
 
     if (user && verifyPassword(password, user.password)) {
-      recordLoginSuccess(request, 'workout');
+      recordLoginSuccess(request, 'workout', normalizedUsername);
       const cookieStore = await cookies();
       cookieStore.set('workout_auth', createWorkoutAuthToken(user.id), {
         httpOnly: true,
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, user: { id: user.id, username: user.username, studyHome: user.studyHome === true } });
     }
 
-    await recordLoginFailure(request, 'workout');
+    await recordLoginFailure(request, 'workout', normalizedUsername);
     return NextResponse.json({ success: false, message: "Invalid credentials" }, { status: 401 });
   } catch (error) {
     return handleApiError(error, 'Workout login failed');

@@ -283,9 +283,13 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
 
   // 3. Strength (S)
   const liftMaxes = new Map<string, number>();
-  
+  const liftById = new Map<string, any>(allLifts.map((l: any) => [l.id, l]));
+
   workouts.forEach((w: any) => {
       Object.keys(w.logs).forEach(liftId => {
+          if (!liftById.has(liftId) && w.liftMeta?.[liftId]) {
+              liftById.set(liftId, w.liftMeta[liftId]);
+          }
           w.logs[liftId].forEach((set: any) => {
               if (set.weight > 0 && set.reps > 0) {
                   const rm = calcAverage1RM(set.weight, set.reps);
@@ -297,7 +301,6 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
 
   // Find SBD or core compounds. Name matches (e.g. "squat") always win over
   // muscle-group fallbacks (e.g. a Quads leg press), regardless of order.
-  const liftById = new Map<string, any>(allLifts.map((l: any) => [l.id, l]));
   const pickCompound = (namePattern: RegExp, fallbackMuscle: string) => {
       let best = { max: 0, byName: false };
       liftMaxes.forEach((rm, liftId) => {
@@ -313,7 +316,7 @@ export function calculateExperienceScore(user: { weight?: number }, history: any
 
   const squat = pickCompound(/squat/, 'Quads');
   const bench = pickCompound(/bench press/, 'Chest');
-  const deadlift = pickCompound(/deadlift/, 'Hamstrings');
+  const deadlift = pickCompound(/deadlift/, 'Back');
   const squatMax = squat.max, benchMax = bench.max, deadliftMax = deadlift.max;
 
   const bodyweight = user.weight || 150;

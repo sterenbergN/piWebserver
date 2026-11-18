@@ -125,13 +125,23 @@ export const fakerLogic = {
 };
 
 async function startNewFakerRound(state: GameState) {
-  const activePlayers = state.gameData.activePlayers;
+  const activePlayers = (state.gameData.activePlayers as string[]).filter(
+    (pid) => state.players[pid] && !state.players[pid].left,
+  );
+  state.gameData.activePlayers = activePlayers;
   const [task] = await getRandomPrompts('the-faker', 1, state.settings?.packs);
-  // Keep existing faker if possible, otherwise pick new
-  let fakerId = state.gameData.fakerId;
-  if (!fakerId || !activePlayers.includes(fakerId)) {
-    fakerId = activePlayers[Math.floor(Math.random() * activePlayers.length)];
-  }
+
+  // Rotate faker each round so the same player doesn't stay faker after being revealed
+  const previousFaker = state.gameData.fakerId;
+  const pastFakers = new Set<string>(
+    ((state.gameData.roundHistory as any[]) || []).map((r) => r.fakerId).filter(Boolean),
+  );
+  const connected = waitingFor(state, activePlayers);
+  const pool = connected.length > 0 ? connected : activePlayers;
+  const freshPool = pool.filter((pid) => pid !== previousFaker && !pastFakers.has(pid));
+  const nonRepeatPool = pool.filter((pid) => pid !== previousFaker);
+  const candidates = freshPool.length > 0 ? freshPool : nonRepeatPool.length > 0 ? nonRepeatPool : pool;
+  const fakerId = candidates[Math.floor(Math.random() * candidates.length)];
 
   state.gameData.task = task;
   state.gameData.fakerId = fakerId;
@@ -276,9 +286,12 @@ function calculateFakerRoundResult(state: GameState) {
     state.playerData[pid] = {
       phase: 'RESULTS',
       fakerCaught,
+      fakerEliminated,
       isEliminated,
       wasFaker,
       eliminated,
+      fakerId,
+      task: state.gameData.task,
       fakerName: state.players[fakerId]?.name,
       eliminatedName: eliminated ? state.players[eliminated]?.name : null,
       message: buildPlayerResultMessage(pid, fakerId, eliminated, fakerCaught, votes),

@@ -22,7 +22,7 @@ export default function WorkoutTabBar() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => {
-    // The Analytics page switches tabs in place; follow its ?tab= and saved choice.
+    // The Analytics page switches tabs in place; follow its ?tab= query param.
     const read = () => setTab(new URLSearchParams(window.location.search).get('tab') || '');
     read();
     window.addEventListener('popstate', read);

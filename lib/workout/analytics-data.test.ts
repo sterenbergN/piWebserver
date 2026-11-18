@@ -48,3 +48,20 @@ test('progression ignores ramp-up from light starting weights', async () => {
   const growing = weights.map((w, i) => ({ timestamp: day(i * 7), logs: { b: [{ weight: i < 3 ? w : 135 + (i - 3) * 5, reps: 8, rir: 2 }] }, liftMeta: { b: { name: 'Bench Press' } } }));
   assert.ok(strengthProgressRate(growing)!.pctPerMonth > 5);
 });
+
+test('Deadlift and Back alignment counts Back primaryMuscle fallback and liftMeta without picking Hamstrings curl', async () => {
+  const { calculateExperienceScore } = await import('./analytics');
+  const day = new Date(Date.UTC(2026, 0, 1)).toISOString();
+  const curlOnly = calculateExperienceScore(
+    { weight: 180 },
+    [{ timestamp: day, logs: { c: [{ weight: 100, reps: 10 }] }, liftMeta: { c: { name: 'Leg Curl', primaryMuscle: 'Hamstrings' } } }],
+    [],
+  );
+  const withBack = calculateExperienceScore(
+    { weight: 180 },
+    [{ timestamp: day, logs: { r: [{ weight: 200, reps: 5 }] }, liftMeta: { r: { name: 'Cable Row', primaryMuscle: 'Back' } } }],
+    [],
+  );
+  assert.equal(curlOnly.breakdown.strength, 0);
+  assert.ok(withBack.breakdown.strength > 0);
+});

@@ -6,6 +6,7 @@ import { loadUsersData, normalizeWorkoutUser, toSafeUser, updateUsersData } from
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 import { removeFromHousehold } from '@/lib/chores/households';
 import { deleteUserHealth } from '@/lib/workout/health-store';
+import { ensureStarterWorkoutTypes } from '@/lib/workout/starter-types';
 
 // Only system admins should be able to create, edit, and delete workout users.
 async function requireAdmin() {
@@ -49,6 +50,8 @@ export async function POST(request: Request) {
       data.users.push(created);
       return created;
     });
+
+    await ensureStarterWorkoutTypes(user.id);
 
     return NextResponse.json({ success: true, user: toSafeUser(user) });
   } catch (error) {
@@ -103,6 +106,7 @@ export async function DELETE(request: Request) {
 
     await updateUsersData((data) => {
       data.users = data.users.filter((u) => u.id !== id);
+      data.deletedUserIds = Array.from(new Set([...(Array.isArray(data.deletedUserIds) ? data.deletedUserIds : []), id]));
     });
     await deleteUserHealth(id);
     await removeFromHousehold(id);

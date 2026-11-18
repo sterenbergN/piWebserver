@@ -10,25 +10,27 @@ const pollKey = (state: GameState) => `quip-${state.gameData.currentRound}-${sta
 
 export const quipClashLogic = {
   onStart: async (state: GameState, isNextRound = false) => {
-    if (state.playerOrder.length < 3) return;
+    const activePlayers = state.playerOrder.filter((pid) => state.players[pid] && !state.players[pid].left);
+    if (activePlayers.length < 3) return;
 
-    const targetRounds = state.gameData?.targetRounds || 1;
+    const configuredRounds = state.settings?.rounds ?? state.gameData?.targetRounds;
+    const parsedRounds = typeof configuredRounds === 'number' ? Math.round(configuredRounds) : NaN;
+    const targetRounds = Number.isFinite(parsedRounds) && parsedRounds >= 1 && parsedRounds <= 5 ? parsedRounds : 3;
     const currentRound = isNextRound && state.gameData ? state.gameData.currentRound + 1 : 0;
 
-
-    // We need 2 prompts per player. 
+    // We need 2 prompts per player.
     // Usually each prompt goes to exactly 2 players.
-    // So we need playerOrder.length prompts total.
-    const prompts = await getRandomPrompts('quip-clash', state.playerOrder.length, state.settings?.packs);
-    
+    // So we need activePlayers.length prompts total.
+    const prompts = await getRandomPrompts('quip-clash', activePlayers.length, state.settings?.packs);
+
     // Circular assignment: player i answers prompts i and i+1, so every prompt
     // has exactly two authors. Everything is keyed by prompt index (not text)
     // so a small prompt pool that repeats a prompt can't merge two matchups.
-    const n = state.playerOrder.length;
+    const n = activePlayers.length;
     const playerPromptIdx: Record<string, number[]> = {};
     const promptOwners: string[][] = prompts.map(() => []);
     for (let i = 0; i < n; i++) {
-      const pid = state.playerOrder[i];
+      const pid = activePlayers[i];
       const idx = [i, (i + 1) % n];
       playerPromptIdx[pid] = idx;
       for (const k of idx) promptOwners[k].push(pid);
@@ -37,6 +39,8 @@ export const quipClashLogic = {
     state.phase = 'PROMPTING';
     state.hostData = {
       message: 'Check your devices and answer your prompts!',
+      round: currentRound + 1,
+      totalRounds: targetRounds,
       timerStart: Date.now(),
       timerDuration: 60,
       autoAdvanceAt: Date.now() + 60_000,
@@ -44,7 +48,7 @@ export const quipClashLogic = {
     };
 
     state.gameData = {
-      ...state.gameData, 
+      ...state.gameData,
       prompts,
       promptOwners,
       answers: {}, // promptIndex -> { playerId: answer }
@@ -56,12 +60,12 @@ export const quipClashLogic = {
     };
 
     // Initialize player data
-    for (const pid of state.playerOrder) {
+    for (const pid of activePlayers) {
       state.playerData[pid] = {
         phase: 'PROMPTING',
         prompts: playerPromptIdx[pid].map((k) => prompts[k]),
         promptIdx: playerPromptIdx[pid],
-        answers: ['', '']
+        answers: ['', ''],
       };
     }
   },
@@ -119,6 +123,9 @@ export const quipClashLogic = {
           } else {
             state.phase = 'FINAL_RESULTS';
             state.hostData = { message: 'Game Over! Look at the winners.' };
+            for (const pid of state.playerOrder) {
+              state.playerData[pid] = { phase: 'FINAL_RESULTS' };
+            }
           }
         } else {
           startVotingRound(state);
@@ -167,12 +174,14 @@ function startVotingRound(state: GameState) {
     answer: answers[pid] || 'Nothing!'
   })).sort(() => Math.random() - 0.5);
 
-  // 30s voting timer per prompt
+  // 30s voting timer per prompt (keep hostData.round/totalRounds as actual game rounds, not prompt index)
   state.hostData = {
     prompt: currentPrompt,
     answers: displayAnswers,
-    round: state.gameData.currentPromptIndex + 1,
-    totalRounds: state.gameData.totalPrompts,
+    round: (state.gameData.currentRound ?? 0) + 1,
+    totalRounds: state.gameData.targetRounds ?? 3,
+    promptNumber: state.gameData.currentPromptIndex + 1,
+    totalPrompts: state.gameData.totalPrompts,
     timerStart: Date.now(),
     timerDuration: 30,
     autoAdvanceAt: Date.now() + 30_000,
@@ -187,12 +196,18 @@ function startVotingRound(state: GameState) {
 
   for (const pid of state.playerOrder) {
     if (owners.includes(pid)) {
-      state.playerData[pid] = { phase: 'WAITING', message: 'Your prompt is on screen! Shhh!' };
+      state.playerData[pid] = {
+        phase: 'WAITING',
+        message: 'Your prompt is on screen! Shhh!',
+        prompt: currentPrompt,
+        // Never expose author IDs during voting
+        answers: displayAnswers.map((a) => ({ answer: a.answer })),
+      };
     } else {
       state.playerData[pid] = {
         phase: 'VOTING',
         prompt: currentPrompt,
-        answers: displayAnswers
+        answers: displayAnswers,
       };
     }
   }
@@ -243,6 +258,10 @@ function calculateRoundVotes(state: GameState) {
   state.hostData = {
     prompt: currentPrompt,
     tally,
+    round: (state.gameData.currentRound ?? 0) + 1,
+    totalRounds: state.gameData.targetRounds ?? 3,
+    promptNumber: currentIdx + 1,
+    totalPrompts: state.gameData.totalPrompts,
     audienceTally: audience.total > 0 ? audience.tally : null,
     // Who voted for which answer, so the TV can show their faces on it.
     voters: Object.fromEntries(owners.map((pid: string) => [pid, Object.keys(votes).filter((v) => votes[v] === pid)])),
@@ -256,6 +275,12 @@ function calculateRoundVotes(state: GameState) {
   };
 
   for (const pid of state.playerOrder) {
-    state.playerData[pid] = { phase: 'ROUND_RESULTS' };
+    state.playerData[pid] = {
+      phase: 'ROUND_RESULTS',
+      prompt: currentPrompt,
+      tally,
+      answers: state.gameData.answers[currentIdx] || {},
+      quipLash,
+    };
   }
 }

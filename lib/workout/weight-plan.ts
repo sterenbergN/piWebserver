@@ -169,7 +169,7 @@ export function planProgress(plan: WeightPlan, entries: WeighIn[], todayKey: str
       ? {
         // 3,500 kcal ≈ 1 lb: losing x lb/day on the plan's calories means burning x × 3,500 more than that.
         kcal: Math.round((plan.targetCalories - (pace / 7) * 3500) / 10) * 10,
-        calculator: Math.round(calculateMifflinStJeor({ ...profile, weightLbs: current.weight }).maintenanceCalories / 10) * 10,
+        calculator: Math.round(calculateMifflinStJeor({ ...profile, weightLbs: current.weight }).maintenanceCalories),
       }
       : null,
     plannedPace: Math.round(((plannedEnd - plan.startWeightLbs) / totalDays) * 7 * 100) / 100,

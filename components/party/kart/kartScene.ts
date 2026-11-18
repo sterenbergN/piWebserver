@@ -649,6 +649,7 @@ function instanced(
   geo: THREE.BufferGeometry,
   material: THREE.Material,
   transforms: { x: number; y: number; z: number; ry: number; s: number; sy?: number; color?: THREE.Color }[],
+  disposers?: (() => void)[],
 ) {
   if (transforms.length === 0) {
     geo.dispose();
@@ -667,6 +668,10 @@ function instanced(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   group.add(mesh);
+  disposers?.push(() => {
+    geo.dispose();
+    mesh.dispose();
+  });
   return mesh;
 }
 
@@ -698,23 +703,23 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
 
   switch (track.biome) {
     case 'beach':
-      instanced(group, palmGeometry(), propMat, scatter(120, 5, 150, [0.9, 1.5]).filter((p) => p.y > -1));
-      instanced(group, umbrellaGeometry(), propMat, scatter(26, 3, 26, [1, 1.3]));
-      instanced(group, rockGeometry('#8d8678'), propMat, scatter(34, 6, 200, [0.6, 2.2]));
+      instanced(group, palmGeometry(), propMat, scatter(120, 5, 150, [0.9, 1.5]).filter((p) => p.y > -1), disposers);
+      instanced(group, umbrellaGeometry(), propMat, scatter(26, 3, 26, [1, 1.3]), disposers);
+      instanced(group, rockGeometry('#8d8678'), propMat, scatter(34, 6, 200, [0.6, 2.2]), disposers);
       break;
     case 'canyon':
-      instanced(group, cactusGeometry(), propMat, scatter(90, 4, 90, [0.9, 1.6]));
-      instanced(group, rockGeometry('#a35128'), propMat, scatter(70, 11, 120, [0.7, 3]));
+      instanced(group, cactusGeometry(), propMat, scatter(90, 4, 90, [0.9, 1.6]), disposers);
+      instanced(group, rockGeometry('#a35128'), propMat, scatter(70, 11, 120, [0.7, 3]), disposers);
       break;
     case 'snow':
-      instanced(group, pineGeometry(), propMat, scatter(190, 4, 220, [0.8, 1.8]));
-      instanced(group, snowmanGeometry(), propMat, scatter(16, 3, 22, [0.9, 1.2]));
-      instanced(group, rockGeometry('#a9bccd'), propMat, scatter(40, 5, 150, [0.6, 2]));
+      instanced(group, pineGeometry(), propMat, scatter(190, 4, 220, [0.8, 1.8]), disposers);
+      instanced(group, snowmanGeometry(), propMat, scatter(16, 3, 22, [0.9, 1.2]), disposers);
+      instanced(group, rockGeometry('#a9bccd'), propMat, scatter(40, 5, 150, [0.6, 2]), disposers);
       break;
     case 'lava':
-      instanced(group, lavaSpireGeometry(), propMat, scatter(70, 6, 150, [0.8, 1.9]));
-      instanced(group, deadTreeGeometry(), propMat, scatter(60, 3, 70, [0.9, 1.5]));
-      instanced(group, rockGeometry('#2a1d19'), propMat, scatter(60, 4, 150, [0.7, 2.6]));
+      instanced(group, lavaSpireGeometry(), propMat, scatter(70, 6, 150, [0.8, 1.9]), disposers);
+      instanced(group, deadTreeGeometry(), propMat, scatter(60, 3, 70, [0.9, 1.5]), disposers);
+      instanced(group, rockGeometry('#2a1d19'), propMat, scatter(60, 4, 150, [0.7, 2.6]), disposers);
       break;
     case 'space': {
       const place = (count: number, minGap: number, maxGap: number, scale: [number, number]) =>
@@ -722,9 +727,9 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
           const near = track.samples[Math.floor(rng() * track.samples.length)];
           return { ...p, y: near.y - 26 + rng() * 80 };
         });
-      instanced(group, crystalGeometry('#c084fc'), glowMat, place(40, 6, 180, [0.9, 2.6]));
-      instanced(group, crystalGeometry('#22d3ee'), glowMat, place(40, 6, 180, [0.9, 2.6]));
-      instanced(group, rockGeometry('#3a3360'), propMat, place(70, 30, 260, [1, 6]));
+      instanced(group, crystalGeometry('#c084fc'), glowMat, place(40, 6, 180, [0.9, 2.6]), disposers);
+      instanced(group, crystalGeometry('#22d3ee'), glowMat, place(40, 6, 180, [0.9, 2.6]), disposers);
+      instanced(group, rockGeometry('#3a3360'), propMat, place(70, 30, 260, [1, 6]), disposers);
       break;
     }
     case 'city': {
@@ -743,7 +748,7 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
           const h = (idx === 2 ? 110 : 45) + rng() * (idx === 2 ? 150 : 60);
           return { ...p, s: w, sy: h, ry: Math.round(rng() * 4) * (Math.PI / 2) };
         });
-        instanced(group, geo, mat, spots);
+        instanced(group, geo, mat, spots, disposers);
       });
       break;
     }
@@ -777,12 +782,14 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
       boards.push({ x: s.x + s.nx * off, y: y + 3.4, z: s.z + s.nz * off, ry: s.angle, s: outside });
     }
   }
-  if (track.biome !== 'space') instanced(group, flagGeometry(), propMat, flags);
-  instanced(group, signGeometry(), propMat, signs);
+  if (track.biome !== 'space') instanced(group, flagGeometry(), propMat, flags, disposers);
+  instanced(group, signGeometry(), propMat, signs, disposers);
 
   if (lampHeads.length) {
     const head = new THREE.SphereGeometry(0.5, 6, 5);
-    instanced(group, head, new THREE.MeshBasicMaterial({ color: '#ffffff' }), lampHeads);
+    const headMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+    disposers.push(() => headMat.dispose());
+    instanced(group, head, headMat, lampHeads, disposers);
   }
 
   const chevronTex = canvasTexture(128, (ctx, w, h) => {
@@ -808,10 +815,10 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
   // Boards face oncoming traffic and point into the corner
   const right = boards.filter((b) => b.s > 0);
   const left = boards.filter((b) => b.s < 0);
-  instanced(group, new THREE.PlaneGeometry(4.6, 2.2), boardMat, left.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })));
+  instanced(group, new THREE.PlaneGeometry(4.6, 2.2), boardMat, left.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })), disposers);
   const mirrored = new THREE.PlaneGeometry(4.6, 2.2);
   mirrored.scale(-1, 1, 1);
-  instanced(group, mirrored, boardMat, right.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })));
+  instanced(group, mirrored, boardMat, right.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })), disposers);
 }
 
 // ─── Kart models ─────────────────────────────────────────────────────────────
@@ -1184,8 +1191,8 @@ export class KartScene {
 
   private buildEnvironment() {
     const t = this.track.theme;
-    this.scene.add(new THREE.HemisphereLight(t.ambient, t.groundLow, 1.15));
-    const sun = new THREE.DirectionalLight(t.sun, 2.1);
+    this.scene.add(this.track2(new THREE.HemisphereLight(t.ambient, t.groundLow, 1.15)));
+    const sun = this.track2(new THREE.DirectionalLight(t.sun, 2.1));
     sun.position.set(t.sunDir[0] * 500, t.sunDir[1] * 500, t.sunDir[2] * 500);
     this.scene.add(sun);
 
@@ -1478,7 +1485,7 @@ export class KartScene {
     const padMat = this.track2(new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false, transparent: true, opacity: 0.96 }));
     const padGeo = new THREE.PlaneGeometry(7.4, 10);
     padGeo.rotateX(-Math.PI / 2);
-    const padMesh = new THREE.InstancedMesh(this.track2(padGeo), padMat, track.boostPads.length);
+    const padMesh = this.track2(new THREE.InstancedMesh(this.track2(padGeo), padMat, track.boostPads.length));
     track.boostPads.forEach((pad, i) => {
       this.dummy.position.set(pad.x, pad.y + 0.16, pad.z);
       this.dummy.rotation.set(0, pad.angle + Math.PI, 0);
@@ -1538,7 +1545,7 @@ export class KartScene {
     const boxTex = this.track2(makeItemBoxTexture());
     const boxMat = this.track2(new THREE.MeshBasicMaterial({ map: boxTex, transparent: true, opacity: 0.92, toneMapped: false }));
     const boxGeo = this.track2(new THREE.BoxGeometry(3.1, 3.1, 3.1));
-    this.itemBoxMesh = new THREE.InstancedMesh(boxGeo, boxMat, track.itemBoxes.length + 16);
+    this.itemBoxMesh = this.track2(new THREE.InstancedMesh(boxGeo, boxMat, track.itemBoxes.length + 16));
     this.itemBoxMesh.frustumCulled = false;
     this.itemBoxMesh.count = track.itemBoxes.length + 16;
     this.dummy.position.set(0, -500, 0);
@@ -1581,7 +1588,7 @@ export class KartScene {
     const box = new THREE.PlaneGeometry(track.roadWidth * 0.3, 7);
     box.rotateX(-Math.PI / 2);
     const boxMat = this.track2(new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.16 }));
-    const boxes = new THREE.InstancedMesh(this.track2(box), boxMat, 16);
+    const boxes = this.track2(new THREE.InstancedMesh(this.track2(box), boxMat, 16));
     for (let i = 0; i < 16; i++) {
       const row = Math.floor(i / 2);
       const col = i % 2 === 0 ? -1 : 1;
@@ -2603,7 +2610,7 @@ export class KartScene {
 
   /** Drop resolution on machines that can't hold frame rate rather than letting the race stutter. */
   private adaptQuality(dtRaw: number) {
-    this.frameTimes.push(dtRaw);
+    this.frameTimes.push(Math.min(dtRaw, 0.1));
     if (this.frameTimes.length < 90) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
     this.frameTimes = [];
@@ -2621,13 +2628,24 @@ export class KartScene {
     }
     this.karts.clear();
     for (const obj of this.hazards.values()) {
+      this.scene.remove(obj);
       if (obj.userData.ownMat) ((obj as THREE.Mesh).material as THREE.Material).dispose();
     }
     this.hazards.clear();
+    for (const tex of this.itemTextures.values()) {
+      tex.dispose();
+    }
+    this.itemTextures.clear();
     this.disposers.forEach((d) => d());
     this.disposers = [];
+    this.rigs.clear();
+    this.itemBoxSlots.clear();
+    this.gantryLights = [];
+    this.animated = [];
     this.additive.dispose();
     this.smoke.dispose();
+    this.scene.clear();
+    this.renderer.renderLists?.dispose?.();
     this.renderer.dispose();
   }
 }

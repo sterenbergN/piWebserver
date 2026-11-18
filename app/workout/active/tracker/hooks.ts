@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipment';
-import { exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
+import { exerciseKey, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { restTargetSeconds } from '@/lib/workout/session-insights';
 import { isLoadStation } from '@/lib/workout/types';
 import { playBeep, readPref, savePref, unlockAudio, vibrate } from '@/lib/workout/device-prefs';
@@ -65,6 +65,8 @@ type RestTimerOptions = {
   lastSetAt: number | null;
   /** Reps planned for the lift you're on; sets the default rest. */
   reps: number;
+  /** Optional latched default rest (used when switching lifts mid-rest). */
+  defaultSeconds?: number;
   enabled: boolean;
   /** The exercise you're on (exerciseKey), so a changed rest is remembered for it. */
   liftKey: string;
@@ -81,7 +83,7 @@ type RestTimerOptions = {
  * and used every time you do it. When the rest is up the phone buzzes
  * (Android) and, if sound is on, beeps.
  */
-export function useRestTimer({ lastSetAt, reps, enabled, liftKey, saved, syncToServer }: RestTimerOptions) {
+export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey, saved, syncToServer }: RestTimerOptions) {
   // The account's times win over this device's (they may be newer, from another phone).
   const [restTimes, setRestTimes] = useState<Record<string, number>>(() => ({ ...readRestTimes(), ...(saved || {}) }));
   const [sound, setSound] = useState(() => readPref('workout:restSound') === '1');
@@ -91,7 +93,8 @@ export function useRestTimer({ lastSetAt, reps, enabled, liftKey, saved, syncToS
   useEffect(() => { soundRef.current = sound; }, [sound]);
 
   const custom = restTimes[liftKey];
-  const target = custom > 0 ? custom : restTargetSeconds(reps);
+  const fallbackTarget = defaultSeconds ?? restTargetSeconds(reps);
+  const target = custom > 0 ? custom : fallbackTarget;
   const elapsed = lastSetAt ? Math.max(0, Math.floor((Date.now() - lastSetAt) / 1000)) : 0;
   const visible = enabled && !!lastSetAt && elapsed < 15 * 60;
   const done = elapsed >= target;
@@ -150,7 +153,7 @@ export function useRestTimer({ lastSetAt, reps, enabled, liftKey, saved, syncToS
   const remember = (change: (current: number) => number | null) => {
     if (!liftKey) return;
     const next = { ...restTimesRef.current };
-    const current = next[liftKey] > 0 ? next[liftKey] : restTargetSeconds(reps);
+    const current = next[liftKey] > 0 ? next[liftKey] : fallbackTarget;
     const seconds = change(current);
     if (seconds === null) delete next[liftKey];
     else next[liftKey] = seconds;
@@ -214,6 +217,11 @@ async function requestSuggestion(lift: any, { plan, pastHistory, intensity, defa
     historicStats: null,
   };
 
+  const lastPlannedSets = lastWorkout?.liftMeta?.[lift.id]?.plannedSets
+    ?? (usable && !usable.sameLift
+      ? (Object.values(lastWorkout?.liftMeta || {}) as any[]).find((meta) => exerciseKey(meta) === exerciseKey(lift))?.plannedSets
+      : undefined);
+
   let data: any = null;
   try {
     const response = await fetch('/api/workout/progression', {
@@ -225,7 +233,7 @@ async function requestSuggestion(lift: any, { plan, pastHistory, intensity, defa
         gymId: plan.gymId,
         station: lift.station,
         logs: sessionSets,
-        plannedSets: lastWorkout?.liftMeta?.[lift.id]?.plannedSets,
+        plannedSets: lastPlannedSets,
         planType: plan.type,
         intensity,
         progressionProfile: lift.progressionProfile || 'standard',
@@ -239,11 +247,26 @@ async function requestSuggestion(lift: any, { plan, pastHistory, intensity, defa
 
   const calibration = data?.calibration || null;
   if (sessionSets.length === 0) {
-    // Never done here: start from a related lift if there is one (bench → dumbbell bench).
+    // Never done here: start from a related lift if there is one (bench → dumbbell bench),
+    // or from the same lift's last weight at another gym while calibrating a machine.
     const related = plan.isDeload ? null : relatedStartingWeight(lift, pastHistory, { reps: baseline.reps, possibleWeights });
-    return related
-      ? { ...baseline, weight: related.weight, reason: `First time — estimated from your ${related.fromName} (est. 1RM ${related.fromE1rm}). Adjust if it feels off.`, calibration }
-      : { ...baseline, calibration };
+    if (related) {
+      return { ...baseline, weight: related.weight, reason: `First time — estimated from your ${related.fromName} (est. 1RM ${related.fromE1rm}). Adjust if it feels off.`, calibration };
+    }
+    if (calibration?.status === 'calibrating' && Number(calibration.referenceWeight) > 0) {
+      const refReps = Number(calibration.referenceReps) > 0 ? Number(calibration.referenceReps) : baseline.reps;
+      const refE1rm = calcAverage1RM(Number(calibration.referenceWeight), refReps);
+      const rawTarget = baseline.reps <= 1 ? refE1rm : refE1rm / (1 + baseline.reps / 30);
+      const scaled = plan.isDeload ? rawTarget * 0.85 : rawTarget;
+      const weight = snapToPossibleWeight(scaled, possibleWeights);
+      return {
+        ...baseline,
+        weight,
+        reason: `First time at this gym — estimated from your ${calibration.referenceWeight} × ${refReps} at ${calibration.referenceGymName || 'another gym'}. Adjust if it feels off.`,
+        calibration,
+      };
+    }
+    return { ...baseline, calibration };
   }
 
   const top = topSet(sessionSets)!;

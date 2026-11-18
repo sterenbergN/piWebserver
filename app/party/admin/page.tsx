@@ -180,7 +180,7 @@ export default function AdminPage() {
   };
 
   if (unauthorized) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--party-bg)' }}>
+    <div className="party-root" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--party-bg)' }}>
       <div className="party-card text-center">
         <h2 className="text-red font-black text-3xl mb-4">Unauthorized</h2>
         <p className="mb-4">You need admin privileges to manage prompts.</p>
@@ -189,7 +189,7 @@ export default function AdminPage() {
     </div>
   );
 
-  if (loading) return <div style={{ minHeight: '100vh', background: 'var(--party-bg)' }} />;
+  if (loading) return <div className="party-root" style={{ minHeight: '100vh', background: 'var(--party-bg)' }} />;
 
   const example = (text: string) => <code style={{ color: 'var(--party-purple-lt)' }}>{text}</code>;
   const IMPORT_FORMAT: Partial<Record<GameKey, React.ReactNode>> = {
@@ -200,7 +200,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--party-bg)', position: 'relative' }}>
+    <div className="party-root" style={{ minHeight: '100vh', background: 'var(--party-bg)', position: 'relative' }}>
       {toast && <div className="admin-toast">{toast}</div>}
 
       {/* IMPORT MODAL */}

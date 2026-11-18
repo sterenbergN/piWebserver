@@ -1,5 +1,6 @@
 import { calcAverage1RM } from './analytics';
 import { exerciseName, lastSessionForLift } from './exercises';
+import { goalLabel, goalsFor, setMeetsGoal, type Goal } from './goals';
 
 // Pure helpers for the workout tracker (app/workout/active): formatting, the
 // payload a finished workout is saved with, and the "how did today compare"
@@ -7,6 +8,56 @@ import { exerciseName, lastSessionForLift } from './exercises';
 
 export type LoggedSet = { weight: number; reps: number; rir?: number; plannedWeight?: number; plannedReps?: number; timestamp?: number; completed?: boolean };
 export type WarmupSet = { weight: number; reps: number };
+export type SessionPR = { name: string; e1rm: number; previous: number; weight: number; reps: number };
+
+/**
+ * Recompute this session's PRs and reached goals from the current logged sets.
+ * Used when a logged set is edited or removed so typo weights (e.g. 2250 → 225)
+ * don't leave behind phantom PR badges or goal hits.
+ */
+export function computeSessionAwards(
+  planLifts: any[],
+  logs: Record<string, LoggedSet[]>,
+  bestBeforeFn: (lift: any) => number,
+  goals: Goal[] = [],
+): { sessionPRs: Record<string, SessionPR>; goalsHit: string[] } {
+  const sessionPRs: Record<string, SessionPR> = {};
+  const goalsHit: string[] = [];
+
+  for (const lift of planLifts) {
+    if (!lift?.id) continue;
+    const sets = logs[uidOf(lift)] || [];
+    const baseline = Number(bestBeforeFn(lift)) || 0;
+    const liftGoals = goalsFor(goals, exerciseName(lift));
+
+    for (const set of sets) {
+      const weight = Number(set?.weight) || 0;
+      const reps = Number(set?.reps) || 0;
+      if (weight <= 0 || reps <= 0) continue;
+
+      const previousBest = Math.max(baseline, sessionPRs[lift.id]?.e1rm || 0);
+      const e1rm = calcAverage1RM(weight, reps);
+      if (previousBest > 0 && e1rm > previousBest + 0.5) {
+        sessionPRs[lift.id] = {
+          name: lift.name,
+          e1rm,
+          previous: sessionPRs[lift.id]?.previous ?? baseline,
+          weight,
+          reps,
+        };
+      }
+
+      for (const goal of liftGoals) {
+        if (setMeetsGoal({ weight, reps }, goal)) {
+          const label = goalLabel(goal);
+          if (!goalsHit.includes(label)) goalsHit.push(label);
+        }
+      }
+    }
+  }
+
+  return { sessionPRs, goalsHit };
+}
 
 export type HistoricStats = { prevWeight: number; prevReps: number; prevSets: number; est1RM: number };
 

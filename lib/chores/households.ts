@@ -118,6 +118,15 @@ export async function joinHousehold(userId: string, rawCode: string, today: stri
   return result.target;
 }
 
+async function unassignMemberChores(householdId: string, userId: string) {
+  await updateJson<Partial<ChoresData>>(choresFile(householdId), emptyChoresData(), (data) => {
+    if (!Array.isArray(data.chores)) return;
+    for (const chore of data.chores) {
+      if (chore && chore.assignee === userId) chore.assignee = null;
+    }
+  });
+}
+
 /** Leave your household for a fresh one of your own. Its chores and kitchen stay with whoever is left. */
 export async function leaveHousehold(userId: string) {
   const mine = await householdFor(userId);
@@ -126,6 +135,7 @@ export async function leaveHousehold(userId: string) {
     const household = data.households.find((h) => h.id === mine.id);
     if (household) household.members = household.members.filter((m) => m !== userId);
   });
+  await unassignMemberChores(mine.id, userId);
   const fresh = await householdFor(userId);
   // Stored empty, not missing: a missing kitchen takes in whatever the device has, here the list just left.
   await writeJsonAtomic(householdKitchenFile(fresh.id), emptyKitchen());
@@ -134,18 +144,20 @@ export async function leaveHousehold(userId: string) {
 
 /** An account was deleted: it's no longer in anyone's household, and one it had to itself goes with it. */
 export async function removeFromHousehold(userId: string) {
-  const emptied = await updateJson<HouseholdsFile, string | null>(INDEX(), empty(), (data) => {
+  const result = await updateJson<HouseholdsFile, { householdId: string; emptied: boolean } | null>(INDEX(), empty(), (data) => {
     data.households ||= [];
     const household = data.households.find((h) => h.members.includes(userId));
     if (!household) return null;
     household.members = household.members.filter((m) => m !== userId);
-    if (household.members.length) return null;
+    if (household.members.length) return { householdId: household.id, emptied: false };
     data.households = data.households.filter((h) => h !== household);
-    return household.id;
+    return { householdId: household.id, emptied: true };
   });
-  if (emptied) {
-    await fs.rm(choresFile(emptied), { force: true });
-    await fs.rm(householdKitchenFile(emptied), { force: true });
+  if (result?.emptied) {
+    await fs.rm(choresFile(result.householdId), { force: true });
+    await fs.rm(householdKitchenFile(result.householdId), { force: true });
+  } else if (result) {
+    await unassignMemberChores(result.householdId, userId);
   }
   await fs.rm(personalKitchenFile(userId), { force: true });
 }

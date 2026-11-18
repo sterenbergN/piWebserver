@@ -42,6 +42,9 @@ export type HealthDay = {
   hrAvg?: number;
   hrMin?: number;
   hrMax?: number;
+  /** Manual daily intake (kcal) and protein (g) logged on Health -> Today. */
+  intakeKcal?: number;
+  proteinG?: number;
 };
 
 /** A workout session recorded by the watch (if the sender can read workouts). */

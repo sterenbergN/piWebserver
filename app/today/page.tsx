@@ -20,7 +20,7 @@ import { levelFromXp } from '@/lib/progress/levels';
 import { skillsXpElsewhere, studyXpElsewhere } from '@/components/progress/otherXp';
 import LevelInfo from '@/components/progress/LevelInfo';
 import ExamHelpBanner from '@/components/study/ExamHelpBanner';
-import { isOpen as choreOpen } from '@/lib/chores/chores';
+import { isOpen as choreOpen, latestEntry } from '@/lib/chores/chores';
 import { byUrgency, choreXp, chorePlant, dueStatus } from '@/lib/chores/stats';
 import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insights';
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
@@ -132,9 +132,22 @@ export default function TodayPage() {
   const frozen = useMemo(() => freezeState(data, today).frozen, [data, today]);
   const xpSources = { questions: question?.xp ?? 0, habits: habitXp(data, today), chores: choreXp(ch.data, me), study: studyXp, skills: skillsXp };
   const level = levelFromXp(xpSources.questions + xpSources.habits + xpSources.chores + xpSources.study + xpSources.skills);
-  // Chores due in the next week, overdue first (yours or anyone's).
+  // Chores due in the next week, overdue first (yours or anyone's), plus chores completed today.
   const openChores = ch.data.chores.filter(choreOpen);
-  const dueChores = byUrgency(openChores.filter((x) => ['overdue', 'today', 'soon'].includes(dueStatus(x, today).status) && (!x.assignee || x.assignee === me)));
+  const choreById = new Map(ch.data.chores.map((x) => [x.id, x]));
+  const doneTodayMap = new Map<string, { chore: Chore; entryId: string }>();
+  for (const e of ch.data.log) {
+    if (e.date !== today || e.skipped) continue;
+    const chore = choreById.get(e.choreId);
+    if (!chore) continue;
+    if (chore.assignee && chore.assignee !== me && e.by !== me) continue;
+    if (latestEntry(ch.data, chore.id)?.id === e.id) {
+      doneTodayMap.set(chore.id, { chore, entryId: e.id });
+    }
+  }
+  const doneTodayChores = [...doneTodayMap.values()];
+  const doneTodayIds = new Set(doneTodayChores.map((x) => x.chore.id));
+  const dueChores = byUrgency(openChores.filter((x) => !doneTodayIds.has(x.id) && ['overdue', 'today', 'soon'].includes(dueStatus(x, today).status) && (!x.assignee || x.assignee === me)));
   const lateChores = dueChores.filter((x) => dueStatus(x, today).status === 'overdue').length;
   const todayChores = dueChores.filter((x) => dueStatus(x, today).status === 'today').length;
   const habits = data.habits.filter((x) => isActive(x) && (isWeekly(x) || isDueOn(x, today)));
@@ -147,16 +160,17 @@ export default function TodayPage() {
   // Today's question's page in Notes, if it's been made.
   const tied = useTiedPages(core ? [core.id] : [], signedIn);
 
-  // The day at a glance: the question, each daily habit, chores due today, and the journal once signed in.
-  const dueToday = dueChores.filter((x) => ['overdue', 'today'].includes(dueStatus(x, today).status)).length;
+  // The day at a glance: the question, each daily habit, chores due/done today, and the journal once signed in.
+  const pendingDueToday = dueChores.filter((x) => ['overdue', 'today'].includes(dueStatus(x, today).status)).length;
+  const choresDoneToday = doneTodayChores.length;
   const questionDone = core && question?.status ? 1 : 0;
   const journalDone = journalWritten ? 1 : 0;
-  const dayTotal = (core ? 1 : 0) + daily.length + dueToday + (signedIn ? 1 : 0);
-  const dayDone = questionDone + doneDaily + (signedIn ? journalDone : 0);
+  const dayTotal = (core ? 1 : 0) + daily.length + pendingDueToday + choresDoneToday + (signedIn ? 1 : 0);
+  const dayDone = questionDone + doneDaily + choresDoneToday + (signedIn ? journalDone : 0);
   const left = [
     core && !questionDone ? 'question' : '',
     daily.length > doneDaily ? `${daily.length - doneDaily} habit${daily.length - doneDaily === 1 ? '' : 's'}` : '',
-    dueToday ? `${dueToday} chore${dueToday === 1 ? '' : 's'}` : '',
+    pendingDueToday ? `${pendingDueToday} chore${pendingDueToday === 1 ? '' : 's'}` : '',
     signedIn && !journalDone ? 'journal' : '',
   ].filter(Boolean);
   const dayLeft = left.length ? `Left: ${left.join(', ')}` : '';
@@ -237,9 +251,9 @@ export default function TodayPage() {
                     <>
                       <p className="hb-hint">{question.streak ? `Answer it to make it ${question.streak + 1} days in a row.` : 'Answer it to start a streak.'}</p>
                       <Link className="btn btn-primary" href="/daily">Answer it</Link>
-                      {signedIn && question.day && <WorkInNotes className="dq-notes td-notes" question={core.id} date={question.day.date} pages={notesLinks(core, question.day.date, tied).pages} signedIn />}
                     </>
                   )}
+                  {signedIn && question.day && <WorkInNotes className="dq-notes td-notes" question={core.id} date={question.day.date} pages={notesLinks(core, question.day.date, tied).pages} signedIn />}
                 </>
               )}
             </section>
@@ -249,7 +263,7 @@ export default function TodayPage() {
 
           {showSkills && <SkillsCard />}
 
-          <JournalCard today={today} onWritten={setJournalWritten} />
+          <JournalCard today={today} signedIn={signedIn} onWritten={setJournalWritten} />
 
           {showReader && <ReaderCard />}
 
@@ -300,37 +314,51 @@ export default function TodayPage() {
             )}
           </section>
 
-          <KitchenCard today={today} />
+          <KitchenCard today={today} signedIn={signedIn} />
 
           {/* Chores */}
           <section className="td-card td-chores">
             <div className="td-card-head">
               <h2><span aria-hidden>🧹</span> Chores</h2>
-              {(ch.mode === 'account' || ch.mode === 'device') && openChores.length > 0 && (
+              {(ch.mode === 'account' || ch.mode === 'device') && (openChores.length > 0 || choresDoneToday > 0) && (
                 <span className={`td-chip${dueChores.length ? '' : ' is-done'}${lateChores ? ' is-late' : ''}`}>
                   {lateChores ? `${lateChores} overdue` : todayChores ? `${todayChores} due today` : dueChores.length ? `${dueChores.length} this week` : 'All caught up'}
                 </span>
               )}
             </div>
-            {ch.mode === 'loading' ? <p className="hb-hint">Loading…</p> : openChores.length === 0 ? (
+            {ch.mode === 'loading' ? <p className="hb-hint">Loading…</p> : openChores.length === 0 && choresDoneToday === 0 ? (
               <>
                 <p className="hb-hint">Keep track of vacuuming, the bathroom, the vet, and share the list with your household.</p>
                 <Link className="btn btn-secondary" href="/chores">Set up chores</Link>
               </>
-            ) : dueChores.length === 0 ? (
+            ) : dueChores.length === 0 && choresDoneToday === 0 ? (
               <>
                 <p className="hb-hint">Nothing due in the next week.</p>
                 <Link className="td-more" href="/chores">All chores →</Link>
               </>
             ) : (
               <>
-                <div className="hb-list">
-                  {dueChores.slice(0, 8).map((chore) => (
-                    <ChoreCard key={chore.id} chore={chore} data={ch.data} today={today} members={ch.household?.members ?? []} me={me}
-                      onDone={() => ch.dispatch({ type: 'done', id: chore.id, date: today })}
-                      onUndo={(entryId) => ch.dispatch({ type: 'undo', entryId })} />
-                  ))}
-                </div>
+                {dueChores.length > 0 && (
+                  <div className="hb-list">
+                    {dueChores.slice(0, 8).map((chore) => (
+                      <ChoreCard key={chore.id} chore={chore} data={ch.data} today={today} members={ch.household?.members ?? []} me={me}
+                        onDone={() => ch.dispatch({ type: 'done', id: chore.id, date: today })}
+                        onUndo={(entryId) => ch.dispatch({ type: 'undo', entryId })} />
+                    ))}
+                  </div>
+                )}
+                {doneTodayChores.length > 0 && (
+                  <ul className="td-done-chores" aria-label="Completed today">
+                    {doneTodayChores.map(({ chore, entryId }) => (
+                      <li key={chore.id}>
+                        <span aria-hidden>{chore.emoji}</span>
+                        <span className="td-done-name">{chore.name}</span>
+                        <small>Done today</small>
+                        <button type="button" className="hb-text-btn" onClick={() => ch.dispatch({ type: 'undo', entryId })}>Undo</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <Link className="td-more" href="/chores">{dueChores.length > 8 ? `${dueChores.length - 8} more this week →` : 'All chores →'}</Link>
               </>
             )}

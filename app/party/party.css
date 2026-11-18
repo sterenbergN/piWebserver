@@ -26,7 +26,7 @@
   --party-orange:      #f97316;
 
   --party-text:        #f0e8ff;
-  --party-text-muted:  rgba(240,232,255,0.55);
+  --party-text-muted:  rgba(240,232,255,0.68);
 
   --party-shadow-sm:   0 4px 16px rgba(0,0,0,0.4);
   --party-shadow-md:   0 8px 32px rgba(0,0,0,0.5);
@@ -49,6 +49,10 @@
    Reset / Base within party-root
    ---------------------------------------------------------- */
 .party-root {
+  --foreground: var(--party-text);
+  --muted: var(--party-text-muted);
+  --input-bg: rgba(0,0,0,0.35);
+  --surface-border: var(--party-border);
   min-height: 100vh;
   background: var(--party-bg);
   color: var(--party-text);
@@ -58,6 +62,14 @@
 }
 
 .party-root * { box-sizing: border-box; }
+.party-root p { color: var(--party-text); }
+.party-root p.text-muted,
+.party-root p.party-logo-sub,
+.party-root p.host-lobby-subtitle,
+.party-root p.player-waiting-sub,
+.party-root p.party-picker-empty,
+.party-root p.host-prompting-sub,
+.party-root p.host-round-prompt-text { color: var(--party-text-muted); }
 .party-root h1, .party-root h2, .party-root h3 {
   font-family: var(--party-font-display);
   font-weight: 900;
@@ -66,6 +78,33 @@
   color: var(--party-text);
   background: none;
   -webkit-text-fill-color: var(--party-text);
+}
+
+/* Beat app/globals.css (0,3,1) form defaults in Light & Dark modes */
+.party-root input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.party-root textarea,
+.party-root select {
+  width: 100%;
+  background: rgba(0,0,0,0.35);
+  border: 2px solid rgba(255,255,255,0.14);
+  border-radius: 12px;
+  padding: 0.85rem 1.1rem;
+  color: var(--party-text);
+  font-family: var(--party-font-body);
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.party-root input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+.party-root textarea:focus,
+.party-root select:focus {
+  border-color: var(--party-purple-lt);
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.2);
+}
+.party-root input::placeholder,
+.party-root textarea::placeholder {
+  color: rgba(240,232,255,0.45);
+  opacity: 1;
 }
 
 /* ----------------------------------------------------------
@@ -123,16 +162,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 2rem 1rem;
+  justify-content: flex-start;
+  padding: 1.25rem 1rem 2rem;
 }
 
 .party-logo {
   font-family: var(--party-font-display);
   font-weight: 900;
-  font-size: clamp(3rem, 8vw, 5rem);
+  font-size: clamp(2.5rem, 6.5vw, 3.85rem);
   text-align: center;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.2rem;
   background: linear-gradient(135deg, #a855f7, #ec4899, #f59e0b);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -145,11 +184,11 @@
   to   { opacity:1; transform: scale(1) translateY(0); }
 }
 .party-logo-sub {
-  font-size: 1rem;
+  font-size: 0.92rem;
   color: var(--party-text-muted);
   text-align: center;
-  margin-bottom: 2.5rem;
-  letter-spacing: 0.15em;
+  margin-bottom: 1.15rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   font-family: var(--party-font-body);
 }
@@ -158,7 +197,7 @@
   background: var(--party-surface);
   border: 1px solid var(--party-border);
   border-radius: var(--party-radius-lg);
-  padding: 2rem;
+  padding: 1.4rem 1.65rem;
   box-shadow: var(--party-shadow-lg);
   backdrop-filter: blur(20px);
   width: 100%;
@@ -175,7 +214,7 @@
   background: rgba(0,0,0,0.3);
   border-radius: 12px;
   padding: 4px;
-  margin-bottom: 1.75rem;
+  margin-bottom: 1.15rem;
   gap: 4px;
 }
 .party-tab {
@@ -207,10 +246,13 @@
   color: var(--party-purple-lt);
   margin-bottom: 0.5rem;
 }
-.party-input {
+.party-root input.party-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.party-root input.player-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.party-input,
+.player-input {
   width: 100%;
   background: rgba(0,0,0,0.35);
-  border: 2px solid rgba(255,255,255,0.1);
+  border: 2px solid rgba(255,255,255,0.14);
   border-radius: 12px;
   padding: 1rem 1.25rem;
   color: var(--party-text);
@@ -219,10 +261,20 @@
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.party-input:focus {
+.party-root input.player-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.player-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.75rem 1rem;
+}
+.party-root input.party-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+.party-root input.player-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+.party-input:focus,
+.player-input:focus {
   border-color: var(--party-purple-lt);
   box-shadow: 0 0 0 3px rgba(168,85,247,0.2);
 }
+.party-root input.party-input.code-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 .party-input.code-input {
   font-family: var(--party-font-display);
   font-size: 2.5rem;
@@ -232,7 +284,10 @@
   text-transform: uppercase;
   padding: 1rem;
 }
-.party-input::placeholder { color: rgba(255,255,255,0.2); }
+.party-root .party-input::placeholder,
+.party-root .player-input::placeholder,
+.party-input::placeholder,
+.player-input::placeholder { color: rgba(240,232,255,0.45); opacity: 1; }
 
 .party-form-group { margin-bottom: 1.25rem; }
 
@@ -464,31 +519,31 @@
 /* ------ Lobby Phase ------ */
 .host-lobby { width: 100%; max-width: 1100px; }
 .host-lobby-title {
-  font-size: clamp(3rem, 6vw, 5.5rem);
+  font-size: clamp(2.25rem, 4.5vw, 4rem);
   text-align: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.3rem;
   background: linear-gradient(135deg, #a855f7, #ec4899);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
 }
 .host-lobby-subtitle {
   text-align: center;
   color: var(--party-text-muted);
-  font-size: 1.2rem;
-  margin-bottom: 3rem;
+  font-size: 1.05rem;
+  margin-bottom: 1.25rem;
   font-family: var(--party-font-body);
 }
 .host-players-grid {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 1.25rem;
-  min-height: 120px;
-  margin-bottom: 3rem;
+  gap: 0.9rem;
+  min-height: 88px;
+  margin-bottom: 1.25rem;
 }
 .host-player-card {
   background: var(--party-surface);
   border-radius: var(--party-radius);
-  padding: 1.25rem 1.5rem;
+  padding: 0.9rem 1.15rem;
   text-align: center;
   min-width: 120px;
   border: 2px solid transparent;
@@ -1241,15 +1296,23 @@
 .admin-prompt-row { display: flex; align-items: center; gap: 0.5rem; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 0.3rem 0.3rem 0.3rem 0.75rem; border: 1px solid rgba(255,255,255,0.07); transition: border-color 0.15s; animation: slideIn 0.2s ease both; }
 .admin-prompt-row:focus-within { border-color: rgba(255,255,255,0.2); }
 .admin-prompt-index { font-family: var(--party-font-body); font-size: 0.7rem; color: var(--party-text-muted); min-width: 1.5rem; text-align: center; flex-shrink: 0; font-weight: 600; }
-.admin-prompt-input { flex: 1; background: transparent; border: none; color: var(--party-text); font-family: var(--party-font-body); font-size: 0.9rem; outline: none; padding: 0.5rem 0.25rem; width: 100%; }
-.admin-prompt-input::placeholder { color: rgba(255,255,255,0.2); }
-.admin-delete-btn { background: transparent; border: none; color: rgba(239,68,68,0.5); cursor: pointer; padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.9rem; transition: all 0.15s; flex-shrink: 0; line-height: 1; }
+.party-root input.admin-prompt-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.admin-prompt-input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--party-text); font-family: var(--party-font-body); font-size: 0.9rem; outline: none; padding: 0.5rem 0.25rem; width: 100%; box-shadow: none; border-radius: 6px; }
+.party-root input.admin-prompt-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+.admin-prompt-input:focus { border-color: transparent; box-shadow: none; }
+.party-root .admin-prompt-input::placeholder,
+.admin-prompt-input::placeholder { color: rgba(240,232,255,0.45); opacity: 1; }
+.admin-delete-btn { background: transparent; border: none; color: rgba(239,68,68,0.65); cursor: pointer; padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.9rem; transition: all 0.15s; flex-shrink: 0; line-height: 1; }
 .admin-delete-btn:hover { background: rgba(239,68,68,0.15); color: var(--party-red); }
 .admin-section-footer { padding: 0.75rem 1rem; border-top: 1px solid var(--party-border); flex-shrink: 0; }
 .admin-add-btn { width: 100%; background: transparent; border: 2px dashed rgba(255,255,255,0.15); border-radius: 10px; color: var(--party-text-muted); font-family: var(--party-font-display); font-weight: 800; font-size: 0.9rem; padding: 0.7rem; cursor: pointer; transition: all 0.2s; text-align: center; }
 .admin-section.yellow .admin-add-btn:hover { border-color: var(--party-yellow); color: var(--party-yellow); background: rgba(245,158,11,0.05); }
 .admin-section.red    .admin-add-btn:hover { border-color: var(--party-red);    color: var(--party-red);    background: rgba(239,68,68,0.05); }
-.admin-toast { position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%); background: var(--party-green); color: #fff; font-family: var(--party-font-display); font-weight: 800; font-size: 1rem; padding: 0.75rem 2rem; border-radius: 99px; box-shadow: var(--party-glow-green); animation: toastPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; z-index: 200; }
+.admin-section.purple .admin-add-btn:hover { border-color: var(--party-purple-lt); color: var(--party-purple-lt); background: rgba(168,85,247,0.06); }
+.admin-section.cyan   .admin-add-btn:hover { border-color: var(--party-cyan);   color: var(--party-cyan);   background: rgba(6,182,212,0.06); }
+.admin-section.pink   .admin-add-btn:hover { border-color: var(--party-pink);   color: var(--party-pink);   background: rgba(236,72,153,0.06); }
+.admin-section.green  .admin-add-btn:hover { border-color: var(--party-green);  color: var(--party-green);  background: rgba(34,197,94,0.06); }
+.admin-toast { position: fixed; bottom: 5.5rem; left: 50%; transform: translateX(-50%); background: var(--party-green); color: #fff; font-family: var(--party-font-display); font-weight: 800; font-size: 1rem; padding: 0.75rem 2rem; border-radius: 99px; box-shadow: var(--party-glow-green); animation: toastPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; z-index: 200; }
 @keyframes toastPop { from { opacity:0; transform: translateX(-50%) translateY(20px) scale(0.9); } to { opacity:1; transform: translateX(-50%) translateY(0) scale(1); } }
 .admin-empty { text-align: center; padding: 2rem 1rem; color: var(--party-text-muted); font-family: var(--party-font-body); font-size: 0.9rem; }
 .admin-empty-icon { font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5; }
@@ -1294,7 +1357,9 @@
 .admin-modal-close { background: transparent; border: none; font-size: 1.5rem; color: var(--party-text-muted); cursor: pointer; }
 .admin-modal-body { padding: 2rem; overflow-y: auto; flex: 1; }
 .admin-modal-footer { padding: 1.5rem 2rem; border-top: 1px solid var(--party-border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
-.admin-textarea { width: 100%; min-height: 200px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 1rem; color: var(--party-text); font-family: monospace; font-size: 0.9rem; margin-bottom: 1rem; resize: vertical; }
+.party-root textarea.admin-textarea,
+.admin-textarea { width: 100%; min-height: 200px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 1rem; color: var(--party-text); font-family: monospace; font-size: 0.9rem; margin-bottom: 1rem; resize: vertical; }
+.party-root textarea.admin-textarea:focus,
 .admin-textarea:focus { border-color: var(--party-purple-lt); outline: none; }
 .admin-file-label { display: block; border: 2px dashed rgba(255,255,255,0.2); border-radius: 12px; padding: 2rem; text-align: center; cursor: pointer; margin-bottom: 1rem; transition: border 0.2s; }
 .admin-file-label:hover { border-color: var(--party-purple-lt); background: rgba(168,85,247,0.05); }
@@ -1982,7 +2047,8 @@ body.party-phone .glass-nav, body.party-phone footer { display: none !important;
 body.party-tv main.container, body.party-phone main.container { max-width: none; padding: 0; }
 
 .party-soundbar { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.5rem; }
-.party-voice-select { background: rgba(255,255,255,0.08); border: 1px solid var(--party-border); color: #fff; border-radius: 999px; padding: 0.35rem 0.7rem; font-size: 0.85rem; max-width: 15rem; cursor: pointer; }
+.party-root select.party-voice-select,
+.party-voice-select { width: auto; background: rgba(255,255,255,0.08); border: 1px solid var(--party-border); color: var(--party-text); border-radius: 999px; padding: 0.35rem 0.7rem; font-size: 0.85rem; max-width: 15rem; cursor: pointer; }
 .party-voice-select option { background: var(--party-surface); color: var(--party-text); }
 .party-sound-cta {
   background: var(--party-yellow); color: #111; border: none; border-radius: 999px;
@@ -2123,6 +2189,22 @@ body.party-tv .host-stage { padding-bottom: 5.5rem; }
   .host-topbar > div:last-child { align-items: center !important; }
   .host-topbar > div:last-child > div { flex-wrap: wrap; justify-content: center; }
   .host-room-code-badge { font-size: 1.5rem; padding: 0.25rem 0.9rem; }
+}
+
+/* Desktop & 1920x1080 TV: compact lobby chrome so Start Game / GamePicker stay above the fold */
+@media (min-width: 1024px) {
+  .party-lobby { padding: 0.85rem 1rem 1.5rem; }
+  .party-logo { font-size: 3.15rem; }
+  .party-logo-sub { margin-bottom: 0.85rem; }
+  .party-lobby .party-card { padding: 1.25rem 1.5rem; }
+  .party-lobby .party-tab-bar { margin-bottom: 0.95rem; }
+  .host-topbar { padding: 0.6rem 1.5rem; }
+  .host-stage { padding: 1rem 1.75rem 4.5rem; }
+  .host-lobby-title { font-size: 3.25rem; }
+  .host-lobby-subtitle { margin-bottom: 0.9rem; }
+  .host-players-grid { min-height: 76px; margin-bottom: 1rem; gap: 0.75rem; }
+  .host-player-card { padding: 0.75rem 1rem; }
+  .host-player-avatar { width: 44px; height: 44px; font-size: 1.35rem; margin-bottom: 0.35rem; }
 }
 
 /* Shorter TVs and laptops: keep the room code, give the height back to the game */

@@ -147,8 +147,8 @@ function LiftDetail({ stat, goals, history, review, onClose }: { stat: ExerciseS
     >
       <div className="an-tiles is-three">
         <div className="an-tile"><span className="an-tile-label">Est. 1RM now</span><strong className="an-tile-value">{Math.round(stat.current)}</strong><span className="an-tile-sub">best of last 3</span></div>
-        <div className="an-tile"><span className="an-tile-label">All-time best</span><strong className="an-tile-value">{Math.round(stat.best)}</strong><span className="an-tile-sub">{stat.sessions.length} sessions</span></div>
-        <div className="an-tile"><span className="an-tile-label">This period</span><strong className="an-tile-value">{stat.periodChange === null ? '—' : <Delta value={stat.periodChange} />}</strong><span className="an-tile-sub">{stat.sessionsInPeriod} sessions</span></div>
+        <div className="an-tile"><span className="an-tile-label">All-time best</span><strong className="an-tile-value">{Math.round(stat.best)}</strong><span className="an-tile-sub">{stat.sessions.length} session{stat.sessions.length === 1 ? '' : 's'}</span></div>
+        <div className="an-tile"><span className="an-tile-label">This period</span><strong className="an-tile-value">{stat.periodChange === null ? '—' : <Delta value={stat.periodChange} />}</strong><span className="an-tile-sub">{stat.sessionsInPeriod} session{stat.sessionsInPeriod === 1 ? '' : 's'}</span></div>
       </div>
 
       {chartData.length >= 2 ? (

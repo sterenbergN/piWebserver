@@ -9,12 +9,10 @@ export const metadata: Metadata = {
   description: 'Mobile-first workout tracker',
 };
 
-// Fit the phone screen with no zooming (NoZoom also blocks pinches).
+// Fit mobile viewports cleanly without blocking user pinch-to-zoom.
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export default function WorkoutLayout({ children }: { children: React.ReactNode }) {

@@ -21,7 +21,7 @@ function UnitConverter() {
   const pickCategory = (id: string) => {
     const next = CATEGORIES.find(c => c.id === id)!;
     setCatId(id);
-    setFrom(next.units[Math.min(2, next.units.length - 1)].id);
+    setFrom(id === 'temperature' ? 'f' : next.units[Math.min(2, next.units.length - 1)].id);
   };
 
   return (
@@ -219,13 +219,46 @@ function ExpressionCalc() {
   );
 }
 
+/** Simulate month-by-month amortization with optional extra monthly principal payment. */
+function simulateLoanSchedule(principal: number, aprPercent: number, years: number, baseMonthly: number, extraMonthly: number) {
+  const n = Math.round(years * 12);
+  const r = aprPercent / 100 / 12;
+  let balance = principal;
+  let months = 0;
+  let interest = 0;
+  let totalPaid = 0;
+  const yearly: { year: number; interest: number; principal: number; balance: number }[] = [];
+
+  while (balance > 0.005 && months < n) {
+    const monthlyInterest = balance * r;
+    const monthlyPayment = Math.min(balance + monthlyInterest, baseMonthly + extraMonthly);
+    const principalPaid = Math.min(balance, Math.max(0, monthlyPayment - monthlyInterest));
+    balance -= principalPaid;
+    interest += monthlyInterest;
+    totalPaid += monthlyInterest + principalPaid;
+    months++;
+    const y = Math.ceil(months / 12);
+    const row = yearly[y - 1] ||= { year: y, interest: 0, principal: 0, balance: 0 };
+    row.interest += monthlyInterest;
+    row.principal += principalPaid;
+    row.balance = Math.max(0, balance);
+  }
+
+  return { months, interest, totalPaid, yearly };
+}
+
 /** Monthly payment for a mortgage, car loan or the like, and what paying extra saves. */
 function LoanCalc() {
   const [amount, setAmount] = useState('300000');
   const [rate, setRate] = useState('6.5');
   const [years, setYears] = useState('30');
   const [extra, setExtra] = useState('');
-  const result = loan(num(amount) ?? 0, num(rate) ?? -1, num(years) ?? 0, num(extra) ?? 0);
+  const principal = num(amount) ?? 0;
+  const apr = num(rate) ?? -1;
+  const termYears = num(years) ?? 0;
+  const extraMonthly = Math.max(0, num(extra) ?? 0);
+  const result = loan(principal, apr, termYears, extraMonthly);
+  const schedule = result ? simulateLoanSchedule(principal, apr, termYears, result.payment, extraMonthly) : null;
   const span = (months: number) => `${Math.floor(months / 12)} yr${months % 12 ? ` ${months % 12} mo` : ''}`;
 
   return (
@@ -244,16 +277,16 @@ function LoanCalc() {
         <input inputMode="decimal" value={years} onChange={(e) => setYears(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="Years" style={{ width: '5rem', minHeight: 40, borderRadius: 999, textAlign: 'center' }} />
       </div>
 
-      {result ? (
+      {result && schedule ? (
         <>
           <div className="tl-results" aria-live="polite">
-            <div className="tl-result is-main"><span>Monthly payment{num(extra) ? ' (before extra)' : ''}</span><strong>{money(result.payment)}</strong></div>
-            <div className="tl-result"><span className="tl-muted">Total interest</span><strong>{money(result.interest)}</strong></div>
-            <div className="tl-result"><span className="tl-muted">Total paid</span><strong>{money(result.total)}</strong></div>
+            <div className="tl-result is-main"><span>Monthly payment{extraMonthly > 0 ? ' (before extra)' : ''}</span><strong>{money(result.payment)}</strong></div>
+            <div className="tl-result"><span className="tl-muted">Total interest</span><strong>{money(schedule.interest)}</strong></div>
+            <div className="tl-result"><span className="tl-muted">Total paid</span><strong>{money(schedule.totalPaid)}</strong></div>
             {result.extra && (
               <div className="tl-result" style={{ borderColor: 'rgba(var(--success-rgb), 0.6)' }}>
-                <span className="tl-muted">Paying {money(num(extra) ?? 0)} extra</span>
-                <strong>Done in {span(result.extra.months)}, saves {money(result.extra.interestSaved)}</strong>
+                <span className="tl-muted">Paying {money(extraMonthly)} extra</span>
+                <strong>Done in {span(schedule.months)}, saves {money(Math.max(0, result.interest - schedule.interest))}</strong>
               </div>
             )}
           </div>
@@ -262,7 +295,7 @@ function LoanCalc() {
             <div className="tl-card-scroll" style={{ marginTop: '0.6rem' }}>
               <table className="tl-scorecard tl-amort">
                 <thead><tr><th>Year</th><th>Principal</th><th>Interest</th><th>Balance</th></tr></thead>
-                <tbody>{result.yearly.map((y) => (
+                <tbody>{schedule.yearly.map((y) => (
                   <tr key={y.year}><td>{y.year}</td><td>{money(y.principal)}</td><td>{money(y.interest)}</td><td>{money(y.balance)}</td></tr>
                 ))}</tbody>
               </table>
@@ -385,6 +418,7 @@ function UnitPriceCalc() {
   const [items, setItems] = useState([{ price: '4.99', size: '16' }, { price: '7.49', size: '28' }]);
   const { per, best } = unitPrices(items.map((x) => ({ price: num(x.price), size: num(x.size) })));
   const compared = per.filter((p) => p !== null).length > 1;
+  const allPositive = compared && per.every((p) => p === null || p > 0) && best >= 0 && (per[best] ?? 0) > 0;
   const set = (i: number, patch: Partial<(typeof items)[number]>) => setItems(items.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   return (
     <>
@@ -401,7 +435,7 @@ function UnitPriceCalc() {
             <span className="tl-price-per">
               {per[i] === null ? '—' : `${money(per[i]!)}/${unit}`}
               {compared && i === best && <small>Best deal</small>}
-              {compared && i !== best && per[i] !== null && <small className="tl-muted">+{Math.round((per[i]! / per[best]! - 1) * 100)}%</small>}
+              {allPositive && i !== best && per[i] !== null && <small className="tl-muted">+{Math.round((per[i]! / per[best]! - 1) * 100)}%</small>}
             </span>
             {items.length > 2 && <button className="tl-icon-btn" onClick={() => setItems(items.filter((_, j) => j !== i))} aria-label={`Remove ${String.fromCharCode(65 + i)}`}>✕</button>}
           </div>

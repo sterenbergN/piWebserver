@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { getWorkoutUserIdFromToken, isAdminTokenValid } from '@/lib/security/auth';
+import { findHousehold } from '@/lib/chores/households';
 import { loadUsersData } from '@/lib/workout/users';
 import {
   loadUserMovieData,
@@ -53,26 +54,44 @@ async function getCallerUserId(request?: Request): Promise<string | null> {
 export async function GET(request: Request) {
   try {
     const callerUserId = await getCallerUserId(request);
+    const { searchParams } = new URL(request.url);
+    const targetUserId = searchParams.get('userId');
+
     if (!callerUserId) {
+      if (targetUserId) {
+        return NextResponse.json(
+          { success: false, error: 'Unauthorized' },
+          { status: 401, headers: { 'Cache-Control': 'no-store' } }
+        );
+      }
       return NextResponse.json(
         { success: true, authenticated: false },
         { headers: { 'Cache-Control': 'no-store' } }
       );
     }
 
-    const { searchParams } = new URL(request.url);
-    const targetUserId = searchParams.get('userId');
+    const household = callerUserId === 'admin' ? null : await findHousehold(callerUserId).catch(() => null);
+    const allowedUserIds = new Set<string>([callerUserId, ...(household?.members ?? [])]);
 
     const usersData = await loadUsersData().catch(() => ({ users: [] }));
-    const users = (usersData.users || []).map((u) => ({
-      id: u.id,
-      username: u.username || u.name || u.id,
-    }));
+    const users = (usersData.users || [])
+      .filter((u) => callerUserId === 'admin' || allowedUserIds.has(u.id))
+      .map((u) => ({
+        id: u.id,
+        username: u.username || u.name || u.id,
+      }));
     if (callerUserId === 'admin' && !users.some((u) => u.id === 'admin')) {
       users.unshift({ id: 'admin', username: 'Admin' });
     }
 
     if (targetUserId && targetUserId !== callerUserId) {
+      if (!allowedUserIds.has(targetUserId)) {
+        return NextResponse.json(
+          { success: false, error: 'Forbidden' },
+          { status: 403, headers: { 'Cache-Control': 'no-store' } }
+        );
+      }
+
       const targetState = await loadUserMovieData(targetUserId);
       return NextResponse.json(
         {
@@ -140,6 +159,19 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: 'Invalid request body' },
         { status: 400 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const queryUserId = searchParams.get('userId');
+    const explicitUserId = typeof body.userId === 'string' ? body.userId : (typeof body.state?.userId === 'string' ? body.state.userId : null);
+    if (
+      (queryUserId && queryUserId !== callerUserId) ||
+      (explicitUserId && explicitUserId !== callerUserId && explicitUserId !== 'guest')
+    ) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
       );
     }
 

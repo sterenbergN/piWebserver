@@ -1039,7 +1039,9 @@ export default function KartClashHostView({
                   <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.6rem 1.6rem minmax(0, 1fr) auto auto', gap: '0.35rem', alignItems: 'center', padding: '0.14rem 0', fontWeight: 800 }}>
                     <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, i)] }}>{i + 1}</span>
                     <span>{row.avatar}</span>
-                    <span style={{ color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
+                    <span style={{ color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.name}{row.isBot ? <span style={{ fontSize: '0.68rem', color: 'var(--party-text-muted)', marginLeft: '0.35rem' }}>BOT</span> : null}
+                    </span>
                     <span style={{ fontSize: '0.8rem', color: 'var(--party-green)' }}>{row.gained ? `+${row.gained.toLocaleString()}` : ''}</span>
                     <span style={{ fontFamily: 'monospace', minWidth: '4.2ch', textAlign: 'right' }}>{row.score.toLocaleString()}</span>
                   </div>
@@ -1085,11 +1087,9 @@ export default function KartClashHostView({
                     <span style={{ fontFamily: 'monospace', color: 'var(--party-text-muted)', fontSize: '0.88rem' }}>
                       {row.dnf || !row.timeMs ? 'DNF' : formatRaceTime(row.timeMs)}
                     </span>
-                    {!row.isBot && (
-                      <span style={{ fontWeight: 900, color: 'var(--party-green)', minWidth: '3.4rem', textAlign: 'right' }}>
-                        +{row.points.toLocaleString()}
-                      </span>
-                    )}
+                    <span style={{ fontWeight: 900, color: row.isBot ? 'var(--party-text-muted)' : 'var(--party-green)', minWidth: '3.4rem', textAlign: 'right' }}>
+                      +{row.points.toLocaleString()}
+                    </span>
                   </div>
                 </div>
               );

@@ -460,12 +460,14 @@ function revealTriviaAnswers(state: GameState) {
     const status = state.gameData.playerStatuses[pid];
     const answered = state.gameData.currentAnswers[pid];
     const correct = answered === correctIdx;
-    if (correct) bumpStat(state, 'correct', pid);
     state.playerData[pid] = {
       phase: 'QUESTION_RESULTS',
       correct,
       correctAnswer: correctIdx,
       yourAnswer: answered,
+      question: q.question,
+      choices: q.choices,
+      killingFloorPlayers: state.gameData.killingFloorPlayers,
       going_to_killing_floor: state.gameData.killingFloorPlayers.includes(pid),
       status,
       ghostStreak: state.gameData.ghostStreaks[pid] || 0,
@@ -505,6 +507,7 @@ async function startKillingFloor(state: GameState) {
     phase: 'KILLING_FLOOR',
     miniGame,
     miniGameName: MINI_GAME_NAMES[miniGame],
+    killingFloorPlayers: state.gameData.killingFloorPlayers,
     isOnFloor: state.gameData.killingFloorPlayers.includes(pid),
     status: state.gameData.playerStatuses[pid],
     money: state.gameData.money[pid],
@@ -736,10 +739,11 @@ function resolveKillingFloor(state: GameState) {
       const theirPick = state.gameData.killingFloorAnswers[pid];
       survives = theirPick !== data.deathNumber;
     } else if (miniGame === 'memory') {
-      // Player must have typed the first symbol of the grid sequence
-      const theirAnswer = (state.gameData.killingFloorAnswers[pid] || '').toString().trim().toUpperCase();
-      const correct = data.word || data.grid?.[0] || '';
-      survives = theirAnswer.includes(correct.toString().toUpperCase());
+      // Player must have typed the first symbol of the grid sequence; normalize VS-16 (\uFE0F)
+      const normalizeSym = (s: unknown) => String(s ?? '').replace(/\uFE0F/g, '').trim().toUpperCase();
+      const theirAnswer = normalizeSym(state.gameData.killingFloorAnswers[pid]);
+      const correct = normalizeSym(data.word || data.grid?.[0] || '');
+      survives = Boolean(correct && theirAnswer.includes(correct));
     } else if (miniGame === 'hotpotato') {
       // Whoever is holding when time runs out dies
       survives = pid !== state.gameData.hotPotatoHolder;
@@ -811,6 +815,10 @@ function resolveKillingFloor(state: GameState) {
     const isOnFloor = state.gameData.killingFloorPlayers.includes(pid);
     state.playerData[pid] = {
       phase: 'KILLING_FLOOR_RESULTS',
+      miniGame,
+      miniGameName: MINI_GAME_NAMES[miniGame],
+      killingFloorPlayers: state.gameData.killingFloorPlayers,
+      dead,
       isDead,
       isOnFloor,
       status: state.gameData.playerStatuses[pid],
@@ -832,12 +840,15 @@ async function nextRoundOrEscape(state: GameState) {
 async function startFinalEscape(state: GameState) {
   const now = Date.now();
   state.phase = 'FINAL_ESCAPE';
-  
-  const sortedPids = [...state.playerOrder].sort((a, b) => (state.gameData.money[a] || 0) - (state.gameData.money[b] || 0));
+
+  const activePids = state.playerOrder.filter((pid) => !state.players[pid]?.left);
+  const sortedPids = [...activePids].sort((a, b) => (state.gameData.money[a] || 0) - (state.gameData.money[b] || 0));
   const N = sortedPids.length;
+  const maxStart = ESCAPE_QUESTIONS - 1;
   for (let i = 0; i < N; i++) {
-    // 1st place gets N spaces, last gets 1 space.
-    state.gameData.escapeProgress[sortedPids[i]] = i + 1;
+    // Spread starting steps across 0..(ESCAPE_QUESTIONS - 1) so 1st place cannot auto-win on Q1.
+    const startStep = N <= 1 ? 0 : Math.floor((i * maxStart) / (N - 1));
+    state.gameData.escapeProgress[sortedPids[i]] = startStep;
   }
   
   state.gameData.escapeQuestionIndex = TOTAL_ROUNDS;

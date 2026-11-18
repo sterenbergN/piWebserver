@@ -33,6 +33,7 @@ export function HoldButton({ done, label, symbol, onHold, disabled }: { done: bo
       disabled={disabled}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* not supported */ }
         setHolding(true);
         timer.current = setTimeout(() => { timer.current = null; setHolding(false); onHold(); }, HOLD_MS);
       }}

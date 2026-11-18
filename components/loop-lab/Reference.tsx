@@ -19,6 +19,36 @@ import { PlantNow } from './PlantEditor';
 import { ScorecardTable, TestTabs, TrendPanel } from './Results';
 import { useRunsMany } from './useRuns';
 import { AutomationView, CodeTabs, ControlView, MechanicalView } from './Views';
+import { encodeExperiment } from '@/lib/loop-lab/setup';
+
+function StableSlider({ value, min, max, step, label, onChange }: {
+  value: number; min: number; max: number; step: number; label: string; onChange: (v: number) => void;
+}) {
+  const [lockedMax, setLockedMax] = useState<number | null>(null);
+  const effectiveMax = lockedMax ?? max;
+  const lock = () => setLockedMax((m) => m ?? max);
+  const unlock = () => setLockedMax(null);
+  return (
+    <input
+      type="range"
+      min={min}
+      max={effectiveMax}
+      step={step}
+      value={Math.min(effectiveMax, Math.max(min, value))}
+      onPointerDown={() => {
+        lock();
+        window.addEventListener('pointerup', unlock, { once: true });
+        window.addEventListener('pointercancel', unlock, { once: true });
+      }}
+      onKeyDown={lock}
+      onKeyUp={unlock}
+      onBlur={unlock}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{ width: '100%' }}
+      aria-label={label}
+    />
+  );
+}
 
 export function ProcessReference({ id }: { id: ProcessId }) {
   const proc = getProcess(id);
@@ -48,7 +78,7 @@ export function ProcessReference({ id }: { id: ProcessId }) {
         <p>{proc.summary}</p>
         <div className="ll-actions">
           <Link className="ll-btn is-primary" href={benchLink(exp)}>Open on the bench</Link>
-          <Link className="ll-btn" href="/loop-lab/builder">🧩 Build in Block Studio</Link>
+          <Link className="ll-btn" href={`/loop-lab/builder?setup=${encodeExperiment(exp)}`}>🧩 Build in Block Studio</Link>
           {cases.map((c) => <Link key={c.id} className="ll-btn" href={`/loop-lab/cases/${c.id}`}>Case study: {c.title.split(':').pop()!.trim()}</Link>)}
         </div>
       </header>
@@ -62,7 +92,7 @@ export function ProcessReference({ id }: { id: ProcessId }) {
           </div>
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <Link className="ll-btn is-primary is-small" href={benchLink(exp)}>Open on the bench</Link>
-            <Link className="ll-btn is-small" href="/loop-lab/builder">🧩 Build in Block Studio</Link>
+            <Link className="ll-btn is-small" href={`/loop-lab/builder?setup=${encodeExperiment(exp)}`}>🧩 Build in Block Studio</Link>
             {nChanged > 0 && (
               <button className="ll-link" style={{ fontSize: '0.78rem' }} onClick={() => setParams(defaults)}>
                 Reset {nChanged} change{nChanged > 1 ? 's' : ''}
@@ -161,7 +191,15 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
 
   const updatePidGain = (field: 'Kc' | 'Ti' | 'Td', value: number) => {
     const v = Math.max(field === 'Td' ? 0 : 0.001, Number(value));
-    if ('pid' in ctrl) {
+    if (ctrl.kind === 'schedule') {
+      const oldVal = ctrl.pid[field];
+      const allEqual = ctrl.points.every((pt) => Math.abs(pt[field] - oldVal) <= 1e-9);
+      const points = ctrl.points.map((pt) => ({
+        ...pt,
+        [field]: allEqual || oldVal <= 0 ? v : Number((pt[field] * (v / oldVal)).toPrecision(4)),
+      }));
+      setCtrl({ ...ctrl, pid: { ...ctrl.pid, [field]: v }, points });
+    } else if ('pid' in ctrl) {
       setCtrl({ ...ctrl, pid: { ...ctrl.pid, [field]: v } });
     } else if ('outer' in ctrl) {
       setCtrl({ ...ctrl, outer: { ...ctrl.outer, [field]: v } });
@@ -204,7 +242,7 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
             <p>{c.summary}</p>
             <div className="ll-actions">
               <Link className="ll-btn is-primary" href={benchLink(thisExp)}>Try it on the bench</Link>
-              <Link className="ll-btn" href="/loop-lab/builder">🧩 Open Block Studio</Link>
+              <Link className="ll-btn" href={`/loop-lab/builder?setup=${encodeExperiment(thisExp)}`}>🧩 Open Block Studio</Link>
             </div>
           </header>
 
@@ -295,15 +333,13 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
                         <button type="button" className="ll-btn is-small" style={{ minHeight: '22px', padding: '0 0.35rem', fontSize: '0.7rem' }} onClick={() => nudgeGain('Kc', 1.2)}>+20%</button>
                       </div>
                     </div>
-                    <input
-                      type="range"
+                    <StableSlider
                       min={0.01}
                       max={Math.max(10, Math.ceil(pidParams.Kc * 2.5))}
                       step={0.01}
                       value={pidParams.Kc}
-                      onChange={(e) => updatePidGain('Kc', Number(e.target.value))}
-                      style={{ width: '100%' }}
-                      aria-label="Proportional gain Kc"
+                      onChange={(v) => updatePidGain('Kc', v)}
+                      label="Proportional gain Kc"
                     />
                   </div>
                   {/* Ti */}
@@ -315,15 +351,13 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
                         <button type="button" className="ll-btn is-small" style={{ minHeight: '22px', padding: '0 0.35rem', fontSize: '0.7rem' }} onClick={() => nudgeGain('Ti', 1.2)}>+20%</button>
                       </div>
                     </div>
-                    <input
-                      type="range"
+                    <StableSlider
                       min={0.1}
                       max={Math.max(30, Math.ceil(pidParams.Ti * 2.5))}
                       step={0.1}
                       value={pidParams.Ti}
-                      onChange={(e) => updatePidGain('Ti', Number(e.target.value))}
-                      style={{ width: '100%' }}
-                      aria-label="Integral time Ti"
+                      onChange={(v) => updatePidGain('Ti', v)}
+                      label="Integral time Ti"
                     />
                   </div>
                   {/* Td */}
@@ -335,15 +369,13 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
                         <button type="button" className="ll-btn is-small" style={{ minHeight: '22px', padding: '0 0.35rem', fontSize: '0.7rem' }} onClick={() => nudgeGain('Td', 1.2)}>+20%</button>
                       </div>
                     </div>
-                    <input
-                      type="range"
+                    <StableSlider
                       min={0}
                       max={Math.max(5, Math.ceil((pidParams.Td || 1) * 2.5))}
                       step={0.05}
                       value={pidParams.Td}
-                      onChange={(e) => updatePidGain('Td', Number(e.target.value))}
-                      style={{ width: '100%' }}
-                      aria-label="Derivative time Td"
+                      onChange={(v) => updatePidGain('Td', v)}
+                      label="Derivative time Td"
                     />
                   </div>
                 </div>
@@ -398,7 +430,7 @@ export function ControllerReference({ kind }: { kind: ControllerKind }) {
             <CodeTabs proc={proc} exp={thisExp} />
             <div className="ll-actions" style={{ marginTop: '1.25rem' }}>
               <Link className="ll-btn is-primary" href={benchLink(thisExp)}>Try it on the bench</Link>
-              <Link className="ll-btn" href="/loop-lab/builder">🧩 Open Block Studio</Link>
+              <Link className="ll-btn" href={`/loop-lab/builder?setup=${encodeExperiment(thisExp)}`}>🧩 Open Block Studio</Link>
             </div>
           </section>
         </div>

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GRID, createGame, queueDirection, step, tickMs, topValue, type Direction, type MergeSnakeState } from '@/lib/games/mergesnake';
-import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
+import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useCanvasTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
 
 const CELL = 40;
 const SIZE = GRID * CELL;
@@ -136,7 +136,7 @@ export default function MergeSnakeGame() {
     sync();
   }, !paused && hud.status !== 'over');
 
-  useEffect(() => { draw(); }, [draw]);
+  useCanvasTheme(theme, draw);
   usePauseWhenHidden(() => { if (game.current.status === 'playing') setPaused(true); });
 
   const turn = useCallback((dir: Direction) => {

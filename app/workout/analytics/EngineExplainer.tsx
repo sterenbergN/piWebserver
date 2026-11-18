@@ -31,7 +31,7 @@ export default function EngineExplainer({ intensityFactor }: { intensityFactor: 
          </p>
 
          <h5 style={{ margin: '0 0 0.3rem 0', color: 'var(--foreground)' }}>3. Formulas</h5>
-         <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.6rem', borderRadius: '6px', fontFamily: 'monospace', fontSize: '0.75rem', margin: '0.3rem 0 0.5rem 0' }}>
+         <div style={{ background: 'var(--input-bg)', padding: '0.6rem', borderRadius: '6px', fontFamily: 'monospace', fontSize: '0.75rem', margin: '0.3rem 0 0.5rem 0' }}>
             <div>e1RM = weight × f(reps + RIR)  <span style={{ color: 'var(--muted)' }}>// mean of Epley, Brzycki, Lombardi</span></div>
             <div>estimate = 0.6 × e1RM₀ + 0.25 × e1RM₋₁ + 0.15 × e1RM₋₂</div>
             <div>rirAdjustment = 0.1 × (working-set RIR − target RIR)</div>

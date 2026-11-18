@@ -142,7 +142,7 @@ function PartyLobby() {
         const joinRes = await fetch('/api/party/join', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomCode: data.roomCode, playerName: playerName.trim(), avatar }),
+          body: JSON.stringify({ roomCode: data.roomCode, playerName: playerName.trim(), avatar, hostId: data.hostId }),
         });
         const joinData = await joinRes.json();
         if (!joinRes.ok || joinData.error) {
@@ -160,7 +160,6 @@ function PartyLobby() {
         router.push(seatPath(seat));
       } else {
         try {
-          localStorage.setItem(`host_${data.roomCode}`, data.hostId);
           localStorage.setItem('partyLastHosted', JSON.stringify({ roomCode: data.roomCode, hostId: data.hostId, at: Date.now() }));
         } catch { /* ignore */ }
         router.push(`/party/host/${data.roomCode}?hostId=${data.hostId}`);

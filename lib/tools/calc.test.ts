@@ -41,8 +41,15 @@ test('loan: standard amortisation, zero interest and extra payments', () => {
   close(l.interest, 1896.2041 * 360 - 300000, 1e-3);
   assert.equal(l.yearly.length, 30);
   close(loan(1200, 0, 1)!.payment, 100);
-  const extra = loan(300000, 6.5, 30, 200)!.extra!;
+  const withExtra = loan(300000, 6.5, 30, 200)!;
+  const extra = withExtra.extra!;
   assert.ok(extra.monthsSaved > 50 && extra.interestSaved > 80000);
+  assert.ok(extra.months < l.months);
+  assert.ok(extra.interest < l.interest);
+  close(extra.interest + extra.interestSaved, l.interest);
+  const zeroExtra = loan(1200, 0, 1, 100)!;
+  assert.equal(zeroExtra.extra!.months, 6);
+  assert.equal(zeroExtra.extra!.interest, 0);
   assert.equal(loan(0, 5, 10), null);
 });
 

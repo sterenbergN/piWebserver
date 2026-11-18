@@ -14,6 +14,7 @@ import {
   cleanDiagram,
   clampParam,
   decodeDiagram,
+  diagramFromExperiment,
   encodeDiagram,
   type BlockCategory,
   type BlockDiagramModel,
@@ -23,6 +24,8 @@ import {
   type BlockWire,
   type ParamSpec,
 } from '@/lib/loop-lab/block-sim';
+import { isProcessId } from '@/lib/loop-lab/processes';
+import { decodeExperiment, defaultExperiment } from '@/lib/loop-lab/setup';
 import { SAVED_MAX, cleanSavedList, withSaved, type SavedDiagram } from '@/lib/loop-lab/saved-diagrams';
 
 const BLOCK_WIDTH = 152;
@@ -539,9 +542,13 @@ export default function BlockBuilder() {
     } catch {
       // Unreadable or not allowed: start from the template.
     }
-    const code = new URLSearchParams(window.location.search).get('d');
-    const shared = code ? decodeDiagram(code) : null;
-    if (code) {
+    const q = new URLSearchParams(window.location.search);
+    const code = q.get('d');
+    const setupCode = q.get('setup');
+    const procCode = q.get('process');
+    const expFromUrl = setupCode ? decodeExperiment(setupCode) : procCode && isProcessId(procCode) ? defaultExperiment(procCode) : null;
+    const shared = code ? decodeDiagram(code) : expFromUrl ? diagramFromExperiment(expFromUrl) : null;
+    if (code || setupCode || procCode) {
       // The link has done its job: a reload shows the diagram as it is by then.
       window.history.replaceState(null, '', window.location.pathname + window.location.hash);
     }
@@ -550,12 +557,12 @@ export default function BlockBuilder() {
       if (left && JSON.stringify(left) !== JSON.stringify(shared) && JSON.stringify(left) !== JSON.stringify(BLOCK_TEMPLATES[0])) {
         const keep: SavedDiagram = { id: `s_${Date.now().toString(36)}`, name: `Before the shared link (${new Date().toLocaleString()})`, savedAt: Date.now(), model: left };
         keepSaved(keep);
-        setNotice('Opened the diagram from the link. What you had here is in Saved diagrams, as “Before the shared link”.');
-      } else setNotice('Opened the diagram from the link.');
+        setNotice(expFromUrl ? 'Loaded your Bench setup into Block Studio. Previous work is in Saved diagrams.' : 'Opened the diagram from the link. What you had here is in Saved diagrams, as “Before the shared link”.');
+      } else setNotice(expFromUrl ? 'Loaded your Bench setup into Block Studio.' : 'Opened the diagram from the link.');
       modelRef.current = shared;
       setModelNow(shared);
     } else {
-      if (code) setNotice('That link doesn’t hold a diagram this page can read.');
+      if (code || setupCode || procCode) setNotice('That link doesn’t hold a diagram this page can read.');
       if (left) {
         modelRef.current = left;
         setModelNow(left);
@@ -1826,7 +1833,7 @@ export default function BlockBuilder() {
       {/* ── Bottom 2-Column Split: Scopes/Phase Left (1.5fr) vs Inspector Right (1fr) ── */}
       <div className="ll-builder-split">
         {/* ── Left Column: Multi-Channel Scope Chart, Phase-Plane Plot & Metrics Table ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: 0 }}>
           {/* Scope Visualizers */}
           {simResult.scopeSeries.map((scope) => {
             const chartSeries: Series[] = scope.series.map((s) => ({
@@ -1869,7 +1876,7 @@ export default function BlockBuilder() {
                 </div>
 
                 {/* Multi-Channel Scope Chart */}
-                <div style={{ width: '100%', marginBottom: '1rem' }}>
+                <div className="ll-chart-scroll" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto', marginBottom: '1rem' }}>
                   <Chart
                     series={chartSeries}
                     x={{ label: 'Time (s)', min: 0, max: model.duration }}
@@ -1964,7 +1971,7 @@ export default function BlockBuilder() {
         </div>
 
         {/* ── Right Column: Selected Block Inspector & Tuning ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', minWidth: 0 }}>
           {selectedNode ? (
             <div className="ll-card" style={{ padding: '1rem 1.15rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
@@ -2027,6 +2034,7 @@ export default function BlockBuilder() {
                             setModel((prev) => ({
                               ...prev,
                               nodes: prev.nodes.map((n) => (n.id === selectedNode.id ? { ...n, signs: sign } : n)),
+                              wires: prev.wires.filter((w) => !(w.toBlock === selectedNode.id && w.toPort >= sign.length)),
                             }));
                           }}
                           className="ll-btn is-small"

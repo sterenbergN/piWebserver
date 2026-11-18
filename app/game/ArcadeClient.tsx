@@ -51,7 +51,7 @@ function Playing({ game }: { game: GameId }) {
         <Link href="/game" className="arc-playbar-back"><span aria-hidden>◀</span> Lobby</Link>
         <div className="arc-playbar-strip" ref={strip}>
           {GAMES.map((g) => (
-            <Link key={g.id} href={`/game?game=${g.id}`} aria-current={g.id === game ? 'page' : undefined} title={g.label}>
+            <Link key={g.id} href={`/game?game=${g.id}`} aria-current={g.id === game ? 'page' : undefined} aria-label={g.label} title={g.label}>
               <span aria-hidden>{g.emoji}</span><span>{g.label}</span>
             </Link>
           ))}

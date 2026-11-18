@@ -31,7 +31,7 @@ export default function GolfApp() {
     if (golf.mode !== 'loading') void prepareOffline().catch(() => {});
   }, [golf.mode]);
 
-  if (golf.mode === 'loading') return <main className={`golf${sunlight ? ' is-sunlight' : ''}`}><p className="golf-muted">Loading…</p></main>;
+  if (golf.mode === 'loading') return <div className={`golf${sunlight ? ' is-sunlight' : ''}`}><p className="golf-muted">Loading…</p></div>;
 
   // Signed out, "you" in a round is the player marked as this device.
   const me = golf.mode === 'account' ? golf.userId! : DEVICE_PLAYER;
@@ -48,7 +48,7 @@ export default function GolfApp() {
   else screen = <Hub {...props} />;
 
   return (
-    <main className={`golf${sunlight ? ' is-sunlight' : ''}`}>
+    <div className={`golf${sunlight ? ' is-sunlight' : ''}`}>
       {screen}
       {golf.notice && (
         <div className="golf-toast" role="status">
@@ -57,7 +57,7 @@ export default function GolfApp() {
         </div>
       )}
       {popup.popup}
-    </main>
+    </div>
   );
 }
 

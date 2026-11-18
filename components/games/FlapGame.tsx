@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BIRD_R, BIRD_X, GROUND, H, PIPE_W, W, createGame, flap, step, type FlapState } from '@/lib/games/flap';
-import { GameFrame, Overlay, Prompt, fitCanvas, readTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
+import { GameFrame, Overlay, Prompt, fitCanvas, readTheme, useCanvasTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
 
 export default function FlapGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -71,15 +71,16 @@ export default function FlapGame() {
     setHud((h) => (h.score === s.score && h.status === s.status ? h : { score: s.score, status: s.status }));
   };
 
+  useCanvasTheme(theme, draw);
+
   useFrame((dt) => {
     const before = game.current.status;
     game.current = step(game.current, dt);
     if (before === 'playing') scroll.current += 165 * dt;
     draw();
     sync();
-  }, !paused);
+  }, !paused && hud.status !== 'over');
 
-  useEffect(() => { draw(); }, [draw]);
   usePauseWhenHidden(() => { if (game.current.status === 'playing') setPaused(true); });
 
   const press = useCallback(() => {
@@ -92,9 +93,13 @@ export default function FlapGame() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.repeat) return;
-      if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); press(); }
-      else if ((e.key === 'p' || e.key === 'P') && game.current.status === 'playing') setPaused((p) => !p);
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+        if (game.current.status !== 'over' || !(e.target instanceof HTMLButtonElement)) e.preventDefault();
+        if (!e.repeat) press();
+      } else if ((e.key === 'p' || e.key === 'P') && game.current.status === 'playing' && !e.repeat) {
+        setPaused((p) => !p);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

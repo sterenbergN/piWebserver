@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import PageHeader from '@/components/workout/PageHeader';
@@ -64,6 +64,14 @@ function asNumber(value: number | '' | undefined): number | null {
 }
 
 export default function WorkoutCalculatorsPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted)' }}>Loading calculators...</div>}>
+      <WorkoutCalculatorsContent />
+    </Suspense>
+  );
+}
+
+function WorkoutCalculatorsContent() {
   const searchParams = useSearchParams();
   const isSampleMode = searchParams.get('isDemo') === '1';
   const [activeTab, setActiveTab] = useState<TabKey>('calorie');
@@ -428,7 +436,7 @@ export default function WorkoutCalculatorsPage() {
                 <div style={{ height: '220px', marginBottom: '0.75rem' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={calorieMetrics.projection}>
-                      <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
+                      <CartesianGrid stroke="var(--surface-border)" strokeDasharray="3 3" />
                       <XAxis
                         dataKey={calorieForm.startDate ? 'shortDate' : 'week'}
                         tick={{ fill: 'var(--muted)', fontSize: 12 }}

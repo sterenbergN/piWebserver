@@ -75,24 +75,25 @@ export function measuredActivity(days: Days, profile: Omit<CoachProfile, 'activi
     // Watch active calories tend to run high, which roughly covers digestion (TEF) that Health doesn't count.
     const total = (avgResting ?? bmr) + avgActive;
     const multiplier = total / bmr;
-    return { days: active.length, basis: 'calories', avgActive, avgResting, avgSteps, level: nearest(multiplier), multiplier, maintenance: Math.round(total / 10) * 10, bmr: Math.round(bmr) };
+    return { days: active.length, basis: 'calories', avgActive, avgResting, avgSteps, level: nearest(multiplier), multiplier, maintenance: Math.round(total), bmr: Math.round(bmr) };
   }
   if (steps.length >= 7) {
     const value = STEP_LEVELS.find(([max]) => avgSteps! < max)![1];
     const level = ACTIVITY_LEVELS.find((l) => l.value === value)!;
-    return { days: steps.length, basis: 'steps', avgActive: null, avgResting: null, avgSteps, level, multiplier: level.multiplier, maintenance: Math.round(bmr * level.multiplier / 10) * 10, bmr: Math.round(bmr) };
+    return { days: steps.length, basis: 'steps', avgActive: null, avgResting: null, avgSteps, level, multiplier: level.multiplier, maintenance: Math.round(bmr * level.multiplier), bmr: Math.round(bmr) };
   }
   return { days: Math.max(active.length, steps.length), basis: null, avgActive: null, avgResting: null, avgSteps, level: null, multiplier: null, maintenance: null, bmr: Math.round(bmr) };
 }
 
 /** What the measurement was, in words, e.g. "2,710 kcal a day (1,850 resting + 610 active)". */
 export function describeActivity(m: MeasuredActivity) {
+  const daysWord = m.days === 1 ? 'day' : 'days';
   if (m.basis === 'calories') {
     return m.avgResting !== null
-      ? `you burn about ${m.maintenance!.toLocaleString()} kcal a day (${m.avgResting.toLocaleString()} resting + ${m.avgActive!.toLocaleString()} active, over ${m.days} days)`
-      : `you burn about ${m.avgActive!.toLocaleString()} active kcal a day on top of resting (over ${m.days} days)`;
+      ? `you burn about ${m.maintenance!.toLocaleString()} kcal a day (${m.avgResting.toLocaleString()} resting + ${m.avgActive!.toLocaleString()} active, over ${m.days} ${daysWord})`
+      : `you burn about ${m.avgActive!.toLocaleString()} active kcal a day on top of resting (over ${m.days} ${daysWord})`;
   }
-  if (m.basis === 'steps') return `you average ${m.avgSteps!.toLocaleString()} steps a day (over ${m.days} days)`;
+  if (m.basis === 'steps') return `you average ${m.avgSteps!.toLocaleString()} steps a day (over ${m.days} ${daysWord})`;
   return '';
 }
 
@@ -200,7 +201,7 @@ function activityLevelCheck(days: Days, profile: CoachProfile | null, now: numbe
   }
   if (m.level.value === profile.activityLevel) return null;
   const chosen = ACTIVITY_LEVELS.find((l) => l.value === profile.activityLevel)!;
-  const current = Math.round(m.bmr * chosen.multiplier / 10) * 10;
+  const current = Math.round(m.bmr * chosen.multiplier);
   return {
     id: 'activity-level', category: 'activity', tone: 'info', priority: 48, usesHealth: true,
     title: `Your data says your activity level is “${m.level.label}”`,

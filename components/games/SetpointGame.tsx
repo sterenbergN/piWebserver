@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HISTORY, bandAt, createGame, gustWarning, outside, setpointAt, step, type SetpointState } from '@/lib/games/setpoint';
-import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
+import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useCanvasTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
 
 const W = 480;
 const H = 520;
@@ -105,7 +105,7 @@ export default function SetpointGame() {
   };
 
   useFrame((dt) => { game.current = step(game.current, dt, thrust.current); draw(); sync(); }, !paused && hud.status !== 'over');
-  useEffect(() => { draw(); }, [draw]);
+  useCanvasTheme(theme, draw);
   usePauseWhenHidden(() => { thrust.current = false; if (game.current.status === 'playing') setPaused(true); });
 
   const hold = (on: boolean) => { thrust.current = on; if (on) setPaused(false); };

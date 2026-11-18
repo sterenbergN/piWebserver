@@ -91,11 +91,15 @@ export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, on
     finished: 'Plan finished',
   }[status];
 
+  const [logError, setLogError] = useState('');
   const log = async () => {
     const weight = parseFloat(input);
     if (!onLog || !Number.isFinite(weight)) return;
     setLogging(true);
-    try { await onLog(weight); setInput(''); } finally { setLogging(false); }
+    setLogError('');
+    try { await onLog(weight); setInput(''); }
+    catch (err) { setLogError(err instanceof Error ? err.message : 'Could not log weight'); }
+    finally { setLogging(false); }
   };
 
   return (
@@ -157,10 +161,13 @@ export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, on
       )}
 
       {onLog && (
-        <div className="wp-log">
-          <input className="workout-input" type="number" inputMode="decimal" placeholder={current ? `Today's weight (last ${entries[entries.length - 1]?.weight ?? current.weight})` : "Today's weight (lb)"} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') log(); }} />
-          <button type="button" className="workout-button" disabled={logging || !input} onClick={log}>{logging ? 'Saving…' : 'Log'}</button>
-        </div>
+        <>
+          <div className="wp-log">
+            <input className="workout-input" type="number" inputMode="decimal" placeholder={current ? `Today's weight (last ${entries[entries.length - 1]?.weight ?? current.weight})` : "Today's weight (lb)"} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') log(); }} />
+            <button type="button" className="workout-button" disabled={logging || !input} onClick={log}>{logging ? 'Saving…' : 'Log'}</button>
+          </div>
+          {logError && <p className="workout-error" style={{ margin: '0.35rem 0 0' }}>{logError}</p>}
+        </>
       )}
       <div className="wp-actions">
         <button type="button" className="workout-text-btn" onClick={onEdit}>Change plan</button>

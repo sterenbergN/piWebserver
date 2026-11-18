@@ -295,7 +295,7 @@ export default function WorkoutDashboard() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          weight: parseFloat(editWeight) || 0,
+          weight: editWeight === '' ? '' : parseFloat(editWeight) || 0,
           height: editHeight === '' ? '' : parseFloat(editHeight) || 0,
           gender: editGender,
           intensityFactor: editIntensityFactor
@@ -504,7 +504,7 @@ export default function WorkoutDashboard() {
           <p style={{ color: 'var(--muted)', fontSize: '0.85rem', margin: 0 }}>{dateStr} &bull; {timeStr}</p>
         </div>
         <div style={{ position: 'relative' }}>
-          <button className="btn btn-secondary" style={{ borderRadius: '50%', width: '40px', height: '40px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => {
+          <button className="btn btn-secondary" aria-label={isDemo ? 'Sign in to account' : 'Account menu'} style={{ borderRadius: '50%', width: '40px', height: '40px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => {
             if (isDemo) setShowLogin(true);
             else { setShowProfileMenu(!showProfileMenu); setShowProfileEditor(false); }
           }}>
@@ -656,7 +656,7 @@ export default function WorkoutDashboard() {
                    <div>
                       <div style={{ fontWeight: 700, fontSize: '1rem' }}>Workout In Progress</div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                         {workoutName} • {minsAgo}m ago • {totalSets} sets logged
+                         {workoutName} • {minsAgo}m ago • {totalSets} set{totalSets === 1 ? '' : 's'} logged
                       </div>
                    </div>
                 </div>
@@ -702,7 +702,7 @@ export default function WorkoutDashboard() {
                   return (
                     <span key={w.id} className="workout-hint">
                       {w.isDeload ? '🧘 ' : ''}{w.type?.name || w.name || 'Workout'} at {new Date(w.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                      {length ? ` · ${length}` : ''} · {sets} sets{volume ? ` · ${volume.toLocaleString()} lb` : ''}
+                      {length ? ` · ${length}` : ''} · {sets} set{sets === 1 ? '' : 's'}{volume ? ` · ${volume.toLocaleString()} lb` : ''}
                     </span>
                   );
                 })}
@@ -833,8 +833,9 @@ export default function WorkoutDashboard() {
                     gymId = d.gym.id;
                   }
                   rememberStart({ gym: gymId, type: selectedType, lifts: liftCount });
-                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(startIntensity) });
+                  const params = new URLSearchParams({ gym: gymId, freestyle: '1', intensity: String(isDeload ? 0.5 : startIntensity) });
                   if (selectedType) params.set('type', selectedType);
+                  if (isDeload) params.set('deload', '1');
                   window.location.href = `/workout/active?${params.toString()}`;
                 } catch (err) {
                   setStartError(err instanceof Error ? err.message : 'Could not start');
@@ -917,7 +918,7 @@ export default function WorkoutDashboard() {
             {volumeRows.map(({ muscle, sets }) => {
               const done = sets >= weeklySetTarget;
               return (
-                <div key={muscle} style={{ display: 'grid', gridTemplateColumns: '5.5rem minmax(0, 1fr) 3.2rem', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                <div key={muscle} style={{ display: 'grid', gridTemplateColumns: '5.8rem minmax(0, 1fr) 3.8rem', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                   <span>{muscle}</span>
                   <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-border)', overflow: 'hidden' }} role="meter" aria-valuemin={0} aria-valuemax={weeklySetTarget} aria-valuenow={sets} aria-label={`${muscle} sets this week`}>
                     <div style={{ width: `${Math.min(100, (sets / weeklySetTarget) * 100)}%`, height: '100%', borderRadius: 4, background: done ? 'var(--success)' : 'var(--accent)' }} />
@@ -948,7 +949,7 @@ export default function WorkoutDashboard() {
           {stalledLifts.map((lift) => (
             <div key={lift.liftId} className="workout-list-row" style={{ marginBottom: '0.35rem' }}>
               <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{lift.name}</span>
-              <span className="workout-hint">best e1RM {lift.bestE1RM} lbs · {lift.sessions} sessions</span>
+              <span className="workout-hint">best e1RM {lift.bestE1RM} lbs · {lift.sessions} session{lift.sessions === 1 ? '' : 's'}</span>
             </div>
           ))}
         </div>
@@ -971,7 +972,7 @@ export default function WorkoutDashboard() {
                       {workout.isDeload ? '🧘 ' : ''}{workout.type?.name || workout.name}
                     </div>
                     <div className="workout-hint">
-                      {formatRelativeDay(workout.timestamp)} · {setCount} sets · {Math.round(volume).toLocaleString()} lbs{workout.duration ? ` · ${workout.duration}` : ''}
+                      {formatRelativeDay(workout.timestamp)} · {setCount} set{setCount === 1 ? '' : 's'} · {Math.round(volume).toLocaleString()} lbs{workout.duration ? ` · ${workout.duration}` : ''}
                     </div>
                   </div>
                   {canRepeat(workout) && (

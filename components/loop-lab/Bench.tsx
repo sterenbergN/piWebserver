@@ -155,14 +155,22 @@ export default function Bench() {
     const h = window.location.hash.slice(1);
     if (TABS.some((t) => t.id === h)) setTab(h as TabId);
   }, []);
-  // Keep the link up to date so it can be copied from the address bar.
+  // Keep the link up to date so it can be copied from the address bar,
+  // and immediately notify LabNav so its Block Studio button carries the active ?setup=.
   useEffect(() => {
+    const encoded = encodeExperiment(exp);
+    (window as Window & { __llBenchSetup?: string | null }).__llBenchSetup = encoded;
+    window.dispatchEvent(new CustomEvent('loop-lab:bench-setup', { detail: encoded }));
     const id = window.setTimeout(() => {
-      const url = `${window.location.pathname}?setup=${encodeExperiment(exp)}${window.location.hash}`;
+      const url = `${window.location.pathname}?setup=${encoded}${window.location.hash}`;
       history.replaceState(history.state, '', url);
     }, 400);
     return () => window.clearTimeout(id);
   }, [exp]);
+  useEffect(() => () => {
+    (window as Window & { __llBenchSetup?: string | null }).__llBenchSetup = null;
+    window.dispatchEvent(new CustomEvent('loop-lab:bench-setup', { detail: null }));
+  }, []);
 
   const chooseTab = (id: TabId) => {
     setTab(id);
@@ -288,7 +296,7 @@ export default function Bench() {
               <button className="ll-btn is-small" onClick={redo} disabled={future.length === 0} title="Redo (Ctrl+Y)">↷ Redo</button>
               <button className="ll-btn is-small" onClick={() => setNaming(describeController(proc, exp.controller))} disabled={!current}>Save</button>
               <button className="ll-btn is-small" onClick={copyLink} title="Share link to this experiment">{copied ? 'Copied' : 'Share'}</button>
-              <Link className="ll-btn is-small" href="/loop-lab/builder" title="Wire your own loop from blocks and simulate it">🧩 Block Studio</Link>
+              <Link className="ll-btn is-small" href={`/loop-lab/builder?setup=${encodeExperiment(exp)}`} title="Wire your own loop from blocks and simulate it">🧩 Block Studio</Link>
               <button className="ll-btn is-small is-quiet" onClick={resetExp}>Reset</button>
             </>
           )}

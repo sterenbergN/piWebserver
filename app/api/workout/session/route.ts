@@ -106,6 +106,15 @@ export async function POST(request: Request) {
 
       const session = await updateWorkoutData(SESSIONS_FILE, { sessions: [] as SharedSession[] }, (store) => {
         pruneStaleSessions(store);
+        const now = new Date().toISOString();
+
+        // Replace any prior active session hosted by the same user so resuming/restarting never returns 409.
+        for (const entry of store.sessions) {
+          if (entry.hostUserId === userId && entry.status === 'active') {
+            entry.status = 'finished';
+            entry.updatedAt = now;
+          }
+        }
 
         let code = generateCode();
         for (let guard = 0; guard < 50 && store.sessions.some((entry) => entry.code === code && entry.status === 'active'); guard++) {
@@ -115,7 +124,6 @@ export async function POST(request: Request) {
           throw new ApiError(503, 'Too many active sessions, try again shortly');
         }
 
-        const now = new Date().toISOString();
         const created: SharedSession = {
           id: `ws-${generateId()}`,
           code,
@@ -157,7 +165,9 @@ export async function POST(request: Request) {
         if (!found) throw new ApiError(404, 'Session not found');
 
         if (!found.participants.some((entry) => entry.userId === userId)) {
-          if (found.participants.length >= MAX_PARTICIPANTS) throw new ApiError(409, 'Session is full');
+          if (found.participants.length >= MAX_PARTICIPANTS && found.hostUserId !== userId) {
+            throw new ApiError(409, 'Session is full');
+          }
           found.participants.push({
             userId,
             username,

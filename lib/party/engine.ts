@@ -15,7 +15,7 @@ import { bluffClashLogic } from './games/bluff-clash';
 import { emojiTelephoneLogic } from './games/emoji-telephone';
 import { kartClashLogic } from './games/kart-clash';
 import { addHeckle, debateDuelLogic } from './games/debate-duel';
-import { stopKartSimulation } from './kart-physics';
+import { revokeKartPlayer, stopKartSimulation } from './kart-physics';
 import { GAME_CATALOG, GAME_INFO } from './catalog';
 import { MAX_AUDIENCE, activeAudienceVote, recordAudienceVote } from './audience';
 import { computeAwards } from './awards';
@@ -177,7 +177,7 @@ function generateRoomCode(): string {
   return Array.from({ length: 4 }, () => chars[crypto.randomInt(chars.length)]).join('');
 }
 
-export async function createRoom(gameType: GameType, options?: { phonesOnly?: boolean }): Promise<{ roomCode: string; hostId: string }> {
+export async function createRoom(gameType: GameType, options?: { phonesOnly?: boolean; rounds?: number }): Promise<{ roomCode: string; hostId: string }> {
   if (!GAME_TYPES.includes(gameType)) throw new Error('Unknown game type');
   if (options?.phonesOnly && GAME_INFO[gameType].tvOnly) throw new Error(`${GAME_INFO[gameType].name} needs a TV`);
   await pruneStaleRooms();
@@ -186,6 +186,12 @@ export async function createRoom(gameType: GameType, options?: { phonesOnly?: bo
   for (let i = 0; i < 20 && (await getGameState(roomCode)); i++) roomCode = generateRoomCode();
 
   const hostId = `HOST_${crypto.randomBytes(8).toString('hex')}`;
+  const settings: GameState['settings'] = {};
+  if (options?.phonesOnly) settings.phonesOnly = true;
+  if (typeof options?.rounds === 'number' && Number.isFinite(options.rounds)) {
+    const r = Math.round(options.rounds);
+    if (r >= 1 && r <= 5) settings.rounds = r;
+  }
   const initialState: GameState = {
     roomCode,
     gameType,
@@ -195,7 +201,7 @@ export async function createRoom(gameType: GameType, options?: { phonesOnly?: bo
     hostId,
     hostData: {},
     playerData: {},
-    settings: options?.phonesOnly ? { phonesOnly: true } : undefined,
+    settings: Object.keys(settings).length > 0 ? settings : undefined,
     updatedAt: Date.now(),
   };
 
@@ -213,7 +219,7 @@ export type JoinResult =
   | { playerId: string; rejoined?: boolean; audience?: boolean }
   | { error: string; audienceAvailable?: boolean };
 
-export async function joinRoom(roomCode: string, playerName: string, options: { asAudience?: boolean; avatar?: unknown } = {}): Promise<JoinResult> {
+export async function joinRoom(roomCode: string, playerName: string, options: { asAudience?: boolean; avatar?: unknown; hostId?: string } = {}): Promise<JoinResult> {
   const code = normalizeRoomCode(roomCode);
   const name = sanitizePlayerName(playerName);
   if (!code) return { error: 'Room codes are 4 letters' };
@@ -229,6 +235,10 @@ export async function joinRoom(roomCode: string, playerName: string, options: { 
       if (!existing.connected) {
         existing.connected = true;
         delete existing.disconnectedAt;
+        if (options.hostId && options.hostId === state.hostId && (!state.vipId || state.vipId === existing.id)) {
+          state.vipId = existing.id;
+          existing.isVip = true;
+        }
         const key = Object.keys(state.playerKeys || {}).find((k) => state.playerKeys![k] === existing.id) || newPlayerKey(state, existing.id);
         await saveGameState(state);
         return { playerId: key, rejoined: true };
@@ -252,7 +262,9 @@ export async function joinRoom(roomCode: string, playerName: string, options: { 
     const avatar = isAvatar(options.avatar) && !usedAvatars.has(options.avatar)
       ? options.avatar
       : AVATARS.find((a) => !usedAvatars.has(a)) || AVATARS[state.playerOrder.length % AVATARS.length];
-    state.players[playerId] = { id: playerId, name, score: 0, connected: true, avatarColor: color, avatar };
+    const isVip = Boolean(options.hostId && options.hostId === state.hostId && !state.vipId);
+    state.players[playerId] = { id: playerId, name, score: 0, connected: true, avatarColor: color, avatar, ...(isVip ? { isVip: true } : {}) };
+    if (isVip) state.vipId = playerId;
     state.playerOrder.push(playerId);
     const key = newPlayerKey(state, playerId);
     await saveGameState(state);
@@ -434,22 +446,34 @@ function addReaction(state: GameState, from: string, emoji: unknown): boolean {
   return true;
 }
 
+/** Whether `playerId` is the active VIP host for this room. */
+export function isVipPlayer(state: GameState, playerId: string | null | undefined): boolean {
+  if (!playerId) return false;
+  const p = state.players[playerId];
+  if (!p || p.left) return false;
+  return (Boolean(state.vipId) && p.id === state.vipId) || p.isVip === true;
+}
+
 function purgePlayer(state: GameState, target: string) {
+  revokeKartPlayer(state.roomCode, target);
   delete state.players[target];
   delete state.playerData[target];
   if (state.playerKeys) {
     for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
   }
+  if (state.vipId === target) delete state.vipId;
   state.playerOrder = state.playerOrder.filter((pid) => pid !== target);
 }
 
 function removePlayerFromRoom(state: GameState, target: string) {
   if (!state.players[target]) return;
+  revokeKartPlayer(state.roomCode, target);
   if (state.phase === 'LOBBY' || state.phase === 'FINAL_RESULTS') {
     purgePlayer(state, target);
   } else {
     state.players[target].connected = false;
     state.players[target].left = true;
+    state.players[target].isVip = false;
     if (state.playerKeys) {
       for (const [k, pid] of Object.entries(state.playerKeys)) if (pid === target) delete state.playerKeys[k];
     }
@@ -543,8 +567,11 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
     const state = await getGameState(code);
     if (!state) return { success: false, error: 'Room not found' };
 
-    const isHost = actorKey === state.hostId;
-    const playerId = isHost ? state.hostId : resolvePlayerKey(state, actorKey);
+    const isHostToken = actorKey === state.hostId;
+    const resolvedPlayerId = isHostToken ? null : resolvePlayerKey(state, actorKey);
+    const isVip = Boolean(resolvedPlayerId && isVipPlayer(state, resolvedPlayerId));
+    const isHost = isHostToken || isVip;
+    const playerId = isHostToken ? state.hostId : resolvedPlayerId;
     if (!playerId) {
       const audienceId = resolveAudienceKey(state, actorKey);
       if (!audienceId) return { success: false, error: 'You are not in this room' };
@@ -579,7 +606,7 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
       await saveGameState(state);
       return { success: true };
     }
-    if (!isHost && !state.players[playerId]) return { success: false, error: 'Not in this room' };
+    if (!isHostToken && (!state.players[playerId] || state.players[playerId].left)) return { success: false, error: 'Not in this room' };
     if (!isHost && !isPlayerAction(action.type)) return { success: false, error: 'Only the host can do that' };
 
     // Timer-driven actions carry the deadline they were scheduled for; ignore
@@ -659,6 +686,7 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         const rounds = Math.round(Number(action.rounds));
         if (!Number.isFinite(rounds) || rounds < 1 || rounds > 5) return { success: false, error: 'Rounds must be 1–5' };
         state.gameData = { ...(state.gameData || {}), targetRounds: rounds };
+        state.settings = { ...(state.settings || {}), rounds };
         break;
       }
       case 'SET_PACKS': {
@@ -679,10 +707,13 @@ export async function processAction(roomCode: string, actorKey: string, rawActio
         removePlayerFromRoom(state, target);
         break;
       }
-      default:
+      default: {
         // Nothing moves while the clock is stopped, including answers and Skip.
         if (state.paused) return { success: false, error: 'The game is paused' };
-        await LOGIC[state.gameType].processAction(state, playerId, action);
+        // Verified VIP players running host-level actions execute with state.hostId
+        const effectiveActorId = !isPlayerAction(action.type) && isVip ? state.hostId : playerId;
+        await LOGIC[state.gameType].processAction(state, effectiveActorId, action);
+      }
     }
 
     await saveGameState(state);

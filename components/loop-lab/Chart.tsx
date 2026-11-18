@@ -250,49 +250,51 @@ export default function Chart({
           ))}
         </div>
       )}
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}
-        onPointerMove={parametric ? undefined : onMove} onPointerLeave={() => setHover(null)}>
-        <defs><clipPath id={clip}><rect x={m.l} y={m.t} width={w} height={h} /></clipPath></defs>
-        <g className="ll-grid">
-          {xTicks.map((t) => <line key={`x${t}`} x1={px(t)} x2={px(t)} y1={m.t} y2={m.t + h} />)}
-          {yTicks.map((t) => <line key={`y${t}`} x1={m.l} x2={m.l + w} y1={py(t)} y2={py(t)} />)}
-        </g>
-        <g className="ll-ticks">
-          {xTicks.map((t) => <text key={`x${t}`} x={px(t)} y={m.t + h + 14} textAnchor="middle">{fmt(t, 3)}</text>)}
-          {yTicks.map((t, idx) => <text key={`y${t}-${idx}`} x={m.l - 6} y={py(t) + 4} textAnchor="end">{formatYTick(t)}</text>)}
-          {x.label && !x.hideLabel && <text className="ll-axis" x={m.l + w / 2} y={height - 4} textAnchor="middle">{x.label}</text>}
-          {y.label && <text className="ll-axis" transform={`translate(12 ${m.t + h / 2}) rotate(-90)`} textAnchor="middle">{y.label}</text>}
-        </g>
-        <g clipPath={`url(#${clip})`}>
-          {bands.map((b, i) => {
-            const yTop = py(Math.max(b.lo, b.hi));
-            const yBot = py(Math.min(b.lo, b.hi));
-            return <rect key={`b${i}`} x={m.l} y={yTop} width={w} height={Math.max(0, yBot - yTop)} fill={b.color ?? 'rgba(16, 185, 129, 0.12)'} />;
-          })}
-          {hGuides.map((g, i) => <line key={`h${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={m.l} x2={m.l + w} y1={py(g.at)} y2={py(g.at)} />)}
-          {vGuides.filter((g) => g.at >= xmin && g.at <= xmax).map((g, i) => <line key={`v${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={px(g.at)} x2={px(g.at)} y1={m.t} y2={m.t + h} />)}
-          {paths.map((d, i) => (
-            <path key={i} d={d} fill="none" stroke={series[i].color} strokeWidth={series[i].width ?? 1.8} strokeDasharray={series[i].dash} strokeLinejoin="round" />
-          ))}
-          {markers.map((mk, i) => {
-            const cx = px(mk.x), cy = py(mk.y);
-            if (mk.shape === 'x') return <path key={i} d={`M${cx - 5} ${cy - 5}L${cx + 5} ${cy + 5}M${cx - 5} ${cy + 5}L${cx + 5} ${cy - 5}`} stroke={mk.color} strokeWidth={2} />;
-            if (mk.shape === 'o') return <circle key={i} cx={cx} cy={cy} r={5} fill="none" stroke={mk.color} strokeWidth={2} />;
-            return <circle key={i} cx={cx} cy={cy} r={4} fill={mk.color} />;
-          })}
-        </g>
-        <g className="ll-guide-labels">
-          {hGuides.filter((g) => g.label && g.at >= ymin && g.at <= ymax).map((g, i) => <text key={`h${i}`} x={m.l + w - 4} y={py(g.at) - 4} textAnchor="end">{g.label}</text>)}
-          {vGuides.filter((g) => g.label && g.at >= xmin && g.at <= xmax).map((g, i) => {
-            const right = px(g.at) > m.l + w - 60;
-            return <text key={`v${i}`} x={px(g.at) + (right ? -4 : 4)} y={m.t + 12 + (i % 3) * 12} textAnchor={right ? 'end' : 'start'}>{g.label}</text>;
-          })}
-          {markers.filter((mk) => mk.label).map((mk, i) => <text key={`m${i}`} x={px(mk.x) + 7} y={py(mk.y) - 7}>{mk.label}</text>)}
-        </g>
-        {hover !== null && (
-          <line className="ll-hover" x1={px(hover)} x2={px(hover)} y1={m.t} y2={m.t + h} />
-        )}
-      </svg>
+      <div className="ll-chart-scroll">
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}
+          onPointerMove={parametric ? undefined : onMove} onPointerLeave={() => setHover(null)}>
+          <defs><clipPath id={clip}><rect x={m.l} y={m.t} width={w} height={h} /></clipPath></defs>
+          <g className="ll-grid">
+            {xTicks.map((t) => <line key={`x${t}`} x1={px(t)} x2={px(t)} y1={m.t} y2={m.t + h} />)}
+            {yTicks.map((t) => <line key={`y${t}`} x1={m.l} x2={m.l + w} y1={py(t)} y2={py(t)} />)}
+          </g>
+          <g className="ll-ticks">
+            {xTicks.map((t) => <text key={`x${t}`} x={px(t)} y={m.t + h + 14} textAnchor="middle">{fmt(t, 3)}</text>)}
+            {yTicks.map((t, idx) => <text key={`y${t}-${idx}`} x={m.l - 6} y={py(t) + 4} textAnchor="end">{formatYTick(t)}</text>)}
+            {x.label && !x.hideLabel && <text className="ll-axis" x={m.l + w / 2} y={height - 4} textAnchor="middle">{x.label}</text>}
+            {y.label && <text className="ll-axis" transform={`translate(12 ${m.t + h / 2}) rotate(-90)`} textAnchor="middle">{y.label}</text>}
+          </g>
+          <g clipPath={`url(#${clip})`}>
+            {bands.map((b, i) => {
+              const yTop = py(Math.max(b.lo, b.hi));
+              const yBot = py(Math.min(b.lo, b.hi));
+              return <rect key={`b${i}`} x={m.l} y={yTop} width={w} height={Math.max(0, yBot - yTop)} fill={b.color ?? 'rgba(16, 185, 129, 0.12)'} />;
+            })}
+            {hGuides.map((g, i) => <line key={`h${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={m.l} x2={m.l + w} y1={py(g.at)} y2={py(g.at)} />)}
+            {vGuides.filter((g) => g.at >= xmin && g.at <= xmax).map((g, i) => <line key={`v${i}`} className="ll-guide" style={{ stroke: g.color, strokeDasharray: g.dash }} x1={px(g.at)} x2={px(g.at)} y1={m.t} y2={m.t + h} />)}
+            {paths.map((d, i) => (
+              <path key={i} d={d} fill="none" stroke={series[i].color} strokeWidth={series[i].width ?? 1.8} strokeDasharray={series[i].dash} strokeLinejoin="round" />
+            ))}
+            {markers.map((mk, i) => {
+              const cx = px(mk.x), cy = py(mk.y);
+              if (mk.shape === 'x') return <path key={i} d={`M${cx - 5} ${cy - 5}L${cx + 5} ${cy + 5}M${cx - 5} ${cy + 5}L${cx + 5} ${cy - 5}`} stroke={mk.color} strokeWidth={2} />;
+              if (mk.shape === 'o') return <circle key={i} cx={cx} cy={cy} r={5} fill="none" stroke={mk.color} strokeWidth={2} />;
+              return <circle key={i} cx={cx} cy={cy} r={4} fill={mk.color} />;
+            })}
+          </g>
+          <g className="ll-guide-labels">
+            {hGuides.filter((g) => g.label && g.at >= ymin && g.at <= ymax).map((g, i) => <text key={`h${i}`} x={m.l + w - 4} y={py(g.at) - 4} textAnchor="end">{g.label}</text>)}
+            {vGuides.filter((g) => g.label && g.at >= xmin && g.at <= xmax).map((g, i) => {
+              const right = px(g.at) > m.l + w - 60;
+              return <text key={`v${i}`} x={px(g.at) + (right ? -4 : 4)} y={m.t + 12 + (i % 3) * 12} textAnchor={right ? 'end' : 'start'}>{g.label}</text>;
+            })}
+            {markers.filter((mk) => mk.label).map((mk, i) => <text key={`m${i}`} x={px(mk.x) + 7} y={py(mk.y) - 7}>{mk.label}</text>)}
+          </g>
+          {hover !== null && (
+            <line className="ll-hover" x1={px(hover)} x2={px(hover)} y1={m.t} y2={m.t + h} />
+          )}
+        </svg>
+      </div>
       {readout.length > 0 && (
         <div className="ll-readout" aria-live="polite">
           <span>{x.label ? `${x.label.split(' ')[0]} ` : ''}{fmt(readout[0].x, 4)}</span>

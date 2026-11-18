@@ -72,13 +72,23 @@ export default function AnalyticsPage() {
   const [showHow, setShowHow] = useState(false);
   const [showRecap, setShowRecap] = useState(false);
 
-  // Remember the chosen tab and period on this device; ?tab= deep-links.
+  // Deep-link via ?tab= only; bare /workout/analytics always lands on Summary.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const wantedTab = params.get('tab') || readPref('workout:analyticsTab');
-    if (TABS.some((t) => t.key === wantedTab)) { setTab(wantedTab as Tab); showTabInUrl(wantedTab as Tab); }
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      const wantedTab = params.get('tab');
+      if (wantedTab && TABS.some((t) => t.key === wantedTab)) {
+        setTab(wantedTab as Tab);
+      } else {
+        setTab('summary');
+      }
+      window.dispatchEvent(new Event('workout:tabchange'));
+    };
+    syncFromUrl();
     const savedPeriod = readPref('workout:analyticsPeriod');
     if (PERIODS.some((p) => p.key === savedPeriod)) setPeriod(savedPeriod as Period);
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
   }, []);
   const chooseTab = (next: Tab) => { setTab(next); savePref('workout:analyticsTab', next); showTabInUrl(next); window.scrollTo({ top: 0 }); };
   const choosePeriod = (next: Period) => { setPeriod(next); savePref('workout:analyticsPeriod', next); };

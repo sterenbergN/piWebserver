@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BALL_R, BRICK_H, BRICK_W, H, PADDLE_H, PADDLE_Y, W, brickRect, createGame, step, type BreakoutState } from '@/lib/games/breakout';
-import { GameFrame, Overlay, Pad, PadButton, Prompt, canvasPoint, fitCanvas, readTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
+import { GameFrame, Overlay, Pad, PadButton, Prompt, canvasPoint, fitCanvas, readTheme, useCanvasTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
 
 const ROW_COLORS = ['#bf616a', '#d08770', '#ebcb8b', '#a3be8c', '#88c0d0', '#81a1c1'];
 
@@ -63,7 +63,7 @@ export default function BreakoutGame() {
     sync();
   }, !paused && hud.status !== 'over');
 
-  useEffect(() => { draw(); }, [draw]);
+  useCanvasTheme(theme, draw);
   usePauseWhenHidden(() => { if (game.current.status === 'playing') setPaused(true); });
 
   const restart = useCallback(() => {

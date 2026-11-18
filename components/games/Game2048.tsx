@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { SIZE, createGame, maxTile, move, type Direction, type G2048State } from '@/lib/games/g2048';
+import { SIZE, createGame, emptyBoard, maxTile, move, type Direction, type G2048State } from '@/lib/games/g2048';
 import { LeaderboardPanel, ScoreForm, useLeaderboard } from './leaderboard';
 
 const KEYS: Record<string, Direction> = {
@@ -26,40 +26,62 @@ const TILE_STYLE: Record<number, { bg: string; fg: string }> = {
 const tileStyle = (v: number) => TILE_STYLE[v] || { bg: '#3c3a32', fg: '#fff' };
 
 export default function Game2048() {
-  const [game, setGame] = useState<G2048State>(() => createGame());
+  const [game, setGame] = useState<G2048State>(() => ({ board: emptyBoard(), score: 0, won: false, over: false }));
   const [history, setHistory] = useState<G2048State[]>([]);
   const [best, setBest] = useState(0);
   const [keepGoing, setKeepGoing] = useState(false);
   const [nameSubmitted, setNameSubmitted] = useState(false);
+  const loadedRef = useRef(false);
+  const gameRef = useRef(game);
+  gameRef.current = game;
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const { leaderboard, qualifies, submit, submitting, error, setError } = useLeaderboard('2048');
 
-  // Resume an unfinished game and the personal best from this device.
+  // Seed random tiles on client mount (avoid SSR hydration mismatch) or resume saved game.
   useEffect(() => {
     try {
       setBest(Number(localStorage.getItem(BEST_KEY)) || 0);
       const saved = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
-      if (saved?.board?.length === SIZE && !saved.over) setGame(saved);
-    } catch { /* storage unavailable */ }
+      if (saved?.board?.length === SIZE && !saved.over) {
+        const restored: G2048State = { board: saved.board, score: saved.score ?? 0, won: Boolean(saved.won), over: Boolean(saved.over) };
+        gameRef.current = restored;
+        setGame(restored);
+        if (saved.keepGoing) setKeepGoing(true);
+      } else {
+        const fresh = createGame();
+        gameRef.current = fresh;
+        setGame(fresh);
+      }
+    } catch {
+      const fresh = createGame();
+      gameRef.current = fresh;
+      setGame(fresh);
+    } finally {
+      loadedRef.current = true;
+    }
   }, []);
 
   useEffect(() => {
+    if (!loadedRef.current) return;
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(game));
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ ...game, keepGoing }));
       if (game.score > best) { setBest(game.score); localStorage.setItem(BEST_KEY, String(game.score)); }
     } catch { /* ignore */ }
-  }, [game, best]);
+  }, [game, best, keepGoing]);
 
   const play = useCallback((dir: Direction) => {
-    setGame((prev) => {
-      const next = move(prev, dir);
-      if (next !== prev) setHistory((h) => [...h.slice(-19), prev]);
-      return next;
-    });
+    const prev = gameRef.current;
+    const next = move(prev, dir);
+    if (next === prev) return;
+    gameRef.current = next;
+    setGame(next);
+    setHistory((h) => [...h.slice(-19), prev]);
   }, []);
 
   const restart = useCallback(() => {
-    setGame(createGame());
+    const fresh = createGame();
+    gameRef.current = fresh;
+    setGame(fresh);
     setHistory([]);
     setKeepGoing(false);
     setNameSubmitted(false);
@@ -68,24 +90,26 @@ export default function Game2048() {
 
   const undo = useCallback(() => {
     if (history.length === 0) return;
-    setGame(history[history.length - 1]);
+    const prev = history[history.length - 1];
+    gameRef.current = prev;
+    setGame(prev);
     setHistory(history.slice(0, -1));
   }, [history]);
 
   const showWin = game.won && !keepGoing && !game.over;
-  const typingName = game.over && !nameSubmitted;
+  const eligible = game.over && !nameSubmitted && qualifies(game.score);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const dir = KEYS[e.key];
       if (dir && !showWin) { e.preventDefault(); play(dir); }
-      else if (e.key === 'u' || (e.key === 'z' && (e.metaKey || e.ctrlKey))) undo();
-      else if (e.key === 'Enter' && game.over && !typingName) restart();
+      else if (e.key === 'u' || (e.key === 'z' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); undo(); }
+      else if (e.key === 'Enter' && game.over && !eligible) { e.preventDefault(); restart(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [play, restart, undo, showWin, game.over, typingName]);
+  }, [play, restart, undo, showWin, game.over, eligible]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
@@ -102,7 +126,6 @@ export default function Game2048() {
     play(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
   };
 
-  const eligible = game.over && !nameSubmitted && qualifies(game.score);
   const handleSubmit = async (name: string) => {
     if (await submit(name, game.score)) setNameSubmitted(true);
   };

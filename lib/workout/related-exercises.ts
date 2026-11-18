@@ -98,11 +98,20 @@ const MUSCLE_AREA: Record<string, string> = {
   Core: 'core',
 };
 
+const REAR_DELT_PULL_RE = /\b(face\s*pull|rear\s*delt|reverse\s*fly|pull[\s-]*apart)\b/i;
+
 type SwapLift = { name?: string; exercise?: string; primaryMuscle?: string; secondaryMuscle?: string };
 export type SwapGroup<T> = { label: string; lifts: T[] };
 
 function musclesOf(lift: SwapLift) {
   return [lift.primaryMuscle, lift.secondaryMuscle].filter((m): m is string => !!m && m !== 'None');
+}
+
+function liftArea(lift: SwapLift): string | undefined {
+  if ((lift.primaryMuscle === 'Shoulders' && lift.secondaryMuscle === 'Back') || REAR_DELT_PULL_RE.test(exerciseName(lift))) {
+    return 'pull';
+  }
+  return lift.primaryMuscle ? MUSCLE_AREA[lift.primaryMuscle] : undefined;
 }
 
 /**
@@ -115,7 +124,13 @@ export function rankSwapCandidates<T extends SwapLift>(current: SwapLift, candid
   const family = exerciseVariant(exerciseName(current))?.family;
   const primary = current.primaryMuscle || '';
   const muscles = musclesOf(current);
-  const areas = new Set(muscles.map((m) => MUSCLE_AREA[m]).filter(Boolean));
+  const currentArea = liftArea(current);
+  const isRearShoulderPull = currentArea === 'pull' && current.primaryMuscle === 'Shoulders';
+  const areas = new Set(
+    currentArea
+      ? [currentArea, ...muscles.map((m) => MUSCLE_AREA[m]).filter((a) => !!a && !(isRearShoulderPull && a === 'push'))]
+      : muscles.map((m) => MUSCLE_AREA[m]).filter(Boolean),
+  );
   const areaLabel = areas.size === 1 ? `Other ${[...areas][0]} lifts` : 'Same area of the body';
 
   const tiers: SwapGroup<T>[] = [
@@ -128,10 +143,11 @@ export function rankSwapCandidates<T extends SwapLift>(current: SwapLift, candid
   ];
   const tierOf = (lift: T) => {
     const theirs = musclesOf(lift);
+    const candidateArea = liftArea(lift);
     if (family && exerciseVariant(exerciseName(lift))?.family === family) return 0;
     if (primary && lift.primaryMuscle === primary) return 1;
     if (theirs.some((m) => muscles.includes(m))) return 2;
-    if (theirs.some((m) => areas.has(MUSCLE_AREA[m]))) return 3;
+    if (candidateArea && areas.has(candidateArea)) return 3;
     if (theirs.some((m) => workoutMuscles.includes(m))) return 4;
     return 5;
   };

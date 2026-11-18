@@ -24,6 +24,8 @@ export interface Player {
   avatar?: string;
   /** Set when a player explicitly leaves or is kicked mid-game; purged on return to lobby. */
   left?: boolean;
+  /** Set for the phones-only VIP host player so only they receive VIP controls. */
+  isVip?: boolean;
   /** When their last live connection closed (see DISCONNECT_GRACE_MS); cleared on reconnect. */
   disconnectedAt?: number;
 }
@@ -55,6 +57,8 @@ export interface GameState {
   players: Record<string, Player>;
   playerOrder: string[]; // Keep track of join order
   hostId: string;
+  /** Public player ID of the VIP host in phones-only/VIP rooms. */
+  vipId?: string;
   // Secret key -> player id. The key is the player's credential (it's in their
   // URL); the id is public (other players vote by it), so the two must differ.
   playerKeys?: Record<string, string>;
@@ -69,6 +73,8 @@ export interface GameState {
   settings?: {
     packs?: string[];
     phonesOnly?: boolean;
+    /** Number of rounds configured for multi-round games like Quip Clash (1–3). */
+    rounds?: number;
     /** A host's own study questions are in play: what the room may know about them. */
     study?: { count: number; seconds: number };
   };

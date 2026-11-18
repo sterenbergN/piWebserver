@@ -1,6 +1,8 @@
 import { encodeExperiment, type Experiment } from './setup';
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate';
-import { DEFAULT_PID, NOTCH_WIDTH, type ControllerConfig, type PidParams } from './controllers';
+import { DEFAULT_PID, NOTCH_WIDTH, controllerMeta, type ControllerConfig, type PidParams } from './controllers';
+import { plantSummary } from './plant';
+import { getProcess } from './processes';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -667,8 +669,12 @@ export function cleanDiagram(raw: unknown): BlockDiagramModel | null {
 }
 
 /** Does this block's output follow its input within the same instant? (The rest answer from their state.) */
-function passesThrough(node: BlockNode): boolean {
+function passesThrough(node: BlockNode, dt: number): boolean {
   if (node.kind === 'leadlag') return (node.params.Tlead ?? 8) !== 0;
+  if (node.kind === 'deadtime') {
+    const theta = Math.max(0, Number(node.params.theta ?? 5));
+    return Math.round(theta / dt) <= 0;
+  }
   return node.kind === 'sum' || node.kind === 'gain' || node.kind === 'product' || node.kind === 'saturation' || node.kind === 'selector' || node.kind === 'pid'
     || node.kind === 'notch' || node.kind === 'ratelimit';
 }
@@ -686,8 +692,8 @@ type EvalGroup = {
  * The order to work the pass-through blocks out in: each after everything it reads, whatever
  * order they were added to the diagram in. Blocks that read each other in a ring come out together.
  */
-function evaluationPlan(model: BlockDiagramModel): EvalGroup[] {
-  const nodes = model.nodes.filter(passesThrough);
+function evaluationPlan(model: BlockDiagramModel, dt: number): EvalGroup[] {
+  const nodes = model.nodes.filter((n) => passesThrough(n, dt));
   const index = new Map(nodes.map((n, i) => [n.id, i]));
   const feeds: number[][] = nodes.map(() => []);
   for (const w of model.wires) {
@@ -752,16 +758,19 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
     nodeOutputs[node.id] = new Array(steps).fill(0);
   }
 
-  // Ring buffers for pure delays
+  // Ring buffers for pure delays (skip allocation when delaySteps === 0 so theta === 0 has 0 sample delay)
   const deadtimeBuffers: Record<string, Float64Array> = {};
   for (const node of model.nodes) {
     if (node.kind === 'deadtime' || node.kind === 'fopdt' || node.kind === 'sopdt') {
       const theta = Math.max(0, Number(node.params.theta ?? (node.kind === 'deadtime' ? 5 : 0)));
-      const bufLen = Math.max(1, Math.round(theta / dt) + 1);
-      const buf = new Float64Array(bufLen);
-      const initVal = Number(node.params.y0 ?? 0);
-      buf.fill(initVal);
-      deadtimeBuffers[node.id] = buf;
+      const delaySteps = Math.round(theta / dt);
+      if (delaySteps > 0) {
+        const bufLen = node.kind === 'deadtime' ? delaySteps : delaySteps + 1;
+        const buf = new Float64Array(bufLen);
+        const initVal = Number(node.params.y0 ?? 0);
+        buf.fill(initVal);
+        deadtimeBuffers[node.id] = buf;
+      }
     }
   }
   const deadtimeIndices: Record<string, number> = {};
@@ -829,7 +838,7 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
     incomingWires[wire.toBlock].push(wire);
   }
 
-  const plan = evaluationPlan(model);
+  const plan = evaluationPlan(model, dt);
   const unsolved = new Set<EvalGroup>();
 
   // Step loop
@@ -1027,6 +1036,9 @@ export function simulateBlockDiagram(model: BlockDiagramModel): BlockSimResult {
         if (!Number.isFinite(st.rateY)) return u;
         return st.rateY + Math.max(-(p.fall ?? 10) * dt, Math.min((p.rise ?? 10) * dt, u - st.rateY));
       }
+
+      case 'deadtime':
+        return getInput(node.id, 0, Number(p.y0 ?? 0));
 
     }
       return 0;
@@ -1752,6 +1764,106 @@ function cascadeExport(model: BlockDiagramModel): BenchExport {
   const config: ControllerConfig = { kind: 'cascade', outer: pid(master, k2), inner: pid(slave, 1 / k2), ff: [] };
   const experiment: Experiment = { process: 'custom', params, controller: config };
   return { url: `/loop-lab/bench?setup=${encodeExperiment(experiment)}#tests`, reason: '', notes };
+}
+
+/** Build a Block Studio diagram seeded with an active bench experiment's process & controller params. */
+export function diagramFromExperiment(exp: Experiment): BlockDiagramModel {
+  const proc = getProcess(exp.process);
+  const summary = plantSummary(proc, exp.params);
+  const dt = Math.max(0.01, Math.min(1, Number(exp.params.Ts) || 0.1));
+  const K = clampParam('fopdt', 'K', Math.abs(summary?.K ?? 1.2) || 1.2);
+  const tau = clampParam('fopdt', 'tau', summary?.integrating ? 15 : Math.max(0.2, summary?.tau ?? 15));
+  const theta = clampParam('fopdt', 'theta', Math.max(0, summary?.theta ?? 0));
+  const duration = Math.max(20, Math.min(300, Math.round(Math.max(tau * 5, theta * 6, 80))));
+
+  const toPidParams = (p: PidParams) => ({
+    Kc: clampParam('pid', 'Kc', Math.abs(p.Kc)),
+    Ti: clampParam('pid', 'Ti', p.Ti),
+    Td: clampParam('pid', 'Td', p.Td),
+    N: clampParam('pid', 'N', Math.round(1 / Math.max(0.03, p.a || 0.1))),
+    uMin: clampParam('pid', 'uMin', p.outLo),
+    uMax: clampParam('pid', 'uMax', p.outHi),
+    bias: 0,
+  });
+
+  const label = `${proc.name} · ${controllerMeta(exp.controller.kind).short}`;
+
+  if (exp.controller.kind === 'cascade' && proc.secondary) {
+    const base: BlockDiagramModel = JSON.parse(JSON.stringify(BLOCK_TEMPLATES[1]));
+    const outerPid = toPidParams(exp.controller.outer);
+    const innerPid = toPidParams(exp.controller.inner);
+    return cleanDiagram({
+      ...base,
+      name: label,
+      duration,
+      dt,
+      nodes: base.nodes.map((n) => {
+        if (n.id === 'pid1') return { ...n, params: outerPid };
+        if (n.id === 'pid2') return { ...n, params: innerPid };
+        if (n.id === 'inner') return { ...n, params: { K: 1, tau: clampParam('fopdt', 'tau', Math.max(0.2, tau * 0.15)), theta: 0.2, y0: 0 } };
+        if (n.id === 'outer') return { ...n, params: { K, tau, theta, y0: 0 } };
+        return n;
+      }),
+    })!;
+  }
+
+  if (exp.controller.kind === 'smith') {
+    const base: BlockDiagramModel = JSON.parse(JSON.stringify(BLOCK_TEMPLATES[3]));
+    const pid = toPidParams(exp.controller.pid);
+    const model = exp.controller.model;
+    return cleanDiagram({
+      ...base,
+      name: label,
+      duration,
+      dt,
+      nodes: base.nodes.map((n) => {
+        if (n.id === 'pid') return { ...n, params: pid };
+        if (n.id === 'plant') return { ...n, params: { K, tau, theta, y0: 0 } };
+        if (n.id === 'model_lag') return { ...n, params: { K: clampParam('fopdt', 'K', Math.abs(model.K) || K), tau: clampParam('fopdt', 'tau', model.tau || tau), theta: 0, y0: 0 } };
+        if (n.id === 'model_delay') return { ...n, params: { theta: clampParam('deadtime', 'theta', model.theta), y0: 0 } };
+        return n;
+      }),
+    })!;
+  }
+
+  if (exp.controller.kind === 'feedforward' && exp.controller.ff.length > 0) {
+    const base: BlockDiagramModel = JSON.parse(JSON.stringify(BLOCK_TEMPLATES[2]));
+    const pid = toPidParams(exp.controller.pid);
+    const ff0 = exp.controller.ff[0];
+    return cleanDiagram({
+      ...base,
+      name: label,
+      duration,
+      dt,
+      nodes: base.nodes.map((n) => {
+        if (n.id === 'pid') return { ...n, params: pid };
+        if (n.id === 'ff') return { ...n, params: { K: clampParam('leadlag', 'K', ff0.gain), Tlead: clampParam('leadlag', 'Tlead', ff0.lead), Tlag: clampParam('leadlag', 'Tlag', Math.max(0.1, ff0.lag || 1)) } };
+        if (n.id === 'plant') return { ...n, params: { K, tau, theta, y0: 0 } };
+        return n;
+      }),
+    })!;
+  }
+
+  const base: BlockDiagramModel = JSON.parse(JSON.stringify(BLOCK_TEMPLATES[0]));
+  const rawPid = 'pid' in exp.controller ? exp.controller.pid : ('outer' in exp.controller ? exp.controller.outer : DEFAULT_PID);
+  const pid = toPidParams(rawPid);
+  return cleanDiagram({
+    ...base,
+    name: label,
+    duration,
+    dt,
+    nodes: base.nodes.map((n) => {
+      if (n.id === 'pid') return { ...n, params: pid };
+      if (n.id === 'sat') return { ...n, params: { lo: clampParam('saturation', 'lo', rawPid.outLo), hi: clampParam('saturation', 'hi', rawPid.outHi) } };
+      if (n.id === 'plant') {
+        if (summary?.integrating) {
+          return { ...n, kind: 'integrator', label: `${proc.name} (Integrating)`, params: { K: clampParam('integrator', 'K', Math.abs(summary.kPrime) || 0.2), y0: 0, min: -100, max: 100 } };
+        }
+        return { ...n, label: proc.name, params: { K, tau, theta, y0: 0 } };
+      }
+      return n;
+    }),
+  })!;
 }
 
 // ─── Sharing ─────────────────────────────────────────────────────────────────

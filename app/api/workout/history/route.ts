@@ -4,6 +4,7 @@ import { stationKindIndex } from '@/lib/workout/equipment-kinds';
 import { applyWorkoutEdit, HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore, inferCalibrationsForWorkout, recalibrateAfterEdit, upsertCalibrationEntries } from '@/lib/workout/calibration';
+import { resolveWorkoutHabitDate, syncWorkoutHabitForDate } from '@/lib/workout/habit-sync';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 
@@ -65,6 +66,14 @@ export async function POST(request: Request) {
         await upsertCalibrationEntries(inferred);
       } catch (error) {
         console.error('Calibration inference failed:', error);
+      }
+
+      // Auto-tick any active workout-linked habit without creating a file if user doesn't track habits.
+      try {
+        const habitDate = resolveWorkoutHabitDate(payload.localDate, entry.timestamp);
+        await syncWorkoutHabitForDate(userId, habitDate);
+      } catch (error) {
+        console.error('Workout habit auto-tick failed:', error);
       }
     }
 

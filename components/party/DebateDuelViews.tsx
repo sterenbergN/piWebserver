@@ -83,11 +83,11 @@ function DebateHeader({ h, players, topicClass }: { h: any; players: Record<stri
 // ─── TV ────────────────────────────────────────────────────────────────────────
 
 export function DebateDuelHost({ state, secondsLeft, pct }: {
-  state: { phase: string; players: Record<string, Player>; playerData: Record<string, any>; hostData: any };
+  state: { phase: string; players: Record<string, Player>; playerData: Record<string, any>; hostData?: any; publicData?: any };
   secondsLeft: number | null;
   pct: number;
 }) {
-  const h = state.hostData || {};
+  const h = state.publicData || state.hostData || {};
   const players = state.players;
   const seated = Object.values(players).filter((p) => !p.left);
   const debaters: string[] = h.debaters || [];

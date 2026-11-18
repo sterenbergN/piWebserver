@@ -59,7 +59,7 @@ export function useGolf() {
     if (!s || s === 'device') return;
     try {
       const [rounds, courses, me] = await Promise.all([getJson('/api/golf/rounds?full=1'), getJson('/api/golf/courses'), getJson('/api/golf/me')]);
-      if (!rounds.ok || !courses.ok || !me.ok) throw new Error('pull');
+      if (!rounds.ok || !courses.ok || !me.ok || me.data?.authenticated === false || !me.data?.user) throw new Error('pull');
       const server: Snapshot = { rounds: rounds.data.rounds, courses: courses.data.courses, user: me.data.user };
       commit(rebase(server, readQueue(storage, s)));
       setLegacy(me.data.legacy);
@@ -87,7 +87,7 @@ export function useGolf() {
       if (cancelled) return;
       const device = readSnapshot(storage, 'device');
       setDeviceRounds(device.rounds.length + oldToolRounds().length);
-      if (res?.status === 401) {
+      if (res?.status === 401 || res?.data?.authenticated === false) {
         // Signed out: don't fall back to that account's copy later just because there's no signal.
         storage.remove(LAST_ACCOUNT);
         scope.current = 'device';

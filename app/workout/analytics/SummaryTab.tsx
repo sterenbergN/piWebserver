@@ -74,7 +74,7 @@ export default function SummaryTab({ history, period, periodLabel, summary, insi
       <section className="workout-tile an-card">
         <div className="an-card-head">
           <h2>Consistency</h2>
-          <span className="workout-hint">{activeDays} training days in {CAL_WEEKS} weeks</span>
+          <span className="workout-hint">{activeDays} training day{activeDays === 1 ? '' : 's'} in {CAL_WEEKS} weeks</span>
         </div>
         <div className="an-cal" role="grid" aria-label="Training days, last 16 weeks">
           <div className="an-cal-days" aria-hidden>{['M', '', 'W', '', 'F', '', 'S'].map((d, i) => <span key={i}>{d}</span>)}</div>
@@ -89,8 +89,8 @@ export default function SummaryTab({ history, period, periodLabel, summary, insi
                     role="gridcell"
                     className={`an-cal-cell lv-${level(cell.sets)}${day === cell.key ? ' is-selected' : ''}`}
                     disabled={future}
-                    aria-label={`${cell.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${cell.sets ? `${cell.sets} sets` : 'rest'}`}
-                    title={`${shortDate(cell.date)}: ${cell.sets ? `${cell.sets} sets` : 'rest'}`}
+                    aria-label={`${cell.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${cell.sets ? `${cell.sets} set${cell.sets === 1 ? '' : 's'}` : 'rest'}`}
+                    title={`${shortDate(cell.date)}: ${cell.sets ? `${cell.sets} set${cell.sets === 1 ? '' : 's'}` : 'rest'}`}
                     onClick={() => setDay(day === cell.key ? null : cell.key)}
                   />
                 );
@@ -106,7 +106,7 @@ export default function SummaryTab({ history, period, periodLabel, summary, insi
         {selected && (
           <p className="an-cal-detail">
             <strong>{selected.date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</strong>
-            {selected.sets ? ` · ${selected.workouts.map((w) => w.name).join(', ')} · ${selected.sets} sets` : ' · rest day'}
+            {selected.sets ? ` · ${selected.workouts.map((w) => w.name).join(', ')} · ${selected.sets} set${selected.sets === 1 ? '' : 's'}` : ' · rest day'}
           </p>
         )}
       </section>

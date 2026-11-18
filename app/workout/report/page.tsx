@@ -83,14 +83,14 @@ export default function ReportPage() {
   const summaryText = view === 'week'
     ? [
         `🏋️ Training week ${title}`,
-        `${week.current.sessions} workouts · ${week.current.sets} sets · ${fmt(week.current.volume)} lb moved`,
+        `${week.current.sessions} workout${week.current.sessions === 1 ? '' : 's'} · ${week.current.sets} set${week.current.sets === 1 ? '' : 's'} · ${fmt(week.current.volume)} lb moved`,
         week.prs.length ? `🏆 PRs: ${week.prs.map((p) => `${p.lift} ${p.weight}×${p.reps}`).join(', ')}` : '',
         `🔥 ${week.weekStreak}-week streak`,
         body?.stats.sleepMin != null ? `😴 ${formatMinutes(body.stats.sleepMin)} sleep a night${body.stats.steps != null ? ` · 👣 ${fmt(body.stats.steps)} steps a day` : ''}` : '',
       ].filter(Boolean).join('\n')
     : [
         `💪 Strength ${title}`,
-        `${month.improved} lifts up, ${month.declined} down over ${month.sessions} workouts`,
+        `${month.improved} lift${month.improved === 1 ? '' : 's'} up, ${month.declined} down over ${month.sessions} workout${month.sessions === 1 ? '' : 's'}`,
         ...month.lifts.filter((l) => l.change !== null).slice(0, 5).map((l) => `${l.lift}: ${l.best?.e1rm} e1RM (${l.change! > 0 ? '+' : ''}${l.change}%)`),
       ].join('\n');
 
@@ -103,18 +103,26 @@ export default function ReportPage() {
   };
 
   return (
-    <div className="animate-fade-in" style={{ paddingBottom: '3rem' }}>
-      <PageHeader title="Training report" actions={isDemo ? <span className="workout-pill">Sample data</span> : undefined} />
+    <div className="animate-fade-in workout-report-page" style={{ paddingBottom: '3rem' }}>
+      <PageHeader title="Training report" subtitle={title} actions={isDemo ? <span className="workout-pill">Sample data</span> : undefined} />
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+      <div className="workout-no-print" style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         {(['week', 'month'] as const).map((v) => (
           <button key={v} className={view === v ? 'workout-btn-primary' : 'btn btn-secondary'} style={{ margin: 0, padding: '0.5rem 1rem', width: 'auto', fontSize: '0.9rem' }}
             onClick={() => { setView(v); setOffset(0); }}>
             {v === 'week' ? 'Weekly' : 'Monthly strength'}
           </button>
         ))}
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ marginLeft: 'auto', padding: '0.5rem 0.9rem', fontSize: '0.88rem' }}
+          onClick={() => window.print()}
+        >
+          🖨️ Print / Save PDF
+        </button>
       </div>
-      <div className="workout-flex-between" style={{ marginBottom: '1rem' }}>
+      <div className="workout-flex-between workout-no-print" style={{ marginBottom: '1rem' }}>
         <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem' }} onClick={() => setOffset((o) => o + 1)} aria-label="Previous">‹</button>
         <strong>{title}</strong>
         <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem' }} disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - 1))} aria-label="Next">›</button>
@@ -198,7 +206,7 @@ export default function ReportPage() {
               <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem' }}>Most work</h3>
               {week.topLifts.map((l) => (
                 <div key={l.lift} className="workout-flex-between" style={{ fontSize: '0.85rem', padding: '0.25rem 0' }}>
-                  <span>{l.lift}</span><span className="workout-hint">{l.sets} sets · {fmt(l.volume)} lb</span>
+                  <span>{l.lift}</span><span className="workout-hint">{l.sets} set{l.sets === 1 ? '' : 's'} · {fmt(l.volume)} lb</span>
                 </div>
               ))}
             </div>
@@ -238,9 +246,14 @@ export default function ReportPage() {
         </>
       )}
 
-      <button className="btn btn-secondary" style={{ width: '100%', padding: '0.85rem', borderRadius: '12px' }} onClick={share}>
-        {copied ? '✅ Copied summary' : '📤 Share summary'}
-      </button>
+      <div className="workout-no-print" style={{ display: 'flex', gap: '0.5rem' }}>
+        <button className="btn btn-secondary" style={{ flex: 1, padding: '0.85rem', borderRadius: '12px' }} onClick={share}>
+          {copied ? '✅ Copied summary' : '📤 Share summary'}
+        </button>
+        <button className="btn btn-secondary" style={{ padding: '0.85rem 1rem', borderRadius: '12px' }} onClick={() => window.print()}>
+          🖨️ Print / PDF
+        </button>
+      </div>
     </div>
   );
 }

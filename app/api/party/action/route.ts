@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     const result = await processAction(roomCode, playerId, action);
     
     if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+      const status = result.error?.includes('host') ? 403 : 400;
+      return NextResponse.json({ error: result.error }, { status });
     }
     
     return NextResponse.json({ success: true });

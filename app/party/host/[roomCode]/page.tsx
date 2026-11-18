@@ -80,9 +80,9 @@ function JoinQrCode({ roomCode }: { roomCode: string }) {
   }, [roomCode]);
   if (!src) return null;
   return (
-    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', background: '#fff', padding: '0.75rem', borderRadius: '16px' }}>
-      <img src={src} alt={`Scan to join room ${roomCode}`} width={180} height={180} />
-      <span style={{ color: '#0b0b12', fontWeight: 800, fontSize: '0.85rem' }}>Scan to join</span>
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem', background: '#fff', padding: '0.6rem', borderRadius: '14px' }}>
+      <img src={src} alt={`Scan to join room ${roomCode}`} width={140} height={140} />
+      <span style={{ color: '#0b0b12', fontWeight: 800, fontSize: '0.8rem' }}>Scan to join</span>
     </div>
   );
 }
@@ -367,7 +367,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             <p className="host-lobby-subtitle">
               {state.playerOrder.length}/16 players{state.playerOrder.length >= 16 ? ' (full — others can join the audience)' : ''} · join at <strong>{typeof window !== 'undefined' ? window.location.host : ''}/party</strong> with code <strong>{state.roomCode}</strong>
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', margin: '0 0 1.25rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.75rem' }}>
               <JoinQrCode roomCode={state.roomCode} />
               <ShareInviteButton roomCode={state.roomCode} />
             </div>
@@ -376,7 +376,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               const guide = GAME_GUIDES[state.gameType as GameType];
               if (!guide) return null;
               return (
-                <div className="party-card" style={{ maxWidth: '720px', margin: '0 auto 1.5rem', padding: '1rem 1.25rem', textAlign: 'left' }}>
+                <div className="party-card" style={{ maxWidth: '720px', margin: '0 auto 0.9rem', padding: '0.75rem 1.1rem', textAlign: 'left' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                     <span style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--party-cyan)' }}>
                       🕹️ How to Play {guide.name} ({guide.players} · {guide.rounds})
@@ -445,15 +445,18 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             )}
             
             {(state.gameType === 'quip-clash' || state.gameType === 'debate-duel') && (
-              <div style={{ marginTop: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
+              <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
                 <span style={{ fontWeight: 'bold' }}>Rounds to play:</span>
-                {[1, 2, 3].map(r => (
-                  <button key={r} onClick={() => handleSetQuipRounds(r)}
-                    style={{ background: (state.gameData?.targetRounds || 1) === r ? 'var(--party-yellow)' : 'transparent', color: (state.gameData?.targetRounds || 1) === r ? '#000' : '#fff', border: '2px solid var(--party-yellow)', padding: '0.4rem 1rem', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    {r}
-                  </button>
-                ))}
+                {[1, 2, 3].map(r => {
+                  const activeRounds = state.settings?.rounds ?? state.gameData?.targetRounds ?? (state.gameType === 'quip-clash' ? 3 : 1);
+                  return (
+                    <button key={r} onClick={() => handleSetQuipRounds(r)}
+                      style={{ background: activeRounds === r ? 'var(--party-yellow)' : 'transparent', color: activeRounds === r ? '#000' : '#fff', border: '2px solid var(--party-yellow)', padding: '0.4rem 1rem', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -671,7 +674,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               <p className="text-muted text-center mt-4">Need at least {currentMeta.minPlayers} players to start</p>
             )}
 
-            <div style={{ marginTop: '3rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '2rem' }}>
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1.1rem' }}>
               <div style={{ fontSize: '0.9rem', color: 'var(--party-text-muted)', marginBottom: '1rem' }}>Change Game:</div>
               <GameSwitcher current={state.gameType} playerCount={seated.length} onPick={handleSwitch} />
             </div>
@@ -704,6 +707,11 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         )}
         {state.phase === 'VOTING' && state.gameType === 'quip-clash' && (
           <div className="host-voting phase-enter">
+            {state.hostData.totalPrompts && (
+              <p className="host-prompting-sub" style={{ marginBottom: '0.5rem' }}>
+                Prompt {state.hostData.promptNumber} of {state.hostData.totalPrompts}
+              </p>
+            )}
             {secondsLeft !== null && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '500px', margin: '0 auto 1.25rem' }}>
                 <div className="host-timer-bar-wrap" style={{ flex: 1, height: '8px', margin: 0 }}><div className="host-timer-bar" style={{ width: `${pct}%`, background: pct < 25 ? 'var(--party-red)' : 'var(--party-purple-lt)' }} /></div>
@@ -722,6 +730,11 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         )}
         {state.phase === 'ROUND_RESULTS' && state.gameType === 'quip-clash' && (
           <div className="host-round-results phase-enter">
+            {state.hostData.totalPrompts && (
+              <p className="host-prompting-sub" style={{ marginBottom: '0.35rem' }}>
+                Prompt {state.hostData.promptNumber} of {state.hostData.totalPrompts}
+              </p>
+            )}
             <p className="host-round-prompt-text">"{state.hostData.prompt}"</p>
             {secondsLeft !== null && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '300px', margin: '0 auto 2rem' }}>
@@ -1049,7 +1062,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
         {state.gameType === 'bracket-battles' && state.phase === 'PREDICTION' && (
           <div className="phase-enter" style={{ textAlign: 'center', width: '100%' }}>
             <div className="host-phase-title">The Bracket</div>
-            <p className="text-muted">{state.hostData.prompt}</p>
+            <p className="text-muted">{state.hostData.subMessage || state.hostData.prompt}</p>
             {secondsLeft !== null && (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', maxWidth: '600px', margin: '0 auto 1.5rem' }}>
                 <div className="host-timer-bar-wrap" style={{ flex: 1, margin: 0 }}><div className="host-timer-bar" style={{ width: `${pct}%`, background: 'var(--party-cyan)' }} /></div>
@@ -1057,33 +1070,39 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
               </div>
             )}
             <div className="host-bracket-tree">
-              {state.hostData.bracket && (
-                <>
-                  <div className="host-bracket-col">
-                    {state.hostData.bracket.filter((_:any, i:number) => i < state.hostData.bracketSize / 2 && i % 2 === 0).map((m: any) => (
-                       <div key={m.id} className="host-bracket-match">
-                         <div className={`host-bracket-answer ${m.winnerId === m.answer1?.id ? 'host-bracket-winner' : ''}`}>{m.answer1?.answer || '?'}</div>
-                         <div className={`host-bracket-answer ${m.winnerId === m.answer2?.id ? 'host-bracket-winner' : ''}`}>{m.answer2?.answer || '?'}</div>
-                       </div>
+              {state.hostData.bracket && (() => {
+                const bracket: any[] = state.hostData.bracket;
+                const size: number = state.hostData.bracketSize || 8;
+                const rounds: { label: string; matches: any[] }[] = [];
+                let offset = 0;
+                let count = Math.floor(size / 2);
+                while (count >= 1 && offset < bracket.length) {
+                  const label = count === 1 ? 'Final' : count === 2 ? 'Semifinals' : count === 4 ? 'Quarterfinals' : 'Round of 16';
+                  rounds.push({ label, matches: bracket.slice(offset, offset + count) });
+                  offset += count;
+                  count = Math.floor(count / 2);
+                }
+                return (
+                  <>
+                    {rounds.map((r) => (
+                      <div key={r.label} className="host-bracket-col">
+                        <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--party-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.25rem' }}>{r.label}</div>
+                        {r.matches.map((m: any) => (
+                          <div key={m.id} className="host-bracket-match">
+                            <div className={`host-bracket-answer ${m.winnerId && m.winnerId === m.answer1?.id ? 'host-bracket-winner' : ''}`}>{m.answer1?.answer || '?'}</div>
+                            <div className={`host-bracket-answer ${m.winnerId && m.winnerId === m.answer2?.id ? 'host-bracket-winner' : ''}`}>{m.answer2?.answer || '?'}</div>
+                          </div>
+                        ))}
+                      </div>
                     ))}
-                  </div>
-                  {state.hostData.bracketSize === 16 && (
-                    <div className="host-bracket-col" style={{ padding: '0 1rem' }}>
-                       {state.hostData.bracket.filter((_:any, i:number) => i >= 8 && i <= 11 && i % 2 === 0).map((m: any) => (
-                         <div key={m.id} className="host-bracket-match">
-                           <div className={`host-bracket-answer ${m.winnerId === m.answer1?.id ? 'host-bracket-winner' : ''}`}>{m.answer1?.answer || '?'}</div>
-                           <div className={`host-bracket-answer ${m.winnerId === m.answer2?.id ? 'host-bracket-winner' : ''}`}>{m.answer2?.answer || '?'}</div>
-                         </div>
-                      ))}
+                    <div className="host-bracket-col" style={{ padding: '0 1.25rem', borderInline: '2px solid rgba(255,255,255,0.1)' }}>
+                      <div className="host-bracket-match" style={{ borderStyle: 'dashed' }}>
+                        <div className="host-bracket-answer">🏆 Champion</div>
+                      </div>
                     </div>
-                  )}
-                  <div className="host-bracket-col" style={{ padding: '0 2rem', borderInline: '2px solid rgba(255,255,255,0.1)' }}>
-                     <div className="host-bracket-match" style={{ borderStyle: 'dashed' }}>
-                       <div className="host-bracket-answer">Champion</div>
-                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

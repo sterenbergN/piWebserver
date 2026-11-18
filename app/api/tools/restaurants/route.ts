@@ -166,22 +166,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'The map service is busy. Try again in a minute.' }, { status: 503 });
     }
 
-    const seen = new Set<string>();
-    const places: Place[] = [];
-    for (const { id, lat: pLat, lon: pLon, tags: t } of result.found) {
-      if (!t.name || !Number.isFinite(pLat) || !Number.isFinite(pLon)) continue;
-      const distance = Math.round(metersBetween(lat, lng, pLat, pLon));
-      if (distance > radius * 1.05) continue; // Nominatim searches a box, not a circle
-      // Chains and duplicate node+building entries: keep the closest of each name.
-      const key = t.name.toLowerCase();
-      if (seen.has(key)) {
-        const other = places.find((p) => p.name.toLowerCase() === key)!;
-        if (distance < other.distance) Object.assign(other, { lat: pLat, lon: pLon, distance });
-        continue;
-      }
-      seen.add(key);
+    const toPlace = (id: string, pLat: number, pLon: number, distance: number, t: Record<string, string>): Place => {
       const hours = t.opening_hours || null;
-      places.push({
+      return {
         id,
         name: t.name,
         kind: t.amenity,
@@ -194,7 +181,24 @@ export async function POST(request: Request) {
         website: t.website || t['contact:website'] || null,
         hours,
         open: isOpenAt(hours, day, minute),
-      });
+      };
+    };
+
+    const seen = new Set<string>();
+    const places: Place[] = [];
+    for (const { id, lat: pLat, lon: pLon, tags: t } of result.found) {
+      if (!t.name || !Number.isFinite(pLat) || !Number.isFinite(pLon)) continue;
+      const distance = Math.round(metersBetween(lat, lng, pLat, pLon));
+      if (distance > radius * 1.05) continue; // Nominatim searches a box, not a circle
+      // Chains and duplicate node+building entries: keep the closest of each name with its own details.
+      const key = t.name.toLowerCase();
+      if (seen.has(key)) {
+        const other = places.find((p) => p.name.toLowerCase() === key)!;
+        if (distance < other.distance) Object.assign(other, toPlace(id, pLat, pLon, distance, t));
+        continue;
+      }
+      seen.add(key);
+      places.push(toPlace(id, pLat, pLon, distance, t));
     }
 
     // Closest first, always. "Open now" only drops places known to be closed; unknown hours stay.

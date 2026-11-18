@@ -97,7 +97,7 @@ export default function ChoresPage() {
   const open = data.chores.filter(isOpen);
   const shown = mineOnly ? open.filter((x) => !x.assignee || x.assignee === me) : open;
   const groups = GROUPS.map((g) => ({ ...g, chores: byUrgency(shown.filter((x) => g.status.includes(dueStatus(x, today).status))) })).filter((g) => g.chores.length);
-  const finished = data.chores.filter((x) => !isOpen(x)).sort((a, b) => (b.archivedOn ?? '').localeCompare(a.archivedOn ?? ''));
+  const finished = data.chores.filter((x) => !isOpen(x) && !x.repeat).sort((a, b) => (b.archivedOn ?? '').localeCompare(a.archivedOn ?? ''));
   const overdue = open.filter((x) => dueStatus(x, today).status === 'overdue').length;
   const board = useMemo(() => weekBoard(data, today, members.map((m) => m.id)), [data, today, members]);
   const nameOf = (id: string | null) => (id === me ? 'You' : members.find((m) => m.id === id)?.name ?? 'Someone');

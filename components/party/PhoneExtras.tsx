@@ -8,12 +8,22 @@ import { GAME_GUIDES } from '@/lib/party/guides';
 import { gamesForRoom } from '@/lib/party/catalog';
 import { GameType } from '@/lib/party/types';
 
+function safeVibrate(pattern: number | number[]) {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(pattern);
+    }
+  } catch {
+    // Vibration is unsupported or blocked by browser policy
+  }
+}
+
 /** Emoji bar at the bottom of a phone: tap to throw a reaction onto the TV. */
 export function ReactionBar({ onReact }: { onReact: (emoji: string) => void }) {
   return (
     <div className="party-reaction-bar" role="toolbar" aria-label="Send a reaction to the TV">
       {REACTIONS.map((e) => (
-        <button key={e} aria-label={`React ${e}`} onClick={() => { navigator.vibrate?.(15); onReact(e); }}>{e}</button>
+        <button key={e} aria-label={`React ${e}`} onClick={() => { safeVibrate(15); onReact(e); }}>{e}</button>
       ))}
     </div>
   );
@@ -509,6 +519,6 @@ export function useTurnBuzz(key: string | null, needsInput: boolean) {
     if (!key || key === last.current) return;
     const first = last.current === null;
     last.current = key;
-    if (!first && needsInput) navigator.vibrate?.([60, 40, 60]);
+    if (!first && needsInput) safeVibrate([60, 40, 60]);
   }, [key, needsInput]);
 }

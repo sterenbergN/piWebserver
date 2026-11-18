@@ -61,30 +61,57 @@ export function useSharedSession({ userId, initialSessionId, initialCode, planTe
   // Live stream, with polling while it's down.
   useEffect(() => {
     if (!sessionId) return;
+    let cancelled = false;
     let poller: ReturnType<typeof setInterval> | null = null;
+    let source: EventSource | null = null;
+
+    const stopPolling = () => { if (poller) { clearInterval(poller); poller = null; } };
+    const stopSession = () => {
+      cancelled = true;
+      stopPolling();
+      source?.close();
+      setLive(false);
+      setSessionId(null);
+      setCode(null);
+      setPeer(null);
+    };
+
     const poll = async () => {
       try {
         const response = await fetch(`/api/workout/session?id=${encodeURIComponent(sessionId)}`);
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          stopSession();
+          return;
+        }
         const data = await response.json();
         if (data.success) receive({ session: data.session, peer: data.peer });
       } catch { /* offline: try again next tick */ }
     };
-    const startPolling = () => { if (!poller) { poll(); poller = setInterval(poll, 5000); } };
-    const stopPolling = () => { if (poller) { clearInterval(poller); poller = null; } };
+    const startPolling = () => { if (!cancelled && !poller) { poll(); poller = setInterval(poll, 5000); } };
 
-    let source: EventSource | null = null;
     if (typeof EventSource !== 'undefined') {
       source = new EventSource(`/api/workout/session/stream?id=${encodeURIComponent(sessionId)}`);
       source.onmessage = (event) => {
-        setLive(true);
-        stopPolling();
-        try { receive(JSON.parse(event.data)); } catch { /* ignore a bad frame */ }
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed?.error) {
+            stopSession();
+            return;
+          }
+          setLive(true);
+          stopPolling();
+          receive(parsed);
+        } catch { /* ignore a bad frame */ }
       };
-      source.onerror = () => { setLive(false); startPolling(); };
+      source.onerror = () => {
+        if (cancelled) return;
+        setLive(false);
+        startPolling();
+      };
     } else {
       startPolling();
     }
-    return () => { source?.close(); stopPolling(); };
+    return () => { cancelled = true; source?.close(); stopPolling(); };
   }, [sessionId, receive]);
 
   const push = useCallback(async (progress: ProgressUpdate) => {

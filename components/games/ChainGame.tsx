@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DOT_R, SIZE, blastRadius, createGame, dotCount, needed, proceed, step, tap, type ChainState } from '@/lib/games/chain';
-import { GameFrame, Overlay, Prompt, canvasPoint, fitCanvas, readTheme, useFrame, type Theme } from './canvas';
+import { GameFrame, Overlay, Prompt, canvasPoint, fitCanvas, readTheme, useCanvasTheme, useFrame, type Theme } from './canvas';
 
 export default function ChainGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,7 +67,7 @@ export default function ChainGame() {
   };
 
   useFrame((dt) => { game.current = step(game.current, dt); draw(); sync(); }, hud.status === 'aim' || hud.status === 'running');
-  useEffect(() => { draw(); }, [draw]);
+  useCanvasTheme(theme, draw);
 
   const restart = useCallback(() => { game.current = createGame(); sync(); draw(); }, [draw]);
   const next = useCallback(() => { game.current = proceed(game.current); sync(); draw(); }, [draw]);

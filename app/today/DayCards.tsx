@@ -118,14 +118,23 @@ export function ReaderCard() {
 }
 
 /** Today's journal entry: tap a mood right here, or open the page to write. */
-export function JournalCard({ today, onWritten }: { today: DateKey; onWritten: (written: boolean) => void }) {
-  const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>('loading');
+export function JournalCard({ today, signedIn, onWritten }: { today: DateKey; signedIn: boolean; onWritten: (written: boolean) => void }) {
+  const [state, setState] = useState<'loading' | 'ready' | 'signed-out' | 'error'>(signedIn ? 'loading' : 'signed-out');
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [streak, setStreak] = useState(0);
   const [dates, setDates] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!signedIn) {
+      setState('signed-out');
+      setEntry(null);
+      setDates(new Set());
+      setStreak(0);
+      onWritten(false);
+      return;
+    }
     let cancelled = false;
+    setState('loading');
     (async () => {
       try {
         const [one, all] = await Promise.all([
@@ -149,13 +158,16 @@ export function JournalCard({ today, onWritten }: { today: DateKey; onWritten: (
     })();
     return () => { cancelled = true; };
     // onWritten only reports; it isn't a reason to load again.
-  }, [today]);
+  }, [today, signedIn]);
 
   const setMood = async (value: Mood) => {
     const mood = entry?.mood === value ? null : value;
     const text = entry?.text ?? '';
+    const hasTalks = (entry?.talks?.length ?? 0) > 0;
     const previous = entry;
-    const next = text || mood ? ({ ...(entry ?? {}), text, mood } as JournalEntry) : null;
+    const hasContent = Boolean(text.trim() || mood || hasTalks);
+    const next = hasContent ? ({ ...(entry ?? {}), text, ...(mood ? { mood } : {}) } as JournalEntry) : null;
+    if (next && !mood) delete next.mood;
     setEntry(next);
     onWritten(!!next);
     const res = await fetch('/api/journal', {
@@ -216,22 +228,20 @@ export function JournalCard({ today, onWritten }: { today: DateKey; onWritten: (
 }
 
 /** What's for dinner and what to buy: the kitchen, without leaving the day. */
-export function KitchenCard({ today }: { today: DateKey }) {
+export function KitchenCard({ today, signedIn }: { today: DateKey; signedIn: boolean }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [canEdit, setCanEdit] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [newItem, setNewItem] = useState('');
-  const kitchen = useKitchen(canEdit);
+  const kitchen = useKitchen(signedIn);
 
   useEffect(() => {
     let cancelled = false;
     fetch('/api/recipes').then((r) => r.json()).then((data) => {
       if (cancelled || !Array.isArray(data?.recipes)) return;
       setRecipes(data.recipes);
-      setCanEdit(Boolean(data.canEdit));
     }).catch(() => { /* the card just shows the list */ }).finally(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [signedIn]);
 
   const cookable = useMemo(() => recipesFor(recipes, kitchen.state), [recipes, kitchen.state]);
   const { week, tonight, prep } = useMemo(() => mealsToday(cookable, kitchen.state, today), [cookable, kitchen.state, today]);
@@ -264,8 +274,9 @@ export function KitchenCard({ today }: { today: DateKey }) {
             <li key={entry.id} className={entry.cooked ? 'is-done' : ''}>
               <button type="button" className="td-meal-check" aria-pressed={!!entry.cooked} aria-label={entry.cooked ? `${recipe.title}: not cooked yet` : `${recipe.title}: cooked`}
                 onClick={() => { if (entry.cooked) kitchen.uncookEntry(week, entry); else kitchen.cook(recipe, entry.servings, { week, entry }); }}>{entry.cooked ? '✓' : ''}</button>
-              <Link href={`/recipes?recipe=${encodeURIComponent(recipe.slug)}`}>{recipe.title}</Link>
+              <Link className="td-meal-title" href={`/recipes?recipe=${encodeURIComponent(recipe.slug)}&servings=${entry.servings}`}>{recipe.title}</Link>
               <small>serves {entry.servings}</small>
+              <Link className="td-meal-cook" href={`/recipes?recipe=${encodeURIComponent(recipe.slug)}&servings=${entry.servings}&cook=1`} aria-label={`Cook ${recipe.title}`}>Cook</Link>
             </li>
           ))}
         </ul>

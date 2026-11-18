@@ -155,7 +155,7 @@
 .tracker-superset {
   margin-top: 0.55rem;
   padding: 0.5rem 0.75rem;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--input-bg);
   border-radius: 10px;
   border: 1px solid rgba(var(--accent-rgb), 0.2);
   display: flex;
@@ -206,11 +206,11 @@
 
 /* Workout name takes the leftover width (and wraps); the buttons never get pushed off-screen. */
 .tracker-topbar-row { gap: 0.6rem; }
-.tracker-topbar-row > div:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tracker-topbar-row > div:first-child { flex: 1; min-width: 0; overflow-wrap: break-word; word-break: normal; }
 .tracker-topbar-row > div:last-child { flex-shrink: 0; }
 
 .tracker-summary-card {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--input-bg);
   border: 1px solid var(--surface-border);
   border-radius: 16px;
   padding: 1rem;
@@ -561,7 +561,7 @@
 .tracker-stepper-row button:active { background: rgba(var(--accent-rgb), 0.2); }
 .tracker-stepper-row input {
   flex: 1;
-  min-width: 0;
+  min-width: 4.5rem;
   width: 100%;
   margin: 0;
   padding: 0 0.15rem;
@@ -597,7 +597,7 @@
 }
 .tracker-log-btn small { font-size: 0.58rem; font-weight: 600; color: var(--muted); }
 .tracker-log-btn:active,
-.tracker-log-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+.tracker-log-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #ffffff; }
 .tracker-log-btn:active small,
 .tracker-log-btn[aria-pressed="true"] small { color: inherit; }
 
@@ -732,7 +732,7 @@
   padding: 0.9rem 1rem 0.75rem;
   border-bottom: 1px solid var(--surface-border);
 }
-.workout-sheet-title { margin: 0; font-size: 1.1rem; line-height: 1.3; overflow-wrap: anywhere; }
+.workout-sheet-title { margin: 0; font-size: 1.1rem; line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
 .workout-sheet-body {
   flex: 1;
   overflow-y: auto;
@@ -842,8 +842,8 @@
 }
 .workout-avatar.is-small { width: 40px; height: 40px; border-radius: 12px; font-size: 1.2rem; }
 .workout-card-text { flex: 1; min-width: 0; }
-.workout-card-title { display: block; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
-.workout-card-meta { display: block; font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-top: 0.1rem; overflow-wrap: anywhere; }
+.workout-card-title { display: block; font-weight: 700; line-height: 1.3; overflow-wrap: break-word; word-break: normal; }
+.workout-card-meta { display: block; font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-top: 0.1rem; overflow-wrap: break-word; word-break: normal; }
 .workout-chevron { flex-shrink: 0; color: var(--muted); font-size: 1.2rem; transition: transform 0.15s; }
 .workout-chevron.is-open { transform: rotate(90deg); }
 
@@ -1077,16 +1077,17 @@
 .workout-exercise-list > summary::-webkit-details-marker { display: none; }
 
 /* The site-wide .btn never wraps; on a phone long labels must wrap instead of
-   running past the button. */
+   running past the button. Use break-word (never anywhere) so short words like "lifts" don't split. */
 .workout-mobile-container .btn,
 .workout-sheet .btn {
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   text-align: center;
   min-width: 0;
 }
 .workout-mobile-container button,
-.workout-sheet button { overflow-wrap: anywhere; }
+.workout-sheet button { overflow-wrap: break-word; word-break: normal; }
 
 /* Development only (see OverflowGuard): content spilling out of its box. */
 [data-overflow] { outline: 2px dashed #e53e3e !important; outline-offset: -2px; }
@@ -1358,4 +1359,51 @@
   display: grid; place-items: center; flex-shrink: 0;
   width: 2rem; height: 2rem; border-radius: 50%;
   background: var(--success); color: #fff; font-weight: 800; font-size: 1rem;
+}
+
+/* Training report desktop container & print stylesheet */
+@media (min-width: 720px) {
+  .workout-mobile-container:has(.workout-report-page) {
+    max-width: 760px;
+  }
+}
+
+@media print {
+  body,
+  .workout-mobile-container {
+    background: #ffffff !important;
+    color: #111827 !important;
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: auto !important;
+  }
+
+  .wtb,
+  .wtb-spacer,
+  .workout-no-print,
+  .workout-back,
+  nav.site-nav,
+  header.site-header {
+    display: none !important;
+  }
+
+  .workout-report-page {
+    padding-bottom: 0 !important;
+  }
+
+  .workout-tile,
+  .workout-list-row {
+    background: #ffffff !important;
+    border-color: #d1d5db !important;
+    color: #111827 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  .workout-hint {
+    color: #4b5563 !important;
+  }
 }

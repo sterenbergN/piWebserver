@@ -46,20 +46,22 @@ export async function GET() {
     secondaryMuscle: string;
   }>();
 
-  gymsData.gyms.forEach((gym: any) => {
-    gym.stations?.forEach((station: any) => {
-      station.lifts?.forEach((lift: any) => {
-        liftMetadata.set(lift.id, {
-          liftName: lift.name || '',
-          stationId: station.id || '',
-          stationName: station.name || '',
-          stationType: station.type || '',
-          primaryMuscle: lift.primaryMuscle || '',
-          secondaryMuscle: lift.secondaryMuscle || '',
+  (gymsData.gyms || [])
+    .filter((gym: any) => gym.ownerId === userId)
+    .forEach((gym: any) => {
+      gym.stations?.forEach((station: any) => {
+        station.lifts?.forEach((lift: any) => {
+          liftMetadata.set(lift.id, {
+            liftName: lift.name || '',
+            stationId: station.id || '',
+            stationName: station.name || '',
+            stationType: station.type || '',
+            primaryMuscle: lift.primaryMuscle || '',
+            secondaryMuscle: lift.secondaryMuscle || '',
+          });
         });
       });
     });
-  });
 
   const headers = [
     'userId',

@@ -4,7 +4,7 @@ import { normalizeCalculatorDefaults } from '@/lib/workout/calculators';
 import { getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
 
 type WorkoutUser = Record<string, any>;
-export type UsersData = { users: WorkoutUser[] };
+export type UsersData = { users: WorkoutUser[]; deletedUserIds?: string[] };
 
 export const USERS_FILE = 'users.json';
 

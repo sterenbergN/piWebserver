@@ -139,7 +139,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
             <span className="workout-card-meta">
               {new Date(w.timestamp).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
               {gymOf(w, gymNames) ? ` · ${gymOf(w, gymNames)}` : ''}
-              {` · ${s.sets} sets · ${compact(s.volume)} lb`}
+              {` · ${s.sets} set${s.sets === 1 ? '' : 's'} · ${compact(s.volume)} lb`}
               {w.durationSecs ? ` · ${Math.round(w.durationSecs / 60)} min` : ''}
               {hr?.avgHr !== undefined ? ` · ♥ ${hr.avgHr}` : ''}
               {hr?.kcal !== undefined ? ` · ${hr.kcal} kcal` : ''}
@@ -229,7 +229,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
           <button type="button" className="workout-icon-btn" aria-label="Previous month" onClick={() => moveMonth(-1)}>‹</button>
           <div>
             <strong>{first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong>
-            <span className="workout-hint">{inMonth.length} workout{inMonth.length === 1 ? '' : 's'} · {monthSets} sets</span>
+            <span className="workout-hint">{inMonth.length} workout{inMonth.length === 1 ? '' : 's'} · {monthSets} set{monthSets === 1 ? '' : 's'}</span>
           </div>
           <button type="button" className="workout-icon-btn" aria-label="Next month" onClick={() => moveMonth(1)}>›</button>
         </div>
@@ -293,7 +293,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
           </div>
         )}
         <p className="workout-hint" style={{ margin: 0 }}>
-          {history.length} workouts saved{matches.length !== history.length ? ` · ${matches.length} match` : ''}
+          {history.length} workout{history.length === 1 ? '' : 's'} saved{matches.length !== history.length ? ` · ${matches.length} match` : ''}
         </p>
       </section>
 
@@ -304,7 +304,7 @@ export default function HistoryTab({ history, lifts, gymNames, canEdit, ownerId,
             <section key={key} className="an-week">
               <h3 className="an-week-head">
                 Week of {group.start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                <span>{group.workouts.length} workout{group.workouts.length === 1 ? '' : 's'} · {totals.sets} sets · {compact(totals.volume)} lb</span>
+                <span>{group.workouts.length} workout{group.workouts.length === 1 ? '' : 's'} · {totals.sets} set{totals.sets === 1 ? '' : 's'} · {compact(totals.volume)} lb</span>
               </h3>
               <div className="workout-stack">{group.workouts.map(renderWorkout)}</div>
             </section>

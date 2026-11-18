@@ -98,7 +98,7 @@ export function WorkoutListSheet({ plan, activeIndex, logs, targetSets, partnerO
               <button type="button" className={`workout-lift-row${i === activeIndex ? ' is-current' : ''}${done >= target ? ' is-done' : ''}`} onClick={() => onSelect(i)}>
                 <span className="workout-card-text">
                   <span className="workout-card-title">{i + 1}. {lift.name}{partner ? ' · SS' : ''}</span>
-                  <span className="workout-card-meta">{lift.station?.name} · {done}/{target} sets{partner ? ` · with ${partner.name}` : ''}</span>
+                  <span className="workout-card-meta">{lift.station?.name} · {done}/{target} set{target === 1 ? '' : 's'}{partner ? ` · with ${partner.name}` : ''}</span>
                 </span>
                 {done >= target && <span aria-hidden>✓</span>}
               </button>
@@ -176,7 +176,7 @@ export function SupersetSheet({ lift, partner, logged, targetSets, eligible, can
         <div className="workout-tile">
           <span className="workout-label">Paired with</span>
           <strong style={{ display: 'block' }}>{partner.name}</strong>
-          <span className="workout-hint">{logged(partner)}/{targetSets(partner)} sets logged</span>
+          <span className="workout-hint">{logged(partner)}/{targetSets(partner)} set{targetSets(partner) === 1 ? '' : 's'} logged</span>
           <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>After each set the tracker switches to the other lift, until one side is finished.</p>
         </div>
         <button className="workout-button is-danger is-block" disabled={!canUnpair} onClick={onUnpair}>Remove pair</button>
@@ -187,7 +187,7 @@ export function SupersetSheet({ lift, partner, logged, targetSets, eligible, can
             <button key={uidOf(other)} type="button" className="workout-lift-row" onClick={() => onPair(other)}>
               <span className="workout-card-text">
                 <span className="workout-card-title">{other.name}</span>
-                <span className="workout-card-meta">{other.station?.name} · {logged(other)}/{targetSets(other)} sets logged</span>
+                <span className="workout-card-meta">{other.station?.name} · {logged(other)}/{targetSets(other)} set{targetSets(other) === 1 ? '' : 's'} logged</span>
               </span>
               <span style={{ flexShrink: 0, fontSize: '0.85rem' }}>Pair</span>
             </button>

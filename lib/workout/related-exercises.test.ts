@@ -52,3 +52,24 @@ test('swap choices put the closest lifts first and keep everything else below', 
     ['Everything else', ['Standing Calf Raise']],
   ]);
 });
+
+test('Face Pull (Shoulders/Back) is classified under pull lifts, not Other push lifts', () => {
+  const lift = (name: string, primaryMuscle: string, secondaryMuscle = 'None') => ({ name, primaryMuscle, secondaryMuscle });
+  const pushGroups = rankSwapCandidates(lift('Bench Press', 'Chest', 'Triceps'), [
+    lift('Face Pull', 'Shoulders', 'Back'),
+    lift('Lateral Raise', 'Shoulders'),
+  ], ['Chest']);
+  assert.deepEqual(pushGroups.map((g) => [g.label, g.lifts.map((l) => l.name)]), [
+    ['Other push lifts', ['Lateral Raise']],
+    ['Everything else', ['Face Pull']],
+  ]);
+
+  const pullGroups = rankSwapCandidates(lift('Bicep Curl', 'Biceps'), [
+    lift('Face Pull', 'Shoulders', 'Back'),
+    lift('Lateral Raise', 'Shoulders'),
+  ], ['Biceps']);
+  assert.deepEqual(pullGroups.map((g) => [g.label, g.lifts.map((l) => l.name)]), [
+    ['Other pull lifts', ['Face Pull']],
+    ['Everything else', ['Lateral Raise']],
+  ]);
+});

@@ -41,7 +41,7 @@ export default function SetLogger(props: SetLoggerProps) {
 
   return (
     <>
-      <div className="workout-tile" style={{ background: 'rgba(0,0,0,0.1)', padding: compact ? '0.65rem' : undefined }}>
+      <div className="workout-tile" style={{ background: 'var(--input-bg)', padding: compact ? '0.65rem' : undefined }}>
         {sets.length === 0 ? (warmups.length > 0 && (
           <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
             <span className="workout-hint">Warm-up — tap each one as you do it</span>
@@ -81,7 +81,7 @@ export default function SetLogger(props: SetLoggerProps) {
 
         {liftDone && (
           <div className="tracker-done animate-fade-in">
-            <strong>✓ All {sets.length} sets done</strong>
+            <strong>{sets.length === 1 ? '✓ 1 set done' : `✓ All ${sets.length} sets done`}</strong>
             {props.nextLiftName !== null ? (
               <button type="button" className="workout-btn-primary" style={{ margin: '0.5rem 0 0' }} onClick={props.onNextUnfinished}>Next: {props.nextLiftName} →</button>
             ) : (

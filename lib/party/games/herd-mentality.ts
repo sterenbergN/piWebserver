@@ -126,12 +126,14 @@ function resolveHerdRound(state: GameState) {
   }
 
   // Pink Cow logic: if exactly ONE group has size 1 while at least one group has size >= 2,
-  // that lone oddball gets the Pink Cow!
+  // that lone oddball gets the Pink Cow; otherwise (outlier joined the herd, unanimous, or tie/multiple singletons) clear it.
   const singletons = groups.filter((g) => g.playerIds.length === 1);
   let newPinkCowId: string | null = null;
   if (maxSize >= 2 && singletons.length === 1) {
     newPinkCowId = singletons[0].playerIds[0];
     state.gameData.pinkCowHolder = newPinkCowId;
+  } else {
+    state.gameData.pinkCowHolder = null;
   }
 
   state.hostData = {

@@ -276,6 +276,7 @@ export default function MoviePickerTool() {
   const [groupPartyStates, setGroupPartyStates] = useState<Record<string, UserMovieState>>({});
   const [groupGuestNames, setGroupGuestNames] = useState<string[]>([]);
   const [newGuestInput, setNewGuestInput] = useState('');
+  const [groupSubMode, setGroupSubMode] = useState<'members' | 'wheel' | 'duel'>('members');
 
   // Watchlist & Library State & Live TMDB Search
   const [librarySearch, setLibrarySearch] = useState('');
@@ -302,6 +303,18 @@ export default function MoviePickerTool() {
   // Rankings direct rank prompt modal
   const [rankingPromptFilm, setRankingPromptFilm] = useState<Film | null>(null);
   const [rankingPromptInput, setRankingPromptInput] = useState('1');
+
+  useEffect(() => {
+    if (!reviewingFilm && !rankingPromptFilm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (reviewingFilm) setReviewingFilm(null);
+        else if (rankingPromptFilm) setRankingPromptFilm(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [reviewingFilm, rankingPromptFilm]);
 
   // Persist local state
   const persistState = (newState: UserMovieState) => {
@@ -663,7 +676,8 @@ export default function MoviePickerTool() {
     }
 
     // Pick next challenger not yet seen in duel history
-    const nextCandidate = filteredFilms.find(f => !duelHistory.includes(f.id) && f.id !== winner.id);
+    const unseen = filteredFilms.filter(f => !duelHistory.includes(f.id) && f.id !== winner.id);
+    const nextCandidate = unseen.length > 0 ? unseen[Math.floor(Math.random() * unseen.length)] : undefined;
     if (!nextCandidate) {
       // No more candidates left
       setDuelChampion(winner);
@@ -696,9 +710,11 @@ export default function MoviePickerTool() {
     const currentAId = duelContenderA?.id;
     const currentBId = duelContenderB?.id;
 
-    let nextCandidate = filteredFilms.find(f => !duelHistory.includes(f.id) && f.id !== currentAId && f.id !== currentBId);
+    const unseen = filteredFilms.filter(f => !duelHistory.includes(f.id) && f.id !== currentAId && f.id !== currentBId);
+    let nextCandidate = unseen.length > 0 ? unseen[Math.floor(Math.random() * unseen.length)] : undefined;
     if (!nextCandidate) {
-      nextCandidate = filteredFilms.find(f => (side === 'A' ? f.id !== currentBId : f.id !== currentAId));
+      const fallback = filteredFilms.filter(f => (side === 'A' ? f.id !== currentBId : f.id !== currentAId));
+      nextCandidate = fallback.length > 0 ? fallback[Math.floor(Math.random() * fallback.length)] : undefined;
     }
     if (!nextCandidate) return;
 
@@ -1237,7 +1253,10 @@ export default function MoviePickerTool() {
             <button
               className="tl-movie-mode-btn"
               aria-pressed={pickerMode === 'group'}
-              onClick={() => setPickerMode('group')}
+              onClick={() => {
+                setPickerMode('group');
+                setGroupSubMode('members');
+              }}
             >
               <span>👥</span>
               <span>Watch Together</span>
@@ -1246,39 +1265,37 @@ export default function MoviePickerTool() {
 
           {/* ── Comprehensive Filter Box ── */}
           <section className="tl-filters-card">
-            <div
-              className="tl-filter-toggle"
-              onClick={() => setFiltersOpen(!filtersOpen)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setFiltersOpen(!filtersOpen); }}
-              aria-expanded={filtersOpen}
-            >
-              <h3>
-                <span>🎯 Filters</span>
-                <span className="tl-muted" style={{ fontSize: '0.82rem', fontWeight: 400 }}>
-                  ({filteredFilms.length} {filteredFilms.length === 1 ? 'match' : 'matches'})
-                </span>
-              </h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {(selectedGenres.length > 0 || selectedEra !== 'all' || selectedRuntime !== 'all' || minRating > 0 || poolSource !== '100' || selectedProviders.length > 0) && (
-                  <button
-                    className="tl-link-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedGenres([]);
-                      setSelectedEra('all');
-                      setSelectedRuntime('all');
-                      setMinRating(0);
-                      setPoolSource('100');
-                      setSelectedProviders([]);
-                    }}
-                  >
-                    Reset
-                  </button>
-                )}
+            <div className="tl-filter-toggle">
+              <button
+                type="button"
+                className="tl-filter-toggle-btn"
+                onClick={() => setFiltersOpen(!filtersOpen)}
+                aria-expanded={filtersOpen}
+              >
+                <h3>
+                  <span>🎯 Filters</span>
+                  <span className="tl-muted" style={{ fontSize: '0.82rem', fontWeight: 400 }}>
+                    ({filteredFilms.length} {filteredFilms.length === 1 ? 'match' : 'matches'})
+                  </span>
+                </h3>
                 <span style={{ fontSize: '0.85rem' }}>{filtersOpen ? '▲' : '▼'}</span>
-              </div>
+              </button>
+              {(selectedGenres.length > 0 || selectedEra !== 'all' || selectedRuntime !== 'all' || minRating > 0 || poolSource !== '100' || selectedProviders.length > 0) && (
+                <button
+                  type="button"
+                  className="tl-link-btn"
+                  onClick={() => {
+                    setSelectedGenres([]);
+                    setSelectedEra('all');
+                    setSelectedRuntime('all');
+                    setMinRating(0);
+                    setPoolSource('100');
+                    setSelectedProviders([]);
+                  }}
+                >
+                  Reset
+                </button>
+              )}
             </div>
 
             {filtersOpen && (
@@ -1460,8 +1477,24 @@ export default function MoviePickerTool() {
             )}
           </section>
 
+          {/* ── Group Mode Banner when spinning/dueling inside Watch Together ── */}
+          {pickerMode === 'group' && groupSubMode !== 'members' && (
+            <div className="tl-movie-sync-bar">
+              <span>
+                👥 <strong>Group Mode</strong> · Excluding watched films for {1 + selectedGroupUserIds.length} {selectedGroupUserIds.length === 0 ? 'member' : 'members'} ({groupWatchedIds.size} excluded)
+              </span>
+              <button
+                type="button"
+                className="tl-link-btn"
+                onClick={() => setGroupSubMode('members')}
+              >
+                ← Edit Group
+              </button>
+            </div>
+          )}
+
           {/* ── Mode 1: Spin Reel / Roulette ── */}
-          {pickerMode === 'wheel' && (
+          {(pickerMode === 'wheel' || (pickerMode === 'group' && groupSubMode === 'wheel')) && (
             <section className="tl-card" style={{ textAlign: 'center' }}>
               <h2>🎬 Spin the Reel</h2>
               <p className="tl-sub">
@@ -1486,9 +1519,11 @@ export default function MoviePickerTool() {
                     {finalists.map((f, idx) => {
                       const isActive = activeFinalistIndex === idx;
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={f.id}
                           className={`tl-finalist-card${isActive ? ' is-active' : ''}`}
+                          style={{ font: 'inherit', color: 'inherit' }}
                           onClick={() => {
                             if (spinning) return;
                             setActiveFinalistIndex(idx);
@@ -1516,7 +1551,7 @@ export default function MoviePickerTool() {
                           <div className="tl-finalist-meta">
                             {f.year || ''} · ★ {f.rating.toFixed(1)}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1545,7 +1580,7 @@ export default function MoviePickerTool() {
           )}
 
           {/* ── Pick Winner Display (Wheel Mode) ── */}
-          {pickerMode === 'wheel' && pick && (
+          {(pickerMode === 'wheel' || (pickerMode === 'group' && groupSubMode === 'wheel')) && pick && (
             <section className="tl-card animate-fade-in" aria-live="polite">
               <div className="tl-film">
                 {details?.poster ? (
@@ -1624,7 +1659,7 @@ export default function MoviePickerTool() {
           )}
 
           {/* ── Mode 2: Showdown Duel ('This or That') ── */}
-          {pickerMode === 'duel' && (
+          {(pickerMode === 'duel' || (pickerMode === 'group' && groupSubMode === 'duel')) && (
             <section className="tl-card">
               <div className="tl-duel-status">
                 <div>
@@ -1831,7 +1866,7 @@ export default function MoviePickerTool() {
           )}
 
           {/* ── Mode 4: Watch Together (Group Mode) ── */}
-          {pickerMode === 'group' && (
+          {pickerMode === 'group' && groupSubMode === 'members' && (
             <section className="tl-card">
               <h2>👥 Watch Together (Group Mode)</h2>
               <p className="tl-sub">
@@ -1917,7 +1952,7 @@ export default function MoviePickerTool() {
                   <button
                     className="btn btn-primary tl-btn"
                     onClick={() => {
-                      setPickerMode('wheel');
+                      setGroupSubMode('wheel');
                       spin();
                     }}
                     disabled={filteredFilms.length === 0}
@@ -1927,7 +1962,7 @@ export default function MoviePickerTool() {
                   <button
                     className="btn btn-secondary tl-btn"
                     onClick={() => {
-                      setPickerMode('duel');
+                      setGroupSubMode('duel');
                       startShowdown();
                     }}
                     disabled={filteredFilms.length < 2}
@@ -2344,7 +2379,7 @@ export default function MoviePickerTool() {
                             </button>
                             <button
                               type="button"
-                              className="tl-rank-btn"
+                              className="tl-movie-toggle-btn"
                               onClick={() => handleImportTmdbMovie(item, 'review')}
                               title="Review & Rate"
                             >
@@ -2589,7 +2624,7 @@ export default function MoviePickerTool() {
       ───────────────────────────────────────────────────────────── */}
       {rankingPromptFilm && (
         <div className="tl-modal-backdrop" onClick={() => setRankingPromptFilm(null)}>
-          <div className="tl-modal" style={{ maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+          <div className="tl-modal" style={{ maxWidth: 360 }} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="tl-modal-head">
               <h3>Move to Rank</h3>
               <button className="tl-modal-close" onClick={() => setRankingPromptFilm(null)}>✕</button>

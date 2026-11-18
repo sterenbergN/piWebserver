@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { COLS, ROWS, cells, createGame, ghostY, hardDrop, holdPiece, previewCells, rotate, shift, softDrop, tick, type BlocksState, type PieceType } from '@/lib/games/blocks';
-import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
+import { GameFrame, Overlay, Pad, PadButton, Prompt, fitCanvas, readTheme, useCanvasTheme, useFrame, usePauseWhenHidden, type Theme } from './canvas';
 
 const CELL = 28;
 const BOARD_W = COLS * CELL;
@@ -93,7 +93,7 @@ export default function BlocksGame() {
   }, [draw, sync]);
 
   useFrame((dt) => { game.current = tick(game.current, dt); draw(); sync(); }, !paused && hud.status === 'playing');
-  useEffect(() => { draw(); }, [draw]);
+  useCanvasTheme(theme, draw);
   usePauseWhenHidden(() => { if (game.current.status === 'playing') setPaused(true); });
 
   const restart = useCallback(() => { game.current = createGame(); setPaused(false); draw(); sync(); }, [draw, sync]);

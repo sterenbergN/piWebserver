@@ -49,6 +49,15 @@ export interface KartHeat {
   qualifiers?: string[];
 }
 
+interface BotScoreEntry {
+  id: string;
+  name: string;
+  avatar: string;
+  color: string;
+  score: number;
+  isBot: true;
+}
+
 const RANK_POINTS = [1500, 1200, 1000, 800, 600, 400, 200, 100];
 const CHAMPIONSHIP_FINAL_BONUS = 500;
 const PIT_CREW_PREDICT_BONUS = 300;
@@ -56,18 +65,27 @@ const TRACK_VOTE_SECONDS = 14;
 const RESULTS_SECONDS = 16;
 const PREDICTION_WINDOW_MS = 30_000;
 
-/** Everyone's running Cup total, biggest first, with what they earned this race. */
+/** Everyone's running Cup total (humans and AI bots), biggest first, with what they earned this race. */
 function cupStandings(state: GameState, gained: Record<string, number>) {
-  return activeRoomPlayers(state)
-    .map((pid) => ({
-      id: pid,
-      name: state.players[pid].name,
-      avatar: state.players[pid].avatar || '🏎️',
-      color: state.players[pid].avatarColor,
-      score: state.players[pid].score,
-      gained: gained[pid] || 0,
-    }))
-    .sort((a, b) => b.score - a.score);
+  const humans = activeRoomPlayers(state).map((pid) => ({
+    id: pid,
+    name: state.players[pid].name,
+    avatar: state.players[pid].avatar || '🏎️',
+    color: state.players[pid].avatarColor,
+    score: state.players[pid].score,
+    gained: gained[pid] || 0,
+    isBot: false,
+  }));
+  const bots = Object.values((state.gameData?.botScores || {}) as Record<string, BotScoreEntry>).map((b) => ({
+    id: b.id,
+    name: b.name,
+    avatar: b.avatar,
+    color: b.color,
+    score: b.score,
+    gained: gained[b.id] || 0,
+    isBot: true,
+  }));
+  return [...humans, ...bots].sort((a, b) => b.score - a.score);
 }
 
 function activeRoomPlayers(state: GameState): string[] {
@@ -379,7 +397,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
       color: k.color,
       isBot: k.isBot,
       rank: idx + 1,
-      points: !k.isBot ? (RANK_POINTS[idx] || 100) : 0,
+      points: RANK_POINTS[idx] || 100,
       timeMs: k.finishTimeMs,
       dnf: k.dnf || !k.finished,
       bestLapMs: k.bestLapTimeMs,
@@ -414,28 +432,44 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   stopKartSimulation(state.roomCode);
   state.phase = 'RACE_RESULTS';
 
-  // Identify top human finisher
+  // Identify overall winner (including bots) and top human finisher
+  const overallWinner = standings[0] || null;
   const humanRows = standings.filter((r) => !r.isBot && state.players[r.id]);
   const topHuman = humanRows[0] || null;
-  if (topHuman) {
-    bumpStat(state, 'raceWins', topHuman.id, 1);
+  // Only credit a race win when a human actually wins 1st overall and finished the race
+  if (overallWinner && !overallWinner.isBot && !overallWinner.dnf && state.players[overallWinner.id]) {
+    bumpStat(state, 'raceWins', overallWinner.id, 1);
   }
 
   // Check if this is a Tournament Championship Final heat
   const heats: KartHeat[] = state.gameData.heats || [];
   const currentHeat = heats.find((h) => h.id === state.gameData.activeHeatId) || null;
   const isFinalHeat = currentHeat?.stage === 'final' && heats.length > 1;
-  if (isFinalHeat && topHuman) {
-    topHuman.points += CHAMPIONSHIP_FINAL_BONUS;
+  if (isFinalHeat && overallWinner) {
+    overallWinner.points += CHAMPIONSHIP_FINAL_BONUS;
   }
 
-  // Award race points to human racers
+  // Award race points to humans and cumulative tournament totals to AI bots
   const gained: Record<string, number> = {};
   for (const row of humanRows) {
     if (state.players[row.id]) {
       state.players[row.id].score += row.points;
       gained[row.id] = row.points;
     }
+  }
+  const botScores: Record<string, BotScoreEntry> = (state.gameData.botScores ||= {});
+  for (const row of standings) {
+    if (!row.isBot) continue;
+    const prevBot = botScores[row.id];
+    botScores[row.id] = {
+      id: row.id,
+      name: row.name,
+      avatar: row.avatar,
+      color: row.color,
+      score: (prevBot?.score || 0) + row.points,
+      isBot: true,
+    };
+    gained[row.id] = row.points;
   }
 
   // Score Pit Crew predictions (+300 pts for calling the 1st-place human finisher)
@@ -466,7 +500,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
   if (currentHeat) {
     currentHeat.status = 'completed';
     currentHeat.trackId = state.gameData.currentTrackId;
-    currentHeat.winnerId = topHuman?.id || standings[0]?.id || null;
+    currentHeat.winnerId = overallWinner?.id || null;
     currentHeat.standings = standings;
     const advanceCount = Math.max(1, Math.ceil(humanRows.length / 2));
     currentHeat.qualifiers = humanRows.slice(0, advanceCount).map((r) => r.id);
@@ -491,6 +525,7 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     }
   }
 
+  const cup = cupStandings(state, gained);
   const deadline = Date.now() + RESULTS_SECONDS * 1000;
   state.hostData = {
     phase: 'RACE_RESULTS',
@@ -504,8 +539,11 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     isFinalHeat,
     trackId: state.gameData.currentTrackId,
     standings,
-    cupStandings: cupStandings(state, gained),
+    cupStandings: cup,
     fastestLap: activeSim?.stats?.fastestLap || null,
+    winnerId: overallWinner?.id || null,
+    winnerName: overallWinner?.name || 'Winner',
+    winnerIsBot: Boolean(overallWinner?.isBot),
     topHumanId: topHuman?.id || null,
     correctPredictors,
     qualifiers: currentHeat?.qualifiers || [],
@@ -523,18 +561,22 @@ function finalizeRaceResults(state: GameState, sim?: KartRaceSim) {
     state.playerData[pid] = {
       phase: 'RACE_RESULTS',
       heatName: state.gameData.activeHeatName,
+      isFinalHeat,
+      heats,
       raceNumber: state.gameData.raceNumber,
       totalRaces: cfg.format === 'grand-prix' ? cfg.totalRaces : heats.length,
       myRank: myRow?.rank || null,
       myDnf: Boolean(myRow?.dnf),
       myTimeMs: myRow?.timeMs ?? null,
-      myCupRank: cupStandings(state, gained).findIndex((row) => row.id === pid) + 1,
+      myCupRank: cup.findIndex((row) => row.id === pid) + 1,
       myCupScore: state.players[pid]?.score || 0,
       myPoints: myRow?.points || 0,
       qualified,
       wonPrediction,
       predictionBonus: wonPrediction ? PIT_CREW_PREDICT_BONUS : 0,
-      topHumanName: topHuman?.name || standings[0]?.name || 'Winner',
+      winnerName: overallWinner?.name || 'Winner',
+      winnerIsBot: Boolean(overallWinner?.isBot),
+      topHumanName: overallWinner?.name || topHuman?.name || 'Winner',
       fastestLap: activeSim?.stats?.fastestLap || null,
       standings: standings.slice(0, 8),
     };
@@ -555,6 +597,7 @@ export const kartClashLogic = {
       aiBots: cfg.aiBots,
       raceNumber: 0,
       playedTracks: [],
+      botScores: {},
       stats: state.gameData?.stats || {},
     };
 
@@ -780,7 +823,7 @@ export const kartClashLogic = {
         if (!isHost || state.phase === 'RACING') return;
         stopKartSimulation(state.roomCode);
         state.phase = 'FINAL_RESULTS';
-        state.hostData = { message: 'Tournament Complete!' };
+        state.hostData = { message: 'Tournament Complete!', cupStandings: cupStandings(state, {}) };
         for (const pid of activeRoomPlayers(state)) {
           state.playerData[pid] = { phase: 'FINAL_RESULTS' };
         }
@@ -883,7 +926,7 @@ export const kartClashLogic = {
           const hasPending = heats.some((h) => h.status === 'pending');
           if (currentHeat?.stage === 'final' && !hasPending) {
             state.phase = 'FINAL_RESULTS';
-            state.hostData = { message: 'Tournament Concluded!' };
+            state.hostData = { message: 'Tournament Concluded!', cupStandings: cupStandings(state, {}) };
             for (const pid of activeRoomPlayers(state)) {
               state.playerData[pid] = { phase: 'FINAL_RESULTS' };
             }
@@ -894,7 +937,7 @@ export const kartClashLogic = {
         } else {
           if (state.gameData.raceNumber >= cfg.totalRaces) {
             state.phase = 'FINAL_RESULTS';
-            state.hostData = { message: 'Grand Prix Concluded!' };
+            state.hostData = { message: 'Grand Prix Concluded!', cupStandings: cupStandings(state, {}) };
             for (const pid of activeRoomPlayers(state)) {
               state.playerData[pid] = { phase: 'FINAL_RESULTS' };
             }

@@ -304,8 +304,8 @@ a.ll-row:hover strong { color: var(--accent-light); }
 /* Phone: the setup and the views take turns */
 .ll-tabs .ll-phone-only, .ll-phone-summary { display: none; }
 @media (max-width: 960px) {
-  .ll-bench, .ll-bench.has-code { display: block; width: auto; margin-left: 0; }
-  .ll-nav:has(+ .ll-bench) { width: auto; margin-left: 0; }
+  .ll-bench, .ll-bench.has-code, .ll-builder { display: block; width: auto; margin-left: 0; }
+  .ll-nav:has(+ .ll-bench), .ll-nav:has(+ .ll-builder) { width: auto; margin-left: 0; }
   .ll-panel { position: static; max-height: none; margin-top: 0.9rem; }
   .ll-panel-body { overflow: visible; }
   .ll-bench { display: flex; flex-direction: column; }
@@ -430,8 +430,9 @@ a.ll-row:hover strong { color: var(--accent-light); }
 .ll-measure-info .ll-prose { font-size: 0.88rem; }
 
 /* Charts */
-.ll-chart { position: relative; width: 100%; }
+.ll-chart { position: relative; width: 100%; min-width: 0; max-width: 100%; }
 .ll-chart + .ll-chart { margin-top: 0.15rem; }
+.ll-chart-scroll { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .ll-chart svg { display: block; overflow: visible; touch-action: pan-y; }
 .ll-grid line { stroke: var(--surface-border); stroke-width: 1; opacity: 0.65; }
 .ll-ticks text { fill: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }

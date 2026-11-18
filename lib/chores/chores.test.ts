@@ -1,6 +1,11 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { addMonths, applyChoreAction, ChoreInputError, emptyChoresData, nextDue, normalizeChoresData, type ChoreAction, type ChoresData } from './chores';
+import { choresFile, householdFor, joinHousehold, leaveHousehold, setInvite } from './households';
+import { updateJson } from '@/lib/json-store';
 import { choreStreak, choreXp, chorePlant, CHORE_XP, dueStatus, weekBoard } from './stats';
 
 const TODAY = '2026-10-20'; // a Tuesday
@@ -118,4 +123,28 @@ test('normalize and import: drop malformed data, never overwrite existing chores
   assert.equal(new Set(account.chores.map((c) => c.id)).size, 2);
   assert.equal(account.log[0].by, 'noah');
   assert.equal(account.log[0].choreId, account.chores[1].id);
+});
+
+test('leaveHousehold unassigns chores assigned to the leaving member', async () => {
+  const orig = process.cwd();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'chores-leave-'));
+  try {
+    process.chdir(dir);
+    await householdFor('alice');
+    const invited = await setInvite('alice', true);
+    await joinHousehold('bob', invited.invite!, TODAY);
+    await updateJson(choresFile(invited.id), emptyChoresData(), (data) => {
+      const target = normalizeChoresData(data, TODAY);
+      applyChoreAction(target, { type: 'save', chore: { name: 'Dishes', assignee: 'bob' } }, TODAY, () => 'ch1');
+      applyChoreAction(target, { type: 'save', chore: { name: 'Trash', assignee: 'alice' } }, TODAY, () => 'ch2');
+      Object.assign(data, target);
+    });
+    await leaveHousehold('bob');
+    const after = JSON.parse(await fs.readFile(choresFile(invited.id), 'utf8')) as ChoresData;
+    assert.equal(after.chores.find((c) => c.id === 'ch1')?.assignee, null);
+    assert.equal(after.chores.find((c) => c.id === 'ch2')?.assignee, 'alice');
+  } finally {
+    process.chdir(orig);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

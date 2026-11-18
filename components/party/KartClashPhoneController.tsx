@@ -12,6 +12,7 @@ interface Props {
   roomCode: string;
   playerKey: string;
   hostId: string | null;
+  isVip?: boolean;
   sendAction: (action: Record<string, any>) => void;
   sendHostAction: (action: Record<string, any>) => void;
 }
@@ -28,7 +29,9 @@ const PIT_EMOJIS = REACTIONS.slice(0, 6);
 
 const buzz = (pattern: number | number[]) => {
   try {
-    navigator.vibrate?.(pattern);
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(pattern);
+    }
   } catch {
     // Not every browser allows vibration
   }
@@ -81,21 +84,52 @@ export default function KartClashPhoneController({
   roomCode,
   playerKey,
   hostId,
+  isVip,
   sendAction,
   sendHostAction,
 }: Props) {
   const phase: string = state?.phase || '';
   const pd = state?.data || {};
-  const hd = state?.hostData || {};
+  const hd = state?.publicData || state?.hostData || {};
   const meId: string = state?.me?.id || '';
+  const canVip = Boolean(
+    isVip === true || (state?.me && ((state?.vipId && state.me.id === state.vipId) || state.me.isVip === true)),
+  );
   const raceId: string = pd?.raceId || hd?.raceId || '';
+  const controlStorageKey = roomCode && (meId || playerKey) ? `kart-control:${roomCode}:${meId || playerKey}` : '';
 
   // Tilt: `tiltLive` means real sensor events are arriving, not just that permission was given
   const [gyroStatus, setGyroStatus] = useState<'unknown' | 'granted' | 'denied' | 'unsupported'>('unknown');
   const [tiltLive, setTiltLive] = useState(false);
   const [noSensor, setNoSensor] = useState(false);
   const [sensitivity, setSensitivity] = useState(1);
-  const [preferTouch, setPreferTouch] = useState(false);
+  const [preferTouch, setPreferTouch] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || !controlStorageKey) return false;
+    try {
+      return window.sessionStorage.getItem(controlStorageKey) === 'touch';
+    } catch {
+      return false;
+    }
+  });
+  const setControlMode = useCallback((touch: boolean) => {
+    setPreferTouch(touch);
+    if (typeof window === 'undefined' || !controlStorageKey) return;
+    try {
+      window.sessionStorage.setItem(controlStorageKey, touch ? 'touch' : 'tilt');
+    } catch {
+      // Storage unavailable: control mode stays in memory
+    }
+  }, [controlStorageKey]);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !controlStorageKey) return;
+    try {
+      const saved = window.sessionStorage.getItem(controlStorageKey);
+      if (saved === 'touch') setPreferTouch(true);
+      else if (saved === 'tilt') setPreferTouch(false);
+    } catch {
+      // Storage unavailable
+    }
+  }, [controlStorageKey]);
   const [hasFinePointer, setHasFinePointer] = useState(false);
   const [isIosSafari, setIsIosSafari] = useState(false);
   const [screenShortSide, setScreenShortSide] = useState(0);
@@ -330,7 +364,7 @@ export default function KartClashPhoneController({
       setGyroStatus('unsupported');
       return;
     }
-    setPreferTouch(false);
+    setControlMode(false);
     const doe = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> };
     if (typeof doe.requestPermission === 'function') {
       try {
@@ -344,7 +378,7 @@ export default function KartClashPhoneController({
     } else {
       setGyroStatus('granted');
     }
-  }, [tryLockLandscape]);
+  }, [tryLockLandscape, setControlMode]);
 
   // Read the wheel angle from gravity. Raw `beta` swings wildly when a phone is held near
   // upright like a real steering wheel; the gravity vector stays steady at any hold angle.
@@ -633,7 +667,7 @@ export default function KartClashPhoneController({
     const myHeatName: string | null = pd?.myHeatName || null;
 
     const handleRacerTap = (pid: string, heatId: string) => {
-      if (!hostId) return;
+      if (!canVip) return;
       if (!selectedRacerId) {
         setSelectedRacerId(pid);
       } else if (selectedRacerId === pid) {
@@ -707,7 +741,7 @@ export default function KartClashPhoneController({
         )}
 
         {/* VIP Host Tournament Controls on Phone */}
-        {hostId && (
+        {canVip && (
           <div
             style={{
               background: 'rgba(15,23,42,0.85)',
@@ -829,7 +863,7 @@ export default function KartClashPhoneController({
               <div
                 key={heat.id}
                 onClick={() => {
-                  if (hostId && selectedRacerId && heat.status === 'pending') {
+                  if (canVip && selectedRacerId && heat.status === 'pending') {
                     sendHostAction({ type: 'ASSIGN_HEAT_PLAYER', targetPlayerId: selectedRacerId, targetHeatId: heat.id });
                     setSelectedRacerId(null);
                   }
@@ -893,7 +927,7 @@ export default function KartClashPhoneController({
                           color: '#f8fafc',
                           fontWeight: 700,
                           fontSize: '0.78rem',
-                          cursor: hostId && heat.status === 'pending' ? 'pointer' : 'default',
+                          cursor: canVip && heat.status === 'pending' ? 'pointer' : 'default',
                         }}
                       >
                         <span>{p.avatar || '🏎️'}</span>
@@ -903,7 +937,7 @@ export default function KartClashPhoneController({
                   })}
                 </div>
 
-                {hostId && heat.status === 'pending' && (heat.playerIds?.length || 0) > 0 && (
+                {canVip && heat.status === 'pending' && (heat.playerIds?.length || 0) > 0 && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1148,7 +1182,7 @@ export default function KartClashPhoneController({
           </div>
         )}
 
-        {hostId && (
+        {canVip && (
           <button
             type="button"
             onClick={() => {
@@ -1737,12 +1771,12 @@ export default function KartClashPhoneController({
                 <button type="button" aria-label="Center steering" onClick={recenterGyro} style={{ ...smallBtn, border: '1px solid rgba(56,189,248,0.45)', background: 'rgba(56,189,248,0.14)', color: '#7dd3fc' }}>🎯</button>
                 <button type="button" aria-label="Invert tilt" onClick={flipTilt} style={smallBtn}>⇄</button>
                 <button type="button" aria-label="Tilt sensitivity" onClick={cycleSensitivity} style={{ ...smallBtn, flex: 1.6 }}>🎚️ {TILT_SENSITIVITY[sensitivity].label}</button>
-                <button type="button" aria-label="Use the touch pad" onClick={() => setPreferTouch(true)} style={smallBtn}>👆</button>
+                <button type="button" aria-label="Use the touch pad" onClick={() => setControlMode(true)} style={smallBtn}>👆</button>
               </>
             ) : showTiltPrompt ? (
-              <button type="button" onClick={() => setPreferTouch(true)} style={smallBtn}>👆 Use the touch pad instead</button>
+              <button type="button" onClick={() => setControlMode(true)} style={smallBtn}>👆 Use the touch pad instead</button>
             ) : tiltLive || needsTiltTap ? (
-              <button type="button" onClick={() => (tiltLive ? setPreferTouch(false) : enableGyro())} style={{ ...smallBtn, background: 'rgba(250,204,21,0.16)', border: '1px solid rgba(250,204,21,0.5)', color: '#fde047' }}>🛞 Use tilt</button>
+              <button type="button" onClick={() => (tiltLive ? setControlMode(false) : enableGyro())} style={{ ...smallBtn, background: 'rgba(250,204,21,0.16)', border: '1px solid rgba(250,204,21,0.5)', color: '#fde047' }}>🛞 Use tilt</button>
             ) : (
               <span style={{ fontSize: '0.62rem', color: '#94a3b8', fontWeight: 700, textAlign: 'center', lineHeight: 1.15 }}>
                 {gyroStatus === 'denied'
@@ -1765,7 +1799,7 @@ export default function KartClashPhoneController({
                 📣
               </button>
             )}
-            {hostId && (
+            {canVip && (
               <button type="button" onClick={() => sendHostAction({ type: 'FINISH_KART_RACE' })} style={{ ...smallBtn, flex: '0 0 auto', border: '1px solid rgba(250,204,21,0.45)', background: 'rgba(250,204,21,0.12)', color: '#fde047' }}>⏭️</button>
             )}
           </div>
@@ -1787,7 +1821,7 @@ export default function KartClashPhoneController({
             ✅ You&rsquo;re ready! Waiting for the others...
           </div>
         )}
-        {waiting && hostId && (
+        {waiting && canVip && (
           <button
             type="button"
             onClick={() => sendHostAction({ type: 'FORCE_START_COUNTDOWN' })}
@@ -1913,7 +1947,7 @@ export default function KartClashPhoneController({
           </div>
         )}
 
-        {hostId && (
+        {canVip && (
           <button
             type="button"
             onClick={() => sendHostAction({ type: 'NEXT_KART_STEP' })}

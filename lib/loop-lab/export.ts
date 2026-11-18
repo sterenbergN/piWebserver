@@ -1477,7 +1477,7 @@ export function pidCompactParams(proc: ProcessDef, config: ControllerConfig, raw
   }
   if (config.kind === 'adrc') {
     return [
-      { name: 'PID_Compact', value: 'not applicable', note: 'ADRC isn\'t a PID: use the exported LL_Adrc (an observer of ${config.order + 1} states and a gain row) in a cyclic interrupt OB. Some drives and motion libraries ship ADRC-style disturbance observers; in TIA it is your own SCL.' },
+      { name: 'PID_Compact', value: 'not applicable', note: `ADRC isn't a PID: use the exported LL_Adrc (an observer of ${config.order + 1} states and a gain row) in a cyclic interrupt OB. Some drives and motion libraries ship ADRC-style disturbance observers; in TIA it is your own SCL.` },
       { name: 'Cycle', value: real(p.Ts), note: 'The observer is discretized for this cycle: a different cycle needs a new export.' },
       { name: 'b₀', value: real(config.b0), note: `The plant\'s high-frequency gain (%/s${config.order === 2 ? '²' : ''} per %). Within a factor of two is usually enough; too small makes the loop aggressive, too large sluggish.` },
       { name: 'ω_c / ω_o', value: `${real(config.wc)} / ${real(config.wo)} rad/s`, note: 'Loop and observer bandwidths: the two tuning knobs. Keep ω_o 3–10× ω_c and well below 1/Ts.' },

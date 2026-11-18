@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
-import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, warmupSets } from '@/lib/workout/session-insights';
+import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, restTargetSeconds, warmupSets } from '@/lib/workout/session-insights';
 import { calculatePlates, getPossibleWeights, stepWeight } from '@/lib/workout/equipment';
 import { exerciseKey, exerciseKeyFromName, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { formatProjection, goalLabel, goalProgress, goalsFor, setMeetsGoal, type Goal } from '@/lib/workout/goals';
@@ -12,7 +12,7 @@ import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-qu
 import { rankSwapCandidates } from '@/lib/workout/related-exercises';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
 import { vibrate } from '@/lib/workout/device-prefs';
-import { buildSavePayload, estimateCalories, getBaselineReps, newPlanId, uidOf, workoutTotals, type LoggedSet, type WarmupSet } from '@/lib/workout/tracker-utils';
+import { buildSavePayload, computeSessionAwards, estimateCalories, getBaselineReps, newPlanId, uidOf, workoutTotals, type LoggedSet, type SessionPR, type WarmupSet } from '@/lib/workout/tracker-utils';
 import { useSitePopup } from '@/components/SitePopup';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
 import SetEditSheet from '@/components/workout/SetEditSheet';
@@ -26,8 +26,13 @@ import SetLogger from './tracker/SetLogger';
 import FinishScreen from './tracker/FinishScreen';
 import { SupersetSheet, SwapLiftSheet, WorkoutListSheet, WorkoutMenu } from './tracker/Sheets';
 
-type PR = { name: string; e1rm: number; previous: number; weight: number; reps: number };
+type RestSnapshot = { timestamp: number; liftKey: string; defaultSeconds: number };
 type Toast = { text: string; tone: 'quiet' | 'win'; undo?: () => void };
+
+function localTodayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 type TrackerProps = {
   plan: any;
@@ -62,7 +67,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const [drafts, setDrafts] = useState<Record<string, { weight: number; reps: number }>>(resumeState?.drafts || {});
   const [intensity, setIntensity] = useState<number>(resumeState?.intensitySlider ?? user?.intensityFactor ?? 1.0);
   const [lastSetAt, setLastSetAt] = useState<number | null>(resumeState?.lastSetAt ?? null);
-  const [sessionPRs, setSessionPRs] = useState<Record<string, PR>>(resumeState?.sessionPRs || {});
+  const [restSnapshot, setRestSnapshot] = useState<RestSnapshot | null>(resumeState?.restSnapshot ?? null);
+  const [sessionPRs, setSessionPRs] = useState<Record<string, SessionPR>>(resumeState?.sessionPRs || {});
   const [goalsHit, setGoalsHit] = useState<string[]>(resumeState?.goalsHit || []);
   const [finished, setFinished] = useState(false);
 
@@ -128,11 +134,13 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const liftDone = activeLogs.length > 0 && activeRemaining === 0 && !(partner && partnerRemaining > 0);
   const nextLiftIndex = liftDone ? findNextUnfinished(safeLiftIndex) : null;
   const { volume: totalVolume, sets: totalSets } = workoutTotals(logs);
+  const activeRestLocked = !!(lastSetAt && restSnapshot && restSnapshot.timestamp === lastSetAt);
   const rest = useRestTimer({
     lastSetAt,
     reps: suggestedReps,
+    defaultSeconds: activeRestLocked ? restSnapshot.defaultSeconds : undefined,
     enabled: totalSets > 0 && !finished,
-    liftKey: activeLift ? exerciseKey(activeLift) : '',
+    liftKey: activeRestLocked ? restSnapshot.liftKey : (activeLift ? exerciseKey(activeLift) : ''),
     saved: user?.restTimes,
     syncToServer: !!user?.id && user.id !== DEMO_USER_ID,
   });
@@ -185,6 +193,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
         liftElapsedSecsMap,
         intensitySlider: intensity,
         lastSetAt,
+        restSnapshot,
         sessionPRs,
         goalsHit,
         timestamp: Date.now(),
@@ -192,7 +201,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     } catch {
       // Storage full or unavailable — the workout continues, it just can't be resumed.
     }
-  }, [logs, warmupsDone, drafts, safeLiftIndex, localPlan, workoutStartTime, finished, elapsedSecs, liftElapsedSecsMap, intensity, shared.sessionId, shared.code, user?.id, lastSetAt, sessionPRs, goalsHit]);
+  }, [logs, warmupsDone, drafts, safeLiftIndex, localPlan, workoutStartTime, finished, elapsedSecs, liftElapsedSecsMap, intensity, shared.sessionId, shared.code, user?.id, lastSetAt, restSnapshot, sessionPRs, goalsHit]);
 
   // ─── Partner mode sync ──────────────────────────────────────────────────────
   const progressUpdate = (status?: ProgressUpdate['status']): ProgressUpdate => {
@@ -237,10 +246,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const logSet = (rir: number) => {
     if (!activeLift) return;
     const newLog: LoggedSet = { weight: currentWeight, reps: currentReps, plannedWeight: suggestedWeight, plannedReps: suggestedReps, rir, completed: true, timestamp: Date.now() };
-    const before = { logs, lastSetAt, sessionPRs, goalsHit, index: safeLiftIndex };
+    const before = { logs, lastSetAt, restSnapshot, sessionPRs, goalsHit, index: safeLiftIndex };
     const undo = () => {
       setLogs(before.logs);
       setLastSetAt(before.lastSetAt);
+      setRestSnapshot(before.restSnapshot);
       setSessionPRs(before.sessionPRs);
       setGoalsHit(before.goalsHit);
       setActiveLiftIndex(before.index);
@@ -250,6 +260,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     const updatedLogs = { ...logs, [activeUid]: [...activeLogs, newLog] };
     setLogs(updatedLogs);
     setLastSetAt(newLog.timestamp!);
+    setRestSnapshot({
+      timestamp: newLog.timestamp!,
+      liftKey: exerciseKey(activeLift),
+      defaultSeconds: restTargetSeconds(suggestedReps),
+    });
     rest.unlock();
     vibrate(30);
 
@@ -285,12 +300,70 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     return { ...prev, [activeUid]: has ? list.filter((w) => !(w.weight === set.weight && w.reps === set.reps)) : [...list, set] };
   });
 
+  const recomputeAwards = (planLifts: any[], updatedLogs: Record<string, LoggedSet[]>) => {
+    const awards = computeSessionAwards(planLifts, updatedLogs, bestBefore, goals);
+    setSessionPRs(awards.sessionPRs);
+    setGoalsHit(awards.goalsHit);
+  };
+
   const updateSet = (index: number, set: LoggedSet) => {
-    setLogs((prev) => ({ ...prev, [activeUid]: (prev[activeUid] || []).map((s, i) => (i === index ? set : s)) }));
+    const oldList = logs[activeUid] || [];
+    const oldSet = oldList[index];
+    const updatedLogs = { ...logs, [activeUid]: oldList.map((s, i) => (i === index ? set : s)) };
+    setLogs(updatedLogs);
+    if (oldSet && (oldSet.weight !== set.weight || oldSet.reps !== set.reps)) {
+      const shownWeight = drafts[activeUid]?.weight ?? suggestedWeight;
+      const shownReps = drafts[activeUid]?.reps ?? suggestedReps;
+      const syncWeight = shownWeight === oldSet.weight && set.weight !== oldSet.weight;
+      const syncReps = shownReps === oldSet.reps && set.reps !== oldSet.reps;
+      if (syncWeight || syncReps) {
+        setDrafts((prev) => ({
+          ...prev,
+          [activeUid]: {
+            weight: syncWeight ? set.weight : (prev[activeUid]?.weight ?? suggestedWeight),
+            reps: syncReps ? set.reps : (prev[activeUid]?.reps ?? suggestedReps),
+          },
+        }));
+      }
+    }
+    recomputeAwards(localPlan.lifts, updatedLogs);
+    setToast(null);
     setEditingSetIndex(null);
   };
   const deleteSet = (index: number) => {
-    setLogs((prev) => ({ ...prev, [activeUid]: (prev[activeUid] || []).filter((_, i) => i !== index) }));
+    const oldList = logs[activeUid] || [];
+    const oldSet = oldList[index];
+    const nextList = oldList.filter((_, i) => i !== index);
+    const updatedLogs = { ...logs, [activeUid]: nextList };
+    setLogs(updatedLogs);
+    if (oldSet) {
+      const shownWeight = drafts[activeUid]?.weight ?? suggestedWeight;
+      if (shownWeight === oldSet.weight) {
+        const fallbackWeight = nextList.length > 0 ? nextList[nextList.length - 1].weight : suggestedWeight;
+        setDrafts((prev) => {
+          const next = { ...prev };
+          const nextReps = next[activeUid]?.reps ?? suggestedReps;
+          if (fallbackWeight === suggestedWeight && nextReps === suggestedReps) {
+            delete next[activeUid];
+          } else {
+            next[activeUid] = { weight: fallbackWeight, reps: nextReps };
+          }
+          return next;
+        });
+      }
+      if (oldSet.timestamp && oldSet.timestamp === lastSetAt) {
+        let latest: number | null = null;
+        for (const list of Object.values(updatedLogs)) {
+          for (const s of list || []) {
+            if (typeof s.timestamp === 'number' && (latest === null || s.timestamp > latest)) latest = s.timestamp;
+          }
+        }
+        setLastSetAt(latest);
+        if (latest === null) setRestSnapshot(null);
+      }
+    }
+    recomputeAwards(localPlan.lifts, updatedLogs);
+    setToast(null);
     setEditingSetIndex(null);
   };
 
@@ -348,11 +421,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
       // A superset needs both halves; unpair the partner of a removed lift.
       .map((entry: any) => (lift.supersetId && entry.supersetId === lift.supersetId ? { ...entry, supersetId: null } : entry));
     setLocalPlan({ ...localPlan, lifts: remaining });
-    setLogs((prev) => {
-      const next = { ...prev };
-      delete next[uid];
-      return next;
-    });
+    const nextLogs = { ...logs };
+    delete nextLogs[uid];
+    setLogs(nextLogs);
+    recomputeAwards(remaining, nextLogs);
     // Keep pointing at the same lift when an earlier one is removed.
     setActiveLiftIndex((prev) => (index < prev ? prev - 1 : Math.min(prev, remaining.length - 1)));
   };
@@ -375,7 +447,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     if (saving) return;
     setSaving(true);
     setSaveError('');
-    const payload = { ...buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: !user }), notes: notes.trim() || undefined };
+    const payload = { ...buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: !user }), localDate: localTodayStr(), notes: notes.trim() || undefined };
     if (Object.keys(payload.logs).length === 0) {
       setSaveError('No sets were logged, so there is nothing to save.');
       setSaving(false);
@@ -520,7 +592,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
       />
       {offline && <p className="workout-offline-note">📡 Offline — using saved data. Sets are kept on this phone and saved when you&apos;re back online.</p>}
 
-      <div style={{ flex: 1, padding: compact ? '0.65rem' : '1rem', paddingBottom: compact ? '1.25rem' : '2rem' }}>
+      <div style={{ flex: 1, padding: compact ? '0.5rem' : '1rem', paddingBottom: compact ? '1.25rem' : '2rem' }}>
         <LiftCard
           lift={activeLift}
           index={safeLiftIndex}

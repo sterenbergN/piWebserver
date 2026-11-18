@@ -10,7 +10,7 @@ import { gameInfo, type GameId } from '@/lib/games/registry';
 
 export type Theme = { bg: string; fg: string; muted: string; accent: string; accentLight: string; danger: string; success: string; border: string };
 
-/** The site's colours (they follow light/dark mode), read when the game starts. */
+/** The site's colours (they follow light/dark mode), read when the game starts or theme changes. */
 export function readTheme(): Theme {
   const css = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
@@ -19,6 +19,22 @@ export function readTheme(): Theme {
     accent: v('--accent', '#5e81ac'), accentLight: v('--accent-light', '#88c0d0'), danger: v('--danger', '#e0707a'),
     success: v('--success', '#a3be8c'), border: v('--surface-border', 'rgba(255,255,255,0.12)'),
   };
+}
+
+/** Keep cached theme colours in sync with Light/Dark toggles and redraw immediately. */
+export function useCanvasTheme(themeRef: React.MutableRefObject<Theme | null>, onChange: () => void) {
+  const cb = useRef(onChange);
+  useEffect(() => { cb.current = onChange; });
+  useEffect(() => {
+    themeRef.current = readTheme();
+    cb.current();
+    const obs = new MutationObserver(() => {
+      themeRef.current = readTheme();
+      cb.current();
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+    return () => obs.disconnect();
+  }, [themeRef]);
 }
 
 /** Size a canvas for its logical width × height at the screen's pixel density; returns its 2D context. */
@@ -126,7 +142,10 @@ export function GameFrame({ game, score, stats, over, overTitle, onRestart, aspe
   // Enter starts a new game from the game-over screen (unless you're typing a name).
   useEffect(() => {
     if (!over || eligible) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); onRestart(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === 'Enter') { e.preventDefault(); onRestart(); }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [over, eligible, onRestart]);

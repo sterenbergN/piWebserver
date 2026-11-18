@@ -234,7 +234,7 @@ export const CONTROLLER_KINDS: ControllerMeta[] = [
   { kind: 'schedule', name: 'Gain-scheduled PID', short: 'Gain scheduling', rung: 3, icon: '🗺️' },
   { kind: 'characterized', name: 'Characterized PID', short: 'Characterization', rung: 4, icon: '📐' },
   { kind: 'feedforward', name: 'PID with feedforward', short: 'Feedforward', rung: 5, icon: '⏩' },
-  { kind: 'cascade', name: 'Cascade control', short: 'Cascade', rung: 6, icon: '🪜' },
+  { kind: 'cascade', name: 'Cascade control', short: 'Cascade', rung: 6, icon: '🎚️' },
   { kind: 'smith', name: 'Smith predictor', short: 'Smith predictor', rung: 7, icon: '🔮' },
   { kind: 'override', name: 'Override (selector) control', short: 'Override', rung: 8, icon: '🚧' },
   { kind: 'ratio', name: 'Ratio control', short: 'Ratio', rung: 9, icon: '⚗️' },
@@ -583,7 +583,7 @@ export function createController(proc: ProcessDef, config: ControllerConfig, mod
   const ffs = config.kind === 'feedforward' ? config.ff.map((t) => new FeedforwardCore(t, Ts)) : [];
   let last: ControllerInternals = { P: 0, I: 0, D: 0, Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td, e: 0, sp2: NaN, ff: 0, pred: NaN, alt: NaN };
   const gains = (sp: number, pv: number) =>
-    config.kind === 'schedule' ? scheduledGains(config.points, config.on === 'sp' ? sp : pv) : { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
+    config.kind === 'schedule' && config.points.length > 0 ? scheduledGains(config.points, config.on === 'sp' ? sp : pv) : { Kc: pid.Kc, Ti: pid.Ti, Td: pid.Td };
 
   return {
     step(sp, pv, aux) {

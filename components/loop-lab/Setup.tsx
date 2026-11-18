@@ -295,7 +295,10 @@ export function ControllerEditor({ proc, params, config, onChange }: {
                 <option value="sp">Setpoint (SP)</option>
               </select>
             </label>
-            <ScheduleTable proc={proc} points={config.points} onChange={(points) => onChange({ ...config, points })} />
+            <ScheduleTable proc={proc} points={config.points} onChange={(points) => {
+              const p0 = points[0];
+              onChange({ ...config, points, ...(p0 ? { pid: { ...config.pid, Kc: p0.Kc, Ti: p0.Ti, Td: p0.Td } } : {}) });
+            }} />
             <PidFields pid={config.pid} gains={false} onChange={(pid) => onChange({ ...config, pid })} />
           </>
         )}

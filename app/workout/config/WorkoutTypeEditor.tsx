@@ -43,6 +43,7 @@ export default function WorkoutTypeEditor() {
   const { confirm, popup } = useSitePopup();
   const [types, setTypes] = useState<WorkoutType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [userId, setUserId] = useState('');
   // null = closed; 'new' = creating; otherwise the id being edited
@@ -88,7 +89,9 @@ export default function WorkoutTypeEditor() {
   };
 
   const handleSave = async () => {
-    if (!draft.name?.trim()) return;
+    if (!draft.name?.trim() || saving) return;
+    setSaving(true);
+    setError('');
     try {
       if (draft.id) {
         const data = await requestJson('/api/workout/types', { method: 'PUT', body: JSON.stringify(draft) });
@@ -100,6 +103,8 @@ export default function WorkoutTypeEditor() {
       closeEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save workout type.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -263,9 +268,10 @@ export default function WorkoutTypeEditor() {
         </div>
       </label>
 
+      {error && <p className="workout-error" style={{ margin: '0.5rem 0' }}>{error}</p>}
       <div className="workout-btn-row" style={{ marginTop: '0.5rem' }}>
-        <button className="workout-btn-primary" disabled={!draft.name?.trim()} onClick={handleSave}>Save</button>
-        <button className="btn btn-secondary" onClick={closeEditor}>Cancel</button>
+        <button className="workout-btn-primary" disabled={!draft.name?.trim() || saving} onClick={handleSave}>{saving ? 'Saving…' : 'Save'}</button>
+        <button className="btn btn-secondary" disabled={saving} onClick={closeEditor}>Cancel</button>
       </div>
     </div>
   );
@@ -291,7 +297,7 @@ export default function WorkoutTypeEditor() {
               {type.muscles.map((muscle) => <span key={muscle} className="workout-pill">{muscle}</span>)}
             </div>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--muted)' }}>
-              Target: {type.sets} Sets • {type.minReps}-{type.maxReps} Reps (Intensity: {type.intensity}%) • {type.isPublic ? 'Published' : 'Private'}
+              Target: {type.sets} Set{type.sets === 1 ? '' : 's'} • {type.minReps}-{type.maxReps} Reps (Intensity: {type.intensity}%) • {type.isPublic ? 'Published' : 'Private'}
             </p>
             {(type.fixedLifts?.length || 0) > 0 && (
               <p className="workout-hint" style={{ margin: '0.25rem 0 0' }}>📌 {type.fixedLifts!.map((ref) => ref.name).join(', ')} + random fill</p>

@@ -50,6 +50,7 @@ export function useChores() {
   const modeRef = useRef(mode);
   const queue = useRef(Promise.resolve());
   const pending = useRef(0);
+  const reloadOnError = useRef(false);
 
   const commit = (next: ChoresData) => { dataRef.current = next; setData(next); };
 
@@ -128,11 +129,13 @@ export function useChores() {
         if (pending.current === 1) commit(normalizeChoresData(body.data, today));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Couldn’t save that change.');
-        pending.current--;
-        await load();
-        pending.current++;
+        reloadOnError.current = true;
       } finally {
         pending.current--;
+        if (pending.current === 0 && reloadOnError.current) {
+          reloadOnError.current = false;
+          await load(true);
+        }
       }
     });
     return true;
