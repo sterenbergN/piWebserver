@@ -23,6 +23,8 @@ type Props = {
   wantsSnapshot?: boolean;
   /** Load straight away (e.g. just after the model was saved, so its still gets taken). */
   autoStart?: boolean;
+  /** Allow capturing a still regardless of model file size (e.g. manual capture from Edit dialog). */
+  forceSnapshot?: boolean;
 };
 
 /**
@@ -32,16 +34,18 @@ type Props = {
  * three.js) only download when someone wants the 3D view. Rendering pauses
  * while the viewer is off screen.
  */
-export default function ModelViewer({ src, name, size, poster: savedPoster, onSnapshot: saveSnapshot, wantsSnapshot, autoStart }: Props) {
+export default function ModelViewer({ src, name, size, poster: savedPoster, onSnapshot: saveSnapshot, wantsSnapshot, autoStart, forceSnapshot }: Props) {
+  const mvRef = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const controls = useRef<Controls | null>(null);
   const large = (size ?? 0) > AUTO_LOAD_BYTES;
+  const allowSnapshot = large || !!forceSnapshot;
   // Stills are only for big models: small ones are spinning before a picture would matter.
   const poster = large ? savedPoster : undefined;
-  const onSnapshot = large ? saveSnapshot : undefined;
+  const onSnapshot = allowSnapshot ? saveSnapshot : undefined;
   // The latest snapshot wishes, read once the model has loaded.
-  const snap = useRef({ onSnapshot, wantsSnapshot: large && wantsSnapshot });
-  snap.current = { onSnapshot, wantsSnapshot: large && wantsSnapshot };
+  const snap = useRef({ onSnapshot, wantsSnapshot: allowSnapshot && wantsSnapshot });
+  snap.current = { onSnapshot, wantsSnapshot: allowSnapshot && wantsSnapshot };
   const [snapping, setSnapping] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   /** Each load (or retry) bumps this; 0 until the model is asked for. */
@@ -219,18 +223,20 @@ export default function ModelViewer({ src, name, size, poster: savedPoster, onSn
   };
 
   const fullscreen = () => {
-    const el = box.current?.parentElement;
+    const el = mvRef.current;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else el.requestFullscreen?.().catch(() => {});
   };
 
   return (
-    <div className="mv">
-      <div ref={box} className="mv-stage" aria-label={`3D view of ${name}`} role="img">
-        {poster && status !== 'ready' && (
-          <img className="mv-poster" src={mediaSrc(poster, 960)} srcSet={mediaSrcSet(poster, [640, 960, 1280])} sizes="(max-width: 700px) 100vw, 420px" alt={`${name} (still picture)`} loading="lazy" decoding="async" />
-        )}
+    <div ref={mvRef} className="mv">
+      <div className="mv-stage">
+        <div ref={box} className="mv-canvas-host" aria-label={`3D view of ${name}`} role="img">
+          {poster && status !== 'ready' && (
+            <img className="mv-poster" src={mediaSrc(poster, 960)} srcSet={mediaSrcSet(poster, [640, 960, 1280])} sizes="(max-width: 700px) 100vw, 420px" alt="" aria-hidden="true" loading="lazy" decoding="async" />
+          )}
+        </div>
         {status === 'idle' && (poster ? (
           <button type="button" className="mv-start has-poster" onClick={load} aria-label={`Open the 3D view of ${name}`}>
             <span className="mv-play"><span aria-hidden>🧊</span> View in 3D<small>{size ? ` · ${formatBytes(size)}` : ''}</small></span>

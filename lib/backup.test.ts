@@ -98,3 +98,40 @@ test('checkBackupDrive refuses a missing drive and a same-drive folder when a se
   assert.equal(allowed.ok, true);
   assert.ok((allowed.freeBytes ?? 0) > 0);
 });
+
+test('restoreBackup never prunes the older backup currently being restored', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-prune-'));
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    await fs.mkdir('.data/workouts', { recursive: true });
+    const backupsDir = path.join(dir, 'backups');
+    const { saveBackupSettings, createBackup, listBackups, restoreBackup, defaultSettings: d } = await import('./backup');
+    await saveBackupSettings({ ...d(), dir: backupsDir, keep: 10, requireSeparateDrive: false });
+
+    await fs.writeFile('.data/workouts/history.json', '{"v":"oldest"}');
+    const madeOld = await createBackup('old');
+    const oldName = 'backup-2020-01-01-000000-old.zip';
+    await fs.rename(path.join(backupsDir, madeOld.name), path.join(backupsDir, oldName));
+
+    await fs.writeFile('.data/workouts/history.json', '{"v":"mid"}');
+    const madeMid = await createBackup('mid');
+    const midName = 'backup-2021-01-01-000000-mid.zip';
+    await fs.rename(path.join(backupsDir, madeMid.name), path.join(backupsDir, midName));
+
+    // Lower keep to 1 right before restore so pruning must keep safetyBackup + oldName while removing midName.
+    await saveBackupSettings({ ...d(), dir: backupsDir, keep: 1, requireSeparateDrive: false });
+    await fs.writeFile('.data/workouts/history.json', '{"v":"current"}');
+    const { restored, safetyBackup } = await restoreBackup(oldName);
+    assert.equal(restored, 1);
+    assert.equal(await fs.readFile('.data/workouts/history.json', 'utf-8'), '{"v":"oldest"}');
+
+    const names = (await listBackups()).map((b) => b.name);
+    assert.ok(names.includes(safetyBackup), 'safety backup is kept');
+    assert.ok(names.includes(oldName), 'restored older backup is excluded from pruning');
+    assert.ok(!names.includes(midName), 'unexcluded older backup beyond keep limit is pruned');
+  } finally {
+    process.chdir(cwd);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

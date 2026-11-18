@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { zipSync } from 'fflate';
 import { useSitePopup } from '@/components/SitePopup';
 import Lightbox from '@/components/gallery/Lightbox';
 import GalleryUploadPanel from './GalleryUploadPanel';
 import GalleryPopover from './GalleryPopover';
-import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
+import { mediaPath, mediaSrc, mediaSrcSet } from '@/lib/media-url';
 
 interface AlbumImage { src: string; caption: string; }
 interface Album { id: string; name: string; images: AlbumImage[]; albums: Album[]; }
@@ -84,6 +85,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
 
   // Picture frame
   const [frameMode, setFrameMode] = useState(false);
+  const [framePaused, setFramePaused] = useState(false);
   const [frameIndex, setFrameIndex] = useState(0);
   const [activeFrameImages, setActiveFrameImages] = useState<Photo[]>([]);
   const [frameWidth, setFrameWidth] = useState(1920);
@@ -103,6 +105,13 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
   // Download Job State
   const [downloadJobId, setDownloadJobId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ status: string, progress: number, total: number, url?: string | null, error?: string | null, startTime: number } | null>(null);
+
+  // Multi-select bulk actions
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [bulkMoveTarget, setBulkMoveTarget] = useState('');
+  const [bulkBusy, setBulkBusy] = useState<null | { kind: 'zip' | 'move' | 'delete'; done: number; total: number }>(null);
+  const [bulkNotice, setBulkNotice] = useState('');
 
   const saveSetting = (key: string, val: string) => { try { localStorage.setItem(key, val); } catch { } };
 
@@ -175,7 +184,15 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
   const albumPathMap = useMemo(() => buildAlbumPathMap(rootAlbums), [rootAlbums]);
   const flattenedAlbums = useMemo(() => Object.entries(albumPathMap).map(([id, path]) => ({ id, path })), [albumPathMap]);
 
-  const resetView = () => { setViewerIndex(null); setVisibleCount(PAGE_SIZE); window.scrollTo({ top: 0 }); };
+  useEffect(() => {
+    if (flattenedAlbums.length === 0) return;
+    if (!bulkMoveTarget || !flattenedAlbums.some(a => a.id === bulkMoveTarget)) {
+      const alt = currentAlbum ? flattenedAlbums.find(a => a.id !== currentAlbum.id) : undefined;
+      setBulkMoveTarget((alt ?? flattenedAlbums[0]).id);
+    }
+  }, [flattenedAlbums, bulkMoveTarget, currentAlbum]);
+
+  const resetView = () => { setViewerIndex(null); setVisibleCount(PAGE_SIZE); setSelectedKeys(new Set()); setBulkNotice(''); window.scrollTo({ top: 0 }); };
   const navigateInto = (album: Album) => { setBreadcrumb(prev => [...prev, album]); resetView(); };
   const navigateTo = (index: number) => { setBreadcrumb(prev => prev.slice(0, index + 1)); resetView(); };
   const navigateRoot = () => { setBreadcrumb([]); resetView(); };
@@ -187,6 +204,39 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
     if (currentAlbum) return currentAlbum.images.map(i => ({ ...i, albumId: currentAlbum.id }));
     return [];
   }, [viewMode, currentAlbum, rootAlbums]);
+
+  const photoKey = (img: Photo) => `${img.albumId}::${img.src}`;
+  const selectedPhotos = useMemo(
+    () => shownImages.filter(img => selectedKeys.has(photoKey(img))),
+    [shownImages, selectedKeys]
+  );
+
+  const togglePhotoSelection = (img: Photo) => {
+    const key = photoKey(img);
+    setBulkNotice('');
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSelectionMode = () => {
+    setBulkNotice('');
+    if (selectionMode) {
+      setSelectionMode(false);
+      setSelectedKeys(new Set());
+      return;
+    }
+    if (!currentAlbum && viewMode === 'albums') {
+      saveSetting('gal_view', 'all');
+      setViewMode('all');
+      setViewerIndex(null);
+      setVisibleCount(PAGE_SIZE);
+    }
+    setSelectionMode(true);
+  };
 
   // Frame images: if inside an album collect recursively, else all images from all
   const frameImages: Photo[] = currentAlbum ? collectAllImages(currentAlbum) : rootAlbums.flatMap(a => collectAllImages(a));
@@ -205,7 +255,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
 
   // Picture Frame Preload & Transition Fix
   useEffect(() => {
-    if (!frameMode || activeFrameImages.length === 0) return;
+    if (!frameMode || framePaused || activeFrameImages.length <= 1) return;
     let isCancelled = false;
 
     const loadAndNext = () => {
@@ -219,7 +269,11 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
 
     const timer: NodeJS.Timeout = setTimeout(loadAndNext, cycleTime);
     return () => { isCancelled = true; clearTimeout(timer); };
-  }, [frameMode, activeFrameImages, frameIndex, cycleTime, frameWidth]);
+  }, [frameMode, framePaused, activeFrameImages, frameIndex, cycleTime, frameWidth]);
+
+  const frameStep = useCallback((step: number) => {
+    setFrameIndex((i) => (activeFrameImages.length ? (i + step + activeFrameImages.length) % activeFrameImages.length : 0));
+  }, [activeFrameImages.length]);
 
   const startFrameMode = async () => {
     if (frameImages.length === 0) return;
@@ -235,19 +289,32 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
     setFrameWidth(needed <= 1280 ? 1280 : 1920);
     setActiveFrameImages(list);
     setFrameIndex(0);
+    setFramePaused(false);
     setFrameMode(true);
     setViewerIndex(null);
     try { await document.documentElement.requestFullscreen(); } catch { }
   };
-  const exitFrameMode = async () => {
+  const exitFrameMode = useCallback(async () => {
     setFrameMode(false);
+    setFramePaused(false);
     try { if (document.fullscreenElement) await document.exitFullscreen(); } catch { }
-  };
+  }, []);
   useEffect(() => {
     const handler = () => { if (!document.fullscreenElement && frameMode) setFrameMode(false); };
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
   }, [frameMode]);
+  useEffect(() => {
+    if (!frameMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); void exitFrameMode(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); frameStep(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); frameStep(-1); }
+      else if (e.key === ' ') { e.preventDefault(); setFramePaused((p) => !p); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [frameMode, exitFrameMode, frameStep]);
 
   // ── Download Polling ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -361,9 +428,164 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
 
   const chooseMode = (mode: 'albums' | 'all' | 'downloads') => {
     if (mode !== 'downloads') saveSetting('gal_view', mode);
+    if (mode === 'downloads') setSelectionMode(false);
     setBreadcrumb([]);
     setViewMode(mode);
     resetView();
+  };
+
+  const handleBulkDownloadZip = async () => {
+    if (selectedPhotos.length === 0 || bulkBusy) return;
+    const uniqueBySrc = new Map<string, Photo>();
+    for (const p of selectedPhotos) {
+      if (!uniqueBySrc.has(p.src)) uniqueBySrc.set(p.src, p);
+    }
+    const list = [...uniqueBySrc.values()];
+    setBulkBusy({ kind: 'zip', done: 0, total: list.length });
+    setBulkNotice('');
+
+    const entries: Record<string, Uint8Array> = {};
+    const usedNames = new Map<string, number>();
+    let failed = 0;
+
+    for (let i = 0; i < list.length; i++) {
+      const photo = list[i];
+      try {
+        const res = await fetch(mediaPath(photo.src));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const rawBase = decodeURIComponent(photo.src.split('?')[0].split('/').pop() || `photo-${i + 1}.jpg`);
+        const dot = rawBase.lastIndexOf('.');
+        const stem = dot > 0 ? rawBase.slice(0, dot) : rawBase;
+        const ext = dot > 0 ? rawBase.slice(dot) : '.jpg';
+        const count = (usedNames.get(rawBase.toLowerCase()) ?? 0) + 1;
+        usedNames.set(rawBase.toLowerCase(), count);
+        const filename = count === 1 ? rawBase : `${stem}-${count}${ext}`;
+        entries[filename] = bytes;
+      } catch {
+        failed++;
+      }
+      setBulkBusy({ kind: 'zip', done: i + 1, total: list.length });
+    }
+
+    const included = Object.keys(entries).length;
+    if (included === 0) {
+      setBulkBusy(null);
+      await showAlert({ title: 'Download failed', message: 'Could not download the selected photos.' });
+      return;
+    }
+
+    try {
+      const zipped = zipSync(entries, { level: 0 });
+      const blob = new Blob([zipped], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const albumSlug = (currentAlbum?.name || 'gallery').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'gallery';
+      a.download = `${albumSlug}-selected-${included}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (failed > 0) {
+        await showAlert({ title: 'Partial ZIP ready', message: `Downloaded ${included} photo${included === 1 ? '' : 's'}; ${failed} failed to fetch.` });
+      } else {
+        setBulkNotice(`Downloaded ${included} photo${included === 1 ? '' : 's'} as ZIP.`);
+      }
+    } catch {
+      await showAlert({ title: 'ZIP error', message: 'Could not create the ZIP archive in your browser.' });
+    } finally {
+      setBulkBusy(null);
+    }
+  };
+
+  const handleBulkMove = async () => {
+    if (!isAdmin || selectedPhotos.length === 0 || !bulkMoveTarget || bulkBusy) return;
+    const toMove = selectedPhotos.filter(p => p.albumId !== bulkMoveTarget);
+    if (toMove.length === 0) {
+      await showAlert({ title: 'Already in album', message: 'All selected photos are already in that album.' });
+      return;
+    }
+    setBulkBusy({ kind: 'move', done: 0, total: toMove.length });
+    setBulkNotice('');
+    let moved = 0;
+    let failed = 0;
+
+    for (let i = 0; i < toMove.length; i++) {
+      const photo = toMove[i];
+      try {
+        const res = await fetch('/api/edit', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'gallery-photo',
+            albumId: photo.albumId,
+            src: photo.src,
+            caption: photo.caption,
+            newAlbumId: bulkMoveTarget,
+          }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) moved++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+      setBulkBusy({ kind: 'move', done: i + 1, total: toMove.length });
+    }
+
+    await loadAlbums();
+    setSelectedKeys(new Set());
+    setBulkBusy(null);
+    const destName = albumPathMap[bulkMoveTarget] || 'album';
+    if (failed > 0) {
+      await showAlert({ title: 'Move partially completed', message: `Moved ${moved} photo${moved === 1 ? '' : 's'} to ${destName}; ${failed} failed.` });
+    } else {
+      setBulkNotice(`Moved ${moved} photo${moved === 1 ? '' : 's'} to ${destName}.`);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!isAdmin || selectedPhotos.length === 0 || bulkBusy) return;
+    const uniqueSrcs = [...new Set(selectedPhotos.map(p => p.src))];
+    const ok = await confirm({
+      title: 'Delete Selected Photos',
+      message: `Delete ${uniqueSrcs.length} selected photo${uniqueSrcs.length === 1 ? '' : 's'} permanently? This cannot be undone.`,
+      confirmLabel: `Delete (${uniqueSrcs.length})`,
+      danger: true,
+    });
+    if (!ok) return;
+
+    setBulkBusy({ kind: 'delete', done: 0, total: uniqueSrcs.length });
+    setBulkNotice('');
+    let deleted = 0;
+    let failed = 0;
+
+    for (let i = 0; i < uniqueSrcs.length; i++) {
+      const src = uniqueSrcs[i];
+      try {
+        const res = await fetch('/api/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'gallery', id: src }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.success) deleted++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+      setBulkBusy({ kind: 'delete', done: i + 1, total: uniqueSrcs.length });
+    }
+
+    await loadAlbums();
+    setSelectedKeys(new Set());
+    setBulkBusy(null);
+    if (failed > 0) {
+      await showAlert({ title: 'Delete partially completed', message: `Deleted ${deleted} photo${deleted === 1 ? '' : 's'}; ${failed} failed.` });
+    } else {
+      setBulkNotice(`Deleted ${deleted} photo${deleted === 1 ? '' : 's'}.`);
+    }
   };
 
   // ── Photo grid ────────────────────────────────────────────────────────────
@@ -396,9 +618,16 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
           );
         }
         const label = viewMode === 'all' && !currentAlbum ? albumPathMap[img.albumId] : '';
+        const selected = selectionMode && selectedKeys.has(photoKey(img));
         return (
-          <figure key={`${img.src}-${i}`} className="gal-tile">
-            <button className="gal-photo" onClick={() => setViewerIndex(i)} aria-label={img.caption || `Photo ${i + 1}`}>
+          <figure key={`${img.src}-${i}`} className={`gal-tile${selectionMode ? ' is-selecting' : ''}${selected ? ' is-selected' : ''}`}>
+            <button
+              type="button"
+              className="gal-photo"
+              aria-pressed={selectionMode ? selected : undefined}
+              onClick={() => (selectionMode ? togglePhotoSelection(img) : setViewerIndex(i))}
+              aria-label={selectionMode ? `${selected ? 'Deselect' : 'Select'} ${img.caption || `Photo ${i + 1}`}` : (img.caption || `Photo ${i + 1}`)}
+            >
               <img
                 src={mediaSrc(img.src, 400)}
                 srcSet={mediaSrcSet(img.src, [400, 640])}
@@ -407,8 +636,13 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
                 loading={i < 8 ? 'eager' : 'lazy'}
                 decoding="async"
               />
+              {selectionMode && (
+                <span className={`gal-select-check${selected ? ' is-checked' : ''}`} aria-hidden="true">
+                  {selected ? '✓' : ''}
+                </span>
+              )}
             </button>
-            {isAdmin && (
+            {isAdmin && !selectionMode && (
               <div className="gal-admin">
                 <a href={`/api/download-album?photo=${encodeURIComponent(img.src)}`} download title="Download original" aria-label="Download original">⬇</a>
                 <button onClick={() => setEditingCaption({ albumId: img.albumId, src: img.src, value: img.caption, newAlbumId: img.albumId })} title="Edit caption / move" aria-label="Edit">✏️</button>
@@ -467,9 +701,10 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
   };
 
   const totalPhotos = useMemo(() => rootAlbums.reduce((n, a) => n + countPhotos(a), 0), [rootAlbums]);
+  const allShownSelected = shownImages.length > 0 && selectedPhotos.length === shownImages.length;
 
   return (
-    <div className="gal-page">
+    <div className={`gal-page${selectionMode ? ' has-bulk-bar' : ''}`}>
       {/* Header */}
       <header className="gal-header">
         <div style={{ minWidth: 0 }}>
@@ -503,6 +738,21 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
                 </button>
               ))}
             </div>
+          )}
+
+          {viewMode !== 'downloads' && (
+            <button
+              type="button"
+              className={`gal-tool-btn${selectionMode ? ' is-active' : ''}`}
+              aria-pressed={selectionMode}
+              disabled={!selectionMode && (currentAlbum ? shownImages.length === 0 : totalPhotos === 0)}
+              onClick={toggleSelectionMode}
+              title={selectionMode ? 'Done selecting photos' : 'Select photos'}
+              aria-label={selectionMode ? 'Done selecting photos' : 'Select photos'}
+            >
+              <span aria-hidden>{selectionMode ? '✕' : '☑️'}</span>
+              <span className="gal-tool-label">{selectionMode ? 'Done' : 'Select photos'}</span>
+            </button>
           )}
 
           <GalleryPopover label="View" icon="⚙" kind="dialog">
@@ -592,16 +842,16 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
             <p>Generated album ZIP files will appear here.</p>
           </div>
         ) : (
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
+          <div className="gal-downloads-grid">
             {availableDownloads.map((dl, i) => (
-              <div key={i} className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div key={i} className="glass-panel gal-download-card">
                 <div>
                   <h3 style={{ margin: '0 0 0.2rem', fontSize: '1.05rem', wordBreak: 'break-all' }}>{dl.name}</h3>
                   <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--muted)' }}>{(dl.sizeBytes / 1024 / 1024).toFixed(2)} MB • {new Date(dl.createdAt).toLocaleDateString()}</p>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <a href={dl.url} download className="btn btn-primary" style={{ flex: 1 }}>⬇ Download</a>
-                  <button onClick={() => handleDeleteDownload(dl.filename)} className="btn btn-secondary" style={{ color: 'var(--danger)' }}>Delete</button>
+                <div className="gal-download-actions">
+                  <a href={dl.url} download className="btn btn-primary">⬇ Download</a>
+                  <button type="button" onClick={() => handleDeleteDownload(dl.filename)} className="btn btn-secondary" style={{ color: 'var(--danger)' }}>Delete</button>
                 </div>
               </div>
             ))}
@@ -676,7 +926,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
             </>
           )}
           {downloadProgress.status === 'completed' && (
-            <p style={{ fontSize: '0.85rem', margin: '0.25rem 0 0', color: 'var(--accent-light)' }}>The download is now ready in the <strong>Downloads</strong> tab.</p>
+            <p style={{ fontSize: '0.85rem', margin: '0.25rem 0 0', color: 'var(--accent-light)' }}>The download is now ready under <strong>＋ Manage → Saved downloads</strong>.</p>
           )}
           {downloadProgress.status === 'error' && (
             <p style={{ color: 'var(--danger)', margin: 0, fontSize: '0.85rem' }}>{downloadProgress.error || 'A problem occurred.'}</p>
@@ -701,7 +951,13 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
           }
 
           return (
-            <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={exitFrameMode}>
+            <div
+              className="gal-frame"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Slideshow"
+              onClick={() => void exitFrameMode()}
+            >
               {activeFrameImages.map((imgItem, i) => {
                 // Only the current, next and previous photo are in the page (for the cross-fade).
                 const isCurrent = frameIndex === i;
@@ -713,15 +969,120 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
                     style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: isCurrent ? 1 : 0, transition: 'opacity 1s ease-in-out', pointerEvents: 'none' }} />
                 );
               })}
+              <div className="gal-frame-bar" onClick={(e) => e.stopPropagation()}>
+                <span className="gal-frame-counter">{frameIndex + 1} / {activeFrameImages.length}</span>
+                <div className="gal-frame-actions">
+                  {activeFrameImages.length > 1 && (
+                    <button type="button" className="lightbox-btn" onClick={() => frameStep(-1)} aria-label="Previous slide">‹ Prev</button>
+                  )}
+                  {activeFrameImages.length > 1 && (
+                    <button type="button" className="lightbox-btn" onClick={() => setFramePaused((p) => !p)} aria-pressed={framePaused} aria-label={framePaused ? 'Play slideshow' : 'Pause slideshow'}>
+                      {framePaused ? '▶ Play' : '⏸ Pause'}
+                    </button>
+                  )}
+                  {activeFrameImages.length > 1 && (
+                    <button type="button" className="lightbox-btn" onClick={() => frameStep(1)} aria-label="Next slide">Next ›</button>
+                  )}
+                  <button type="button" className="lightbox-btn" onClick={() => void exitFrameMode()} aria-label="Exit slideshow">✕ Exit</button>
+                </div>
+              </div>
               {(img?.caption || relativeAlbumPath) && showCaptions && (
-                <div style={{ position: 'absolute', bottom: '3rem', background: 'rgba(0,0,0,0.6)', padding: '0.75rem 2.5rem', borderRadius: '30px', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>
-                  {relativeAlbumPath && <div style={{ fontSize: '0.85rem', opacity: 0.7, fontStyle: 'italic', marginBottom: img?.caption ? '0.2rem' : 0 }}>{relativeAlbumPath}</div>}
-                  {img?.caption && <div style={{ fontSize: '1.4rem' }}>{img.caption}</div>}
+                <div style={{ position: 'absolute', bottom: '2rem', background: 'rgba(0,0,0,0.65)', padding: '0.75rem 2.5rem', borderRadius: '30px', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', maxWidth: 'calc(100vw - 2rem)', textAlign: 'center' }}>
+                  {relativeAlbumPath && <div style={{ fontSize: '0.85rem', opacity: 0.85, fontStyle: 'italic', marginBottom: img?.caption ? '0.2rem' : 0 }}>{relativeAlbumPath}</div>}
+                  {img?.caption && <div style={{ fontSize: '1.25rem' }}>{img.caption}</div>}
                 </div>
               )}
             </div>
           );
         })(),
+        document.body
+      )}
+      {selectionMode && mounted && createPortal(
+        <div className="glass-panel animate-fade-in gal-bulk-bar" role="toolbar" aria-label="Selected photo actions">
+          <div className="gal-bulk-summary">
+            <strong>{selectedPhotos.length} selected</strong>
+            <div className="gal-bulk-sel-btns">
+              <button
+                type="button"
+                className="btn btn-secondary gal-bulk-btn"
+                disabled={shownImages.length === 0 || allShownSelected || !!bulkBusy}
+                onClick={() => { setBulkNotice(''); setSelectedKeys(new Set(shownImages.map(photoKey))); }}
+              >
+                Select all ({shownImages.length})
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary gal-bulk-btn"
+                disabled={selectedPhotos.length === 0 || !!bulkBusy}
+                onClick={() => { setBulkNotice(''); setSelectedKeys(new Set()); }}
+              >
+                Clear
+              </button>
+            </div>
+            {bulkNotice && <span className="gal-bulk-notice" role="status">{bulkNotice}</span>}
+          </div>
+
+          <div className="gal-bulk-actions">
+            <button
+              type="button"
+              className="btn btn-primary gal-bulk-btn"
+              disabled={selectedPhotos.length === 0 || !!bulkBusy}
+              onClick={() => void handleBulkDownloadZip()}
+            >
+              {bulkBusy?.kind === 'zip'
+                ? `Zipping ${bulkBusy.done}/${bulkBusy.total}…`
+                : '📦 Download ZIP'}
+            </button>
+
+            {isAdmin && (
+              <>
+                <div className="gal-bulk-move">
+                  <select
+                    className="gal-select gal-bulk-select"
+                    aria-label="Destination album"
+                    value={bulkMoveTarget}
+                    disabled={!!bulkBusy || flattenedAlbums.length === 0}
+                    onChange={e => setBulkMoveTarget(e.target.value)}
+                  >
+                    {flattenedAlbums.map(a => (
+                      <option key={a.id} value={a.id}>{a.path}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-secondary gal-bulk-btn"
+                    disabled={selectedPhotos.length === 0 || !bulkMoveTarget || !!bulkBusy}
+                    onClick={() => void handleBulkMove()}
+                  >
+                    {bulkBusy?.kind === 'move'
+                      ? `Moving ${bulkBusy.done}/${bulkBusy.total}…`
+                      : '📁 Move to album'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn gal-bulk-btn gal-bulk-danger"
+                  disabled={selectedPhotos.length === 0 || !!bulkBusy}
+                  onClick={() => void handleBulkDelete()}
+                >
+                  {bulkBusy?.kind === 'delete'
+                    ? `Deleting ${bulkBusy.done}/${bulkBusy.total}…`
+                    : `🗑️ Delete (${selectedPhotos.length})`}
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-secondary gal-bulk-btn"
+              disabled={!!bulkBusy}
+              onClick={toggleSelectionMode}
+            >
+              Done
+            </button>
+          </div>
+        </div>,
         document.body
       )}
       {popup}

@@ -11,6 +11,7 @@ a.home-cad-item:hover { border-color: rgba(var(--accent-rgb), 0.5); background: 
 .mv { position: relative; border: 1px solid var(--surface-border); border-bottom: none; border-radius: 14px 14px 0 0; overflow: hidden;
   background: radial-gradient(circle at 50% 35%, rgba(var(--accent-rgb), 0.16), transparent 70%), var(--input-bg); }
 .mv-stage { position: relative; aspect-ratio: 4 / 3; width: 100%; }
+.mv-canvas-host { position: absolute; inset: 0; }
 .mv:fullscreen { border-radius: 0; border: none; }
 .mv:fullscreen .mv-stage { aspect-ratio: auto; height: 100vh; }
 .mv-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; cursor: grab; }
@@ -86,7 +87,7 @@ a.home-cad-pill:hover { color: var(--foreground); border-color: rgba(var(--accen
 }
 .cad-pills button:hover { background: var(--surface-hover); border-color: rgba(var(--accent-rgb), 0.5); }
 .cad-pills button span { opacity: 0.65; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
-.cad-pills button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.cad-pills button[aria-pressed="true"] { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); font-weight: 600; }
 .cad-pills button[aria-pressed="true"] span { opacity: 0.9; }
 .cad-count { color: var(--muted); font-size: 0.86rem; font-variant-numeric: tabular-nums; }
 

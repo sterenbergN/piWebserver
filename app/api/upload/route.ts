@@ -79,18 +79,22 @@ function removeImageFromTree(albums: AlbumNode[], mediaSrc: string): AlbumNode[]
 }
 
 async function readAlbums(): Promise<AlbumNode[]> {
+  const file = path.join(base, 'gallery', 'albums.json');
+  let raw: string;
   try {
-    const file = path.join(base, 'gallery', 'albums.json');
-    const albums = JSON.parse(await readFile(file, 'utf-8')) as AlbumNode[];
-    const normalize = (album: AlbumNode): AlbumNode => ({
-      ...album,
-      images: album.images || [],
-      albums: (album.albums || []).map(normalize),
-    });
-    return albums.map(normalize);
-  } catch {
+    raw = await readFile(file, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
     return [{ id: 'general', name: 'General', images: [], albums: [] }];
   }
+  const albums = JSON.parse(raw) as AlbumNode[];
+  if (!Array.isArray(albums)) throw new Error('Invalid albums.json format');
+  const normalize = (album: AlbumNode): AlbumNode => ({
+    ...album,
+    images: album.images || [],
+    albums: (album.albums || []).map(normalize),
+  });
+  return albums.map(normalize);
 }
 
 async function saveAlbums(albums: AlbumNode[]) {
@@ -224,6 +228,13 @@ export async function POST(request: Request) {
       const cover = formData.get('cover') as File | null;
       // A cover already uploaded while drafting (kept with the draft), used when no new file comes with it.
       const coverSrc = formData.get('coverSrc');
+      const hasCoverImage = formData.has('coverImage');
+      const rawCoverImage = formData.get('coverImage');
+      const clearCover =
+        formData.get('clearCover') === 'true' ||
+        formData.get('clearCover') === '1' ||
+        (hasCoverImage && (rawCoverImage === '' || rawCoverImage === 'null' || rawCoverImage === null)) ||
+        (formData.has('coverSrc') && (coverSrc === '' || coverSrc === 'null' || coverSrc === null));
       const draftId = formData.get('draftId');
       if (!title || !markdown.trim()) {
         return NextResponse.json({ success: false, message: 'A post needs a title and some text.' }, { status: 400 });
@@ -256,12 +267,13 @@ export async function POST(request: Request) {
       await writeFile(path.join(blogDir, `${slug}.md`), markdown.replace(/\r\n/g, '\n'));
 
       let coverPath: string | null = null;
+      const inlineCover = isInlineImageSrc(coverSrc) ? coverSrc : isInlineImageSrc(rawCoverImage) ? rawCoverImage : null;
       if (cover && cover.size > 0) {
         const coverFile = `${slug}-img-${Date.now()}${path.extname(cover.name).toLowerCase() || '.jpg'}`;
         await writeFile(path.join(blogDir, coverFile), Buffer.from(await cover.arrayBuffer()));
         coverPath = `/uploads/blog/${coverFile}`;
-      } else if (isInlineImageSrc(coverSrc)) {
-        const from = path.join(blogDir, 'inline', path.basename(coverSrc));
+      } else if (inlineCover) {
+        const from = path.join(blogDir, 'inline', path.basename(inlineCover));
         const coverFile = `${slug}-img-${Date.now()}${path.extname(from).toLowerCase() || '.jpg'}`;
         await copyFile(from, path.join(blogDir, coverFile));
         coverPath = `/uploads/blog/${coverFile}`;
@@ -271,13 +283,20 @@ export async function POST(request: Request) {
       const index = posts.findIndex((p) => p.slug === slug);
       const previous = index > -1 ? posts[index] : null;
       const saved: BlogPost = previous
-        ? { ...previous, title, description, category, ...(coverPath ? { image: coverPath } : {}), updatedAt: new Date().toISOString() }
+        ? {
+            ...previous,
+            title,
+            description,
+            category,
+            ...(coverPath ? { image: coverPath } : clearCover ? { image: '' } : {}),
+            updatedAt: new Date().toISOString(),
+          }
         : { slug, title, description, category, image: coverPath || '', date: new Date().toISOString(), photos: [] };
       if (previous) posts[index] = saved; else posts.unshift(saved);
       await writeFile(postsFile, JSON.stringify(posts, null, 2));
 
       const oldCover = previous?.image ? toMediaSrc(previous.image) : null;
-      if (coverPath && oldCover && oldCover !== toMediaSrc(coverPath)) {
+      if ((coverPath || clearCover) && oldCover && oldCover !== (coverPath ? toMediaSrc(coverPath) : null)) {
         await removePhysicalFile(oldCover);
         await saveAlbums(removeImageFromTree(await readAlbums(), oldCover));
       }

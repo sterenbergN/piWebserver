@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const wait = loginRetryAfter(request, 'admin');
+    const wait = loginRetryAfter(request, 'admin', 'admin');
     if (wait) {
       return NextResponse.json({ success: false, message: tooManyAttemptsMessage(wait) }, { status: 429, headers: { 'Retry-After': String(wait) } });
     }
@@ -28,12 +28,12 @@ export async function POST(request: Request) {
     const SECRET_PASSWORD = process.env.PI_DASHBOARD_PASSWORD;
 
     if (SECRET_PASSWORD && typeof password === 'string' && samePassword(password, SECRET_PASSWORD)) {
-      recordLoginSuccess(request, 'admin');
+      recordLoginSuccess(request, 'admin', 'admin');
       const cookieStore = await cookies();
       cookieStore.set('pi_auth', createAdminAuthToken(), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        sameSite: 'lax',
         path: '/',
         maxAge: 60 * 60 * 24 * 7 // 1 week
       });
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true });
     }
 
-    await recordLoginFailure(request, 'admin');
+    await recordLoginFailure(request, 'admin', 'admin');
     return NextResponse.json({ success: false, message: "Invalid credentials" }, { status: 401 });
   } catch {
     return NextResponse.json({ success: false, message: "Validation error" }, { status: 500 });

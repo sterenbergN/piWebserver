@@ -11,6 +11,6 @@ test('cadIdsIn ignores other code and inline mentions', () => {
   assert.deepEqual(cadIdsIn('Use `cad` blocks like ```cad x``` inline.\n\n```cadquery\nbox()\n```'), []);
 });
 
-test('cadHref links to the card on the home page', () => {
-  assert.equal(cadHref('bracket-v2'), '/#cad-bracket-v2');
+test('cadHref links to the card on the CAD page', () => {
+  assert.equal(cadHref('bracket-v2'), '/cad#cad-bracket-v2');
 });

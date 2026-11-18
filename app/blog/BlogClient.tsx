@@ -56,7 +56,7 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
     const isTile = viewMode === 'tile';
     return (
       <div key={post.slug} style={{ position: 'relative' }}>
-        <Link href={`/blog/${post.slug}`}>
+        <Link href={`/blog/${post.slug}`} style={{ color: 'var(--foreground)', display: 'block', height: isTile ? '100%' : undefined }}>
           <div className="glass-panel"
             style={{ display: 'flex', gap: '1.5rem', cursor: 'pointer', flexDirection: isTile ? 'column' : 'row', flexWrap: 'wrap', transition: 'transform 0.2s', height: isTile ? '100%' : undefined }}
             onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-3px)')}
@@ -67,20 +67,37 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
               </div>
             )}
             <div style={{ flex: 1, minWidth: '200px' }}>
-              <h2 style={{ marginBottom: '0.4rem', fontSize: isTile ? '1.05rem' : '1.3rem' }}>{post.title}</h2>
-              <p style={{ color: 'var(--accent-light)', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
-                {new Date(post.date).toLocaleDateString()}
-              </p>
-              <p style={{ margin: 0, fontSize: '0.92rem' }}>{post.description}</p>
+              <h2 style={{ marginBottom: '0.4rem', fontSize: isTile ? '1.05rem' : '1.3rem', color: 'var(--foreground)', paddingRight: isAdmin ? '3.5rem' : undefined }}>{post.title}</h2>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <span style={{ color: 'var(--accent-light)', fontSize: '0.82rem' }}>
+                  {new Date(post.date).toLocaleDateString()}
+                </span>
+                {post.category && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    padding: '0.14rem 0.55rem',
+                    borderRadius: '999px',
+                    border: '1px solid var(--surface-border)',
+                    background: 'var(--card-bg)',
+                    color: 'var(--foreground)',
+                    fontSize: '0.74rem',
+                    fontWeight: 600,
+                  }}>
+                    {post.category}
+                  </span>
+                )}
+              </div>
+              <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--muted)' }}>{post.description}</p>
             </div>
           </div>
         </Link>
         {isAdmin && (
           <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '0.35rem' }}>
             <Link href={`/admin/posts/${post.slug}`} title="Edit post" aria-label={`Edit ${post.title}`}
-              style={{ background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'none' }}>✏️</Link>
-            <button onClick={e => { e.preventDefault(); handleDelete(post.slug); }}
-              style={{ background: '#eb4d4b', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+              style={{ background: 'var(--primary-bg)', color: 'var(--primary-fg)', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem', textDecoration: 'none' }}>✏️</Link>
+            <button type="button" onClick={e => { e.preventDefault(); handleDelete(post.slug); }} aria-label={`Delete ${post.title}`}
+              style={{ background: '#b23a46', color: 'white', border: 'none', borderRadius: '4px', padding: '0.28rem 0.5rem', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
           </div>
         )}
       </div>
@@ -94,7 +111,14 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
         <h1>Posts</h1>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         {isAdmin && <Link href="/admin/posts/new" className="btn btn-primary">✍️ Write a post</Link>}
-        <button onClick={() => setShowSettings(!showSettings)} title="Display Settings" style={{ ...ICON_BTN, background: showSettings ? 'var(--accent)' : 'var(--surface-glass)', color: showSettings ? 'white' : 'var(--foreground)' }}>⚙</button>
+        <button
+          type="button"
+          onClick={() => setShowSettings(s => !s)}
+          aria-expanded={showSettings}
+          aria-label="Display Settings"
+          title="Display Settings"
+          style={{ ...ICON_BTN, background: showSettings ? 'var(--primary-bg)' : 'var(--surface-glass)', color: showSettings ? 'var(--primary-fg)' : 'var(--foreground)' }}
+        >⚙</button>
         </div>
       </div>
 
@@ -149,7 +173,12 @@ export default function BlogClient({ initialPosts, initialIsAdmin }: { initialPo
       {sortedPosts.length === 0 ? (
           <div className="glass-panel" style={{ textAlign: 'center', padding: '4rem' }}>
             <h3>No Posts Yet</h3>
-            <p>{isAdmin ? 'Use the Admin panel to publish your first post.' : 'Check back soon — new write-ups are on the way.'}</p>
+            <p>{isAdmin ? 'Write your first post using the editor.' : 'Check back soon — new write-ups are on the way.'}</p>
+            {isAdmin && (
+              <Link href="/admin/posts/new" className="btn btn-primary" style={{ marginTop: '0.75rem' }}>
+                ✍️ Write a post
+              </Link>
+            )}
           </div>
         ) : groupCategory ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '3rem' }}>

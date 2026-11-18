@@ -1,12 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import Link from 'next/link';
 import { useSitePopup } from '@/components/SitePopup';
 import { mediaSrc, mediaSrcSet } from '@/lib/media-url';
 import PostImage from '@/components/blog/PostImage';
 import { cadPre } from '@/components/blog/CadEmbed';
+import {
+  BLOG_REHYPE_PLUGINS,
+  BLOG_REMARK_PLUGINS,
+  extractToc,
+  fenceDisplayMath,
+} from '@/components/blog/markdown-plugins';
+import 'katex/dist/katex.min.css';
+import '@/components/blog/markdown.css';
 import type { CadProject } from '@/lib/site-content';
 import ProgressBar from '@/components/ProgressBar';
 import { uploadWithProgress } from '@/lib/upload-client';
@@ -27,6 +35,9 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
   const markdown = initialMarkdown;
   const [linkCopied, setLinkCopied] = useState(false);
   const [post, setPost] = useState<any>(initialPost);
+  const [readProgress, setReadProgress] = useState(0);
+  const [tocOpen, setTocOpen] = useState(true);
+  const articleRef = useRef<HTMLDivElement>(null);
 
   // Photo gallery state
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -40,15 +51,65 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
   const [photoProgress, setPhotoProgress] = useState<number | null>(null);
   const [photoError, setPhotoError] = useState('');
 
+  const toc = useMemo(() => extractToc(markdown), [markdown]);
+  const preparedMarkdown = useMemo(() => fenceDisplayMath(markdown), [markdown]);
 
+  useEffect(() => {
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const el = articleRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const total = el.offsetHeight - window.innerHeight;
+      if (total <= 0) {
+        setReadProgress(rect.top < 0 ? 100 : 0);
+        return;
+      }
+      const scrolled = Math.min(total, Math.max(0, -rect.top));
+      setReadProgress(Math.round((scrolled / total) * 100));
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [markdown]);
 
   const sharePost = async () => {
     const url = window.location.href;
     const nav = navigator as Navigator & { share?: (d: { title?: string; url: string }) => Promise<void> };
     if (nav.share) { try { await nav.share({ title: post?.title, url }); return; } catch { /* fall back to copy */ } }
-    await navigator.clipboard.writeText(url).catch(() => {});
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch { /* fallback below */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch { /* ignore */ }
+    }
+    if (ok) {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
   };
   // ~220 words a minute, ignoring markdown syntax.
   const readingMinutes = Math.max(1, Math.round(markdown.replace(/[#*_`>\[\]()!-]/g, ' ').split(/\s+/).filter(Boolean).length / 220));
@@ -112,9 +173,12 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
   const photos: any[] = post?.photos || [];
   const currentPhoto = photos[photoIndex];
 
-
   return (
     <div className="animate-fade-in" style={{ padding: '2rem 0' }}>
+      <div className="post-progress" aria-hidden="true">
+        <div className="post-progress-fill" style={{ width: `${readProgress}%` }} />
+      </div>
+
       <div style={{ maxWidth: '900px', margin: '0 auto', paddingBottom: '4rem' }}>
         <Link className="btn btn-secondary" href="/blog" style={{ marginBottom: '2rem', display: 'inline-flex' }}>
           ← All posts
@@ -123,15 +187,18 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
         {post && (
           <div style={{ marginBottom: '3rem', textAlign: 'center' }}>
             <h1 style={{ marginBottom: '1rem' }}>{post.title}</h1>
-            <p style={{ fontSize: '1.1rem', color: 'var(--accent-light)', marginBottom: '1.5rem' }}>{post.description}</p>
-            <p style={{ fontSize: '0.85rem', opacity: 0.5, marginBottom: '2rem' }}>
-              {new Date(post.date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-              {' · '}{readingMinutes} min read
-              {' · '}
-              <button onClick={sharePost} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', font: 'inherit', padding: 0 }}>
-                {linkCopied ? 'Link copied' : 'Share'}
-              </button>
-            </p>
+            <p style={{ fontSize: '1.1rem', color: 'var(--accent-light)', marginBottom: '1.25rem' }}>{post.description}</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '0.5rem 0.75rem', fontSize: '0.85rem', color: 'var(--muted)', marginBottom: '2rem' }}>
+              {post.category && <span className="post-category-pill">{post.category}</span>}
+              <span>
+                {new Date(post.date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                {' · '}{readingMinutes} min read
+                {' · '}
+                <button type="button" onClick={sharePost} style={{ background: 'none', border: 'none', color: 'var(--accent-light)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit', padding: 0 }}>
+                  {linkCopied ? 'Link copied' : 'Share'}
+                </button>
+              </span>
+            </div>
             {isAdmin && (
               <div style={{ marginBottom: '2rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'center' }}>
                 {/* The editor covers the text, title, summary, category and cover. */}
@@ -170,21 +237,49 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
           </div>
         )}
 
+        {toc.length > 0 && (
+          <nav className="glass-panel post-toc" aria-label="Table of contents">
+            <button
+              type="button"
+              className="post-toc-toggle"
+              aria-expanded={tocOpen}
+              onClick={() => setTocOpen((v) => !v)}
+            >
+              <span>Table of Contents ({toc.length})</span>
+              <span aria-hidden>{tocOpen ? '▴' : '▾'}</span>
+            </button>
+            {tocOpen && (
+              <ul className="post-toc-list">
+                {toc.map((item) => (
+                  <li key={item.id} className={`post-toc-item${item.level === 3 ? ' is-h3' : ''}`}>
+                    <a href={`#${item.id}`}>{item.text}</a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </nav>
+        )}
+
         {/* Markdown Body */}
-        <div className="glass-panel markdown-body post-body">
+        <div ref={articleRef} className="glass-panel markdown-body post-body">
           <Markdown
+            remarkPlugins={BLOG_REMARK_PLUGINS}
+            rehypePlugins={BLOG_REHYPE_PLUGINS}
             components={{
               // Links out open in a new tab; links within the site (e.g. to a CAD model) don't.
               a: ({ node: _node, ...props }) => (
-                <a {...props}
-                {...(/^[/#]/.test(String(props.href ?? '')) ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
-                style={{ color: 'var(--accent)', textDecoration: 'underline' }} />
+                <a
+                  {...props}
+                  {...(/^[/#]/.test(String(props.href ?? '')) ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
+                  style={{ color: 'var(--accent-light)', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+                />
               ),
+              table: ({ node: _node, ...props }) => <div className="post-table-wrap"><table {...props} /></div>,
               pre: cadPre(cadProjects),
               // Pictures in the text: a screen-sized copy, loaded as they scroll into view.
               img: ({ node: _node, src, alt, title }) => <PostImage src={src} alt={alt} title={title} />,
             }}
-          >{markdown}</Markdown>
+          >{preparedMarkdown}</Markdown>
         </div>
 
         {/* Photo Gallery Strip */}
@@ -207,7 +302,7 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
 
               {/* Counter + Description */}
               <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-                <p style={{ fontSize: '0.85rem', opacity: 0.55, marginBottom: '0.5rem' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>
                   Photo {photoIndex + 1} of {photos.length}
                 </p>
                 {editingPhoto && editingPhoto.src === currentPhoto.src ? (
@@ -223,8 +318,12 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
                       <p style={{ margin: 0, fontSize: '1rem' }}>{currentPhoto.description}</p>
                     )}
                     {isAdmin && (
-                      <button onClick={() => setEditingPhoto({ src: currentPhoto.src, description: currentPhoto.description || '' })}
-                        style={{ background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontSize: '0.8rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => setEditingPhoto({ src: currentPhoto.src, description: currentPhoto.description || '' })}
+                        aria-label="Edit photo description"
+                        style={{ background: 'var(--primary-bg)', color: 'var(--primary-fg)', border: 'none', borderRadius: '4px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontSize: '0.8rem' }}
+                      >
                         ✏️
                       </button>
                     )}
@@ -238,8 +337,8 @@ export default function PostClient({ slug, initialMarkdown, initialPost, isAdmin
                   ← Prev
                 </button>
                 {photos.map((_, i) => (
-                  <button key={i} onClick={() => setPhotoIndex(i)}
-                    style={{ width: 10, height: 10, borderRadius: '50%', border: 'none', cursor: 'pointer', background: i === photoIndex ? 'var(--accent)' : 'var(--surface-border)', padding: 0 }}
+                  <button key={i} onClick={() => setPhotoIndex(i)} aria-label={`Photo ${i + 1}`}
+                    style={{ width: 10, height: 10, borderRadius: '50%', border: 'none', cursor: 'pointer', background: i === photoIndex ? 'var(--primary-bg)' : 'var(--surface-border)', padding: 0 }}
                   />
                 ))}
                 <button className="btn btn-secondary" onClick={() => setPhotoIndex(i => Math.min(photos.length - 1, i + 1))} disabled={photoIndex === photos.length - 1}>

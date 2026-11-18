@@ -29,7 +29,7 @@
   --success-light: #b8cfa4;
   --warning: #e09c85;
   --info: #81a1c1;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji';
   /* Categorical palette (habits, question tracks, confetti): eight slots in a fixed
      order, stepped separately for dark and light and checked for colorblind separation. */
   --habit-1: #3987e5; --habit-2: #d95926; --habit-3: #199e70; --habit-4: #c98500;
@@ -52,7 +52,7 @@
   --surface-border: #d8dee9;
   --surface-hover: #f4f6f9;
   --nav-bg: #eceff4;
-  --input-bg: #ffffff;
+  --input-bg: #eef2f6;
   --card-bg: #f6f8fb;
   --danger: #b23a46;
   --danger-rgb: 178, 58, 70;
@@ -85,7 +85,7 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
 h1 { font-size: clamp(2rem, 5vw, 3rem); color: var(--foreground); }
 h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 1rem; }
 
-p { color: var(--muted); margin-bottom: 1rem; }
+p { color: var(--foreground); margin-bottom: 1rem; }
 
 a { color: inherit; text-decoration: none; transition: color 0.2s ease; }
 a:hover { color: var(--accent-light); }
@@ -115,13 +115,15 @@ a:hover { color: var(--accent-light); }
 .nav-logo { font-weight: 700; font-size: 1.05rem; color: var(--foreground); flex-shrink: 0; white-space: nowrap; }
 
 /* Your pinned pages. They sit in a row that gives way before anything else does. */
-.nav-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; flex: 1; min-width: 0; height: 2rem; margin-left: 0.6rem; overflow: hidden; }
+.nav-pins { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.2rem; flex: 1; min-width: 0; margin-left: 0.6rem; }
+.nav-pins-list { display: flex; flex-wrap: nowrap; align-items: center; gap: 0.2rem; min-width: 0; overflow: hidden; }
 .nav-link {
   flex-shrink: 0; padding: 0.3rem 0.65rem; border-radius: 8px; color: var(--foreground); font-size: 0.93rem; white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .nav-link:hover { background: var(--surface-hover); color: var(--foreground); }
-.nav-link[aria-current="page"] { font-weight: 600; color: var(--accent-light); background: rgba(var(--accent-rgb), 0.16); }
+.nav-link[aria-current="page"], .nav-pins-more.is-current { font-weight: 600; color: var(--accent-light); background: rgba(var(--accent-rgb), 0.16); }
+.nav-pins-more { border: none; background: transparent; cursor: pointer; font-family: inherit; color: var(--muted); font-weight: 600; }
 
 .nav-search, .nav-all, .nav-theme {
   display: inline-flex; align-items: center; gap: 0.45rem; flex-shrink: 0; height: 2.15rem; padding: 0 0.65rem;
@@ -181,7 +183,7 @@ a:hover { color: var(--accent-light); }
 }
 .section-bar a:hover { color: var(--foreground); background: var(--surface-hover); }
 .section-bar a[aria-current="page"] { color: var(--primary-fg); background: var(--primary-bg); font-weight: 600; }
-@media (min-width: 1100px) { .section-bar { justify-content: center; } }
+@media (min-width: 1100px) { .section-bar { justify-content: flex-start; justify-content: safe center; } }
 
 /* Phones: your pins along the bottom, under your thumb. */
 .site-dock { display: none; }
@@ -348,10 +350,10 @@ main { min-height: calc(100vh - 120px); }
 
 /* ── Markdown body ── */
 .markdown-body h1, .markdown-body h2, .markdown-body h3 { color: var(--foreground); -webkit-text-fill-color: var(--foreground); margin: 1.5rem 0 0.75rem; }
-.markdown-body p { color: var(--muted); }
+.markdown-body p { color: var(--foreground); }
 .markdown-body code { background: var(--card-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.9em; }
 .markdown-body pre { background: var(--card-bg); padding: 1rem; border-radius: 8px; overflow-x: auto; }
-.markdown-body ul, .markdown-body ol { padding-left: 1.5rem; color: var(--muted); }
+.markdown-body ul, .markdown-body ol { padding-left: 1.5rem; color: var(--foreground); }
 /* Blog list rows: on a phone the cover sits full-width above the text. */
 @media (max-width: 600px) {
   .blog-row-img { flex: 1 1 100% !important; width: 100% !important; height: 170px !important; }
@@ -369,12 +371,12 @@ main { min-height: calc(100vh - 120px); }
 /* ── Mobile Responsive ── */
 @media (max-width: 768px) {
   .nav-pins { margin: 0; }
-  .nav-pins > *, .nav-all, .nav-theme { display: none; }
+  .nav-pins > * { display: none; }
+  body:has(.site-dock) .nav-all, body:has(.site-dock) .nav-theme { display: none; }
   .nav-account-name { display: none; }
   .nav-account.is-signed-in { padding: 0.25rem; }
   .glass-nav { padding: 0.55rem 1rem; }
   .section-bar { padding: 0.4rem 1rem; }
-  .section-bar.is-wide-only { display: none; }
 
   body:has(.site-dock) { --dock-h: calc(58px + env(safe-area-inset-bottom)); padding-bottom: var(--dock-h); }
   body.arcade-playing { --dock-h: 0px !important; padding-bottom: 0 !important; }
@@ -412,6 +414,14 @@ main { min-height: calc(100vh - 120px); }
 
   /* Blog tiles: the chosen column count is for wide screens; cap it here. */
   .blog-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
+@media (max-width: 700px) {
+  .section-bar.is-wide-only { display: none; }
+}
+
+@media (max-width: 420px) {
+  .glass-nav { padding: 0.55rem 0.75rem; gap: 0.4rem; }
 }
 
 @media (max-width: 600px) {
@@ -459,3 +469,6 @@ main { min-height: calc(100vh - 120px); }
 
 /* Add to home screen steps (components/AddToHomeScreen.tsx) */
 .home-screen-steps { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.45rem; line-height: 1.45; }
+
+/* Keep Launcher room headers visible when opened over full-screen pages (/reader, /notes) that hide site headers. */
+html body .lc-backdrop .lc-panel .rm-room > header.rm-head { display: flex !important; }

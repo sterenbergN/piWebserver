@@ -4,13 +4,13 @@
 //       ```cad
 //       bracket-v2
 //       ```
-//   - A link to it on the home page: [the bracket](/#cad-bracket-v2)
+//   - A link to it on the CAD page: [the bracket](/cad#cad-bracket-v2)
 
-/** The element id of a model's card in the home page's CAD section. */
+/** The element id of a model's card in the CAD section. */
 export const cadAnchor = (id: string) => `cad-${id}`;
 
-/** A link to a model's card on the home page. */
-export const cadHref = (id: string) => `/#${cadAnchor(id)}`;
+/** A link to a model's card on the CAD page. */
+export const cadHref = (id: string) => `/cad#${cadAnchor(id)}`;
 
 /** The Markdown that shows a model's card in a post. */
 export const cadBlock = (id: string) => '```cad\n' + id + '\n```';

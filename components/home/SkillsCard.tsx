@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Skill } from '@/lib/resume';
 
 /** Skill badges; ones with linked posts open a small list of those posts. */
@@ -9,15 +9,53 @@ export default function SkillsCard({ skills, intro }: { skills: Skill[]; intro?:
   const [openId, setOpenId] = useState<string | null>(null);
   // Sideways nudge so an opened popover (centred on its badge) stays on screen.
   const [shift, setShift] = useState(0);
+  const activeWrapperRef = useRef<HTMLDivElement>(null);
+  const activePopoverRef = useRef<HTMLDivElement>(null);
 
-  const open = (id: string, badge: HTMLElement) => {
-    if (openId === id) { setOpenId(null); return; }
-    const rect = badge.getBoundingClientRect();
-    const width = Math.min(250, window.innerWidth * 0.8);
-    const left = rect.left + rect.width / 2 - width / 2;
-    const clamped = Math.min(Math.max(left, 12), window.innerWidth - 12 - width);
-    setShift(clamped - left);
-    setOpenId(id);
+  const clampPopover = () => {
+    const wrapper = activeWrapperRef.current;
+    const popover = activePopoverRef.current;
+    if (!wrapper || !popover) return;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const wRect = wrapper.getBoundingClientRect();
+    const pWidth = popover.offsetWidth || Math.min(250, vw - 24);
+    const idealLeft = wRect.left + wRect.width / 2 - pWidth / 2;
+    const clampedLeft = Math.min(Math.max(idealLeft, 12), Math.max(12, vw - 12 - pWidth));
+    setShift(clampedLeft - idealLeft);
+  };
+
+  useLayoutEffect(() => {
+    if (!openId) {
+      setShift(0);
+      return;
+    }
+    clampPopover();
+  }, [openId]);
+
+  useEffect(() => {
+    if (!openId) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (activeWrapperRef.current && !activeWrapperRef.current.contains(e.target as Node)) {
+        setOpenId(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenId(null);
+    };
+    const onResize = () => clampPopover();
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [openId]);
+
+  const toggle = (id: string) => {
+    setShift(0);
+    setOpenId((prev) => (prev === id ? null : id));
   };
 
   return (
@@ -32,23 +70,39 @@ export default function SkillsCard({ skills, intro }: { skills: Skill[]; intro?:
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem' }}>
         {skills.map(skill => {
           const hasPosts = skill.linkedPosts?.length > 0;
+          const isOpen = openId === skill.id;
           return (
-            <div key={skill.id} className={`skill-wrapper${openId === skill.id ? ' active' : ''}`}>
+            <div
+              key={skill.id}
+              ref={isOpen ? activeWrapperRef : undefined}
+              className={`skill-wrapper${isOpen ? ' active' : ''}`}
+            >
               {hasPosts ? (
-                <button className="skill-badge has-posts" aria-expanded={openId === skill.id} onClick={(e) => open(skill.id, e.currentTarget)}>{skill.name}</button>
+                <button type="button" className="skill-badge has-posts" aria-expanded={isOpen} onClick={() => toggle(skill.id)}>{skill.name}</button>
               ) : (
                 <span className="skill-badge">{skill.name}</span>
               )}
               {hasPosts && (
-                <div className="skill-popover" style={openId === skill.id ? { left: `calc(50% + ${shift}px)` } : undefined}>
-                  <button className="skill-popover-header" onClick={() => setOpenId(null)} aria-label={`Close ${skill.name}`}>
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{skill.name}</span>
+                <div
+                  ref={isOpen ? activePopoverRef : undefined}
+                  className="skill-popover"
+                  aria-hidden={!isOpen}
+                  style={isOpen ? { left: `calc(50% + ${shift}px)` } : undefined}
+                >
+                  <button
+                    type="button"
+                    className="skill-popover-header"
+                    tabIndex={isOpen ? 0 : -1}
+                    onClick={() => setOpenId(null)}
+                    aria-label={`Close ${skill.name}`}
+                  >
+                    <span>{skill.name}</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(180deg)' }} aria-hidden><polyline points="6 9 12 15 18 9" /></svg>
                   </button>
                   <div className="skill-popover-content">
                     <div className="skill-popover-title">Related posts</div>
                     {skill.linkedPosts.map(post => (
-                      <Link key={post.slug} href={`/blog/${post.slug}`} className="skill-post-link" onClick={() => setOpenId(null)}>
+                      <Link key={post.slug} href={`/blog/${post.slug}`} className="skill-post-link" tabIndex={isOpen ? 0 : -1} onClick={() => setOpenId(null)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                         {post.title}
                       </Link>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MathText } from '@/components/daily/MathText';
 import { AnswerText } from '@/components/daily/AnswerInput';
 import { FormulaOfTheDay } from '@/components/daily/FormulaSheet';
@@ -139,18 +139,34 @@ export default function DailyPanel() {
   const [open, setOpen] = useState<string | null>(null);
   const [upload, setUpload] = useState<{ message: string; errors?: string[] } | null>(null);
   const [feedback, setFeedback] = useState<FeedbackRow[] | null>(null);
-  const [notes, setNotes] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string>('');
+  const [notesLoaded, setNotesLoaded] = useState(false);
+  const [notesError, setNotesError] = useState('');
   const [notesSaved, setNotesSaved] = useState('');
+  const notesDirty = useRef(false);
   const [showPast, setShowPast] = useState(false);
 
   const load = useCallback(() => {
     api(`/api/daily/admin?today=${localToday()}`).then(setSummary).catch(() => setSummary({ today: localToday(), buffer: 0, days: [] }));
     api('/api/daily/feedback').then((d) => setFeedback(d.questions)).catch(() => setFeedback([]));
   }, []);
+  const loadNotes = useCallback(() => {
+    setNotesError('');
+    api('/api/daily/admin/notes')
+      .then((d) => {
+        setNotes(typeof d.notes === 'string' ? d.notes : '');
+        notesDirty.current = false;
+        setNotesLoaded(true);
+      })
+      .catch((e) => {
+        setNotesLoaded(false);
+        setNotesError(e instanceof Error ? e.message : 'Could not load generator notes.');
+      });
+  }, []);
   useEffect(() => {
     load();
-    api('/api/daily/admin/notes').then((d) => setNotes(d.notes)).catch(() => setNotes(''));
-  }, [load]);
+    loadNotes();
+  }, [load, loadNotes]);
 
   const uploadFile = async (file: File) => {
     setUpload({ message: `Checking ${file.name}…` });
@@ -166,14 +182,23 @@ export default function DailyPanel() {
     }
   };
 
-  const saveNotes = async () => {
+  const saveNotes = useCallback(async (text: string) => {
+    if (!notesLoaded) return;
     try {
-      await api('/api/daily/admin/notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+      setNotesSaved('Saving…');
+      await api('/api/daily/admin/notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: text }) });
+      notesDirty.current = false;
       setNotesSaved('Saved.');
     } catch (e) {
       setNotesSaved((e as Error).message);
     }
-  };
+  }, [notesLoaded]);
+
+  useEffect(() => {
+    if (!notesLoaded || !notesDirty.current) return;
+    const timer = setTimeout(() => { void saveNotes(notes); }, 600);
+    return () => clearTimeout(timer);
+  }, [notes, notesLoaded, saveNotes]);
 
   const today = summary?.today ?? localToday();
   const days = (summary?.days ?? []).filter((d) => showPast || d.date >= today);
@@ -246,7 +271,9 @@ export default function DailyPanel() {
                     <div style={{ fontWeight: 700 }}>⚑ {r.kind} · {r.row.title}</div>
                     <div className="adm-row-sub">{r.row.date} · {r.note || 'no note'}</div>
                   </div>
-                  <button type="button" className="btn btn-secondary adm-small-btn" onClick={() => setOpen(r.row.date)}>Open day</button>
+                  {r.row.date !== 'practice' && (
+                    <button type="button" className="btn btn-secondary adm-small-btn" onClick={() => { setOpen(r.row.date); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Open day</button>
+                  )}
                 </div>
               ))}
             </div>
@@ -278,9 +305,22 @@ export default function DailyPanel() {
             <div className="adm-muted">Read by the weekly generator before every run. Steer it here: “more PID tuning”, “fewer IEC basics”.</div>
           </div>
         </div>
-        <textarea rows={10} value={notes ?? ''} disabled={notes === null} onChange={(e) => { setNotes(e.target.value); setNotesSaved(''); }} aria-label="Generator notes" />
+        {notesError && (
+          <div className="adm-notice is-error" role="alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <span>{notesError}</span>
+            <button type="button" className="btn btn-secondary adm-small-btn" onClick={loadNotes}>Retry</button>
+          </div>
+        )}
+        <textarea
+          rows={10}
+          value={notes}
+          disabled={!notesLoaded}
+          placeholder={!notesLoaded && !notesError ? 'Loading generator notes…' : undefined}
+          onChange={(e) => { notesDirty.current = true; setNotes(e.target.value); setNotesSaved(''); }}
+          aria-label="Generator notes"
+        />
         <div className="adm-actions" style={{ marginTop: '0.75rem', alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary" onClick={saveNotes} disabled={notes === null}>Save notes</button>
+          <button type="button" className="btn btn-primary" onClick={() => void saveNotes(notes)} disabled={!notesLoaded}>Save notes</button>
           {notesSaved && <span className="adm-muted">{notesSaved}</span>}
         </div>
       </div>

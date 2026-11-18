@@ -164,7 +164,7 @@ export async function POST(request: Request) {
     if (type === 'gallery') {
       const mediaSrc = toMediaSrc(id);
       // Only ever a photo: never a data file like albums.json or posts.json.
-      if (!/^\/api\/media\/uploads\/(gallery|blog)\/[^/]+\.(jpe?g|png|webp|gif|heic|avif)$/i.test(mediaSrc)) {
+      if (!/^\/api\/media\/uploads\/(gallery|blog)\/[^/]+\.(jpe?g|png|webp|gif|heic|avif|svg)$/i.test(mediaSrc)) {
         return NextResponse.json({ success: false, message: 'Not a photo' }, { status: 400 });
       }
       const albumsFile = path.join(baseDir, 'gallery', 'albums.json');

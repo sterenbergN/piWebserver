@@ -27,10 +27,40 @@ export async function registerNode() {
       const { exec } = await import('child_process');
       const { promisify } = await import('util');
       const fs = await import('fs/promises');
+      const os = await import('os');
       const path = await import('path');
-      const { getLiveRates } = await import('./lib/system-stats');
+      const { cpuUseBetween, parseProcStat } = await import('./lib/system-stats');
+      type CpuSample = import('./lib/system-stats').CpuSample;
+      type CpuTimes = import('./lib/system-stats').CpuTimes;
 
       const execAsync = promisify(exec);
+      // Keep the 1-minute collector's CPU baseline separate from lib/system-stats's
+      // shared `getLiveRates()` state used by 10-second /api/stats polls.
+      let prevCpuSample: CpuSample | null = null;
+
+      const readCpuSample = async (): Promise<CpuSample> => {
+        const proc = await fs.readFile('/proc/stat', 'utf8').then(parseProcStat).catch(() => null);
+        if (proc) return proc;
+        const cores: CpuTimes[] = os.cpus().map(({ times: t }) => ({
+          user: t.user,
+          nice: t.nice,
+          system: t.sys,
+          idle: t.idle,
+          iowait: 0,
+          irq: t.irq,
+          softirq: 0,
+          steal: 0,
+        }));
+        const all: CpuTimes = { user: 0, nice: 0, system: 0, idle: 0, iowait: 0, irq: 0, softirq: 0, steal: 0 };
+        for (const c of cores) {
+          all.user += c.user;
+          all.nice += c.nice;
+          all.system += c.system;
+          all.idle += c.idle;
+          all.irq += c.irq;
+        }
+        return { all, cores };
+      };
       // Private runtime data lives in .data (it used to be written into
       // public/, which served it statically and kept dirtying the repo).
       const STATS_HISTORY_FILE = path.join(process.cwd(), '.data', 'stats-history.json');
@@ -64,12 +94,16 @@ export async function registerNode() {
             const usedRaw = parts[2];
             const totalRaw = parts[1];
             
-            // free -h gives human readable like 2.3G or 512M
-            const parseHuman = (str: string) => {
+            // free -h gives human readable values like 2.3Gi, 512Mi, 256Ki, or 512B
+            const parseHuman = (str: string | undefined) => {
+              if (!str) return 0;
               const val = parseFloat(str) || 0;
-              if (str.toUpperCase().includes('G')) return val;
-              if (str.toUpperCase().includes('M')) return val / 1024;
-              if (str.toUpperCase().includes('K')) return val / (1024 * 1024);
+              const upper = str.toUpperCase();
+              if (upper.includes('T')) return val * 1024;
+              if (upper.includes('G')) return val;
+              if (upper.includes('M')) return val / 1024;
+              if (upper.includes('K')) return val / (1024 * 1024);
+              if (upper.includes('B')) return val / (1024 * 1024 * 1024);
               return val;
             };
 
@@ -77,8 +111,25 @@ export async function registerNode() {
             memTotal = parseHuman(totalRaw);
           }
 
-          // Real CPU use (busy time between readings), not load average scaled by a guess.
-          const cpuLoad: number | null = await getLiveRates().then((r) => Math.round(r.cpuPercent * 10) / 10).catch(() => null);
+          // Real CPU use (busy time between readings), using this collector's own baseline.
+          let cpuLoad: number | null = null;
+          try {
+            if (!prevCpuSample) {
+              const first = await readCpuSample();
+              await new Promise((r) => setTimeout(r, 1000));
+              const next = await readCpuSample();
+              const use = cpuUseBetween(first, next);
+              prevCpuSample = next;
+              cpuLoad = use ? Math.round(use.percent * 10) / 10 : null;
+            } else {
+              const curr = await readCpuSample();
+              const use = cpuUseBetween(prevCpuSample, curr);
+              prevCpuSample = curr;
+              cpuLoad = use ? Math.round(use.percent * 10) / 10 : null;
+            }
+          } catch {
+            cpuLoad = null;
+          }
 
           const newEntry = {
             timestamp: new Date().toISOString(),

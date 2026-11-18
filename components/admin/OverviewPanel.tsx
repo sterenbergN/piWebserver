@@ -16,13 +16,24 @@ export default function OverviewPanel() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [statsState, setStatsState] = useState<'loading' | 'ok' | 'error'>('loading');
   const [visits, setVisits] = useState<SiteVisit[] | null>(null);
+  const [visitsError, setVisitsError] = useState(false);
 
   useEffect(() => {
     const fetchStats = () => fetch('/api/stats').then(r => r.json())
       .then(d => { if (d?.success) { setStats(d.data); setStatsState('ok'); } else setStatsState('error'); })
       .catch(() => setStatsState(s => (s === 'ok' ? s : 'error')));
     // The visit log can be large; load it once rather than with every stats refresh.
-    fetch('/api/analytics').then(r => r.json()).then(d => { if (d?.success) setVisits(d.visits); }).catch(() => setVisits([]));
+    fetch('/api/analytics')
+      .then(async (r) => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok || !d?.success || !Array.isArray(d.visits)) throw new Error('Failed to load analytics');
+        setVisits(d.visits);
+        setVisitsError(false);
+      })
+      .catch(() => {
+        setVisitsError(true);
+        setVisits([]);
+      });
     fetchStats();
     const interval = setInterval(fetchStats, 10_000);
     return () => clearInterval(interval);
@@ -64,7 +75,7 @@ export default function OverviewPanel() {
     { label: 'Storage', value: stats.storage.split('(')[0].trim(), sub: stats.storage.includes('(') ? stats.storage.slice(stats.storage.indexOf('(')) : undefined },
     ...(stats.cpu !== undefined ? [{
       label: 'CPU use',
-      value: `${stats.cpu}%`,
+      value: stats.cpu.trim() !== '' && Number.isFinite(Number(stats.cpu)) ? `${stats.cpu}%` : stats.cpu,
       sub: stats.cpuDetail?.cores.length ? `busy, across ${stats.cpuDetail.cores.length} cores` : undefined,
       extra: stats.cpuDetail ? <CpuBreakdown detail={stats.cpuDetail} align="start" /> : undefined,
     }] : []),
@@ -107,7 +118,8 @@ export default function OverviewPanel() {
             <p>Page views by people — bots and your own admin browsing aren’t counted.</p>
           </div>
         </div>
-        {!summary ? <ProgressBar label="Loading visits…" /> : (
+        {visitsError ? <div className="adm-notice is-error">Could not load visit analytics.</div>
+          : !summary ? <ProgressBar label="Loading visits…" /> : (
           <>
             <div className="adm-stats">
               {summary.counts.map(c => (

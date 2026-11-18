@@ -3,12 +3,15 @@
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 
+const SESSION_MS = 1_800_000;
+const STORAGE_KEY = 'lastSiteVisits';
+
 export function AnalyticsTracker() {
   const pathname = usePathname();
 
   useEffect(() => {
     if (!pathname) return;
-    
+
     // Ignore api/admin paths for tracking
     if (pathname.startsWith('/api') || pathname.startsWith('/admin')) {
       return;
@@ -16,11 +19,18 @@ export function AnalyticsTracker() {
 
     try {
       const now = Date.now();
-      const lastVisitStr = localStorage.getItem('lastSiteVisit');
-      const lastVisit = lastVisitStr ? parseInt(lastVisitStr, 10) : 0;
+      let visits: Record<string, number> = {};
+      try {
+        const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) visits = raw;
+      } catch {
+        visits = {};
+      }
 
-      // 30-minute session expiry (1800000 ms)
-      if (now - lastVisit > 1800000) {
+      const lastVisit = typeof visits[pathname] === 'number' && Number.isFinite(visits[pathname]) ? visits[pathname] : 0;
+
+      // 30-minute session expiry (1800000 ms), keyed per pathname
+      if (now - lastVisit > SESSION_MS) {
         // Track unique visitor ping
         fetch('/api/analytics', {
           method: 'POST',
@@ -28,11 +38,18 @@ export function AnalyticsTracker() {
           body: JSON.stringify({ path: pathname })
         }).catch(console.error);
       }
-      
-      // Always prolong their session if they are navigating or switching tabs
-      localStorage.setItem('lastSiteVisit', now.toString());
-    } catch (e) {
-      // Catch in case localStorage is disabled visually or throws an error
+
+      // Prune expired entries and prolong this pathname's session window
+      const next: Record<string, number> = {};
+      for (const [key, ts] of Object.entries(visits)) {
+        if (typeof ts === 'number' && Number.isFinite(ts) && now - ts <= SESSION_MS) {
+          next[key] = ts;
+        }
+      }
+      next[pathname] = now;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Catch in case localStorage is disabled or throws an error
     }
 
   }, [pathname]);

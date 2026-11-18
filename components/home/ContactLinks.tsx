@@ -22,10 +22,32 @@ export default function ContactLinks({ links, email }: { links: ResumeLink[]; em
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const copy = () => navigator.clipboard.writeText(email).then(() => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  });
+  const copy = async () => {
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(email);
+        ok = true;
+      }
+    } catch { /* fall back to execCommand on LAN HTTP */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = email;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch { /* ignore */ }
+    }
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
 
   return (
     <>

@@ -3,8 +3,8 @@
 .pe { max-width: 1200px; margin: 0 auto; padding: 1.25rem 0 3rem; }
 .pe-top {
   position: sticky;
-  top: 60px;
-  z-index: 20;
+  top: 56px;
+  z-index: 25;
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -25,7 +25,7 @@
 .pe-drafts-btn.is-on { border-color: var(--accent); }
 .pe-count {
   min-width: 1.4rem; padding: 0 0.35rem; border-radius: 999px;
-  background: var(--accent); color: #fff; font-size: 0.75rem; line-height: 1.4rem; text-align: center;
+  background: var(--primary-bg); color: var(--primary-fg); font-size: 0.75rem; line-height: 1.4rem; text-align: center;
 }
 .pe-drafts { padding: 0.9rem 1rem; margin-bottom: 1rem; }
 .pe-drafts-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.6rem; }
@@ -79,7 +79,7 @@ textarea.pe-text {
 /* The CAD model menu: a card or a link for each model in the CAD section. */
 .pe-cad { position: relative; }
 .pe-toolbar .pe-cad > button.pe-cad-btn { font-weight: 600; }
-.pe-cad-menu { position: absolute; z-index: 20; top: calc(100% + 0.35rem); left: 0; width: min(340px, 80vw); max-height: 320px; overflow-y: auto; padding: 0.6rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); }
+.pe-cad-menu { position: absolute; z-index: 40; top: calc(100% + 0.35rem); left: 0; width: min(340px, 80vw); max-height: 320px; overflow-y: auto; padding: 0.6rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--background); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); }
 .pe-cad-menu p { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
 .pe-cad-menu ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .pe-cad-menu li { display: flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.3rem; border-radius: 8px; }
@@ -100,10 +100,128 @@ textarea.pe-text.is-dropping { outline: 2px dashed var(--accent); outline-offset
   .pe-top .pe-status { order: 5; flex-basis: 100%; }
   .pe-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem; padding: 0.25rem; margin-bottom: 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
   .pe-tabs button { min-height: 40px; border: none; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
-  .pe-tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+  .pe-tabs button[aria-selected="true"] { background: var(--primary-bg); color: var(--primary-fg); }
   .pe-panes { grid-template-columns: minmax(0, 1fr); }
   .pe-panes.is-write .pe-preview { display: none; }
   .pe-panes.is-preview .pe-write { display: none; }
   .pe-preview { position: static; max-height: none; }
   .pe-row { flex-wrap: wrap; }
+}
+
+/* ─── Post-publish linking wizard ──────────────────────────────────────────── */
+
+.pe-wizard-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow-y: auto;
+}
+.pe-wizard-card {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 1.5rem;
+  background: linear-gradient(var(--surface-glass), var(--surface-glass)), var(--background);
+  border: 1px solid var(--surface-border);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+}
+.pe-wizard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.pe-wizard-head h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.3rem;
+}
+.pe-wizard-head p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.pe-wizard-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--surface-border);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pe-wizard-close:hover { color: var(--foreground); background: var(--surface-hover); }
+
+.pe-wizard-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.pe-wizard-box {
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border);
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.pe-wizard-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.pe-wizard-box-head span { font-size: 0.82rem; }
+.pe-wizard-desc {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.pe-wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pe-wizard-actions .btn {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.88rem;
+}
+.pe-wizard-select {
+  width: auto !important;
+  min-width: 140px;
+  padding: 0.48rem 0.7rem !important;
+  font-size: 0.88rem;
+}
+.pe-wizard-msg {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.pe-wizard-msg.is-ok { color: var(--success-light); font-weight: 500; }
+.pe-wizard-msg.is-error { color: var(--danger); }
+
+.pe-wizard-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--surface-border);
+}
+.pe-wizard-foot .btn {
+  padding: 0.55rem 1rem;
+  font-size: 0.9rem;
 }

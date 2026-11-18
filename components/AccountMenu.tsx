@@ -5,20 +5,22 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { announceAccountChange, signOut } from './account-session';
 import { useHomeScreen } from './AddToHomeScreen';
+import { useTheme } from './ThemeProvider';
 
 export type NavUser = { username: string; /** Starts on PA Today, not the main site. */ studyHome?: boolean } | null;
 
 /**
- * Sign-in chip for the navbar. Accounts are the workout accounts (created by the
- * admin); one sign-in covers every page that remembers you. Everything still
- * works signed out, it just stays on this device. The site admin sign-in is
- * separate but unlocks the same pages, so it shows here too.
+ * Sign-in chip for the navbar. Personal accounts unlock and sync personal rooms
+ * (Today, Daily Questions, Study, Reader, Notes, Journal, Skills, Habits, Chores,
+ * Kitchen, Workouts) across devices. Site Admin sign-in is separate and manages
+ * site publishing & settings (shown here when signed in as admin).
  */
 export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const homeScreen = useHomeScreen();
+  const { theme, toggleTheme } = useTheme();
 
   // Close the signed-in menu on an outside click or Escape.
   useEffect(() => {
@@ -88,6 +90,10 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
               <button type="button" onClick={() => { setMenuOpen(false); setDialogOpen(true); }}><span aria-hidden>👤</span>Sign in to your account</button>
             )}
             {isAdmin && <Link href="/admin" onClick={() => setMenuOpen(false)}><span aria-hidden>🔧</span>Admin</Link>}
+            <button type="button" onClick={() => { toggleTheme(); setMenuOpen(false); }}>
+              <span aria-hidden>{theme === 'dark' ? '☀️' : '🌙'}</span>
+              {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </button>
             <button type="button" onClick={signOut}><span aria-hidden>🚪</span>Sign out</button>
           </div>
         </div>
@@ -104,6 +110,7 @@ function SignInDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -146,8 +153,20 @@ function SignInDialog({ onClose }: { onClose: () => void }) {
   return createPortal(
     <div className="signin-backdrop" role="dialog" aria-modal="true" aria-labelledby="signin-title" onClick={onClose}>
       <form className="signin-card" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h2 id="signin-title">Sign in</h2>
-        <p className="signin-sub">Saves your journal, workouts, habits, chores, meal plans, grocery list and daily questions to your account. Everything also works without signing in, on this device only.</p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <h2 id="signin-title">Sign in</h2>
+          <button
+            type="button"
+            className="nav-theme"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <span aria-hidden>{theme === 'dark' ? '☀️' : '🌙'}</span>
+            <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+          </button>
+        </div>
+        <p className="signin-sub">Personal accounts unlock and sync your personal rooms (Today, Daily Questions, Study, Reader, Notes, Journal, Skills, Habits, Chores, Kitchen, and Workouts) across devices. Site Admin sign-in is separate and manages site publishing &amp; settings.</p>
         <label htmlFor="signin-username" className="sr-only">Username</label>
         <input id="signin-username" ref={inputRef} name="username" autoComplete="username" placeholder="Username"
           value={username} onChange={(e) => setUsername(e.target.value)} />

@@ -17,12 +17,12 @@ import './home.css';
 // (no blank screen while the browser fetches the resume, posts and CAD list).
 
 const CATEGORY_COLORS: Record<string, string> = {
-  // Muted Nord-style tones that read on both the light and dark theme.
-  Automation: '#5e81ac',
-  Infrastructure: '#9a7397',
-  Software: '#6f8f57',
-  Hardware: '#b58b2e',
-  Other: '#7b8597',
+  // Theme-aware tokens defined in home.css so every category passes WCAG AA in Light and Dark mode.
+  Automation: 'var(--cat-automation)',
+  Infrastructure: 'var(--cat-infrastructure)',
+  Software: 'var(--cat-software)',
+  Hardware: 'var(--cat-hardware)',
+  Other: 'var(--cat-other)',
 };
 
 const countPhotos = (albums: GalleryAlbum[]): number => albums.reduce((n, a) => n + a.images.length + countPhotos(a.albums), 0);
@@ -145,7 +145,16 @@ export default async function Home() {
                 <div key={project.id} className="premium-card home-project">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
                     <h3>{project.name}</h3>
-                    <span className="home-tag" style={{ color, borderColor: `${color}55`, background: `${color}18` }}>{project.category}</span>
+                    <span
+                      className="home-tag"
+                      style={{
+                        color,
+                        borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
+                        background: `color-mix(in srgb, ${color} 12%, transparent)`,
+                      }}
+                    >
+                      {project.category}
+                    </span>
                   </div>
                   <p>{project.description}</p>
                   {(project.post || albumId) && (

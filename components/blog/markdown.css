@@ -1,0 +1,171 @@
+/* Shared blog post & markdown preview styles: reading progress, ToC, tables, math */
+
+.post-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 150;
+  background: transparent;
+  pointer-events: none;
+}
+
+.post-progress-fill {
+  height: 100%;
+  background: var(--accent-light);
+  transition: width 0.08s linear;
+}
+
+.post-toc {
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+}
+
+.post-toc-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.post-toc-toggle:hover {
+  color: var(--accent-light);
+}
+
+.post-toc-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--surface-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.post-toc-item a {
+  display: block;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.post-toc-item a:hover {
+  background: var(--surface-hover);
+  color: var(--accent-light);
+}
+
+.post-toc-item.is-h3 {
+  padding-left: 1rem;
+}
+
+.post-toc-item.is-h3 a {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.post-category-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--card-bg);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Headings inside posts clear sticky header when jumped to via ToC */
+.post-body h2,
+.post-body h3 {
+  scroll-margin-top: 76px;
+}
+
+.post-body.markdown-body blockquote {
+  opacity: 1;
+  color: var(--foreground);
+}
+
+.post-body.markdown-body a {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* GFM tables */
+.post-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+}
+
+.post-body .post-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+  font-size: 0.94rem;
+  line-height: 1.5;
+}
+
+.post-body .post-table-wrap th,
+.post-body .post-table-wrap td {
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--surface-border);
+  border-right: 1px solid var(--surface-border);
+  text-align: left;
+}
+
+.post-body .post-table-wrap th:last-child,
+.post-body .post-table-wrap td:last-child {
+  border-right: none;
+}
+
+.post-body .post-table-wrap tr:last-child td {
+  border-bottom: none;
+}
+
+.post-body .post-table-wrap th {
+  background: var(--card-bg);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.post-body .post-table-wrap tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--card-bg) 45%, transparent);
+}
+
+.post-body input[type='checkbox'] {
+  width: auto;
+  height: auto;
+  margin-right: 0.45rem;
+  vertical-align: middle;
+}
+
+.post-body .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .post-progress-fill {
+    transition: none;
+  }
+}

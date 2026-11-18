@@ -108,10 +108,13 @@ export default function ResumeEditor() {
       {popup}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
         <div>
-          <Link href="/" style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>← Home page</Link>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', alignItems: 'center', fontSize: '0.85rem' }}>
+            <Link href="/admin" style={{ color: 'var(--accent-light)', fontWeight: 600 }}>← Admin</Link>
+            <Link href="/" style={{ color: 'var(--muted)' }}>View site</Link>
+          </div>
           <h1 style={{ margin: '0.25rem 0 0', fontSize: '1.8rem' }}>Resume & Home Page</h1>
           <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.9rem' }}>
-            Edit it like a resume — the home page and the printable <Link href="/resume" target="_blank" style={{ color: 'var(--accent)' }}>/resume</Link> update when you save.
+            Edit it like a resume — the home page and the printable <Link href="/resume" target="_blank" style={{ color: 'var(--accent-light)' }}>/resume</Link> update when you save.
             {dirty && <strong style={{ color: 'var(--warning)' }}> • Unsaved changes</strong>}
             {!dirty && resume.profile.updatedAt && <span> · Last saved {new Date(resume.profile.updatedAt).toLocaleString()}</span>}
           </p>

@@ -12,6 +12,11 @@ if (!command || !['dev', 'build', 'start'].includes(command)) {
 
 if (command === 'dev') {
   process.env.NEXT_DIST_DIR = '.next-dev';
+  const hookFlag = '--require ./scripts/fix-next-dev-watchpack.cjs';
+  const currentNodeOpts = process.env.NODE_OPTIONS || '';
+  if (!currentNodeOpts.includes('fix-next-dev-watchpack.cjs')) {
+    process.env.NODE_OPTIONS = currentNodeOpts ? `${currentNodeOpts} ${hookFlag}` : hookFlag;
+  }
 }
 
 if (command === 'build') {

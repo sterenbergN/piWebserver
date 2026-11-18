@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Noah Stuf',
     short_name: 'Noah Stuf',
     description: 'Your day, workouts, recipes, games and more — hosted on a Raspberry Pi.',
-    start_url: '/workout',
+    start_url: '/',
     scope: '/',
     display: 'standalone',
     background_color: '#2b303b',

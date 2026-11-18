@@ -6,9 +6,11 @@ import { choresFile, examHelpFile, findHousehold } from '@/lib/chores/households
 import { readFeedback, readUserDaily } from '@/lib/daily/store';
 import { folder as privatePostsFolder } from '@/lib/journal/private-posts';
 import { householdKitchenFile, personalKitchenFile } from '@/lib/recipes/kitchen-store';
+import { RECIPE_PHOTO_PREFIX, isRecipePhotoSrc, type Recipe } from '@/lib/recipes/recipes';
 import { libraryFile as readerLibraryFile, notesFolder as readerNotesFolder, progressFile as readerProgressFile } from '@/lib/reader/store';
 import { notesFolder } from '@/lib/notes/store';
 import { golfUserFile, listRoundSummaries, roundFile } from '@/lib/golf/store';
+import { projectFilesFolder, skillsFolder } from '@/lib/skills/store';
 import { studyFolder } from '@/lib/study/store';
 import { userMovieFile } from '@/lib/tools/movies-store';
 import { getWorkoutData } from '@/lib/workout/data';
@@ -124,6 +126,34 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
   // Read-only: signing in to download shouldn't make a household or move a kitchen.
   const household = await findHousehold(userId);
 
+  // Skills: prefer the per-user folder layout (.data/skills/<userId>/skills.json), falling back to legacy <userId>.json.
+  const skillsDir = skillsFolder(userId);
+  const skillsDataFile = path.join(skillsDir, 'skills.json');
+  const hasSkillsDataFile = await fs.stat(skillsDataFile).then((s) => s.isFile(), () => false);
+  const skillsFilesDir = projectFilesFolder(userId);
+  const skillProjectFiles = (await walk(skillsFilesDir))
+    .filter((file) => !file.endsWith('.tmp'))
+    .map((file) => ({ entry: `skills/files/${path.relative(skillsFilesDir, file).split(path.sep).join('/')}`, file }));
+
+  // Recipes: only recipes owned by this account, plus any dish photos they use.
+  const recipesFile = path.join(process.cwd(), '.data', 'recipes', 'recipes.json');
+  const storedRecipes = await fs.readFile(recipesFile, 'utf-8')
+    .then((raw) => JSON.parse(raw) as { recipes?: Recipe[] })
+    .catch(() => null);
+  const myRecipes = Array.isArray(storedRecipes?.recipes)
+    ? storedRecipes.recipes.filter((r) => r && r.ownerId === userId)
+    : [];
+  const recipePhotoNames = new Set<string>();
+  for (const r of myRecipes) {
+    if (isRecipePhotoSrc(r.photo)) {
+      recipePhotoNames.add(r.photo.slice(RECIPE_PHOTO_PREFIX.length));
+    }
+  }
+  const recipePhotos: Item[] = [...recipePhotoNames].map((fileName) => ({
+    entry: `recipes/photos/${fileName}`,
+    file: path.join(process.cwd(), 'public', 'uploads', 'recipes', fileName),
+  }));
+
   return [
     { entry: 'journal.json', file: perUserFile('journal', userId) },
     ...posts,
@@ -131,6 +161,9 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'daily/answers.json', json: daily },
     ...(feedback.length ? [{ entry: 'daily/feedback.json', json: { entries: feedback } }] : []),
     { entry: 'loop-lab-notebook.json', file: perUserFile('loop-lab', userId) },
+    { entry: 'skills/skills.json', file: hasSkillsDataFile ? skillsDataFile : perUserFile('skills', userId) },
+    { entry: 'skills/progress.json', file: path.join(skillsDir, 'progress.json') },
+    ...skillProjectFiles,
     { entry: 'study/tests.json', file: path.join(studyFolder(userId), 'tests.json') },
     { entry: 'study/progress.json', file: path.join(studyFolder(userId), 'progress.json') },
     { entry: 'study/map.json', file: path.join(studyFolder(userId), 'map.json') },
@@ -146,6 +179,7 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'golf/bag-and-settings.json', file: golfUserFile(userId) },
     ...golfRounds,
     { entry: 'movies.json', file: userMovieFile(userId) },
+    ...(myRecipes.length ? [{ entry: 'recipes/recipes.json', json: { version: 1, recipes: myRecipes } }, ...recipePhotos] : []),
     { entry: 'kitchen/personal.json', file: personalKitchenFile(userId) },
     ...(household ? [
       { entry: 'kitchen/household.json', file: householdKitchenFile(household.id) },

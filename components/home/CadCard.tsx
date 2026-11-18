@@ -4,7 +4,7 @@ import ModelViewer from './ModelViewer';
 import './cad.css';
 
 /** For admins: what the viewer should do about the model's still picture. */
-export type StillOptions = { onSnapshot: (image: Blob, byHand: boolean) => Promise<void>; wantsSnapshot: boolean; autoStart: boolean };
+export type StillOptions = { onSnapshot: (image: Blob, byHand: boolean) => Promise<void>; wantsSnapshot: boolean; autoStart: boolean; forceSnapshot?: boolean };
 
 /**
  * One CAD model: its 3D view (when it has a model file), name and description,

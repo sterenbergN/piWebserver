@@ -8,6 +8,7 @@ import { MAX_MODEL_BYTES, MODEL_EXTENSIONS, formatBytes, modelExtension } from '
 import { parseOnshapeLink } from '@/lib/cad/onshape';
 import { cadAnchor } from '@/lib/cad/embeds';
 import CadCard from './CadCard';
+import ModelViewer from './ModelViewer';
 import './cad.css';
 
 const PREVIEW = 4;
@@ -50,6 +51,7 @@ export default function CadSection({
   const [notice, setNotice] = useState('');
   /** The model whose 3D view opens by itself (just saved), so its still picture gets taken. */
   const [justSaved, setJustSaved] = useState<string | null>(null);
+  const [capturingPoster, setCapturingPoster] = useState(false);
   const [error, setError] = useState('');
   /** The model a link (#cad-<id>, e.g. from a post) pointed at, glowing briefly. */
   const [linked, setLinked] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export default function CadSection({
     const data = await res?.json().catch(() => ({}));
     if (!data?.success) { setNotice(data?.message || 'Couldn’t save the still picture'); return; }
     setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, poster: data.project.poster, posterFor: data.project.posterFor } : p)));
+    setEditing((prev) => (prev && prev.id === id ? { ...prev, poster: data.project.poster, posterFor: data.project.posterFor } : prev));
     if (announce) setNotice('Saved this view as the still picture.');
   };
 
@@ -153,6 +156,7 @@ export default function CadSection({
     setError('');
     setNotice('');
     setModelFile(null);
+    setCapturingPoster(false);
     setFromOnshape(onshape && !p.model);
     setEditing(p);
   };
@@ -183,7 +187,7 @@ export default function CadSection({
         setProjects((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
       } else if (fromOnshape && onshape && parseOnshapeLink(saved.link)) {
         try {
-          await fetchFromOnshape(saved.id);
+          saved = await fetchFromOnshape(saved.id);
         } catch (err) {
           setEditing(saved);
           throw new Error(`Saved, but the Onshape export didn’t work: ${err instanceof Error ? err.message : 'try again'}`);
@@ -195,6 +199,7 @@ export default function CadSection({
         setFilter('all');
       }
       setModelFile(null);
+      setCapturingPoster(false);
       setFromOnshape(false);
       setEditing(null);
     } catch (err) {
@@ -259,12 +264,42 @@ export default function CadSection({
             : editing.model ? <small>{editing.modelSource === 'onshape' ? 'From Onshape' : editing.modelName || 'Model'}{editing.modelSize ? ` · ${formatBytes(editing.modelSize)}` : ''}{editing.modelUpdatedAt ? ` · ${new Date(editing.modelUpdatedAt).toLocaleDateString()}` : ''}</small>
               : <small>None yet. STEP files: export as STL or 3MF first.</small>}
           {modelFile && <button type="button" className="btn btn-secondary" onClick={() => setModelFile(null)}>✕</button>}
-          {!modelFile && editing.model && <button type="button" className="btn btn-secondary" onClick={() => removeModel(editing)}>Remove</button>}
+          {!modelFile && editing.model && (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={saving || capturingPoster}
+                onClick={() => setCapturingPoster(true)}
+              >
+                {capturingPoster ? 'Capturing poster…' : '📸 Capture poster'}
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => removeModel(editing)}>Remove</button>
+            </>
+          )}
         </div>
+        {capturingPoster && editing.id && editing.model && !modelFile && (
+          <div style={{ maxWidth: 360, marginTop: '0.5rem' }}>
+            <ModelViewer
+              key={`poster-${editing.id}-${editing.model}`}
+              src={`/api/media${editing.model}`}
+              name={editing.name || 'Model'}
+              size={editing.modelSize}
+              poster={editing.poster}
+              autoStart
+              wantsSnapshot
+              forceSnapshot
+              onSnapshot={async (image) => {
+                await saveStill(editing.id, image, true);
+                setCapturingPoster(false);
+              }}
+            />
+          </div>
+        )}
       </div>
       <div className="is-wide" style={{ display: 'flex', gap: '0.5rem' }}>
         <button className="btn btn-primary" onClick={save} disabled={saving || !editing.name.trim()}>{saving ? (fromOnshape && !modelFile && onshape && parseOnshapeLink(editing.link) ? 'Exporting from Onshape…' : 'Saving…') : editing.id ? 'Save' : 'Add model'}</button>
-        <button className="btn btn-secondary" onClick={() => { setEditing(null); setModelFile(null); }} disabled={saving}>Cancel</button>
+        <button className="btn btn-secondary" onClick={() => { setEditing(null); setModelFile(null); setCapturingPoster(false); }} disabled={saving}>Cancel</button>
       </div>
     </div>
   );

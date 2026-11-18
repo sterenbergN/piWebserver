@@ -29,32 +29,45 @@ export function createLimiter({ max, windowMs }: { max: number; windowMs: number
   };
 }
 
-/** Best guess at the visitor's address (Cloudflare, a proxy, or Next's own forwarded header). */
+/** Best guess at the visitor's address when behind a trusted proxy (`TRUST_PROXY=1`). */
 export function clientAddress(request: Request) {
+  if (process.env.TRUST_PROXY !== '1') return 'unknown';
   const h = request.headers;
-  return h.get('cf-connecting-ip') || h.get('x-real-ip') || h.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+  return h.get('cf-connecting-ip')?.trim() || h.get('x-real-ip')?.trim() || h.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
 }
 
-// Password guessing: 5 wrong tries per address per 15 minutes. The overall
-// cap still slows an attacker who fakes a new address for every try.
+// Password guessing: 5 wrong tries per address/account per 15 minutes. The overall
+// cap still slows an attacker who rotates accounts or addresses.
 const perAddress = createLimiter({ max: 5, windowMs: 15 * 60_000 });
 const overall = createLimiter({ max: 60, windowMs: 15 * 60_000 });
 
-/** Seconds to wait before another login attempt from this request (0 = go ahead). */
-export function loginRetryAfter(request: Request, scope: string) {
+function loginBucketKey(request: Request, scope: string, identifier?: string) {
   const ip = clientAddress(request);
-  return Math.max(perAddress.retryAfter(`${scope}:${ip}`), overall.retryAfter(scope));
+  const id = identifier?.trim().toLowerCase();
+  if (ip !== 'unknown') {
+    return id ? `${scope}:${ip}:${id}` : `${scope}:${ip}`;
+  }
+  if (id && id !== 'admin') {
+    return `${scope}:unknown:${id}`;
+  }
+  const ua = (request.headers.get('user-agent') || '').trim().slice(0, 160);
+  return `${scope}:unknown:${id || scope}:${ua || 'no-ua'}`;
 }
 
-export async function recordLoginFailure(request: Request, scope: string) {
-  perAddress.hit(`${scope}:${clientAddress(request)}`);
+/** Seconds to wait before another login attempt from this request (0 = go ahead). */
+export function loginRetryAfter(request: Request, scope: string, identifier?: string) {
+  return Math.max(perAddress.retryAfter(loginBucketKey(request, scope, identifier)), overall.retryAfter(scope));
+}
+
+export async function recordLoginFailure(request: Request, scope: string, identifier?: string) {
+  perAddress.hit(loginBucketKey(request, scope, identifier));
   overall.hit(scope);
   // A short pause makes rapid guessing slower still.
   await new Promise((r) => setTimeout(r, 400));
 }
 
-export function recordLoginSuccess(request: Request, scope: string) {
-  perAddress.reset(`${scope}:${clientAddress(request)}`);
+export function recordLoginSuccess(request: Request, scope: string, identifier?: string) {
+  perAddress.reset(loginBucketKey(request, scope, identifier));
 }
 
 export const tooManyAttemptsMessage = (seconds: number) =>

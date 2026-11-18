@@ -3,6 +3,9 @@
 import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import Markdown from 'react-markdown';
 import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
+import { BLOG_REHYPE_PLUGINS, BLOG_REMARK_PLUGINS, fenceDisplayMath } from './markdown-plugins';
+import 'katex/dist/katex.min.css';
+import './markdown.css';
 import PostImage from './PostImage';
 import { cadPre } from './CadEmbed';
 import { cadBlock, cadHref } from '@/lib/cad/embeds';
@@ -235,13 +238,21 @@ export default function MarkdownWriter({ markdown, setMarkdown, title, setTitle,
 /** A post's Markdown as readers see it (pictures still uploading show as a placeholder). */
 export function PostMarkdown({ markdown, cadProjects = [], cadPreview }: { markdown: string; cadProjects?: CadProject[]; cadPreview?: ReturnType<typeof cadPre> }) {
   const pre = useMemo(() => cadPreview ?? cadPre(cadProjects), [cadPreview, cadProjects]);
+  const prepared = useMemo(() => fenceDisplayMath(markdown), [markdown]);
   return (
-    <Markdown components={{
-      a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-      pre,
-      img: ({ node: _node, src, alt, title }) => typeof src === 'string' && src.startsWith('uploading-')
-        ? <span className="pe-uploading">{alt}</span>
-        : <PostImage src={src} alt={alt} title={title} />,
-    }}>{markdown}</Markdown>
+    <Markdown
+      remarkPlugins={BLOG_REMARK_PLUGINS}
+      rehypePlugins={BLOG_REHYPE_PLUGINS}
+      components={{
+        a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+        table: ({ node: _node, ...props }) => <div className="post-table-wrap"><table {...props} /></div>,
+        pre,
+        img: ({ node: _node, src, alt, title }) => typeof src === 'string' && src.startsWith('uploading-')
+          ? <span className="pe-uploading">{alt}</span>
+          : <PostImage src={src} alt={alt} title={title} />,
+      }}
+    >
+      {prepared}
+    </Markdown>
   );
 }

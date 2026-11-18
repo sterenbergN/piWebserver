@@ -56,13 +56,12 @@ function removeAlbum(albums: Album[], id: string): Album[] {
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 async function readAlbums(): Promise<Album[]> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(albumsFile, 'utf-8');
-    const albums = JSON.parse(raw);
-    // Ensure every album has an `albums` field
-    const normalise = (a: any): Album => ({ ...a, albums: (a.albums || []).map(normalise) });
-    return albums.map(normalise);
-  } catch {
+    raw = await fs.readFile(albumsFile, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+    // First-time bootstrap only when albums.json does not exist yet.
     await fs.mkdir(galleryDir, { recursive: true });
     let images: AlbumImage[] = [];
     try {
@@ -78,6 +77,11 @@ async function readAlbums(): Promise<Album[]> {
     await saveAlbums(initial);
     return initial;
   }
+  const albums = JSON.parse(raw);
+  if (!Array.isArray(albums)) throw new Error('Invalid albums.json format');
+  // Ensure every album has an `albums` field
+  const normalise = (a: any): Album => ({ ...a, images: a.images || [], albums: (a.albums || []).map(normalise) });
+  return albums.map(normalise);
 }
 
 async function saveAlbums(albums: Album[]) {

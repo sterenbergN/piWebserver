@@ -1,14 +1,41 @@
 /* ─── Admin dashboard ──────────────────────────────────────────────────────── */
 
 .adm { max-width: 1000px; margin: 0 auto; padding: 1.5rem 0 3rem; }
-.adm-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem; }
+.adm-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.9rem; }
 .adm-top h1 { margin: 0; }
+.adm-back-link { display: inline-block; margin-bottom: 0.25rem; color: var(--accent-light); font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+.adm-back-link:hover { text-decoration: underline; }
+
+/* Quick-Switch Bar */
+.adm-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+.adm-quick-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 36px;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.adm-quick-link:hover { background: var(--surface-hover); border-color: var(--accent-light); }
+.adm-quick-link[aria-current="page"] { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
 
 /* Section tabs: one row that scrolls sideways on phones. */
 .adm-tabs {
   position: sticky;
-  top: 64px;
-  z-index: 20;
+  top: 56px;
+  z-index: 30;
   display: flex;
   gap: 0.35rem;
   overflow-x: auto;
@@ -17,7 +44,7 @@
   margin-bottom: 1.5rem;
   border-radius: 14px;
   border: 1px solid var(--surface-border);
-  background: var(--nav-bg);
+  background: var(--background);
 }
 .adm-tabs::-webkit-scrollbar { display: none; }
 .adm-tab {
@@ -38,7 +65,7 @@
   white-space: nowrap;
 }
 .adm-tab:hover { color: var(--foreground); background: var(--surface-hover); }
-.adm-tab[aria-selected="true"] { background: var(--accent); color: #fff; }
+.adm-tab[aria-selected="true"] { background: var(--primary-bg); color: var(--primary-fg); }
 .adm-tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
 
 .adm-card {
@@ -104,7 +131,7 @@
 
 .adm-badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.65rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; border: 1px solid; }
 .adm-badge.is-good { color: var(--success-light); border-color: rgba(var(--success-rgb), 0.5); background: rgba(var(--success-rgb), 0.1); }
-.adm-badge.is-new { color: #fff; border-color: var(--accent); background: var(--accent); }
+.adm-badge.is-new { color: var(--primary-fg); border-color: var(--primary-bg); background: var(--primary-bg); }
 .adm-badge.is-warn { color: var(--warning); border-color: var(--warning); background: rgba(237, 137, 54, 0.1); }
 
 /* Update steps */
@@ -167,7 +194,7 @@
 pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; overflow: auto; padding: 0.75rem; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--surface-border); margin: 0.5rem 0 0; }
 
 @media (max-width: 600px) {
-  .adm-tabs { top: 58px; margin-left: -0.25rem; margin-right: -0.25rem; }
+  .adm-tabs { top: 56px; margin-left: -0.25rem; margin-right: -0.25rem; }
   .adm-row { flex-wrap: wrap; }
   /* Text gets its own line when the buttons would squeeze it. */
   .adm-row-main { min-width: min(100%, 11rem); }

@@ -2,15 +2,16 @@ import fs from 'fs/promises';
 import path from 'path';
 import { NextResponse } from 'next/server';
 import { SITE_PAGES, searchDocs, type SearchDoc } from '@/lib/search';
-import { getPosts, withoutBlogAlbums } from '@/lib/site-content';
+import { getCadProjects, getPosts, withoutBlogAlbums } from '@/lib/site-content';
 import { getResume } from '@/lib/resume-store';
+import { publicLibraryFile } from '@/lib/reader/items';
 import { isSafeBlogSlug } from '@/lib/security/paths';
 import { DEFAULT_RECIPES, extractIngredients, normalizeRecipesData, resolveRecipes, type RecipesData } from '@/lib/recipes/recipes';
 
 export const dynamic = 'force-dynamic';
 
 type Album = { id: string; name?: string; images?: { src: string; caption?: string }[]; albums?: Album[] };
-type LibraryDoc = { url: string; name?: string; category?: string; note?: string };
+type LibraryDoc = { id?: string; url: string; name?: string; category?: string; note?: string };
 
 const uploads = () => path.join(process.cwd(), 'public', 'uploads');
 const readJson = async <T,>(file: string, fallback: T): Promise<T> =>
@@ -41,10 +42,13 @@ async function buildIndex(): Promise<SearchDoc[]> {
   const library = await readJson<LibraryDoc[]>(path.join(uploads(), 'library', 'library.json'), []);
   for (const doc of Array.isArray(library) ? library : []) {
     if (!doc?.url) continue;
-    docs.push({ kind: 'document', title: doc.name || path.basename(doc.url), url: '/reader?shelf=library', subtitle: doc.category, body: doc.note });
+    const fileName = publicLibraryFile(doc.url);
+    const bookId = doc.id || (fileName ? `lib-${fileName.replace(/[^\w-]+/g, '-').slice(0, 58)}` : '');
+    const url = bookId ? `/reader?book=${encodeURIComponent(bookId)}` : '/reader?shelf=library';
+    docs.push({ kind: 'document', title: doc.name || path.basename(doc.url), url, subtitle: doc.category, body: doc.note });
   }
 
-  const { projects, skills } = await getResume();
+  const { projects } = await getResume();
   const recipesRaw = await readJson<RecipesData>(
     path.join(process.cwd(), '.data', 'recipes', 'recipes.json'),
     { version: 1, recipes: DEFAULT_RECIPES },
@@ -60,9 +64,20 @@ async function buildIndex(): Promise<SearchDoc[]> {
     });
   }
   for (const project of projects) {
+    const tags = Array.isArray((project as { tags?: string[] }).tags) ? (project as { tags?: string[] }).tags! : [];
     docs.push({
       kind: 'project', title: project.name, url: project.post ? `/blog/${project.post.slug}` : '/#projects',
-      subtitle: project.category, body: `${project.description} ${skills.map((s) => s.name).join(' ')}`,
+      subtitle: project.category, body: [project.description, ...tags].filter(Boolean).join(' '),
+    });
+  }
+  for (const model of await getCadProjects()) {
+    if (!model?.id || !model?.name) continue;
+    docs.push({
+      kind: 'project',
+      title: model.name,
+      url: `/cad#cad-${encodeURIComponent(model.id)}`,
+      subtitle: model.model ? 'Interactive 3D model · CAD' : 'CAD model',
+      body: [model.description, model.modelName, model.link].filter(Boolean).join(' '),
     });
   }
   return docs;

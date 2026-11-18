@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 type ConfirmOptions = {
@@ -33,10 +33,18 @@ function normalizeAlertInput(input: AlertOptions | string): AlertOptions {
 export function useSitePopup() {
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [alertState, setAlertState] = useState<AlertState | null>(null);
+  const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const alertResolverRef = useRef<(() => void) | null>(null);
 
   const confirm = useCallback((options: ConfirmOptions | string) => {
     const normalized = normalizeConfirmInput(options);
+    if (confirmResolverRef.current) {
+      const prev = confirmResolverRef.current;
+      confirmResolverRef.current = null;
+      prev(false);
+    }
     return new Promise<boolean>((resolve) => {
+      confirmResolverRef.current = resolve;
       setConfirmState({
         title: normalized.title || 'Confirm Action',
         message: normalized.message,
@@ -50,7 +58,13 @@ export function useSitePopup() {
 
   const showAlert = useCallback((options: AlertOptions | string) => {
     const normalized = normalizeAlertInput(options);
+    if (alertResolverRef.current) {
+      const prev = alertResolverRef.current;
+      alertResolverRef.current = null;
+      prev();
+    }
     return new Promise<void>((resolve) => {
+      alertResolverRef.current = resolve;
       setAlertState({
         title: normalized.title || 'Notice',
         message: normalized.message,
@@ -61,17 +75,36 @@ export function useSitePopup() {
   }, []);
 
   const closeConfirm = useCallback((value: boolean) => {
-    setConfirmState((prev) => {
-      if (prev) prev.resolve(value);
-      return null;
-    });
+    if (confirmResolverRef.current) {
+      const resolve = confirmResolverRef.current;
+      confirmResolverRef.current = null;
+      resolve(value);
+    }
+    setConfirmState(null);
   }, []);
 
   const closeAlert = useCallback(() => {
-    setAlertState((prev) => {
-      if (prev) prev.resolve();
-      return null;
-    });
+    if (alertResolverRef.current) {
+      const resolve = alertResolverRef.current;
+      alertResolverRef.current = null;
+      resolve();
+    }
+    setAlertState(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (confirmResolverRef.current) {
+        const resolve = confirmResolverRef.current;
+        confirmResolverRef.current = null;
+        resolve(false);
+      }
+      if (alertResolverRef.current) {
+        const resolve = alertResolverRef.current;
+        alertResolverRef.current = null;
+        resolve();
+      }
+    };
   }, []);
 
   useEffect(() => {

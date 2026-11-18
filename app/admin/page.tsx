@@ -6,6 +6,7 @@ import UpdatesPanel from '@/components/admin/UpdatesPanel';
 import BackupsPanel from '@/components/admin/BackupsPanel';
 import DailyPanel from '@/components/admin/DailyPanel';
 import AccountsPanel from '@/components/admin/AccountsPanel';
+import AdminQuickNav from '@/components/admin/AdminQuickNav';
 import './admin.css';
 
 const TABS = [
@@ -19,24 +20,31 @@ type TabId = (typeof TABS)[number]['id'];
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState<TabId>('overview');
+  const [visited, setVisited] = useState<Set<TabId>>(() => new Set(['overview']));
   const [updateAvailable, setUpdateAvailable] = useState(false);
+
+  const openTab = useCallback((id: TabId) => {
+    setTab(id);
+    setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
 
   // The open tab lives in the URL (#updates) so a refresh or link lands on it.
   useEffect(() => {
     const follow = () => {
       const fromHash = window.location.hash.slice(1);
-      if (TABS.some(t => t.id === fromHash)) setTab(fromHash as TabId);
+      if (TABS.some(t => t.id === fromHash)) openTab(fromHash as TabId);
+      else if (!fromHash) openTab('overview');
     };
     follow();
     window.addEventListener('hashchange', follow);
     return () => window.removeEventListener('hashchange', follow);
-  }, []);
+  }, [openTab]);
   // On a phone the tab row scrolls sideways; keep the chosen tab in view.
   useEffect(() => {
     document.getElementById(`tab-${tab}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [tab]);
   const choose = (id: TabId) => {
-    setTab(id);
+    openTab(id);
     history.replaceState(null, '', `#${id}`);
   };
   const onUpdateStatus = useCallback((available: boolean) => setUpdateAvailable(available), []);
@@ -52,6 +60,8 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      <AdminQuickNav current="/admin" />
+
       <nav className="adm-tabs" role="tablist" aria-label="Admin sections">
         {TABS.map(t => (
           <button key={t.id} role="tab" id={`tab-${t.id}`} aria-controls={`panel-${t.id}`} aria-selected={tab === t.id} className="adm-tab" onClick={() => choose(t.id)}>
@@ -61,14 +71,18 @@ export default function AdminDashboard() {
         ))}
       </nav>
 
-      {/* Every panel stays mounted (just hidden), so an update or upload keeps going when you switch tabs. */}
+      {/* Panels lazy-mount on first visit and stay mounted once visited so active jobs aren't lost. */}
       {TABS.map(t => (
         <div key={t.id} role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} hidden={tab !== t.id}>
-          {t.id === 'overview' && <OverviewPanel />}
-          {t.id === 'accounts' && <AccountsPanel />}
-          {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
-          {t.id === 'backups' && <BackupsPanel />}
-          {t.id === 'daily' && <DailyPanel />}
+          {visited.has(t.id) && (
+            <>
+              {t.id === 'overview' && <OverviewPanel />}
+              {t.id === 'accounts' && <AccountsPanel />}
+              {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
+              {t.id === 'backups' && <BackupsPanel />}
+              {t.id === 'daily' && <DailyPanel />}
+            </>
+          )}
         </div>
       ))}
     </div>

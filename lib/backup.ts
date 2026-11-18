@@ -202,7 +202,7 @@ export async function listBackups(settings?: BackupSettings): Promise<BackupInfo
 export type BackupProgress = { done: number; total: number; bytes: number };
 type OnProgress = (progress: BackupProgress) => void;
 
-export async function createBackup(label = 'manual', onProgress?: OnProgress): Promise<BackupInfo> {
+export async function createBackup(label = 'manual', onProgress?: OnProgress, excludeName?: string): Promise<BackupInfo> {
   const settings = await getBackupSettings();
   const safeLabel = label.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 30);
   const name = `backup-${stamp()}${safeLabel ? `-${safeLabel}` : ''}.zip`;
@@ -243,16 +243,16 @@ export async function createBackup(label = 'manual', onProgress?: OnProgress): P
     throw error;
   }
   await fs.rename(tmp, target);
-  await pruneBackups(settings, name);
+  await pruneBackups(settings, name, excludeName);
   const stat = await fs.stat(target);
   return { name, size: stat.size, createdAt: stat.mtime.toISOString(), label: safeLabel || 'manual' };
 }
 
-/** Keep the newest `keep` backups (never deleting the one just made). */
-async function pruneBackups(settings: BackupSettings, justMade: string) {
+/** Keep the newest `keep` backups (never deleting the one just made or an excluded backup). */
+async function pruneBackups(settings: BackupSettings, justMade: string, excludeName?: string) {
   const all = await listBackups(settings);
   for (const old of all.slice(settings.keep)) {
-    if (old.name === justMade) continue;
+    if (old.name === justMade || (excludeName && old.name === excludeName)) continue;
     await fs.unlink(path.join(settings.dir, old.name)).catch(() => {});
   }
 }
@@ -283,7 +283,7 @@ export function isRestorablePath(entry: string) {
 export async function restoreBackup(name: string, onProgress?: OnProgress): Promise<{ restored: number; safetyBackup: string }> {
   const file = await resolveBackup(name);
   const entries = (await readZipEntries(file)).filter((e) => !e.isDirectory && isRestorablePath(e.name));
-  const safety = await createBackup('pre-restore');
+  const safety = await createBackup('pre-restore', undefined, name);
   let restored = 0;
   let bytes = 0;
   for (const entry of entries) {

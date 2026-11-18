@@ -48,7 +48,7 @@ async function keepApp(cacheName, pagePath, code, assets) {
   const cache = await caches.open(cacheName);
   // Offline there's nothing to gain, and everything to lose if the list came up short.
   const page = await fetch(pagePath, { credentials: 'same-origin' }).catch(() => null);
-  if (!page || !page.ok) return;
+  if (!page || !page.ok || page.redirected) return;
   await cache.put(pagePath, page);
   const wanted = new Set([pagePath, ...code, ...assets].map((path) => new URL(path, self.location.origin).href));
   for (const request of await cache.keys()) {
@@ -80,7 +80,7 @@ self.addEventListener('message', (event) => {
 async function appPage(event, cacheName, pagePath) {
   const cache = await caches.open(cacheName);
   const network = fetch(event.request).then((response) => {
-    if (response.ok) cache.put(pagePath, response.clone());
+    if (response && response.ok && !response.redirected) cache.put(pagePath, response.clone());
     return response;
   });
   event.waitUntil(network.catch(() => {}));
@@ -144,7 +144,7 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           // Kept fresh so the recipe box still opens with no signal at the store.
-          if (response.ok && (url.pathname.startsWith('/workout') || url.pathname === '/recipes')) {
+          if (response && response.ok && !response.redirected && (url.pathname.startsWith('/workout') || url.pathname === '/recipes')) {
             const copy = response.clone();
             caches.open(PAGE_CACHE).then((cache) => cache.put(url.pathname, copy));
           }
