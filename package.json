@@ -22,6 +22,7 @@
     "fflate": "^0.8.3",
     "katex": "^0.16.47",
     "leaflet": "^1.9.4",
+    "mathjax-full": "^3.2.2",
     "next": "16.2.2",
     "onnxruntime-node": "^1.31.1",
     "pdf-lib": "^1.17.1",

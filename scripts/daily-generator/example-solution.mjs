@@ -61,8 +61,12 @@ const poles = plot({
 
 export const practice = {
   formulas: [
-    { id: 'second-order', name: 'Standard second-order system', latex: R`T(s)=\dfrac{\omega_n^2}{s^2+2\zeta\omega_n s+\omega_n^2}`, source: 'Nise, Control Systems Engineering, Ch. 4 (Time Response)' },
-    { id: 'overshoot', name: 'Percent overshoot and peak time', latex: R`\%OS = 100\,e^{-\zeta\pi/\sqrt{1-\zeta^2}},\quad T_p=\dfrac{\pi}{\omega_n\sqrt{1-\zeta^2}}`, source: 'Nise, Control Systems Engineering, Ch. 4 (Time Response)' },
+    { id: 'second-order', name: 'Standard second-order system', latex: R`T(s)=\dfrac{\omega_n^2}{s^2+2\zeta\omega_n s+\omega_n^2}`,
+      where: [{ symbol: R`T(s)`, meaning: 'closed-loop transfer function' }, { symbol: R`\omega_n`, meaning: 'natural frequency (rad/s)' }, { symbol: R`\zeta`, meaning: 'damping ratio (dimensionless)' }, { symbol: 's', meaning: 'Laplace variable (1/s)' }],
+      source: 'Nise, Control Systems Engineering, Ch. 4 (Time Response)' },
+    { id: 'overshoot', name: 'Percent overshoot and peak time', latex: R`\%OS = 100\,e^{-\zeta\pi/\sqrt{1-\zeta^2}},\quad T_p=\dfrac{\pi}{\omega_n\sqrt{1-\zeta^2}}`,
+      where: [{ symbol: R`\%OS`, meaning: 'percent overshoot of the step response (%)' }, { symbol: R`\zeta`, meaning: 'damping ratio (dimensionless)' }, { symbol: R`T_p`, meaning: 'peak time (s)' }, { symbol: R`\omega_n`, meaning: 'natural frequency (rad/s)' }],
+      source: 'Nise, Control Systems Engineering, Ch. 4 (Time Response)' },
   ],
   questions: [
     {

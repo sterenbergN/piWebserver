@@ -57,6 +57,9 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-sheet-item dt { font-weight: 700; font-size: 0.9rem; }
 .dq-sheet-item dd { margin: 0; overflow-x: auto; }
 .dq-sheet-note { font-size: 0.85rem; color: var(--muted); }
+.dq-symbols { list-style: none; margin: 0.15rem 0 0.35rem; padding: 0; display: grid; gap: 0.15rem; font-size: 0.85rem; }
+.dq-symbols li { display: grid; grid-template-columns: minmax(2.5rem, max-content) 1fr; gap: 0.6rem; align-items: baseline; }
+.dq-symbols li > :first-child { text-align: right; }
 .dq-tex.is-display { display: block; overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }
 .dq .katex-display { margin: 0.6rem 0; overflow-x: auto; overflow-y: hidden; padding: 0.1rem 0; }
 

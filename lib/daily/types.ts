@@ -74,7 +74,14 @@ export type Question = {
   check?: string;
 };
 
-export type Formula = { id: string; name: string; latex: string; source: string; note?: string };
+/** One symbol in a formula and what it stands for: `symbol` is LaTeX (no $), `meaning` text that may hold $math$. */
+export type FormulaSymbol = { symbol: string; meaning: string };
+
+export type Formula = {
+  id: string; name: string; latex: string; source: string; note?: string;
+  /** What each symbol stands for, in the order they appear ("where …"). */
+  where?: FormulaSymbol[];
+};
 
 export type DailyDay = {
   date: string; // YYYY-MM-DD

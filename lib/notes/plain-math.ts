@@ -8,7 +8,7 @@ const SYMBOLS: Record<string, string> = {
   Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
   cdot: '·', times: '×', div: '÷', pm: '±', mp: '∓', le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', approx: '≈', sim: '~',
   infty: '∞', degree: '°', circ: '°', to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', partial: '∂', nabla: '∇', sum: 'Σ', int: '∫',
-  sqrt: '√', angle: '∠', perp: '⊥', parallel: '∥', propto: '∝', cdots: '…', ldots: '…', dots: '…', quad: ' ', qquad: '  ', ',': ' ', ';': ' ', '!': '',
+  sqrt: '√', angle: '∠', vert: '|', lvert: '|', rvert: '|', mid: '|', Vert: '‖', lVert: '‖', rVert: '‖', perp: '⊥', parallel: '∥', propto: '∝', cdots: '…', ldots: '…', dots: '…', quad: ' ', qquad: '  ', ',': ' ', ';': ' ', '!': '',
 };
 
 /** Accents, as the combining marks that draw them over a letter. */
