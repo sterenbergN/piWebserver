@@ -81,3 +81,110 @@ test('load brings back a past sum to edit, without changing the saved copy', () 
   check.load(saved);
   assert.equal(check.toExpression(), '((9)/(4))', 'the saved sum is unchanged');
 });
+
+test('squaring a unary negative wraps it in parentheses while binary minus does not', () => {
+  const ed = new MathEditor();
+  ed.setText('-5');
+  ed.insertPower('2');
+  assert.equal(ed.toExpression(), '(-5)^(2)');
+  assert.equal(value(ed), 25);
+
+  const sub = new MathEditor();
+  sub.setText('2-5');
+  sub.insertPower('2');
+  assert.equal(sub.toExpression(), '2-5^(2)');
+  assert.equal(value(sub), -23);
+
+  const nested = new MathEditor();
+  nested.setText('2+-5');
+  nested.insertPower('2');
+  assert.equal(value(nested), 27);
+});
+
+test('fractions take postfix operators (!, %, °), scientific notation, constants, and digit-named functions', () => {
+  const fact = new MathEditor();
+  fact.insertText('5!');
+  fact.insertFraction();
+  fact.insertText('2');
+  assert.equal(fact.toExpression(), '((5!)/(2))');
+  assert.equal(value(fact), 60);
+
+  const parenFact = new MathEditor();
+  parenFact.insertText('(2+3)!');
+  parenFact.insertFraction();
+  parenFact.insertText('10');
+  assert.equal(parenFact.toExpression(), '(((2+3)!)/(10))');
+  assert.equal(value(parenFact), 12);
+
+  const pct = new MathEditor();
+  pct.insertText('50%');
+  pct.insertFraction();
+  pct.insertText('2');
+  assert.equal(pct.toExpression(), '((50%)/(2))');
+  assert.equal(value(pct), 0.25);
+
+  const deg = new MathEditor();
+  deg.insertText('60°');
+  deg.insertFraction();
+  deg.insertText('2');
+  assert.equal(deg.toExpression(), '((60°)/(2))');
+
+  const sci = new MathEditor();
+  sci.insertText('1.5e-3');
+  sci.insertFraction();
+  sci.insertText('3');
+  assert.equal(sci.toExpression(), '((1.5e-3)/(3))');
+  assert.ok(Math.abs(value(sci) - 0.0005) < 1e-12);
+
+  const eulerSub = new MathEditor();
+  eulerSub.insertText('e-3');
+  eulerSub.insertFraction();
+  eulerSub.insertText('2');
+  assert.equal(eulerSub.toExpression(), 'e-((3)/(2))');
+
+  const logTen = new MathEditor();
+  logTen.insertText('2*log10(100)');
+  logTen.insertFraction();
+  logTen.insertText('4');
+  assert.equal(logTen.toExpression(), '2*((log10(100))/(4))');
+  assert.equal(value(logTen), 1);
+
+  const piFrac = new MathEditor();
+  piFrac.insertText('2π');
+  piFrac.insertFraction();
+  piFrac.insertText('4');
+  assert.equal(piFrac.toExpression(), '((2π)/(4))');
+  assert.ok(Math.abs(value(piFrac) - Math.PI / 2) < 1e-12);
+});
+
+test('handles abs(, parallel(, ncr(, and variables a, b, x cleanly', () => {
+  const fn = new MathEditor();
+  fn.insertText('parallel(10,20)');
+  fn.insertFraction();
+  fn.insertText('2');
+  assert.equal(fn.toExpression(), '((parallel(10,20))/(2))');
+  assert.ok(Math.abs(value(fn) - 10 / 3) < 1e-12);
+
+  const comb = new MathEditor();
+  comb.insertText('ncr(5,2)');
+  comb.insertFraction();
+  comb.insertText('5');
+  assert.equal(comb.toExpression(), '((ncr(5,2))/(5))');
+  assert.equal(value(comb), 2);
+
+  const negVar = new MathEditor();
+  negVar.insertText('-x');
+  negVar.insertPower('2');
+  assert.equal(negVar.toExpression(), '(-x)^(2)');
+  const r = evaluate(negVar.toExpression(), { vars: { a: 2, b: 3, x: 5 } });
+  assert.ok('value' in r && r.value === 25);
+
+  const poly = new MathEditor();
+  poly.insertText('abs(-a)+b');
+  poly.backspace();
+  poly.backspace();
+  poly.insertText('*x');
+  assert.equal(poly.toExpression(), 'abs(-a)*x');
+  const pr = evaluate(poly.toExpression(), { vars: { a: 3, b: 1, x: 4 } });
+  assert.ok('value' in pr && pr.value === 12);
+});

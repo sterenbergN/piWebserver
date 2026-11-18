@@ -22,14 +22,21 @@ export function rowsOf(n: MathNode): MathRow[] {
 }
 
 const isEmptyNode = (n: MathNode) => n.k !== 'ch' && rowsOf(n).every((r) => r.length === 0);
-const isWordChar = (n: MathNode | undefined) => n?.k === 'ch' && /^[0-9a-z.]$/i.test(n.c);
+const isWordChar = (n: MathNode | undefined) => n?.k === 'ch' && /^[0-9a-z.πφ]$/i.test(n.c);
 const isLetter = (n: MathNode | undefined) => n?.k === 'ch' && /^[a-z]$/i.test(n.c);
+const isDigit = (n: MathNode | undefined) => n?.k === 'ch' && /^[0-9]$/.test(n.c);
+const isDigitOrDot = (n: MathNode | undefined) => n?.k === 'ch' && /^[0-9.]$/.test(n.c);
+const DIGIT_FUNCS = new Set(['log10', 'log2', 'atan2', 'db10']);
 
 /** Where the operand ending at `end` starts (for a fraction to take as its numerator). */
 function operandStart(row: MathRow, end: number): number {
   if (end === 0) return 0;
   const prev = row[end - 1];
   if (prev.k === 'pow') return operandStart(row, end - 1); // x² takes its base along
+  if (prev.k === 'ch' && (prev.c === '!' || prev.c === '%' || prev.c === '°')) {
+    const baseStart = operandStart(row, end - 1);
+    return baseStart < end - 1 ? baseStart : end;
+  }
   if (prev.k === 'frac' || prev.k === 'root') return end - 1;
   if (prev.k === 'ch' && prev.c === ')') {
     let depth = 0;
@@ -38,14 +45,41 @@ function operandStart(row: MathRow, end: number): number {
       if (n.k !== 'ch') continue;
       if (n.c === ')') depth++;
       else if (n.c === '(' && --depth === 0) {
-        while (j > 0 && isLetter(row[j - 1])) j--; // sin(…)
+        if (j > 0 && isLetter(row[j - 1])) {
+          while (j > 0 && isLetter(row[j - 1])) j--; // sin(…)
+        } else if (j > 0 && isDigit(row[j - 1])) {
+          let k = j;
+          while (k > 0 && isDigit(row[k - 1])) k--;
+          const dStart = k;
+          while (k > 0 && isLetter(row[k - 1])) k--;
+          if (k < dStart) {
+            const name = row.slice(k, j).map((m) => (m.k === 'ch' ? m.c : '')).join('').toLowerCase();
+            if (DIGIT_FUNCS.has(name)) j = k; // log10(…), log2(…), atan2(…), db10(…)
+          }
+        }
         return j;
       }
     }
     return end;
   }
   let j = end;
-  while (j > 0 && isWordChar(row[j - 1])) j--;
+  while (j > 0) {
+    if (isWordChar(row[j - 1])) { j--; continue; }
+    const n = row[j - 1];
+    const prevCh = row[j - 2];
+    if (
+      n.k === 'ch' &&
+      (n.c === '-' || n.c === '+') &&
+      prevCh?.k === 'ch' &&
+      prevCh.c.toLowerCase() === 'e' &&
+      isDigitOrDot(row[j - 3]) &&
+      isDigit(row[j])
+    ) {
+      j -= 2;
+      continue;
+    }
+    break;
+  }
   return j;
 }
 
@@ -103,8 +137,23 @@ export class MathEditor {
     this.cursor = { row: node.body, i: 0 };
   }
 
-  /** A power box; with `exp` filled in (x²) the cursor stays after it. */
+  /** A power box; wraps a preceding unary negative operand in parentheses so (-5)^2 stays positive. */
   insertPower(exp?: string) {
+    const { row, i } = this.cursor;
+    const start = operandStart(row, i);
+    const signIdx = start - 1;
+    const prevBeforeSign = signIdx > 0 ? row[signIdx - 1] : undefined;
+    const isUnaryMinus =
+      start < i &&
+      signIdx >= 0 &&
+      row[signIdx].k === 'ch' &&
+      row[signIdx].c === '-' &&
+      (signIdx === 0 || (prevBeforeSign?.k === 'ch' && '(+-*/^,'.includes(prevBeforeSign.c)));
+    if (isUnaryMinus) {
+      const inner = row.splice(signIdx, i - signIdx);
+      row.splice(signIdx, 0, { k: 'ch', c: '(' }, ...inner, { k: 'ch', c: ')' });
+      this.cursor.i += 2;
+    }
     const node: MathNode = { k: 'pow', exp: [] };
     this.cursor.row.splice(this.cursor.i, 0, node);
     if (exp) {

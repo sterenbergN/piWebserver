@@ -1,0 +1,621 @@
+/* Universal floating scientific & engineering calculator widget */
+
+.dq-calc-fab {
+  position: fixed;
+  right: calc(1rem + env(safe-area-inset-right));
+  bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px));
+  z-index: 1200;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font-size: 1.35rem;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  opacity: 0.9;
+  touch-action: manipulation;
+  transition: opacity 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.dq-calc-fab:hover {
+  opacity: 1;
+  border-color: var(--accent-light);
+}
+
+.dq-calc-pill {
+  position: fixed;
+  right: calc(1rem + env(safe-area-inset-right));
+  bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px));
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.25rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--card-bg);
+  color: var(--foreground);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  animation: popIn 0.16s ease-out;
+}
+.dq-calc-pill-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 36px;
+  max-width: 190px;
+  padding: 0.2rem 0.55rem;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dq-calc-pill-restore:hover {
+  background: var(--surface-hover);
+}
+.dq-calc-pill-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-light);
+}
+.dq-calc-pill-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dq-calc-pill-close:hover {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+.dq-calc {
+  position: fixed;
+  right: calc(1rem + env(safe-area-inset-right));
+  bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px));
+  z-index: 1200;
+  width: min(344px, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  padding: 0.55rem;
+  border-radius: 18px;
+  border: 1px solid var(--surface-border);
+  background: var(--card-bg);
+  color: var(--foreground);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  translate: var(--calc-tx, 0px) var(--calc-ty, 0px);
+  animation: popIn 0.18s ease-out;
+}
+
+.dq-calc-spacer {
+  height: 560px;
+}
+
+.dq-calc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  padding: 0.05rem 0.05rem 0.1rem;
+}
+.dq-calc.is-dragging .dq-calc-head {
+  cursor: grabbing;
+}
+.dq-calc-grip {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-left: 0.15rem;
+}
+.dq-calc-angle {
+  flex: 0 0 auto;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--surface-border);
+}
+.dq-calc-angle button {
+  min-height: 26px;
+  padding: 0 0.6rem;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dq-calc-angle button[aria-checked="true"] {
+  background: rgba(var(--accent-rgb), 0.28);
+  color: var(--foreground);
+}
+.dq-calc-head-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.dq-calc-min,
+.dq-calc-close {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dq-calc-min:hover,
+.dq-calc-close:hover {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+.dq-calc-vars {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.dq-calc-vars button {
+  min-height: 27px;
+  padding: 0 0.48rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.dq-calc-vars button:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent-light);
+}
+.dq-calc-vars button.is-sto[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.dq-calc-vars button.is-const[aria-expanded="true"] {
+  background: rgba(var(--accent-rgb), 0.22);
+  border-color: var(--accent-light);
+  color: var(--accent-light);
+}
+.dq-calc-vars button.is-var.has-val {
+  border-color: rgba(var(--accent-rgb), 0.65);
+  color: var(--accent-light);
+}
+.dq-calc-vars-note {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dq-calc-consts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+}
+.dq-calc-consts button {
+  min-height: 26px;
+  padding: 0.1rem 0.45rem;
+  border-radius: 7px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+.dq-calc-consts button small {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 500;
+}
+.dq-calc-consts button:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent-light);
+}
+
+.dq-calc-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  max-height: 5.8rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.dq-calc-history li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+.dq-calc-history button {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  text-align: left;
+}
+.dq-calc-history button:hover {
+  background: var(--surface-hover);
+}
+.dq-calc-hist-expr {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.dq-calc-history .dq-mf {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+  font-size: 0.78rem;
+}
+.dq-calc-hist-edit {
+  flex-shrink: 0;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  color: var(--accent-light);
+  font-size: 0.66rem;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+.dq-calc-hist-expr:hover .dq-calc-hist-edit {
+  opacity: 1;
+}
+.dq-calc-hist-value {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--foreground) !important;
+  font-weight: 600;
+}
+
+.dq-calc-input {
+  min-height: 3.1rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  cursor: text;
+  font-size: 1.12rem;
+}
+.dq-calc-input:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 1px;
+}
+
+/* The expression, with fractions, roots and powers drawn as boxes. */
+.dq-mf {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dq-mf-row {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.15em;
+}
+.dq-mf-row.is-empty {
+  min-width: 0.65em;
+  min-height: 0.95em;
+  border: 1px dashed var(--muted);
+  border-radius: 3px;
+  opacity: 0.75;
+}
+.dq-mf-ch {
+  padding: 0 0.02em;
+  white-space: pre;
+}
+.dq-mf-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin: 0 0.15em;
+  font-size: 0.9em;
+}
+.dq-mf-num,
+.dq-mf-den {
+  display: flex;
+  justify-content: center;
+  padding: 0.05em 0.2em;
+}
+.dq-mf-num {
+  border-bottom: 1.5px solid currentColor;
+}
+.dq-mf-frac.is-icon {
+  font-size: 0.72rem;
+  line-height: 1;
+  margin: 0;
+}
+.dq-mf-root {
+  display: inline-flex;
+  align-items: stretch;
+}
+.dq-mf-radical {
+  display: flex;
+  align-items: center;
+  font-size: 1.05em;
+}
+.dq-mf-radicand {
+  display: inline-flex;
+  align-items: center;
+  border-top: 1.5px solid currentColor;
+  padding: 0.1em 0.1em 0;
+}
+.dq-mf-sup {
+  position: relative;
+  top: -0.55em;
+  font-size: 0.7em;
+  line-height: 1;
+}
+.dq-mf-caret {
+  display: inline-block;
+  width: 0;
+  height: 1.1em;
+  margin: 0 -1px;
+  border-left: 2px solid var(--accent-light);
+  animation: dqBlink 1.1s steps(1) infinite;
+}
+@keyframes dqBlink {
+  50% { opacity: 0; }
+}
+.dq-mf-placeholder {
+  margin-left: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.dq-calc-result {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.85rem;
+}
+.dq-calc-mode-pill {
+  flex-shrink: 0;
+  min-height: 25px;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.dq-calc-mode-pill:hover {
+  border-color: var(--accent-light);
+  color: var(--foreground);
+}
+.dq-calc-result-val {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: 1.08rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dq-calc-result-val button {
+  border: none;
+  background: none;
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-light);
+  font: inherit;
+  cursor: pointer;
+}
+.dq-calc-result-val .is-bad {
+  color: var(--muted);
+}
+.dq-calc-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+.dq-calc-act-btn {
+  min-height: 25px;
+  padding: 0 0.48rem;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-glass);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+.dq-calc-act-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent-light);
+}
+.dq-calc-act-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dq-calc-act-btn.is-insert {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.48);
+  color: var(--accent-light);
+}
+
+.dq-calc-keys {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.26rem;
+}
+.dq-calc-keys button {
+  min-height: 33px;
+  padding: 0 0.15rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 9px;
+  background: var(--input-bg);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dq-calc-keys button:hover {
+  background: var(--surface-hover);
+}
+.dq-calc-keys button.is-fn {
+  font-size: 0.75rem;
+  color: var(--accent-light);
+}
+.dq-calc-keys button.is-op {
+  background: var(--surface-glass);
+}
+.dq-calc-keys button.is-eq {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.dq-calc-keys button.is-nav {
+  background: var(--surface-glass);
+  color: var(--muted);
+}
+.dq-calc-keys button.is-wide {
+  grid-column: span 2;
+}
+.dq-calc-keys button.is-tall {
+  grid-row: span 2;
+}
+.dq-calc-keys button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Launcher /calc prominent top action card */
+.lc-row.dq-calc-launch {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--surface-border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  margin-bottom: 0.25rem;
+}
+.lc-row.dq-calc-launch:hover,
+.lc-row.dq-calc-launch:focus-visible {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-hover));
+  border-color: var(--accent-light);
+}
+.dq-calc-launch-preview {
+  color: var(--accent-light);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 420px) {
+  .dq-calc {
+    width: calc(100vw - 1rem);
+    right: 0.5rem;
+    padding: 0.45rem;
+  }
+  .dq-calc-keys button {
+    min-height: 31px;
+    font-size: 0.85rem;
+  }
+  .dq-calc-keys button.is-fn {
+    font-size: 0.72rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dq-calc,
+  .dq-calc-pill,
+  .dq-mf-caret {
+    animation: none;
+  }
+}
+
+@media print {
+  .dq-calc,
+  .dq-calc-fab,
+  .dq-calc-pill {
+    display: none !important;
+  }
+}

@@ -122,6 +122,7 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 .dq-w-stats dd { margin: 0; font-weight: 800; font-size: 1.02rem; font-variant-numeric: tabular-nums; }
 .dq-w-stats dd.dq-w-sub { font-weight: 400; font-size: 0.74rem; color: var(--muted); }
 .dq-w-caption { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--muted); }
+.dq-w-caption-line { margin: 0; }
 @media (max-width: 480px) {
   .dq-widget { padding: 0.7rem 0.65rem 0.75rem; margin-left: -0.3rem; margin-right: -0.3rem; }
   .dq-w-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -280,66 +281,7 @@ p.dq-hint { margin: 0.4rem 0 0.8rem; }
 }
 @keyframes dqToast { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
 
-/* Pop-up calculator */
-.dq-calc-fab {
-  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px)); z-index: 1050;
-  width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--surface-border); background: var(--surface-glass);
-  font-size: 1.35rem; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); opacity: 0.85;
-}
-.dq-calc-fab:hover { opacity: 1; border-color: var(--accent-light); }
-.dq-calc {
-  position: fixed; right: calc(1rem + env(safe-area-inset-right)); bottom: calc(1rem + env(safe-area-inset-bottom) + var(--dock-h, 0px)); z-index: 1050;
-  width: min(300px, calc(100vw - 2rem)); padding: 0.6rem; border-radius: 18px; border: 1px solid var(--surface-border);
-  background: var(--card-bg); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 0.4rem;
-  animation: popIn 0.18s ease-out;
-}
-.dq-calc-spacer { height: 560px; }
-.dq-calc-head { display: flex; align-items: center; gap: 0.5rem; }
-.dq-calc-angle { flex: 0 0 auto; }
-.dq-calc-angle button { min-height: 28px; padding: 0 0.7rem; }
-.dq-calc-close { margin-left: auto; width: 32px; height: 32px; border: none; border-radius: 10px; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }
-.dq-calc-close:hover { background: var(--surface-hover); color: var(--foreground); }
-.dq-calc-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.dq-calc-history li { display: flex; align-items: center; justify-content: space-between; gap: 0.25rem; }
-.dq-calc-history button { display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.3rem; border: none; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; cursor: pointer; text-align: left; }
-.dq-calc-history button:hover { background: var(--surface-hover); }
-.dq-calc-hist-expr { flex: 0 1 auto; min-width: 0; }
-.dq-calc-history .dq-mf { flex: 1; min-width: 0; justify-content: flex-start; overflow: hidden; font-size: 0.8rem; }
-.dq-calc-hist-edit { flex-shrink: 0; padding: 0 0.35rem; border-radius: 999px; border: 1px solid var(--surface-border); color: var(--accent-light); font-size: 0.68rem; line-height: 1.4; opacity: 0.75; }
-.dq-calc-hist-expr:hover .dq-calc-hist-edit { opacity: 1; }
-.dq-calc-hist-value { flex-shrink: 0; white-space: nowrap; color: var(--foreground) !important; font-weight: 600; }
-.dq-calc-input { min-height: 3.2rem; padding: 0.55rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); cursor: text; font-size: 1.15rem; }
-.dq-calc-input:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 1px; }
-/* The expression, with fractions, roots and powers drawn as boxes. */
-.dq-mf { display: flex; align-items: center; justify-content: flex-end; overflow-x: auto; overflow-y: hidden; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.dq-mf-row { display: inline-flex; align-items: center; min-height: 1.15em; }
-.dq-mf-row.is-empty { min-width: 0.65em; min-height: 0.95em; border: 1px dashed var(--muted); border-radius: 3px; opacity: 0.75; }
-.dq-mf-ch { padding: 0 0.02em; }
-.dq-mf-frac { display: inline-flex; flex-direction: column; align-items: stretch; margin: 0 0.15em; font-size: 0.9em; }
-.dq-mf-num, .dq-mf-den { display: flex; justify-content: center; padding: 0.05em 0.2em; }
-.dq-mf-num { border-bottom: 1.5px solid currentColor; }
-.dq-mf-frac.is-icon { font-size: 0.75rem; line-height: 1; margin: 0; }
-.dq-mf-root { display: inline-flex; align-items: stretch; }
-.dq-mf-radical { display: flex; align-items: center; font-size: 1.05em; }
-.dq-mf-radicand { display: inline-flex; align-items: center; border-top: 1.5px solid currentColor; padding: 0.1em 0.1em 0; }
-.dq-mf-sup { position: relative; top: -0.55em; font-size: 0.7em; line-height: 1; }
-.dq-mf-caret { display: inline-block; width: 0; height: 1.1em; margin: 0 -1px; border-left: 2px solid var(--accent-light); animation: dqBlink 1.1s steps(1) infinite; }
-@keyframes dqBlink { 50% { opacity: 0; } }
-.dq-mf-placeholder { margin-left: 0.4rem; color: var(--muted); font-size: 0.85rem; }
-.dq-calc-result { min-height: 1.6rem; text-align: right; font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.dq-calc-result button { border: none; background: none; padding: 0; color: var(--accent-light); font: inherit; cursor: pointer; }
-.dq-calc-result small { font-size: 0.75rem; font-weight: 400; color: var(--muted); }
-.dq-calc-result .is-bad { color: var(--muted); }
-.dq-calc-keys { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.3rem; }
-.dq-calc-keys button { min-height: 36px; border: 1px solid var(--surface-border); border-radius: 10px; background: var(--input-bg); color: var(--foreground); font: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
-.dq-calc-keys button:hover { background: var(--surface-hover); }
-.dq-calc-keys button.is-fn { font-size: 0.8rem; color: var(--accent-light); }
-.dq-calc-keys button.is-op { background: var(--surface-glass); }
-.dq-calc-keys button.is-eq { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
-.dq-calc-keys button.is-nav { background: var(--surface-glass); color: var(--muted); }
-.dq-calc-keys button.is-wide { grid-column: span 2; }
-.dq-calc-keys button.is-tall { grid-row: span 2; }
-.dq-calc-keys button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Calculator styles live in components/daily/calculator.css */
 
 @media (max-width: 520px) {
   .dq { padding-top: 0.75rem; }

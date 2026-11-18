@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { addGroceryItem } from '@/lib/recipes/grocery-client';
+import { evaluate, formatCalcValue, type AngleMode } from '@/lib/daily/expr';
 import { allPlaces, matchNavItems, orderRooms, type NavGroup } from './nav-links';
 import { loadNavInfo, type NavInfo } from './nav-badges';
 import { Door, ExploreMeter, RoomGrid, type RoomContext } from './Rooms';
@@ -23,6 +24,8 @@ type Mode = 'find' | 'ask' | 'list';
 const ADD_PREFIX = /^(add|buy)\s+/i;
 /** Typing "?" first in Find switches to asking. */
 const ASK_PREFIX = /^\?+\s*/;
+/** "/calc ...", "calc ...", "/calculator ...", "calculator ..." opens the floating calculator. */
+const CALC_CMD = /^\/?(?:calc|calculator)(?:\s+(.*))?$/i;
 /** Reads like a question: Find offers to save it, and Enter opens it as one. */
 const QUESTION_START = /^(who|what|whats|what's|when|where|why|how|which|is|are|can|could|should|would|does|do|did|will)\b/i;
 
@@ -69,6 +72,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const [info, setInfo] = useState<NavInfo | undefined>();
   const [editing, setEditing] = useState(false);
   const [flash, setFlash] = useState<{ text: string; ok: boolean; href?: string; link?: string } | null>(null);
+  const [calcAngle, setCalcAngle] = useState<AngleMode>('rad');
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recent = useRecentPages();
@@ -86,6 +90,9 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const pageUrls = new Set(pageHits.map((i) => i.href));
   const contentHits = hits.filter((h) => !pageUrls.has(h.url));
   const finding = mode === 'find';
+  const calcMatch = finding ? CALC_CMD.exec(q) : null;
+  const calcExpr = calcMatch?.[1]?.trim() ?? '';
+  const calcPreview = calcExpr ? evaluate(calcExpr, { angle: calcAngle }) : null;
   // In Find these are only offers, which switch modes when picked.
   const groceryOffer = ADD_PREFIX.test(q) ? q.replace(ADD_PREFIX, '').trim() : '';
   const looksLikeQuestion = signedIn && (/\?$/.test(q) || QUESTION_START.test(q));
@@ -96,13 +103,32 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const askedOn = typeof document === 'undefined' ? '' : document.title.split(/\s[|·–-]\s/)[0].trim();
 
   useEffect(() => {
-    let cancelled = false;
-    loadNavInfo().then((i) => { if (!cancelled) setInfo(i); }).catch(() => { /* no counts, still works */ });
     inputRef.current?.focus();
+    try {
+      if (localStorage.getItem('dq-calc-angle') === 'deg') setCalcAngle('deg');
+    } catch { /* storage blocked */ }
     const { overflow } = document.body.style;
     document.body.style.overflow = 'hidden';
-    return () => { cancelled = true; document.body.style.overflow = overflow; };
+    return () => { document.body.style.overflow = overflow; };
   }, []);
+
+  useEffect(() => {
+    if (!signedIn) { setInfo(undefined); return; }
+    let cancelled = false;
+    loadNavInfo().then((i) => { if (!cancelled) setInfo(i); }).catch(() => { /* no counts, still works */ });
+    return () => { cancelled = true; };
+  }, [signedIn]);
+
+  useEffect(() => {
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      if (editing) setEditing(false);
+      else onClose();
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [editing, onClose]);
 
   useEffect(() => {
     if (!q || !finding) { setHits([]); return; }
@@ -164,17 +190,22 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   // Left and right walk the icons in order, up and down go to the nearest one that
   // way; Tab stays inside the dialog.
   const move = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { if (editing) setEditing(false); else onClose(); return; }
+    if (e.key === 'Escape') return;
     const all = [...(panelRef.current?.querySelectorAll<HTMLElement>('[data-lc]') ?? [])];
     if (e.key === 'Tab') {
-      const focusable = [...(panelRef.current?.querySelectorAll<HTMLElement>('a, button, input') ?? [])];
+      const focusable = [...(panelRef.current?.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)') ?? [])];
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
       return;
     }
-    const inInput = document.activeElement === inputRef.current;
+    const active = document.activeElement as HTMLElement | null;
+    const target = e.target as HTMLElement | null;
+    const isFormControl = (el: HTMLElement | null) =>
+      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    const inInput = active === inputRef.current;
+    if (!inInput && (isFormControl(active) || isFormControl(target))) return;
     if (inInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
     if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     e.preventDefault();
@@ -206,6 +237,11 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     e.preventDefault();
     if (mode === 'ask') { void askLater(); return; }
     if (mode === 'list') { void addToList(); return; }
+    if (calcMatch) {
+      onClose();
+      window.dispatchEvent(new CustomEvent('site:open-calculator', { detail: { expression: calcExpr } }));
+      return;
+    }
     // Find: open the best match. A question opens the question box (it isn't saved
     // until Enter there); anything else with no match does nothing.
     const url = pageHits[0]?.href ?? contentHits[0]?.url;
@@ -215,6 +251,10 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   };
 
   const jumpTo = (id: string) => panelRef.current?.querySelector(`[data-room="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const openCalculator = (expression = '') => {
+    onClose();
+    window.dispatchEvent(new CustomEvent('site:open-calculator', { detail: { expression } }));
+  };
 
   // Offers in Find: each opens its own mode with the text in it, ready to check and save.
   const askOffer = signedIn && (
@@ -298,7 +338,27 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
             </section>
           ) : q ? (
             <>
-              {looksLikeQuestion && askOffer}
+              {calcMatch && (
+                <button type="button" data-lc className="lc-row dq-calc-launch" onClick={() => openCalculator(calcExpr)}>
+                  <span className="lc-icon" aria-hidden>🧮</span>
+                  <span className="lc-text">
+                    <strong>
+                      Open Calculator Widget
+                      {calcPreview && 'value' in calcPreview && (
+                        <span className="dq-calc-launch-preview"> = {formatCalcValue(calcPreview.value, 'dec')}</span>
+                      )}
+                    </strong>
+                    <small>
+                      {calcExpr
+                        ? calcPreview && 'value' in calcPreview
+                          ? `Evaluate “${calcExpr}” (${calcAngle.toUpperCase()}) · Enter or click to open`
+                          : `Load “${calcExpr}” in calculator · Enter or click to open`
+                        : 'Floating scientific & engineering calculator (Alt+C) · Enter or click to open'}
+                    </small>
+                  </span>
+                </button>
+              )}
+              {!calcMatch && looksLikeQuestion && askOffer}
               {pageHits.length > 0 && (
                 <section aria-label="Pages">
                   <h2>Pages</h2>
@@ -320,11 +380,13 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   ))}
                 </section>
               )}
-              <section aria-label="Actions">
-                {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
-                {!looksLikeQuestion && pageHits.length + contentHits.length === 0 && askOffer}
-                {listOffer}
-              </section>
+              {!calcMatch && (
+                <section aria-label="Actions">
+                  {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
+                  {!looksLikeQuestion && pageHits.length + contentHits.length === 0 && askOffer}
+                  {listOffer}
+                </section>
+              )}
             </>
           ) : (
             <>
@@ -335,13 +397,13 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                 <ExploreMeter groups={groups} ctx={ctx} />
               </div>
               {/* On a phone the rooms run long: one tap to the one you want. */}
-              <nav className="lc-jump" aria-label="Jump to a room">
+              <div role="navigation" className="lc-jump" aria-label="Jump to a room">
                 {orderRooms(groups, signedIn, studyFirst).map((room) => (
                   <button key={room.id} type="button" style={{ '--room': room.color } as React.CSSProperties} onClick={() => jumpTo(room.id)}>
                     <span aria-hidden>{room.icon}</span>{room.label}
                   </button>
                 ))}
-              </nav>
+              </div>
               {shortcuts.length > 0 && (
                 <section className="lc-chips" aria-label="Your shortcuts">
                   {shortcuts.map((item) => (
@@ -357,12 +419,13 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
           )}
         </div>
 
-        <footer className="lc-foot">
+        <div className="lc-foot" style={{ flexWrap: 'wrap' }}>
           <button type="button" onClick={onToggleTheme}>{theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}</button>
+          <button type="button" onClick={() => openCalculator()}>🧮 Calculator</button>
           {!signedIn && <button type="button" onClick={() => { onClose(); window.dispatchEvent(new Event('site:sign-in')); }}>👤 Sign in</button>}
           <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setMode('find'); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
           <span className="lc-keys" aria-hidden>{editing ? 'Tap a star to keep it in your header and dock' : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> to move · <kbd>Enter</kbd> to open</>}</span>
-        </footer>
+        </div>
       </div>
     </div>,
     document.body,

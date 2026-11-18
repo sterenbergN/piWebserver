@@ -5,7 +5,6 @@ import QuestionCard from '@/components/daily/QuestionCard';
 import FormulaSheet, { FormulaOfTheDay } from '@/components/daily/FormulaSheet';
 import DailyStats from '@/components/daily/DailyStats';
 import Practice from '@/components/daily/Practice';
-import Calculator from '@/components/daily/Calculator';
 import LevelInfo from '@/components/progress/LevelInfo';
 import { useDaily } from '@/components/daily/useDaily';
 import Confetti from '@/components/habits/Confetti';
@@ -17,6 +16,7 @@ import type { PartResponse } from '@/lib/daily/types';
 import 'katex/dist/katex.min.css';
 import './daily.css';
 import { notesLinks, useTiedPages } from '@/components/daily/notes-links';
+import { normalizeWorkId } from '@/lib/notes/items';
 
 const TABS = [
   { id: 'today', icon: '🧠', label: 'Questions' },
@@ -63,7 +63,8 @@ export default function DailyPage() {
   useEffect(() => {
     if (!wanted || !d.day || d.state !== 'ready') return;
     setWanted(null);
-    if ([d.day.core, ...d.day.bonus].some((q) => q.id === wanted)) {
+    const matched = [d.day.core, ...d.day.bonus].find((q) => q.id === wanted || normalizeWorkId(q.id) === wanted);
+    if (matched) {
       setTab('today');
       // Once the cards are drawn, and again for a few seconds while what loads around them
       // settles (the page can grow, or the browser put it back where it was), until you touch it.
@@ -74,7 +75,7 @@ export default function DailyPage() {
       for (const name of events) window.addEventListener(name, stop, { once: true, passive: true });
       const find = () => {
         tries += 1;
-        const card = document.getElementById(`q-${wanted}`);
+        const card = document.getElementById(`q-${matched.id}`);
         if (!touched && card && Math.abs(card.getBoundingClientRect().top) > 40) card.scrollIntoView({ block: 'start' });
         if (!touched && tries < 20) setTimeout(find, 150);
         else for (const name of events) window.removeEventListener(name, stop);
@@ -141,6 +142,18 @@ export default function DailyPage() {
   const signIn = () => window.dispatchEvent(new Event('site:sign-in'));
   const openDay = (date: DateKey) => { d.open(date); chooseTab('today'); window.scrollTo({ top: 0 }); };
   const statusFor = (date: DateKey) => d.progress?.stats.coreByDay[date];
+
+  // Tell the global floating calculator whether to show its docked FAB on /daily.
+  useEffect(() => {
+    const show = d.state === 'ready' && (tab === 'today' || tab === 'practice');
+    window.dispatchEvent(new CustomEvent('daily:calc-fab', { detail: { show } }));
+  }, [d.state, tab]);
+
+  useEffect(() => {
+    return () => {
+      window.dispatchEvent(new CustomEvent('daily:calc-fab', { detail: { show: false } }));
+    };
+  }, []);
 
   return (
     <div className="dq animate-fade-in">
@@ -293,7 +306,6 @@ export default function DailyPage() {
         </>
       )}
 
-      {d.state === 'ready' && (tab === 'today' || tab === 'practice') && <Calculator />}
       {toast && <div className="dq-toast" role="status">{toast}</div>}
     </div>
   );
