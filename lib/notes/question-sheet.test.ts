@@ -73,15 +73,18 @@ and a step is applied.` };
   }
 });
 
-test('a long sheet makes the page taller, with room to work every part', () => {
+test('a long sheet stays a regular page (a taller one zooms the whole notebook out), with less room under each part', () => {
   const pub = publicQuestion(question);
-  const many = Array.from({ length: 6 }, (_, i) => ({ name: `F${i}`, latex: 'x', where: [{ symbol: 'x', meaning: 'a thing' }, { symbol: 'y', meaning: 'another' }] }));
+  const many = Array.from({ length: 3 }, (_, i) => ({ name: `F${i}`, latex: 'x', where: [{ symbol: 'x', meaning: 'a thing' }, { symbol: 'y', meaning: 'another' }] }));
   const { boxes, h } = layoutQuestionSheet(pub, many, 'Nov 11', measure, { figure: svgSize(question.figure!) });
-  assert.ok(h > SHEET_PAGE.h);
+  assert.equal(h, SHEET_PAGE.h);
   const parts = boxes.filter((b) => b.kind === 'text' && b.role === 'part');
-  for (const [i, p] of parts.slice(0, -1).entries()) assert.ok(parts[i + 1].y - (p.y + p.h) >= 110, `room under part ${i}`);
+  for (const [i, p] of parts.slice(0, -1).entries()) {
+    const room = parts[i + 1].y - (p.y + p.h);
+    assert.ok(room >= 28 && room < 160, `room under part ${i}: ${room}`);
+  }
   const last = parts[parts.length - 1];
-  assert.ok(h - (last.y + last.h) >= 220, 'room under the last part');
+  assert.ok(last.y + last.h <= h, 'the last part is on the page');
 });
 
 test('svgSize reads width/height, or the viewBox', () => {

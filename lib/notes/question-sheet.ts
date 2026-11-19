@@ -26,8 +26,8 @@ const TEXT_W = SHEET_PAGE.w - MARGIN * 2;
 const PART_W = 360;
 const INDENT = 14;
 const INK = '#1d1f27';
-/** Room to work under each part, and under the last one, when the page grows to make it. */
-const ROOM = { min: 110, max: 160, last: 220 };
+/** Room to work under each part. The page stays letter size, so a long sheet gets less of it. */
+const ROOM = { min: 28, max: 160 };
 
 export type SheetText = { kind: 'text'; role: 'heading' | 'open' | 'prompt' | 'formulas' | 'part'; x: number; y: number; w: number; h: number; text: string; size: number; bold?: boolean; color: string };
 export type SheetFigure = { kind: 'figure'; x: number; y: number; w: number; h: number };
@@ -105,7 +105,7 @@ export function promptPieces(prompt: string) {
  * Where everything goes. `figure` is the picture's natural size, if the question has one; it is
  * scaled to fit beside the margin. `math` sizes typeset math; without it, math is written as
  * text. The parts share what's left of the page, spaced out so each has room under it for
- * working, and the page grows when there isn't enough.
+ * working. The page is always letter size, so a long sheet leaves less room under each part.
  */
 export function layoutQuestionSheet(q: SheetQuestion, formulas: SheetFormula[], dateLabel: string, measure: Measure, options: { figure?: { w: number; h: number }; math?: MathSize } = {}): SheetLayout {
   const boxes: SheetBox[] = [];
@@ -173,9 +173,8 @@ export function layoutQuestionSheet(q: SheetQuestion, formulas: SheetFormula[], 
     boxes.push({ kind: 'text', role: 'part', x: MARGIN, y, w: PART_W, h: p.h, text: p.text, size: 11, color: '#1f4e8c' });
     y += p.h + (i < parts.length - 1 ? gap : 0);
   }
-  // A whole number of grid squares (the paper's are 18 points), so the pattern ends tidily.
-  const h = Math.max(SHEET_PAGE.h, Math.ceil((y + ROOM.last + MARGIN) / 18) * 18);
-  return { boxes, h };
+  // Always a regular page: one taller page makes Notes zoom the whole notebook out to fit it.
+  return { boxes, h: SHEET_PAGE.h };
 }
 
 /** A figure's natural size from its SVG, for when the picture itself can't say. */
