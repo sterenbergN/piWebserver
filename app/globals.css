@@ -5,6 +5,9 @@
 
 /* ── Dark Mode (default) ── */
 :root, [data-theme="dark"] {
+  /* Without this, Safari on iPhone draws native controls (checkboxes, radios, selects,
+     date pickers) in their light style: white boxes and unreadable menus on the dark theme. */
+  color-scheme: dark;
   --background: #2b303b;
   --foreground: #eceff4;
   --muted: #a3adbf;
@@ -38,6 +41,7 @@
 
 /* ── Light Mode ── */
 [data-theme="light"] {
+  color-scheme: light;
   --background: #eceff4;
   --foreground: #2e3440;
   --muted: #5c667a;

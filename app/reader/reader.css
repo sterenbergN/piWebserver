@@ -34,6 +34,9 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Native controls (checkboxes, selects) follow the reading theme, not the site theme. */
+[data-rd-theme='paper'], [data-rd-theme='sepia'] { color-scheme: light; }
+[data-rd-theme='night'] { color-scheme: dark; }
 [data-rd-theme='paper'] {
   --rd-bg: #fbfaf6; --rd-fg: #20222a; --rd-muted: #666a75; --rd-surface: #ffffff; --rd-raised: #f1eee6; --rd-line: #e0dcd0;
   --rd-accent: #2f4f8f; --rd-accent-fg: #ffffff; --rd-danger: #b3362d; --rd-bar: rgba(251, 250, 246, 0.94);
@@ -436,6 +439,7 @@ body:has(.reader-space) header:not(.rd-bar):not(.rd-lib-head) { display: none !i
 .rd-home {
   display: inline-flex; align-items: center; gap: 0.2rem; min-height: 38px; margin-bottom: 0.35rem; padding: 0 0.85rem 0 0.5rem; border-radius: 19px;
   background: var(--rd-surface); box-shadow: 0 0 0 1px var(--rd-line); color: var(--rd-fg); font-size: 0.85rem; font-weight: 600; text-decoration: none;
+  white-space: nowrap;
 }
 
 /* Shelf search + sort & dialog close row */

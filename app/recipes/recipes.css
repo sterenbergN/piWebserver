@@ -2169,7 +2169,12 @@ span.rc-source-chip { cursor: default; }
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  margin-left: auto;
 }
+/* Keep "‹ Recipes" on one line on a phone; when the chips don't fit beside it they
+   drop to their own row together. */
+.rc-bar { flex-wrap: wrap; column-gap: 0.5rem; }
+.rc-bar > .rc-text-btn { flex: none; white-space: nowrap; }
 
 .rc-log-btn {
   min-height: 34px;

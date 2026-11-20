@@ -49,6 +49,7 @@
    Reset / Base within party-root
    ---------------------------------------------------------- */
 .party-root {
+  color-scheme: dark; /* always dark, whatever the site theme */
   --foreground: var(--party-text);
   --muted: var(--party-text-muted);
   --input-bg: rgba(0,0,0,0.35);
