@@ -1098,11 +1098,11 @@ export default function BlockBuilder() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           {/* Duration */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem' }}>
-            <span className="ll-muted">Duration (s):</span>
+            <span className="ll-muted" style={{ whiteSpace: 'nowrap' }}>Duration (s):</span>
             <select
               value={model.duration}
               onChange={(e) => setModel((prev) => ({ ...prev, duration: Number(e.target.value) }))}
-              style={{ padding: '0.15rem 0.45rem', minHeight: '26px', fontSize: '0.8rem' }}
+              style={{ width: 'auto', padding: '0.15rem 0.45rem', minHeight: '26px', fontSize: '0.8rem' }}
             >
               <option value={40}>40 s</option>
               <option value={60}>60 s</option>
@@ -1114,11 +1114,11 @@ export default function BlockBuilder() {
 
           {/* dt */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem' }}>
-            <span className="ll-muted">dt (s):</span>
+            <span className="ll-muted" style={{ whiteSpace: 'nowrap' }}>dt (s):</span>
             <select
               value={model.dt}
               onChange={(e) => setModel((prev) => ({ ...prev, dt: Number(e.target.value) }))}
-              style={{ padding: '0.15rem 0.45rem', minHeight: '26px', fontSize: '0.8rem' }}
+              style={{ width: 'auto', padding: '0.15rem 0.45rem', minHeight: '26px', fontSize: '0.8rem' }}
             >
               <option value={0.05}>0.05 s (Fidelity)</option>
               <option value={0.1}>0.10 s (Standard)</option>

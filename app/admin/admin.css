@@ -205,3 +205,11 @@ pre.adm-log { white-space: pre-wrap; font-size: 0.75rem; max-height: 260px; over
   .adm-usage-where { margin-left: 1.25rem; }
   .adm-usage-row.is-deep { padding-left: 2rem; }
 }
+
+/* Resume editor: one link per row (label, URL, move/delete). On a phone the URL gets
+   its own full-width line under the label and buttons instead of shrinking to nothing. */
+.rs-link-row { display: grid; grid-template-columns: minmax(0, 30%) minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+@media (max-width: 600px) {
+  .rs-link-row { grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 0.75rem; }
+  .rs-link-row .rs-link-url { grid-column: 1 / -1; grid-row: 2; }
+}

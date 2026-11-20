@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import ResumeView from '@/components/resume/ResumeView';
+import '../admin.css';
 import { NOW_SUGGESTIONS, PROJECT_CATEGORIES, type ExperienceEntry, type Project, type Resume, type Skill } from '@/lib/resume';
 type Section = 'profile' | 'experience' | 'skills' | 'projects';
 
@@ -171,10 +172,10 @@ export default function ResumeEditor() {
 
               <label style={label}>Links</label>
               {resume.profile.links.map((l, i) => (
-                <div key={i} style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
-                  <input style={{ ...input, flex: '0 0 30%' }} value={l.label} placeholder="Label" aria-label="Link label"
+                <div key={i} className="rs-link-row">
+                  <input className="rs-link-label" style={input} value={l.label} placeholder="Label" aria-label="Link label"
                     onChange={(e) => setProfile({ links: resume.profile.links.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
-                  <input style={input} value={l.url} placeholder="https://…" aria-label="Link URL"
+                  <input className="rs-link-url" style={input} value={l.url} placeholder="https://…" aria-label="Link URL"
                     onChange={(e) => setProfile({ links: resume.profile.links.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)) })} />
                   <RowControls index={i} count={resume.profile.links.length} name={l.label || 'link'}
                     onMove={(to) => setProfile({ links: move(resume.profile.links, i, to) })}

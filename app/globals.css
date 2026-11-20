@@ -231,6 +231,29 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, 
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+/* Dropdowns: draw our own chevron instead of the platform's menu button, which Safari on
+   iPhone paints in its own gray and ignores the page's colors. The image and its spacing
+   are !important so pages that set `background:` or `padding:` on a select keep the arrow. */
+select:not([multiple]):not([size]) {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23a3adbf' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.6rem center !important;
+  background-size: 0.7rem auto !important;
+  padding-right: 1.8rem !important;
+  text-overflow: ellipsis;
+}
+[data-theme="light"] select:not([multiple]):not([size]) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%235c667a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+}
+/* Always-dark spaces keep the light chevron whatever the site theme. */
+[data-theme="light"] .party-root select:not([multiple]):not([size]),
+[data-theme="light"] [data-rd-theme="night"] select:not([multiple]):not([size]) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23a3adbf' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+}
+select option { background-color: var(--background); color: var(--foreground); }
+
 /* :where() keeps these defaults at zero specificity, so any class on a checkbox
    (a switch, a bigger tick box) wins without !important. */
 :where(input[type="checkbox"], input[type="radio"], input[type="range"]) {
