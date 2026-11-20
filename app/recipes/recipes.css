@@ -1695,6 +1695,20 @@ button.rc-pill-label { cursor: pointer; }
 .rc-mini-stepper span { min-width: 1.1rem; text-align: center; }
 .rc-plan-remove { width: 34px; font-size: 1.15rem; }
 
+/* A planned meal needs ~400px for everything on one line. Narrower (a day on a phone),
+   the name keeps the first line with its check and ×, and servings + day drop below it. */
+.rc-plan-rows { container-type: inline-size; }
+@container (max-width: 440px) {
+  .rc-plan-row { flex-wrap: wrap; row-gap: 0; padding-bottom: 0.35rem; }
+  /* Fill the first line beside the handle (22px), check (32px), × (34px) and three gaps,
+     which pushes the stepper and day picker onto the next line. */
+  .rc-plan-row .rc-plan-name { flex: 1 1 calc(100% - 88px - 0.6rem); }
+  .rc-plan-row .rc-plan-remove { order: 1; }
+  /* Under the name: past the handle, check and their two gaps. */
+  .rc-plan-row .rc-mini-stepper { order: 2; margin-left: calc(54px + 0.4rem); }
+  .rc-plan-row .rc-day-move-select { order: 3; width: auto; min-width: 4.75rem; max-width: 7rem; margin-left: 0.3rem; }
+}
+
 .rc-picker { list-style: none; flex: 1; min-height: 0; overflow-y: auto; margin-top: 0.5rem; }
 .rc-picker button {
   width: 100%;

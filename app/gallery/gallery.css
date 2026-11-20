@@ -79,11 +79,6 @@
 .gal-chips { display: flex; gap: 0.3rem; }
 .gal-chips button { flex: 1; min-height: 34px; border-radius: 9px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
 .gal-chips button[aria-checked="true"] { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); font-weight: 600; }
-/* A checkbox drawn as an on/off switch. */
-.gal-switch { appearance: none; -webkit-appearance: none; width: 42px !important; height: 24px; padding: 0 !important; margin: 0; flex-shrink: 0; border-radius: 999px !important; border: 1px solid var(--surface-border) !important; background: var(--surface-border) !important; position: relative; cursor: pointer; transition: background 0.2s; }
-.gal-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform 0.2s, background 0.2s; }
-.gal-switch:checked { background: var(--accent) !important; border-color: var(--accent) !important; }
-.gal-switch:checked::after { transform: translateX(18px); background: #fff; }
 
 /* Manage menu */
 .gal-menu-item { display: flex; align-items: center; gap: 0.6rem; width: 100%; min-height: 40px; padding: 0 0.7rem; border: none; border-radius: 9px; background: none; color: var(--foreground); font: inherit; font-size: 0.9rem; text-align: left; cursor: pointer; }

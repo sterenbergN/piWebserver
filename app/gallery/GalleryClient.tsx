@@ -768,7 +768,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
                 </div>
                 <label className="gal-option is-row">
                   <span className="gal-option-name">Captions</span>
-                  <input type="checkbox" role="switch" className="gal-switch" checked={showCaptions} onChange={e => { setShowCaptions(e.target.checked); saveSetting('gal_caps', String(e.target.checked)); }} />
+                  <input type="checkbox" role="switch" className="switch" checked={showCaptions} onChange={e => { setShowCaptions(e.target.checked); saveSetting('gal_caps', String(e.target.checked)); }} />
                 </label>
                 <div className="gal-option-group">Slideshow</div>
                 <div className="gal-option">
@@ -781,7 +781,7 @@ export default function GalleryClient({ initialAlbums, initialIsAdmin }: Gallery
                 </div>
                 <label className="gal-option is-row">
                   <span className="gal-option-name">Shuffle</span>
-                  <input type="checkbox" role="switch" className="gal-switch" checked={shuffleMode} onChange={e => { setShuffleMode(e.target.checked); saveSetting('gal_shuffle', String(e.target.checked)); }} />
+                  <input type="checkbox" role="switch" className="switch" checked={shuffleMode} onChange={e => { setShuffleMode(e.target.checked); saveSetting('gal_shuffle', String(e.target.checked)); }} />
                 </label>
               </div>
             )}
