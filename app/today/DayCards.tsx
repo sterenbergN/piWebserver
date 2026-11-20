@@ -12,6 +12,9 @@ import { groceriesLeft, mealsToday, missingIngredients, recipesFor } from '@/lib
 import type { Recipe } from '@/lib/recipes/recipes';
 import type { BoardSummary } from '@/lib/skills/model';
 import { REVIEW_DAY_ANSWERS } from '@/lib/skills/xp';
+import QuickNotesList, { QuickNoteInput } from '@/components/quick-notes/QuickNotesList';
+import { useQuickNotes } from '@/components/quick-notes/useQuickNotes';
+import { openNotes } from '@/lib/quick-notes/quick-notes';
 
 const MOOD_NAMES = ['Rough', 'Meh', 'Okay', 'Good', 'Great'];
 
@@ -66,6 +69,24 @@ export function SkillsCard() {
       <Link className={`btn ${done ? 'btn-secondary' : 'btn-primary'}`} href={board.due > 0 ? '/skills/review' : '/skills/review?mode=weak'}>
         {board.due > 0 ? `Review ${board.due}` : 'Weak spots'}
       </Link>
+    </section>
+  );
+}
+
+/** Quick notes still open, to tick off, and a box to jot another. Out of the way until the first note. */
+export function QuickNotesCard() {
+  const notes = useQuickNotes();
+  if (notes.status !== 'ready' || !notes.data.notes.length) return null;
+  const open = openNotes(notes.data).length;
+  return (
+    <section className="td-card td-quick-notes">
+      <div className="td-card-head">
+        <h2><span aria-hidden>🗒️</span> Quick notes</h2>
+        <span className={`td-chip${open ? '' : ' is-done'}`}>{open ? `${open} open` : 'All checked off'}</span>
+      </div>
+      <QuickNotesList notes={notes} limit={5} showDone={false} empty="Nothing open." />
+      <QuickNoteInput notes={notes} />
+      <Link className="td-more" href="/quick-notes">{open > 5 ? `All ${open} notes →` : 'All quick notes →'}</Link>
     </section>
   );
 }

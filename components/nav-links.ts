@@ -84,6 +84,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         // Not account-only: with no account it's still where the Library is read.
         { href: '/reader', label: 'Reader', icon: '📖', blurb: 'The Library, and your own books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline library documents manuals papers audiobook' },
         { href: '/notes', label: 'Notes', icon: '✏️', blurb: 'Notebooks you write in, with or without a connection', keywords: 'goodnotes notability handwriting pencil notebook pdf annotate lecture recording offline', account: true },
+        { href: '/quick-notes', label: 'Quick notes', icon: '🗒️', short: 'Jots', blurb: 'Jot things down from any page, check them off later', keywords: 'todo to-do reminder jot memo inbox scratch list remember learned til', account: true },
         { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆', short: 'Ranks', blurb: 'How everyone’s doing', keywords: 'scores xp' },
       ],
       corners: [{

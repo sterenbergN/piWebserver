@@ -26,7 +26,7 @@ import { formatRelativeDay, trainingStreak } from '@/lib/workout/session-insight
 import type { PublicDay, QuestionStatus } from '@/lib/daily/grade';
 import { TRACK_LABEL } from '@/lib/daily/types';
 import { readTodayHidden, type TodayCard } from '@/lib/today-prefs';
-import { JournalCard, KitchenCard, ReaderCard, SkillsCard, StudyCard } from './DayCards';
+import { JournalCard, KitchenCard, QuickNotesCard, ReaderCard, SkillsCard, StudyCard } from './DayCards';
 import '../habits/habits.css';
 import '../chores/chores.css';
 import '../study/study.css';
@@ -73,6 +73,7 @@ export default function TodayPage() {
   const showStudy = signedIn && !!hidden && !hidden.includes('study');
   const showReader = signedIn && !!hidden && !hidden.includes('reader');
   const showSkills = signedIn && !!hidden && !hidden.includes('skills');
+  const showNotes = signedIn && !!hidden && !hidden.includes('notes');
 
   const setCardShown = async (card: TodayCard, shown: boolean) => {
     const before = savedHidden ?? [];
@@ -265,6 +266,8 @@ export default function TodayPage() {
 
           <JournalCard today={today} signedIn={signedIn} onWritten={setJournalWritten} />
 
+          {showNotes && <QuickNotesCard />}
+
           {showReader && <ReaderCard />}
 
           {/* Workout */}
@@ -399,6 +402,13 @@ export default function TodayPage() {
             <span>
               <strong>Skills</strong>
               <small>Questions due across your subjects and the next step, once you have a subject. Skills stays in Explore.</small>
+            </span>
+          </label>
+          <label className="sd-check">
+            <input type="checkbox" checked={showNotes} onChange={(e) => setCardShown('notes', e.target.checked)} />
+            <span>
+              <strong>Quick notes</strong>
+              <small>Notes you’ve jotted down and not checked off yet, once you have any. Quick notes stay in Explore.</small>
             </span>
           </label>
           {hiddenError && <p className="sd-warning" role="alert">{hiddenError}</p>}

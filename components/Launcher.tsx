@@ -10,6 +10,9 @@ import { allPlaces, matchNavItems, orderRooms, type NavGroup } from './nav-links
 import { loadNavInfo, type NavInfo } from './nav-badges';
 import { Door, ExploreMeter, RoomGrid, type RoomContext } from './Rooms';
 import { useFoundPlaces, useRecentPages } from './useNavPins';
+import QuickNotesList from './quick-notes/QuickNotesList';
+import { herePage, useQuickNotes } from './quick-notes/useQuickNotes';
+import { openNotes } from '@/lib/quick-notes/quick-notes';
 import './launcher.css';
 
 type Hit = { kind: string; title: string; url: string; subtitle?: string; snippet?: string };
@@ -19,13 +22,15 @@ const KIND_ICON: Record<string, string> = { post: '📝', album: '🖼️', phot
  * What the box is for. Find never saves anything: a question or a grocery item
  * only gets saved from its own mode, so a stray Enter can't put either anywhere.
  */
-type Mode = 'find' | 'ask' | 'list';
+type Mode = 'find' | 'ask' | 'list' | 'note';
 /** "add milk" / "buy milk" in Find offers (never does) the grocery list. */
 const ADD_PREFIX = /^(add|buy)\s+/i;
 /** Typing "?" first in Find switches to asking. */
 const ASK_PREFIX = /^\?+\s*/;
 /** "/calc ...", "calc ...", "/calculator ...", "calculator ..." opens the floating calculator. */
 const CALC_CMD = /^\/?(?:calc|calculator)(?:\s+(.*))?$/i;
+/** "/note walk the dog", "/n …", "/jot …" (or "jot …") saves a quick note; on its own it opens them. */
+const NOTE_CMD = /^(?:\/(?:note|notes|n|jot)|jot)(?:\s+([\s\S]*))?$/i;
 /** Reads like a question: Find offers to save it, and Enter opens it as one. */
 const QUESTION_START = /^(who|what|whats|what's|when|where|why|how|which|is|are|can|could|should|would|does|do|did|will)\b/i;
 
@@ -33,6 +38,7 @@ const MODES: { id: Mode; icon: string; label: string; placeholder: string }[] = 
   { id: 'find', icon: '🔍', label: 'Find', placeholder: 'Jump to a page or search the site' },
   { id: 'ask', icon: '❓', label: 'Ask a question', placeholder: 'What do you want to look up later?' },
   { id: 'list', icon: '🛒', label: 'Grocery list', placeholder: 'An item for the list, e.g. 2 lemons' },
+  { id: 'note', icon: '🗒️', label: 'Quick note', placeholder: 'Jot something down…' },
 ];
 
 /** The Skills subject a page belongs to, so a question asked there is filed with it. */
@@ -65,8 +71,9 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
 }) {
   const router = useRouter();
   const startsAsking = signedIn && ASK_PREFIX.test(initialQuery);
-  const [mode, setMode] = useState<Mode>(startsAsking ? 'ask' : 'find');
-  const [query, setQuery] = useState(startsAsking ? initialQuery.replace(ASK_PREFIX, '') : initialQuery);
+  const startsNote = signedIn ? NOTE_CMD.exec(initialQuery.trim()) : null;
+  const [mode, setMode] = useState<Mode>(startsAsking ? 'ask' : startsNote ? 'note' : 'find');
+  const [query, setQuery] = useState(startsAsking ? initialQuery.replace(ASK_PREFIX, '') : startsNote ? startsNote[1] ?? '' : NOTE_CMD.test(initialQuery.trim()) ? '' : initialQuery);
   const [busy, setBusy] = useState(false);
   const [hits, setHits] = useState<Hit[]>([]);
   const [info, setInfo] = useState<NavInfo | undefined>();
@@ -75,6 +82,8 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const [calcAngle, setCalcAngle] = useState<AngleMode>('rad');
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const notes = useQuickNotes(signedIn);
+  const openCount = openNotes(notes.data).length;
   const recent = useRecentPages();
   const found = useFoundPlaces();
 
@@ -93,10 +102,12 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const calcMatch = finding ? CALC_CMD.exec(q) : null;
   const calcExpr = calcMatch?.[1]?.trim() ?? '';
   const calcPreview = calcExpr ? evaluate(calcExpr, { angle: calcAngle }) : null;
+  const noteMatch = finding && signedIn ? NOTE_CMD.exec(q) : null;
+  const noteText = noteMatch?.[1]?.trim() ?? '';
   // In Find these are only offers, which switch modes when picked.
   const groceryOffer = ADD_PREFIX.test(q) ? q.replace(ADD_PREFIX, '').trim() : '';
   const looksLikeQuestion = signedIn && (/\?$/.test(q) || QUESTION_START.test(q));
-  const modes = MODES.filter((m) => m.id !== 'ask' || signedIn);
+  const modes = MODES.filter((m) => (m.id !== 'ask' && m.id !== 'note') || signedIn);
   const modeInfo = MODES.find((m) => m.id === mode)!;
   const subjectId = typeof window === 'undefined' ? undefined : subjectHere();
   // "Skills · Site name" → "Skills".
@@ -187,6 +198,22 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     inputRef.current?.focus();
   };
 
+  // A quick note, kept on the account with the page it was written on.
+  const saveNote = async (text = q) => {
+    if (!text || busy) return;
+    setBusy(true);
+    const ok = await notes.dispatch({ type: 'add', text, from: herePage() });
+    setBusy(false);
+    if (ok) {
+      setFlash({ text: `Noted: “${text.length > 60 ? `${text.slice(0, 60)}…` : text}”`, ok: true, href: '/quick-notes', link: 'All quick notes' });
+      setQuery('');
+      notes.clearError();
+    } else {
+      setFlash({ text: notes.error || 'Couldn’t save the note. Try again.', ok: false });
+    }
+    inputRef.current?.focus();
+  };
+
   // Left and right walk the icons in order, up and down go to the nearest one that
   // way; Tab stays inside the dialog.
   const move = (e: React.KeyboardEvent) => {
@@ -237,6 +264,12 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     e.preventDefault();
     if (mode === 'ask') { void askLater(); return; }
     if (mode === 'list') { void addToList(); return; }
+    if (mode === 'note') { void saveNote(); return; }
+    if (noteMatch) {
+      if (noteText) void saveNote(noteText);
+      else switchTo('note', '');
+      return;
+    }
     if (calcMatch) {
       onClose();
       window.dispatchEvent(new CustomEvent('site:open-calculator', { detail: { expression: calcExpr } }));
@@ -283,17 +316,17 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         <div className={`lc-search is-${mode}`}>
           <span aria-hidden>{modeInfo.icon}</span>
           <input ref={inputRef} value={query} onChange={(e) => onType(e.target.value)} onKeyDown={onInputKey}
-            placeholder={modeInfo.placeholder} aria-label={modeInfo.label} enterKeyHint={finding ? 'go' : 'done'} maxLength={finding ? undefined : 500} />
+            placeholder={modeInfo.placeholder} aria-label={modeInfo.label} enterKeyHint={finding ? 'go' : 'done'} maxLength={finding ? undefined : mode === 'note' ? 2000 : 500} />
           <button type="button" className="lc-close" onClick={onClose} aria-label="Close">Esc</button>
         </div>
         <div className="lc-modes" role="group" aria-label="What the box does">
           {modes.map((m) => (
             <button key={m.id} type="button" aria-pressed={mode === m.id} className={mode === m.id ? 'is-on' : ''}
-              onClick={() => switchTo(m.id, m.id === 'list' && groceryOffer ? groceryOffer : q)}>
+              onClick={() => switchTo(m.id, m.id === 'list' && groceryOffer ? groceryOffer : m.id === 'note' && noteMatch ? noteText : q)}>
               <span aria-hidden>{m.icon}</span>{m.label}
             </button>
           ))}
-          {finding && signedIn && <span className="lc-modes-tip">Tip: type <kbd>?</kbd> first to ask</span>}
+          {finding && signedIn && <span className="lc-modes-tip">Tip: <kbd>?</kbd> first to ask · <kbd>/note</kbd> to jot</span>}
         </div>
 
         {flash && (
@@ -336,6 +369,19 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
               </div>
               <p className="lc-compose-hint"><kbd>Enter</kbd> adds · <kbd>Backspace</kbd> in an empty box goes back to search</p>
             </section>
+          ) : mode === 'note' ? (
+            <section className="lc-compose is-note" aria-label="Quick notes">
+              <div className="lc-compose-actions">
+                <button type="button" className="btn btn-primary" disabled={!q || busy} onClick={() => void saveNote()}>{busy ? 'Saving…' : 'Save note'}</button>
+                <button type="button" className="btn btn-secondary" onClick={() => switchTo('find', '')}>Back to search</button>
+                <Link className="lc-compose-link" href="/quick-notes" onClick={onClose}>All quick notes →</Link>
+              </div>
+              <p className="lc-compose-hint"><kbd>Enter</kbd> saves · tick to check off · <kbd>Backspace</kbd> in an empty box goes back to search</p>
+              <div className="lc-notes">
+                <h2>Your notes{openCount ? ` · ${openCount} open` : ''}</h2>
+                <QuickNotesList notes={notes} onNavigate={onClose} empty="Nothing jotted down yet. Type above and press Enter." />
+              </div>
+            </section>
           ) : q ? (
             <>
               {calcMatch && (
@@ -358,7 +404,16 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   </span>
                 </button>
               )}
-              {!calcMatch && looksLikeQuestion && askOffer}
+              {noteMatch && (
+                <button type="button" data-lc className="lc-row" onClick={() => (noteText ? void saveNote(noteText) : switchTo('note', ''))}>
+                  <span className="lc-icon" aria-hidden>🗒️</span>
+                  <span className="lc-text">
+                    <strong>{noteText ? `Save quick note: “${noteText}”` : 'Quick notes'}</strong>
+                    <small>{noteText ? 'Enter or click to save it to your quick notes' : `Jot something down${openCount ? ` · ${openCount} open` : ''} · Enter to open`}</small>
+                  </span>
+                </button>
+              )}
+              {!calcMatch && !noteMatch && looksLikeQuestion && askOffer}
               {pageHits.length > 0 && (
                 <section aria-label="Pages">
                   <h2>Pages</h2>
@@ -380,7 +435,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   ))}
                 </section>
               )}
-              {!calcMatch && (
+              {!calcMatch && !noteMatch && (
                 <section aria-label="Actions">
                   {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
                   {!looksLikeQuestion && pageHits.length + contentHits.length === 0 && askOffer}
@@ -422,6 +477,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         <div className="lc-foot" style={{ flexWrap: 'wrap' }}>
           <button type="button" onClick={onToggleTheme}>{theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}</button>
           <button type="button" onClick={() => openCalculator()}>🧮 Calculator</button>
+          {signedIn && <button type="button" className={mode === 'note' ? 'is-on' : ''} aria-pressed={mode === 'note'} onClick={() => switchTo(mode === 'note' ? 'find' : 'note', '')}>🗒️ Quick notes{openCount ? ` (${openCount})` : ''}</button>}
           {!signedIn && <button type="button" onClick={() => { onClose(); window.dispatchEvent(new Event('site:sign-in')); }}>👤 Sign in</button>}
           <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setMode('find'); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
           <span className="lc-keys" aria-hidden>{editing ? 'Tap a star to keep it in your header and dock' : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> to move · <kbd>Enter</kbd> to open</>}</span>

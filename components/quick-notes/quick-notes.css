@@ -1,0 +1,80 @@
+/* Quick notes: the list shared by the Explore panel, the Quick notes page and Today. */
+.qn-list { display: flex; flex-direction: column; gap: 0.5rem; align-self: stretch; min-width: 0; }
+.qn-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+
+.qn-row { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.45rem 0.4rem 0.45rem 0.5rem; border-radius: 10px; border: 1px solid transparent; }
+.qn-row:hover { background: var(--surface-hover); }
+.qn-row:focus-within { border-color: var(--surface-border); }
+
+/* A round tick box, drawn the same on every browser (Safari on iPhone included). */
+input.qn-check {
+  -webkit-appearance: none; appearance: none; flex-shrink: 0; position: relative; width: 1.3rem; height: 1.3rem; margin: 0.12rem 0 0;
+  border-radius: 50%; border: 2px solid var(--muted); background: transparent; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+input.qn-check:hover { border-color: var(--accent-light); }
+input.qn-check:checked { background: var(--success); border-color: var(--success); }
+input.qn-check:checked::after {
+  content: ''; position: absolute; left: 0.36rem; top: 0.14rem; width: 0.3rem; height: 0.6rem;
+  border: solid var(--background); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+input.qn-check:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
+.qn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.qn-text { margin: 0; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 0.95rem; line-height: 1.4; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qn-text.is-editable { cursor: text; border-radius: 4px; }
+.qn-text.is-editable:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.qn-row.is-done .qn-text { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 70%, transparent); }
+.qn-meta { font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qn-meta a { color: inherit; text-decoration: underline; text-decoration-color: var(--surface-border); }
+.qn-meta a:hover { color: var(--foreground); }
+textarea.qn-edit { padding: 0.35rem 0.5rem; font-size: 0.95rem; line-height: 1.4; resize: vertical; }
+
+.qn-clear {
+  flex-shrink: 0; width: 1.9rem; height: 1.9rem; margin: -0.2rem -0.1rem 0 0; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 8px; background: none; color: var(--muted); font-size: 1.15rem; line-height: 1; cursor: pointer;
+  opacity: 0.55; transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.qn-row:hover .qn-clear, .qn-clear:focus-visible { opacity: 1; }
+.qn-clear:hover { color: var(--danger); background: rgba(var(--danger-rgb), 0.1); }
+@media (hover: none) { .qn-clear { opacity: 0.8; } }
+
+.qn-empty { margin: 0; padding: 0.3rem 0.2rem; color: var(--muted); font-size: 0.9rem; }
+.qn-more { margin: 0; padding-left: 2.4rem; color: var(--muted); font-size: 0.8rem; }
+.qn-alert, .qn-undo { margin: 0; padding: 0.45rem 0.7rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; }
+.qn-alert { color: var(--danger); background: rgba(var(--danger-rgb), 0.12); }
+.qn-undo { color: var(--foreground); background: var(--surface-glass); border: 1px solid var(--surface-border); }
+.qn-link { padding: 0; border: 0; background: none; color: var(--accent-light); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
+.qn-done { display: flex; flex-direction: column; gap: 0.3rem; padding-top: 0.35rem; border-top: 1px dashed var(--surface-border); }
+.qn-done-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem; padding: 0 0.2rem; }
+.qn-done-head .qn-link { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
+.qn-done-head .qn-link:hover { color: var(--foreground); }
+.qn-pill { padding: 0.25rem 0.7rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+.qn-pill:hover { border-color: rgba(var(--danger-rgb), 0.6); color: var(--danger); }
+
+.qn-add { display: flex; align-items: flex-end; gap: 0.5rem; align-self: stretch; }
+.qn-add textarea { flex: 1; min-width: 0; min-height: 2.6rem; padding: 0.6rem 0.8rem; resize: none; field-sizing: content; max-height: 10rem; line-height: 1.4; }
+.qn-add .btn { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .qn-add textarea, textarea.qn-edit { font-size: 16px; }
+  .qn-row { padding-top: 0.55rem; padding-bottom: 0.55rem; }
+}
+
+/* The Quick notes page. */
+.qn-page { max-width: 720px; margin: 0 auto; padding: 1.5rem 0 4rem; display: flex; flex-direction: column; gap: 1rem; }
+.qn-page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0.75rem; }
+.qn-page-head h1 { margin: 0; display: flex; align-items: center; gap: 0.5rem; }
+.qn-page-head p { margin: 0.35rem 0 0; color: var(--muted); max-width: 36rem; }
+.qn-page kbd { padding: 0 0.3rem; border-radius: 4px; border: 1px solid var(--surface-border); font: inherit; font-size: 0.8em; }
+.qn-card { display: flex; flex-direction: column; align-items: flex-start; gap: 0.75rem; padding: 1rem 1.1rem 1.1rem; border-radius: 18px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.qn-page-foot { margin: 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
+@media (max-width: 640px) {
+  .qn-page { padding-top: 1rem; }
+  .qn-card { padding: 0.8rem 0.7rem 0.9rem; border-radius: 14px; }
+  .qn-page-head p kbd { white-space: nowrap; }
+}
+.qn-chip { padding: 0.2rem 0.65rem; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--surface-border); font-size: 0.8rem; font-weight: 700; white-space: nowrap; }
+.qn-on-phone { display: none; }
+@media (max-width: 640px) {
+  .qn-on-desktop { display: none; }
+  .qn-on-phone { display: inline; }
+}

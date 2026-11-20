@@ -158,6 +158,7 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     { entry: 'journal.json', file: perUserFile('journal', userId) },
     ...posts,
     { entry: 'habits.json', file: perUserFile('habits', userId) },
+    { entry: 'quick-notes.json', file: perUserFile('quick-notes', userId) },
     { entry: 'daily/answers.json', json: daily },
     ...(feedback.length ? [{ entry: 'daily/feedback.json', json: { entries: feedback } }] : []),
     { entry: 'loop-lab-notebook.json', file: perUserFile('loop-lab', userId) },

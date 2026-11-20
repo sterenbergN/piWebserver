@@ -17,6 +17,7 @@
   .td-question, .td-study { order: 1; }
   .td-habits { order: 2; }
   .td-journal { order: 3; }
+  .td-quick-notes { order: 3; }
   .td-reader { order: 4; }
   .td-kitchen { order: 5; }
   .td-chores { order: 6; }

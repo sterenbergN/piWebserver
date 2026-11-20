@@ -92,3 +92,7 @@
   .lc-compose-actions .btn { flex: 1; }
   .lc-compose-link { margin-left: 0; width: 100%; text-align: center; }
 }
+
+/* Quick notes inside the panel: jot in the box, the list underneath. */
+.lc-search.is-note { box-shadow: inset 3px 0 0 var(--warning); }
+.lc-notes { display: flex; flex-direction: column; gap: 0.2rem; padding-top: 0.25rem; }

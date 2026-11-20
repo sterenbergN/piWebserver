@@ -145,6 +145,7 @@ const AREAS: [string, string[]][] = [
   ['Private posts', ['.data/private-posts/']],
   ['Workouts & health', ['.data/workouts/']],
   ['Habits', ['.data/habits/']],
+  ['Quick notes', ['.data/quick-notes/']],
   ['Chores', ['.data/chores/']],
   ['Daily questions', ['.data/daily/']],
   ['Study tests & miss banks', ['.data/study/']],

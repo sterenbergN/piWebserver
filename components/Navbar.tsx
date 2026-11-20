@@ -204,7 +204,8 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
     return () => window.clearTimeout(handle);
   }, [discovery]);
 
-  // "/" or Ctrl+K opens the panel from anywhere; "?" opens it to jot down a question for Skills.
+  // "/" or Ctrl+K opens the panel from anywhere; "?" opens it to jot down a question for Skills;
+  // Alt+N opens it on quick notes (signed out it's just the panel).
   // Alt+C toggles/opens the floating calculator; rolling /calc + Space|Enter or /calculator opens it too.
   useEffect(() => {
     launcherOpenRef.current = !!launcher;
@@ -220,6 +221,14 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
         e.preventDefault();
         setLauncher(false);
         window.dispatchEvent(new CustomEvent('site:open-calculator', { detail: { toggle: true } }));
+        return;
+      }
+      // Alt+N jots a quick note (outside text fields, where Option+N types a tilde on a Mac).
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyN' && !inTextField) {
+        e.preventDefault();
+        keyBufRef.current.str = '';
+        void loadLauncher();
+        setLauncher({ query: '/note ' });
         return;
       }
       // defaultPrevented: a widget already used the key (the daily calculator's / makes a fraction).

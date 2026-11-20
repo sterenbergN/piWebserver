@@ -7,6 +7,7 @@ import { isActive, normalizeHabitsData, type HabitsData } from '@/lib/habits/hab
 import { isDueOn, isWeekly } from '@/lib/habits/stats';
 import { currentWeek, groceriesLeft, mealsToday } from '@/lib/recipes/kitchen';
 import { readLocalKitchen } from '@/lib/recipes/grocery-client';
+import { normalizeQuickNotes, openNotes } from '@/lib/quick-notes/quick-notes';
 import { readTodayHidden } from '@/lib/today-prefs';
 import { formatRelativeDay } from '@/lib/workout/session-insights';
 
@@ -56,6 +57,11 @@ async function kitchenNow(today: string) {
   return { left: groceriesLeft(recipes.recipes, kitchen, currentWeek(today)), tonight: tonight?.recipe.title ?? '' };
 }
 
+async function quickNotesOpen() {
+  const body = await json('/api/quick-notes');
+  return body?.success ? openNotes(normalizeQuickNotes(body.data)).length : 0;
+}
+
 async function lastLift() {
   const body = await json('/api/workout/history');
   const history: { timestamp?: string }[] = Array.isArray(body?.history) ? body.history : [];
@@ -79,15 +85,17 @@ export function loadNavInfo(): Promise<NavInfo> {
   const today = localToday();
   const count = (n: number) => (n > 0 ? String(n) : '');
   const info = (async (): Promise<NavInfo> => {
-    const [habits, chores, question, journal, kitchen, lifted, temp] = await Promise.all([
+    const [habits, chores, question, journal, kitchen, lifted, temp, jots] = await Promise.all([
       habitsLeft(today).catch(() => 0), choresDue(today).catch(() => 0), questionOpen(today).catch(() => false),
       journalOpen(today).catch(() => false), kitchenNow(today).catch(() => ({ left: 0, tonight: '' })), lastLift().catch(() => ''), piTemperature().catch(() => ''),
+      quickNotesOpen().catch(() => 0),
     ]);
     const toDo = habits + chores + (question ? 1 : 0) + (journal ? 1 : 0);
     return {
       badges: {
         '/habits': count(habits), '/chores': count(chores), '/daily': question ? 'New' : '',
         '/journal': journal ? 'Write' : '', '/recipes?view=list': count(kitchen.left),
+        '/quick-notes': count(jots),
       },
       status: {
         day: toDo ? `${toDo} thing${toDo === 1 ? '' : 's'} to do today` : '',
