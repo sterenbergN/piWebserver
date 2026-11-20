@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { forgetCatalog } from '@/lib/ai/catalog';
+import { forgetAiAccount } from '@/lib/ai/settings';
 import { generateId } from '@/lib/workout/data';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { hashPassword } from '@/lib/workout/passwords';
@@ -110,6 +112,9 @@ export async function DELETE(request: Request) {
     });
     await deleteUserHealth(id);
     await removeFromHousehold(id);
+    // Their AI key (if the admin gave them one) and their place on the site's key go too.
+    await forgetAiAccount(id);
+    await forgetCatalog(id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

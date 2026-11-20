@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { createLimiter } from '@/lib/security/rate-limit';
 import { AiError, type Provider } from './providers';
 import { modelForTask } from './catalog';
-import { isAiReady, mayUseAi, type AiCaller, type AiSettings } from './settings';
+import { connectionFor, isAiReady, type ActiveConnection, type AiCaller, type AiSettings } from './settings';
 import type { AiTask } from './tasks';
 import type { ProviderId } from './providers-list';
 
@@ -30,14 +30,14 @@ type Options = {
   loadSettings: () => Promise<AiSettings>;
   providerFor: (id: ProviderId) => Provider;
   /** Which model a task uses (the newest of a family can change from day to day). */
-  pickModel?: (settings: AiSettings, task?: AiTask) => Promise<string>;
+  pickModel?: (conn: ActiveConnection, task?: AiTask) => Promise<string>;
   timeoutMs?: number;
   perHour?: number;
   keepMs?: number;
   now?: () => number;
 };
 
-export function createAiJobs({ loadSettings, providerFor, pickModel = async (s, task) => modelForTask(s, null, task).id, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now }: Options) {
+export function createAiJobs({ loadSettings, providerFor, pickModel = async (conn, task) => modelForTask(conn, null, task).id, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now }: Options) {
   const jobs = new Map<string, AiJob & { controller: AbortController }>();
   const limiter = createLimiter({ max: perHour, windowMs: 60 * 60_000 });
 
@@ -57,8 +57,12 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (s, 
       if (typeof prompt !== 'string' || !prompt.trim()) throw new AiError('empty', 'There’s no prompt to send.');
       if (prompt.length > MAX_PROMPT_CHARS) throw new AiError('too-long', 'That prompt is too long to send.');
       const settings = await loadSettings();
-      if (!isAiReady(settings)) throw new AiError('not-set-up', 'No AI is connected.');
-      if (!mayUseAi(settings, who)) throw new AiError('not-allowed', 'This account can’t use the site’s AI.');
+      // The account's own key if the admin gave it one, else the site's if it may share it.
+      const conn = connectionFor(settings, who);
+      if (!conn) {
+        if (isAiReady(settings)) throw new AiError('not-allowed', 'This account can’t use the site’s AI.');
+        throw new AiError('not-set-up', 'No AI is connected.');
+      }
       if ([...jobs.values()].some((j) => j.owner === owner && j.status === 'running')) {
         throw new AiError('busy', 'It’s already writing one. Wait for that to finish.');
       }
@@ -66,7 +70,7 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (s, 
       if (wait > 0) throw new AiError('rate', `That’s a lot of AI for one hour. Try again in ${Math.ceil(wait / 60)} minutes.`);
       limiter.hit(owner, now());
 
-      const model = await pickModel(settings, task);
+      const model = await pickModel(conn, task);
       const controller = new AbortController();
       const job = { id: crypto.randomUUID(), owner, status: 'running' as AiJob['status'], startedAt: now(), controller };
       jobs.set(job.id, job);
@@ -76,8 +80,8 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (s, 
         Object.assign(job, patch, { finishedAt: now() });
       };
       // Not awaited: the page asks how it's going.
-      void providerFor(settings.provider)
-        .generate({ apiKey: settings.apiKey, model, prompt, signal: controller.signal, timeoutMs })
+      void providerFor(conn.provider)
+        .generate({ apiKey: conn.apiKey, model, prompt, signal: controller.signal, timeoutMs })
         .then((text) => finish({ status: 'done', text }))
         .catch((error) => {
           const e = error instanceof AiError ? error : new AiError('unknown', 'Something went wrong talking to the AI.');

@@ -11,7 +11,7 @@ const globalJobs = globalThis as unknown as { __aiJobs?: ReturnType<typeof creat
 export const aiJobs = globalJobs.__aiJobs ??= createAiJobs({
   loadSettings: getAiSettings,
   providerFor,
-  pickModel: async (settings, task) => modelForTask(settings, await currentCatalog(settings, providerFor(settings.provider)), task).id,
+  pickModel: async (conn, task) => modelForTask(conn, await currentCatalog(conn, providerFor(conn.provider)), task).id,
 });
 
 /**

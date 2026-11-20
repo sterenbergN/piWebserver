@@ -7,7 +7,7 @@ import { createAiJobs } from './jobs';
 import { AiError, geminiError, providerFor, readGeminiReply, type Provider } from './providers';
 import { currentCatalog, modelForTask, savedCatalog } from './catalog';
 import { resolveChoice } from './providers-list';
-import { AiSettingsError, applyAiPatch, choiceFor, cleanAiSettings, defaultAiSettings, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
+import { AiSettingsError, applyAiPatch, choiceFor, cleanAiSettings, connectionFor, defaultAiSettings, forgetAiAccount, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
 
 const original = process.cwd();
 let dir = '';
@@ -312,7 +312,7 @@ test('a job uses the model picked for its task', async () => {
 });
 
 test('the model list is fetched once a day, and an old one is used if the provider can’t be reached', async () => {
-  const settings = { ...ready };
+  const settings = { ...ready, scope: 'site' };
   let calls = 0;
   let fail = false;
   const provider: Provider = {
@@ -331,4 +331,60 @@ test('the model list is fetched once a day, and an old one is used if the provid
   assert.equal(stale?.models[0].id, 'claude-opus-9', 'and keeps the old list when that fails');
   // A different key (or provider) never reuses another's list.
   assert.equal(await savedCatalog({ ...settings, apiKey: 'sk-ant-other' }), null);
+});
+
+// ── Keys per account, set by the admin ────────────────────────────────────────
+
+test('an account’s own key is used before the site’s, and only the admin sets it', () => {
+  const s = applyAiPatch({ ...defaultAiSettings(), apiKey: 'sk-ant-site', allowedUserIds: ['wife'] }, {
+    accounts: { wife: { provider: 'gemini', apiKey: 'AIza-wife', taskModels: { 'study-tests': 'auto:flash-lite' } } },
+  });
+  assert.throws(() => applyAiPatch(s, { accounts: { '../bad id': {} } }), AiSettingsError, 'odd ids are refused');
+  const wife = connectionFor(s, { userId: 'wife', isAdmin: false });
+  assert.equal(wife?.apiKey, 'AIza-wife');
+  assert.equal(wife?.provider, 'gemini');
+  assert.equal(wife?.scope, 'user:wife');
+  assert.equal(choiceFor(wife!, 'study-tests'), 'auto:flash-lite');
+  assert.equal(connectionFor(s, { userId: null, isAdmin: true })?.apiKey, 'sk-ant-site', 'Admin uses the site key');
+  assert.equal(connectionFor(s, { userId: 'partner', isAdmin: false }), null, 'nobody else gets anything');
+});
+
+test('without its own key an account falls back to the site key only if it’s allowed', () => {
+  const s = applyAiPatch({ ...defaultAiSettings(), apiKey: 'sk-ant-site' }, { accounts: { wife: { provider: 'gemini' } } });
+  assert.equal(connectionFor(s, { userId: 'wife', isAdmin: false }), null);
+  const allowed = applyAiPatch(s, { allowedUserIds: ['wife'] });
+  assert.equal(connectionFor(allowed, { userId: 'wife', isAdmin: false })?.scope, 'site');
+  // Switched off means off for everyone, own keys included.
+  const off = applyAiPatch(applyAiPatch(s, { accounts: { wife: { apiKey: 'AIza-wife' } } }), { enabled: false });
+  assert.equal(connectionFor(off, { userId: 'wife', isAdmin: false }), null);
+});
+
+test('an account’s key follows the same rules: new provider forgets it, remove takes it away', () => {
+  const s = applyAiPatch(defaultAiSettings(), { accounts: { wife: { provider: 'gemini', apiKey: 'AIza-wife' } } });
+  assert.equal(applyAiPatch(s, { accounts: { wife: { provider: 'anthropic' } } }).accounts.wife.apiKey, '');
+  assert.equal(applyAiPatch(s, { accounts: { wife: { model: 'gemini-3.6-flash' } } }).accounts.wife.apiKey, 'AIza-wife', 'a blank key keeps it');
+  assert.deepEqual(applyAiPatch(s, { accounts: { wife: { remove: true } } }).accounts, {});
+  assert.throws(() => applyAiPatch(s, { accounts: { wife: { apiKey: 'has spaces' } } }), AiSettingsError);
+  const pub = toPublic(s);
+  assert.equal(pub.accounts.wife.keyHint, '…wife');
+  assert.ok(!JSON.stringify(pub).includes('AIza-wife'), 'the admin page never gets an account’s key either');
+});
+
+test('a job runs on the account’s own key and provider', async () => {
+  let seen = '';
+  const jobs = createAiJobs({
+    loadSettings: async () => applyAiPatch({ ...ready }, { accounts: { c: { provider: 'gemini', apiKey: 'AIza-c' } } }),
+    providerFor: (id) => fakeProvider(async ({ apiKey, model }) => { seen = `${id}|${apiKey}|${model}`; return 'x'; }),
+  });
+  const { id } = await jobs.start('user:c', 'hi', as('c'), 'study-tests');
+  await settle(jobs, 'user:c', id);
+  assert.equal(seen, 'gemini|AIza-c|gemini-3.8-flash');
+});
+
+test('deleting an account forgets its AI settings', async () => {
+  await saveAiSettings({ enabled: true, allowedUserIds: ['gone', 'stays'], accounts: { gone: { provider: 'gemini', apiKey: 'AIza-gone' } } });
+  await forgetAiAccount('gone');
+  const s = await getAiSettings();
+  assert.deepEqual(s.allowedUserIds, ['stays']);
+  assert.equal(s.accounts.gone, undefined);
 });
