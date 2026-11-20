@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { createLimiter } from '@/lib/security/rate-limit';
 import { AiError, type Provider } from './providers';
-import { isAiReady, type AiSettings } from './settings';
+import { isAiReady, mayUseAi, type AiCaller, type AiSettings } from './settings';
 import type { ProviderId } from './providers-list';
 
 // Writing a reply runs as a job the page checks on, not one long request: a long
@@ -47,13 +47,14 @@ export function createAiJobs({ loadSettings, providerFor, timeoutMs = 5 * 60_000
   const view = (job: AiJob): AiJobView => ({ id: job.id, status: job.status, text: job.text, error: job.error, errorKind: job.errorKind });
 
   return {
-    /** Start writing a reply to `prompt` for `owner`. Throws AiError when it can't start. */
-    async start(owner: string, prompt: string): Promise<AiJobView> {
+    /** Start writing a reply to `prompt` for `owner` (who is `who`). Throws AiError when it can't start. */
+    async start(owner: string, prompt: string, who: AiCaller): Promise<AiJobView> {
       prune();
       if (typeof prompt !== 'string' || !prompt.trim()) throw new AiError('empty', 'There’s no prompt to send.');
       if (prompt.length > MAX_PROMPT_CHARS) throw new AiError('too-long', 'That prompt is too long to send.');
       const settings = await loadSettings();
       if (!isAiReady(settings)) throw new AiError('not-set-up', 'No AI is connected.');
+      if (!mayUseAi(settings, who)) throw new AiError('not-allowed', 'This account can’t use the site’s AI.');
       if ([...jobs.values()].some((j) => j.owner === owner && j.status === 'running')) {
         throw new AiError('busy', 'It’s already writing one. Wait for that to finish.');
       }

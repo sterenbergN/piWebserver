@@ -13,8 +13,16 @@ export type AiSettings = {
   apiKey: string;
   /** Off keeps the key but hides Generate everywhere. */
   enabled: boolean;
+  /**
+   * Accounts that may use it. Whoever is signed in to Admin always may; nobody
+   * else does unless ticked here, so the owner's key isn't shared by default.
+   */
+  allowedUserIds: string[];
   updatedAt?: string;
 };
+
+/** Who's asking: a signed-in account, the admin, or both in one browser. */
+export type AiCaller = { userId: string | null; isAdmin: boolean };
 
 /** What the admin page may see. */
 export type AiPublicSettings = Omit<AiSettings, 'apiKey'> & { hasKey: boolean; keyHint: string };
@@ -23,12 +31,14 @@ export const AI_FOLDER = '.data/ai/';
 export const aiSettingsFile = () => path.join(process.cwd(), '.data', 'ai', 'settings.json');
 
 const MAX_KEY = 400;
+const MAX_ALLOWED = 50;
+const USER_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$/;
 
 export class AiSettingsError extends Error {}
 
 export function defaultAiSettings(): AiSettings {
-  return { provider: DEFAULT_PROVIDER, model: PROVIDERS[DEFAULT_PROVIDER].defaultModel, apiKey: '', enabled: true };
+  return { provider: DEFAULT_PROVIDER, model: PROVIDERS[DEFAULT_PROVIDER].defaultModel, apiKey: '', enabled: true, allowedUserIds: [] };
 }
 
 /** Whatever was stored, made safe to use: unknown providers and odd values fall back to the defaults. */
@@ -44,8 +54,14 @@ export function cleanAiSettings(raw: unknown): AiSettings {
     model,
     apiKey,
     enabled: r.enabled !== false,
+    allowedUserIds: cleanUserIds(r.allowedUserIds),
     ...(typeof r.updatedAt === 'string' ? { updatedAt: r.updatedAt } : {}),
   };
+}
+
+function cleanUserIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((v): v is string => typeof v === 'string' && USER_ID_RE.test(v)))].slice(0, MAX_ALLOWED);
 }
 
 export async function getAiSettings(): Promise<AiSettings> {
@@ -66,6 +82,11 @@ export function isAiReady(settings: AiSettings) {
   return settings.enabled && !!settings.apiKey;
 }
 
+/** Whether this caller may use the key: the admin, or an account the admin ticked. */
+export function mayUseAi(settings: AiSettings, caller: AiCaller) {
+  return caller.isAdmin || (!!caller.userId && settings.allowedUserIds.includes(caller.userId));
+}
+
 export type AiSettingsPatch = {
   provider?: unknown;
   model?: unknown;
@@ -74,6 +95,7 @@ export type AiSettingsPatch = {
   /** True forgets the saved key. */
   clearKey?: unknown;
   enabled?: unknown;
+  allowedUserIds?: unknown;
 };
 
 /** Check a change from the admin page and apply it to `current`. Throws AiSettingsError on bad input. */
@@ -82,7 +104,11 @@ export function applyAiPatch(current: AiSettings, patch: AiSettingsPatch, now = 
   if (patch.provider !== undefined) {
     if (!isProviderId(patch.provider)) throw new AiSettingsError('Unknown provider.');
     const info = PROVIDERS[patch.provider];
-    if (patch.provider !== next.provider) next.model = info.defaultModel;
+    if (patch.provider !== next.provider) {
+      next.model = info.defaultModel;
+      // A key belongs to one provider: never send it to another.
+      next.apiKey = '';
+    }
     next.provider = patch.provider;
   }
   if (patch.model !== undefined) {
@@ -98,6 +124,10 @@ export function applyAiPatch(current: AiSettings, patch: AiSettingsPatch, now = 
     if (key) next.apiKey = key;
   }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true;
+  if (patch.allowedUserIds !== undefined) {
+    if (!Array.isArray(patch.allowedUserIds)) throw new AiSettingsError('Pick accounts from the list.');
+    next.allowedUserIds = cleanUserIds(patch.allowedUserIds);
+  }
   next.updatedAt = now.toISOString();
   return next;
 }

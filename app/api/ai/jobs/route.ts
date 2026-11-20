@@ -4,7 +4,7 @@ import { aiCaller, aiJobs } from '@/lib/ai/server';
 
 export const dynamic = 'force-dynamic';
 
-const STATUS: Record<string, number> = { 'not-set-up': 503, rate: 429, busy: 409, empty: 400, 'too-long': 413 };
+const STATUS: Record<string, number> = { 'not-set-up': 503, 'not-allowed': 403, rate: 429, busy: 409, empty: 400, 'too-long': 413 };
 
 /** Start writing a reply to a prompt. Answers with a job id to check on. */
 export async function POST(request: Request) {
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Bad request.' }, { status: 400 });
   }
   try {
-    const job = await aiJobs.start(caller, typeof prompt === 'string' ? prompt : '');
+    const job = await aiJobs.start(caller.key, typeof prompt === 'string' ? prompt : '', caller.who);
     return NextResponse.json(job, { status: 202 });
   } catch (error) {
     if (error instanceof AiError) return NextResponse.json({ error: error.message, errorKind: error.kind }, { status: STATUS[error.kind] ?? 500 });
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const caller = await aiCaller();
   if (!caller) return NextResponse.json({ error: 'Sign in to use the AI.' }, { status: 401 });
   const id = new URL(request.url).searchParams.get('id') ?? '';
-  const job = aiJobs.get(caller, id);
+  const job = aiJobs.get(caller.key, id);
   if (!job) return NextResponse.json({ error: 'That job is gone. Try again.' }, { status: 404 });
   return NextResponse.json(job, { headers: { 'Cache-Control': 'no-store' } });
 }
@@ -40,6 +40,6 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   const caller = await aiCaller();
   if (!caller) return NextResponse.json({ error: 'Sign in to use the AI.' }, { status: 401 });
-  aiJobs.cancel(caller, new URL(request.url).searchParams.get('id') ?? '');
+  aiJobs.cancel(caller.key, new URL(request.url).searchParams.get('id') ?? '');
   return NextResponse.json({ ok: true });
 }

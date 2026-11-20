@@ -4,8 +4,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { createAiJobs } from './jobs';
-import { AiError, type Provider } from './providers';
-import { AiSettingsError, applyAiPatch, cleanAiSettings, defaultAiSettings, getAiSettings, isAiReady, saveAiSettings, toPublic, type AiSettings } from './settings';
+import { AiError, geminiError, providerFor, readGeminiReply, type Provider } from './providers';
+import { AiSettingsError, applyAiPatch, cleanAiSettings, defaultAiSettings, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
 
 const original = process.cwd();
 let dir = '';
@@ -72,7 +72,9 @@ test('saving writes under .data/ai and reads back', async () => {
 
 // ── Jobs: Generate when it works, a clear reason (and copy-paste) when it doesn't ──
 
-const ready: AiSettings = { ...defaultAiSettings(), apiKey: 'sk-ant-test' };
+const ready: AiSettings = { ...defaultAiSettings(), apiKey: 'sk-ant-test', allowedUserIds: ['a', 'b'] };
+/** Signed in as account `id` (not the admin). */
+const as = (id: string) => ({ userId: id, isAdmin: false });
 
 function fakeProvider(generate: Provider['generate']): Provider {
   return { generate, check: async () => ({ modelLabel: 'Test' }) };
@@ -94,7 +96,7 @@ test('a working provider fills in the reply', async () => {
     loadSettings: async () => ready,
     providerFor: () => fakeProvider(async ({ prompt, apiKey, model }) => { seen = `${apiKey}|${model}|${prompt}`; return '```json\n{"ok":true}\n```'; }),
   });
-  const started = await jobs.start('user:a', 'Write a week plan');
+  const started = await jobs.start('user:a', 'Write a week plan', as('a'));
   assert.equal(started.status, 'running');
   const done = await settle(jobs, 'user:a', started.id);
   assert.equal(done.status, 'done');
@@ -105,7 +107,7 @@ test('a working provider fills in the reply', async () => {
 test('no key or switched off: it won’t start, so the page keeps copy-paste', async () => {
   for (const settings of [defaultAiSettings(), { ...ready, enabled: false }]) {
     const jobs = createAiJobs({ loadSettings: async () => settings, providerFor: () => fakeProvider(async () => 'x') });
-    await assert.rejects(jobs.start('user:a', 'hi'), (e: unknown) => e instanceof AiError && e.kind === 'not-set-up');
+    await assert.rejects(jobs.start('user:a', 'hi', as('a')), (e: unknown) => e instanceof AiError && e.kind === 'not-set-up');
   }
 });
 
@@ -114,7 +116,7 @@ test('a provider error comes back as a short message, not a crash', async () => 
     loadSettings: async () => ready,
     providerFor: () => fakeProvider(async () => { throw new AiError('auth', 'The API key was turned down.'); }),
   });
-  const { id } = await jobs.start('user:a', 'hi');
+  const { id } = await jobs.start('user:a', 'hi', as('a'));
   const job = await settle(jobs, 'user:a', id);
   assert.equal(job.status, 'error');
   assert.equal(job.errorKind, 'auth');
@@ -126,7 +128,7 @@ test('an unexpected error never leaks its message', async () => {
     loadSettings: async () => ready,
     providerFor: () => fakeProvider(async () => { throw new Error('boom with sk-ant-test inside'); }),
   });
-  const { id } = await jobs.start('user:a', 'hi');
+  const { id } = await jobs.start('user:a', 'hi', as('a'));
   const job = await settle(jobs, 'user:a', id);
   assert.equal(job.status, 'error');
   assert.ok(!job.error?.includes('sk-ant'));
@@ -140,7 +142,7 @@ test('a reply that takes too long is stopped', async () => {
       signal?.addEventListener('abort', () => reject(new AiError('timeout', 'It took too long to answer.')));
     })),
   });
-  const { id } = await jobs.start('user:a', 'hi');
+  const { id } = await jobs.start('user:a', 'hi', as('a'));
   const job = await settle(jobs, 'user:a', id);
   assert.equal(job.errorKind, 'timeout');
 });
@@ -152,19 +154,19 @@ test('one at a time per account, a cap per hour, and nobody sees another’s job
     perHour: 2,
     providerFor: () => fakeProvider(() => new Promise((resolve) => { release = () => resolve('done'); })),
   });
-  const first = await jobs.start('user:a', 'one');
-  await assert.rejects(jobs.start('user:a', 'two'), (e: unknown) => e instanceof AiError && e.kind === 'busy');
+  const first = await jobs.start('user:a', 'one', as('a'));
+  await assert.rejects(jobs.start('user:a', 'two', as('a')), (e: unknown) => e instanceof AiError && e.kind === 'busy');
   assert.equal(jobs.get('user:b', first.id), null, 'another account can’t read it');
   jobs.cancel('user:b', first.id);
   assert.equal(jobs.get('user:a', first.id)?.status, 'running', 'or stop it');
   release();
   await settle(jobs, 'user:a', first.id);
-  const second = await jobs.start('user:a', 'two');
+  const second = await jobs.start('user:a', 'two', as('a'));
   release();
   await settle(jobs, 'user:a', second.id);
-  await assert.rejects(jobs.start('user:a', 'three'), (e: unknown) => e instanceof AiError && e.kind === 'rate');
+  await assert.rejects(jobs.start('user:a', 'three', as('a')), (e: unknown) => e instanceof AiError && e.kind === 'rate');
   // Someone else still has their own allowance.
-  const other = await jobs.start('user:b', 'one');
+  const other = await jobs.start('user:b', 'one', as('b'));
   release();
   assert.equal((await settle(jobs, 'user:b', other.id)).status, 'done');
 });
@@ -172,16 +174,88 @@ test('one at a time per account, a cap per hour, and nobody sees another’s job
 test('empty and huge prompts are refused before calling anything', async () => {
   let calls = 0;
   const jobs = createAiJobs({ loadSettings: async () => ready, providerFor: () => fakeProvider(async () => { calls++; return 'x'; }) });
-  await assert.rejects(jobs.start('user:a', '   '), (e: unknown) => e instanceof AiError && e.kind === 'empty');
-  await assert.rejects(jobs.start('user:a', 'x'.repeat(400_001)), (e: unknown) => e instanceof AiError && e.kind === 'too-long');
+  await assert.rejects(jobs.start('user:a', '   ', as('a')), (e: unknown) => e instanceof AiError && e.kind === 'empty');
+  await assert.rejects(jobs.start('user:a', 'x'.repeat(400_001), as('a')), (e: unknown) => e instanceof AiError && e.kind === 'too-long');
   assert.equal(calls, 0);
 });
 
 test('finished jobs are forgotten after a while', async () => {
   let t = 1_000_000;
   const jobs = createAiJobs({ loadSettings: async () => ready, keepMs: 1000, now: () => t, providerFor: () => fakeProvider(async () => 'x') });
-  const { id } = await jobs.start('user:a', 'hi');
+  const { id } = await jobs.start('user:a', 'hi', as('a'));
   await settle(jobs, 'user:a', id);
   t += 2000;
   assert.equal(jobs.get('user:a', id), null);
+});
+
+// ── Who may use it ────────────────────────────────────────────────────────────
+
+test('owner only by default: the admin may, accounts only once ticked', () => {
+  const s = { ...defaultAiSettings(), apiKey: 'k' };
+  assert.equal(mayUseAi(s, { userId: null, isAdmin: true }), true);
+  assert.equal(mayUseAi(s, { userId: 'dev-partner', isAdmin: false }), false);
+  const ticked = applyAiPatch(s, { allowedUserIds: ['dev-tester', 'bad id!', 'dev-tester'] });
+  assert.deepEqual(ticked.allowedUserIds, ['dev-tester']);
+  assert.equal(mayUseAi(ticked, { userId: 'dev-tester', isAdmin: false }), true);
+  assert.equal(mayUseAi(ticked, { userId: 'dev-partner', isAdmin: false }), false);
+  assert.throws(() => applyAiPatch(s, { allowedUserIds: 'dev-tester' }), AiSettingsError);
+});
+
+test('an account that isn’t ticked can’t start a job', async () => {
+  let calls = 0;
+  const jobs = createAiJobs({ loadSettings: async () => ready, providerFor: () => fakeProvider(async () => { calls++; return 'x'; }) });
+  await assert.rejects(jobs.start('user:c', 'hi', as('c')), (e: unknown) => e instanceof AiError && e.kind === 'not-allowed');
+  assert.equal(calls, 0);
+});
+
+test('changing provider forgets the old key so it never goes to the new one', () => {
+  const claude = applyAiPatch(defaultAiSettings(), { apiKey: 'sk-ant-claude-key' });
+  const gemini = applyAiPatch(claude, { provider: 'gemini' });
+  assert.equal(gemini.apiKey, '');
+  assert.equal(gemini.model, 'gemini-3.8-flash');
+  const withKey = applyAiPatch(claude, { provider: 'gemini', apiKey: 'AIza-gemini-key' });
+  assert.equal(withKey.apiKey, 'AIza-gemini-key');
+  assert.equal(applyAiPatch(withKey, { provider: 'gemini' }).apiKey, 'AIza-gemini-key', 'same provider keeps it');
+});
+
+// ── Gemini ────────────────────────────────────────────────────────────────────
+
+test('Gemini: the key goes in a header, never the address, and thinking is left out', async () => {
+  const realFetch = globalThis.fetch;
+  let url = '';
+  let headers: Record<string, string> = {};
+  let body: { systemInstruction?: unknown; contents?: { parts: { text: string }[] }[] } = {};
+  globalThis.fetch = (async (input: string, init: RequestInit) => {
+    url = String(input);
+    headers = init.headers as Record<string, string>;
+    body = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'thinking…', thought: true }, { text: '```json\n{}\n```' }] } }] }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const text = await providerFor('gemini').generate({ apiKey: 'AIza-secret', model: 'gemini-3.8-flash', prompt: 'Plan a week', timeoutMs: 5000 });
+    assert.equal(text, '```json\n{}\n```');
+    assert.match(url, /\/v1beta\/models\/gemini-3\.8-flash:generateContent$/);
+    assert.ok(!url.includes('AIza'));
+    assert.equal(headers['x-goog-api-key'], 'AIza-secret');
+    assert.ok(body.systemInstruction);
+    assert.equal(body.contents?.[0].parts[0].text, 'Plan a week');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('Gemini: blocked, cut-off and empty answers become short reasons', () => {
+  assert.throws(() => readGeminiReply({ promptFeedback: { blockReason: 'SAFETY' } }), (e: unknown) => e instanceof AiError && e.kind === 'refused');
+  assert.throws(() => readGeminiReply({ candidates: [{ finishReason: 'SAFETY' }] }), (e: unknown) => e instanceof AiError && e.kind === 'refused');
+  assert.throws(() => readGeminiReply({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"half' }] } }] }), (e: unknown) => e instanceof AiError && e.kind === 'too-long');
+  assert.throws(() => readGeminiReply({ candidates: [] }), (e: unknown) => e instanceof AiError && e.kind === 'empty');
+});
+
+test('Gemini: HTTP errors map to plain reasons', () => {
+  assert.equal(geminiError(400, 'API key not valid. Please pass a valid API key.').kind, 'auth');
+  assert.equal(geminiError(401).kind, 'auth');
+  assert.match(geminiError(403, 'Your API key was reported as leaked.').message, /leaked/);
+  assert.equal(geminiError(404).kind, 'model');
+  assert.equal(geminiError(429, 'Resource has been exhausted').kind, 'rate');
+  assert.equal(geminiError(503).kind, 'busy');
 });

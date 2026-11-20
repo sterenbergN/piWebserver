@@ -11,6 +11,8 @@ import type { AiPublicSettings } from '@/lib/ai/settings';
 // four characters.
 
 const OTHER = '__other__';
+type Account = { id: string; username: string };
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 export default function AiPanel() {
   const [settings, setSettings] = useState<AiPublicSettings | null>(null);
@@ -21,6 +23,8 @@ export default function AiPanel() {
   const [customModel, setCustomModel] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [enabled, setEnabled] = useState(true);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [allowed, setAllowed] = useState<string[]>([]);
   const [busy, setBusy] = useState<'' | 'save' | 'test' | 'remove'>('');
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const { confirm, popup } = useSitePopup();
@@ -31,14 +35,16 @@ export default function AiPanel() {
     setModel(s.model);
     setCustomModel(!!list && !list[s.provider].models.some((m) => m.id === s.model));
     setEnabled(s.enabled);
+    setAllowed(s.allowedUserIds);
     setApiKey('');
   };
 
   useEffect(() => {
     fetch('/api/admin/ai', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error())))
-      .then((body: { settings: AiPublicSettings; providers: Record<ProviderId, ProviderInfo> }) => {
+      .then((body: { settings: AiPublicSettings; providers: Record<ProviderId, ProviderInfo>; accounts?: Account[] }) => {
         setProviders(body.providers);
+        setAccounts(body.accounts ?? []);
         adopt(body.settings, body.providers);
       })
       .catch(() => setLoadError(true));
@@ -54,7 +60,10 @@ export default function AiPanel() {
   }
 
   const info = providers[provider];
-  const dirty = provider !== settings.provider || model.trim() !== settings.model || enabled !== settings.enabled || !!apiKey.trim();
+  const switching = provider !== settings.provider;
+  const dirty = switching || model.trim() !== settings.model || enabled !== settings.enabled || !!apiKey.trim() || !sameSet(allowed, settings.allowedUserIds);
+  // A saved key belongs to its provider, so a new provider needs its own.
+  const keyForTest = !!apiKey.trim() || (settings.hasKey && !switching);
 
   const save = async (patch: Record<string, unknown>, doing: 'save' | 'remove') => {
     setBusy(doing);
@@ -88,6 +97,7 @@ export default function AiPanel() {
   };
 
   const ready = settings.enabled && settings.hasKey;
+  const allowedNames = settings.allowedUserIds.map((id) => accounts.find((a) => a.id === id)?.username ?? id);
   const savedModel = providers[settings.provider].models.find((m) => m.id === settings.model)?.label.replace(/\s*\(.*\)$/, '') ?? settings.model;
 
   return (
@@ -102,7 +112,7 @@ export default function AiPanel() {
 
       <div role="status" className={`adm-notice ${ready ? 'is-success' : 'is-info'}`}>
         {ready
-          ? `On: signed-in accounts see Generate, using ${savedModel} (key ${settings.keyHint}).`
+          ? `On, using ${savedModel} (key ${settings.keyHint}). Generate shows for Admin${allowedNames.length ? ` and ${allowedNames.join(', ')}` : ' only'}.`
           : settings.hasKey ? 'Off: the key is saved but Generate is hidden.' : 'Not connected: every page uses copy and paste.'}
       </div>
 
@@ -135,19 +145,33 @@ export default function AiPanel() {
             <input value={model} maxLength={100} placeholder={info.defaultModel} spellCheck={false} autoCapitalize="off" onChange={(e) => setModel(e.target.value)} />
           </label>
         )}
+        {info.note && <p className="adm-notice is-info is-wide" style={{ margin: 0 }}>{info.note}</p>}
         <label className="adm-field is-wide">
-          API key {settings.hasKey && <span>(saved, ends {settings.keyHint})</span>}
+          API key {settings.hasKey && !switching && <span>(saved, ends {settings.keyHint})</span>}
           <input
             type="password"
             value={apiKey}
             autoComplete="off"
             spellCheck={false}
             autoCapitalize="off"
-            placeholder={settings.hasKey ? 'Leave blank to keep the saved key' : info.keyPlaceholder}
+            placeholder={settings.hasKey && !switching ? 'Leave blank to keep the saved key' : info.keyPlaceholder}
             onChange={(e) => setApiKey(e.target.value)}
           />
-          <span>Make one at <a href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl.replace(/^https:\/\//, '')}</a>. Every Generate is billed to that account.</span>
+          <span>
+            Make one at <a href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl.replace(/^https:\/\//, '')}</a>.
+            {switching && settings.hasKey ? ' Saving with a new provider forgets the old key, so paste this provider’s key.' : ' Any charges go to that account.'}
+          </span>
         </label>
+        <fieldset className="adm-field is-wide" style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend style={{ marginBottom: '0.35rem' }}>Who can use it</legend>
+          <span>Admin can always use it. Tick your own account so Generate shows when you’re signed in as you; leave the rest unticked to keep it to yourself.</span>
+          {accounts.map((a) => (
+            <label key={a.id} className="adm-check">
+              <input type="checkbox" checked={allowed.includes(a.id)} onChange={(e) => setAllowed(e.target.checked ? [...allowed, a.id] : allowed.filter((id) => id !== a.id))} />
+              {a.username}
+            </label>
+          ))}
+        </fieldset>
         <label className="adm-check is-wide">
           <input type="checkbox" className="switch" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Show Generate buttons
         </label>
@@ -156,10 +180,10 @@ export default function AiPanel() {
       {notice && <div role="status" className={`adm-notice is-${notice.kind}`} style={{ marginTop: '1rem', marginBottom: 0 }}>{notice.text}</div>}
 
       <div className="adm-actions" style={{ marginTop: '1rem', flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" disabled={!!busy || !dirty || !model.trim()} onClick={() => save({ provider, model: model.trim(), enabled, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }, 'save')}>
+        <button className="btn btn-primary" disabled={!!busy || !dirty || !model.trim()} onClick={() => save({ provider, model: model.trim(), enabled, allowedUserIds: allowed, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }, 'save')}>
           {busy === 'save' ? 'Saving…' : 'Save'}
         </button>
-        <button className="btn btn-secondary" disabled={!!busy || (!settings.hasKey && !apiKey.trim()) || !model.trim()} onClick={test}>
+        <button className="btn btn-secondary" disabled={!!busy || !keyForTest || !model.trim()} onClick={test}>
           {busy === 'test' ? 'Testing…' : 'Test connection'}
         </button>
         {settings.hasKey && (

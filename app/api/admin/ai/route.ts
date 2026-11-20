@@ -3,15 +3,23 @@ import { AiError, providerFor } from '@/lib/ai/providers';
 import { PROVIDERS, isProviderId } from '@/lib/ai/providers-list';
 import { AiSettingsError, getAiSettings, saveAiSettings, toPublic } from '@/lib/ai/settings';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
+import { loadUsersData } from '@/lib/workout/users';
 
 export const dynamic = 'force-dynamic';
 
 const unauthorized = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+/** The site's accounts, to pick who may use the AI. */
+async function accounts() {
+  const data = await loadUsersData().catch(() => ({ users: [], deletedUserIds: [] as string[] }));
+  const deleted = new Set(data.deletedUserIds ?? []);
+  return data.users.filter((u) => !deleted.has(u.id)).map((u) => ({ id: u.id, username: u.username }));
+}
+
 /** The AI connection, without the key (only its last four characters). */
 export async function GET() {
   if (!(await isAdminAuthenticated())) return unauthorized();
-  return NextResponse.json({ settings: toPublic(await getAiSettings()), providers: PROVIDERS });
+  return NextResponse.json({ settings: toPublic(await getAiSettings()), providers: PROVIDERS, accounts: await accounts() });
 }
 
 /** Save provider, model, key or the on/off switch. A blank key keeps the saved one. */
@@ -38,8 +46,9 @@ export async function POST(request: Request) {
   const saved = await getAiSettings();
   const provider = isProviderId(body.provider) ? body.provider : saved.provider;
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : saved.model;
-  const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : saved.apiKey;
-  if (!apiKey) return NextResponse.json({ ok: false, error: 'Add an API key first.' });
+  // The saved key only ever goes to the provider it was saved for.
+  const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : provider === saved.provider ? saved.apiKey : '';
+  if (!apiKey) return NextResponse.json({ ok: false, error: `Add a ${PROVIDERS[provider].label} API key first.` });
   try {
     const { modelLabel } = await providerFor(provider).check({ apiKey, model, timeoutMs: 15_000 });
     return NextResponse.json({ ok: true, message: `Connected. ${modelLabel} is ready.` });

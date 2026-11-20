@@ -6,7 +6,7 @@ import type { ProviderId } from './providers-list';
 // Errors come back as AiError with a short message that's safe to show anyone:
 // no key, no provider response body.
 
-export type AiErrorKind = 'not-set-up' | 'auth' | 'model' | 'rate' | 'timeout' | 'network' | 'refused' | 'too-long' | 'empty' | 'busy' | 'unknown';
+export type AiErrorKind = 'not-set-up' | 'not-allowed' | 'auth' | 'model' | 'rate' | 'timeout' | 'network' | 'refused' | 'too-long' | 'empty' | 'busy' | 'unknown';
 
 export class AiError extends Error {
   constructor(readonly kind: AiErrorKind, message: string) {
@@ -89,7 +89,92 @@ const anthropic: Provider = {
   },
 };
 
-const IMPLEMENTATIONS: Record<ProviderId, Provider> = { anthropic };
+// ── Google Gemini (AI Studio keys) ──────────────────────────────────────────
+// Plain REST, no SDK. The key goes in a header, never in the address, so it can't
+// end up in a log line. GEMINI_BASE_URL is only for pointing tests at a stand-in.
+
+const geminiBase = () => (process.env.GEMINI_BASE_URL?.trim() || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+const geminiModel = (model: string) => encodeURIComponent(model.replace(/^models\//, ''));
+
+type GeminiPart = { text?: string; thought?: boolean };
+export type GeminiReply = {
+  candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[];
+  promptFeedback?: { blockReason?: string };
+};
+
+/** Turn an HTTP failure into a short reason. Google's message is only looked at, never passed on. */
+export function geminiError(status: number, message = ''): AiError {
+  const msg = message.toLowerCase();
+  if (msg.includes('leaked')) return new AiError('auth', 'Google says this API key leaked. Make a new one in AI Studio.');
+  if (status === 401 || (status === 400 && msg.includes('api key')) || msg.includes('api_key_invalid')) return new AiError('auth', 'The API key was turned down.');
+  if (status === 403) return new AiError('auth', 'This API key isn’t allowed to do that.');
+  if (status === 404) return new AiError('model', 'That model wasn’t found for this key.');
+  if (status === 429) return new AiError('rate', 'Gemini’s quota is used up for now (the free tier allows only so many a minute and a day). Try again later.');
+  if (status >= 500) return new AiError('busy', 'Gemini is having trouble. Try again soon.');
+  if (msg.includes('token') && (msg.includes('exceed') || msg.includes('too long') || msg.includes('limit'))) return new AiError('too-long', 'The prompt is too long for this model.');
+  return new AiError('unknown', `Gemini answered with an error${status ? ` (${status})` : ''}.`);
+}
+
+async function geminiFetch(url: string, init: RequestInit & { signal: AbortSignal }) {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    if (init.signal.aborted) throw new AiError('timeout', 'It took too long to answer.');
+    throw new AiError('network', 'Couldn’t reach Gemini.');
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw geminiError(res.status, body.error?.message);
+  }
+  return res;
+}
+
+const BLOCKED = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY', 'LANGUAGE']);
+
+/** The text of Gemini's answer (its thinking left out), or the reason there isn't one. */
+export function readGeminiReply(reply: GeminiReply): string {
+  if (reply.promptFeedback?.blockReason) throw new AiError('refused', 'Gemini declined to write this one.');
+  const candidate = reply.candidates?.[0];
+  const text = (candidate?.content?.parts ?? []).filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('').trim();
+  if (candidate?.finishReason && BLOCKED.has(candidate.finishReason)) throw new AiError('refused', 'Gemini declined to write this one.');
+  if (candidate?.finishReason === 'MAX_TOKENS') throw new AiError('too-long', 'The reply ran out of room before it finished.');
+  if (!text) throw new AiError('empty', 'Gemini sent back nothing.');
+  return text;
+}
+
+const gemini: Provider = {
+  async generate({ apiKey, model, prompt, signal, timeoutMs }) {
+    const signals = [AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])];
+    const res = await geminiFetch(`${geminiBase()}/v1beta/models/${geminiModel(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      signal: AbortSignal.any(signals),
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 32000 },
+      }),
+    });
+    const reply = (await res.json().catch(() => null)) as GeminiReply | null;
+    if (!reply) throw new AiError('unknown', 'Gemini’s answer couldn’t be read.');
+    return readGeminiReply(reply);
+  },
+  async check({ apiKey, model, timeoutMs }) {
+    // Looking the model up proves the key and the model name without using any quota.
+    const res = await geminiFetch(`${geminiBase()}/v1beta/models/${geminiModel(model)}`, {
+      headers: { 'x-goog-api-key': apiKey },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const info = (await res.json().catch(() => ({}))) as { displayName?: string; supportedGenerationMethods?: string[] };
+    if (Array.isArray(info.supportedGenerationMethods) && !info.supportedGenerationMethods.includes('generateContent')) {
+      throw new AiError('model', 'That model can’t write text replies.');
+    }
+    return { modelLabel: info.displayName || model };
+  },
+};
+
+const IMPLEMENTATIONS: Record<ProviderId, Provider> = { anthropic, gemini };
 
 export function providerFor(id: ProviderId): Provider {
   return IMPLEMENTATIONS[id];
