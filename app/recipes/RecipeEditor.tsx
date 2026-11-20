@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { mediaSrc } from '@/lib/media-url';
 import { AI_EDIT_PRESETS, AiReplyError, buildEditRecipePrompt, parseAiEditReply } from '@/lib/recipes/ai';
 import {
@@ -993,10 +994,19 @@ function EditorAiSheet({
     }
   };
 
-  const read = () => {
+  const replyProblem = (text: string): string | null => {
+    try {
+      parseAiEditReply(text, draftRecipe, recipes);
+      return null;
+    } catch (err) {
+      return err instanceof AiReplyError ? err.message : 'I couldn’t read that. Ask the AI to send it again as one JSON code block.';
+    }
+  };
+
+  const read = (text: string = replyText) => {
     setError('');
     try {
-      setPreview(parseAiEditReply(replyText, draftRecipe, recipes));
+      setPreview(parseAiEditReply(text, draftRecipe, recipes));
     } catch (err) {
       setError(err instanceof AiReplyError ? err.message : 'I couldn’t read that. Ask the AI to send it again as one JSON code block.');
     }
@@ -1111,6 +1121,15 @@ function EditorAiSheet({
                 <h3>
                   <span className="rc-ai-num">2</span> Paste what it wrote
                 </h3>
+                <GenerateReply
+                  prompt={prompt}
+                  check={replyProblem}
+                  onReply={(text) => {
+                    setReplyText(text);
+                    setError('');
+                    if (!replyProblem(text)) read(text);
+                  }}
+                />
                 <textarea
                   className="rc-input"
                   rows={replyText ? 6 : 3}
@@ -1142,7 +1161,7 @@ function EditorAiSheet({
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel
               </button>
-              <button type="button" className="btn btn-primary" disabled={!replyText.trim()} onClick={read}>
+              <button type="button" className="btn btn-primary" disabled={!replyText.trim()} onClick={() => read()}>
                 Read the reply
               </button>
             </>

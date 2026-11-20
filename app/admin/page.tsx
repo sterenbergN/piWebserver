@@ -5,6 +5,7 @@ import OverviewPanel from '@/components/admin/OverviewPanel';
 import UpdatesPanel from '@/components/admin/UpdatesPanel';
 import BackupsPanel from '@/components/admin/BackupsPanel';
 import DailyPanel from '@/components/admin/DailyPanel';
+import AiPanel from '@/components/admin/AiPanel';
 import AccountsPanel from '@/components/admin/AccountsPanel';
 import AdminQuickNav from '@/components/admin/AdminQuickNav';
 import './admin.css';
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'updates', label: 'Updates', icon: '🚀' },
   { id: 'backups', label: 'Backups', icon: '💾' },
   { id: 'daily', label: 'Daily', icon: '🧠' },
+  { id: 'ai', label: 'AI', icon: '✨' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -81,6 +83,7 @@ export default function AdminDashboard() {
               {t.id === 'updates' && <UpdatesPanel onStatus={onUpdateStatus} />}
               {t.id === 'backups' && <BackupsPanel />}
               {t.id === 'daily' && <DailyPanel />}
+              {t.id === 'ai' && <AiPanel />}
             </>
           )}
         </div>

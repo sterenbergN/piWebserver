@@ -254,7 +254,15 @@ function Planner({ id, data, reload }: { id: string; data: SubjectResponse; relo
         </p>
       </CopyPrompt>
 
-      <PasteReply step={3} value={reply} onChange={setReply}>
+      <PasteReply
+        step={3}
+        value={reply}
+        onChange={setReply}
+        prompt={prompt}
+        check={(text) => {
+          try { parsePlanReply(text, subject); return null; } catch (e) { return e instanceof SkillsInputError ? e.message : 'That reply couldn’t be read.'; }
+        }}
+      >
         {parsed.hint && <p className="sk-hint">{parsed.hint}</p>}
       </PasteReply>
 

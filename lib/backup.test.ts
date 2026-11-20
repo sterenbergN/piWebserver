@@ -40,6 +40,9 @@ test('create, list and restore a backup round trip', async () => {
     await fs.mkdir('public/uploads/gallery', { recursive: true });
     await fs.writeFile('.data/workouts/history.json', '{"v":1}');
     await fs.writeFile('.data/party/ROOM.json', '{}');
+    // The AI connection's key never goes into a backup.
+    await fs.mkdir('.data/ai', { recursive: true });
+    await fs.writeFile('.data/ai/settings.json', '{"apiKey":"sk-secret"}');
     await fs.writeFile('public/uploads/gallery/albums.json', '[]');
     await fs.writeFile('public/uploads/gallery/photo.jpg', 'jpeg');
     const { createBackup, listBackups, restoreBackup, collectBackupFiles } = await import('./backup');
@@ -56,6 +59,8 @@ test('create, list and restore a backup round trip', async () => {
     const names = (await listBackups()).map((b) => b.name);
     assert.ok(names.includes(made.name) && names.includes(safetyBackup));
     await assert.rejects(() => restoreBackup('../../etc/passwd'));
+    const { isRestorablePath } = await import('./backup');
+    assert.equal(isRestorablePath('.data/ai/settings.json'), false, 'a backup can’t put an AI key in place');
   } finally {
     process.chdir(cwd);
   }

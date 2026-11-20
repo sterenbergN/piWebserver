@@ -394,7 +394,17 @@ export default function InterconnectedPlanPage() {
         </p>
       </CopyPrompt>
 
-      <PasteReply step={3} value={reply} onChange={setReply}>
+      <PasteReply
+        step={3}
+        value={reply}
+        onChange={setReply}
+        prompt={prompt}
+        check={(text) => {
+          if (!graph) return null;
+          const r = parseInterconnectedPlanReply(text, graph.realSubjects, today);
+          return r.ok ? null : r.error;
+        }}
+      >
         {parsed && !parsed.ok && <p className="sk-warning">{parsed.error}</p>}
       </PasteReply>
 

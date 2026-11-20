@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { addDays, daysBetween, localToday, type DateKey } from '@/lib/habits/dates';
 import {
   AI_EDIT_PRESETS,
@@ -151,7 +152,22 @@ export default function AiSheet({
     }
   };
 
-  const read = () => {
+  /** Why a reply can't be used, or null when it can. Reads it without acting on it. */
+  const replyProblem = (text: string): string | null => {
+    try {
+      if (mode === 'edit') {
+        if (!selectedRecipe) return 'Choose a recipe to edit first.';
+        parseAiEditReply(text, selectedRecipe, recipes);
+      } else {
+        parseAiReply(text, recipes, servings);
+      }
+      return null;
+    } catch (err) {
+      return err instanceof AiReplyError ? err.message : 'I couldn’t read that. Ask the AI to send it again as one JSON code block.';
+    }
+  };
+
+  const read = (text: string = replyText) => {
     setError('');
     try {
       if (mode === 'edit') {
@@ -159,10 +175,10 @@ export default function AiSheet({
           setError('Choose a recipe to edit first.');
           return;
         }
-        setEditResult(parseAiEditReply(replyText, selectedRecipe, recipes));
+        setEditResult(parseAiEditReply(text, selectedRecipe, recipes));
         return;
       }
-      const parsed = parseAiReply(replyText, recipes, servings);
+      const parsed = parseAiReply(text, recipes, servings);
       const singleToCheck =
         parsed.recipes.length === 1 &&
         !parsed.plan.length &&
@@ -537,6 +553,17 @@ export default function AiSheet({
                 <h3>
                   <span className="rc-ai-num">2</span> Paste what it wrote
                 </h3>
+                <GenerateReply
+                  prompt={prompt}
+                  disabled={!prompt}
+                  check={replyProblem}
+                  onReply={(text) => {
+                    setReplyText(text);
+                    setError('');
+                    // A good reply goes straight to the same check-over a pasted one gets.
+                    if (!replyProblem(text)) read(text);
+                  }}
+                />
                 <textarea
                   className="rc-input"
                   rows={replyText ? 6 : 3}
@@ -587,7 +614,7 @@ export default function AiSheet({
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel
               </button>
-              <button type="button" className="btn btn-primary" disabled={!replyText.trim()} onClick={read}>
+              <button type="button" className="btn btn-primary" disabled={!replyText.trim()} onClick={() => read()}>
                 Read the reply
               </button>
             </>

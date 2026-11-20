@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { LEVELS, MAX_LEVEL } from '@/lib/skills/types';
 import { levelName, type Confidence, type Tier, type TopicState, TIER_LABEL } from '@/lib/skills/model';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -134,7 +135,15 @@ export function CopyPrompt({ title, prompt, step = 1, children }: { title: strin
   );
 }
 
-export function PasteReply({ value, onChange, step = 2, children }: { value: string; onChange: (text: string) => void; step?: number; children?: ReactNode }) {
+/** The reply step. Given the prompt, it also offers Generate when the site has an AI connected. */
+export function PasteReply({ value, onChange, step = 2, prompt, check, children }: {
+  value: string;
+  onChange: (text: string) => void;
+  step?: number;
+  prompt?: string;
+  check?: (text: string) => string | null;
+  children?: ReactNode;
+}) {
   const [failed, setFailed] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   async function paste() {
@@ -153,6 +162,7 @@ export function PasteReply({ value, onChange, step = 2, children }: { value: str
         <h2><span className="sk-step">{step}</span> Paste what it wrote</h2>
         <button type="button" className="sk-small-btn" onClick={paste}>Paste</button>
       </div>
+      {prompt !== undefined && <GenerateReply prompt={prompt} onReply={onChange} check={check} />}
       <textarea ref={box} className="sk-mono" rows={value ? 8 : 4} value={value} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => onChange(e.target.value)} />
       {failed && <p className="sk-hint">This browser wants you to paste by hand. Hold or right-click in the box.</p>}
       {children}

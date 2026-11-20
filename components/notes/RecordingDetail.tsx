@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { Icon } from '@/components/study/Icon';
 import { isDark, type RecordingPage, type RecordingRecord } from '@/lib/notes/items';
 import {
@@ -808,6 +809,7 @@ function Summary({
             <span className="nt-grow">Paste its reply here</span>
             <button type="button" className="nt-btn is-small" onClick={() => void paste()}><Icon name="paste" /> Paste</button>
           </div>
+          <GenerateReply prompt={prompt} disabled={!prompt} onReply={setReply} />
           <textarea
             ref={replyBox}
             className="nt-input nt-gap"

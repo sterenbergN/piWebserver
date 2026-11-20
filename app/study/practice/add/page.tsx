@@ -117,7 +117,13 @@ function AddPractice() {
         {kind === 'puzzle' && used.length > 0 && <p className="hb-hint">The prompt asks it not to repeat the {used.length} diagnos{used.length === 1 ? 'is' : 'es'} you already have.</p>}
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={(text) => { setReply(text); setSaveError(''); }}>
+      <PasteReply
+        value={reply}
+        onChange={(text) => { setReply(text); setSaveError(''); }}
+        prompt={prompt}
+        check={(text) => readAny(kind, text).error ?? null}
+        material={{ label: 'Your notes, for the AI to write from', placeholder: 'Paste your notes as text. For a PDF or slides, copy the prompt into your own AI instead.', required: true }}
+      >
         {parsed.error && <div className="hb-banner is-error" role="alert"><span>{parsed.error}</span></div>}
         {parsed.found && (
           <div className="sd-preview">

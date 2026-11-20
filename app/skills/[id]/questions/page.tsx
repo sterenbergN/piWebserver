@@ -254,7 +254,14 @@ function Writer({ id, data, reload }: { id: string; data: SubjectResponse; reloa
         </CopyPrompt>
       )}
 
-      <PasteReply value={reply} onChange={setReply}>
+      <PasteReply
+        value={reply}
+        onChange={setReply}
+        prompt={prompt}
+        check={(text) => {
+          try { parseQuestionsReply(text, subject, { fallbackTopicId }); return null; } catch (e) { return e instanceof SkillsInputError ? e.message : 'That reply couldn’t be read.'; }
+        }}
+      >
         {parsed.hint && <p className="sk-hint">{parsed.hint}</p>}
       </PasteReply>
 

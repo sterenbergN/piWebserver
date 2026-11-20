@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { Icon, KIND_GLYPH, Pancakes } from '@/components/study/Icon';
 import { Loading } from '@/components/study/Ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -195,6 +196,12 @@ function Syllabus({ planner }: { planner: Planner }) {
         <summary>Read the prompt</summary>
         <textarea ref={box} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
       </details>
+      <GenerateReply
+        prompt={prompt}
+        onReply={(text) => { setReply(text); setNotice(''); }}
+        check={(text) => readPack(text, today).error ?? null}
+        material={{ label: 'The syllabus or schedule, as text', placeholder: 'Paste the syllabus here. For a PDF, copy the prompt into your own AI instead.', required: true }}
+      />
       <textarea className="sd-reply" rows={6} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setNotice(''); }} />
       {readError && <div className="hb-banner is-error" role="alert"><span>{readError}</span></div>}
       {pack && (

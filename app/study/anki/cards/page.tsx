@@ -207,7 +207,13 @@ function CardMaker() {
         {count > LONG_BATCH && <p className="hb-hint">An AI may stop partway through this many. Every whole card still gets saved, or you can make two smaller batches.</p>}
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={(text) => { setReply(text); setRemoved([]); setSaveError(''); }}>
+      <PasteReply
+        value={reply}
+        onChange={(text) => { setReply(text); setRemoved([]); setSaveError(''); }}
+        prompt={prompt}
+        check={(text) => readPack(text).error ?? null}
+        material={source === 'notes' ? { label: 'Your notes, for the AI to write from', placeholder: 'Paste your notes as text. For a PDF or slides, copy the prompt into your own AI instead.', required: true } : undefined}
+      >
         {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
         {pack && (
           <div className="sd-preview">

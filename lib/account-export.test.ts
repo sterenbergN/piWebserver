@@ -52,6 +52,8 @@ async function seed() {
   // Other files in the daily folder belong to the site, not to anyone.
   await write(data('daily', 'notes.md'), 'SITE-notes');
   await write(data('daily', 'practice.json'), { questions: [{ id: 'SITE-practice' }] });
+  // The site's AI connection key belongs to the site and must never reach an export.
+  await write(data('ai', 'settings.json'), { provider: 'anthropic', model: 'claude-opus-5-5', apiKey: 'SITE-ai-api-key', enabled: true });
 
   await write(data('chores', 'households.json'), { households: [
     { id: 'home-shared', members: ['alice', 'carol'], invite: 'SITE-invite-shared', createdOn: '' },

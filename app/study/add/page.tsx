@@ -240,7 +240,15 @@ export default function AddTestPage() {
         {source === 'notes' && brief && brief.testCount > 0 && <Tailoring brief={brief} use={use} onChange={setUse} />}
       </CopyPrompt>
 
-      <PasteReply value={reply} onChange={(text) => { setReply(text); setExcluded([]); setSaveError(''); }}>
+      <PasteReply
+        value={reply}
+        onChange={(text) => { setReply(text); setExcluded([]); setSaveError(''); }}
+        prompt={prompt}
+        check={(text) => readPack(text, brief?.stems ?? []).error ?? null}
+        material={source === 'notes'
+          ? { label: 'Your notes, for the AI to write from', placeholder: 'Paste your notes as text. For a PDF or slides, copy the prompt into your own AI instead.', required: true }
+          : { label: 'The old test, as text', placeholder: 'Paste the test’s questions and answers here.', required: true }}
+      >
         {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
         {pack && (
           <div className="sd-preview">

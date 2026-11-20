@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import GenerateReply from '@/components/ai/GenerateReply';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import { skillsPost, type KnowledgeSubjectOption } from '@/components/skills/api';
@@ -1376,6 +1377,18 @@ export default function InquiryDesk({
               aria-label="Generated AI solve prompt"
             />
           )}
+
+          <GenerateReply
+            disabled={selectedAiIds.length === 0}
+            prompt={async () => {
+              const res = await skillsPost<{ prompt: string }>('inquiry-prompt', {
+                ...(selectedAiIds.length > 0 ? { inquiryIds: selectedAiIds } : {}),
+              });
+              setAiPrompt(res.prompt);
+              return res.prompt;
+            }}
+            onReply={setAiReply}
+          />
 
           <div className="sk-field">
             <div className="sk-card-head">

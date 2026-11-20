@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { AI_FOLDER } from './ai/settings';
 import { ZipWriter, extractZipEntry, readZipEntries, readZipEntry } from './zip-stream';
 
 // Backups of everything the site stores: private data (.data), home-page
@@ -129,7 +130,8 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
     // Party rooms are throwaway; tmp files are half-written. Reader books count as media:
     // they can be huge, and notes and reading positions (in .data/reader) are always kept.
     // The same goes for the PDFs, pictures and recordings in .data/notes-files, and the ink in .data/notes.
-    .filter((p) => !p.startsWith('.data/party/') && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
+    // The AI connection holds an API key, so it never leaves the server in a backup.
+    .filter((p) => !p.startsWith('.data/party/') && !p.startsWith(AI_FOLDER) && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
   const content = (await walk(path.join(root(), 'public', 'content'))).map(rel);
   const uploads = (await walk(path.join(root(), 'public', 'uploads')))
     .map(rel)
@@ -273,7 +275,8 @@ export function isRestorablePath(entry: string) {
     && !normalized.startsWith('/')
     && !normalized.split('/').includes('..')
     && RESTORE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-    && normalized !== '.data/backup-settings.json';
+    && normalized !== '.data/backup-settings.json'
+    && !normalized.startsWith(AI_FOLDER);
 }
 
 /**
