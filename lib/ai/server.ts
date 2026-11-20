@@ -1,4 +1,5 @@
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
+import { currentCatalog, modelForTask } from './catalog';
 import { createAiJobs } from './jobs';
 import { providerFor } from './providers';
 import { getAiSettings, type AiCaller } from './settings';
@@ -7,7 +8,11 @@ import { getAiSettings, type AiCaller } from './settings';
 
 const globalJobs = globalThis as unknown as { __aiJobs?: ReturnType<typeof createAiJobs> };
 // Kept on globalThis so a dev-server reload doesn't lose jobs that are still running.
-export const aiJobs = globalJobs.__aiJobs ??= createAiJobs({ loadSettings: getAiSettings, providerFor });
+export const aiJobs = globalJobs.__aiJobs ??= createAiJobs({
+  loadSettings: getAiSettings,
+  providerFor,
+  pickModel: async (settings, task) => modelForTask(settings, await currentCatalog(settings, providerFor(settings.provider)), task).id,
+});
 
 /**
  * Who's signed in: `key` names them for rate limits and job ownership (an account,

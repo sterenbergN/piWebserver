@@ -162,7 +162,7 @@ export function PasteReply({ value, onChange, step = 2, prompt, check, children 
         <h2><span className="sk-step">{step}</span> Paste what it wrote</h2>
         <button type="button" className="sk-small-btn" onClick={paste}>Paste</button>
       </div>
-      {prompt !== undefined && <GenerateReply prompt={prompt} onReply={onChange} check={check} />}
+      {prompt !== undefined && <GenerateReply task="skills" prompt={prompt} onReply={onChange} check={check} />}
       <textarea ref={box} className="sk-mono" rows={value ? 8 : 4} value={value} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => onChange(e.target.value)} />
       {failed && <p className="sk-hint">This browser wants you to paste by hand. Hold or right-click in the box.</p>}
       {children}

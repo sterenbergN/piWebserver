@@ -4,7 +4,10 @@
 
 import { useEffect, useState } from 'react';
 
-export type AiStatus = { ready: false } | { ready: true; provider: string; model: string };
+import type { AiTask } from './tasks';
+
+/** `model` is the default's name, `models` each task's, both as people read them. */
+export type AiStatus = { ready: false } | { ready: true; provider: string; model: string; models?: Partial<Record<AiTask, string>> };
 
 let cached: Promise<AiStatus> | null = null;
 
@@ -46,10 +49,10 @@ async function readError(r: Response) {
 }
 
 /** Write a reply to `prompt` with the connected AI. Throws AiClientError with a short reason. */
-export async function generateReply(prompt: string, signal?: AbortSignal): Promise<string> {
+export async function generateReply(prompt: string, task: AiTask, signal?: AbortSignal): Promise<string> {
   let r: Response;
   try {
-    r = await fetch('/api/ai/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }), signal });
+    r = await fetch('/api/ai/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, task }), signal });
   } catch {
     throw new AiClientError(signal?.aborted ? 'Stopped.' : 'Couldn’t reach the site.', signal?.aborted ? 'cancelled' : 'network');
   }

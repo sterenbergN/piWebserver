@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 import { createLimiter } from '@/lib/security/rate-limit';
 import { AiError, type Provider } from './providers';
+import { modelForTask } from './catalog';
 import { isAiReady, mayUseAi, type AiCaller, type AiSettings } from './settings';
+import type { AiTask } from './tasks';
 import type { ProviderId } from './providers-list';
 
 // Writing a reply runs as a job the page checks on, not one long request: a long
@@ -27,13 +29,15 @@ export const MAX_PROMPT_CHARS = 400_000;
 type Options = {
   loadSettings: () => Promise<AiSettings>;
   providerFor: (id: ProviderId) => Provider;
+  /** Which model a task uses (the newest of a family can change from day to day). */
+  pickModel?: (settings: AiSettings, task?: AiTask) => Promise<string>;
   timeoutMs?: number;
   perHour?: number;
   keepMs?: number;
   now?: () => number;
 };
 
-export function createAiJobs({ loadSettings, providerFor, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now }: Options) {
+export function createAiJobs({ loadSettings, providerFor, pickModel = async (s, task) => modelForTask(s, null, task).id, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now }: Options) {
   const jobs = new Map<string, AiJob & { controller: AbortController }>();
   const limiter = createLimiter({ max: perHour, windowMs: 60 * 60_000 });
 
@@ -48,7 +52,7 @@ export function createAiJobs({ loadSettings, providerFor, timeoutMs = 5 * 60_000
 
   return {
     /** Start writing a reply to `prompt` for `owner` (who is `who`). Throws AiError when it can't start. */
-    async start(owner: string, prompt: string, who: AiCaller): Promise<AiJobView> {
+    async start(owner: string, prompt: string, who: AiCaller, task?: AiTask): Promise<AiJobView> {
       prune();
       if (typeof prompt !== 'string' || !prompt.trim()) throw new AiError('empty', 'There’s no prompt to send.');
       if (prompt.length > MAX_PROMPT_CHARS) throw new AiError('too-long', 'That prompt is too long to send.');
@@ -62,6 +66,7 @@ export function createAiJobs({ loadSettings, providerFor, timeoutMs = 5 * 60_000
       if (wait > 0) throw new AiError('rate', `That’s a lot of AI for one hour. Try again in ${Math.ceil(wait / 60)} minutes.`);
       limiter.hit(owner, now());
 
+      const model = await pickModel(settings, task);
       const controller = new AbortController();
       const job = { id: crypto.randomUUID(), owner, status: 'running' as AiJob['status'], startedAt: now(), controller };
       jobs.set(job.id, job);
@@ -72,7 +77,7 @@ export function createAiJobs({ loadSettings, providerFor, timeoutMs = 5 * 60_000
       };
       // Not awaited: the page asks how it's going.
       void providerFor(settings.provider)
-        .generate({ apiKey: settings.apiKey, model: settings.model, prompt, signal: controller.signal, timeoutMs })
+        .generate({ apiKey: settings.apiKey, model, prompt, signal: controller.signal, timeoutMs })
         .then((text) => finish({ status: 'done', text }))
         .catch((error) => {
           const e = error instanceof AiError ? error : new AiError('unknown', 'Something went wrong talking to the AI.');

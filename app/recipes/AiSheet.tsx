@@ -554,6 +554,7 @@ export default function AiSheet({
                   <span className="rc-ai-num">2</span> Paste what it wrote
                 </h3>
                 <GenerateReply
+                  task={mode === 'week' ? 'meal-plan' : 'recipes'}
                   prompt={prompt}
                   disabled={!prompt}
                   check={replyProblem}

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AiError } from '@/lib/ai/providers';
 import { aiCaller, aiJobs } from '@/lib/ai/server';
+import { isAiTask } from '@/lib/ai/tasks';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,13 +12,14 @@ export async function POST(request: Request) {
   const caller = await aiCaller();
   if (!caller) return NextResponse.json({ error: 'Sign in to use the AI.' }, { status: 401 });
   let prompt: unknown;
+  let task: unknown;
   try {
-    prompt = ((await request.json()) as { prompt?: unknown })?.prompt;
+    ({ prompt, task } = ((await request.json()) as { prompt?: unknown; task?: unknown }) ?? {});
   } catch {
     return NextResponse.json({ error: 'Bad request.' }, { status: 400 });
   }
   try {
-    const job = await aiJobs.start(caller.key, typeof prompt === 'string' ? prompt : '', caller.who);
+    const job = await aiJobs.start(caller.key, typeof prompt === 'string' ? prompt : '', caller.who, isAiTask(task) ? task : undefined);
     return NextResponse.json(job, { status: 202 });
   } catch (error) {
     if (error instanceof AiError) return NextResponse.json({ error: error.message, errorKind: error.kind }, { status: STATUS[error.kind] ?? 500 });

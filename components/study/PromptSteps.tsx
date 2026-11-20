@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import GenerateReply, { type GenerateMaterial } from '@/components/ai/GenerateReply';
+import type { AiTask } from '@/lib/ai/tasks';
 import { Icon } from './Icon';
 
 // The two steps every AI-written thing goes through: copy a prompt into her AI, and
@@ -48,10 +49,12 @@ export function CopyPrompt({ title = 'Copy this into your AI, with your notes', 
  * connected, filling the same box; `check` is the page's reader, `material` asks
  * for the notes the prompt expects to be attached.
  */
-export function PasteReply({ value, onChange, prompt, check, material, children }: {
+export function PasteReply({ value, onChange, prompt, task = 'study-tests', check, material, children }: {
   value: string;
   onChange: (text: string) => void;
   prompt?: string;
+  /** Which model setting (Admin → AI) Generate uses. */
+  task?: AiTask;
   check?: (text: string) => string | null;
   material?: GenerateMaterial;
   children?: ReactNode;
@@ -77,7 +80,7 @@ export function PasteReply({ value, onChange, prompt, check, material, children 
         <h2><span className="sd-step">2</span> Paste what it wrote</h2>
         <button type="button" className="hb-small-btn sd-with-icon" onClick={paste}><Icon name="paste" /> Paste</button>
       </div>
-      {prompt !== undefined && <GenerateReply prompt={prompt} onReply={onChange} check={check} material={material} />}
+      {prompt !== undefined && <GenerateReply task={task} prompt={prompt} onReply={onChange} check={check} material={material} />}
       <textarea ref={box} className="sd-reply" rows={value ? 8 : 4} value={value} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => onChange(e.target.value)} />
       {failed && <p className="hb-hint">This browser wants you to paste by hand. Hold or right-click in the box.</p>}
       {children}

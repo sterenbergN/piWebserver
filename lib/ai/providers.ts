@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ProviderId } from './providers-list';
+import type { CatalogModel, ProviderId } from './providers-list';
 
 // The calls themselves, one small pair per provider: `generate` writes a reply to a
 // prompt, `check` proves a key and model work (for the admin page's Test button).
@@ -20,6 +20,8 @@ export type CheckRequest = { apiKey: string; model: string; timeoutMs: number };
 export type Provider = {
   generate(req: GenerateRequest): Promise<string>;
   check(req: CheckRequest): Promise<{ modelLabel: string }>;
+  /** Every text model this key can use right now, so new releases show up on their own. */
+  listModels(req: { apiKey: string; timeoutMs: number }): Promise<CatalogModel[]>;
 };
 
 /**
@@ -87,6 +89,16 @@ const anthropic: Provider = {
       throw anthropicError(error);
     }
   },
+  async listModels({ apiKey, timeoutMs }) {
+    const client = new Anthropic({ apiKey, maxRetries: 1, timeout: timeoutMs });
+    try {
+      const out: CatalogModel[] = [];
+      for await (const m of client.models.list({ limit: 100 })) out.push({ id: m.id, label: m.display_name || m.id, createdAt: m.created_at });
+      return out;
+    } catch (error) {
+      throw anthropicError(error);
+    }
+  },
 };
 
 // ── Google Gemini (AI Studio keys) ──────────────────────────────────────────
@@ -130,6 +142,8 @@ async function geminiFetch(url: string, init: RequestInit & { signal: AbortSigna
   return res;
 }
 
+const GEMINI_NOT_TEXT = /(embed|image|imagen|veo|tts|audio|live|aqa|robotics|computer-use|lyria)/i;
+
 const BLOCKED = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY', 'LANGUAGE']);
 
 /** The text of Gemini's answer (its thinking left out), or the reason there isn't one. */
@@ -171,6 +185,26 @@ const gemini: Provider = {
       throw new AiError('model', 'That model can’t write text replies.');
     }
     return { modelLabel: info.displayName || model };
+  },
+  async listModels({ apiKey, timeoutMs }) {
+    const out: CatalogModel[] = [];
+    let pageToken = '';
+    for (let page = 0; page < 10; page++) {
+      const res = await geminiFetch(`${geminiBase()}/v1beta/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, {
+        headers: { 'x-goog-api-key': apiKey },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const body = (await res.json().catch(() => ({}))) as { models?: { name?: string; displayName?: string; supportedGenerationMethods?: string[] }[]; nextPageToken?: string };
+      for (const m of body.models ?? []) {
+        const id = (m.name ?? '').replace(/^models\//, '');
+        // Text models only: not embeddings, pictures, speech or video.
+        if (!id || !m.supportedGenerationMethods?.includes('generateContent') || GEMINI_NOT_TEXT.test(id)) continue;
+        out.push({ id, label: m.displayName || id });
+      }
+      if (!body.nextPageToken) break;
+      pageToken = body.nextPageToken;
+    }
+    return out;
   },
 };
 

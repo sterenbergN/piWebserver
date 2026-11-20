@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { PROVIDERS } from '@/lib/ai/providers-list';
 import { AiClientError, generateReply, useAiStatus } from '@/lib/ai/client';
+import type { AiTask } from '@/lib/ai/tasks';
 import './ai.css';
 
 // "Generate" for any copy-prompt / paste-reply flow. It only shows when the site has
@@ -10,7 +10,6 @@ import './ai.css';
 // goes in, so the page's own reading, preview and save steps run as before. When
 // anything goes wrong it says so in a line and copy-paste is right there.
 
-const MODEL_LABELS = new Map(Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id, m.label.replace(/\s*\(.*\)$/, '')] as const)));
 
 export type GenerateMaterial = {
   /** Asks for the text the prompt expects to be attached (notes, a syllabus…). */
@@ -20,7 +19,9 @@ export type GenerateMaterial = {
   required?: boolean;
 };
 
-export default function GenerateReply({ prompt, onReply, check, material, disabled, className }: {
+export default function GenerateReply({ task, prompt, onReply, check, material, disabled, className }: {
+  /** Which job this is, so it uses the model chosen for it in Admin → AI. */
+  task: AiTask;
   /** The prompt, or a way to get it (some pages build it on the server). */
   prompt: string | (() => Promise<string>);
   /** Put the reply where a pasted one goes. */
@@ -48,7 +49,7 @@ export default function GenerateReply({ prompt, onReply, check, material, disabl
   }, [state]);
 
   if (!status?.ready) return null;
-  const model = MODEL_LABELS.get(status.model) ?? status.model;
+  const model = status.models?.[task] ?? status.model;
   const needsText = !!material?.required && !text.trim();
 
   const go = async () => {
@@ -62,7 +63,7 @@ export default function GenerateReply({ prompt, onReply, check, material, disabl
       const base = typeof prompt === 'string' ? prompt : await prompt();
       if (!base.trim()) throw new AiClientError('There’s nothing to ask yet.');
       const full = material && text.trim() ? `${base}\n\n<material>\n${text.trim()}\n</material>` : base;
-      const reply = await generateReply(full, controller.signal);
+      const reply = await generateReply(full, task, controller.signal);
       if (controller.signal.aborted) return;
       onReply(reply);
       const problem = check?.(reply);

@@ -1379,6 +1379,7 @@ export default function InquiryDesk({
           )}
 
           <GenerateReply
+            task="skills"
             disabled={selectedAiIds.length === 0}
             prompt={async () => {
               const res = await skillsPost<{ prompt: string }>('inquiry-prompt', {

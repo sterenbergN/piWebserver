@@ -1,6 +1,7 @@
 import path from 'path';
 import { readJson, withLock, writeJsonAtomic } from '@/lib/json-store';
 import { DEFAULT_PROVIDER, PROVIDERS, isProviderId, type ProviderId } from './providers-list';
+import { isAiTask, type AiTask } from './tasks';
 
 // The site owner's connection to an AI provider, for the copy-prompt / paste-reply
 // features. The key lives only here on the server: it's never sent to a browser
@@ -9,7 +10,10 @@ import { DEFAULT_PROVIDER, PROVIDERS, isProviderId, type ProviderId } from './pr
 
 export type AiSettings = {
   provider: ProviderId;
+  /** The default: an exact model id, or `auto:<family>` for the newest of a family. */
   model: string;
+  /** A different model for some tasks; a task left out uses `model`. */
+  taskModels: Partial<Record<AiTask, string>>;
   apiKey: string;
   /** Off keeps the key but hides Generate everywhere. */
   enabled: boolean;
@@ -38,7 +42,7 @@ const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$/;
 export class AiSettingsError extends Error {}
 
 export function defaultAiSettings(): AiSettings {
-  return { provider: DEFAULT_PROVIDER, model: PROVIDERS[DEFAULT_PROVIDER].defaultModel, apiKey: '', enabled: true, allowedUserIds: [] };
+  return { provider: DEFAULT_PROVIDER, model: PROVIDERS[DEFAULT_PROVIDER].defaultModel, taskModels: {}, apiKey: '', enabled: true, allowedUserIds: [] };
 }
 
 /** Whatever was stored, made safe to use: unknown providers and odd values fall back to the defaults. */
@@ -52,11 +56,26 @@ export function cleanAiSettings(raw: unknown): AiSettings {
   return {
     provider,
     model,
+    taskModels: cleanTaskModels(r.taskModels),
     apiKey,
     enabled: r.enabled !== false,
     allowedUserIds: cleanUserIds(r.allowedUserIds),
     ...(typeof r.updatedAt === 'string' ? { updatedAt: r.updatedAt } : {}),
   };
+}
+
+function cleanTaskModels(value: unknown): Partial<Record<AiTask, string>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Partial<Record<AiTask, string>> = {};
+  for (const [task, model] of Object.entries(value)) {
+    if (isAiTask(task) && typeof model === 'string' && MODEL_RE.test(model.trim())) out[task] = model.trim();
+  }
+  return out;
+}
+
+/** The model choice for a task: its own, or the default. */
+export function choiceFor(settings: AiSettings, task?: AiTask) {
+  return (task && settings.taskModels[task]) || settings.model;
 }
 
 function cleanUserIds(value: unknown): string[] {
@@ -96,6 +115,8 @@ export type AiSettingsPatch = {
   clearKey?: unknown;
   enabled?: unknown;
   allowedUserIds?: unknown;
+  /** Per-task models; a blank one goes back to the default. */
+  taskModels?: unknown;
 };
 
 /** Check a change from the admin page and apply it to `current`. Throws AiSettingsError on bad input. */
@@ -106,6 +127,8 @@ export function applyAiPatch(current: AiSettings, patch: AiSettingsPatch, now = 
     const info = PROVIDERS[patch.provider];
     if (patch.provider !== next.provider) {
       next.model = info.defaultModel;
+      // Another provider's models mean nothing here.
+      next.taskModels = {};
       // A key belongs to one provider: never send it to another.
       next.apiKey = '';
     }
@@ -124,6 +147,14 @@ export function applyAiPatch(current: AiSettings, patch: AiSettingsPatch, now = 
     if (key) next.apiKey = key;
   }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true;
+  if (patch.taskModels !== undefined) {
+    if (!patch.taskModels || typeof patch.taskModels !== 'object' || Array.isArray(patch.taskModels)) throw new AiSettingsError('Pick models from the list.');
+    for (const [task, model] of Object.entries(patch.taskModels)) {
+      if (!isAiTask(task)) continue;
+      if (model !== '' && model !== null && (typeof model !== 'string' || !MODEL_RE.test(model.trim()))) throw new AiSettingsError('That model name doesn’t look right.');
+    }
+    next.taskModels = cleanTaskModels(patch.taskModels);
+  }
   if (patch.allowedUserIds !== undefined) {
     if (!Array.isArray(patch.allowedUserIds)) throw new AiSettingsError('Pick accounts from the list.');
     next.allowedUserIds = cleanUserIds(patch.allowedUserIds);

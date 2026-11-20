@@ -121,6 +121,7 @@ function AddPractice() {
         value={reply}
         onChange={(text) => { setReply(text); setSaveError(''); }}
         prompt={prompt}
+        task="study-practice"
         check={(text) => readAny(kind, text).error ?? null}
         material={{ label: 'Your notes, for the AI to write from', placeholder: 'Paste your notes as text. For a PDF or slides, copy the prompt into your own AI instead.', required: true }}
       >

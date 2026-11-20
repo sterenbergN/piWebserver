@@ -809,7 +809,7 @@ function Summary({
             <span className="nt-grow">Paste its reply here</span>
             <button type="button" className="nt-btn is-small" onClick={() => void paste()}><Icon name="paste" /> Paste</button>
           </div>
-          <GenerateReply prompt={prompt} disabled={!prompt} onReply={setReply} />
+          <GenerateReply task="notes" prompt={prompt} disabled={!prompt} onReply={setReply} />
           <textarea
             ref={replyBox}
             className="nt-input nt-gap"

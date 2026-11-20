@@ -1122,6 +1122,7 @@ function EditorAiSheet({
                   <span className="rc-ai-num">2</span> Paste what it wrote
                 </h3>
                 <GenerateReply
+                  task="recipes"
                   prompt={prompt}
                   check={replyProblem}
                   onReply={(text) => {

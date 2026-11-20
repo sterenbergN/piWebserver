@@ -5,7 +5,9 @@ import os from 'os';
 import path from 'path';
 import { createAiJobs } from './jobs';
 import { AiError, geminiError, providerFor, readGeminiReply, type Provider } from './providers';
-import { AiSettingsError, applyAiPatch, cleanAiSettings, defaultAiSettings, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
+import { currentCatalog, modelForTask, savedCatalog } from './catalog';
+import { resolveChoice } from './providers-list';
+import { AiSettingsError, applyAiPatch, choiceFor, cleanAiSettings, defaultAiSettings, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
 
 const original = process.cwd();
 let dir = '';
@@ -23,7 +25,7 @@ after(async () => {
 test('nothing saved means Claude Opus, no key, not ready', async () => {
   const s = await getAiSettings();
   assert.equal(s.provider, 'anthropic');
-  assert.equal(s.model, 'claude-opus-5-5');
+  assert.equal(s.model, 'auto:opus');
   assert.equal(s.apiKey, '');
   assert.equal(isAiReady(s), false);
 });
@@ -77,7 +79,7 @@ const ready: AiSettings = { ...defaultAiSettings(), apiKey: 'sk-ant-test', allow
 const as = (id: string) => ({ userId: id, isAdmin: false });
 
 function fakeProvider(generate: Provider['generate']): Provider {
-  return { generate, check: async () => ({ modelLabel: 'Test' }) };
+  return { generate, check: async () => ({ modelLabel: 'Test' }), listModels: async () => [] };
 }
 
 /** Wait for a job to stop running. */
@@ -212,7 +214,7 @@ test('changing provider forgets the old key so it never goes to the new one', ()
   const claude = applyAiPatch(defaultAiSettings(), { apiKey: 'sk-ant-claude-key' });
   const gemini = applyAiPatch(claude, { provider: 'gemini' });
   assert.equal(gemini.apiKey, '');
-  assert.equal(gemini.model, 'gemini-3.8-flash');
+  assert.equal(gemini.model, 'auto:flash');
   const withKey = applyAiPatch(claude, { provider: 'gemini', apiKey: 'AIza-gemini-key' });
   assert.equal(withKey.apiKey, 'AIza-gemini-key');
   assert.equal(applyAiPatch(withKey, { provider: 'gemini' }).apiKey, 'AIza-gemini-key', 'same provider keeps it');
@@ -258,4 +260,75 @@ test('Gemini: HTTP errors map to plain reasons', () => {
   assert.equal(geminiError(404).kind, 'model');
   assert.equal(geminiError(429, 'Resource has been exhausted').kind, 'rate');
   assert.equal(geminiError(503).kind, 'busy');
+});
+
+// ── Models per task, and keeping up with new ones ─────────────────────────────
+
+test('“Newest …” picks the newest of a family, by date when there is one, else by version', () => {
+  const claude = [
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', createdAt: '2026-03-01T00:00:00Z' },
+    { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', createdAt: '2026-10-01T00:00:00Z' },
+    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', createdAt: '2026-10-01T00:00:00Z' },
+  ];
+  assert.equal(resolveChoice('anthropic', 'auto:opus', claude).id, 'claude-opus-5-5');
+  assert.equal(resolveChoice('anthropic', 'auto:sonnet', claude).id, 'claude-sonnet-5-5');
+  // A release the site has never heard of is picked up as soon as the provider lists it.
+  const later = [...claude, { id: 'claude-opus-6', label: 'Claude Opus 6', createdAt: '2027-02-01T00:00:00Z' }];
+  assert.equal(resolveChoice('anthropic', 'auto:opus', later).label, 'Claude Opus 6');
+
+  const gemini = ['gemini-3.6-flash', 'gemini-3.10-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-4-hydrogen']
+    .map((id) => ({ id, label: id }));
+  assert.equal(resolveChoice('gemini', 'auto:flash', gemini).id, 'gemini-3.10-flash', 'versions compare as numbers, previews are skipped');
+  assert.equal(resolveChoice('gemini', 'auto:flash-lite', gemini).id, 'gemini-3.5-flash-lite');
+  // No list yet (or an empty one): the built-in fallback.
+  assert.equal(resolveChoice('gemini', 'auto:flash', []).id, 'gemini-3.8-flash');
+  // An exact id stays exactly that.
+  assert.equal(resolveChoice('gemini', 'gemini-4-hydrogen', gemini).id, 'gemini-4-hydrogen');
+});
+
+test('each task can have its own model; a blank one goes back to the default', () => {
+  const s = applyAiPatch({ ...defaultAiSettings(), apiKey: 'k' }, { taskModels: { 'meal-plan': 'auto:sonnet', notes: 'claude-haiku-5-5', nonsense: 'x' } });
+  assert.deepEqual(s.taskModels, { 'meal-plan': 'auto:sonnet', notes: 'claude-haiku-5-5' });
+  assert.equal(choiceFor(s, 'meal-plan'), 'auto:sonnet');
+  assert.equal(choiceFor(s, 'study-tests'), 'auto:opus');
+  assert.equal(choiceFor(s), 'auto:opus');
+  assert.deepEqual(applyAiPatch(s, { taskModels: { 'meal-plan': '', notes: 'claude-haiku-5-5' } }).taskModels, { notes: 'claude-haiku-5-5' });
+  assert.throws(() => applyAiPatch(s, { taskModels: { notes: 'bad model!' } }), AiSettingsError);
+  assert.deepEqual(applyAiPatch(s, { provider: 'gemini' }).taskModels, {}, 'another provider’s models are dropped');
+});
+
+test('a job uses the model picked for its task', async () => {
+  let used = '';
+  const jobs = createAiJobs({
+    loadSettings: async () => ({ ...ready, taskModels: { notes: 'claude-haiku-5-5' } }),
+    providerFor: () => fakeProvider(async ({ model }) => { used = model; return 'x'; }),
+  });
+  const a = await jobs.start('user:a', 'hi', as('a'), 'notes');
+  await settle(jobs, 'user:a', a.id);
+  assert.equal(used, 'claude-haiku-5-5');
+  const b = await jobs.start('user:a', 'hi', as('a'), 'meal-plan');
+  await settle(jobs, 'user:a', b.id);
+  assert.equal(used, 'claude-opus-5-5', 'the default, Newest Opus, with no list yet');
+});
+
+test('the model list is fetched once a day, and an old one is used if the provider can’t be reached', async () => {
+  const settings = { ...ready };
+  let calls = 0;
+  let fail = false;
+  const provider: Provider = {
+    ...fakeProvider(async () => 'x'),
+    listModels: async () => { calls++; if (fail) throw new AiError('network', 'down'); return [{ id: 'claude-opus-9', label: 'Claude Opus 9', createdAt: '2030-01-01T00:00:00Z' }]; },
+  };
+  const t0 = Date.parse('2026-11-20T12:00:00Z');
+  const first = await currentCatalog(settings, provider, t0);
+  assert.equal(first?.models[0].id, 'claude-opus-9');
+  assert.equal(modelForTask(settings, first).id, 'claude-opus-9', 'Newest Opus follows the list');
+  await currentCatalog(settings, provider, t0 + 60 * 60_000);
+  assert.equal(calls, 1, 'an hour later the saved list is used');
+  fail = true;
+  const stale = await currentCatalog(settings, provider, t0 + 25 * 60 * 60_000);
+  assert.equal(calls, 2, 'a day later it asks again');
+  assert.equal(stale?.models[0].id, 'claude-opus-9', 'and keeps the old list when that fails');
+  // A different key (or provider) never reuses another's list.
+  assert.equal(await savedCatalog({ ...settings, apiKey: 'sk-ant-other' }), null);
 });

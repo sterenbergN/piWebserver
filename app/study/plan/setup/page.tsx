@@ -197,6 +197,7 @@ function Syllabus({ planner }: { planner: Planner }) {
         <textarea ref={box} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
       </details>
       <GenerateReply
+        task="syllabus"
         prompt={prompt}
         onReply={(text) => { setReply(text); setNotice(''); }}
         check={(text) => readPack(text, today).error ?? null}
