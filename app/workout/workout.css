@@ -1407,3 +1407,10 @@
     color: #4b5563 !important;
   }
 }
+
+/* Shown under the rest timer when sound is on but the phone hasn't allowed audio yet. */
+.tracker-rest-hint {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  opacity: 0.75;
+}

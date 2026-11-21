@@ -11,7 +11,7 @@ import { DEMO_USER_ID } from '@/lib/workout/demo-data';
 import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-queue';
 import { rankSwapCandidates } from '@/lib/workout/related-exercises';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
-import { vibrate } from '@/lib/workout/device-prefs';
+import { readPref, savePref, vibrate } from '@/lib/workout/device-prefs';
 import { buildSavePayload, computeSessionAwards, estimateCalories, getBaselineReps, newPlanId, uidOf, workoutTotals, type LoggedSet, type SessionPR, type WarmupSet } from '@/lib/workout/tracker-utils';
 import { useSitePopup } from '@/components/SitePopup';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
@@ -101,7 +101,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
 
   const defaultSetCount = Number(localPlan.type?.sets) > 0 ? Number(localPlan.type.sets) : 5;
   const { elapsedSecs, liftElapsedSecsMap } = useWorkoutClock(activeUid, !finished, resumeState);
-  useWakeLock(!finished);
+  // Per-device choice, on by default. Read after mount so the server and first client render match.
+  const [keepAwake, setKeepAwake] = useState(true);
+  useEffect(() => { setKeepAwake(readPref('workout:keepAwake') !== '0'); }, []);
+  const toggleKeepAwake = () => setKeepAwake((on) => { savePref('workout:keepAwake', on ? '0' : '1'); return !on; });
+  useWakeLock(!finished && keepAwake);
   const { suggestions, invalidate } = useSuggestions(localPlan, pastHistory, intensity, defaultSetCount);
 
   // ─── Derived values ─────────────────────────────────────────────────────────
@@ -660,6 +664,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
           onPause={pauseWorkout}
           onFinish={() => { setFinished(true); setSheet(null); }}
           onDelete={deleteWorkout}
+          keepAwake={keepAwake}
+          onToggleKeepAwake={toggleKeepAwake}
           partner={{
             active: !!shared.sessionId,
             code: shared.code,

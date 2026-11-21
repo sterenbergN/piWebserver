@@ -309,8 +309,39 @@ export function useRecorder(notebook: string, doc: NotebookDoc, say: (text: stri
   return { recording, elapsed, cutOff, playing, start, stop, dismissCutOff, play, togglePause, seek, seekToStroke, closePlayer };
 }
 
+const PILL_PREF = 'notes:recordingPillOpen';
+
+/**
+ * While recording: a small pill at the screen's edge (pulsing red dot and an arrow) that
+ * pulls out to show the time and Stop. Folded away by default so it leaves the page clear;
+ * the choice is remembered on this device.
+ */
+function RecordingPill({ recorder, onOpen }: { recorder: Recorder; onOpen: () => void }) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(PILL_PREF) === '1'; } catch { return false; }
+  });
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try { localStorage.setItem(PILL_PREF, next ? '1' : '0'); } catch { /* not remembered, still works */ }
+  };
+  const time = fmtDuration(recorder.elapsed);
+  return (
+    <div className={`nt-rec-pill${open ? ' is-open' : ''}`} role="status">
+      <i className="nt-rec-dot" aria-hidden />
+      <div className="nt-rec-panel">
+        <button type="button" className="nt-player-time" tabIndex={open ? 0 : -1} onClick={onOpen}>Recording {time}</button>
+        <button type="button" className="nt-btn is-small" tabIndex={open ? 0 : -1} onClick={() => void recorder.stop()}><Icon name="stop" /> Stop</button>
+      </div>
+      <button type="button" className="nt-rec-tab" aria-expanded={open} aria-label={`Recording, ${time}. ${open ? 'Hide' : 'Show'} recording controls`} onClick={toggle}>
+        <Icon name="chevron" size="1em" />
+      </button>
+    </div>
+  );
+}
+
 export function RecordingBar({ recorder, onOpen }: { recorder: Recorder; onOpen: () => void }) {
-  const { recording, elapsed, cutOff, playing } = recorder;
+  const { recording, cutOff, playing } = recorder;
   if (cutOff && !recording) {
     return (
       <div className="nt-player is-cut" role="alert">
@@ -322,15 +353,7 @@ export function RecordingBar({ recorder, onOpen }: { recorder: Recorder; onOpen:
       </div>
     );
   }
-  if (recording) {
-    return (
-      <div className="nt-player is-recording" role="status">
-        <i className="nt-rec-dot" />
-        <button type="button" className="nt-player-time" onClick={onOpen}>Recording {fmtDuration(elapsed)}</button>
-        <button type="button" className="nt-btn is-small" onClick={() => void recorder.stop()}><Icon name="stop" /> Stop</button>
-      </div>
-    );
-  }
+  if (recording) return <RecordingPill recorder={recorder} onOpen={onOpen} />;
   if (!playing) return null;
   const { record, at, paused } = playing;
   return (

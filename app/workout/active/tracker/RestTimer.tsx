@@ -24,6 +24,7 @@ export default function RestTimer({ rest }: { rest: ReturnType<typeof useRestTim
           <button type="button" aria-label={rest.sound ? 'Turn rest sound off' : 'Turn rest sound on'} aria-pressed={rest.sound} onClick={rest.toggleSound}>{rest.sound ? '🔔' : '🔕'}</button>
         </span>
       </div>
+      {rest.needsTap && <div className="tracker-rest-hint">Tap anywhere to re-enable the chime</div>}
       <div className="tracker-rest-bar"><div style={{ width: `${Math.min(100, (rest.elapsed / rest.target) * 100)}%` }} /></div>
     </div>
   );

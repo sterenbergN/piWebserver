@@ -15,6 +15,8 @@ type MenuProps = {
   onPause: () => void;
   onFinish: () => void;
   onDelete: () => void;
+  keepAwake: boolean;
+  onToggleKeepAwake: () => void;
   partner: {
     active: boolean;
     code: string | null;
@@ -26,7 +28,7 @@ type MenuProps = {
   };
 };
 
-export function WorkoutMenu({ onClose, onPause, onFinish, onDelete, partner }: MenuProps) {
+export function WorkoutMenu({ onClose, onPause, onFinish, onDelete, keepAwake, onToggleKeepAwake, partner }: MenuProps) {
   const [copied, setCopied] = useState(false);
   const shareInvite = async () => {
     const nav = navigator as Navigator & { share?: (d: { title: string; text: string; url: string }) => Promise<void> };
@@ -43,6 +45,9 @@ export function WorkoutMenu({ onClose, onPause, onFinish, onDelete, partner }: M
       <div className="workout-stack is-loose">
         <button className="workout-button is-block" onClick={onPause}>⏸ Pause — resume later from the home page</button>
         <button className="workout-button is-block" onClick={onFinish}>🏁 Finish workout</button>
+        <button className="workout-button is-block" role="switch" aria-checked={keepAwake} onClick={onToggleKeepAwake}>
+          {keepAwake ? '✓ Keeping screen on' : 'Keep screen on'}
+        </button>
 
         <div className="workout-tile" style={{ margin: 0 }}>
           <strong style={{ display: 'block', marginBottom: '0.25rem' }}>👥 Partner mode</strong>

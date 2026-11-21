@@ -6,7 +6,7 @@ import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipmen
 import { exerciseKey, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { restTargetSeconds } from '@/lib/workout/session-insights';
 import { isLoadStation } from '@/lib/workout/types';
-import { playBeep, readPref, savePref, unlockAudio, vibrate } from '@/lib/workout/device-prefs';
+import { alertIsTooLate, audioIsRunning, playBeep, readPref, savePref, unlockAudio, vibrate, watchAudioUnlock } from '@/lib/workout/device-prefs';
 import { relatedStartingWeight } from '@/lib/workout/related-exercises';
 import { getBaselineReps, topSet, uidOf, type HistoricStats, type Suggestion } from '@/lib/workout/tracker-utils';
 
@@ -87,7 +87,7 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
   // The account's times win over this device's (they may be newer, from another phone).
   const [restTimes, setRestTimes] = useState<Record<string, number>>(() => ({ ...readRestTimes(), ...(saved || {}) }));
   const [sound, setSound] = useState(() => readPref('workout:restSound') === '1');
-  const audioRef = useRef<AudioContext | null>(null);
+  const [audioReady, setAudioReady] = useState(true);
   const notifiedFor = useRef<number | null>(null);
   const soundRef = useRef(sound);
   useEffect(() => { soundRef.current = sound; }, [sound]);
@@ -107,9 +107,9 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
     const notify = () => {
       if (notifiedFor.current === lastSetAt) return;
       notifiedFor.current = lastSetAt;
-      if (Date.now() - due > 15_000) return;
+      if (alertIsTooLate(due, Date.now())) return;
       vibrate([200, 100, 200]);
-      if (soundRef.current) playBeep(audioRef.current);
+      if (soundRef.current) playBeep(null);
     };
     const wait = due - Date.now();
     if (wait <= 0) {
@@ -121,13 +121,22 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
     return () => clearTimeout(handle);
   }, [enabled, lastSetAt, target]);
 
-  // Every tap re-unlocks audio, which iPhones suspend when the screen locks or
-  // another app plays sound — otherwise the next beep is silently dropped.
+  // Every tap re-unlocks the shared audio context, which iPhones suspend when
+  // the screen locks or another app plays sound — otherwise the next beep is
+  // silently dropped.
   useEffect(() => {
     if (!sound || !enabled) return;
-    const unlock = () => { audioRef.current = unlockAudio(audioRef.current); };
-    document.addEventListener('pointerdown', unlock, true);
-    return () => document.removeEventListener('pointerdown', unlock, true);
+    return watchAudioUnlock();
+  }, [sound, enabled]);
+
+  // Is the chime currently able to sound? (Not after a reload or an iOS interrupt, until a tap.)
+  useEffect(() => {
+    if (!sound || !enabled) { setAudioReady(true); return; }
+    const check = () => setAudioReady(audioIsRunning());
+    check();
+    const handle = setInterval(check, 1000);
+    document.addEventListener('visibilitychange', check);
+    return () => { clearInterval(handle); document.removeEventListener('visibilitychange', check); };
   }, [sound, enabled]);
 
   // Save to the account shortly after the last ±15 tap (one request, not one per tap).
@@ -172,6 +181,8 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
     visible,
     done,
     sound,
+    /** Sound is on but the phone hasn't allowed audio yet; any tap fixes it. */
+    needsTap: sound && !audioReady,
     /** This exercise has its own remembered rest (not the rep-based default). */
     custom: custom > 0,
     adjust: (delta: number) => remember((current) => Math.max(15, Math.min(900, current + delta))),
@@ -181,12 +192,12 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
       setSound(next);
       savePref('workout:restSound', next ? '1' : '0');
       if (next) {
-        audioRef.current = unlockAudio(audioRef.current);
-        playBeep(audioRef.current, 1); // so you know it can be heard
+        unlockAudio();
+        playBeep(null, 1); // so you know it can be heard
       }
     },
     /** Call from a tap (e.g. logging a set) so the beep is allowed to play later. */
-    unlock: () => { if (sound) audioRef.current = unlockAudio(audioRef.current); },
+    unlock: () => { if (sound) unlockAudio(); },
   };
 }
 

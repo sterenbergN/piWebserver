@@ -10,15 +10,36 @@ export function savePref(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* not remembered, still works */ }
 }
 
-/**
- * Browsers only let audio start from a tap, so create/resume the context on
- * one. iPhones also suspend ("interrupt") it when the screen locks, another app
- * plays sound or a call comes in, so this is called on every tap, and a silent
- * sample is played to fully unlock it.
- */
-export function unlockAudio(ctx: AudioContext | null) {
+// One audio context for the whole page session. It used to live in a component
+// ref, so navigating away and back gave a fresh, locked one until the next tap.
+let sharedCtx: AudioContext | null = null;
+
+function sharedContext() {
+  if (sharedCtx) return sharedCtx;
   try {
-    const context = ctx ?? new (window.AudioContext || (window as any).webkitAudioContext)();
+    sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  } catch {
+    sharedCtx = null;
+  }
+  return sharedCtx;
+}
+
+/** True when a beep would actually be heard right now. */
+export function audioIsRunning() {
+  return sharedCtx?.state === 'running';
+}
+
+/**
+ * Browsers only let audio start from a user activation, so create/resume the
+ * context on one. iPhones also suspend ("interrupt") it when the screen locks,
+ * another app plays sound or a call comes in, so this is called on every tap,
+ * and a silent sample is played to fully unlock it. The argument is kept for
+ * older callers; the shared context is always the one used.
+ */
+export function unlockAudio(_ctx?: AudioContext | null) {
+  try {
+    const context = sharedContext();
+    if (!context) return null;
     if (context.state !== 'running') context.resume().catch(() => {});
     const silent = context.createBufferSource();
     silent.buffer = context.createBuffer(1, 1, 22050);
@@ -30,8 +51,35 @@ export function unlockAudio(ctx: AudioContext | null) {
   }
 }
 
+/**
+ * Re-unlock audio on every tap/key (pointerdown alone doesn't count as a user
+ * activation on iOS touch, so click/touchend are needed) and try to resume when
+ * the page comes back to the front. Returns the cleanup.
+ */
+export function watchAudioUnlock() {
+  const unlock = () => { unlockAudio(); };
+  const onVisible = () => {
+    if (document.visibilityState === 'visible' && sharedCtx && sharedCtx.state !== 'running') sharedCtx.resume().catch(() => {});
+  };
+  const events = ['pointerdown', 'touchend', 'click', 'keydown'] as const;
+  events.forEach((e) => document.addEventListener(e, unlock, true));
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    events.forEach((e) => document.removeEventListener(e, unlock, true));
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
+/** A rest alert that fires more than this long after it was due is skipped (you were away). */
+export const LATE_ALERT_MS = 15_000;
+
+export function alertIsTooLate(due: number, now: number) {
+  return now - due > LATE_ALERT_MS;
+}
+
 /** Two short beeps (one for a quick test). Resumes a suspended context first. */
-export function playBeep(ctx: AudioContext | null, count = 2) {
+export function playBeep(given: AudioContext | null, count = 2) {
+  const ctx = given ?? sharedCtx;
   if (!ctx) return;
   const play = () => {
     try {
