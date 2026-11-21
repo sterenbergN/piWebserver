@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, restTargetSeconds, warmupSets } from '@/lib/workout/session-insights';
@@ -12,6 +13,7 @@ import { enqueueWorkout, isRetryableSaveFailure } from '@/lib/workout/offline-qu
 import { rankSwapCandidates } from '@/lib/workout/related-exercises';
 import { takeQueuedLifts } from '@/lib/workout/station-link';
 import { readPref, savePref, vibrate } from '@/lib/workout/device-prefs';
+import { LISTEN_LAST_KEY } from '@/lib/reader/audio-player';
 import { buildSavePayload, computeSessionAwards, estimateCalories, getBaselineReps, newPlanId, uidOf, workoutTotals, type LoggedSet, type SessionPR, type WarmupSet } from '@/lib/workout/tracker-utils';
 import { useSitePopup } from '@/components/SitePopup';
 import LiftHistorySheet from '@/components/workout/LiftHistorySheet';
@@ -25,6 +27,9 @@ import LiftCard from './tracker/LiftCard';
 import SetLogger from './tracker/SetLogger';
 import FinishScreen from './tracker/FinishScreen';
 import { SupersetSheet, SwapLiftSheet, WorkoutListSheet, WorkoutMenu } from './tracker/Sheets';
+
+// Loaded when 🎧 is first tapped, or when a book was played here before, so the tracker's own bundle stays small.
+const AudioPlayer = dynamic(() => import('@/components/workout/AudioPlayer'), { ssr: false });
 
 type RestSnapshot = { timestamp: number; liftKey: string; defaultSeconds: number };
 type Toast = { text: string; tone: 'quiet' | 'win'; undo?: () => void };
@@ -80,6 +85,11 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [templateState, setTemplateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // Audio book player: only for a signed-in account's own workout (the Reader's books are that account's).
+  const [audioLoaded, setAudioLoaded] = useState(false);
+  const [audioTaps, setAudioTaps] = useState(0);
+  useEffect(() => { if (readPref(LISTEN_LAST_KEY)) setAudioLoaded(true); }, []);
 
   // Lifts picked on a station page (QR sticker) join the workout in progress.
   useEffect(() => {
@@ -179,6 +189,10 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
       if (set) setToast({ tone: 'quiet', text: `👥 ${peer.username} finished ${set.liftName ? `${set.liftName} ` : 'a set '}${set.weight}×${set.reps} — your turn` });
     },
   });
+
+  // The player stays mounted from the first tap, so lifts, sheets and logging never stop it. A partner session hides it.
+  const canListen = !!user?.id && user.id !== DEMO_USER_ID && !shared.sessionId;
+  const audio = canListen && audioLoaded ? <AudioPlayer userId={user.id} openSignal={audioTaps} /> : null;
 
   useEffect(() => {
     if (finished) return;
@@ -537,6 +551,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
 
   if (finished) {
     return (
+      <>
       <FinishScreen
         plan={localPlan}
         logs={logs}
@@ -556,6 +571,8 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
         onBack={() => { setFinished(false); setSaveError(''); }}
         getLinkPayload={user ? () => buildSavePayload({ plan: localPlan, logs, warmups: warmupsDone, targetSets: getTargetSets, elapsedSecs, intensity, bodyweightLbs: user?.weight, isDemo: false }) : undefined}
       />
+      {audio}
+      </>
     );
   }
 
@@ -582,155 +599,160 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
     !liftIdsInPlan.has(l.id)
     && (!localPlan.gymName || !l.gymName || l.gymName === localPlan.gymName)), localPlan.type?.muscles || []);
 
+  // The player is the second child in both the workout and finish screens, so it keeps playing between them.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
-      <TopBar
-        name={localPlan.name}
-        elapsedSecs={elapsedSecs}
-        compact={compact}
-        peer={shared.peer}
-        live={shared.live}
-        onList={() => setSheet('list')}
-        onAdd={() => setSheet('add')}
-        onMenu={() => setSheet('menu')}
-      />
-      {offline && <p className="workout-offline-note">📡 Offline — using saved data. Sets are kept on this phone and saved when you&apos;re back online.</p>}
-
-      <div style={{ flex: 1, padding: compact ? '0.5rem' : '1rem', paddingBottom: compact ? '1.25rem' : '2rem' }}>
-        <LiftCard
-          lift={activeLift}
-          index={safeLiftIndex}
-          count={localPlan.lifts.length}
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh' }}>
+        <TopBar
+          name={localPlan.name}
+          elapsedSecs={elapsedSecs}
           compact={compact}
-          canEdit={!!user && !!activeLift.station?.id}
-          onEdit={setEditTarget}
-          plateau={stalledExercises.has(exerciseKey(activeLift)) && !localPlan.isDeload}
-          onSwap={() => setSheet('swap')}
-          onHistory={() => setSheet('history')}
-          onSuperset={() => setSheet('superset')}
-          partner={partner && partnerRemaining > 0 ? {
-            name: partner.name,
-            logged: getLogs(partner).length,
-            target: getTargetSets(partner),
-            upNext: activeRemaining > 0,
-            onSwitch: () => setActiveLiftIndex(localPlan.lifts.findIndex((lift: any) => uidOf(lift) === uidOf(partner))),
-          } : null}
-          target={{ loading: !suggestion, weight: suggestedWeight, reps: suggestedReps, sets: getTargetSets(activeLift) }}
-          deviated={!!draft && (currentWeight !== suggestedWeight || currentReps !== suggestedReps)}
-          onReset={resetToSuggestion}
-          suggestion={suggestion}
-          calibrationNote={calibrationNote}
-          liftSecs={liftElapsedSecsMap[activeUid] || 0}
-          workoutSecs={elapsedSecs}
-          intensity={intensity}
-          onIntensity={setIntensity}
-          rest={rest}
-          extra={activeGoal && activeGoalProgress && (
-            <p className="workout-hint" style={{ margin: '-0.1rem 0 0.45rem' }}>
-              🎯 Goal {activeGoal.targetWeight}×{activeGoal.targetReps} · {Math.round(activeGoalProgress.fraction * 100)}% · {formatProjection(activeGoalProgress)}
-            </p>
-          )}
+          peer={shared.peer}
+          live={shared.live}
+          onList={() => setSheet('list')}
+          onAdd={() => setSheet('add')}
+          onMenu={() => setSheet('menu')}
+          onAudio={canListen ? () => { setAudioLoaded(true); setAudioTaps((n) => n + 1); } : undefined}
         />
+        {offline && <p className="workout-offline-note">📡 Offline — using saved data. Sets are kept on this phone and saved when you&apos;re back online.</p>}
 
-        <SetLogger
-          compact={compact}
-          sets={activeLogs}
-          onEditSet={setEditingSetIndex}
-          warmups={warmups}
-          warmupsDone={warmupsDone[activeUid] || []}
-          onToggleWarmup={toggleWarmup}
-          lastTime={lastTime}
-          liftDone={liftDone}
-          nextLiftName={nextLiftIndex !== null ? localPlan.lifts[nextLiftIndex].name : null}
-          onNextUnfinished={() => nextLiftIndex !== null && setActiveLiftIndex(nextLiftIndex)}
-          onFinish={() => setFinished(true)}
-          weight={currentWeight}
-          reps={currentReps}
-          onWeight={setCurrentWeight}
-          onReps={setCurrentReps}
-          onStepWeight={(direction) => setCurrentWeight(stepWeight(currentWeight, direction, possibleWeights))}
-          onLog={logSet}
-          canPrev={safeLiftIndex > 0}
-          onPrev={() => setActiveLiftIndex(safeLiftIndex - 1)}
-          hasNext={safeLiftIndex < localPlan.lifts.length - 1}
-          onNext={() => setActiveLiftIndex(safeLiftIndex + 1)}
-          plates={plates}
-        />
-      </div>
+        <div style={{ flex: 1, padding: compact ? '0.5rem' : '1rem', paddingBottom: compact ? '1.25rem' : '2rem' }}>
+          <LiftCard
+            lift={activeLift}
+            index={safeLiftIndex}
+            count={localPlan.lifts.length}
+            compact={compact}
+            canEdit={!!user && !!activeLift.station?.id}
+            onEdit={setEditTarget}
+            plateau={stalledExercises.has(exerciseKey(activeLift)) && !localPlan.isDeload}
+            onSwap={() => setSheet('swap')}
+            onHistory={() => setSheet('history')}
+            onSuperset={() => setSheet('superset')}
+            partner={partner && partnerRemaining > 0 ? {
+              name: partner.name,
+              logged: getLogs(partner).length,
+              target: getTargetSets(partner),
+              upNext: activeRemaining > 0,
+              onSwitch: () => setActiveLiftIndex(localPlan.lifts.findIndex((lift: any) => uidOf(lift) === uidOf(partner))),
+            } : null}
+            target={{ loading: !suggestion, weight: suggestedWeight, reps: suggestedReps, sets: getTargetSets(activeLift) }}
+            deviated={!!draft && (currentWeight !== suggestedWeight || currentReps !== suggestedReps)}
+            onReset={resetToSuggestion}
+            suggestion={suggestion}
+            calibrationNote={calibrationNote}
+            liftSecs={liftElapsedSecsMap[activeUid] || 0}
+            workoutSecs={elapsedSecs}
+            intensity={intensity}
+            onIntensity={setIntensity}
+            rest={rest}
+            extra={activeGoal && activeGoalProgress && (
+              <p className="workout-hint" style={{ margin: '-0.1rem 0 0.45rem' }}>
+                🎯 Goal {activeGoal.targetWeight}×{activeGoal.targetReps} · {Math.round(activeGoalProgress.fraction * 100)}% · {formatProjection(activeGoalProgress)}
+              </p>
+            )}
+          />
 
-      {sheet === 'menu' && (
-        <WorkoutMenu
-          onClose={() => setSheet(null)}
-          onPause={pauseWorkout}
-          onFinish={() => { setFinished(true); setSheet(null); }}
-          onDelete={deleteWorkout}
-          keepAwake={keepAwake}
-          onToggleKeepAwake={toggleKeepAwake}
-          partner={{
-            active: !!shared.sessionId,
-            code: shared.code,
-            inviteLink: shared.inviteLink,
-            loading: shared.loading,
-            error: shared.error,
-            onStart: () => shared.start(progressUpdate('active')),
-            onLeave: () => shared.leave(progressUpdate()),
-          }}
-        />
-      )}
-      {(sheet === 'list' || sheet === 'add') && (
-        <WorkoutListSheet
-          plan={localPlan}
-          activeIndex={safeLiftIndex}
-          logs={logs}
-          targetSets={getTargetSets}
-          partnerOf={getSupersetPartner}
-          startAdding={sheet === 'add'}
-          onSelect={(index) => { setActiveLiftIndex(index); setSheet(null); }}
-          onRemove={removeLiftAt}
-          onAdd={addLifts}
-          onGymUpdated={applyGymUpdate}
-          onClose={() => setSheet(null)}
-        />
-      )}
-      {sheet === 'swap' && <SwapLiftSheet alternatives={alternatives} onSwap={swapLift} onClose={() => setSheet(null)} />}
-      {sheet === 'superset' && (
-        <SupersetSheet
-          lift={activeLift}
-          partner={partner}
-          logged={(lift) => getLogs(lift).length}
-          targetSets={getTargetSets}
-          eligible={localPlan.lifts.filter((lift: any) => uidOf(lift) !== activeUid && !lift.supersetId && getRemainingSets(lift) > 0)}
-          canUnpair={!(activeRemaining === 0 && partnerRemaining === 0)}
-          onPair={pairSuperset}
-          onUnpair={unpairSuperset}
-          onClose={() => setSheet(null)}
-        />
-      )}
-      {sheet === 'history' && (
-        <LiftHistorySheet liftId={activeLift.id} liftName={exerciseName(activeLift)} history={pastHistory || []} onClose={() => setSheet(null)} />
-      )}
-      {editingSetIndex !== null && activeLogs[editingSetIndex] && (
-        <SetEditSheet
-          key={editingSetIndex}
-          set={activeLogs[editingSetIndex]}
-          setNumber={editingSetIndex + 1}
-          liftName={activeLift.name}
-          possibleWeights={possibleWeights}
-          onSave={(set) => updateSet(editingSetIndex, set as LoggedSet)}
-          onDelete={() => deleteSet(editingSetIndex)}
-          onClose={() => setEditingSetIndex(null)}
-        />
-      )}
-      {editTarget && activeLift.station?.id && (
-        <ActiveLiftEditor mode={editTarget} stationId={activeLift.station.id} liftId={activeLift.id} onSaved={applyGymUpdate} onClose={() => setEditTarget(null)} />
-      )}
-      {toast && (
-        <div className={`tracker-toast animate-fade-in${toast.tone === 'quiet' ? ' is-quiet' : ''}`} role="status">
-          <span style={{ flex: 1, minWidth: 0 }} onClick={() => setToast(null)}>{toast.text}</span>
-          {toast.undo && <button type="button" className="tracker-toast-action" onClick={toast.undo}>Undo</button>}
+          <SetLogger
+            compact={compact}
+            sets={activeLogs}
+            onEditSet={setEditingSetIndex}
+            warmups={warmups}
+            warmupsDone={warmupsDone[activeUid] || []}
+            onToggleWarmup={toggleWarmup}
+            lastTime={lastTime}
+            liftDone={liftDone}
+            nextLiftName={nextLiftIndex !== null ? localPlan.lifts[nextLiftIndex].name : null}
+            onNextUnfinished={() => nextLiftIndex !== null && setActiveLiftIndex(nextLiftIndex)}
+            onFinish={() => setFinished(true)}
+            weight={currentWeight}
+            reps={currentReps}
+            onWeight={setCurrentWeight}
+            onReps={setCurrentReps}
+            onStepWeight={(direction) => setCurrentWeight(stepWeight(currentWeight, direction, possibleWeights))}
+            onLog={logSet}
+            canPrev={safeLiftIndex > 0}
+            onPrev={() => setActiveLiftIndex(safeLiftIndex - 1)}
+            hasNext={safeLiftIndex < localPlan.lifts.length - 1}
+            onNext={() => setActiveLiftIndex(safeLiftIndex + 1)}
+            plates={plates}
+          />
         </div>
-      )}
-      {popup}
-    </div>
+
+        {sheet === 'menu' && (
+          <WorkoutMenu
+            onClose={() => setSheet(null)}
+            onPause={pauseWorkout}
+            onFinish={() => { setFinished(true); setSheet(null); }}
+            onDelete={deleteWorkout}
+            keepAwake={keepAwake}
+            onToggleKeepAwake={toggleKeepAwake}
+            partner={{
+              active: !!shared.sessionId,
+              code: shared.code,
+              inviteLink: shared.inviteLink,
+              loading: shared.loading,
+              error: shared.error,
+              onStart: () => shared.start(progressUpdate('active')),
+              onLeave: () => shared.leave(progressUpdate()),
+            }}
+          />
+        )}
+        {(sheet === 'list' || sheet === 'add') && (
+          <WorkoutListSheet
+            plan={localPlan}
+            activeIndex={safeLiftIndex}
+            logs={logs}
+            targetSets={getTargetSets}
+            partnerOf={getSupersetPartner}
+            startAdding={sheet === 'add'}
+            onSelect={(index) => { setActiveLiftIndex(index); setSheet(null); }}
+            onRemove={removeLiftAt}
+            onAdd={addLifts}
+            onGymUpdated={applyGymUpdate}
+            onClose={() => setSheet(null)}
+          />
+        )}
+        {sheet === 'swap' && <SwapLiftSheet alternatives={alternatives} onSwap={swapLift} onClose={() => setSheet(null)} />}
+        {sheet === 'superset' && (
+          <SupersetSheet
+            lift={activeLift}
+            partner={partner}
+            logged={(lift) => getLogs(lift).length}
+            targetSets={getTargetSets}
+            eligible={localPlan.lifts.filter((lift: any) => uidOf(lift) !== activeUid && !lift.supersetId && getRemainingSets(lift) > 0)}
+            canUnpair={!(activeRemaining === 0 && partnerRemaining === 0)}
+            onPair={pairSuperset}
+            onUnpair={unpairSuperset}
+            onClose={() => setSheet(null)}
+          />
+        )}
+        {sheet === 'history' && (
+          <LiftHistorySheet liftId={activeLift.id} liftName={exerciseName(activeLift)} history={pastHistory || []} onClose={() => setSheet(null)} />
+        )}
+        {editingSetIndex !== null && activeLogs[editingSetIndex] && (
+          <SetEditSheet
+            key={editingSetIndex}
+            set={activeLogs[editingSetIndex]}
+            setNumber={editingSetIndex + 1}
+            liftName={activeLift.name}
+            possibleWeights={possibleWeights}
+            onSave={(set) => updateSet(editingSetIndex, set as LoggedSet)}
+            onDelete={() => deleteSet(editingSetIndex)}
+            onClose={() => setEditingSetIndex(null)}
+          />
+        )}
+        {editTarget && activeLift.station?.id && (
+          <ActiveLiftEditor mode={editTarget} stationId={activeLift.station.id} liftId={activeLift.id} onSaved={applyGymUpdate} onClose={() => setEditTarget(null)} />
+        )}
+        {toast && (
+          <div className={`tracker-toast animate-fade-in${toast.tone === 'quiet' ? ' is-quiet' : ''}`} role="status">
+            <span style={{ flex: 1, minWidth: 0 }} onClick={() => setToast(null)}>{toast.text}</span>
+            {toast.undo && <button type="button" className="tracker-toast-action" onClick={toast.undo}>Undo</button>}
+          </div>
+        )}
+        {popup}
+      </div>
+      {audio}
+    </>
   );
 }

@@ -12,10 +12,12 @@ type TopBarProps = {
   onList: () => void;
   onAdd: () => void;
   onMenu: () => void;
+  /** Shows the audio book button. Left out where there's no Reader to listen from (demo, partner sessions). */
+  onAudio?: () => void;
 };
 
-/** Sticky header: workout name and time, partner status, List / ＋ / Menu. */
-export default function TopBar({ name, elapsedSecs, compact, peer, live, onList, onAdd, onMenu }: TopBarProps) {
+/** Sticky header: workout name and time, partner status, 🎧 / List / ＋ / Menu. */
+export default function TopBar({ name, elapsedSecs, compact, peer, live, onList, onAdd, onMenu, onAudio }: TopBarProps) {
   const buttonPadding = compact ? '0.35rem 0.7rem' : '0.5rem 1rem';
   return (
     <div className={`workout-tile tracker-topbar${compact ? ' tracker-topbar-compact' : ''}`}>
@@ -26,6 +28,7 @@ export default function TopBar({ name, elapsedSecs, compact, peer, live, onList,
           <p style={{ margin: 0, fontSize: compact ? '0.75rem' : '0.85rem', color: 'var(--muted)' }}>{formatClock(elapsedSecs)}</p>
         </div>
         <div style={{ display: 'flex', gap: '0.4rem' }}>
+          {onAudio && <button className="btn btn-secondary tracker-topbar-action" aria-label="Listen to an audio book" title="Audio book" style={{ padding: buttonPadding }} onClick={onAudio}>🎧</button>}
           <button className="btn btn-secondary tracker-topbar-action" style={{ padding: buttonPadding }} onClick={onList}>List</button>
           <button className="btn btn-secondary tracker-topbar-action" aria-label="Add an exercise" title="Add an exercise" style={{ padding: buttonPadding }} onClick={onAdd}>＋</button>
           <button className="btn btn-secondary tracker-topbar-action" style={{ padding: buttonPadding }} onClick={onMenu}>Menu</button>

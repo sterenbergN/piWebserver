@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/study/Icon';
 import { chapterAt, clock, spoken } from '@/lib/reader/audio';
 import { audioTimeSeconds, type Anchor, type BookMeta } from '@/lib/reader/items';
+import { listenPlace, resumeSeconds } from '@/lib/reader/audio-player';
+import { readSpeed, SAVE_EVERY_MS, SPEEDS, streamUrl, writeSpeed } from './audio-core';
 import { deleteFile, getCover, getFile, getProgress } from './db';
 import { ChapterEditor } from './ShelfDialogs';
 import type { ReaderSettings } from './source';
@@ -17,18 +19,9 @@ import { useBookItems } from './useBookItems';
 // Skills resource linked to it moves along too. The lock screen and headphones
 // control it through Media Session.
 
-const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
-const SPEED_KEY = 'reader-audio-speed';
-const SAVE_EVERY_MS = 10_000;
-/** This close to the end counts as finished. */
-const END_SECONDS = 30;
 const SLEEP_CHOICES = [{ label: 'Off', minutes: 0 }, { label: '15 min', minutes: 15 }, { label: '30 min', minutes: 30 }, { label: '1 hour', minutes: 60 }, { label: 'End of chapter', minutes: -1 }];
 
 type Sleep = { until: number } | { chapterIndex: number } | null;
-
-function readSpeed() {
-  try { const v = Number(localStorage.getItem(SPEED_KEY)); return SPEEDS.includes(v) ? v : 1; } catch { return 1; }
-}
 
 export default function AudioView({ book, startAt, settings, other, onSwitch, onEdited, onExit, onSignedOut }: {
   book: BookMeta;
@@ -94,9 +87,8 @@ export default function AudioView({ book, startAt, settings, other, onSwitch, on
       const [file, progress, coverBlob] = await Promise.all([getFile(book.id), getProgress(book.id), book.hasCover ? getCover(book.id) : null]);
       if (!live) return;
       const total = book.audio?.duration ?? 0;
-      const saved = startAt ? audioTimeSeconds(startAt) : (progress?.anchor.page ?? 0);
       // Finished, or right at the end: start again from the top.
-      startRef.current = progress?.finishedAt || (total && saved > total - END_SECONDS) ? 0 : saved;
+      startRef.current = resumeSeconds(progress, total, startAt ? audioTimeSeconds(startAt) : undefined);
       if (coverBlob) { made = URL.createObjectURL(coverBlob); setCover(made); }
       if (file) {
         setKept(true);
@@ -104,7 +96,7 @@ export default function AudioView({ book, startAt, settings, other, onSwitch, on
         return;
       }
       if (!navigator.onLine) { setProblem('This one isn’t on this device yet, and there’s no connection. Keep it here next time you’re online to listen offline.'); return; }
-      setSrc(`/api/reader/file?book=${encodeURIComponent(book.id)}`);
+      setSrc(streamUrl(book.id));
     })().catch(() => setProblem('This couldn’t be opened.'));
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
   }, [book.id, startAt]);
@@ -118,11 +110,7 @@ export default function AudioView({ book, startAt, settings, other, onSwitch, on
     if (!total || startRef.current !== null) return;
     const t = el ? el.currentTime : currentTimeRef.current;
     lastSave.current = Date.now();
-    const at = chapterAt(chapters, t);
-    await saveProgressHere(book.id, {
-      anchor: { page: Math.max(1, Math.floor(t)), ...(at >= 0 ? { chapter: chapters[at].title } : {}) },
-      pct: Math.min(1, t / total), total: Math.ceil(total), atEnd: total - t <= END_SECONDS,
-    }).catch(() => {});
+    await saveProgressHere(book.id, listenPlace(t, total, chapters)).catch(() => {});
     if (now) void flushNow().catch(() => {});
   }, [book.id, chapters]);
 
@@ -196,7 +184,7 @@ export default function AudioView({ book, startAt, settings, other, onSwitch, on
     const next = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
     setSpeed(next);
     if (audio.current) audio.current.playbackRate = next;
-    try { localStorage.setItem(SPEED_KEY, String(next)); } catch { /* Just for now, then. */ }
+    writeSpeed(next);
   };
 
   const chooseSleep = (minutes: number) => {
@@ -229,7 +217,7 @@ export default function AudioView({ book, startAt, settings, other, onSwitch, on
     if (el) { startRef.current = el.currentTime; el.pause(); }
     await deleteFile(book.id).catch(() => {});
     setKept(false);
-    setSrc(`/api/reader/file?book=${encodeURIComponent(book.id)}`);
+    setSrc(streamUrl(book.id));
   }
 
   const left = duration ? duration - time : 0;
