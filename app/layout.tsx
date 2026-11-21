@@ -3,7 +3,9 @@ import Link from "next/link";
 import { Suspense } from "react";
 import Navbar from "../components/Navbar";
 import { ThemeProvider } from "../components/ThemeProvider";
-import { isAdminAuthenticated } from "@/lib/security/server-auth";
+import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from "@/lib/security/server-auth";
+import { canFileTickets } from "@/lib/tickets/store";
+import FeedbackButton from "@/components/tickets/FeedbackButton";
 import { signedInUser } from "@/lib/security/session";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
@@ -38,6 +40,8 @@ export default async function RootLayout({
   const isAdmin = await isAdminAuthenticated();
   // Unreadable counts as signed out here; the navbar's own check corrects it.
   const user = await signedInUser().catch(() => null);
+  // Feedback button: only for accounts the admin turned tickets on for, and the admin.
+  const canFeedback = isAdmin || (await canFileTickets(await getAuthenticatedWorkoutUserId().catch(() => null)));
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -58,6 +62,7 @@ export default async function RootLayout({
             <p style={{ color: 'var(--muted)' }}>© {new Date().getFullYear()} Noah Sterenberg. It’s alive.
               <Link href="/login" tabIndex={-1} aria-label="Admin login" style={{ opacity: 0, paddingLeft: '0.5rem', cursor: 'pointer' }}>.</Link>
             </p>
+            {canFeedback && <FeedbackButton />}
           </footer>
         </ThemeProvider>
       </body>
