@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { canScanBarcodes, foodApi } from '@/lib/food/client';
 import type { Food } from '@/lib/food/types';
-
-type BarcodeDetectorLike = { detect: (source: CanvasImageSource) => Promise<{ rawValue: string }[]> };
+import type { Camera } from '@/lib/food/scanner';
+import './scanner.css';
 
 /**
- * Look a packaged food up by its barcode. Typing the number is the main way
- * (iPhone Safari can't read barcodes from the camera); where the browser can,
- * a camera button scans it instead.
+ * Look a packaged food up by its barcode: type the number, or scan it with the
+ * camera. iPhone Safari has no BarcodeDetector, so lib/food/scanner.ts brings
+ * a WebAssembly reader there, loaded only when Scan is tapped.
  */
 export default function BarcodeEntry({ onFound, onNotFound, onBack }: {
   onFound: (food: Food) => void;
@@ -24,17 +24,57 @@ export default function BarcodeEntry({ onFound, onNotFound, onBack }: {
   const [notices, setNotices] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [canScan, setCanScan] = useState(false);
+  const [torch, setTorch] = useState<{ available: boolean; on: boolean }>({ available: false, on: false });
+  const [flash, setFlash] = useState(false);
+  const [camera, setCamera] = useState<Camera | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const cameraRef = useRef<Camera | null>(null);
 
   useEffect(() => { setCanScan(canScanBarcodes()); }, []);
-  useEffect(() => () => stopCamera(), []);
+  useEffect(() => () => { cameraRef.current?.stop(); }, []);
 
   function stopCamera() {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+    cameraRef.current?.stop();
+    cameraRef.current = null;
+    setCamera(null);
     setScanning(false);
+    setTorch({ available: false, on: false });
   }
+
+  // A camera left running behind a hidden page drains the battery and iOS keeps the green dot on.
+  useEffect(() => {
+    if (!camera) return;
+    const onHide = () => { if (document.hidden) stopCamera(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, [camera]);
+
+  // Once the camera is open and the video is on screen: play it and read frames until a code repeats.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!camera || !video) return;
+    const abort = new AbortController();
+    video.srcObject = camera.stream;
+    (async () => {
+      try {
+        await video.play();
+        const { startScan } = await import('@/lib/food/scanner');
+        await startScan(video, (gtin) => {
+          navigator.vibrate?.(60);
+          setFlash(true);
+          stopCamera();
+          setCode(gtin);
+          void lookup(gtin);
+        }, { signal: abort.signal });
+      } catch {
+        if (abort.signal.aborted) return;
+        stopCamera();
+        setError('Couldn’t start the scanner. Type the number instead.');
+      }
+    })();
+    return () => { abort.abort(); video.srcObject = null; };
+    // lookup only uses state setters and props, so it's safe to leave out.
+  }, [camera]);
 
   async function lookup(value: string) {
     const digits = value.replace(/\D/g, '');
@@ -57,35 +97,27 @@ export default function BarcodeEntry({ onFound, onNotFound, onBack }: {
 
   async function startCamera() {
     setError('');
+    setFlash(false);
     try {
-      const Detector = (window as unknown as { BarcodeDetector: new (o: { formats: string[] }) => BarcodeDetectorLike }).BarcodeDetector;
-      const detector = new Detector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
+      // The camera is requested right here in the tap, which iOS needs; the decoder loads afterwards.
+      const { openCamera } = await import('@/lib/food/scanner');
+      const cam = await openCamera();
+      cameraRef.current = cam;
+      setTorch({ available: cam.hasTorch, on: false });
+      setCamera(cam);
       setScanning(true);
-      await new Promise((r) => requestAnimationFrame(r));
-      const video = videoRef.current;
-      if (!video) { stopCamera(); return; }
-      video.srcObject = stream;
-      await video.play();
-      const tick = async () => {
-        if (!streamRef.current) return;
-        try {
-          const found = await detector.detect(video);
-          if (found[0]?.rawValue) {
-            stopCamera();
-            setCode(found[0].rawValue);
-            void lookup(found[0].rawValue);
-            return;
-          }
-        } catch { /* a frame that couldn't be read; try the next */ }
-        setTimeout(tick, 250);
-      };
-      void tick();
-    } catch {
-      stopCamera();
-      setError('The camera isn’t available here. Type the number instead.');
+    } catch (e) {
+      const reason = (e as { reason?: string }).reason;
+      setError(reason === 'denied'
+        ? 'Camera access is off for this site. Allow it in Settings → Safari → Camera, or type the number.'
+        : 'No camera found here. Type the number instead.');
     }
+  }
+
+  async function toggleTorch() {
+    if (!camera) return;
+    const on = await camera.setTorch(!torch.on);
+    setTorch((t) => ({ ...t, on }));
   }
 
   return (
@@ -103,9 +135,16 @@ export default function BarcodeEntry({ onFound, onNotFound, onBack }: {
       </form>
       {canScan && !scanning && <button type="button" className="food-more" onClick={() => void startCamera()}>📷 Scan with the camera</button>}
       {scanning && (
-        <div style={{ marginTop: '0.75rem' }}>
-          <video ref={videoRef} className="food-video" muted playsInline />
-          <button type="button" className="food-more" style={{ marginTop: 0 }} onClick={stopCamera}>Stop camera</button>
+        <div className="food-scan">
+          <div className={`food-scan-view${flash ? ' food-scan-hit' : ''}`}>
+            <video ref={videoRef} className="food-scan-video" muted playsInline autoPlay />
+            <div className="food-scan-frame" aria-hidden="true" />
+          </div>
+          <p className="food-scan-hint">Hold the barcode inside the box</p>
+          <div className="food-scan-actions">
+            {torch.available && <button type="button" className="food-more" onClick={() => void toggleTorch()}>{torch.on ? 'Light off' : 'Light on'}</button>}
+            <button type="button" className="food-more" onClick={stopCamera}>Stop camera</button>
+          </div>
         </div>
       )}
       {notices.map((n) => <p key={n} className="food-notice" style={{ marginTop: '0.75rem' }}>{n}</p>)}

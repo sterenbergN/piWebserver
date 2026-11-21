@@ -101,9 +101,9 @@ export function itemFor(food: Food, servingId: string, amount: number) {
 export const itemFromRecent = (r: Pick<RecentFood, 'foodId' | 'servingId' | 'amount' | 'snapshot'>) =>
   ({ foodId: r.foodId, servingId: r.servingId, amount: r.amount, snapshot: r.snapshot });
 
-/** The browser can scan barcodes with the camera here (Chrome on Android, not iOS Safari). */
+/** The camera can be used here. Native BarcodeDetector isn't needed: iPhone Safari falls back to a WebAssembly reader (lib/food/scanner.ts). */
 export function canScanBarcodes(): boolean {
-  if (typeof window === 'undefined' || !('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) return false;
+  if (typeof window === 'undefined' || !window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return false;
   // The site's Permissions-Policy may switch the camera off for this page.
   const doc = document as Document & { permissionsPolicy?: { allowsFeature?: (f: string) => boolean }; featurePolicy?: { allowsFeature?: (f: string) => boolean } };
   const policy = doc.permissionsPolicy ?? doc.featurePolicy;

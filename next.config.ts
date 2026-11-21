@@ -54,7 +54,7 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // The food log can scan a barcode with the camera (where the browser can read barcodes).
+        // The food log can scan a barcode with the camera (on iPhone through a WebAssembly reader).
         source: '/workout/food',
         headers: [
           { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(self), microphone=(), payment=(), usb=()' },
