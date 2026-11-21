@@ -1,0 +1,133 @@
+/* ─── During rest: something to do between sets (components/workout/rest) ─── */
+
+.rest-go { font-size: 1.05rem; font-weight: 800; color: var(--success); letter-spacing: 0.01em; }
+
+.rest-panel { margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px dashed var(--surface-border); font-size: 0.85rem; min-width: 0; }
+.rest-panel.is-closed { padding-top: 0.3rem; }
+.rest-off { margin-top: 0.35rem; font-size: 0.75rem; }
+
+.rest-ask { margin: 0 0 0.4rem; font-weight: 600; }
+.rest-choices { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.rest-choice { display: inline-flex; align-items: center; gap: 0.3rem; min-height: 34px; padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 0.82rem; cursor: pointer; }
+.rest-choice:hover { border-color: var(--accent-light); }
+.rest-choice.is-off { color: var(--muted); padding: 0.3rem 0.55rem; }
+
+.rest-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; flex-wrap: wrap; }
+.rest-fold { display: inline-flex; align-items: center; gap: 0.3rem; min-height: 30px; padding: 0; border: none; background: none; color: var(--foreground); font: inherit; font-weight: 600; cursor: pointer; }
+.rest-fold-mark { width: 0.8rem; color: var(--muted); }
+.rest-switch { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+.rest-switch button { min-width: 32px; min-height: 30px; padding: 0 0.35rem; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.rest-switch button.is-off { font-size: 0.72rem; color: var(--muted); }
+
+.rest-note { margin: 0.4rem 0 0; color: var(--muted); line-height: 1.45; }
+.rest-note.is-wrong, .rest-wrong { color: var(--danger); }
+.rest-right { color: var(--success); }
+.rest-muted { color: var(--muted); font-size: 0.78rem; }
+.rest-result { margin: 0.45rem 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.rest-suggest { white-space: normal; }
+.rest-credit { margin: 0.4rem 0 0; font-size: 0.7rem; color: var(--muted); }
+.rest-credit a { color: inherit; text-decoration: underline; }
+.rest-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.rest-link { padding: 0; border: none; background: none; color: var(--accent-light); font: inherit; text-decoration: underline; cursor: pointer; }
+.rest-link:disabled { opacity: 0.5; cursor: default; }
+.rest-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; margin-top: 0.4rem; padding: 0.35rem 0.85rem; border-radius: 9px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.rest-btn.is-primary { border-color: transparent; background: var(--primary-bg, var(--accent)); color: var(--primary-fg, #fff); }
+.rest-btn:disabled { opacity: 0.5; cursor: default; }
+.rest-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.7rem; margin-top: 0.2rem; }
+.rest-actions .rest-note { margin: 0.4rem 0 0; }
+.rest-actions .rest-link { margin-top: 0.4rem; }
+
+/* ── Skills question ── */
+.rest-skill { min-width: 0; }
+.rest-skill-head { display: flex; justify-content: space-between; gap: 0.5rem; margin: 0.4rem 0 0; font-size: 0.75rem; color: var(--muted); }
+.rest-skill-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rest-skill-text { font-size: 0.9rem; }
+.rest-skill-back { margin-top: 0.4rem; padding: 0.1rem 0.65rem; border-radius: 10px; background: var(--input-bg); }
+.rest-rate { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.3rem; }
+.rest-rate .rest-btn { padding: 0.35rem 0.2rem; }
+.rest-rate .is-again { border-color: rgba(var(--danger-rgb), 0.5); }
+.rest-rate .is-easy, .rest-rate .is-good { border-color: rgba(var(--success-rgb), 0.5); }
+/* The daily question pieces (AnswerInput, MathText), sized down for the panel. */
+.rest-skill .dq-md { line-height: 1.5; overflow-wrap: anywhere; }
+.rest-skill .dq-md > :first-child { margin-top: 0.35rem; }
+.rest-skill .dq-md p { margin: 0.35rem 0; }
+.rest-skill .dq-md.is-inline, .rest-skill .dq-md.is-inline > p, .rest-skill .dq-md.is-inline > :first-child { display: inline; margin: 0; }
+.rest-skill .dq-md table { display: block; max-width: 100%; overflow-x: auto; }
+.rest-skill .dq-md pre { max-width: 100%; overflow-x: auto; }
+.rest-skill .dq-figure { display: block; margin: 0.4rem 0; padding: 0.4rem; border-radius: 10px; background: #fff; text-align: center; }
+.rest-skill .dq-figure img { display: block; margin: 0 auto; max-width: 100%; max-height: 180px; height: auto; }
+.rest-skill .dq-figcaption { display: block; font-size: 0.75rem; color: #4b5563; }
+.rest-skill .katex-display { overflow-x: auto; overflow-y: hidden; }
+.rest-skill .dq-hint { margin: 0.2rem 0; color: var(--muted); font-size: 0.78rem; }
+.rest-skill .dq-options { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.35rem; }
+.rest-skill .dq-option { display: flex; align-items: flex-start; gap: 0.5rem; min-height: 38px; padding: 0.45rem 0.6rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); color: var(--foreground); font: inherit; font-size: 0.85rem; text-align: left; cursor: pointer; min-width: 0; }
+.rest-skill .dq-option[aria-checked="true"] { border-color: var(--accent-light); box-shadow: inset 0 0 0 1px var(--accent-light); background: rgba(var(--accent-rgb), 0.12); }
+.rest-skill .dq-option:disabled { cursor: default; }
+.rest-skill .dq-option-mark { flex-shrink: 0; display: grid; place-items: center; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--input-bg); font-weight: 800; font-size: 0.72rem; }
+.rest-skill .dq-option[aria-checked="true"] .dq-option-mark { background: var(--accent); color: #fff; }
+.rest-skill .dq-numeric { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; max-width: 100%; }
+.rest-skill .dq-numeric-row { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.rest-skill .dq-numeric input { flex: 1; min-width: 0; font-size: 1rem; }
+.rest-skill .dq-unit { font-weight: 700; white-space: nowrap; }
+.rest-skill .dq-value-preview { font-size: 0.78rem; color: var(--accent-light); }
+.rest-skill .dq-value-preview.is-bad { color: var(--muted); }
+.rest-skill .dq-order { margin: 0.35rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; counter-reset: rq; }
+.rest-skill .dq-order li { display: flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.5rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--background); counter-increment: rq; min-width: 0; }
+.rest-skill .dq-order li::before { content: counter(rq); font-weight: 800; color: var(--accent-light); min-width: 1rem; }
+.rest-skill .dq-order li > .dq-md { flex: 1; min-width: 0; }
+.rest-skill .dq-order-btns { display: flex; gap: 0.2rem; flex-shrink: 0; }
+.rest-skill .dq-order-btns button { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); cursor: pointer; }
+.rest-skill .dq-order-btns button:disabled { opacity: 0.35; cursor: default; }
+.rest-skill .dq-answer-list { margin: 0.2rem 0 0; padding-left: 1.2rem; }
+
+/* ── Chess ── */
+.rest-chess { min-width: 0; }
+.rest-chess-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin: 0.4rem 0; font-size: 0.8rem; }
+.rest-turn { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; border: 1px solid var(--muted); vertical-align: -0.05rem; }
+.rest-turn.is-w { background: #fff; }
+.rest-turn.is-b { background: #222; }
+.rest-board {
+  display: grid; grid-template-columns: repeat(8, minmax(0, 1fr));
+  width: min(100%, 264px); aspect-ratio: 1; margin: 0 auto;
+  border-radius: 6px; overflow: hidden; container-type: inline-size;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+.rest-sq { position: relative; display: grid; place-items: center; padding: 0; border: none; border-radius: 0; min-width: 0; aspect-ratio: 1; font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rest-sq:disabled { cursor: default; opacity: 1; }
+.rest-sq.is-light { background: #ecdab9; }
+.rest-sq.is-dark { background: #ae8a68; }
+.rest-sq.is-last.is-light { background: #f3e07a; }
+.rest-sq.is-last.is-dark { background: #d1b247; }
+.rest-sq.is-selected { box-shadow: inset 0 0 0 3px #3b82c4; }
+.rest-sq.is-check { background: radial-gradient(circle, #ff5a4f 0%, rgba(230, 60, 50, 0.7) 45%, transparent 75%), #ae8a68; }
+.rest-sq.is-light.is-check { background: radial-gradient(circle, #ff5a4f 0%, rgba(230, 60, 50, 0.7) 45%, transparent 75%), #ecdab9; }
+.rest-sq.is-target::after { content: ''; width: 30%; height: 30%; border-radius: 50%; background: rgba(20, 60, 30, 0.38); }
+.rest-sq.is-capture::after { content: ''; position: absolute; inset: 4%; border-radius: 50%; border: 3px solid rgba(20, 60, 30, 0.38); }
+.rest-sq:focus-visible { outline: 2px solid #3b82c4; outline-offset: -2px; }
+.rest-piece { font-size: 26px; font-size: 10.5cqi; line-height: 1; font-family: 'Segoe UI Symbol', 'Apple Symbols', 'DejaVu Sans', 'Noto Sans Symbols 2', serif; pointer-events: none; }
+.rest-piece.is-w { color: #fff; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 1px 1px rgba(0, 0, 0, 0.6); -webkit-text-stroke: 0.6px #222; }
+.rest-piece.is-b { color: #1a1a1a; text-shadow: 0 0 1px rgba(255, 255, 255, 0.5); }
+.rest-coord { position: absolute; font-size: 8px; font-size: 3.2cqi; font-weight: 700; line-height: 1; pointer-events: none; }
+.rest-coord.is-rank { top: 2px; left: 2px; }
+.rest-coord.is-file { bottom: 2px; right: 2px; }
+.rest-sq.is-light .rest-coord { color: #ae8a68; }
+.rest-sq.is-dark .rest-coord { color: #ecdab9; }
+.rest-chess-status { min-height: 1.5rem; }
+.rest-chess-status .rest-btn { margin-top: 0; min-height: 30px; padding: 0.2rem 0.6rem; }
+
+/* ── Quick math ── */
+.rest-math { min-width: 0; max-width: 300px; }
+.rest-math-top { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.4rem; font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rest-math-top .is-low { color: var(--danger); font-weight: 700; }
+.rest-math-problem { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0; padding: 0.4rem 0.6rem; border-radius: 10px; background: var(--input-bg); font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; transition: background 0.15s; }
+.rest-math-problem.is-right { background: rgba(var(--success-rgb), 0.18); }
+.rest-math-problem.is-wrong { background: rgba(var(--danger-rgb), 0.16); }
+.rest-math-typed { min-width: 2.5ch; border-bottom: 2px solid var(--accent-light); color: var(--accent-light); }
+.rest-math-flash { margin-left: auto; font-size: 0.85rem; }
+.rest-math-problem.is-right .rest-math-flash { color: var(--success); }
+.rest-math-problem.is-wrong .rest-math-flash { color: var(--danger); }
+.rest-keypad { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.3rem; }
+.rest-keypad button { min-height: 42px; border-radius: 9px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 1.15rem; font-weight: 700; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.rest-keypad button:active { background: rgba(var(--accent-rgb), 0.2); }
+.rest-keypad .is-skip { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
