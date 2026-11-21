@@ -7,6 +7,7 @@ import EntryEditSheet from '@/components/food/EntryEditSheet';
 import FoodSettingsSheet from '@/components/food/FoodSettingsSheet';
 import FoodSummary from '@/components/food/FoodSummary';
 import FoodWeekView from '@/components/food/FoodWeekView';
+import RecipeSheet from '@/components/food/RecipeSheet';
 import PageHeader from '@/components/workout/PageHeader';
 import Sheet from '@/components/workout/Sheet';
 import { amountLabel, dayLabel, fmt, foodApi, FoodApiError, localDateKey, logChange, shiftKey, type DayData, type LogResponse } from '@/lib/food/client';
@@ -31,6 +32,7 @@ export default function FoodPage() {
   const [error, setError] = useState('');
   const [signedOut, setSignedOut] = useState(false);
   const [adding, setAdding] = useState<Meal | null>(null);
+  const [fromRecipe, setFromRecipe] = useState<Meal | null>(null);
   const [editing, setEditing] = useState<LogEntry | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savingMeal, setSavingMeal] = useState<Meal | null>(null);
@@ -155,10 +157,14 @@ export default function FoodPage() {
       {tab === 'day' && day && (
         <>
           <FoodSummary totals={day.totals} targets={day.targets} exerciseKcal={day.exerciseKcal} addExercise={day.settings.addExercise} />
-          <button type="button" className="workout-btn-primary" style={{ marginTop: 0, marginBottom: '1rem' }}
-            onClick={() => setAdding(date === today ? mealForTime(new Date()) : 'snack')}>
-            + Add food
-          </button>
+          <div className="food-add-row">
+            <button type="button" className="workout-btn-primary" onClick={() => setAdding(date === today ? mealForTime(new Date()) : 'snack')}>
+              + Add food
+            </button>
+            <button type="button" className="food-recipe-btn" onClick={() => setFromRecipe(date === today ? mealForTime(new Date()) : 'snack')}>
+              <span aria-hidden>🍳</span> From a recipe
+            </button>
+          </div>
           {MEALS.map((meal) => {
             const entries = day.entries.filter((e) => e.meal === meal);
             const kcal = day.meals[meal]?.kcal ?? 0;
@@ -199,6 +205,9 @@ export default function FoodPage() {
 
       {adding && day && (
         <AddFoodSheet date={date} meal={adding} day={day} onChanged={applied} onClose={() => setAdding(null)} />
+      )}
+      {fromRecipe && day && (
+        <RecipeSheet date={date} meal={fromRecipe} onChanged={applied} onDone={(text) => setToast({ text })} onClose={() => setFromRecipe(null)} />
       )}
       {editing && (
         <EntryEditSheet entry={editing} date={date} onChanged={applied} onDelete={(e) => void remove(e)} onClose={() => setEditing(null)} />

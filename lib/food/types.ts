@@ -17,8 +17,11 @@ export type Nutrients = {
   satFat?: number;
 };
 
-/** Where a food came from. "custom" = typed in from a label here; "quick" = calories only, no food. */
-export type FoodSource = 'custom' | 'usda' | 'fatsecret' | 'off' | 'quick';
+/**
+ * Where a food came from. "custom" = typed in from a label here; "quick" = calories only, no food;
+ * "recipe" = a dish from /recipes, worked out from its ingredients (foodId `recipe:<recipeId>`).
+ */
+export type FoodSource = 'custom' | 'usda' | 'fatsecret' | 'off' | 'quick' | 'recipe';
 
 export const SOURCE_LABELS: Record<FoodSource, string> = {
   custom: 'My foods',
@@ -26,6 +29,7 @@ export const SOURCE_LABELS: Record<FoodSource, string> = {
   fatsecret: 'FatSecret',
   off: 'Open Food Facts',
   quick: 'Quick add',
+  recipe: 'Recipe',
 };
 
 /** One way to measure a food: "1 cup", "100 g", "1 bar (45 g)". Nutrients are for one of it. */
@@ -113,9 +117,18 @@ export type FoodSettings = {
   addExercise: boolean;
 };
 
+/**
+ * A recipe ingredient matched by hand, so every recipe using it starts there:
+ * the food and serving, and how many of that serving one of the recipe's units
+ * comes to (`perUnit` per `unit`: "g", "ml", "each", "clove"…), when known.
+ */
+export type RecipeMatchPref = { foodId: string; servingId?: string; perUnit?: number; unit?: string };
+
 /** One account's food file: .data/food/logs/<userId>.json */
 export type FoodUserData = {
   days: Record<string, LogEntry[]>;
   meals: SavedMeal[];
   settings: FoodSettings;
+  /** Corrections from logging recipes, by the recipe's ingredient key ("chicken thigh"). */
+  recipeMatches: Record<string, RecipeMatchPref>;
 };

@@ -101,7 +101,7 @@ export type SearchHit = { food: Food; score: number };
 export type Usage = { count: number; last: string };
 
 /** Sources in the order they win a tie or a duplicate: your own first, then the most reliable. */
-const SOURCE_RANK: Record<FoodSource, number> = { custom: 0, fatsecret: 1, usda: 2, off: 3, quick: 4 };
+const SOURCE_RANK: Record<FoodSource, number> = { custom: 0, fatsecret: 1, usda: 2, off: 3, quick: 4, recipe: 5 };
 
 /**
  * One list from every source: duplicates (same id, or same name and brand)

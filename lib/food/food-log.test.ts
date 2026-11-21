@@ -6,6 +6,7 @@ import {
   normalizeFoodData, recentFoods, shiftDate, snapshotFor, usageStats, type LogAction, type ResolvedItem,
 } from './log';
 import { estimateMaintenance, slopePerDay } from './maintenance';
+import { recipeFoodId, recipeSnapshot } from './recipe-match';
 import { exerciseKcalFor, resolveTargets } from './targets';
 import type { Food, FoodUserData } from './types';
 
@@ -136,6 +137,50 @@ test('usage, recent and frequent foods come from the log, quick adds aside', () 
   assert.equal(recent[0].servingId, '100g');
   assert.equal(recent[0].amount, 0.8);
   assert.deepEqual(frequentFoods(data, '2026-11-20').map((f) => f.foodId), ['usda:1']);
+});
+
+// ─── Recipes ──────────────────────────────────────────────────────────────────
+
+const recipeItem = (amount = 1.5): ResolvedItem => ({
+  foodId: recipeFoodId('burrito-bowls'),
+  servingId: 's',
+  amount,
+  snapshot: recipeSnapshot('Chicken burrito bowls', { kcal: 612, protein: 41, carbs: 60, fat: 19 }, 4),
+});
+
+test('a recipe logs as one entry and remembers corrected matches', () => {
+  const data = emptyFoodData();
+  const [entry] = apply(data, {
+    type: 'recipe', date: '2026-11-20', meal: 'dinner', item: recipeItem(),
+    remember: { 'chicken thigh': { foodId: 'usda:5', servingId: 'g', perUnit: 1, unit: 'g' }, 'Bad Key': { foodId: 'usda:1' } },
+  });
+  assert.equal(entry.foodId, 'recipe:burrito-bowls');
+  assert.equal(entry.snapshot.name, 'Chicken burrito bowls · recipe');
+  assert.equal(entry.snapshot.source, 'recipe');
+  assert.equal(dayTotals(data.days['2026-11-20']).kcal, 918);
+  assert.deepEqual(data.recipeMatches, { 'chicken thigh': { foodId: 'usda:5', servingId: 'g', perUnit: 1, unit: 'g' } });
+
+  // A later correction replaces the earlier one for that ingredient.
+  apply(data, { type: 'recipe', date: '2026-11-20', meal: 'lunch', item: recipeItem(1), remember: { 'chicken thigh': { foodId: 'usda:6' } } });
+  assert.deepEqual(data.recipeMatches, { 'chicken thigh': { foodId: 'usda:6' } });
+  assert.throws(() => apply(data, { type: 'recipe', date: '2026-11-20', meal: 'brunch' as never, item: recipeItem() }), FoodInputError);
+  assert.throws(() => apply(data, { type: 'recipe', date: '2026-11-20', meal: 'lunch', item: recipeItem(0) }), FoodInputError);
+
+  // Stored and read back: the recipe id and source survive, and it's a recent food like any other.
+  const back = normalizeFoodData(JSON.parse(JSON.stringify(data)));
+  assert.equal(back.days['2026-11-20'][0].foodId, 'recipe:burrito-bowls');
+  assert.equal(back.days['2026-11-20'][0].snapshot.source, 'recipe');
+  assert.deepEqual(back.recipeMatches, data.recipeMatches);
+  assert.deepEqual(recentFoods(back).map((r) => r.foodId), ['recipe:burrito-bowls']);
+  assert.equal(usageStats(back)['recipe:burrito-bowls'].count, 2);
+});
+
+test('food files from before recipes still load', () => {
+  const old = { days: { '2026-11-19': [{ id: 'a', meal: 'lunch', foodId: 'usda:1', servingId: 'p0', amount: 1, snapshot: snapshotFor(oats, oats.servings[0]), at: '2026-11-19T12:00:00Z' }] }, meals: [], settings: {} };
+  const data = normalizeFoodData(old);
+  assert.equal(data.days['2026-11-19'].length, 1);
+  assert.deepEqual(data.recipeMatches, {});
+  assert.deepEqual(emptyFoodData().recipeMatches, {});
 });
 
 // ─── Targets ──────────────────────────────────────────────────────────────────

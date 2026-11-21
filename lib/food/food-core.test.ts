@@ -33,7 +33,9 @@ test('scale, add, sum and round nutrients', () => {
   assert.deepEqual(scaleNutrients(a, 1.5), { kcal: 150, protein: 15, carbs: 7.5, fat: 3, fiber: 1.5 });
   assert.deepEqual(addNutrients(a, b), { kcal: 150, protein: 11, carbs: 15, fat: 2, fiber: 1, sodium: 100 });
   assert.deepEqual(sumNutrients([]), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
-  assert.deepEqual(roundNutrients({ kcal: 99.6, protein: 1.04, carbs: 1.05, fat: 0.333, sodium: 10.5 }), { kcal: 100, protein: 1, carbs: 1.1, fat: 0.3, sodium: 11 });
+  assert.deepEqual(roundNutrients({ kcal: 99.6, protein: 1.04, carbs: 1.05, fat: 0.333, sodium: 10.5 }), { kcal: 100, protein: 1, carbs: 1.1, fat: 0.333, sodium: 11 });
+  // A "1 g" serving keeps its decimals, so 450 of them add up right.
+  assert.deepEqual(roundNutrients({ kcal: 1.6512, protein: 0.3102, carbs: 0, fat: 0.0357, sodium: 0.8 }), { kcal: 1.65, protein: 0.31, carbs: 0, fat: 0.036, sodium: 0.8 });
   assert.ok(isNutrients(a));
   assert.ok(!isNutrients({ kcal: 1, protein: 1, carbs: 1 }));
   assert.ok(!isNutrients({ kcal: -1, protein: 1, carbs: 1, fat: 1 }));

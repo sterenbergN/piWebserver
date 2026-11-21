@@ -3,7 +3,7 @@ import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '
 import { generateId } from '@/lib/workout/data';
 import { FoodInputError } from '@/lib/food/foods';
 import { applyLogAction, dayTotals, isDateKey, isMeal, mealTotals, type LogAction } from '@/lib/food/log';
-import { resolveItem, resolveItems, type ItemInput } from '@/lib/food/resolve';
+import { resolveItem, resolveItems, resolveRecipeLog, type ItemInput } from '@/lib/food/resolve';
 import { updateFoodData } from '@/lib/food/store';
 
 // Changes to the signed-in account's food diary: POST { action: { type, … } }.
@@ -17,6 +17,8 @@ import { updateFoodData } from '@/lib/food/store';
 //   copy-meal    { fromDate, fromMeal, date, meal }
 //   save-meal    { name, items }        save-meal-from { name, date, meal }
 //   rename-meal  { id, name }           remove-meal { id }
+//   recipe       { date, meal, recipeId, servings, use?: 'lines' | 'recipe', lines: [{ key, foodId, servingId, amount, changed? }] }
+//                One entry for the dish, worked out here from its ingredients; changed lines are remembered.
 
 const PRIVATE = { 'Cache-Control': 'no-store, private' };
 
@@ -27,6 +29,8 @@ async function prepare(userId: string, raw: Record<string, any>): Promise<LogAct
       return { type: 'add', date: raw.date, meal: raw.meal, items: await resolveItems(userId, raw.items) };
     case 'save-meal':
       return { type: 'save-meal', name: raw.name, items: await resolveItems(userId, raw.items) };
+    case 'recipe':
+      return resolveRecipeLog(userId, raw);
     case 'edit': {
       const action: Extract<LogAction, { type: 'edit' }> = { type: 'edit', date: raw.date, id: String(raw.id || ''), amount: raw.amount, meal: raw.meal, moveTo: raw.moveTo };
       if (typeof raw.servingId === 'string' && typeof raw.foodId === 'string') {

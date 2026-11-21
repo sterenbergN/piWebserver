@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { generateId } from '@/lib/workout/data';
-import { buildCustomFood, FoodInputError, type CustomFoodInput } from '@/lib/food/foods';
+import { buildCustomFood, FoodInputError, forViewer, type CustomFoodInput } from '@/lib/food/foods';
 import { getFood, keepInLibrary } from '@/lib/food/sources';
 import { removeCustomFood } from '@/lib/food/sources/library';
 import { createLimiter } from '@/lib/security/rate-limit';
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     const id = new URL(request.url).searchParams.get('id') || '';
     const { food, notice } = await getFood(id.slice(0, 100), userId);
     if (!food) throw new ApiError(404, notice || 'Couldn’t find that food.');
-    return NextResponse.json({ success: true, food }, { headers: PRIVATE });
+    return NextResponse.json({ success: true, food: forViewer(food) }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load food failed');
   }

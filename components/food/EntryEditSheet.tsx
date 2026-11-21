@@ -34,7 +34,8 @@ export default function EntryEditSheet({ entry, date, onChanged, onDelete, onClo
 
   useEffect(() => {
     let live = true;
-    if (entry.foodId === 'quick') { setFood(foodFromEntry(entry)); return; }
+    // Quick adds and recipes are only their snapshot: there's no food to fetch.
+    if (entry.foodId === 'quick' || entry.snapshot.source === 'recipe') { setFood(foodFromEntry(entry)); return; }
     foodApi<{ food: Food }>(`/api/food/foods?id=${encodeURIComponent(entry.foodId)}`)
       .then((res) => {
         if (!live) return;

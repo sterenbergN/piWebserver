@@ -4,6 +4,7 @@ import { usageStats } from '@/lib/food/log';
 import { dateParam } from '@/lib/food/resolve';
 import { searchFoods } from '@/lib/food/sources';
 import { loadFoodData } from '@/lib/food/store';
+import { forViewer } from '@/lib/food/foods';
 
 // Food search across every source for the signed-in account: ?q=…&more=1&date=YYYY-MM-DD.
 // Foods this account logs often rank first.
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({
       success: true,
-      results: result.results.map((h) => ({ food: h.food, source: h.source })),
+      results: result.results.map((h) => ({ food: forViewer(h.food), source: h.source })),
       notices: result.notices,
       searched: result.searched,
       canSearchMore: result.canSearchMore,

@@ -6,7 +6,7 @@ import { NUTRIENT_KEYS, type Food, type FoodSource, type Nutrients, type Serving
 
 export const MAX_NAME = 120;
 export const MAX_SERVINGS = 20;
-const SOURCES: FoodSource[] = ['custom', 'usda', 'fatsecret', 'off', 'quick'];
+const SOURCES: FoodSource[] = ['custom', 'usda', 'fatsecret', 'off', 'quick', 'recipe'];
 const SOURCE_ID = /^[\w.-]{1,64}$/;
 const SERVING_ID = /^[\w.-]{1,40}$/;
 
@@ -52,7 +52,8 @@ export function cleanFood(raw: unknown): Food {
   if (!raw || typeof raw !== 'object') throw new FoodInputError('Missing food.');
   const r = raw as Record<string, unknown>;
   const parsed = parseFoodId(r.id);
-  if (!parsed || parsed.source === 'quick') throw new FoodInputError('Unknown food.');
+  // Quick adds and recipes are diary entries, never foods kept in the library.
+  if (!parsed || parsed.source === 'quick' || parsed.source === 'recipe') throw new FoodInputError('Unknown food.');
   const name = cleanText(r.name, MAX_NAME);
   if (!name) throw new FoodInputError('A food needs a name.');
   const seen = new Set<string>();
@@ -124,4 +125,11 @@ export function macroLine(n: Nutrients): string {
 /** True when two nutrient sets are the same after rounding. */
 export function sameNutrients(a: Nutrients, b: Nutrients) {
   return NUTRIENT_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? null));
+}
+
+/** A food as sent to the browser: the library's bookkeeping (who added it, when) stays on the server. */
+export function forViewer<T extends Food | null>(food: T): T {
+  if (!food) return food;
+  const { savedAt: _s, fetchedAt: _f, createdBy: _c, ...rest } = food as Food & { savedAt?: string; fetchedAt?: string; createdBy?: string };
+  return rest as T;
 }

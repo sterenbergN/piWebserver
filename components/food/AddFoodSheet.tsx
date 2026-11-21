@@ -10,12 +10,14 @@ import BarcodeEntry from './BarcodeEntry';
 import CustomFoodForm from './CustomFoodForm';
 import FoodPicker from './FoodPicker';
 import QuickAddForm from './QuickAddForm';
+import { RecipeImport } from './RecipeSheet';
 
 type View =
   | { kind: 'home' }
   | { kind: 'pick'; food: Food; servingId?: string; amount?: number }
   | { kind: 'barcode' }
   | { kind: 'quick' }
+  | { kind: 'recipe' }
   | { kind: 'custom'; barcode?: string; name?: string };
 
 const BADGE: Record<SearchResult['source'], [string, string]> = {
@@ -117,6 +119,8 @@ export default function AddFoodSheet({ date, meal: initialMeal, day, onChanged, 
   async function openRecent(r: RecentFood) {
     setError('');
     try {
+      // A recipe is only ever its snapshot: there's no food to fetch.
+      if (r.foodId.startsWith('recipe:')) throw new Error('recipe');
       const res = await foodApi<{ food: Food }>(`/api/food/foods?id=${encodeURIComponent(r.foodId)}`);
       setView({ kind: 'pick', food: res.food, servingId: r.servingId, amount: r.amount });
     } catch {
@@ -127,7 +131,8 @@ export default function AddFoodSheet({ date, meal: initialMeal, day, onChanged, 
     }
   }
 
-  const title = view.kind === 'barcode' ? 'Barcode' : view.kind === 'quick' ? 'Quick add' : view.kind === 'custom' ? 'New food' : `Add to ${MEAL_LABELS[meal]}`;
+  const title = view.kind === 'barcode' ? 'Barcode' : view.kind === 'quick' ? 'Quick add' : view.kind === 'custom' ? 'New food'
+    : view.kind === 'recipe' ? 'From a recipe' : `Add to ${MEAL_LABELS[meal]}`;
   const back = () => { setError(''); setView({ kind: 'home' }); };
 
   const recentRow = (r: RecentFood) => (
@@ -163,6 +168,7 @@ export default function AddFoodSheet({ date, meal: initialMeal, day, onChanged, 
       {view.kind === 'quick' && (
         <QuickAddForm busy={busy} onBack={back} onAdd={({ name, nutrients }) => void run({ type: 'quick', date, meal, name, nutrients }, `${Math.round(nutrients.kcal)} kcal`)} />
       )}
+      {view.kind === 'recipe' && <RecipeImport date={date} meal={meal} busy={busy} onLog={run} onBack={back} />}
       {view.kind === 'custom' && (
         <CustomFoodForm barcode={view.barcode} initialName={view.name} onBack={back} onSaved={(food) => setView({ kind: 'pick', food })} />
       )}
@@ -177,10 +183,11 @@ export default function AddFoodSheet({ date, meal: initialMeal, day, onChanged, 
 
           {results === null ? (
             <>
-              <div className="food-tools">
+              <div className="food-tools is-four">
                 <button type="button" className="food-tool" onClick={() => setView({ kind: 'barcode' })}><span aria-hidden>🔢</span><span>Barcode</span></button>
                 <button type="button" className="food-tool" onClick={() => setView({ kind: 'quick' })}><span aria-hidden>⚡</span><span>Quick add</span></button>
                 <button type="button" className="food-tool" onClick={() => setView({ kind: 'custom' })}><span aria-hidden>🏷️</span><span>From a label</span></button>
+                <button type="button" className="food-tool" onClick={() => setView({ kind: 'recipe' })}><span aria-hidden>🍳</span><span>From a recipe</span></button>
               </div>
               {day.previous.meals.length > 0 && (
                 <div className="workout-chip-list" style={{ marginBottom: '0.75rem' }}>

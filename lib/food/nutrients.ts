@@ -33,22 +33,27 @@ export function cleanNutrients(raw: unknown): Nutrients | null {
   if (kcal === null || kcal < 0) return null;
   const clamp = (key: keyof Nutrients, v: number) => Math.min(Math.max(v, 0), MAX[key]);
   const out: Nutrients = {
-    kcal: round(clamp('kcal', kcal), 0),
-    protein: round(clamp('protein', toNumber(r.protein) ?? 0)),
-    carbs: round(clamp('carbs', toNumber(r.carbs) ?? 0)),
-    fat: round(clamp('fat', toNumber(r.fat) ?? 0)),
+    kcal: clamp('kcal', kcal),
+    protein: clamp('protein', toNumber(r.protein) ?? 0),
+    carbs: clamp('carbs', toNumber(r.carbs) ?? 0),
+    fat: clamp('fat', toNumber(r.fat) ?? 0),
   };
   for (const key of OPTIONAL) {
     const v = toNumber(r[key]);
-    if (v !== null && v >= 0) out[key] = round(clamp(key, v), key === 'sodium' ? 0 : 1);
+    if (v !== null && v >= 0) out[key] = clamp(key, v);
   }
-  return out;
+  return roundNutrients(out);
 }
 
 export function round(n: number, places = 1) {
   const f = 10 ** places;
   return Math.round(n * f) / f;
 }
+
+// Small amounts keep more places: a "1 g" serving of chicken is 1.65 kcal, and
+// rounding it to 2 would make "450 × 1 g" log 900 kcal instead of 743.
+const kcalPlaces = (v: number) => (v < 10 ? 2 : 0);
+const gramPlaces = (v: number) => (v < 1 ? 3 : 1);
 
 /** `n` times `factor`, optional nutrients only where known. Not rounded. */
 export function scaleNutrients(n: Nutrients, factor: number): Nutrients {
@@ -68,10 +73,11 @@ export function sumNutrients(list: Nutrients[]): Nutrients {
   return list.reduce(addNutrients, zeroNutrients());
 }
 
-/** Rounded for display and storage: kcal and sodium whole, grams to 0.1. */
+/** Rounded for storage: kcal and sodium whole and grams to 0.1, with more places for small amounts. */
 export function roundNutrients(n: Nutrients): Nutrients {
-  const out: Nutrients = { kcal: Math.round(n.kcal), protein: round(n.protein), carbs: round(n.carbs), fat: round(n.fat) };
-  for (const key of OPTIONAL) if (n[key] !== undefined) out[key] = key === 'sodium' ? Math.round(n[key]!) : round(n[key]!);
+  const g = (v: number) => round(v, gramPlaces(v));
+  const out: Nutrients = { kcal: round(n.kcal, kcalPlaces(n.kcal)), protein: g(n.protein), carbs: g(n.carbs), fat: g(n.fat) };
+  for (const key of OPTIONAL) if (n[key] !== undefined) out[key] = key === 'sodium' ? round(n[key]!, kcalPlaces(n[key]!)) : g(n[key]!);
   return out;
 }
 

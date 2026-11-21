@@ -1,8 +1,9 @@
 import { cleanFood, cleanText, FoodInputError, parseFoodId } from './foods';
 import { cleanNutrients, roundNutrients, scaleNutrients, sumNutrients, zeroNutrients } from './nutrients';
+import { cleanRecipeMatches, MAX_REMEMBERED } from './recipe-match';
 import type { Usage } from './search';
 import {
-  MEALS, type EntrySnapshot, type Food, type FoodSettings, type FoodSource, type FoodUserData, type LogEntry, type Meal, type Nutrients, type SavedMeal, type Serving,
+  MEALS, type EntrySnapshot, type Food, type FoodSettings, type FoodSource, type FoodUserData, type LogEntry, type Meal, type Nutrients, type RecipeMatchPref, type SavedMeal, type Serving,
 } from './types';
 
 // One account's food diary: days of entries, saved meals and settings, and the
@@ -16,11 +17,11 @@ export const MAX_MEAL_ITEMS = 40;
 export const MAX_AMOUNT = 5000;
 const ID = /^[\w-]{1,40}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const SOURCES: FoodSource[] = ['custom', 'usda', 'fatsecret', 'off', 'quick'];
+const SOURCES: FoodSource[] = ['custom', 'usda', 'fatsecret', 'off', 'quick', 'recipe'];
 
 export const DEFAULT_SETTINGS: FoodSettings = { proteinPerLb: 0.8, planTarget: 'plan', addExercise: false };
 
-export const emptyFoodData = (): FoodUserData => ({ days: {}, meals: [], settings: { ...DEFAULT_SETTINGS } });
+export const emptyFoodData = (): FoodUserData => ({ days: {}, meals: [], settings: { ...DEFAULT_SETTINGS }, recipeMatches: {} });
 
 export function isDateKey(value: unknown): value is string {
   if (typeof value !== 'string' || !DATE.test(value)) return false;
@@ -139,7 +140,8 @@ export function normalizeFoodData(raw: unknown): FoodUserData {
     }
   }
   const meals = (Array.isArray(r.meals) ? r.meals : []).map(cleanSavedMeal).filter((m): m is SavedMeal => !!m).slice(0, MAX_SAVED_MEALS);
-  return { days, meals, settings: cleanSettings(r.settings, DEFAULT_SETTINGS) };
+  // Files from before recipes could be logged have no corrections yet.
+  return { days, meals, settings: cleanSettings(r.settings, DEFAULT_SETTINGS), recipeMatches: cleanRecipeMatches(r.recipeMatches) };
 }
 
 // ─── Changes ──────────────────────────────────────────────────────────────────
@@ -157,7 +159,9 @@ export type LogAction =
   | { type: 'save-meal'; name: string; items: ResolvedItem[] }
   | { type: 'save-meal-from'; name: string; date: string; meal: Meal }
   | { type: 'rename-meal'; id: string; name: string }
-  | { type: 'remove-meal'; id: string };
+  | { type: 'remove-meal'; id: string }
+  /** A meal from a recipe: one entry, and any ingredient matches corrected on the way, remembered. */
+  | { type: 'recipe'; date: string; meal: Meal; item: ResolvedItem; remember?: Record<string, RecipeMatchPref> };
 
 function dayOf(data: FoodUserData, date: unknown): LogEntry[] {
   if (!isDateKey(date)) throw new FoodInputError('Unknown day.');
@@ -281,6 +285,16 @@ export function applyLogAction(data: FoodUserData, action: LogAction, now: Date,
     case 'remove-meal':
       data.meals = data.meals.filter((m) => m.id !== action.id);
       return [];
+    case 'recipe': {
+      if (!isMeal(action.meal)) throw new FoodInputError('Pick a meal.');
+      const entry = entryFrom(action.meal, action.item);
+      pushEntries(data, action.date, [entry]);
+      // The latest corrections go last, so when there are too many the oldest are the ones dropped.
+      const fresh = cleanRecipeMatches(action.remember);
+      const kept = Object.entries(data.recipeMatches).filter(([key]) => !(key in fresh));
+      data.recipeMatches = Object.fromEntries([...kept, ...Object.entries(fresh)].slice(-MAX_REMEMBERED));
+      return [entry];
+    }
     default:
       throw new FoodInputError('Unknown change.');
   }
