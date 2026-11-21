@@ -1,0 +1,98 @@
+/* Wishlist: lists, items, sheets. Uses the site's colour variables so it follows light/dark. */
+.wl-page { max-width: 860px; margin: 0 auto; padding: 0 0 3rem; display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+.wl-page h1 { margin: 0; font-size: 1.6rem; }
+.wl-page h2 { margin: 0; font-size: 1.2rem; }
+.wl-sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
+.wl-note { margin: 0.4rem 0 0; font-size: 0.9rem; white-space: pre-wrap; }
+.wl-empty { color: var(--muted); margin: 0.5rem 0; }
+.wl-error { color: var(--danger); font-size: 0.9rem; margin: 0.25rem 0; }
+.wl-notice { margin: 0; padding: 0.5rem 0.7rem; border-radius: 8px; background: var(--surface-hover); font-size: 0.88rem; }
+.wl-hint { color: var(--muted); font-size: 0.82rem; margin: 0.25rem 0 0; }
+.wl-hint-list { color: var(--muted); font-size: 0.85rem; margin: 0.25rem 0 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.wl-banner { margin: 0.6rem 0 0; padding: 0.55rem 0.75rem; border-radius: 10px; background: rgba(var(--accent-rgb), 0.12); border: 1px solid rgba(var(--accent-rgb), 0.3); font-size: 0.88rem; }
+
+.wl-card { background: var(--card-bg); border: 1px solid var(--surface-border); border-radius: 14px; padding: 1rem; display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+.wl-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.wl-link { background: none; border: 0; padding: 0; color: var(--accent-light); text-decoration: underline; cursor: pointer; font-size: inherit; }
+.wl-link:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+.wl-danger { color: var(--danger); }
+
+/* List chips */
+.wl-tabs { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.2rem; align-items: center; -webkit-overflow-scrolling: touch; }
+.wl-tabs-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); flex-shrink: 0; }
+.wl-tab { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.75rem; border-radius: 999px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font-size: 0.9rem; cursor: pointer; }
+.wl-tab em { font-style: normal; font-size: 0.75rem; color: var(--muted); }
+.wl-tab.is-on { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.wl-tab.is-on em { color: inherit; opacity: 0.8; }
+.wl-tab-add { border-style: dashed; color: var(--muted); }
+
+.wl-list-head { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: space-between; align-items: flex-start; }
+.wl-addbar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.wl-addbar input { flex: 1 1 14rem; min-width: 0; }
+.wl-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.wl-sort { display: inline-flex; gap: 0.4rem; align-items: center; margin-left: auto; font-size: 0.85rem; color: var(--muted); }
+.wl-sort select { width: auto; padding: 0.4rem 0.6rem; }
+.wl-list-order { justify-content: flex-end; font-size: 0.8rem; }
+
+/* Items */
+.wl-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.wl-item { display: flex; gap: 0.8rem; padding: 0.7rem; border: 1px solid var(--surface-border); border-radius: 12px; background: var(--surface-glass); min-width: 0; }
+.wl-item.is-got, .wl-item.is-taken { opacity: 0.65; }
+.wl-thumb { width: 84px; height: 84px; border-radius: 10px; object-fit: cover; flex-shrink: 0; background: var(--input-bg); }
+.wl-thumb-empty { display: grid; place-items: center; font-size: 1.6rem; color: var(--muted); }
+.wl-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.wl-item-top { display: flex; gap: 0.5rem; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+.wl-item-title { margin: 0; font-size: 1rem; line-height: 1.3; overflow-wrap: anywhere; }
+.wl-item-title a { color: inherit; text-decoration: underline; text-decoration-color: var(--surface-border); }
+.wl-item-title a:hover { text-decoration-color: var(--accent-light); }
+.wl-item-meta { margin: 0; display: flex; flex-wrap: wrap; gap: 0.2rem 0.7rem; font-size: 0.85rem; color: var(--muted); }
+.wl-item-meta strong { color: var(--foreground); }
+.wl-item-desc { margin: 0; font-size: 0.85rem; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.wl-item-note { margin: 0; font-size: 0.85rem; }
+.wl-got { color: var(--success); }
+.wl-pri { font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--surface-border); white-space: nowrap; color: var(--muted); }
+.wl-pri-must { color: var(--danger); border-color: rgba(var(--danger-rgb), 0.5); }
+.wl-pri-love { color: var(--accent-light); border-color: rgba(var(--accent-rgb), 0.5); }
+.wl-item-actions { margin-top: 0.2rem; }
+.wl-icon { width: 2.1rem; height: 2.1rem; border-radius: 8px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); cursor: pointer; }
+.wl-icon:disabled { opacity: 0.35; cursor: default; }
+
+/* Claiming */
+.wl-claim { margin-top: 0.3rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+.wl-claim p { margin: 0; font-size: 0.85rem; }
+.wl-claim-mine { color: var(--success); }
+.wl-claim-taken { color: var(--muted); }
+.wl-claim-form { display: flex; flex-direction: column; gap: 0.5rem; align-self: stretch; }
+.wl-claim-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
+.wl-public-head { padding-top: 0.5rem; }
+
+/* Sheets */
+.wl-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-end; justify-content: center; }
+.wl-sheet { width: 100%; max-width: 560px; max-height: 92dvh; overflow-y: auto; background: var(--background); border: 1px solid var(--surface-border); border-radius: 18px 18px 0 0; padding: 1rem 1rem calc(1.2rem + env(safe-area-inset-bottom)); }
+@media (min-width: 640px) { .wl-overlay { align-items: center; } .wl-sheet { border-radius: 18px; } }
+.wl-sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
+.wl-sheet-head h2 { margin: 0; font-size: 1.15rem; }
+.wl-x { width: 2.2rem; height: 2.2rem; border: 0; background: none; font-size: 1.6rem; line-height: 1; color: var(--muted); cursor: pointer; }
+.wl-form { display: flex; flex-direction: column; gap: 0.7rem; }
+.wl-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
+.wl-form label.wl-check { flex-direction: row; align-items: center; gap: 0.5rem; color: var(--foreground); }
+.wl-two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.wl-emoji-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.wl-emoji-row button { width: 2.4rem; height: 2.4rem; border-radius: 10px; border: 1px solid var(--surface-border); background: none; font-size: 1.2rem; cursor: pointer; }
+.wl-emoji-row button.is-on { border-color: var(--accent-light); background: rgba(var(--accent-rgb), 0.18); }
+.wl-image-edit { display: flex; gap: 0.7rem; align-items: flex-start; }
+.wl-image-edit > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.wl-details summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+.wl-details textarea { margin-top: 0.4rem; width: 100%; font-size: 0.8rem; }
+.wl-ideas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.wl-idea { padding: 0.7rem; border: 1px solid var(--surface-border); border-radius: 12px; display: flex; flex-direction: column; gap: 0.3rem; }
+.wl-idea h3 { margin: 0; font-size: 1rem; }
+.wl-idea p { margin: 0; font-size: 0.88rem; }
+.wl-idea .btn { text-decoration: none; }
+.wl-start h2 { font-size: 1.1rem; }
+.wl-start p { margin: 0; color: var(--muted); }
+
+@media (max-width: 480px) {
+  .wl-thumb { width: 68px; height: 68px; }
+  .wl-two { grid-template-columns: 1fr; }
+}

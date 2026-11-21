@@ -8,6 +8,7 @@ export const AI_TASKS = {
   syllabus: 'Dates from a syllabus',
   skills: 'Skills plans, schedules, questions and answers',
   notes: 'Recording summaries',
+  wishlist: 'Wishlist gift ideas',
 } as const;
 
 export type AiTask = keyof typeof AI_TASKS;
