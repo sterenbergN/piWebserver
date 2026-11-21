@@ -1,6 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { AI_FOLDER } from './ai/settings';
+
+/** Holds the FatSecret secret, which stays on the server like the AI key. */
+const FOOD_SETTINGS = '.data/food/settings.json';
 import { ZipWriter, extractZipEntry, readZipEntries, readZipEntry } from './zip-stream';
 
 // Backups of everything the site stores: private data (.data), home-page
@@ -130,8 +133,8 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
     // Party rooms are throwaway; tmp files are half-written. Reader books count as media:
     // they can be huge, and notes and reading positions (in .data/reader) are always kept.
     // The same goes for the PDFs, pictures and recordings in .data/notes-files, and the ink in .data/notes.
-    // The AI connection holds an API key, so it never leaves the server in a backup.
-    .filter((p) => !p.startsWith('.data/party/') && !p.startsWith(AI_FOLDER) && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
+    // The AI connection and the food settings hold API keys, so they never leave the server in a backup.
+    .filter((p) => !p.startsWith('.data/party/') && !p.startsWith(AI_FOLDER) && p !== FOOD_SETTINGS && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
   const content = (await walk(path.join(root(), 'public', 'content'))).map(rel);
   const uploads = (await walk(path.join(root(), 'public', 'uploads')))
     .map(rel)
@@ -148,6 +151,9 @@ const AREAS: [string, string[]][] = [
   ['Workouts & health', ['.data/workouts/']],
   ['Habits', ['.data/habits/']],
   ['Quick notes', ['.data/quick-notes/']],
+  ['Food diary & library', ['.data/food/']],
+  ['Wishlists', ['.data/wishlist/']],
+  ['Tickets', ['.data/tickets/']],
   ['Chores', ['.data/chores/']],
   ['Daily questions', ['.data/daily/']],
   ['Study tests & miss banks', ['.data/study/']],
@@ -276,7 +282,8 @@ export function isRestorablePath(entry: string) {
     && !normalized.split('/').includes('..')
     && RESTORE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
     && normalized !== '.data/backup-settings.json'
-    && !normalized.startsWith(AI_FOLDER);
+    && !normalized.startsWith(AI_FOLDER)
+    && normalized !== FOOD_SETTINGS;
 }
 
 /**

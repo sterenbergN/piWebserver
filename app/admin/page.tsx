@@ -7,16 +7,20 @@ import BackupsPanel from '@/components/admin/BackupsPanel';
 import DailyPanel from '@/components/admin/DailyPanel';
 import AiPanel from '@/components/admin/AiPanel';
 import AccountsPanel from '@/components/admin/AccountsPanel';
+import TicketsPanel from '@/components/admin/TicketsPanel';
+import FoodPanel from '@/components/admin/FoodPanel';
 import AdminQuickNav from '@/components/admin/AdminQuickNav';
 import './admin.css';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: '🖥️' },
   { id: 'accounts', label: 'Accounts', icon: '👥' },
+  { id: 'tickets', label: 'Tickets', icon: '🎫' },
   { id: 'updates', label: 'Updates', icon: '🚀' },
   { id: 'backups', label: 'Backups', icon: '💾' },
   { id: 'daily', label: 'Daily', icon: '🧠' },
   { id: 'ai', label: 'AI', icon: '✨' },
+  { id: 'food', label: 'Food', icon: '🍽️' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -24,6 +28,7 @@ export default function AdminDashboard() {
   const [tab, setTab] = useState<TabId>('overview');
   const [visited, setVisited] = useState<Set<TabId>>(() => new Set(['overview']));
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [newTickets, setNewTickets] = useState(0);
 
   const openTab = useCallback((id: TabId) => {
     setTab(id);
@@ -49,6 +54,14 @@ export default function AdminDashboard() {
     openTab(id);
     history.replaceState(null, '', `#${id}`);
   };
+  // New tickets get a dot on their tab; checked on load and again whenever the Tickets tab is left.
+  useEffect(() => {
+    if (tab === 'tickets') return;
+    fetch('/api/admin/tickets?count=1', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setNewTickets(typeof d?.new === 'number' ? d.new : 0))
+      .catch(() => {});
+  }, [tab]);
   const onUpdateStatus = useCallback((available: boolean) => setUpdateAvailable(available), []);
 
   const handleLogout = async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/'; };
@@ -69,6 +82,7 @@ export default function AdminDashboard() {
           <button key={t.id} role="tab" id={`tab-${t.id}`} aria-controls={`panel-${t.id}`} aria-selected={tab === t.id} className="adm-tab" onClick={() => choose(t.id)}>
             <span aria-hidden>{t.icon}</span>{t.label}
             {t.id === 'updates' && updateAvailable && <span className="adm-tab-dot" title="Update available" />}
+            {t.id === 'tickets' && newTickets > 0 && <span className="adm-tab-dot" title={`${newTickets} new`} />}
           </button>
         ))}
       </nav>
@@ -84,6 +98,8 @@ export default function AdminDashboard() {
               {t.id === 'backups' && <BackupsPanel />}
               {t.id === 'daily' && <DailyPanel />}
               {t.id === 'ai' && <AiPanel />}
+              {t.id === 'tickets' && <TicketsPanel />}
+              {t.id === 'food' && <FoodPanel />}
             </>
           )}
         </div>

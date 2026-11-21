@@ -17,7 +17,10 @@ import { getWorkoutData } from '@/lib/workout/data';
 import { isPhotoId, photoPath } from '@/lib/workout/photos';
 import { SESSIONS_FILE, type SharedSession } from '@/lib/workout/shared-session';
 import { findWorkoutUser, toSafeUser } from '@/lib/workout/users';
+import { readJson } from '@/lib/json-store';
 import { ZipWriter } from '@/lib/zip-stream';
+import { ticketsFile } from '@/lib/tickets/store';
+import { emptyTickets, normalizeTickets, toMine } from '@/lib/tickets/tickets';
 
 // "Download my data": a zip of one account's data, and only that account's.
 // Everything here is an allow-list: a file is named from the account's own id or
@@ -126,6 +129,9 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
   // Read-only: signing in to download shouldn't make a household or move a kitchen.
   const household = await findHousehold(userId);
 
+  // Tickets are one shared file: just this account's, as they see them (no admin-only note).
+  const myTickets = normalizeTickets(await readJson(ticketsFile(), emptyTickets())).tickets.filter((t) => t.userId === userId).map(toMine);
+
   // Skills: prefer the per-user folder layout (.data/skills/<userId>/skills.json), falling back to legacy <userId>.json.
   const skillsDir = skillsFolder(userId);
   const skillsDataFile = path.join(skillsDir, 'skills.json');
@@ -159,6 +165,10 @@ export async function collectAccountItems(userId: string): Promise<Item[]> {
     ...posts,
     { entry: 'habits.json', file: perUserFile('habits', userId) },
     { entry: 'quick-notes.json', file: perUserFile('quick-notes', userId) },
+    // The lists only: who's getting what (claims) belongs to the givers, not the list's owner.
+    { entry: 'wishlist.json', file: perUserFile(path.join('wishlist', 'lists'), userId) },
+    { entry: 'food/diary.json', file: perUserFile(path.join('food', 'logs'), userId) },
+    ...(myTickets.length ? [{ entry: 'tickets.json', json: { tickets: myTickets } }] : []),
     { entry: 'daily/answers.json', json: daily },
     ...(feedback.length ? [{ entry: 'daily/feedback.json', json: { entries: feedback } }] : []),
     { entry: 'loop-lab-notebook.json', file: perUserFile('loop-lab', userId) },

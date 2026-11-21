@@ -39,7 +39,7 @@ const LABELS: Record<string, string> = {
   workouts: 'Workouts', skills: 'Skills', party: 'Party games', 'party-prompts.json': 'Party prompts', chores: 'Chores',
   movies: 'Movies', golf: 'Golf', daily: 'Daily questions', 'private-posts': 'Private journal', 'blog-drafts.json': 'Blog drafts',
   'analytics.json': 'Visit log', 'stats-history.json': 'Pi stats history', 'account-exports': 'Account exports',
-  study: 'Study', habits: 'Habits', 'quick-notes': 'Quick notes', journal: 'Journal', 'loop-lab': 'Loop Lab',
+  study: 'Study', habits: 'Habits', 'quick-notes': 'Quick notes', food: 'Food log', wishlist: 'Wishlists', tickets: 'Tickets', journal: 'Journal', 'loop-lab': 'Loop Lab',
   // .cache
   'thumbs-v2': 'Photo thumbnails', thumbs: 'Old photo thumbnails', 'notes-transcribe': 'Speech-to-text model', 'notes-handwriting': 'Handwriting model',
   // code

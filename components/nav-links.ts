@@ -85,6 +85,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/reader', label: 'Reader', icon: '📖', blurb: 'The Library, and your own books and notes, with or without a connection', keywords: 'ebook epub pdf kindle reading annotate highlight offline library documents manuals papers audiobook' },
         { href: '/notes', label: 'Notes', icon: '✏️', blurb: 'Notebooks you write in, with or without a connection', keywords: 'goodnotes notability handwriting pencil notebook pdf annotate lecture recording offline', account: true },
         { href: '/quick-notes', label: 'Quick notes', icon: '🗒️', short: 'Jots', blurb: 'Jot things down from any page, check them off later', keywords: 'todo to-do reminder jot memo inbox scratch list remember learned til', account: true },
+        { href: '/wishlist', label: 'Wishlist', icon: '🎁', blurb: 'Things you’d love, to share for birthdays and Christmas', keywords: 'gifts gift ideas christmas birthday amazon wants presents share', account: true },
         { href: '/daily/leaderboard', label: 'Leaderboard', icon: '🏆', short: 'Ranks', blurb: 'How everyone’s doing', keywords: 'scores xp' },
       ],
       corners: [{
@@ -155,6 +156,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
       items: [
         { href: '/workout', label: 'Workout', icon: '🏋️', blurb: 'Plan, log and track your lifts', keywords: 'gym lift training', account: true },
         { href: '/workout/health', label: 'Health & plan', icon: '❤️', short: 'Health', blurb: 'Weight, sleep and your plan', keywords: 'body weight sleep nutrition', account: true },
+        { href: '/workout/food', label: 'Food log', icon: '🍽️', short: 'Food', blurb: 'Calories and macros, tied to your plan', keywords: 'calories nutrition macros diet fatsecret barcode eat meal tracker', account: true },
         { href: '/workout/analytics', label: 'Progress & coach', icon: '📈', short: 'Progress', blurb: 'Charts and what to do next', keywords: 'analytics charts coach', account: true },
         { href: '/workout/calculators', label: 'Lifting calculators', icon: '🧮', short: 'Calc', blurb: 'One-rep max, plates and more', keywords: 'one rep max 1rm plates' },
       ],
@@ -192,10 +194,12 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/loop-lab', label: 'Loop Lab', icon: '🎛️', blurb: 'Try control strategies on live processes', keywords: 'pid tuning control plc' },
         { href: '/tools#calculators', label: 'Calculators', icon: '🧮', blurb: 'Units and engineering sums', keywords: 'convert units' },
         { href: '/stats', label: 'Pi stats', icon: '📊', short: 'Stats', blurb: 'The Raspberry Pi running all this, live', keywords: 'server raspberry cpu memory' },
+        { href: '/stats/history', label: 'Site history', icon: '🕰️', short: 'History', blurb: 'How this site was built, commit by commit', keywords: 'git commits timeline changelog changes wayback checkpoints' },
         ...(isAdmin ? [{ href: '/admin', label: 'Admin', icon: '🔧', blurb: 'Backups, updates and content', keywords: 'settings backup' }] : []),
       ],
       ...(isAdmin ? { corners: [{ label: 'Admin only', items: [
         { href: '/admin#accounts', label: 'Accounts', icon: '👥', blurb: 'Who can sign in', keywords: 'users add people login' },
+        { href: '/admin#tickets', label: 'Tickets', icon: '🎫', blurb: 'Problems and ideas people sent in', keywords: 'feedback bugs reports support' },
       ] }] } : {}),
     },
     {
