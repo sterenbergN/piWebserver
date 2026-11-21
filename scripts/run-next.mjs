@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -61,6 +61,12 @@ if (command !== 'start') {
   }
   // Everything a device should keep to read any PDF with no connection.
   await writeFile(path.join(target, 'offline.json'), JSON.stringify(offline));
+}
+
+// The site's commit history, for /stats/history. The Pi has no .git, so it's written now and
+// ships in the release's public/ folder. It never fails the build: without git there's just no page data.
+if (command === 'build') {
+  spawnSync(process.execPath, [path.join(process.cwd(), 'scripts', 'site-history.mjs')], { stdio: 'inherit' });
 }
 
 const isWindows = process.platform === 'win32';

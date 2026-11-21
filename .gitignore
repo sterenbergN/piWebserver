@@ -56,6 +56,9 @@ next-env.d.ts
 # runtime stats (now stored in .data)
 /public/stats-history.json
 
+# commit history for /stats/history, made at build time (scripts/site-history.mjs)
+/public/site-history.json
+
 # release packaging output
 /release
 /dist

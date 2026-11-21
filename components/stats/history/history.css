@@ -1,0 +1,98 @@
+/* Styles for /stats/history. Everything is prefixed sh- so it can't touch other pages. */
+.sh-page { padding: 1.5rem 0 3rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.sh-page h1 { margin: 0; }
+.sh-lede { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.95rem; line-height: 1.5; }
+.sh-back { color: var(--muted); font-size: 0.85rem; text-decoration: none; }
+.sh-panel { padding: 1rem; min-width: 0; }
+.sh-panel h2 { margin: 0 0 0.15rem; font-size: 1.1rem; }
+.sh-sub { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.85rem; line-height: 1.45; }
+.sh-note { padding: 0.7rem 0.9rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--card-bg); font-size: 0.85rem; color: var(--muted); }
+
+.sh-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+@media (min-width: 640px) { .sh-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.sh-stat { padding: 0.8rem 0.9rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.sh-stat b { display: block; font-size: 1.55rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sh-stat span { display: block; margin-top: 0.2rem; font-size: 0.78rem; color: var(--muted); }
+
+/* heatmap */
+.sh-heat-scroll { overflow-x: auto; padding-bottom: 0.4rem; -webkit-overflow-scrolling: touch; }
+.sh-heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 13px); grid-auto-columns: 13px; gap: 3px; width: max-content; }
+.sh-heat-months { display: grid; grid-auto-flow: column; grid-auto-columns: 13px; gap: 3px; width: max-content; height: 1.1rem; font-size: 0.68rem; color: var(--muted); }
+.sh-heat-months span { white-space: nowrap; overflow: visible; }
+.sh-cell { width: 13px; height: 13px; border-radius: 3px; padding: 0; border: 0; background: color-mix(in srgb, var(--foreground) 9%, transparent); cursor: pointer; }
+.sh-cell.empty { background: transparent; cursor: default; }
+.sh-cell.l1 { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.sh-cell.l2 { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.sh-cell.l3 { background: color-mix(in srgb, var(--accent) 80%, transparent); }
+.sh-cell.l4 { background: var(--accent-light); }
+.sh-cell.picked { outline: 2px solid var(--foreground); outline-offset: 1px; }
+.sh-day { margin-top: 0.6rem; font-size: 0.85rem; }
+.sh-day ul { margin: 0.3rem 0 0; padding-left: 1.1rem; color: var(--muted); }
+
+.sh-chart { width: 100%; height: auto; display: block; }
+.sh-chart text { fill: var(--muted); font-size: 10px; }
+.sh-chart .grid { stroke: var(--surface-border); stroke-width: 1; }
+.sh-chart .line { fill: none; stroke: var(--accent-light); stroke-width: 2; }
+.sh-chart .fill { fill: var(--accent); opacity: 0.18; }
+.sh-chart .mark { stroke: var(--foreground); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+
+/* area chips */
+.sh-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.74rem; line-height: 1.4; border: 1px solid color-mix(in srgb, var(--chip) 55%, transparent); background: color-mix(in srgb, var(--chip) 16%, transparent); color: var(--foreground); cursor: pointer; font-family: inherit; white-space: nowrap; }
+.sh-chip.on { background: color-mix(in srgb, var(--chip) 45%, transparent); font-weight: 600; }
+.sh-chip.static { cursor: default; }
+.sh-chip i { font-style: normal; opacity: 0.6; }
+.sh-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+/* checkpoints */
+.sh-cp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.sh-cp-title { font-size: 1.05rem; font-weight: 700; }
+.sh-cp-when { color: var(--muted); font-size: 0.82rem; }
+.sh-slider { display: flex; align-items: center; gap: 0.5rem; margin: 0.8rem 0; }
+.sh-slider input[type='range'] { flex: 1; min-width: 0; height: 2.2rem; accent-color: var(--accent-light); }
+.sh-btn { border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); border-radius: 10px; min-width: 2.6rem; height: 2.4rem; font-size: 1rem; cursor: pointer; font-family: inherit; padding: 0 0.7rem; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.sh-btn:disabled { opacity: 0.35; cursor: default; }
+.sh-routes { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
+.sh-route { padding: 0.12rem 0.5rem; border-radius: 6px; font-size: 0.76rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--surface-border); background: var(--card-bg); }
+.sh-route.new { border-color: var(--success); color: var(--success-light); background: rgba(var(--success-rgb), 0.12); }
+.sh-route.gone { border-color: var(--danger); color: var(--danger); text-decoration: line-through; background: rgba(var(--danger-rgb), 0.1); }
+.sh-h3 { margin: 0.9rem 0 0; font-size: 0.82rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.sh-details summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); margin-top: 0.8rem; }
+
+/* areas */
+.sh-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 0.55rem; }
+.sh-area { text-align: left; padding: 0.7rem 0.8rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font-family: inherit; cursor: pointer; display: grid; gap: 0.25rem; }
+.sh-area.on { border-color: var(--chip); }
+.sh-area-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.sh-area-name { font-weight: 600; display: flex; align-items: center; gap: 0.4rem; }
+.sh-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--chip); flex: none; }
+.sh-area small { color: var(--muted); font-size: 0.74rem; }
+.sh-spark { width: 100%; height: 26px; display: block; }
+.sh-spark path { fill: none; stroke: var(--chip); stroke-width: 1.6; }
+
+/* connections */
+.sh-graph { width: 100%; max-width: 460px; height: auto; display: block; margin: 0 auto; touch-action: manipulation; }
+.sh-graph line { stroke: var(--foreground); }
+.sh-graph text { fill: var(--foreground); font-size: 10.5px; paint-order: stroke; stroke: var(--background); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.sh-graph circle { cursor: pointer; stroke: var(--background); stroke-width: 1.5; }
+.sh-pairs { list-style: none; margin: 0.7rem 0 0; padding: 0; display: grid; gap: 0.4rem; }
+.sh-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.6rem; font-size: 0.85rem; }
+.sh-pair .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--foreground) 10%, transparent); }
+.sh-pair .bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent-light); }
+.sh-pair b { font-variant-numeric: tabular-nums; }
+
+/* timeline */
+.sh-controls { display: grid; gap: 0.6rem; margin-bottom: 0.9rem; }
+.sh-search { width: 100%; padding: 0.6rem 0.8rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--input-bg); color: var(--foreground); font-size: 1rem; font-family: inherit; }
+.sh-month { margin: 1.1rem 0 0.2rem; font-size: 1rem; display: flex; justify-content: space-between; align-items: baseline; }
+.sh-month small { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+.sh-week { margin: 0.7rem 0 0.2rem; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.sh-commit { border-left: 2px solid var(--surface-border); margin-left: 0.2rem; padding: 0.15rem 0 0.15rem 0.75rem; }
+.sh-commit-btn { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0.3rem 0; color: var(--foreground); font-family: inherit; cursor: pointer; }
+.sh-commit-s { display: block; font-size: 0.92rem; line-height: 1.35; overflow-wrap: anywhere; }
+.sh-commit-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.3rem; font-size: 0.74rem; color: var(--muted); }
+.sh-plus { color: var(--success-light); font-variant-numeric: tabular-nums; }
+.sh-minus { color: var(--danger); font-variant-numeric: tabular-nums; }
+.sh-body { margin: 0.2rem 0 0.5rem; padding: 0.6rem 0.75rem; border-radius: 10px; background: var(--card-bg); font-size: 0.82rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+.sh-files { margin: 0.4rem 0 0; padding: 0; list-style: none; font-size: 0.76rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.sh-more { width: 100%; margin-top: 0.9rem; }
+.sh-link { color: var(--accent-light); font-size: 0.8rem; }

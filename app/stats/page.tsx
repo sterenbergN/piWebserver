@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, type ReactNode } from 'react';
+import Link from 'next/link';
 import CpuBreakdown from '@/components/stats/CpuBreakdown';
 import type { CpuDetail } from '@/lib/cpu-detail';
 
@@ -110,6 +111,15 @@ export default function StatsPage() {
           Auto-refresh every 10s
         </div>
       </div>
+
+      <Link href="/stats/history" className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', padding: '0.9rem 1.1rem', marginBottom: '1.25rem', textDecoration: 'none', color: 'inherit' }}>
+        <span aria-hidden style={{ fontSize: '1.6rem' }}>🕰️</span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <strong style={{ display: 'block' }}>How this site was built</strong>
+          <span style={{ opacity: 0.65, fontSize: '0.85rem' }}>Every commit, the work by area, and the site at past checkpoints</span>
+        </span>
+        <span aria-hidden style={{ opacity: 0.5 }}>›</span>
+      </Link>
 
       {loading && !stats ? (
         <p>Connecting to system services...</p>

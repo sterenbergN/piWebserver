@@ -23,7 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Full history: the History page under Stats is built from it.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
