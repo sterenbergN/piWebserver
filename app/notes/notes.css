@@ -268,9 +268,6 @@ label.nt-menu-title .nt-input { margin-top: 0.45rem; font-weight: 400; }
 }
 .nt-player-time { flex: none; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .nt-player-slider { flex: 1; min-width: 60px; width: 180px; height: 36px; accent-color: var(--nt-accent); }
-.nt-rec-dot { flex: none; width: 10px; height: 10px; margin-left: 0.25rem; border-radius: 50%; background: #f05a4f; animation: nt-pulse 1.4s ease-in-out infinite; }
-@keyframes nt-pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .nt-rec-dot { animation: none; } }
 .nt-player.is-cut { padding-left: 0.75rem; }
 .nt-player.is-cut .nt-player-time { flex: 1; min-width: 0; white-space: normal; text-align: left; line-height: 1.3; cursor: pointer; }
 
@@ -465,10 +462,9 @@ label.nt-menu-title .nt-input { margin-top: 0.45rem; font-weight: 400; }
 /* ─── Recording pill: docked at the edge, pulls out to show time and Stop ─── */
 .nt-rec-pill {
   position: absolute; left: 0; bottom: calc(var(--nt-bottom) + 10px); z-index: 3; display: flex; align-items: center; gap: 0.3rem;
-  max-width: calc(100vw - env(safe-area-inset-left) - 16px); padding: 0.15rem 0.1rem 0.15rem calc(env(safe-area-inset-left) + 0.55rem);
+  max-width: calc(100vw - env(safe-area-inset-left) - 16px); padding: 0.15rem 0.1rem 0.15rem calc(env(safe-area-inset-left) + 0.2rem);
   border-radius: 0 16px 16px 0; background: var(--nt-bar); color: var(--nt-fg); box-shadow: 0 0 0 1px var(--nt-line), 0 8px 20px -10px rgba(0, 0, 0, 0.55);
 }
-.nt-rec-pill .nt-rec-dot { margin-left: 0; }
 .nt-rec-panel { display: flex; align-items: center; gap: 0.5rem; max-width: 0; overflow: hidden; visibility: hidden; white-space: nowrap; transition: max-width 0.22s ease, visibility 0.22s; }
 .nt-rec-pill.is-open .nt-rec-panel { max-width: 16rem; visibility: visible; }
 .nt-rec-tab { flex: none; display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--nt-muted); cursor: pointer; transition: transform 0.22s ease; }

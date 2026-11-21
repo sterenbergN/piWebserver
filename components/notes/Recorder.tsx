@@ -328,7 +328,6 @@ function RecordingPill({ recorder, onOpen }: { recorder: Recorder; onOpen: () =>
   const time = fmtDuration(recorder.elapsed);
   return (
     <div className={`nt-rec-pill${open ? ' is-open' : ''}`} role="status">
-      <i className="nt-rec-dot" aria-hidden />
       <div className="nt-rec-panel">
         <button type="button" className="nt-player-time" tabIndex={open ? 0 : -1} onClick={onOpen}>Recording {time}</button>
         <button type="button" className="nt-btn is-small" tabIndex={open ? 0 : -1} onClick={() => void recorder.stop()}><Icon name="stop" /> Stop</button>
