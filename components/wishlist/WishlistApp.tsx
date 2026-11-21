@@ -8,6 +8,7 @@ import {
 } from '@/lib/wishlist/model';
 import GiverList, { Thumb } from './GiverList';
 import { IdeasSheet, ItemSheet, ListSheet, ShareSheet } from './Sheets';
+import { ReceivedSheet, TidySheet } from './Tidy';
 import { useWishlist } from './useWishlist';
 import './wishlist.css';
 
@@ -21,7 +22,7 @@ export default function WishlistApp() {
   const [sel, setSel] = useState<Selection | null>(null);
   const [sort, setSort] = useState<SortMode>('mine');
   const [sheet, setSheet] = useState<
-    | { type: 'newList'; kind: ListKind } | { type: 'editList' } | { type: 'item'; id: string | null } | { type: 'share' } | { type: 'ideas' } | null
+    | { type: 'newList'; kind: ListKind } | { type: 'editList' } | { type: 'item'; id: string | null } | { type: 'share' } | { type: 'ideas' } | { type: 'tidy' } | { type: 'received' } | null
   >(null);
   const [link, setLink] = useState('');
   const [adding, setAdding] = useState(false);
@@ -113,6 +114,12 @@ export default function WishlistApp() {
         <div>
           <h1><span aria-hidden>🎁</span> Wishlist</h1>
           <p className="wl-sub">Things you want, with links and pictures. Share a list so people know what to get you.</p>
+          {mine.length > 0 && (
+            <div className="wl-head-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'tidy' })}>🎉 After the occasion: tidy up</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'received' })}>📦 Received</button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -282,6 +289,8 @@ export default function WishlistApp() {
       {sheet?.type === 'share' && own && own.kind === 'mine' && (
         <ShareSheet list={own} onClose={() => setSheet(null)} onAct={(op) => w.act({ type: 'share', listId: own.id, op })} />
       )}
+      {sheet?.type === 'tidy' && <TidySheet lists={w.lists} onClose={() => setSheet(null)} onDone={() => void w.load()} />}
+      {sheet?.type === 'received' && <ReceivedSheet onClose={() => setSheet(null)} />}
       {sheet?.type === 'ideas' && own && <IdeasSheet list={own as OwnerList} onAdd={addIdea} onClose={() => setSheet(null)} />}
     </div>
   );

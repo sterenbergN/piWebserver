@@ -42,6 +42,8 @@ export async function editWishlist<R>(userId: string, fn: (data: WishlistData) =
     const next = normalizeWishlist(stored, newId);
     result = fn(next);
     stored.lists = next.lists;
+    stored.received = next.received;
+    stored.lastTidyAt = next.lastTidyAt;
     return next;
   });
   return { data, result };
@@ -134,7 +136,8 @@ export async function readImage(ownerId: string, id: string): Promise<Buffer | n
 
 /** Delete pictures no item uses any more. Files under an hour old are kept: they may be about to be saved. */
 export async function sweepImages(ownerId: string, data: WishlistData) {
-  const used = new Set(data.lists.flatMap((l) => l.items.map((i) => i.image)));
+  // Received things keep their picture after they leave the list.
+  const used = new Set([...data.lists.flatMap((l) => l.items.map((i) => i.image)), ...data.received.flatMap((g) => g.items.map((i) => i.image))]);
   let names: string[] = [];
   try {
     names = await fs.readdir(imageDir(ownerId));

@@ -7,6 +7,7 @@ import {
   WishlistInputError, type Claim, type WishlistAction, type WishlistData,
 } from './model';
 import { parseProductHtml, titleFromUrl } from './parse';
+import { applyReceivedAction, applyTidy, buildTidyRows } from './tidy';
 
 let n = 0;
 const newId = () => `id${++n}`;
@@ -147,4 +148,92 @@ test('import: notices a shop redirecting to a general page, but follows short li
   assert.equal(landedElsewhere(ikea, ikea.replace('www.', '')), false);
   assert.equal(landedElsewhere('https://amzn.to/3abc', 'https://www.amazon.com/dp/B0ABC'), false);
   assert.equal(landedElsewhere('https://shop.example/item/123', 'https://shop.example/item/123/blue-mug'), false);
+});
+
+// ---- Tidy-up ----------------------------------------------------------------------
+
+function claimed() {
+  const d = sample(); // L1: A (wants 2), B, C (got it myself)
+  const c = emptyClaims();
+  claimItem(c, d.lists[0].items[0], 'k:one', { qty: 1, name: 'Aunt May' }, newId, new Date('2026-12-20T10:00:00Z'));
+  claimItem(c, d.lists[0].items[1], 'u:wife', { qty: 1 }, newId, new Date('2026-12-21T10:00:00Z'));
+  return { d, c };
+}
+const nameFor = (who: string) => (who === 'u:wife' ? 'Sam' : 'Someone');
+const deps = { nameFor, newId, now: new Date('2026-12-26T09:00:00Z') };
+
+test('tidy preview: claimed items with giver names, newest first; for-lists are ignored', () => {
+  const { d, c } = claimed();
+  apply(d, { type: 'addList', id: 'F1', kind: 'for', fields: { name: 'Ideas' } });
+  const rows = buildTidyRows(d, c, {}, nameFor);
+  assert.deepEqual(rows.map((r) => r.itemId), ['B', 'A']);
+  assert.equal(rows[0].givers[0].name, 'Sam'); // household member: no typed name
+  assert.equal(rows[1].givers[0].name, 'Aunt May');
+  assert.equal(rows[1].listName, 'Christmas');
+  assert.equal(buildTidyRows(d, c, { since: '2026-12-21T00:00:00Z' }, nameFor).length, 1);
+  assert.equal(buildTidyRows(d, c, { listId: 'F1' }, nameFor).length, 0);
+});
+
+test('tidy apply: got items leave (or shrink), kept items stay, claims clear, history and marker are set', () => {
+  const { d, c } = claimed();
+  const result = applyTidy(d, c, { decisions: { A: 'got', B: 'keep' }, asOf: '2026-12-25T00:00:00Z', groupName: ' Christmas 2026 ' }, deps);
+  assert.equal(result.got, 1);
+  assert.equal(result.kept, 1);
+  // A wanted 2 and one was claimed: one remains on the list.
+  const a = d.lists[0].items.find((i) => i.id === 'A')!;
+  assert.equal(a.quantity, 1);
+  assert.ok(d.lists[0].items.some((i) => i.id === 'B'));
+  assert.equal(c.claims.length, 0);
+  assert.equal(d.received[0].name, 'Christmas 2026');
+  assert.deepEqual(d.received[0].items[0].givers, [{ name: 'Aunt May', qty: 1 }]);
+  assert.equal(d.received[0].items[0].thanked, false);
+  assert.equal(d.lastTidyAt, '2026-12-25T00:00:00Z');
+  // Kept item is free to claim again.
+  claimItem(c, d.lists[0].items.find((i) => i.id === 'B')!, 'k:new', {}, newId);
+  assert.equal(c.claims.length, 1);
+});
+
+test('tidy apply: fully claimed items are removed; claims after the preview and undecided rows are left alone; one-list tidy keeps the marker', () => {
+  const { d, c } = claimed();
+  claimItem(c, d.lists[0].items[0], 'k:two', { qty: 1 }, newId, new Date('2026-12-22T10:00:00Z'));
+  assert.equal(c.claims.length, 3);
+  // The preview was taken on the 21st at noon: k:two's claim came after it.
+  applyTidy(d, c, { decisions: { A: 'got' }, asOf: '2026-12-21T12:00:00Z', listId: 'L1' }, deps);
+  const a = d.lists[0].items.find((i) => i.id === 'A')!;
+  assert.equal(a.quantity, 1); // only the one claim shown was handled
+  assert.equal(d.received[0].items[0].quantity, 1);
+  assert.equal(d.received[0].name, 'Received 2026-12-26');
+  assert.equal(d.lastTidyAt, '');
+  assert.deepEqual(c.claims.map((x) => x.who).sort(), ['k:two', 'u:wife']); // B wasn't decided on
+  applyTidy(d, c, { decisions: { A: 'got' }, asOf: '2026-12-30T00:00:00Z' }, deps);
+  assert.ok(!d.lists[0].items.some((i) => i.id === 'A')); // the rest were claimed: it's gone
+  assert.equal(d.lastTidyAt, '2026-12-30T00:00:00Z');
+  assert.throws(() => applyTidy(d, c, { decisions: {}, asOf: '2026-12-31T00:00:00Z' }, deps), WishlistInputError);
+  assert.throws(() => applyTidy(d, c, { decisions: { A: 'got' }, asOf: '', listId: 'nope' }, deps), WishlistInputError);
+});
+
+test('received history: thank-you ticks, rename, remove; old files without history still load', () => {
+  const { d, c } = claimed();
+  applyTidy(d, c, { decisions: { A: 'got', B: 'got' }, asOf: '2026-12-25T00:00:00Z' }, deps);
+  const g = d.received[0];
+  applyReceivedAction(d, { type: 'thank', groupId: g.id, itemId: g.items[0].id, thanked: true });
+  assert.equal(d.received[0].items[0].thanked, true);
+  applyReceivedAction(d, { type: 'renameGroup', groupId: g.id, name: 'Xmas' });
+  assert.equal(d.received[0].name, 'Xmas');
+  applyReceivedAction(d, { type: 'removeItem', groupId: g.id, itemId: g.items[0].id });
+  applyReceivedAction(d, { type: 'removeItem', groupId: g.id, itemId: d.received[0].items[0].id });
+  assert.equal(d.received.length, 0); // an empty batch goes away
+  assert.throws(() => applyReceivedAction(d, { type: 'removeGroup', groupId: 'nope' }), WishlistInputError);
+  const old = normalizeWishlist({ lists: [{ id: 'X', items: [] }] });
+  assert.deepEqual([old.received, old.lastTidyAt], [[], '']);
+  const again = normalizeWishlist(JSON.parse(JSON.stringify(normalizeWishlist({ lists: [], received: [{ id: 'g', name: 'N', at: '2026-12-26T00:00:00Z', items: [{ id: 'i', title: 'T', thanked: true, givers: [{ name: 'Z' }] }] }] }))));
+  assert.equal(again.received[0].items[0].thanked, true);
+});
+
+test('owner view still has no claim or giver info, even once a history exists', () => {
+  const { d, c } = claimed();
+  applyTidy(d, c, { decisions: { A: 'got', B: 'keep' }, asOf: '2026-12-25T00:00:00Z' }, deps);
+  claimItem(c, d.lists[0].items.find((i) => i.id === 'B')!, 'k:x', { name: 'Secret Santa' }, newId);
+  const json = JSON.stringify(ownerView(d, img));
+  assert.ok(!/Aunt May|Secret Santa|givers|claimed|"mine":|received|k:x/.test(json));
 });

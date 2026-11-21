@@ -96,3 +96,17 @@
   .wl-thumb { width: 68px; height: 68px; }
   .wl-two { grid-template-columns: 1fr; }
 }
+
+/* After the occasion: tidy-up and Received */
+.wl-head-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+.wl-tidy-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.wl-tidy-row { display: flex; gap: 0.7rem; padding: 0.6rem; border: 1px solid var(--surface-border); border-radius: 12px; min-width: 0; }
+.wl-seg { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
+.wl-seg button { flex: 1 1 auto; min-height: 2.5rem; padding: 0.4rem 0.7rem; border-radius: 10px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); font-size: 0.85rem; cursor: pointer; }
+.wl-seg button.is-on { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+.wl-recv-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.wl-recv-head { display: flex; flex-wrap: wrap; gap: 0.2rem 0.7rem; align-items: baseline; }
+.wl-recv-head h3 { margin: 0; font-size: 1rem; margin-right: auto; }
+.wl-check-inline { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; color: var(--foreground); min-height: 2.2rem; }
+.wl-check-inline input { width: 1.2rem; height: 1.2rem; }
+@media (max-width: 480px) { .wl-tidy-row .wl-thumb { width: 56px; height: 56px; } }

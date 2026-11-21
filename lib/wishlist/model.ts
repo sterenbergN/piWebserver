@@ -49,7 +49,36 @@ export type WishList = {
   items: WishItem[];
 };
 
-export type WishlistData = { lists: WishList[] };
+/** One thing the owner was given, kept after a tidy-up. Who gave it is only known because the owner chose to look. */
+export type ReceivedItem = {
+  id: string;
+  title: string;
+  url: string;
+  /** An image id, same as a list item's. */
+  image: string;
+  price: number | null;
+  currency: string;
+  store: string;
+  quantity: number;
+  /** The list it was on, as it was called then. */
+  listName: string;
+  givers: { name: string; qty: number }[];
+  claimedAt: string;
+  thanked: boolean;
+};
+
+/** Everything received in one tidy-up, named by the owner ("Christmas 2026"). */
+export type ReceivedGroup = { id: string; name: string; at: string; items: ReceivedItem[] };
+
+export type WishlistData = {
+  lists: WishList[];
+  /** Kept in this file (not a new one) so exports and backups already include it. */
+  received: ReceivedGroup[];
+  /** ISO time of the last tidy-up of every list, or empty. */
+  lastTidyAt: string;
+};
+
+export const MAX_RECEIVED_GROUPS = 60;
 
 export const MAX_LISTS = 40;
 export const MAX_ITEMS = 300;
@@ -57,7 +86,7 @@ export const MAX_QUANTITY = 99;
 
 export class WishlistInputError extends Error {}
 
-export const emptyWishlist = (): WishlistData => ({ lists: [] });
+export const emptyWishlist = (): WishlistData => ({ lists: [], received: [], lastTidyAt: '' });
 
 const ID = /^[\w-]{1,64}$/;
 export const isId = (v: unknown): v is string => typeof v === 'string' && ID.test(v);
@@ -159,17 +188,55 @@ export function normalizeList(raw: unknown, fallbackId: string, newId: () => str
   };
 }
 
+const cleanIso = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : '');
+
+type Loose = Record<string, any>;
+
+export function normalizeReceived(raw: unknown, newId: () => string): ReceivedGroup[] {
+  const groups: ReceivedGroup[] = [];
+  const seen = new Set<string>();
+  for (const g of (Array.isArray(raw) ? raw : []).slice(0, MAX_RECEIVED_GROUPS) as Loose[]) {
+    if (!g || typeof g !== 'object') continue;
+    const id = isId(g.id) && !seen.has(g.id) ? g.id : newId();
+    seen.add(id);
+    const items: ReceivedItem[] = [];
+    for (const it of (Array.isArray(g.items) ? g.items : []).slice(0, MAX_ITEMS) as Loose[]) {
+      if (!it || typeof it !== 'object') continue;
+      const givers = (Array.isArray(it.givers) ? it.givers : []).slice(0, 20).map((x: Loose) => ({
+        name: cleanText(x?.name, 40), qty: cleanQuantity(x?.qty ?? 1),
+      }));
+      items.push({
+        id: isId(it.id) ? it.id : newId(),
+        title: cleanText(it.title, 200) || 'Something I wanted',
+        url: cleanUrl(it.url),
+        image: isId(it.image) ? it.image : '',
+        price: cleanPrice(it.price),
+        currency: cleanCurrency(it.currency),
+        store: cleanText(it.store, 80),
+        quantity: cleanQuantity(it.quantity ?? 1),
+        listName: cleanText(it.listName, 60),
+        givers,
+        claimedAt: cleanIso(it.claimedAt),
+        thanked: it.thanked === true,
+      });
+    }
+    groups.push({ id, name: cleanText(g.name, 60) || 'Received', at: cleanIso(g.at), items });
+  }
+  return groups;
+}
+
 export function normalizeWishlist(raw: unknown, newId: () => string = () => `x${Math.random().toString(36).slice(2, 10)}`): WishlistData {
   const lists: WishList[] = [];
   const seen = new Set<string>();
-  const source = raw && typeof raw === 'object' && Array.isArray((raw as { lists?: unknown }).lists) ? (raw as { lists: unknown[] }).lists : [];
+  const rawObj = (raw && typeof raw === 'object' ? raw : {}) as { lists?: unknown; received?: unknown; lastTidyAt?: unknown };
+  const source = Array.isArray(rawObj.lists) ? (rawObj.lists as unknown[]) : [];
   for (const entry of source.slice(0, MAX_LISTS)) {
     const list = normalizeList(entry, newId(), newId);
     if (seen.has(list.id)) continue;
     seen.add(list.id);
     lists.push(list);
   }
-  return { lists };
+  return { lists, received: normalizeReceived(rawObj.received, newId), lastTidyAt: cleanIso(rawObj.lastTidyAt) };
 }
 
 // ---- Changes the owner can make ------------------------------------------------
