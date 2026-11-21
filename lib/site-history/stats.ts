@@ -1,5 +1,5 @@
 // Everything the history page works out from the commit list. Pure, so it can be tested.
-import { SUPPORT_AREAS } from './areas.mjs';
+import { SUPPORT_AREAS, areaForPath } from './areas.mjs';
 import type { HistoryCommit, HistoryData } from './types';
 
 const DAY_MS = 86_400_000;
@@ -320,4 +320,293 @@ export function compact(n: number) {
   if (abs >= 10_000) return `${Math.round(n / 1000)}k`;
   if (abs >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
+}
+
+// ---- story: growth, milestones, focus, rhythm ----
+
+const minuteOf = (c: HistoryCommit) => dayNum(dayOf(c)) * 1440 + Number(c.d.slice(11, 13)) * 60 + Number(c.d.slice(14, 16));
+
+export interface GrowthPoint {
+  day: string;
+  /** Lines of code at the end of the day. */
+  loc: number;
+  /** Pages at the end of the day, from the latest checkpoint at or before it. */
+  pages: number;
+  /** Commits so far, and on this day. */
+  total: number;
+  commits: number;
+}
+
+/** One point per day with commits: code size, page count and commit count as they stood that evening. */
+export function growth(data: HistoryData): GrowthPoint[] {
+  const pagesAt = new Array<number>(data.commits.length).fill(0);
+  const cps = [...data.checkpoints].sort((a, b) => a.c - b.c);
+  let k = -1;
+  for (let i = 0; i < data.commits.length; i++) {
+    while (k + 1 < cps.length && cps[k + 1].c <= i) k++;
+    pagesAt[i] = k >= 0 ? cps[k].r.length : 0;
+  }
+  const out: GrowthPoint[] = [];
+  let loc = 0;
+  data.commits.forEach((c, i) => {
+    loc += c.ad - c.de;
+    const day = dayOf(c);
+    const last = out[out.length - 1];
+    if (last && last.day === day) { last.loc = loc; last.pages = pagesAt[i]; last.total = i + 1; last.commits++; }
+    else out.push({ day, loc, pages: pagesAt[i], total: i + 1, commits: 1 });
+  });
+  return out;
+}
+
+export interface Milestone { area: string; day: string; index: number; loc: number; count: number }
+
+/** The commit where each site area first appeared, oldest first, with the code size then and the area's lifetime commits. */
+export function milestones(commits: HistoryCommit[]): Milestone[] {
+  const counts = new Map<string, number>();
+  for (const c of commits) for (const a of c.a) counts.set(a, (counts.get(a) ?? 0) + 1);
+  const out: Milestone[] = [];
+  const seen = new Set<string>();
+  let loc = 0;
+  commits.forEach((c, i) => {
+    loc += c.ad - c.de;
+    for (const a of c.a) {
+      if (seen.has(a) || !isSiteArea(a)) continue;
+      seen.add(a);
+      out.push({ area: a, day: dayOf(c), index: i, loc, count: counts.get(a) ?? 0 });
+    }
+  });
+  return out;
+}
+
+/** Site areas by commits, busiest first (ties by name). */
+export function topSiteAreas(commits: HistoryCommit[], n = 8): string[] {
+  const counts = new Map<string, number>();
+  for (const c of commits) for (const a of c.a) if (isSiteArea(a)) counts.set(a, (counts.get(a) ?? 0) + 1);
+  return [...counts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, n).map(([a]) => a);
+}
+
+/**
+ * Colours for the busiest site areas, from the site's eight-colour chart palette. Everything else
+ * stays neutral: past eight, hues stop being tellable apart. They're handed out in the order the
+ * areas appeared, so stacked bands (also in birth order) sit next to their palette neighbours.
+ */
+export function areaPalette(commits: HistoryCommit[], n = 8): Record<string, string> {
+  const top = new Set(topSiteAreas(commits, n));
+  const born = milestones(commits).filter((m) => top.has(m.area));
+  return Object.fromEntries(born.map((m, i) => [m.area, `var(--habit-${i + 1})`]));
+}
+
+export interface AreaWeeks {
+  /** Every Monday from the first commit's week to the last, empty weeks included. */
+  weeks: string[];
+  /** Bottom band first. Values are commits, each shared evenly between the areas it touched. */
+  series: { name: string; values: number[]; total: number }[];
+  totals: number[];
+}
+
+/** Commits per week for each of `keep` (in that order), with everything else folded into one band on top. */
+export function weeklyByArea(commits: HistoryCommit[], keep: string[], otherName = 'Everything else'): AreaWeeks {
+  if (!commits.length) return { weeks: [], series: [], totals: [] };
+  const first = dayNum(weekStart(dayOf(commits[0])));
+  const last = dayNum(weekStart(dayOf(commits[commits.length - 1])));
+  const weeks: string[] = [];
+  for (let n = first; n <= last; n += 7) weeks.push(fromDayNum(n));
+  const names = [...keep, otherName];
+  const rows = names.map(() => new Array<number>(weeks.length).fill(0));
+  const totals = new Array<number>(weeks.length).fill(0);
+  const slot = new Map(keep.map((a, i) => [a, i]));
+  for (const c of commits) {
+    const w = (dayNum(weekStart(dayOf(c))) - first) / 7;
+    if (w < 0 || w >= weeks.length) continue;
+    const areas = c.a.length ? c.a : ['Other'];
+    for (const a of areas) rows[slot.get(a) ?? keep.length][w] += 1 / areas.length;
+    totals[w]++;
+  }
+  const series = names.map((name, i) => ({ name, values: rows[i].map((v) => Math.round(v * 100) / 100), total: Math.round(rows[i].reduce((s, v) => s + v, 0)) }));
+  return { weeks, series, totals };
+}
+
+export interface Runs {
+  /** [first, last] index of each run worth drawing. */
+  segments: [number, number][];
+  /** Long quiet stretches between segments, and how many empty slots each left out. */
+  breaks: { after: number; before: number; empty: number }[];
+}
+
+/** Splits a series at long runs of zeros (more than `maxEmpty` in a row), so a quiet summer doesn't take half the chart. */
+export function collapseQuiet(values: number[], maxEmpty = 2): Runs {
+  const segments: [number, number][] = [];
+  const breaks: Runs['breaks'] = [];
+  let start = -1;
+  let lastBusy = -1;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] <= 0) continue;
+    if (start < 0) start = i;
+    else if (i - lastBusy - 1 > maxEmpty) {
+      segments.push([start, lastBusy]);
+      breaks.push({ after: lastBusy, before: i, empty: i - lastBusy - 1 });
+      start = i;
+    }
+    lastBusy = i;
+  }
+  if (start >= 0) segments.push([start, lastBusy]);
+  return { segments, breaks };
+}
+
+export interface TimeAxis {
+  /** 0..1 across the chart; quiet stretches are squeezed to a fixed width. */
+  at: (day: string) => number;
+  /** How much of the 0..1 width one ordinary day takes. */
+  dayWidth: number;
+  breaks: { from: string; to: string; days: number; pos: number }[];
+}
+
+/**
+ * A time scale over the days that had work, where any gap longer than `maxGap` days is drawn
+ * `gapWidth` days wide instead. Days inside a gap are placed proportionally across it.
+ */
+export function timeAxis(days: string[], maxGap = 14, gapWidth = 6): TimeAxis {
+  const sorted = [...new Set(days)].sort();
+  if (!sorted.length) return { at: () => 0, dayWidth: 0, breaks: [] };
+  const nums = sorted.map(dayNum);
+  const units = [0];
+  const breaks: { from: string; to: string; days: number; u: number }[] = [];
+  for (let i = 1; i < nums.length; i++) {
+    const g = nums[i] - nums[i - 1];
+    if (g > maxGap) {
+      breaks.push({ from: sorted[i - 1], to: sorted[i], days: g, u: units[i - 1] + gapWidth / 2 });
+      units.push(units[i - 1] + gapWidth);
+    } else units.push(units[i - 1] + g);
+  }
+  const total = Math.max(1, units[units.length - 1]);
+  const at = (day: string) => {
+    const n = dayNum(day);
+    if (n <= nums[0]) return 0;
+    if (n >= nums[nums.length - 1]) return 1;
+    let lo = 0;
+    let hi = nums.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (nums[mid] <= n) lo = mid; else hi = mid; }
+    const t = (n - nums[lo]) / Math.max(1, nums[hi] - nums[lo]);
+    return (units[lo] + t * (units[hi] - units[lo])) / total;
+  };
+  return { at, dayWidth: 1 / total, breaks: breaks.map((b) => ({ from: b.from, to: b.to, days: b.days, pos: b.u / total })) };
+}
+
+export interface Streak { start: string; end: string; days: number }
+
+/** The longest run of days in a row with commits, and the run still going (ending today or yesterday). */
+export function streaks(commits: HistoryCommit[], today: string): { longest: Streak | null; current: Streak | null } {
+  const days = [...new Set(commits.map(dayOf))].sort();
+  let longest: Streak | null = null;
+  let run: Streak | null = null;
+  for (const day of days) {
+    if (run && daysBetween(run.end, day) === 1) run = { start: run.start, end: day, days: run.days + 1 };
+    else run = { start: day, end: day, days: 1 };
+    if (!longest || run.days > longest.days) longest = run;
+  }
+  const current = run && daysBetween(run.end, today) <= 1 ? run : null;
+  return { longest, current };
+}
+
+export interface WorkSessions {
+  sessions: number;
+  /** Estimated minutes of work. */
+  minutes: number;
+  longest: { day: string; minutes: number; commits: number } | null;
+}
+
+/**
+ * A rough guess at time spent: commits less than `gapMin` apart belong to one sitting, and each
+ * sitting also gets `leadMin` for the work before its first commit. It can't see thinking time
+ * or work that never got committed, so it's an estimate, and the page says so.
+ */
+export function workSessions(commits: HistoryCommit[], gapMin = 120, leadMin = 30): WorkSessions {
+  const times = commits.map(minuteOf).sort((a, b) => a - b);
+  if (!times.length) return { sessions: 0, minutes: 0, longest: null };
+  let sessions = 0;
+  let minutes = 0;
+  let longest: WorkSessions['longest'] = null;
+  let start = times[0];
+  let prev = times[0];
+  let n = 1;
+  const close = () => {
+    const len = prev - start + leadMin;
+    sessions++;
+    minutes += len;
+    if (!longest || len > longest.minutes) longest = { day: fromDayNum(Math.floor(start / 1440)), minutes: len, commits: n };
+  };
+  for (let i = 1; i < times.length; i++) {
+    if (times[i] - prev > gapMin) { close(); start = times[i]; n = 0; }
+    prev = times[i];
+    n++;
+  }
+  close();
+  return { sessions, minutes, longest };
+}
+
+/** Commits by weekday (rows, Monday first) and hour (columns), in the author's local time. */
+export function punchcard(commits: HistoryCommit[]): { grid: number[][]; max: number } {
+  const grid = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
+  let max = 0;
+  for (const c of commits) {
+    const dow = (dayNum(dayOf(c)) + 3) % 7;
+    const h = Math.min(23, Number(c.d.slice(11, 13)) || 0);
+    max = Math.max(max, ++grid[dow][h]);
+  }
+  return { grid, max };
+}
+
+export interface BigDay { day: string; commits: number; added: number; removed: number }
+
+/** The `n` days with the most commits (at least `min`), busiest first. */
+export function bigDays(commits: HistoryCommit[], n = 5, min = 5): BigDay[] {
+  const map = new Map<string, BigDay>();
+  for (const c of commits) {
+    const day = dayOf(c);
+    let b = map.get(day);
+    if (!b) { b = { day, commits: 0, added: 0, removed: 0 }; map.set(day, b); }
+    b.commits++;
+    b.added += c.ad;
+    b.removed += c.de;
+  }
+  return [...map.values()].filter((b) => b.commits >= min).sort((a, b) => b.commits - a.commits || b.added - a.added || a.day.localeCompare(b.day)).slice(0, n);
+}
+
+// ---- wayback ----
+
+export interface MapSection { key: string; label: string; area: string; pages: string[] }
+
+/**
+ * Pages grouped by their first path segment: "/study/anki" goes in "/study". `order` is every
+ * route in the order it first appeared (data.routes), so sections and tiles keep their places
+ * from one checkpoint to the next and new ones join at the end.
+ */
+export function siteMap(routes: string[], order: string[]): MapSection[] {
+  const rank = new Map(order.map((r, i) => [r, i]));
+  const pos = (r: string) => rank.get(r) ?? order.length;
+  const sections = new Map<string, MapSection>();
+  for (const r of [...routes].sort((a, b) => pos(a) - pos(b) || a.localeCompare(b))) {
+    const key = r.split('/')[1] ?? '';
+    let s = sections.get(key);
+    if (!s) {
+      s = { key, label: key ? `/${key}` : 'Home', area: key ? areaForPath(`app/${key}/page.tsx`) : 'Navigation', pages: [] };
+      sections.set(key, s);
+    }
+    s.pages.push(r);
+  }
+  return [...sections.values()];
+}
+
+/** "Gallery is born · Blog is born" -> "Gallery and Blog arrived"; month and end markers get short names. */
+export function checkpointTitle(label: string, kind: string): string {
+  const parts = label.split(' · ');
+  const born = parts.map((p) => /^(.+) is born$/.exec(p)?.[1]).filter((x): x is string => !!x);
+  if (born.length) {
+    const names = born.length === 1 ? born[0] : `${born.slice(0, -1).join(', ')} and ${born[born.length - 1]}`;
+    return `${names} arrived`;
+  }
+  if (kind === 'start') return 'First commit';
+  if (kind === 'now') return 'Now';
+  const month = parts.map((p) => /^Start of (.+)$/.exec(p)?.[1]).find(Boolean);
+  return month ?? parts[0];
 }

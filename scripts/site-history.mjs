@@ -44,9 +44,11 @@ async function main() {
     console.warn('site-history: git history not available, skipping.');
     return;
   }
+  const minute = (iso) => Math.floor(Date.parse(iso) / 60_000) || 0;
   const parsed = parseLog(log)
     .map((c, i) => ({ c, i }))
-    .sort((a, b) => (a.c.date.slice(0, 16) < b.c.date.slice(0, 16) ? -1 : a.c.date.slice(0, 16) > b.c.date.slice(0, 16) ? 1 : b.i - a.i)) // oldest first; git lists newest first
+    // Oldest first, by the minute (dates come in different time zones); git lists newest first.
+    .sort((a, b) => minute(a.c.date) - minute(b.c.date) || b.i - a.i)
     .map((x) => x.c);
   if (!parsed.length) { console.warn('site-history: no commits found, skipping.'); return; }
 

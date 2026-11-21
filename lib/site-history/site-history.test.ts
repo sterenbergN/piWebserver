@@ -4,7 +4,10 @@ import { areaForPath, areasForCommit, areasFromMessage } from './areas.mjs';
 import { LOG_FORMAT, RS, US, areaBirths, cleanBody, parseLog, shapeCommit } from './build.mjs';
 import { parseGithubRemote, pickCheckpoints } from './checkpoints.mjs';
 import { countsAsCode, renamedTo, routesFromPaths } from './files.mjs';
-import { checkpointView, coChange, filterCommits, groupTimeline, heatmap, layoutGraph, sizeOverTime, summarize, weekStart } from './stats';
+import {
+  areaPalette, bigDays, checkpointTitle, checkpointView, coChange, collapseQuiet, filterCommits, groupTimeline, growth, heatmap, layoutGraph,
+  milestones, punchcard, siteMap, sizeOverTime, streaks, summarize, timeAxis, topSiteAreas, weekStart, weeklyByArea, workSessions,
+} from './stats';
 import type { HistoryCommit, HistoryData } from './types';
 
 test('paths map to site areas', () => {
@@ -21,6 +24,8 @@ test('paths map to site areas', () => {
   assert.equal(areaForPath('scripts/daily-generator/build.mjs'), 'Daily questions');
   assert.equal(areaForPath('docs/study/PLAN.md'), 'Study');
   assert.equal(areaForPath('package.json'), 'Infrastructure');
+  assert.equal(areaForPath('components/wishlist/WishlistApp.tsx'), 'Wishlist');
+  assert.equal(areaForPath('app/workout/food/page.tsx'), 'Workout');
 });
 
 test('message scopes: conventional and free-form', () => {
@@ -154,4 +159,102 @@ test('checkpoint view lists new and removed pages', () => {
   assert.deepEqual(v.added, ['/b']);
   assert.deepEqual(v.removed, ['/a']);
   assert.equal(v.loc, 13);
+});
+
+test('growth carries page counts from the latest checkpoint and merges each day', () => {
+  const commits = [mk('2026-04-01T10:00', ['A'], 10), mk('2026-04-01T11:00', ['B'], 5), mk('2026-04-03T10:00', ['A'], 5, 2)];
+  const data: HistoryData = {
+    v: 1, generated: '2026-04-04T00:00:00Z', repo: null, shallow: false, routes: ['/', '/a', '/b'], commits,
+    checkpoints: [{ c: 0, label: 'First', kind: 'start', r: [0] }, { c: 1, label: 'B is born', kind: 'area', r: [0, 1] }, { c: 2, label: 'Latest', kind: 'now', r: [0, 1, 2] }],
+  };
+  assert.deepEqual(growth(data), [
+    { day: '2026-04-01', loc: 15, pages: 2, total: 2, commits: 2 },
+    { day: '2026-04-03', loc: 18, pages: 3, total: 3, commits: 1 },
+  ]);
+});
+
+test('milestones, top areas and the palette', () => {
+  const commits = [mk('2026-04-01T10:00', ['Infrastructure']), mk('2026-04-02T10:00', ['B', 'A']), mk('2026-04-03T10:00', ['A']), mk('2026-04-04T10:00', ['C'])];
+  assert.deepEqual(milestones(commits).map((m) => [m.area, m.index, m.count]), [['B', 1, 1], ['A', 1, 2], ['C', 3, 1]]);
+  assert.deepEqual(topSiteAreas(commits, 2), ['A', 'B']);
+  // Colours go by arrival, not by rank, and only to the top n.
+  assert.deepEqual(areaPalette(commits, 2), { B: 'var(--habit-1)', A: 'var(--habit-2)' });
+});
+
+test('weekly areas split shared commits and fold the rest', () => {
+  const commits = [mk('2026-04-01T10:00', ['A', 'B']), mk('2026-04-02T10:00', ['C']), mk('2026-04-15T10:00', ['A'])];
+  const w = weeklyByArea(commits, ['A']);
+  assert.deepEqual(w.weeks, ['2026-03-30', '2026-04-06', '2026-04-13']);
+  assert.deepEqual(w.totals, [2, 0, 1]);
+  assert.deepEqual(w.series.map((s) => s.name), ['A', 'Everything else']);
+  assert.deepEqual(w.series[0].values, [0.5, 0, 1]);
+  assert.deepEqual(w.series[1].values, [1.5, 0, 0]);
+});
+
+test('quiet runs collapse, short ones stay', () => {
+  assert.deepEqual(collapseQuiet([1, 0, 0, 2, 0, 0, 0, 3, 0]), { segments: [[0, 3], [7, 7]], breaks: [{ after: 3, before: 7, empty: 3 }] });
+  assert.deepEqual(collapseQuiet([0, 0]), { segments: [], breaks: [] });
+});
+
+test('time axis squeezes long gaps', () => {
+  const ax = timeAxis(['2026-01-01', '2026-01-11', '2026-06-01', '2026-06-11'], 14, 4);
+  // 10 days + 4 (the squeezed gap) + 10 days = 24 units.
+  assert.equal(ax.at('2026-01-01'), 0);
+  assert.equal(ax.at('2026-06-11'), 1);
+  assert.ok(Math.abs(ax.at('2026-01-11') - 10 / 24) < 1e-9);
+  assert.ok(Math.abs(ax.at('2026-06-01') - 14 / 24) < 1e-9);
+  assert.ok(Math.abs(ax.dayWidth - 1 / 24) < 1e-9);
+  assert.equal(ax.breaks.length, 1);
+  assert.equal(ax.breaks[0].days, 141);
+  assert.ok(Math.abs(ax.breaks[0].pos - 12 / 24) < 1e-9);
+});
+
+test('streaks: longest and still going', () => {
+  const commits = ['2026-04-01', '2026-04-02', '2026-04-03', '2026-04-07', '2026-04-09', '2026-04-10'].map((d) => mk(`${d}T10:00`, ['A']));
+  const s = streaks(commits, '2026-04-11');
+  assert.deepEqual(s.longest, { start: '2026-04-01', end: '2026-04-03', days: 3 });
+  assert.deepEqual(s.current, { start: '2026-04-09', end: '2026-04-10', days: 2 });
+  assert.equal(streaks(commits, '2026-04-20').current, null);
+});
+
+test('work sessions join commits under two hours apart', () => {
+  const commits = [mk('2026-04-01T10:00', ['A']), mk('2026-04-01T11:30', ['A']), mk('2026-04-01T15:00', ['A']), mk('2026-04-02T23:30', ['A']), mk('2026-04-03T00:30', ['A'])];
+  const w = workSessions(commits);
+  // 10:00-11:30 (90 + 30), 15:00 alone (30), 23:30-00:30 across midnight (60 + 30).
+  assert.equal(w.sessions, 3);
+  assert.equal(w.minutes, 120 + 30 + 90);
+  assert.deepEqual(w.longest, { day: '2026-04-01', minutes: 120, commits: 2 });
+  assert.deepEqual(workSessions([]), { sessions: 0, minutes: 0, longest: null });
+});
+
+test('punch card and big days', () => {
+  const commits = [mk('2026-04-01T10:15', ['A'], 5, 1), mk('2026-04-01T10:45', ['A'], 5, 1), mk('2026-04-06T23:59', ['A'])];
+  const p = punchcard(commits);
+  assert.equal(p.grid[2][10], 2); // Wednesday, 10 am
+  assert.equal(p.grid[0][23], 1); // Monday, 11 pm
+  assert.equal(p.max, 2);
+  assert.deepEqual(bigDays(commits, 5, 2), [{ day: '2026-04-01', commits: 2, added: 10, removed: 2 }]);
+});
+
+test('site map groups pages by section in order of arrival', () => {
+  const order = ['/', '/workout', '/notes', '/workout/active'];
+  const m = siteMap(['/workout/active', '/notes', '/', '/workout'], order);
+  assert.deepEqual(m.map((s) => [s.label, s.area, s.pages]), [['Home', 'Navigation', ['/']], ['/workout', 'Workout', ['/workout', '/workout/active']], ['/notes', 'Notes', ['/notes']]]);
+});
+
+test('checkpoint titles', () => {
+  assert.equal(checkpointTitle('Gallery is born · Blog is born', 'area'), 'Gallery and Blog arrived');
+  assert.equal(checkpointTitle('A is born · B is born · C is born', 'area'), 'A, B and C arrived');
+  assert.equal(checkpointTitle('Start of May 2026', 'month'), 'May 2026');
+  assert.equal(checkpointTitle('First commit · Gallery is born', 'start'), 'Gallery arrived');
+  assert.equal(checkpointTitle('First commit', 'start'), 'First commit');
+  assert.equal(checkpointTitle('Latest', 'now'), 'Now');
+});
+
+test('commit times are shown in the home time zone, whatever zone they were stamped in', async () => {
+  const { homeTime } = await import('./build.mjs');
+  assert.equal(homeTime('2026-09-26T13:50:11Z', 'America/Chicago'), '2026-09-26T08:50');
+  assert.equal(homeTime('2026-11-20T18:17:28-06:00', 'America/Chicago'), '2026-11-20T18:17');
+  assert.equal(homeTime('2026-07-04T23:30:00-05:00', 'America/Chicago'), '2026-07-04T23:30');
+  assert.equal(homeTime('not a date', 'America/Chicago'), 'not a date');
 });
