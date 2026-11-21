@@ -13,6 +13,7 @@ export const MAX_MESSAGE = 4000;
 export const MAX_REPLY = 4000;
 export const MAX_TICKETS = 1000;
 export const MAX_ERRORS = 10;
+export const MAX_COMMENTS = 20;
 
 /** What the browser reports about itself. Everything here is client-supplied, so it's only trusted as text. */
 export type TicketContext = {
@@ -33,6 +34,8 @@ export type TicketContext = {
   build?: string;
 };
 
+export type TicketComment = { text: string; at: string };
+
 export type Ticket = {
   id: string;
   /** From the session, never from the request. */
@@ -49,6 +52,8 @@ export type Ticket = {
   context: TicketContext;
   /** Shown to the person who filed it. */
   reply?: { text: string; at: string };
+  /** Follow-ups the reporter added while it was still open. */
+  comments?: TicketComment[];
   /** Admin only. */
   note?: string;
   /** When the admin first opened it; absent means new. */
@@ -162,9 +167,22 @@ export function applyPatch(ticket: Ticket, patch: TicketPatch, now: Date) {
   ticket.updatedAt = iso;
 }
 
+/** A follow-up from the reporter. Only while the ticket is still being worked on. */
+export function addComment(ticket: Ticket, text: unknown, now: Date) {
+  if (ticket.status === 'done' || ticket.status === 'wontfix') throw new TicketInputError('This one is closed. File a new ticket instead');
+  const clean = cleanText(text, MAX_MESSAGE);
+  if (!clean) throw new TicketInputError('Write a few words first');
+  const comments = ticket.comments ?? [];
+  if (comments.length >= MAX_COMMENTS) throw new TicketInputError('That’s a lot of follow-ups. File a new ticket instead');
+  ticket.comments = [...comments, { text: clean, at: now.toISOString() }];
+  ticket.updatedAt = now.toISOString();
+  // New words from the reporter should light the dot again.
+  delete ticket.seenAt;
+}
+
 /** What the person who filed it may see: no internal note and no technical details beyond the page. */
 export function toMine(t: Ticket) {
-  return { id: t.id, kind: t.kind, severity: t.severity, message: t.message, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt, hasImage: !!t.image, page: t.context.path, reply: t.reply };
+  return { id: t.id, kind: t.kind, severity: t.severity, message: t.message, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt, hasImage: !!t.image, page: t.context.path, reply: t.reply, comments: t.comments ?? [] };
 }
 
 /** Whatever was stored, as tickets with the fields the app relies on, newest first. */

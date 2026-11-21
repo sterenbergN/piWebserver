@@ -17,13 +17,13 @@ const SEVERITIES = [
   { id: 'annoying', label: 'Annoying' },
   { id: 'blocking', label: "Can't use it" },
 ] as const;
-const STATUS_LABEL: Record<string, string> = { open: 'Open', in_progress: 'In progress', done: 'Done', wontfix: "Won't fix" };
+const STATUS_LABEL: Record<string, string> = { open: 'Received', in_progress: 'Being worked on', done: 'Done', wontfix: 'Not planned' };
 const MAX_MESSAGE = 4000;
 const MAX_IMAGE = 10 * 1024 * 1024;
 
 type Mine = {
   id: string; kind: string; severity?: string; message: string; status: string; createdAt: string;
-  hasImage: boolean; page: string; reply?: { text: string; at: string };
+  hasImage: boolean; page: string; reply?: { text: string; at: string }; comments?: { text: string; at: string }[];
 };
 
 /** What the browser can tell us about itself and the page. The server adds who and which build. */
@@ -80,6 +80,8 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
   const [mine, setMine] = useState<Mine[] | null>(null);
   const [mineError, setMineError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const [followUp, setFollowUp] = useState<{ id: string; text: string; busy: boolean; error: string } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -88,6 +90,38 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
   }, [onClose]);
+
+  // On iPhone the keyboard shrinks the visual viewport but not the layout one, so size the sheet to
+  // what is actually visible and keep the focused field (and Send) in view.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const el = backdropRef.current;
+    if (!vv || !el) return;
+    const fit = () => {
+      el.style.height = `${vv.height}px`;
+      el.style.transform = `translateY(${vv.offsetTop}px)`;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && el.contains(active) && /^(TEXTAREA|INPUT)$/.test(active.tagName)) active.scrollIntoView({ block: 'nearest' });
+    };
+    fit();
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+    return () => { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); };
+  }, []);
+
+  async function sendFollowUp() {
+    if (!followUp || followUp.busy || !followUp.text.trim()) return;
+    setFollowUp({ ...followUp, busy: true, error: '' });
+    try {
+      const res = await fetch(`/api/tickets/${followUp.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment: followUp.text }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message || 'Could not send that');
+      setMine((list) => list?.map((t) => (t.id === followUp.id ? body.ticket : t)) ?? list);
+      setFollowUp(null);
+    } catch (err) {
+      setFollowUp((f) => f && { ...f, busy: false, error: err instanceof Error ? err.message : 'Could not send that' });
+    }
+  }
 
   async function loadMine() {
     setMineError('');
@@ -134,7 +168,7 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="tk-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div ref={backdropRef} className="tk-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="tk-sheet" role="dialog" aria-modal="true" aria-label="Feedback">
         <div className="tk-head">
           <div className="tk-tabs" role="tablist">
@@ -155,7 +189,8 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
         )}
 
         {tab === 'new' && !sent && (
-          <form className="tk-body" onSubmit={submit}>
+          <form className="tk-form" onSubmit={submit}>
+            <div className="tk-body">
             <div className="tk-kinds" role="radiogroup" aria-label="Kind">
               {KINDS.map((k) => (
                 <button key={k.id} type="button" role="radio" aria-checked={kind === k.id} className={kind === k.id ? 'is-on' : ''} onClick={() => setKind(k.id)}>{k.label}</button>
@@ -194,7 +229,11 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
             )}
 
             {error && <p className="tk-error" role="alert">{error}</p>}
-            <button type="submit" className="tk-btn tk-btn-primary" disabled={busy || !message.trim()}>{busy ? 'Sending…' : 'Send'}</button>
+            </div>
+            {/* Outside the scrolling part, so Send never slides off screen. */}
+            <div className="tk-foot">
+              <button type="submit" className="tk-btn tk-btn-primary" disabled={busy || !message.trim()}>{busy ? 'Sending…' : 'Send'}</button>
+            </div>
           </form>
         )}
 
@@ -212,6 +251,21 @@ export default function TicketSheet({ onClose }: { onClose: () => void }) {
                 <p className="tk-msg">{t.message}</p>
                 {t.hasImage && <p className="tk-muted">📎 Image attached</p>}
                 {t.reply && <div className="tk-reply"><strong>Reply</strong><p>{t.reply.text}</p></div>}
+                {(t.comments ?? []).map((cm, i) => (
+                  <div key={i} className="tk-reply is-you"><strong>You added · {when(cm.at)}</strong><p>{cm.text}</p></div>
+                ))}
+                {(t.status === 'open' || t.status === 'in_progress') && (followUp?.id === t.id ? (
+                  <div className="tk-follow">
+                    <textarea className="tk-text" rows={3} maxLength={MAX_MESSAGE} autoFocus value={followUp.text} placeholder="Anything to add?" onChange={(e) => setFollowUp({ ...followUp, text: e.target.value })} />
+                    {followUp.error && <p className="tk-error" role="alert">{followUp.error}</p>}
+                    <div className="tk-row">
+                      <button type="button" className="tk-btn tk-btn-primary" disabled={followUp.busy || !followUp.text.trim()} onClick={() => void sendFollowUp()}>{followUp.busy ? 'Sending…' : 'Add'}</button>
+                      <button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp(null)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div><button type="button" className="tk-btn tk-btn-quiet" onClick={() => setFollowUp({ id: t.id, text: '', busy: false, error: '' })}>Add a follow-up</button></div>
+                ))}
               </article>
             ))}
           </div>
