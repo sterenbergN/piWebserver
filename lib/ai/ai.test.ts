@@ -7,6 +7,7 @@ import { createAiJobs } from './jobs';
 import { AiError, geminiError, providerFor, readGeminiReply, type Provider } from './providers';
 import { currentCatalog, modelForTask, savedCatalog } from './catalog';
 import { resolveChoice } from './providers-list';
+import { stripCodeFence } from './reply';
 import { AiSettingsError, applyAiPatch, choiceFor, cleanAiSettings, connectionFor, defaultAiSettings, forgetAiAccount, getAiSettings, isAiReady, mayUseAi, saveAiSettings, toPublic, type AiSettings } from './settings';
 
 const original = process.cwd();
@@ -388,3 +389,37 @@ test('deleting an account forgets its AI settings', async () => {
   assert.deepEqual(s.allowedUserIds, ['stays']);
   assert.equal(s.accounts.gone, undefined);
 });
+
+// ── Replies ───────────────────────────────────────────────────────────────────
+
+const lines = (...l: string[]) => l.join('\n');
+
+test('a code fence around the whole reply is taken off', () => {
+  assert.equal(stripCodeFence(lines('```json', '{"a": 1}', '```')), '{"a": 1}');
+  assert.equal(stripCodeFence('  ```JSON\r\n{"a": 1}\r\n```  \n'), '{"a": 1}');
+  assert.equal(stripCodeFence(lines('```markdown', '- **Point:** one', '  - two', '```')), lines('- **Point:** one', '  - two'));
+  assert.equal(stripCodeFence(lines('```', 'plain', '```')), 'plain');
+  assert.equal(stripCodeFence(lines('~~~', '{"a": 1}', '~~~')), '{"a": 1}');
+  assert.equal(stripCodeFence(lines('````md', 'Some *notes*', '````')), 'Some *notes*');
+  // Markdown wrapped whole, with a code sample of its own inside.
+  assert.equal(stripCodeFence(lines('```markdown', '# Notes', '```js', 'let a = 1;', '```', 'Done.', '```')), lines('# Notes', '```js', 'let a = 1;', '```', 'Done.'));
+  // A reply that ran out of room before the closing fence.
+  assert.equal(stripCodeFence(lines('```json', '{"a": [1, 2')), '{"a": [1, 2');
+});
+
+test('a short lead-in before the one block is dropped with the fence', () => {
+  assert.equal(stripCodeFence(lines('Here’s the JSON:', '```json', '{"a": 1}', '```')), '{"a": 1}');
+  assert.equal(stripCodeFence(lines('Sure! Here you go:', '', '```', '- one', '- two', '```')), lines('- one', '- two'));
+  assert.equal(stripCodeFence(lines('Sure thing', '```json', '[1, 2]', '```')), '[1, 2]');
+});
+
+test('fences that are part of the content are left alone', () => {
+  const same = (text: string) => assert.equal(stripCodeFence(text), text);
+  same('{"a": 1}');
+  same(lines('```json', '{"a": 1}', '```', '', 'And the second:', '', '```json', '{"b": 2}', '```'));
+  same(lines('To list files, run this', '```bash', 'ls -la', '```'));
+  same(lines('Here’s the JSON:', '```json', '{"a": 1}', '```', 'Let me know if you want changes.'));
+  same(lines(`${'A long opening paragraph that explains things. '.repeat(5)}:`, '```json', '{}', '```'));
+  same('Use ```code``` sparingly.');
+});
+

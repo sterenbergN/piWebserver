@@ -1,5 +1,5 @@
 import { addDays, isDateKey, type DateKey } from '@/lib/habits/dates';
-import { isTalkMode, MAX_TOPIC, MAX_TRANSCRIPT, type TalkMode } from './talk';
+import { cleanTalkExtras, isTalkMode, MAX_TOPIC, MAX_TRANSCRIPT, type TalkExtras, type TalkMode } from './talk';
 
 // A private journal: one entry per calendar day, owned by a single account.
 // Pure logic shared by the API route and the page; the route does the storage.
@@ -9,10 +9,14 @@ export const MAX_TALKS = 20;
 export const MAX_SUMMARY = 20_000;
 /** Mood 1 (rough) … 5 (great), shown as these faces. */
 export const MOODS = ['😞', '😕', '😐', '🙂', '😄'] as const;
+export const MOOD_NAMES = ['Rough', 'Meh', 'Okay', 'Good', 'Great'] as const;
 export type Mood = 1 | 2 | 3 | 4 | 5;
 
-/** A conversation talked through with an AI, kept with the day in its own space. */
-export type JournalTalk = {
+/**
+ * A conversation talked through with an AI, kept with the day in its own space. The
+ * extras (headline, tags, follow-ups…) come from JSON replies; older talks have none.
+ */
+export type JournalTalk = TalkExtras & {
   id: string;
   topic: string;
   transcript: string;
@@ -45,6 +49,7 @@ function normalizeTalks(raw: unknown): JournalTalk[] {
         createdAt: typeof t.createdAt === 'string' ? t.createdAt : '',
         ...(isTalkMode(t.mode) ? { mode: t.mode } : {}),
         ...(summary ? { summary } : {}),
+        ...cleanTalkExtras(t),
       };
     });
 }
@@ -117,7 +122,9 @@ export function searchEntries(data: JournalData, query: string): JournalSummary[
   if (!terms.length) return listEntries(data);
   return listEntries(data).flatMap((s) => {
     const entry = data.entries[s.date];
-    const talkTexts = (entry.talks ?? []).flatMap((t) => [t.topic, t.summary, t.transcript]).filter((v): v is string => Boolean(v));
+    const talkTexts = (entry.talks ?? []).flatMap((t) => [
+      t.topic, t.headline, t.summary, t.quote, ...(t.tags ?? []), ...(t.people ?? []), ...(t.followUps ?? []).map((f) => f.text), ...(t.questions ?? []), t.transcript,
+    ]).filter((v): v is string => Boolean(v));
     const haystack = [entry.text, ...talkTexts].filter(Boolean).join('\n');
     const lower = haystack.toLowerCase();
     if (!terms.every((t) => lower.includes(t))) return [];
@@ -161,7 +168,7 @@ export function addTalk(
   today: DateKey,
   now: string,
   id: string,
-  opts?: { mode?: TalkMode; summary?: string },
+  opts?: { mode?: TalkMode; summary?: string; extras?: unknown },
 ): JournalTalk {
   if (!isDateKey(date)) throw new JournalInputError('Invalid date');
   if (date > today) throw new JournalInputError('That day hasn’t happened yet');
@@ -195,17 +202,18 @@ export function addTalk(
     createdAt: now,
     ...(isTalkMode(opts?.mode) ? { mode: opts.mode } : {}),
     ...(cleanSummary ? { summary: cleanSummary } : {}),
+    ...cleanTalkExtras(opts?.extras),
   };
   data.entries[date] = { ...entry, talks: [...talks, talk], updatedAt: now };
   return talk;
 }
 
-/** Update a kept talk session's topic, summary or mode. */
+/** Update a kept talk session's topic, summary or mode, or tick one of its follow-ups (by its place in the list). */
 export function updateTalk(
   data: JournalData,
   date: unknown,
   talkId: unknown,
-  patch: { topic?: unknown; summary?: unknown; mode?: unknown },
+  patch: { topic?: unknown; summary?: unknown; mode?: unknown; followUp?: unknown; done?: unknown },
   now: string,
 ): JournalTalk {
   if (!isDateKey(date)) throw new JournalInputError('Invalid date');
@@ -248,17 +256,57 @@ export function updateTalk(
     else throw new JournalInputError('Invalid talk mode');
   }
 
+  let followUps = current.followUps;
+  if (patch.followUp !== undefined) {
+    const at = patch.followUp;
+    if (typeof at !== 'number' || !Number.isInteger(at) || !followUps?.[at]) throw new JournalInputError('That follow-up isn’t there any more');
+    if (typeof patch.done !== 'boolean') throw new JournalInputError('Invalid follow-up');
+    const done = patch.done;
+    followUps = followUps.map((f, i) => (i !== at ? f : done ? { ...f, done: true } : { text: f.text, ...(f.when ? { when: f.when } : {}) }));
+  }
+
+  const { id, transcript, createdAt, mode: _mode, summary: _summary, topic: _topic, ...extras } = current;
   const updated: JournalTalk = {
-    id: current.id,
+    id,
     topic: nextTopic,
-    transcript: current.transcript,
-    createdAt: current.createdAt,
+    transcript,
+    createdAt,
     ...(nextMode ? { mode: nextMode } : {}),
     ...(nextSummary ? { summary: nextSummary } : {}),
+    ...extras,
+    ...(followUps ? { followUps } : {}),
   };
   const nextTalks = talks.map((t, i) => (i === idx ? updated : t));
   data.entries[date] = { ...entry, talks: nextTalks, updatedAt: now };
   return updated;
+}
+
+/** A follow-up not done yet, with the talk and day it came from. */
+export type OpenFollowUp = { date: DateKey; talkId: string; index: number; text: string; when?: string; topic: string };
+
+/** Follow-ups not yet done from the talks of the last `days` days (today included), newest day first. */
+export function openFollowUps(data: JournalData, today: DateKey, days = 14): OpenFollowUp[] {
+  const from = addDays(today, -(days - 1));
+  return Object.keys(data.entries)
+    .filter((d) => d >= from && d <= today)
+    .sort()
+    .reverse()
+    .flatMap((date) => (data.entries[date].talks ?? []).flatMap((t) => (t.followUps ?? []).flatMap((f, index) => (
+      f.done ? [] : [{ date, talkId: t.id, index, text: f.text, ...(f.when ? { when: f.when } : {}), topic: t.topic }]
+    ))));
+}
+
+/** "Still thinking about" questions from the talks of the last `days` days, newest first, without repeats. */
+export function recentQuestions(data: JournalData, today: DateKey, days = 14, max = 10): string[] {
+  const from = addDays(today, -(days - 1));
+  const seen = new Set<string>();
+  return Object.keys(data.entries)
+    .filter((d) => d >= from && d <= today)
+    .sort()
+    .reverse()
+    .flatMap((date) => [...(data.entries[date].talks ?? [])].reverse().flatMap((t) => t.questions ?? []))
+    .filter((q) => !seen.has(q.toLowerCase()) && !!seen.add(q.toLowerCase()))
+    .slice(0, max);
 }
 
 /** Let go of one kept conversation. The day goes too if nothing else is left in it. */

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import HabitSheet from '@/components/habits/HabitSheet';
 import JournalMarkdown from '@/components/journal/JournalMarkdown';
 import type { DateKey } from '@/lib/habits/dates';
-import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
+import { MOOD_NAMES, MOODS } from '@/lib/journal/journal';
+import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply, type TalkThreads } from '@/lib/journal/talk';
 
 // Talk something through with your own AI, hands-free in its voice mode, then bring
 // back what it wrote. Copying happens before the drive and pasting after, often
@@ -13,13 +14,16 @@ import { buildTalkPrompt, isTalkMode, parseTalkReply, TalkReplyError, TALK_MODES
 
 const MODE_KEY = 'journal:talk-mode';
 const MODES = Object.keys(TALK_MODES) as TalkMode[];
+const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-export default function TalkSheet({ day, entryName, written, initialMode, onClose, onAdd }: {
+export default function TalkSheet({ day, entryName, written, threads, initialMode, onClose, onAdd }: {
   day: DateKey;
   /** "today’s entry", "yesterday’s entry"… */
   entryName: string;
   /** What's written in the day's entry so far, offered to the AI as context. */
   written: string;
+  /** Open follow-ups and questions from recent talks, offered to the AI to ask after. */
+  threads?: TalkThreads;
   /** Optional mode preselected when launched from a quick-start chip. */
   initialMode?: TalkMode;
   onClose: () => void;
@@ -29,6 +33,8 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
   const [picked, setPicked] = useState<string>('');
   const [own, setOwn] = useState('');
   const [share, setShare] = useState(false);
+  const openCount = (threads?.followUps.length ?? 0) + (threads?.questions.length ?? 0);
+  const [remind, setRemind] = useState(true);
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [showPrompt, setShowPrompt] = useState(false);
   const promptBox = useRef<HTMLTextAreaElement>(null);
@@ -63,7 +69,10 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
 
   const info = TALK_MODES[mode];
   const topic = own.trim() || picked;
-  const prompt = useMemo(() => buildTalkPrompt({ date: day, mode, topic, written: share ? written : '' }), [day, mode, topic, share, written]);
+  const prompt = useMemo(
+    () => buildTalkPrompt({ date: day, mode, topic, written: share ? written : '', threads: remind ? threads : undefined }),
+    [day, mode, topic, share, written, remind, threads],
+  );
   const turns = useMemo(() => (reply ? transcriptTurns(reply.transcript).length : 0), [reply]);
 
   const copy = async () => {
@@ -95,7 +104,7 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
     try {
       setReply(parseTalkReply(replyText, topic));
     } catch (err) {
-      setError(err instanceof TalkReplyError ? err.message : 'I couldn’t read that. Ask your AI for the “summary” block again.');
+      setError(err instanceof TalkReplyError ? err.message : 'I couldn’t read that. Ask your AI for the “summary” reply again.');
     }
   };
 
@@ -131,6 +140,26 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
 
       {reply ? (
         <div className="jr-talk-check">
+          {reply.more && (
+            <p className="jr-talk-warn" role="status">Your AI said there’s more of the conversation. Send it “more”, then go Back and paste that reply under this one.</p>
+          )}
+          <div className="jr-talk-read" aria-label="What was read">
+            <p className="jr-talk-read-topic">{reply.topic || 'No topic'}</p>
+            {reply.headline &&<p className="jr-talk-headline">{reply.headline}</p>}
+            <ul className="jr-talk-counts">
+              <li>{count(reply.followUps?.length ?? 0, 'follow-up')}</li>
+              <li>{count(turns, 'turn')}</li>
+              {!!reply.questions?.length && <li>{count(reply.questions.length, 'open question')}</li>}
+              {reply.mood && <li>Mood {MOODS[reply.mood - 1]} {MOOD_NAMES[reply.mood - 1]}</li>}
+              {reply.quote && <li>A quote</li>}
+            </ul>
+            {(!!reply.tags?.length || !!reply.people?.length) && (
+              <div className="jr-talk-chips">
+                {reply.tags?.map((t) => <span key={`t-${t}`} className="jr-talk-chip">#{t}</span>)}
+                {reply.people?.map((p) => <span key={`p-${p}`} className="jr-talk-chip is-person"><span aria-hidden>👤</span> {p}</span>)}
+              </div>
+            )}
+          </div>
           <label className="hb-label" htmlFor="jr-talk-mode">Kind of talk</label>
           <select id="jr-talk-mode" className="jr-talk-input" value={mode} onChange={(e) => setMode(e.target.value as TalkMode)}>
             {MODES.map((m) => <option key={m} value={m}>{TALK_MODES[m].label}</option>)}
@@ -145,10 +174,10 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
           {reply.transcript ? (
             <label className="jr-talk-toggle">
               <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
-              <span>Keep the full conversation<small>{turns} {turns === 1 ? 'turn' : 'turns'}, tucked inside this talk card. Uncheck to save only the topic and summary.</small></span>
+              <span>Keep the full conversation<small>{count(turns, 'turn')}, tucked inside this talk card. Uncheck to save only the topic, summary and the rest.</small></span>
             </label>
           ) : (
-            <p className="jr-hint">There’s no conversation in what you pasted, so only the topic and summary will be saved.</p>
+            <p className="jr-hint">There’s no conversation in what you pasted, so only the topic, summary and the rest will be saved.</p>
           )}
           <p className="jr-hint">Saved to {entryName} in Talk It Through — your written entry stays untouched, and you can edit this summary anytime.</p>
         </div>
@@ -178,6 +207,12 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
                 <span>Give it what I’ve written in this entry<small>So it knows the day so far.</small></span>
               </label>
             )}
+            {openCount > 0 && (
+              <label className="jr-talk-toggle">
+                <input type="checkbox" checked={remind} onChange={(e) => { setRemind(e.target.checked); setCopied('idle'); }} />
+                <span>Remind it of what’s still open<small>{count(openCount, 'follow-up or question', 'follow-ups and questions')} from the last two weeks, so it can ask how they’re going.</small></span>
+              </label>
+            )}
             <div className="jr-talk-actions">
               <button type="button" className={`btn ${copied === 'copied' ? 'btn-secondary' : 'btn-primary'}`} onClick={copy}>{copied === 'copied' ? 'Copied' : 'Copy prompt'}</button>
               <button type="button" className="hb-text-btn" aria-expanded={showPrompt} onClick={() => setShowPrompt((v) => !v)}>{showPrompt ? 'Hide the prompt' : 'Read the prompt'}</button>
@@ -192,7 +227,7 @@ export default function TalkSheet({ day, entryName, written, initialMode, onClos
               <h3><span className="jr-talk-num">2</span> Once you’re parked</h3>
               <button type="button" className="hb-small-btn" onClick={paste}>Paste</button>
             </div>
-            <p className="jr-hint">Type <strong>summary</strong> in the same chat, copy its whole reply and paste it here. If it ends with <strong>MORE</strong>, send “more”, then paste that reply too: each paste goes after the last.</p>
+            <p className="jr-hint">Type <strong>summary</strong> in the same chat. It replies in JSON (a block of text in curly brackets): copy all of it and paste it here. If it ends with <strong>&quot;more&quot;: true</strong>, send “more”, then paste that reply too: each paste goes after the last.</p>
             <textarea ref={replyBox} className="jr-talk-input" rows={replyText ? 6 : 3} value={replyText} placeholder="Paste the whole reply here" aria-label="The AI’s reply"
               onChange={(e) => { setReplyText(e.target.value); setError(''); }} />
             {pasteFailed && <p className="jr-hint">This browser wants you to paste by hand. Hold or right-click in the box.</p>}

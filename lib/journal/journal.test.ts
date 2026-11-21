@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { addTalk, emptyJournal, JournalInputError, listEntries, MAX_SUMMARY, normalizeJournal, saveEntry, searchEntries, updateTalk, writingStreak } from './journal';
+import { addTalk, emptyJournal, JournalInputError, listEntries, MAX_SUMMARY, normalizeJournal, openFollowUps, saveEntry, searchEntries, updateTalk, writingStreak } from './journal';
 
 const TODAY = '2026-10-28';
 const NOW = '2026-10-28T20:00:00.000Z';
@@ -134,4 +134,49 @@ test('searchEntries matches talk summary and generates plain-text preview', () =
   assert.deepEqual(hits.map((s) => s.date), ['2026-10-20']);
   assert.ok(hits[0].preview.toLowerCase().includes('microgrid'));
   assert.equal(searchEntries(data, 'nonexistent term').length, 0);
+});
+
+test('a talk saved before the extras existed reads back exactly as it was', () => {
+  const old = { id: 't1', topic: 'Work', transcript: 'Me: hi', createdAt: NOW, mode: 'reflect', summary: '- Rest.' };
+  const data = normalizeJournal({ entries: { [TODAY]: { text: '', talks: [old], createdAt: NOW, updatedAt: NOW } } });
+  assert.deepEqual(data.entries[TODAY].talks?.[0], old);
+
+  // Bad extras are cleaned on the way in rather than refusing the whole day.
+  const odd = normalizeJournal({ entries: { [TODAY]: { text: '', talks: [{ ...old, tags: 'a, b', mood: 'great', followUps: [{ text: 'x', done: 'yes' }], quote: 4 }], createdAt: NOW, updatedAt: NOW } } });
+  const t = odd.entries[TODAY].talks?.[0];
+  assert.deepEqual(t?.tags, ['a', 'b']);
+  assert.equal(t?.mood, 5);
+  assert.deepEqual(t?.followUps, [{ text: 'x' }]);
+  assert.equal(t?.quote, undefined);
+});
+
+test('follow-ups tick and untick, edits keep the extras, and open ones from two weeks list newest first', () => {
+  const data = emptyJournal();
+  const extras = { headline: 'Keep saving.', tags: ['money'], people: ['Ana'], followUps: [{ text: 'Call the bank', when: 'tomorrow' }, { text: 'Open an ISA' }], questions: ['Is renting so bad?'], quote: 'Rent is not waste.', mood: 4 };
+  addTalk(data, TODAY, 'Money', '', TODAY, NOW, 'talk-1', { summary: '- Rest.', extras });
+  addTalk(data, '2026-10-20', 'Older', '', TODAY, NOW, 'talk-2', { summary: '- Old.', extras: { followUps: ['Book the dentist'] } });
+  addTalk(data, '2026-10-01', 'Too old', '', TODAY, NOW, 'talk-3', { summary: '- Ancient.', extras: { followUps: ['Forgotten'] } });
+
+  assert.deepEqual(openFollowUps(data, TODAY).map((f) => [f.date, f.index, f.text]), [
+    [TODAY, 0, 'Call the bank'], [TODAY, 1, 'Open an ISA'], ['2026-10-20', 0, 'Book the dentist'],
+  ]);
+  assert.equal(openFollowUps(data, TODAY)[0].when, 'tomorrow');
+
+  const ticked = updateTalk(data, TODAY, 'talk-1', { followUp: 0, done: true }, NOW);
+  assert.equal(ticked.followUps?.[0].done, true);
+  assert.equal(ticked.quote, 'Rent is not waste.');
+  assert.deepEqual(openFollowUps(data, TODAY).map((f) => f.text), ['Open an ISA', 'Book the dentist']);
+  assert.deepEqual(updateTalk(data, TODAY, 'talk-1', { followUp: 0, done: false }, NOW).followUps?.[0], { text: 'Call the bank', when: 'tomorrow' });
+
+  const edited = updateTalk(data, TODAY, 'talk-1', { topic: 'Money, again' }, NOW);
+  assert.deepEqual({ ...edited, topic: 'Money' }, { ...data.entries[TODAY].talks?.[0], topic: 'Money' });
+  assert.deepEqual(edited.people, ['Ana']);
+  assert.equal(edited.mood, 4);
+
+  assert.throws(() => updateTalk(data, TODAY, 'talk-1', { followUp: 5, done: true }, NOW), JournalInputError);
+  assert.throws(() => updateTalk(data, TODAY, 'talk-1', { followUp: 0, done: 'yes' }, NOW), JournalInputError);
+
+  // Tags, people and the rest are found by search too.
+  assert.deepEqual(searchEntries(data, 'ana').map((s) => s.date), [TODAY]);
+  assert.deepEqual(searchEntries(data, 'dentist').map((s) => s.date), ['2026-10-20']);
 });

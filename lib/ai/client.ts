@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { stripCodeFence } from './reply';
 import type { AiTask } from './tasks';
 
 /** `model` is the default's name, `models` each task's, both as people read them. */
@@ -48,7 +49,10 @@ async function readError(r: Response) {
   return new AiClientError(body.error || `The site answered ${r.status}.`, body.errorKind || (r.status === 401 ? 'signed-out' : 'unknown'));
 }
 
-/** Write a reply to `prompt` with the connected AI. Throws AiClientError with a short reason. */
+/**
+ * Write a reply to `prompt` with the connected AI, without a code fence wrapped around
+ * the whole of it. Throws AiClientError with a short reason.
+ */
 export async function generateReply(prompt: string, task: AiTask, signal?: AbortSignal): Promise<string> {
   let r: Response;
   try {
@@ -75,7 +79,7 @@ export async function generateReply(prompt: string, task: AiTask, signal?: Abort
       if (attempt < 200) continue;
       throw new AiClientError('Lost touch with the site.', 'network');
     }
-    if (job.status === 'done') return job.text ?? '';
+    if (job.status === 'done') return stripCodeFence(job.text ?? '');
     if (job.status === 'error') throw new AiClientError(job.error || 'The AI couldn’t write it.', job.errorKind);
   }
 }

@@ -4,7 +4,7 @@ import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { addDays, isDateKey } from '@/lib/habits/dates';
-import { addTalk, emptyJournal, JournalInputError, listEntries, normalizeJournal, removeTalk, saveEntry, searchEntries, summarize, updateTalk, type JournalData, type JournalTalk } from '@/lib/journal/journal';
+import { addTalk, emptyJournal, JournalInputError, listEntries, normalizeJournal, openFollowUps, recentQuestions, removeTalk, saveEntry, searchEntries, summarize, updateTalk, type JournalData, type JournalTalk, type OpenFollowUp } from '@/lib/journal/journal';
 
 // The private journal of the signed-in account, one file per user in
 // .data/journal (kept by backups). Every request reads or writes only the
@@ -24,7 +24,12 @@ function userToday(value: unknown) {
   return isDateKey(value) && value >= addDays(serverDay, -1) && value <= addDays(serverDay, 1) ? value : serverDay;
 }
 
-/** `?date=` one entry in full; `?q=` matching entries; otherwise every entry, summarised. */
+type TalkResult = { talk: JournalTalk; summary: ReturnType<typeof summarize>; todo: OpenFollowUp[] };
+
+/**
+ * `?date=` one entry in full; `?q=` matching entries; otherwise every entry, summarised,
+ * with the open follow-ups and questions of the last two weeks' talks (`&today=` is the browser's day).
+ */
 export async function GET(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
@@ -37,8 +42,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, entry: data.entries[date] ?? null }, { headers: PRIVATE });
     }
     const q = params.get('q');
-    const entries = q ? searchEntries(data, q.slice(0, 200)) : listEntries(data);
-    return NextResponse.json({ success: true, entries }, { headers: PRIVATE });
+    if (q) return NextResponse.json({ success: true, entries: searchEntries(data, q.slice(0, 200)) }, { headers: PRIVATE });
+    const today = userToday(params.get('today'));
+    const todo = openFollowUps(data, today);
+    return NextResponse.json({ success: true, entries: listEntries(data), todo, questions: recentQuestions(data, today) }, { headers: PRIVATE });
   } catch (error) {
     return handleApiError(error, 'Load journal failed');
   }
@@ -69,7 +76,10 @@ export async function PUT(request: Request) {
   }
 }
 
-/** Keep a talked-through conversation with a day: `{ date, topic, summary?, mode?, transcript?, today }`. */
+/**
+ * Keep a talked-through conversation with a day: `{ date, topic, summary?, mode?, transcript?, today }`,
+ * plus what a JSON reply gave: `headline?, tags?, people?, followUps?, questions?, quote?, mood?`.
+ */
 export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
@@ -77,15 +87,17 @@ export async function POST(request: Request) {
     const today = userToday(body.today);
     const now = new Date().toISOString();
 
-    const result = await updateJson<JournalData, { talk: JournalTalk; summary: ReturnType<typeof summarize> }>(journalFile(userId), emptyJournal(), (stored) => {
+    const result = await updateJson<JournalData, TalkResult>(journalFile(userId), emptyJournal(), (stored) => {
       const data = normalizeJournal(stored);
       try {
+        const { headline, tags, people, followUps, questions, quote, mood } = body;
         const talk = addTalk(data, body.date, body.topic, body.transcript ?? '', today, now, crypto.randomUUID(), {
           mode: body.mode,
           summary: body.summary,
+          extras: { headline, tags, people, followUps, questions, quote, mood },
         });
         stored.entries = data.entries;
-        return { talk, summary: summarize(body.date, data.entries[body.date]) };
+        return { talk, summary: summarize(body.date, data.entries[body.date]), todo: openFollowUps(data, today) };
       } catch (error) {
         if (error instanceof JournalInputError) throw new ApiError(400, error.message);
         throw error;
@@ -97,25 +109,26 @@ export async function POST(request: Request) {
   }
 }
 
-/** Update a kept talk session's topic, summary or mode: `{ date, talkId, topic?, summary?, mode? }`. */
+/** Update a kept talk session's topic, summary or mode, or tick a follow-up: `{ date, talkId, topic?, summary?, mode?, followUp?, done?, today? }`. */
 export async function PATCH(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const body = await readJsonObject(request);
+    const today = userToday(body.today);
     const now = new Date().toISOString();
 
-    const result = await updateJson<JournalData, { talk: JournalTalk; summary: ReturnType<typeof summarize> }>(journalFile(userId), emptyJournal(), (stored) => {
+    const result = await updateJson<JournalData, TalkResult>(journalFile(userId), emptyJournal(), (stored) => {
       const data = normalizeJournal(stored);
       try {
         const talk = updateTalk(
           data,
           body.date,
           body.talkId,
-          { topic: body.topic, summary: body.summary, mode: body.mode },
+          { topic: body.topic, summary: body.summary, mode: body.mode, followUp: body.followUp, done: body.done },
           now,
         );
         stored.entries = data.entries;
-        return { talk, summary: summarize(body.date, data.entries[body.date]) };
+        return { talk, summary: summarize(body.date, data.entries[body.date]), todo: openFollowUps(data, today) };
       } catch (error) {
         if (error instanceof JournalInputError) throw new ApiError(400, error.message);
         throw error;

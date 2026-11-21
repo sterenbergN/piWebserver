@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSitePopup } from '@/components/SitePopup';
 import JournalTabs from '@/components/journal/JournalTabs';
 import SignInPrompt from '@/components/journal/SignInPrompt';
@@ -8,7 +8,7 @@ import JournalMarkdown from '@/components/journal/JournalMarkdown';
 import TalkSheet from '@/components/journal/TalkSheet';
 import { applyFormat, type FormatAction } from '@/lib/blog/markdown-format';
 import { addDays, localToday, type DateKey } from '@/lib/habits/dates';
-import { MOODS, MAX_SUMMARY, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood } from '@/lib/journal/journal';
+import { MOOD_NAMES, MOODS, MAX_SUMMARY, promptFor, wordCount, writingStreak, type JournalEntry, type JournalSummary, type JournalTalk, type Mood, type OpenFollowUp } from '@/lib/journal/journal';
 import { continueList } from '@/lib/journal/markdown';
 import { isTalkMode, MAX_TOPIC, TALK_MODES, transcriptTurns, type TalkMode, type TalkReply } from '@/lib/journal/talk';
 import '../habits/habits.css';
@@ -39,6 +39,8 @@ const TOOLS: { action: FormatAction; label: string; title: string }[] = [
   { action: 'quote', label: '❝', title: 'Quote' },
 ];
 const fmtDay = (d: DateKey, opts: Intl.DateTimeFormatOptions) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, opts);
+/** How many open follow-ups the To do strip shows before "Show all". */
+const TODO_SHOWN = 4;
 
 function dayTitle(day: DateKey, today: DateKey) {
   if (day === today) return 'Today';
@@ -58,6 +60,14 @@ export default function JournalPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<JournalSummary[] | null>(null);
   const [talks, setTalks] = useState<JournalTalk[]>([]);
+  // Open follow-ups and questions from the last two weeks' talks.
+  const [todo, setTodo] = useState<OpenFollowUp[]>([]);
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [allTodo, setAllTodo] = useState(false);
+  const [todoError, setTodoError] = useState('');
+  // A day whose "Set the mood from the talk?" offer was turned down.
+  const [moodDeclined, setMoodDeclined] = useState<DateKey | null>(null);
+  const searchBox = useRef<HTMLInputElement>(null);
   const [talkSheet, setTalkSheet] = useState<{ open: boolean; initialMode?: TalkMode }>({ open: false });
   const [editingTalk, setEditingTalk] = useState<{
     id: string;
@@ -156,11 +166,13 @@ export default function JournalPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/journal', { cache: 'no-store' });
+        const res = await fetch(`/api/journal?today=${localToday()}`, { cache: 'no-store' });
         if (res.status === 401) { setMode('signed-out'); return; }
         const json = await res.json();
         if (!json.success) throw new Error(json.message);
         setEntries(json.entries);
+        setTodo(json.todo ?? []);
+        setQuestions(json.questions ?? []);
         setMode('account');
         openDay(localToday());
       } catch {
@@ -315,6 +327,13 @@ export default function JournalPage() {
           topic: reply.topic,
           summary: reply.summary,
           transcript: keep ? reply.transcript : '',
+          headline: reply.headline,
+          tags: reply.tags,
+          people: reply.people,
+          followUps: reply.followUps,
+          questions: reply.questions,
+          quote: reply.quote,
+          mood: reply.mood,
           today: localToday(),
         }),
       });
@@ -325,6 +344,8 @@ export default function JournalPage() {
         if (dayView === 'written') setDayView(isDesktop ? 'split' : 'talk');
       }
       putSummary(date, json.summary);
+      if (json.todo) setTodo(json.todo);
+      if (reply.questions?.length) setQuestions((list) => [...new Set([...(reply.questions ?? []), ...list])].slice(0, 10));
       return true;
     } catch {
       return false;
@@ -369,6 +390,7 @@ export default function JournalPage() {
         setEditingTalk(null);
       }
       putSummary(date, json.summary);
+      if (json.todo) setTodo(json.todo);
     } catch (err) {
       setEditingTalk((cur) => (cur && cur.id === t.id ? { ...cur, saving: false, error: err instanceof Error ? err.message : 'Couldn’t save changes.' } : cur));
     }
@@ -386,6 +408,43 @@ export default function JournalPage() {
       if (editingTalk?.id === talk.id) setEditingTalk(null);
     }
     putSummary(date, json.summary);
+    setTodo((list) => list.filter((f) => f.talkId !== talk.id));
+  };
+
+  /**
+   * Tick (or untick) one of a talk's follow-ups, from its card or the To do strip.
+   * It shows at once and goes back if the save fails.
+   */
+  const setFollowUpDone = async (date: DateKey, talkId: string, index: number, done: boolean) => {
+    const mark = (list: JournalTalk[]) => list.map((t) => (t.id !== talkId || !t.followUps ? t : {
+      ...t,
+      followUps: t.followUps.map((f, i) => (i === index ? { ...f, done } : f)),
+    }));
+    const before = { talks, todo };
+    setTodoError('');
+    if (draft.current.day === date) setTalks(mark);
+    if (done) setTodo((list) => list.filter((f) => !(f.talkId === talkId && f.index === index)));
+    try {
+      const res = await fetch('/api/journal', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, talkId, followUp: index, done, today: localToday() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!json.success) throw new Error(json.message);
+      if (draft.current.day === date) setTalks((list) => list.map((t) => (t.id === talkId ? json.talk : t)));
+      if (json.todo) setTodo(json.todo);
+    } catch {
+      if (draft.current.day === date) setTalks(before.talks);
+      setTodo(before.todo);
+      setTodoError('Couldn’t save that tick. Check your connection and try again.');
+    }
+  };
+
+  /** A tag or name on a talk card: look for it across the journal. */
+  const searchFor = (term: string) => {
+    setQuery(term);
+    searchBox.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
 
   const remove = async () => {
@@ -406,6 +465,11 @@ export default function JournalPage() {
   const shown = results ?? entries;
   const hasEntry = written.has(day) || !!text.trim() || !!mood || talks.length > 0;
   const entryName = day === today ? 'today’s entry' : day === addDays(today, -1) ? 'yesterday’s entry' : 'this day’s entry';
+  // The day has no mood yet but a talk read one: offer it rather than setting it quietly.
+  const talkMood = !mood && save !== 'loading' && moodDeclined !== day ? [...talks].reverse().find((t) => t.mood)?.mood : undefined;
+  const shownTodo = allTodo ? todo : todo.slice(0, TODO_SHOWN);
+  const threads = useMemo(() => ({ followUps: todo.map((f) => f.text), questions }), [todo, questions]);
+  const shortDay = (d: DateKey) => (d === today ? 'Today' : d === addDays(today, -1) ? 'Yesterday' : fmtDay(d, { weekday: 'short', month: 'short', day: 'numeric' }));
 
   return (
     <div className="jr animate-fade-in">
@@ -415,6 +479,7 @@ export default function JournalPage() {
           day={day}
           entryName={entryName}
           written={text}
+          threads={threads}
           initialMode={talkSheet.initialMode}
           onClose={() => setTalkSheet({ open: false })}
           onAdd={addTalk}
@@ -442,6 +507,32 @@ export default function JournalPage() {
         <SignInPrompt title="Sign in to open your journal">Your journal is kept in your account and only you can read it. Nothing is saved on this device.</SignInPrompt>
       )}
 
+      {mode === 'account' && todo.length > 0 && (
+        <section className="jr-todo" aria-label="To do from your talks">
+          <div className="jr-todo-head">
+            <h2><span aria-hidden>✅</span> To do</h2>
+            <small>From your talks in the last two weeks</small>
+          </div>
+          <ul>
+            {shownTodo.map((f) => (
+              <li key={`${f.talkId}-${f.index}`}>
+                <label>
+                  <input type="checkbox" checked={false} onChange={() => setFollowUpDone(f.date, f.talkId, f.index, true)} />
+                  <span>{f.text}{f.when && <small> · {f.when}</small>}</span>
+                </label>
+                <button type="button" className="jr-todo-day" title={f.topic ? `From “${f.topic}”` : undefined} onClick={() => openDay(f.date)}>{shortDay(f.date)}</button>
+              </li>
+            ))}
+          </ul>
+          {todo.length > TODO_SHOWN && (
+            <button type="button" className="hb-text-btn jr-todo-more" onClick={() => setAllTodo((v) => !v)}>
+              {allTodo ? 'Show fewer' : `Show all ${todo.length}`}
+            </button>
+          )}
+          {todoError && <p className="jr-talk-error" role="alert">{todoError}</p>}
+        </section>
+      )}
+
       {mode === 'account' && (
         <div className="jr-layout">
           <div className="jr-day-workspace">
@@ -463,11 +554,18 @@ export default function JournalPage() {
                 {MOODS.map((face, i) => {
                   const value = (i + 1) as Mood;
                   return (
-                    <button key={face} type="button" role="radio" aria-checked={mood === value} aria-label={['Rough', 'Meh', 'Okay', 'Good', 'Great'][i]}
+                    <button key={face} type="button" role="radio" aria-checked={mood === value} aria-label={MOOD_NAMES[i]}
                       disabled={save === 'loading'} onMouseDown={keepEditing} onPointerDown={keepEditing} onClick={() => edit({ mood: mood === value ? null : value })}>{face}</button>
                   );
                 })}
               </div>
+              {talkMood && (
+                <p className="jr-mood-offer">
+                  <span>Set {day === today ? 'today’s' : 'this day’s'} mood to {MOODS[talkMood - 1]} {MOOD_NAMES[talkMood - 1]}? <small>From your talk.</small></span>
+                  <button type="button" className="hb-small-btn" onClick={() => edit({ mood: talkMood })}>Set it</button>
+                  <button type="button" className="hb-text-btn" onClick={() => setMoodDeclined(day)}>No thanks</button>
+                </p>
+              )}
 
               <div className="jr-view-tabs" role="tablist" aria-label="Day view">
                 <button type="button" role="tab" aria-selected={effectiveView === 'written'} onClick={() => setDayView('written')}>
@@ -586,6 +684,7 @@ export default function JournalPage() {
                             <div className="jr-talk-card-head">
                               <div className="jr-talk-card-meta">
                                 {modeLabel && <span className="jr-talk-badge">{modeLabel}</span>}
+                                {t.mood && <span className="jr-talk-mood" title={`Mood: ${MOOD_NAMES[t.mood - 1]}`} aria-label={`Mood: ${MOOD_NAMES[t.mood - 1]}`}>{MOODS[t.mood - 1]}</span>}
                                 {t.createdAt && (
                                   <small className="jr-talk-time">
                                     {new Date(t.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
@@ -660,9 +759,44 @@ export default function JournalPage() {
                             ) : (
                               <>
                                 <h4 className="jr-talk-topic">{t.topic || 'Untitled talk'}</h4>
+                                {t.headline && <p className="jr-talk-headline">{t.headline}</p>}
                                 {t.summary && (
                                   <div className="jr-talk-summary">
                                     <JournalMarkdown text={t.summary} />
+                                  </div>
+                                )}
+                                {t.quote && <blockquote className="jr-talk-quote">{t.quote}</blockquote>}
+                                {!!t.followUps?.length && (
+                                  <div className="jr-talk-list">
+                                    <h5>Follow-ups</h5>
+                                    <ul className="jr-talk-followups">
+                                      {t.followUps.map((f, i) => (
+                                        <li key={i} className={f.done ? 'is-done' : undefined}>
+                                          <label>
+                                            <input type="checkbox" checked={!!f.done} onChange={(e) => setFollowUpDone(day, t.id, i, e.target.checked)} />
+                                            <span>{f.text}{f.when && <small> · {f.when}</small>}</span>
+                                          </label>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {!!t.questions?.length && (
+                                  <div className="jr-talk-list">
+                                    <h5>Still thinking about</h5>
+                                    <ul className="jr-talk-questions">
+                                      {t.questions.map((q, i) => <li key={i}>{q}</li>)}
+                                    </ul>
+                                  </div>
+                                )}
+                                {(!!t.tags?.length || !!t.people?.length) && (
+                                  <div className="jr-talk-chips" aria-label="Find in your journal">
+                                    {t.tags?.map((tag) => (
+                                      <button key={`t-${tag}`} type="button" className="jr-talk-chip" title={`Search your journal for ${tag}`} onClick={() => searchFor(tag)}>#{tag}</button>
+                                    ))}
+                                    {t.people?.map((p) => (
+                                      <button key={`p-${p}`} type="button" className="jr-talk-chip is-person" title={`Search your journal for ${p}`} onClick={() => searchFor(p)}><span aria-hidden>👤</span> {p}</button>
+                                    ))}
                                   </div>
                                 )}
                               </>
@@ -692,7 +826,7 @@ export default function JournalPage() {
           </div>
 
           <aside className="jr-list" aria-label="Past entries">
-            <input type="search" className="jr-search" placeholder="Search your journal" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <input ref={searchBox} type="search" className="jr-search" placeholder="Search your journal" value={query} onChange={(e) => setQuery(e.target.value)} />
             {shown.length === 0 ? (
               <p className="jr-hint">{results ? 'Nothing matches that.' : 'Your entries will show up here.'}</p>
             ) : (

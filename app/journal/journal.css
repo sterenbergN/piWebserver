@@ -206,6 +206,49 @@ select.jr-talk-input { margin-bottom: 0.2rem; }
 .jr-talk-preview { margin-top: 0.5rem; padding: 0.7rem 0.85rem; border: 1px dashed var(--surface-border); border-radius: 10px; background: var(--input-bg); }
 .jr-talk-preview .jr-md { font-size: 0.92rem; line-height: 1.55; }
 
+/* What a JSON talk reply brings: headline, quote, chips, follow-ups, questions */
+.jr-talk-warn { margin: 0 0 0.6rem; padding: 0.55rem 0.75rem; border: 1px solid var(--warning); border-radius: 10px; color: var(--warning); font-size: 0.88rem; line-height: 1.45; }
+.jr-talk-read { margin-bottom: 0.4rem; padding: 0.7rem 0.85rem; border: 1px solid var(--surface-border); border-radius: 10px; background: var(--input-bg); }
+.jr-talk-read .jr-talk-headline { margin-bottom: 0.4rem; }
+.jr-talk-read-topic { margin: 0 0 0.2rem; font-weight: 700; overflow-wrap: anywhere; }
+.jr-talk-counts { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.82rem; }
+.jr-talk-headline { margin: 0 0 0.45rem; font-size: 0.95rem; font-weight: 600; line-height: 1.45; color: var(--accent-light); overflow-wrap: anywhere; }
+.jr-talk-quote { margin: 0.6rem 0 0; padding: 0.1rem 0 0.1rem 0.8rem; border-left: 3px solid var(--accent-light); color: var(--muted); font-style: italic; font-size: 0.92rem; line-height: 1.5; overflow-wrap: anywhere; }
+.jr-talk-quote::before { content: '“'; }
+.jr-talk-quote::after { content: '”'; }
+.jr-talk-mood { font-size: 1rem; line-height: 1; }
+.jr-talk-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.65rem; }
+.jr-talk-read .jr-talk-chips { margin-top: 0.5rem; }
+.jr-talk-chip { display: inline-flex; align-items: center; gap: 0.25rem; min-height: 26px; padding: 0.1rem 0.55rem; border: 1px solid var(--surface-border); border-radius: 999px; background: var(--surface-glass); color: var(--muted); font: inherit; font-size: 0.76rem; font-weight: 500; }
+button.jr-talk-chip { cursor: pointer; }
+button.jr-talk-chip:hover { color: var(--foreground); border-color: var(--accent-light); }
+.jr-talk-chip.is-person { color: var(--foreground); }
+.jr-talk-list { margin-top: 0.7rem; }
+.jr-talk-list h5 { margin: 0 0 0.3rem; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.jr-talk-list ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; line-height: 1.45; }
+.jr-talk-followups label, .jr-todo label { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; overflow-wrap: anywhere; }
+.jr-talk-followups input, .jr-todo input { flex-shrink: 0; width: 1.05rem; height: 1.05rem; margin: 0.15rem 0 0; accent-color: var(--accent-light); }
+.jr-talk-followups small, .jr-todo small { color: var(--muted); }
+.jr-talk-followups .is-done span { color: var(--muted); text-decoration: line-through; }
+.jr-talk-questions li { position: relative; padding-left: 1.1rem; overflow-wrap: anywhere; }
+.jr-talk-questions li::before { content: '?'; position: absolute; left: 0.15rem; color: var(--accent-light); font-weight: 700; }
+
+/* Open follow-ups from recent talks, above the day */
+.jr-todo { margin-bottom: 1rem; padding: 0.8rem 1rem; border: 1px solid var(--surface-border); border-radius: 16px; background: var(--surface-glass); }
+.jr-todo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; margin-bottom: 0.5rem; }
+.jr-todo-head h2 { font-size: 1rem; }
+.jr-todo-head small { color: var(--muted); font-size: 0.8rem; }
+.jr-todo ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+.jr-todo li { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; font-size: 0.92rem; line-height: 1.45; }
+.jr-todo li label { flex: 1; min-width: 0; }
+.jr-todo-day { flex-shrink: 0; padding: 0.1rem 0.5rem; border: 1px solid var(--surface-border); border-radius: 999px; background: var(--input-bg); color: var(--muted); font: inherit; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
+.jr-todo-day:hover { color: var(--foreground); border-color: var(--accent-light); }
+.jr-todo-more { margin-top: 0.5rem; }
+
+/* "Set today’s mood to 🙂 Good?" from a talk */
+.jr-mood-offer { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.4rem 0.7rem; margin: 0.55rem 0 0; font-size: 0.88rem; text-align: center; }
+.jr-mood-offer small { color: var(--muted); }
+
 /* Private post editor & cards: clear surface separation in light mode */
 .jr-pe .pe-toolbar { background: var(--input-bg); }
 .jr-pe .pe-toolbar button { color: var(--foreground); }
@@ -218,6 +261,7 @@ select.jr-talk-input { margin-bottom: 0.2rem; }
 :root[data-theme="light"] .jr-item,
 :root[data-theme="light"] .jr-post-card,
 :root[data-theme="light"] .jr-talk-step,
+:root[data-theme="light"] .jr-todo,
 :root[data-theme="light"] .jr-locked {
   background: var(--surface-glass);
 }
