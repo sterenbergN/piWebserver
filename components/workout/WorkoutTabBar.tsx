@@ -12,6 +12,7 @@ const TABS = [
   { href: '/workout', label: 'Train', icon: '🏋️', match: (p: string, tab: string) => p === '/workout' },
   { href: '/workout/analytics', label: 'Progress', icon: '📈', match: (p: string, tab: string) => p === '/workout/analytics' && tab !== 'coach' },
   { href: '/workout/analytics?tab=coach', label: 'Coach', icon: '🧭', match: (p: string, tab: string) => p === '/workout/analytics' && tab === 'coach' },
+  { href: '/workout/food', label: 'Food', icon: '🍽️', match: (p: string) => p === '/workout/food' },
   { href: '/workout/health', label: 'Health', icon: '❤️', match: (p: string) => p === '/workout/health' },
 ];
 const HIDDEN = ['/workout/active', '/workout/station', '/workout/shared-gym', '/workout/shared-workout', '/workout/config/qr', '/workout/users'];
@@ -37,7 +38,8 @@ export default function WorkoutTabBar() {
   return (
     <>
       <div className="wtb-spacer" aria-hidden />
-      {createPortal(<nav className="wtb" aria-label="Workout sections">
+      {/* One column per tab (the stylesheet's default is four). */}
+      {createPortal(<nav className="wtb" aria-label="Workout sections" style={{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }}>
         {TABS.map((t) => {
           const current = t.match(pathname, tab);
           return (

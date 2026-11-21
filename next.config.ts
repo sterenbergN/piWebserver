@@ -15,6 +15,9 @@ const nextConfig: NextConfig = {
   // name it. Only the build machine's own, since a release runs on the machine type it's built on.
   outputFileTracingIncludes: {
     '/api/notes/*': [`./node_modules/onnxruntime-node/bin/napi-v6/${process.platform}/${process.arch}/**/*`, './lib/notes/speech-worker.cjs'],
+    // The bundled USDA foods are read with fs at runtime, which tracing can't see.
+    '/api/food/**': ['./lib/food/data/usda-foods.json.gz'],
+    '/api/admin/food': ['./lib/food/data/usda-foods.json.gz'],
   },
   // Don't advertise the framework in every response.
   poweredByHeader: false,
@@ -48,6 +51,13 @@ const nextConfig: NextConfig = {
         source: '/skills/:path*',
         headers: [
           { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(self), microphone=(self), payment=(), usb=()' },
+        ],
+      },
+      {
+        // The food log can scan a barcode with the camera (where the browser can read barcodes).
+        source: '/workout/food',
+        headers: [
+          { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(self), microphone=(), payment=(), usb=()' },
         ],
       },
       {

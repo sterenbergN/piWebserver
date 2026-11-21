@@ -35,6 +35,7 @@ import { nextProgramDay, programDeloadDue, type Program } from '@/lib/workout/pr
 import { exerciseLibrary } from '@/lib/workout/exercises';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import HealthHomeCard from '@/components/workout/health/HealthHomeCard';
+import FoodHomeCard from '@/components/food/FoodHomeCard';
 import type { Goal } from '@/lib/workout/goals';
 import { useSitePopup } from '@/components/SitePopup';
 
@@ -565,6 +566,7 @@ export default function WorkoutDashboard() {
         <HealthHomeCard defaultIntensity={user.intensityFactor ?? 1.0} todayIntensity={todayIntensity} onUseIntensity={chooseTodayIntensity} onLoaded={setHomeHealth} />
       )}
       {!isDemo && user && <CoachHomeCard history={history} health={homeHealth} user={user} />}
+      {!isDemo && user && <FoodHomeCard />}
 
       <div className="workout-tile" style={{ cursor: 'pointer', transition: 'all 0.3s ease', marginTop: '1rem' }} onClick={() => setExpandAnalytics(!expandAnalytics)}>
         <div className="workout-flex-between">
