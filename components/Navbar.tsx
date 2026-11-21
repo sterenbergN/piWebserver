@@ -47,7 +47,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   const studyHome = !!user?.studyHome;
   const { pins, togglePin } = useNavPins(!!user, studyHome);
   // Open, and what it starts with: "?" opens it ready for a question.
-  const [launcher, setLauncher] = useState<false | { query: string }>(false);
+  const [launcher, setLauncher] = useState<false | { query: string; keys?: boolean }>(false);
   const barRef = useRef<HTMLElement>(null);
   const pinsRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -205,7 +205,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
   }, [discovery]);
 
   // "/" or Ctrl+K opens the panel from anywhere; "?" opens it to jot down a question for Skills;
-  // Alt+N opens it on quick notes (signed out it's just the panel).
+  // Alt+N opens it on quick notes (signed out it's just the panel); Ctrl/⌘+/ opens it on the key of shortcuts.
   // Alt+C toggles/opens the floating calculator; rolling /calc + Space|Enter or /calculator opens it too.
   useEffect(() => {
     launcherOpenRef.current = !!launcher;
@@ -229,6 +229,17 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
         keyBufRef.current.str = '';
         void loadLauncher();
         setLauncher({ query: '/note ' });
+        return;
+      }
+      // Ctrl/⌘+/ shows the key of shortcuts. It types nothing, so it works in text fields too; with the panel open it flips to the key and back.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === '/' || e.code === 'Slash')) {
+        e.preventDefault();
+        keyBufRef.current.str = '';
+        if (launcherOpenRef.current) window.dispatchEvent(new Event('site:toggle-shortcuts'));
+        else {
+          void loadLauncher();
+          setLauncher({ query: '', keys: true });
+        }
         return;
       }
       // defaultPrevented: a widget already used the key (the daily calculator's / makes a fraction).
@@ -397,7 +408,7 @@ export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavU
 
       {launcher && (
         <Launcher groups={groups} pins={pins} togglePin={togglePin} current={here?.href} signedIn={!!user} studyFirst={studyHome} theme={theme}
-          onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} initialQuery={launcher.query} />
+          onToggleTheme={toggleTheme} onFollow={follow} onClose={() => setLauncher(false)} initialQuery={launcher.query} startOnKeys={launcher.keys} />
       )}
       <Calculator />
     </>

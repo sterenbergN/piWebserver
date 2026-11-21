@@ -96,3 +96,30 @@
 /* Quick notes inside the panel: jot in the box, the list underneath. */
 .lc-search.is-note { box-shadow: inset 3px 0 0 var(--warning); }
 .lc-notes { display: flex; flex-direction: column; gap: 0.2rem; padding-top: 0.25rem; }
+
+/* The key of quick actions and shortcuts, shown in the panel's body. */
+.sk { display: flex; flex-direction: column; gap: 0.9rem; }
+.sk-head { display: flex; align-items: center; gap: 0.7rem; }
+.lc-body .sk-head h2 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; text-transform: none; color: var(--foreground); }
+.sk-head .btn { padding: 0.3rem 0.7rem; font-size: 0.82rem; }
+.sk-note { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.sk section { display: flex; flex-direction: column; gap: 0.5rem; }
+.lc-body .sk h3 { margin: 0; padding-bottom: 0.25rem; border-bottom: 1px solid var(--surface-border); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.sk-group h4 { margin: 0.2rem 0 0.15rem 0.1rem; font-size: 0.82rem; font-weight: 700; color: var(--foreground); }
+.sk-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sk-row { display: grid; grid-template-columns: minmax(7rem, 14rem) 1fr; gap: 0.2rem 0.8rem; align-items: baseline; padding: 0.4rem 0.1rem; border-bottom: 1px solid color-mix(in srgb, var(--surface-border) 60%, transparent); font-size: 0.85rem; }
+.sk-row:last-child { border-bottom: none; }
+.sk-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.5rem; }
+.sk-keys em { font-style: normal; font-size: 0.8rem; color: var(--muted); }
+.sk-keys code { padding: 0.05rem 0.4rem; border-radius: 6px; border: 1px solid var(--surface-border); background: var(--surface-glass); font-family: var(--font-geist-mono, ui-monospace, monospace); font-size: 0.8rem; color: var(--foreground); }
+.sk-combo { display: inline-flex; align-items: center; gap: 0.15rem; }
+.sk-plus { font-size: 0.7rem; color: var(--muted); }
+.sk kbd { padding: 0.05rem 0.4rem; border-radius: 5px; border: 1px solid var(--surface-border); border-bottom-width: 2px; background: var(--surface-glass); font: inherit; font-size: 0.75rem; font-weight: 600; color: var(--foreground); white-space: nowrap; }
+.sk-does { color: var(--foreground); line-height: 1.35; }
+.sk-tag { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 999px; border: 1px solid var(--surface-border); font-size: 0.66rem; font-weight: 600; color: var(--muted); white-space: nowrap; vertical-align: 0.05em; }
+.sk-tag.is-quiet { border-style: dashed; }
+/* On a phone the key combos are still true, just not what you'd reach for. */
+.sk-row.is-keyboard { opacity: 0.6; }
+@media (max-width: 640px) {
+  .sk-row { grid-template-columns: 1fr; gap: 0.25rem; padding: 0.55rem 0.1rem; }
+}

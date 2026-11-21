@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
+import { usePathname, useRouter } from 'next/navigation';
 import { addGroceryItem } from '@/lib/recipes/grocery-client';
 import { evaluate, formatCalcValue, type AngleMode } from '@/lib/daily/expr';
 import { allPlaces, matchNavItems, orderRooms, type NavGroup } from './nav-links';
@@ -13,7 +14,11 @@ import { useFoundPlaces, useRecentPages } from './useNavPins';
 import QuickNotesList from './quick-notes/QuickNotesList';
 import { herePage, useQuickNotes } from './quick-notes/useQuickNotes';
 import { openNotes } from '@/lib/quick-notes/quick-notes';
+import { KEYS_COMMAND } from '@/lib/shortcuts';
 import './launcher.css';
+
+// Only fetched when someone asks for the key, so the panel itself stays quick to open.
+const ShortcutsKey = dynamic(() => import('./ShortcutsKey'), { ssr: false });
 
 type Hit = { kind: string; title: string; url: string; subtitle?: string; snippet?: string };
 
@@ -55,7 +60,7 @@ const greeting = () => {
  * you came to do; type, and it's pages, then content. Asking a question or adding to
  * the grocery list each has its own mode, so neither happens by accident.
  */
-export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose, initialQuery = '' }: {
+export default function Launcher({ groups, pins, togglePin, current, signedIn, studyFirst, theme, onToggleTheme, onFollow, onClose, initialQuery = '', startOnKeys = false }: {
   groups: NavGroup[];
   pins: string[];
   togglePin: (href: string) => void;
@@ -68,12 +73,17 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   onClose: () => void;
   /** Opened with "?": starts as a question. */
   initialQuery?: string;
+  /** Opened with Ctrl/⌘+/: starts on the key of shortcuts. */
+  startOnKeys?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const startsAsking = signedIn && ASK_PREFIX.test(initialQuery);
   const startsNote = signedIn ? NOTE_CMD.exec(initialQuery.trim()) : null;
   const [mode, setMode] = useState<Mode>(startsAsking ? 'ask' : startsNote ? 'note' : 'find');
-  const [query, setQuery] = useState(startsAsking ? initialQuery.replace(ASK_PREFIX, '') : startsNote ? startsNote[1] ?? '' : NOTE_CMD.test(initialQuery.trim()) ? '' : initialQuery);
+  const [query, setQuery] = useState(startsAsking ? initialQuery.replace(ASK_PREFIX, '') : startsNote ? startsNote[1] ?? '' : NOTE_CMD.test(initialQuery.trim()) || KEYS_COMMAND.test(initialQuery) ? '' : initialQuery);
+  // The key of shortcuts, in place of the rooms and results.
+  const [showKeys, setShowKeys] = useState(startOnKeys || KEYS_COMMAND.test(initialQuery));
   const [busy, setBusy] = useState(false);
   const [hits, setHits] = useState<Hit[]>([]);
   const [info, setInfo] = useState<NavInfo | undefined>();
@@ -102,6 +112,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const calcMatch = finding ? CALC_CMD.exec(q) : null;
   const calcExpr = calcMatch?.[1]?.trim() ?? '';
   const calcPreview = calcExpr ? evaluate(calcExpr, { angle: calcAngle }) : null;
+  const keysMatch = finding && KEYS_COMMAND.test(q);
   const noteMatch = finding && signedIn ? NOTE_CMD.exec(q) : null;
   const noteText = noteMatch?.[1]?.trim() ?? '';
   // In Find these are only offers, which switch modes when picked.
@@ -141,6 +152,13 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     return () => window.removeEventListener('keydown', onEscape);
   }, [editing, onClose]);
 
+  // Ctrl/⌘+/ with the panel already open flips to the key and back.
+  useEffect(() => {
+    const toggle = () => { setShowKeys((on) => !on); inputRef.current?.focus(); };
+    window.addEventListener('site:toggle-shortcuts', toggle);
+    return () => window.removeEventListener('site:toggle-shortcuts', toggle);
+  }, []);
+
   useEffect(() => {
     if (!q || !finding) { setHits([]); return; }
     const controller = new AbortController();
@@ -157,12 +175,14 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
   const switchTo = (next: Mode, text = q) => {
     setMode(next);
     setQuery(text);
+    setShowKeys(false);
     setFlash(null);
     inputRef.current?.focus();
   };
 
   const onType = (value: string) => {
     setFlash(null);
+    setShowKeys(false);
     if (finding && signedIn && ASK_PREFIX.test(value)) { setMode('ask'); setQuery(value.replace(ASK_PREFIX, '')); return; }
     setQuery(value);
   };
@@ -265,6 +285,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
     if (mode === 'ask') { void askLater(); return; }
     if (mode === 'list') { void addToList(); return; }
     if (mode === 'note') { void saveNote(); return; }
+    if (keysMatch) { setShowKeys(true); setQuery(''); return; }
     if (noteMatch) {
       if (noteText) void saveNote(noteText);
       else switchTo('note', '');
@@ -326,7 +347,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
               <span aria-hidden>{m.icon}</span>{m.label}
             </button>
           ))}
-          {finding && signedIn && <span className="lc-modes-tip">Tip: <kbd>?</kbd> first to ask · <kbd>/note</kbd> to jot</span>}
+          {finding && <span className="lc-modes-tip">Tip: {signedIn && <><kbd>?</kbd> first to ask · <kbd>/note</kbd> to jot · </>}<kbd>/keys</kbd> for all shortcuts</span>}
         </div>
 
         {flash && (
@@ -337,7 +358,9 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
         )}
 
         <div className="lc-body">
-          {mode === 'ask' ? (
+          {showKeys ? (
+            <ShortcutsKey pathname={pathname} signedIn={signedIn} onBack={() => { setShowKeys(false); inputRef.current?.focus(); }} />
+          ) : mode === 'ask' ? (
             <section className="lc-compose" aria-label="Save a question">
               <div className="lc-compose-card">
                 <span className="lc-icon" aria-hidden>❓</span>
@@ -404,6 +427,15 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   </span>
                 </button>
               )}
+              {keysMatch && (
+                <button type="button" data-lc className="lc-row" onClick={() => { setShowKeys(true); setQuery(''); }}>
+                  <span className="lc-icon" aria-hidden>⌨️</span>
+                  <span className="lc-text">
+                    <strong>Shortcuts and quick actions</strong>
+                    <small>What the search box and the keyboard can do · Enter or click to open</small>
+                  </span>
+                </button>
+              )}
               {noteMatch && (
                 <button type="button" data-lc className="lc-row" onClick={() => (noteText ? void saveNote(noteText) : switchTo('note', ''))}>
                   <span className="lc-icon" aria-hidden>🗒️</span>
@@ -435,7 +467,7 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
                   ))}
                 </section>
               )}
-              {!calcMatch && !noteMatch && (
+              {!calcMatch && !noteMatch && !keysMatch && (
                 <section aria-label="Actions">
                   {pageHits.length + contentHits.length === 0 && <p className="lc-none">Nothing on the site matches “{q}”.</p>}
                   {!looksLikeQuestion && pageHits.length + contentHits.length === 0 && askOffer}
@@ -478,8 +510,9 @@ export default function Launcher({ groups, pins, togglePin, current, signedIn, s
           <button type="button" onClick={onToggleTheme}>{theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}</button>
           <button type="button" onClick={() => openCalculator()}>🧮 Calculator</button>
           {signedIn && <button type="button" className={mode === 'note' ? 'is-on' : ''} aria-pressed={mode === 'note'} onClick={() => switchTo(mode === 'note' ? 'find' : 'note', '')}>🗒️ Quick notes{openCount ? ` (${openCount})` : ''}</button>}
+          <button type="button" className={showKeys ? 'is-on' : ''} aria-pressed={showKeys} onClick={() => { setShowKeys(!showKeys); inputRef.current?.focus(); }}>⌨️ Shortcuts</button>
           {!signedIn && <button type="button" onClick={() => { onClose(); window.dispatchEvent(new Event('site:sign-in')); }}>👤 Sign in</button>}
-          <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setMode('find'); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
+          <button type="button" className={editing ? 'is-on' : ''} aria-pressed={editing} onClick={() => { setEditing(!editing); setShowKeys(false); setMode('find'); setQuery(''); }}>{editing ? '✓ Done' : '⭐ Choose shortcuts'}</button>
           <span className="lc-keys" aria-hidden>{editing ? 'Tap a star to keep it in your header and dock' : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> to move · <kbd>Enter</kbd> to open</>}</span>
         </div>
       </div>
