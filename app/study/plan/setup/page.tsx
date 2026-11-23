@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import GenerateReply from '@/components/ai/GenerateReply';
+import { useAiStatus } from '@/lib/ai/client';
 import { Icon, KIND_GLYPH, Pancakes } from '@/components/study/Icon';
 import { Loading } from '@/components/study/Ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -143,6 +144,7 @@ function readPack(text: string, today: string): { pack?: SyllabusPack; error?: s
 
 function Syllabus({ planner }: { planner: Planner }) {
   const { post, today } = planner;
+  const ai = useAiStatus();
   const [course, setCourse] = useState('');
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [reply, setReply] = useState('');
@@ -178,16 +180,8 @@ function Syllabus({ planner }: { planner: Planner }) {
     }
   };
   const fmt = (key: string) => new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-
-  return (
-    <section className="sd-card" id="syllabus">
-      <h2>From a syllabus</h2>
-      <p className="hb-hint">Copy this into your AI along with a syllabus or schedule, then paste back what it writes. Check the dates before saving, since an AI can misread them.</p>
-      <div className="sd-fields">
-        <label className="sd-wide">Class or module (optional)
-          <input value={course} maxLength={80} placeholder="Clinical Medicine II" onChange={(e) => { setCourse(e.target.value); setCopied('idle'); }} />
-        </label>
-      </div>
+  const copyParts = (
+    <>
       <div className="sd-actions">
         <button type="button" className="btn btn-secondary" onClick={copy}><Icon name={copied === 'copied' ? 'check' : 'copy'} /> {copied === 'copied' ? 'Copied' : 'Copy prompt'}</button>
         {copied === 'failed' && <span className="hb-hint">Couldn’t reach the clipboard. It’s selected below, so copy it from there.</span>}
@@ -196,6 +190,23 @@ function Syllabus({ planner }: { planner: Planner }) {
         <summary>Read the prompt</summary>
         <textarea ref={box} className="sd-prompt" readOnly rows={6} value={prompt} aria-label="The prompt to copy" />
       </details>
+    </>
+  );
+  const replyBox = <textarea className="sd-reply" rows={6} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setNotice(''); }} />;
+
+  return (
+    <section className="sd-card" id="syllabus">
+      <h2>From a syllabus</h2>
+      <p className="hb-hint">
+        {ai?.ready
+          ? 'Attach the syllabus or schedule (or paste it) and Generate. Check the dates before saving, since an AI can misread them.'
+          : 'Copy this into your AI along with a syllabus or schedule, then paste back what it writes. Check the dates before saving, since an AI can misread them.'}
+      </p>
+      <div className="sd-fields">
+        <label className="sd-wide">Class or module (optional)
+          <input value={course} maxLength={80} placeholder="Clinical Medicine II" onChange={(e) => { setCourse(e.target.value); setCopied('idle'); }} />
+        </label>
+      </div>
       <GenerateReply
         task="syllabus"
         prompt={prompt}
@@ -203,7 +214,18 @@ function Syllabus({ planner }: { planner: Planner }) {
         check={(text) => readPack(text, today).error ?? null}
         material={{ label: 'The syllabus or schedule', placeholder: 'Paste the syllabus here, or attach it as a PDF or photos below', required: true, files: true }}
       />
-      <textarea className="sd-reply" rows={6} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setNotice(''); }} />
+      {ai?.ready ? (
+        <details className="sd-fallback" open={copied === 'failed' || undefined}>
+          <summary>{reply ? 'See or edit the reply' : 'Or use your own AI: copy the prompt, paste the reply'}</summary>
+          {copyParts}
+          {replyBox}
+        </details>
+      ) : (
+        <>
+          {copyParts}
+          {replyBox}
+        </>
+      )}
       {readError && <div className="hb-banner is-error" role="alert"><span>{readError}</span></div>}
       {pack && (
         <div className="sd-preview">

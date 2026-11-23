@@ -75,7 +75,9 @@ async function saveResult(saved: Saved, clean: boolean): Promise<Result> {
 }
 
 export default function ChessPuzzle({ canStartNew, onResult }: ActivityProps) {
-  const [saved, setSaved] = useState<Saved | null>(restore);
+  // Only what's in memory at first (nothing on the server, nothing on a fresh load): a puzzle
+  // saved on this device is restored after mounting, or the server's HTML wouldn't match.
+  const [saved, setSaved] = useState<Saved | null>(() => kept);
   const [selected, setSelected] = useState<string | null>(null);
   /** The player's move on show for a moment before the reply. */
   const [preview, setPreview] = useState<PuzzleState['beforeReply'] | null>(null);
@@ -107,9 +109,15 @@ export default function ChessPuzzle({ canStartNew, onResult }: ActivityProps) {
     }
   }, [update]);
 
-  // First time here with time to spare: get one straight away (it never takes focus).
+  // Carry on with the puzzle saved on this device, or, with time to spare, get one straight away
+  // (it never takes focus).
   useEffect(() => {
-    if (!savedRef.current && canStartNew) void load();
+    const restored = savedRef.current ?? restore();
+    if (restored) {
+      kept = restored;
+      savedRef.current = restored;
+      setSaved(restored);
+    } else if (canStartNew) void load();
   }, []);
 
   // The solving clock runs only while this is on screen.

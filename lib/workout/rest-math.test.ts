@@ -1,11 +1,15 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { factLabel, factTags, judge, makeProblem, MATH_OPS, MAX_LEVEL, nextLevel, type MathOp } from './rest-math';
+import { factLabel, factTags, judge, makeDrillProblem, makeProblem, MATH_OPS, MAX_LEVEL, nextLevel, pairOf, type MathOp } from './rest-math';
 import {
   emptyMathStats,
   normalizeMathStats,
+  drillTargets,
+  problemHistory,
   recordSprintStats,
   summarizeMathStats,
+  timesGrid,
+  weeklyProgress,
 } from './rest-math-stats';
 
 // A seeded random, so a failure can be replayed.
@@ -85,6 +89,9 @@ test('normalizeMathStats validates and clamps fields and ignores unknown ops', (
       byLevel: {},
       cells: {},
       recent: [],
+      pairs: {},
+      problems: {},
+      drills: 0,
     },
   );
   // Level data: bad keys, bad levels and bad sprint logs are dropped.
@@ -129,6 +136,9 @@ test('recordSprintStats clamps ms, caps answers, and accumulates per-op stats', 
     byLevel: {},
     cells: {},
     recent: [{ at: '2026-11-23T12:00:00.000Z', score: 2, misses: 1, avgMs: 10_533, peakLevel: 0 }],
+    pairs: {},
+    problems: {},
+    drills: 0,
   });
 
   // Caps answers at 200 and score at 200.
@@ -249,9 +259,84 @@ test('stats track levels and judge operations and numbers against the same level
 
 test('the last sprints are kept for a trend', () => {
   let stats = emptyMathStats();
-  for (let i = 0; i < 35; i++) {
-    stats = recordSprintStats(stats, { score: i < 30 ? 10 : 20, answers: [{ op: 'add', right: true, ms: 1000, level: 2, facts: [3, 4] }] });
+  for (let i = 0; i < 205; i++) {
+    stats = recordSprintStats(stats, { score: i < 200 ? 10 : 20, answers: [{ op: 'add', right: true, ms: 1000, level: 2, facts: [3, 4] }] });
   }
-  assert.equal(stats.recent.length, 30);
+  assert.equal(stats.recent.length, 200);
   assert.deepEqual(summarizeMathStats(stats).trend, { recent: 20, before: 10 });
+});
+
+test('times-table pairs: ×, ÷ and mixed problems count toward the same fact, smaller factor first', () => {
+  assert.deepEqual(pairOf('mul', [8, 7]), [7, 8]);
+  assert.deepEqual(pairOf('div', [56, 7]), [7, 8]);
+  assert.deepEqual(pairOf('mixed', [7, 8, 3]), [7, 8]);
+  assert.equal(pairOf('mul', [25, 3]), null);
+  assert.equal(pairOf('add', [7, 8]), null);
+  const stats = recordSprintStats(emptyMathStats(), { score: 2, answers: [
+    { op: 'mul', right: false, ms: 4000, level: 3, facts: [7, 8], text: '7 × 8', answer: 56, typed: '54' },
+    { op: 'div', right: true, ms: 2000, level: 4, facts: [56, 8], text: '56 ÷ 8', answer: 7 },
+    { op: 'mul', right: true, ms: 1000, level: 3, facts: [3, 4], text: '3 × 4', answer: 12 },
+  ] });
+  assert.deepEqual(stats.pairs['7x8'], { right: 1, wrong: 1, totalMs: 6000 });
+  const grid = timesGrid(stats);
+  assert.equal(grid.max, 12);
+  assert.equal(grid.cells['7x8'].accuracy, 50);
+});
+
+test('problem history keeps what you typed when wrong, and lists most-missed and slowest', () => {
+  let stats = emptyMathStats();
+  for (let i = 0; i < 3; i++) {
+    stats = recordSprintStats(stats, { score: 1, answers: [
+      { op: 'mul', right: i === 2, ms: 3000, facts: [17, 8], text: '17 × 8', answer: 136, typed: i === 2 ? undefined : '126' },
+      { op: 'add', right: true, ms: 5000 + i, facts: [48, 37], text: '48 + 37', answer: 85 },
+    ] });
+  }
+  assert.deepEqual(stats.problems['17 × 8'], { right: 1, wrong: 2, totalMs: 9000, answer: 136, seen: 5, lastWrong: '126' });
+  const { mostMissed, slowest } = problemHistory(stats);
+  assert.equal(mostMissed[0].text, '17 × 8');
+  assert.equal(mostMissed[0].lastWrong, '126');
+  assert.equal(slowest[0].text, '48 + 37');
+  // Made-up problem text is ignored.
+  const odd = recordSprintStats(emptyMathStats(), { score: 0, answers: [{ op: 'add', right: false, ms: 900, text: '<script>', answer: 1 }] });
+  assert.deepEqual(odd.problems, {});
+});
+
+test('weekly progress groups sprints by Monday, and drills stay out of best and the sprint log', () => {
+  let stats = emptyMathStats();
+  stats = recordSprintStats(stats, { score: 10, answers: Array.from({ length: 12 }, (_, i) => ({ op: 'add' as const, right: i < 10, ms: 2000, level: 2 })) }, new Date(2026, 10, 17, 9));
+  stats = recordSprintStats(stats, { score: 14, answers: Array.from({ length: 14 }, () => ({ op: 'add' as const, right: true, ms: 1500, level: 3 })) }, new Date(2026, 10, 19, 9));
+  stats = recordSprintStats(stats, { score: 20, answers: Array.from({ length: 20 }, () => ({ op: 'add' as const, right: true, ms: 1000, level: 4 })) }, new Date(2026, 10, 24, 9));
+  const weeks = weeklyProgress(stats);
+  assert.deepEqual(weeks.map((w) => [w.week, w.sprints, w.avgScore, w.topLevel]), [['2026-11-16', 2, 12, 3], ['2026-11-23', 1, 20, 4]]);
+  assert.equal(weeks[0].accuracy, 92);
+  const drilled = recordSprintStats(stats, { score: 99, mode: 'drill', answers: [{ op: 'mul', right: true, ms: 1000, facts: [7, 8], text: '7 × 8', answer: 56 }] });
+  assert.equal(drilled.drills, 1);
+  assert.equal(drilled.best, stats.best);
+  assert.equal(drilled.recent.length, stats.recent.length);
+  assert.equal(drilled.sprints, stats.sprints);
+  assert.deepEqual(drilled.pairs['7x8'], { right: 1, wrong: 0, totalMs: 1000 });
+});
+
+test('drills aim at weak facts, and their problems are well formed', () => {
+  let stats = emptyMathStats();
+  const answers = [
+    ...Array.from({ length: 4 }, (_, i) => ({ op: 'mul' as const, right: i === 0, ms: 5000, level: 3, facts: [7, 8] })),
+    ...Array.from({ length: 6 }, () => ({ op: 'mul' as const, right: true, ms: 1500, level: 3, facts: [3, 4] })),
+  ];
+  stats = recordSprintStats(stats, { score: 7, answers });
+  const targets = drillTargets(stats);
+  assert.ok(targets.some((t) => 'pair' in t && t.pair[0] === 7 && t.pair[1] === 8));
+  assert.ok(!targets.some((t) => 'pair' in t && t.pair[0] === 3 && t.pair[1] === 4));
+  assert.deepEqual(drillTargets(emptyMathStats()), []);
+  const random = seeded(3);
+  for (const target of [{ pair: [7, 8] as [number, number], weight: 1 }, { tag: 'x13', weight: 1 }, { tag: '/6', weight: 1 }, { tag: 'sq14', weight: 1 }, { tag: '25%', weight: 1 }, { tag: '+carry', weight: 1 }, { tag: '-borrow', weight: 1 }]) {
+    for (let i = 0; i < 30; i++) {
+      const p = makeDrillProblem([target], random);
+      assert.ok(Number.isInteger(p.answer) && p.answer >= 0, `${p.text} = ${p.answer}`);
+      if ('tag' in target && target.tag === '+carry') assert.deepEqual(factTags(p.op, p.facts), ['+carry']);
+      if ('tag' in target && target.tag === '-borrow') assert.deepEqual(factTags(p.op, p.facts), ['-borrow'], p.text);
+      if ('pair' in target) assert.deepEqual(pairOf(p.op, p.facts), [7, 8]);
+    }
+  }
+  assert.ok(makeDrillProblem([], random).text);
 });

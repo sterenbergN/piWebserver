@@ -7,7 +7,7 @@ import type { PuzzlePoolInfo, RatingBucket } from '@/lib/chess/puzzles';
 // ships with the site; more come from the Lichess puzzle dump, either on their
 // own when someone runs low near their rating, or loaded here by hand.
 
-type Player = { name: string; rating: number; games: number; solved: number; leftNear: number };
+type Player = { name: string; rating: number; games: number; solved: number; leftNear: number; solvedByBand: Record<string, number> };
 type View = {
   pool: PuzzlePoolInfo;
   buckets: RatingBucket[];
@@ -20,6 +20,9 @@ type Notice = { kind: 'success' | 'error'; text: string };
 const RATINGS = Array.from({ length: 25 }, (_, i) => 400 + i * 100);
 /** A band with fewer than this many puzzles is worth topping up. */
 const THIN_BUCKET = 40;
+/** Share of a band a player has used up before it's flagged. */
+const USED_WARN = 0.5;
+const USED_LOW = 0.8;
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'never');
 
@@ -84,6 +87,15 @@ export default function ChessPanel() {
   const { pool, buckets, players, autoRefill } = view;
   const biggest = Math.max(1, ...buckets.map((b) => b.bundled + b.extra));
   const playersIn = (from: number) => players.filter((p) => p.rating - 50 >= from && p.rating - 50 < from + 100);
+  // Bands anyone has used, plus the one each player's puzzles are aimed at.
+  const usedBands = [...new Set([
+    ...players.flatMap((p) => Object.keys(p.solvedByBand ?? {}).map(Number)),
+    ...players.map((p) => Math.floor((p.rating - 50) / 100) * 100),
+  ])].sort((a, b) => a - b);
+  const bandTotal = (from: number) => { const b = buckets.find((x) => x.from === from); return b ? b.bundled + b.extra : 0; };
+  const mostUsed = (p: Player) => Object.entries(p.solvedByBand ?? {})
+    .map(([from, n]) => ({ from: Number(from), share: n / Math.max(1, bandTotal(Number(from))) }))
+    .sort((a, b) => b.share - a.share)[0];
   const cooling = autoRefill.nextPossibleAt && new Date(autoRefill.nextPossibleAt).getTime() > Date.now();
 
   return (
@@ -113,7 +125,10 @@ export default function ChessPanel() {
               <div key={p.name} className="adm-row">
                 <div className="adm-row-main">
                   <strong>{p.name} · Elo {p.rating}</strong>
-                  <div className="adm-row-sub">{p.solved} solved of {p.games} tried</div>
+                  <div className="adm-row-sub">
+                    {p.solved} solved of {p.games} tried
+                    {(() => { const m = mostUsed(p); return m ? ` · most used: ${m.from}s, ${Math.round(m.share * 100)}% gone` : ''; })()}
+                  </div>
                 </div>
                 <span style={{ color: low ? 'var(--danger)' : 'var(--muted)', fontSize: '0.85rem', textAlign: 'right' }}>
                   {p.leftNear.toLocaleString()} left near their level{low ? ' · low' : ''}
@@ -123,6 +138,40 @@ export default function ChessPanel() {
           })}
         </div>
       )}
+
+      {players.length > 0 && usedBands.length > 0 && (<>
+        <h3 className="adm-h3" style={{ marginTop: '1.5rem' }}>Used up, by player</h3>
+        <p className="adm-muted">Puzzles each player has solved in each band (solved ones aren’t offered to them again), out of what the band holds. Amber past half, red past {Math.round(USED_LOW * 100)}%: worth loading more there.</p>
+        <div className="adm-chess-used" role="table" aria-label="Puzzles used up per player and rating band">
+          <div role="row" className="adm-chess-used-row is-head" style={{ gridTemplateColumns: `4rem 4rem repeat(${players.length}, minmax(0, 1fr))` }}>
+            <span role="columnheader">Rating</span>
+            <span role="columnheader">Puzzles</span>
+            {players.map((p) => <span role="columnheader" key={p.name}>{p.name}</span>)}
+          </div>
+          {usedBands.map((from) => {
+            const total = bandTotal(from);
+            return (
+              <div role="row" key={from} className="adm-chess-used-row" style={{ gridTemplateColumns: `4rem 4rem repeat(${players.length}, minmax(0, 1fr))` }}>
+                <button type="button" role="rowheader" className="adm-chess-band adm-link-btn" title="Aim the load form here" onClick={() => aimAt(from)}>{from}</button>
+                <span role="cell" className="adm-chess-count">{total.toLocaleString()}</span>
+                {players.map((p) => {
+                  const used = p.solvedByBand?.[String(from)] ?? 0;
+                  const share = used / Math.max(1, total);
+                  const tone = share >= USED_LOW ? 'is-low' : share >= USED_WARN ? 'is-warn' : '';
+                  const here = Math.floor((p.rating - 50) / 100) * 100 === from;
+                  return (
+                    <span role="cell" key={p.name} className={`adm-chess-used-cell ${tone}`} title={here ? `${p.name}'s puzzles are aimed here` : undefined}>
+                      <span className="adm-chess-bar" aria-hidden><span style={{ width: `${Math.min(100, share * 100)}%` }} /></span>
+                      {used ? `${used} · ${Math.round(share * 100)}%` : '—'}{here ? ' ◂' : ''}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+        <p className="adm-muted" style={{ marginTop: '0.4rem' }}>◂ marks the band each player’s puzzles are aimed at right now.</p>
+      </>)}
 
       <h3 className="adm-h3" style={{ marginTop: '1.5rem' }}>By rating</h3>
       <p className="adm-muted">Each row is 100 points. Faded is bundled, solid is loaded. Pick a thin band to aim the load form at it.</p>

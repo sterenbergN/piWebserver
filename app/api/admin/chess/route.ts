@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllPuzzles, getPoolDetails, puzzlesLeftNear, refillPuzzlePool } from '@/lib/chess/puzzles';
+import { getAllPuzzles, getPoolDetails, puzzlesLeftNear, refillPuzzlePool, solvedByBand } from '@/lib/chess/puzzles';
 import { readChessProgress } from '@/lib/chess/store';
 import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { loadUsersData } from '@/lib/workout/users';
@@ -11,13 +11,13 @@ export const dynamic = 'force-dynamic';
 const NO_STORE = { 'Cache-Control': 'no-store, private' };
 const unauthorized = () => NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
-/** Everyone who has tried a puzzle: their Elo and how many puzzles are left near it. */
+/** Everyone who has tried a puzzle: their Elo, how many puzzles are left near it, and how many they've used up in each band. */
 async function players() {
   const [{ users }, puzzles] = await Promise.all([loadUsersData(), getAllPuzzles()]);
   const rows = await Promise.all(users.map(async (u) => {
     const progress = await readChessProgress(u.id).catch(() => null);
     if (!progress || progress.games === 0) return null;
-    return { name: u.username, rating: progress.rating, games: progress.games, solved: progress.solved.length, leftNear: puzzlesLeftNear(puzzles, progress) };
+    return { name: u.username, rating: progress.rating, games: progress.games, solved: progress.solved.length, leftNear: puzzlesLeftNear(puzzles, progress), solvedByBand: solvedByBand(puzzles, progress.solved) };
   }));
   return rows.filter((r) => r !== null).sort((a, b) => b.games - a.games);
 }

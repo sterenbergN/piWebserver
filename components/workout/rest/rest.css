@@ -163,3 +163,24 @@
 .rest-practice-stage > .rest-chess,
 .rest-practice-stage > .rest-math { width: 100%; }
 .rest-practice-stage > .rest-math { max-width: 340px; }
+
+/* Math stats tabs (MathStatsPanel.tsx) */
+.rest-math-tabs { display: flex; gap: 0.25rem; overflow-x: auto; }
+.rest-math-tabs button { flex: 1 0 auto; padding: 0.35rem 0.6rem; border-radius: 8px; border: 1px solid var(--surface-border); background: none; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+.rest-math-tabs button[aria-selected="true"] { background: var(--input-bg); color: var(--foreground); border-color: var(--accent); }
+.rest-math-overview, .rest-math-progress, .rest-math-problems, .rest-math-grid-wrap { display: flex; flex-direction: column; gap: 0.45rem; }
+.rest-math-grid { display: grid; gap: 2px; font-size: 0.6rem; font-variant-numeric: tabular-nums; }
+.rest-math-grid-head, .rest-math-grid-corner { display: grid; place-items: center; color: var(--muted); font-weight: 700; aspect-ratio: 1; }
+.rest-math-grid-cell { aspect-ratio: 1; min-width: 0; padding: 0; border: 0; border-radius: 3px; cursor: pointer; position: relative; }
+.rest-math-grid-cell.is-empty { background: var(--input-bg); cursor: default; }
+.rest-math-grid-cell.is-slow::after { content: ''; position: absolute; top: 50%; left: 50%; width: 32%; height: 32%; transform: translate(-50%, -50%); border-radius: 50%; background: rgba(255, 255, 255, 0.9); }
+.rest-math-grid-cell.is-weak { box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55); }
+.rest-math-grid-cell.is-picked { outline: 2px solid var(--foreground); outline-offset: 1px; z-index: 1; }
+.rest-math-grid-detail { margin: 0; font-size: 0.78rem; line-height: 1.4; min-height: 2.2em; }
+.rest-math-legend { display: flex; flex-wrap: wrap; gap: 0.7rem; font-size: 0.7rem; color: var(--muted); }
+.rest-math-legend span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.rest-math-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.rest-math-legend i.is-slow-key { background: var(--muted); border-radius: 50%; width: 6px; height: 6px; }
+.rest-math-chart { height: 110px; }
+.rest-math-op.is-week { grid-template-columns: minmax(0, 1fr) 3rem 2.6rem 2.8rem 3rem 1.8rem; }
+.rest-math-facts.is-slow li { background: rgba(var(--accent-rgb), 0.08); }

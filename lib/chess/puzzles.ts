@@ -170,6 +170,18 @@ export function ratingBuckets(bundled: Pick<Puzzle, 'rating'>[], extra: Pick<Puz
   return out;
 }
 
+/** How many of the puzzles each player solved (so won't be offered again) fall in each 100-point band, keyed by the band's start. */
+export function solvedByBand(puzzles: Pick<Puzzle, 'id' | 'rating'>[], solved: string[], size = 100): Record<number, number> {
+  const ids = new Set(solved);
+  const out: Record<number, number> = {};
+  for (const p of puzzles) {
+    if (!ids.has(p.id)) continue;
+    const from = Math.floor(p.rating / size) * size;
+    out[from] = (out[from] ?? 0) + 1;
+  }
+  return out;
+}
+
 /** The pool plus its rating spread and when the next automatic refill could run. */
 export async function getPoolDetails() {
   const extra = await loadExtraPuzzles();

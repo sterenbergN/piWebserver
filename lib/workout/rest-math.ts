@@ -107,6 +107,51 @@ export function factLabel(tag: string): string {
   return `${tag} of`;
 }
 
+/** Largest factor the times-table grid shows. */
+export const GRID_MAX = 20;
+
+/**
+ * The times-table fact a problem uses, smaller factor first, when both factors are
+ * 2–GRID_MAX: 7 × 8, 56 ÷ 7 (that's 7 × 8 too) and 7 × 8 + 5 all count as 7 × 8.
+ */
+export function pairOf(op: MathOp, facts: number[]): [number, number] | null {
+  let a: number, b: number;
+  if (op === 'mul' || op === 'mixed') [a, b] = facts;
+  else if (op === 'div') { const [dividend, divisor] = facts; if (!divisor) return null; [a, b] = [divisor, dividend / divisor]; }
+  else return null;
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 2 || b < 2 || a > GRID_MAX || b > GRID_MAX) return null;
+  return a <= b ? [a, b] : [b, a];
+}
+
+/** What a drill aims at: a times-table pair, or a kind of problem (a fact tag). */
+export type DrillTarget = { pair: [number, number]; weight: number } | { tag: string; weight: number };
+
+/**
+ * A problem aimed at one of your weak spots, picked in proportion to how weak it is.
+ * Falls back to an ordinary level-4 problem when there's nothing to aim at.
+ */
+export function makeDrillProblem(targets: DrillTarget[], random: () => number = Math.random): MathProblem {
+  const total = targets.reduce((sum, t) => sum + Math.max(0, t.weight), 0);
+  if (!total) return makeProblem(4, random);
+  let roll = random() * total;
+  const target = targets.find((t) => (roll -= Math.max(0, t.weight)) < 0) ?? targets[targets.length - 1];
+  const r = (lo: number, hi: number) => int(random, lo, hi);
+  if ('pair' in target) {
+    const [x, y] = random() < 0.5 ? target.pair : [target.pair[1], target.pair[0]];
+    return random() < 0.7 ? { text: `${x} × ${y}`, answer: x * y, op: 'mul', facts: [x, y] } : { text: `${x * y} ÷ ${x}`, answer: y, op: 'div', facts: [x * y, x] };
+  }
+  const tag = target.tag;
+  const n = Number(tag.replace(/\D/g, ''));
+  if (tag.startsWith('x') && n) { const b = n > 12 ? r(3, 9) : r(2, 12); return { text: `${n} × ${b}`, answer: n * b, op: 'mul', facts: [n, b] }; }
+  if (tag.startsWith('/') && n) { const k = r(2, 12); return { text: `${n * k} ÷ ${n}`, answer: k, op: 'div', facts: [n * k, n] }; }
+  if (tag.startsWith('sq') && n) return { text: `${n}²`, answer: n * n, op: 'sq', facts: [n] };
+  if (tag.endsWith('%') && n) { const whole = r(2, 12) * 20; return { text: `${n}% of ${whole}`, answer: (whole * n) / 100, op: 'pct', facts: [n, whole] }; }
+  if (tag === '+carry') { const a = r(1, 8) * 10 + r(5, 9), b = r(1, 8) * 10 + r(5, 9); return { text: `${a} + ${b}`, answer: a + b, op: 'add', facts: [a, b] }; }
+  // Ones digit of the first smaller than the second's, tens digit larger: always a borrow, never negative.
+  if (tag === '-borrow') { const a = r(3, 9) * 10 + r(0, 4); const b = r(1, Math.floor(a / 10) - 1) * 10 + r(5, 9); return { text: `${a} − ${b}`, answer: a - b, op: 'sub', facts: [a, b] }; }
+  return makeProblem(4, random);
+}
+
 /** The level after an answer, and the run of right answers so far. */
 export function nextLevel(level: number, streak: number, right: boolean): { level: number; streak: number } {
   if (!right) return { level: Math.max(1, level - 1), streak: 0 };

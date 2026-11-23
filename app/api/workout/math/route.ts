@@ -41,6 +41,7 @@ export async function POST(request: Request) {
     const stats = await saveMathSprint(userId, {
       score: body.score,
       answers: body.answers as MathAnswerRecord[],
+      mode: body.mode === 'drill' ? 'drill' : 'sprint',
     });
     return NextResponse.json({ success: true, stats }, { headers: PRIVATE });
   } catch (error) {

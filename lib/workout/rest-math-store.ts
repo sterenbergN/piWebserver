@@ -21,7 +21,7 @@ export async function readMathStats(userId: string): Promise<MathStats> {
 
 export async function saveMathSprint(
   userId: string,
-  input: { score: number; answers: MathAnswerRecord[] },
+  input: { score: number; answers: MathAnswerRecord[]; mode?: 'sprint' | 'drill' },
 ): Promise<MathStats> {
   return updateJson<MathStats, MathStats>(mathFile(userId), emptyMathStats(), (stored) => {
     const current = normalizeMathStats(stored);

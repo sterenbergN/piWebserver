@@ -133,6 +133,15 @@
 .adm-chess-count { font-family: ui-monospace, monospace; white-space: nowrap; }
 .adm-chess-count em { font-family: inherit; font-style: normal; color: var(--accent-light); }
 .adm-chess-bucket.is-thin .adm-chess-count { color: var(--warning); }
+.adm-chess-used { display: flex; flex-direction: column; gap: 2px; font-size: 0.82rem; overflow-x: auto; }
+.adm-chess-used-row { display: grid; align-items: center; gap: 0.6rem; padding: 0.2rem 0.4rem; border-radius: 6px; min-width: max-content; }
+.adm-chess-used-row.is-head { color: var(--muted); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.adm-chess-used-row:not(.is-head):nth-child(even) { background: var(--card-bg); }
+.adm-chess-used-cell { display: grid; grid-template-columns: 3.5rem auto; align-items: center; gap: 0.45rem; font-family: ui-monospace, monospace; white-space: nowrap; color: var(--muted); }
+.adm-chess-used-cell.is-warn { color: var(--warning); }
+.adm-chess-used-cell.is-low { color: var(--danger); font-weight: 700; }
+.adm-chess-used-cell.is-warn .adm-chess-bar > span { background: var(--warning); }
+.adm-chess-used-cell.is-low .adm-chess-bar > span { background: var(--danger); }
 
 /* Notices */
 .adm-notice { padding: 0.7rem 0.9rem; border-radius: 10px; font-size: 0.9rem; margin-bottom: 1rem; border: 1px solid; }

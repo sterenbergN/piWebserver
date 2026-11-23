@@ -1,17 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { judge, makeProblem, nextLevel, SPRINT_SECONDS, type MathProblem } from '@/lib/workout/rest-math';
+import { judge, makeDrillProblem, makeProblem, nextLevel, SPRINT_SECONDS, type DrillTarget, type MathProblem } from '@/lib/workout/rest-math';
 import {
+  drillTargets,
   emptyMathStats,
   normalizeMathStats,
   recordSprintStats,
-  summarizeMathStats,
   type MathAnswerRecord,
   type MathStats,
 } from '@/lib/workout/rest-math-stats';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
 import { formatSeconds, readJsonPref, saveJsonPref, setInProgress, type ActivityProps } from './shared';
+import { MathStatsPanel } from './MathStatsPanel';
+
+export { MathStatsPanel };
 
 // A 60-second sprint of mental arithmetic, all on this device. On-screen keys,
 // so the phone keyboard never covers the page. The clock only runs while it's
@@ -19,6 +22,9 @@ import { formatSeconds, readJsonPref, saveJsonPref, setInProgress, type Activity
 
 type Sprint = {
   phase: 'idle' | 'running' | 'over';
+  /** A sprint climbs the levels; a drill serves your weak spots and doesn't count toward your best. */
+  mode: 'sprint' | 'drill';
+  targets: DrillTarget[];
   /** Seconds left. */
   left: number;
   level: number;
@@ -36,14 +42,16 @@ type Sprint = {
 
 const BEST_PREF = 'workout:restMathBest';
 const STATS_PREF = 'workout:restMathStats';
-const fresh = (level = 1): Sprint => ({
+const fresh = (level = 1, mode: Sprint['mode'] = 'sprint', targets: DrillTarget[] = []): Sprint => ({
   phase: 'idle',
+  mode,
+  targets,
   left: SPRINT_SECONDS,
   level,
   streak: 0,
   score: 0,
   misses: 0,
-  problem: makeProblem(level),
+  problem: mode === 'drill' ? makeDrillProblem(targets) : makeProblem(level),
   problemMs: 0,
   answers: [],
   typed: '',
@@ -132,7 +140,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
         const left = Math.max(0, s.left - step);
         const problemMs = s.problemMs + step * 1000;
         if (left > 0) return { ...s, left, problemMs };
-        return { ...s, left: 0, problemMs, phase: 'over', newBest: s.score > statsRef.current.best, flash: null };
+        return { ...s, left: 0, problemMs, phase: 'over', newBest: s.mode === 'sprint' && s.score > statsRef.current.best, flash: null };
       });
     }, 200);
     return () => clearInterval(handle);
@@ -146,7 +154,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
     if (sprint.phase !== 'over' || savedOverRef.current) return;
     savedOverRef.current = true;
 
-    const input = { score: sprint.score, answers: sprint.answers };
+    const input = { score: sprint.score, answers: sprint.answers, mode: sprint.mode };
     const nextLocal = recordSprintStats(readLocalStats(), input);
     saveJsonPref(STATS_PREF, nextLocal);
     savePref(BEST_PREF, String(nextLocal.best));
@@ -188,10 +196,10 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
     setSprint((s) => {
       if (s.phase !== 'running') return s;
       if (key === 'back') return { ...s, typed: s.typed.slice(0, -1) };
-      if (key === 'skip') return answered(s, false);
+      if (key === 'skip') return answered(s, false, '');
       const typed = (s.typed + key).replace(/^0+(?=\d)/, '').slice(0, 6);
       const verdict = judge(typed, s.problem.answer);
-      return verdict === 'more' ? { ...s, typed } : answered(s, verdict === 'right');
+      return verdict === 'more' ? { ...s, typed } : answered(s, verdict === 'right', typed);
     });
   };
 
@@ -209,10 +217,23 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [running]);
 
-  const start = () => {
+  const targets = drillTargets(stats);
+  const start = (mode: Sprint['mode'] = sprintRef.current.mode) => {
     savedOverRef.current = false;
-    setSprint({ ...fresh(Math.max(1, sprintRef.current.level - 1)), phase: 'running' });
+    const next = mode === 'drill' ? fresh(1, 'drill', drillTargets(statsRef.current)) : fresh(Math.max(1, (sprintRef.current.mode === 'drill' ? 2 : sprintRef.current.level) - 1));
+    setSprint({ ...next, phase: 'running' });
   };
+  const drillButton = (
+    <button
+      type="button"
+      className="rest-btn"
+      disabled={!targets.length}
+      title={targets.length ? 'A minute of the facts and kinds of problem you find hardest' : 'Play a few sprints first, so it knows what to drill'}
+      onClick={() => start('drill')}
+    >
+      🎯 Drill weak spots
+    </button>
+  );
 
   if (sprint.phase === 'idle') {
     return (
@@ -223,7 +244,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
         </p>
         <div className="rest-actions">
           {canStartNew
-            ? <button type="button" className="rest-btn is-primary" onClick={start}>Start the 60 seconds</button>
+            ? <><button type="button" className="rest-btn is-primary" onClick={() => start('sprint')}>Start the 60 seconds</button>{drillButton}</>
             : <p className="rest-note">Not long enough for a sprint, just breathe.</p>}
           <button
             type="button"
@@ -247,12 +268,14 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
     return (
       <div className="rest-math">
         <p className="rest-result">
-          <strong>Time!</strong> {sprint.score} right{sprint.misses ? `, ${sprint.misses} missed` : ''}.{' '}
-          {sprint.newBest ? 'A new best 🎉' : `Best: ${stats.best}.`}
+          <strong>{sprint.mode === 'drill' ? 'Drill done!' : 'Time!'}</strong> {sprint.score} right{sprint.misses ? `, ${sprint.misses} missed` : ''}.{' '}
+          {sprint.mode === 'drill' ? 'Practice only: it doesn’t count toward your best.' : sprint.newBest ? 'A new best 🎉' : `Best: ${stats.best}.`}
           {sprintAvgSec && <span className="rest-muted"> · Avg {sprintAvgSec}s/problem</span>}
         </p>
         <div className="rest-actions">
-          {canStartNew && <button type="button" className="rest-btn" onClick={start}>Go again</button>}
+          {canStartNew && <button type="button" className="rest-btn" onClick={() => start(sprint.mode)}>{sprint.mode === 'drill' ? 'Drill again' : 'Go again'}</button>}
+          {canStartNew && sprint.mode === 'sprint' && drillButton}
+          {canStartNew && sprint.mode === 'drill' && <button type="button" className="rest-btn" onClick={() => start('sprint')}>Start a sprint</button>}
           <button
             type="button"
             className="rest-link rest-math-stats-toggle"
@@ -272,7 +295,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
       <div className="rest-math-top">
         <span className={sprint.left < 10 ? 'is-low' : undefined}>⏱ {formatSeconds(Math.ceil(sprint.left))}</span>
         <span>{sprint.score} right</span>
-        <span>Level {sprint.level}</span>
+        <span>{sprint.mode === 'drill' ? '🎯 Drill' : `Level ${sprint.level}`}</span>
       </div>
       <div className={`rest-math-problem${sprint.flash ? (sprint.flash.right ? ' is-right' : ' is-wrong') : ''}`} aria-live="polite">
         <span>{sprint.problem.text} =</span>
@@ -291,140 +314,19 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
   );
 }
 
-export function MathStatsPanel({ stats }: { stats: MathStats }) {
-  const summary = summarizeMathStats(stats);
-  const fmtSec = (ms: number | null) => (ms !== null ? `${(ms / 1000).toFixed(1)}s` : '—');
-  // Accuracy against your other answers at the same levels: a harder level doesn't count against you.
-  const vsLevel = (c: { accuracy: number; expectedAccuracy: number | null }) => {
-    if (c.expectedAccuracy === null) return { text: '—', tone: '' };
-    const d = c.accuracy - c.expectedAccuracy;
-    return { text: `${d > 0 ? '+' : ''}${d}`, tone: d <= -10 ? 'is-low' : d >= 5 ? 'is-high' : '' };
-  };
-  const sprintsShown = summary.recent.slice(-15);
-  const topScore = Math.max(1, ...sprintsShown.map((r) => r.score));
-
-  return (
-    <div className="rest-math-stats">
-      <div className="rest-math-pills is-five">
-        <div className="rest-math-pill">
-          <span>Sprints</span>
-          <strong>{stats.sprints}</strong>
-        </div>
-        <div className="rest-math-pill">
-          <span>Best</span>
-          <strong>{stats.best}</strong>
-        </div>
-        <div className="rest-math-pill">
-          <span>Accuracy</span>
-          <strong>{summary.accuracy !== null ? `${summary.accuracy}%` : '—'}</strong>
-        </div>
-        <div className="rest-math-pill">
-          <span>Avg time</span>
-          <strong>{fmtSec(summary.avgMs)}</strong>
-        </div>
-        <div className="rest-math-pill">
-          <span>Top level</span>
-          <strong>{summary.peakLevel || '—'}</strong>
-        </div>
-      </div>
-
-      {summary.troubleAreas.length > 0 ? (
-        <p className="rest-math-trouble is-warn">
-          Needs work{summary.levelAdjusted ? ' (next to your other answers at the same levels)' : ''}:{' '}
-          {summary.troubleAreas
-            .map((t) => (t.expectedAccuracy !== null
-              ? `${t.label} (${t.accuracy}% vs ${t.expectedAccuracy}%, ${fmtSec(t.avgMs)} vs ${fmtSec(t.expectedMs)})`
-              : `${t.label} (${t.accuracy}%, ${fmtSec(t.avgMs)})`))
-            .join(', ')}
-        </p>
-      ) : summary.totalAttempts >= 10 ? (
-        <p className="rest-math-trouble is-ok">Solid across all areas so far</p>
-      ) : null}
-
-      {summary.categories.length > 0 ? (
-        <div className="rest-math-ops" role="table" aria-label="Breakdown by operation">
-          <div className="rest-math-op is-head is-four" role="row">
-            <span role="columnheader">Operation</span>
-            <span role="columnheader">Right</span>
-            <span role="columnheader" className="rest-math-op-vs" title="Accuracy compared with your other answers at the same levels">vs lvl</span>
-            <span role="columnheader" className="rest-math-op-time">Time</span>
-          </div>
-          {summary.categories.map((c) => {
-            const vs = vsLevel(c);
-            return (
-              <div className="rest-math-op is-four" role="row" key={c.op}>
-                <span className="rest-math-op-name" role="cell">{c.label} <span className="rest-muted">· {c.attempts}</span></span>
-                <span className="rest-math-op-acc" role="cell">{c.accuracy}%</span>
-                <span className={`rest-math-op-vs ${vs.tone}`} role="cell">{vs.text}</span>
-                <span className="rest-math-op-time" role="cell">{fmtSec(c.avgMs)}</span>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="rest-note">Finish a sprint to see your operation breakdown.</p>
-      )}
-
-      {summary.troubleFacts.length > 0 && (
-        <div>
-          <p className="rest-math-subhead">Numbers that trip you up</p>
-          <ul className="rest-math-facts">
-            {summary.troubleFacts.map((f) => (
-              <li key={f.tag} title={`Level ${f.levels[0] === f.levels[1] ? f.levels[0] : `${f.levels[0]}–${f.levels[1]}`}, ${f.attempts} tries`}>
-                <strong>{f.label}</strong>
-                <span>
-                  {f.accuracy}% <span className="rest-muted">(others {f.expectedAccuracy}%)</span> · {fmtSec(f.avgMs)} <span className="rest-muted">({fmtSec(f.expectedMs)})</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {summary.levels.length > 0 && (
-        <div>
-          <p className="rest-math-subhead">By level</p>
-          <div className="rest-math-ops" role="table" aria-label="Breakdown by level">
-            {summary.levels.map((l) => (
-              <div className="rest-math-op" role="row" key={l.level}>
-                <span className="rest-math-op-name" role="cell">Level {l.level} <span className="rest-muted">· {l.attempts}</span></span>
-                <span className="rest-math-op-acc" role="cell">{l.accuracy}%</span>
-                <span className="rest-math-op-time" role="cell">{fmtSec(l.avgMs)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {sprintsShown.length >= 2 && (
-        <div>
-          <p className="rest-math-subhead">
-            Recent sprints
-            {summary.trend && ` · last 5 average ${summary.trend.recent}, ${summary.trend.recent >= summary.trend.before ? 'up' : 'down'} from ${summary.trend.before}`}
-          </p>
-          <div className="rest-math-sprints" role="img" aria-label={`Scores of the last ${sprintsShown.length} sprints: ${sprintsShown.map((r) => r.score).join(', ')}`}>
-            {sprintsShown.map((r, i) => (
-              <span
-                key={`${r.at}-${i}`}
-                style={{ height: `${Math.max(6, (r.score / topScore) * 100)}%` }}
-                title={`${new Date(r.at).toLocaleDateString()}: ${r.score} right, ${r.misses} missed, up to level ${r.peakLevel || '?'}`}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function answered(s: Sprint, right: boolean): Sprint {
-  const { level, streak } = nextLevel(s.level, s.streak, right);
+function answered(s: Sprint, right: boolean, typed: string): Sprint {
+  const drill = s.mode === 'drill';
+  const { level, streak } = drill ? { level: s.level, streak: 0 } : nextLevel(s.level, s.streak, right);
   const record: MathAnswerRecord = {
     op: s.problem.op,
     right,
     ms: Math.max(100, Math.round(s.problemMs)),
-    level: s.level,
+    // Drill problems aren't from a level, so they stay out of the by-level numbers.
+    ...(drill ? {} : { level: s.level }),
     ...(s.problem.facts ? { facts: s.problem.facts } : {}),
+    text: s.problem.text,
+    answer: s.problem.answer,
+    ...(right ? {} : { typed }),
   };
   return {
     ...s,
@@ -435,7 +337,7 @@ function answered(s: Sprint, right: boolean): Sprint {
     answers: [...s.answers, record],
     score: s.score + (right ? 1 : 0),
     misses: s.misses + (right ? 0 : 1),
-    problem: makeProblem(level),
+    problem: drill ? makeDrillProblem(s.targets) : makeProblem(level),
     flash: { right, answer: s.problem.answer },
   };
 }

@@ -234,3 +234,9 @@
 
 /* Ensure game outcomes / results are immediately visible with zero fade delay */
 .sd-done, .sd-result, .ns-stage, .ns-stage > *, .pr-case-done, .pr-card-summary { animation: none !important; opacity: 1; }
+
+/* The copy-paste way, folded under Generate when the site's AI is connected (components/study/PromptSteps.tsx) */
+.sd-fallback { border-top: 1px solid var(--surface-border); padding-top: 0.6rem; }
+.sd-fallback > summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; list-style-position: inside; }
+.sd-fallback > summary:hover { color: var(--foreground); }
+.sd-fallback[open] { display: flex; flex-direction: column; gap: 0.6rem; }

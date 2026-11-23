@@ -1,4 +1,4 @@
-import { factLabel, factTags, MATH_OP_LABELS, MATH_OPS, MAX_LEVEL, type MathOp } from './rest-math';
+import { factLabel, factTags, GRID_MAX, MATH_OP_LABELS, MATH_OPS, MAX_LEVEL, pairOf, type DrillTarget, type MathOp } from './rest-math';
 
 // Pure mental-math statistics helpers, shared by the server store and browser.
 //
@@ -8,7 +8,19 @@ import { factLabel, factTags, MATH_OP_LABELS, MATH_OPS, MAX_LEVEL, type MathOp }
 // can be measured against everything else you answered at the same levels.
 
 export type MathOpStat = { right: number; wrong: number; totalMs: number };
-export type MathAnswerRecord = { op: MathOp; right: boolean; ms: number; level?: number; facts?: number[] };
+export type MathAnswerRecord = {
+  op: MathOp;
+  right: boolean;
+  ms: number;
+  level?: number;
+  facts?: number[];
+  /** The problem as shown ("17 × 8"), its answer, and what was typed when it was wrong ('' for a skip). */
+  text?: string;
+  answer?: number;
+  typed?: string;
+};
+/** One problem as you've met it: how it went, and your last wrong answer. */
+export type MathProblemStat = MathOpStat & { answer: number; lastWrong?: string; seen: number };
 /** One finished sprint, for the trend. */
 export type MathSprintLog = { at: string; score: number; misses: number; avgMs: number; peakLevel: number };
 export type MathStats = {
@@ -26,6 +38,12 @@ export type MathStats = {
   cells: Record<string, MathOpStat>;
   /** The last sprints, oldest first. */
   recent: MathSprintLog[];
+  /** Times-table facts, keyed "7x8" (smaller first, 2–20), whether met as ×, ÷ or in a mixed problem. */
+  pairs: Record<string, MathOpStat>;
+  /** Problems by their text ("17 × 8"), the most recently seen kept. */
+  problems: Record<string, MathProblemStat>;
+  /** Drills done (they're practice: not in best, sprints or the trend). */
+  drills: number;
 };
 
 export type MathCategorySummary = {
@@ -77,7 +95,17 @@ const MIN_ANSWER_MS = 100;
 const MAX_ANSWER_MS = 30_000;
 const MAX_ANSWERS_PER_SPRINT = 200;
 const MAX_CELLS = 1000;
-const RECENT_KEPT = 30;
+const RECENT_KEPT = 200;
+const MAX_PROBLEMS = 400;
+const PAIR_KEY = /^(\d{1,2})x(\d{1,2})$/;
+const PROBLEM_TEXT = /^[0-9 ×÷+−%²of]{1,40}$/u;
+const pairKey = (pair: [number, number]) => `${pair[0]}x${pair[1]}`;
+const validPairKey = (key: string) => {
+  const m = key.match(PAIR_KEY);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a >= 2 && a <= b && b <= GRID_MAX;
+};
 /** Fewer answers than this at a level (outside the one being judged) and there's nothing fair to compare with. */
 const MIN_COMPARE = 3;
 const CELL_KEY = /^([1-8])\|(op:(add|sub|mul|div|pct|sq|mixed)|\+carry|\+plain|-borrow|-plain|x\d{1,4}|\/\d{1,4}|sq\d{1,4}|\d{1,3}%)$/;
@@ -117,6 +145,9 @@ export const emptyMathStats = (): MathStats => ({
   byLevel: {},
   cells: {},
   recent: [],
+  pairs: {},
+  problems: {},
+  drills: 0,
 });
 
 /** Normalize stored or incoming JSON into a valid MathStats object. */
@@ -151,6 +182,24 @@ export function normalizeMathStats(raw: unknown): MathStats {
     return [{ at: e.at, score: nonNegInt(e.score), misses: nonNegInt(e.misses), avgMs: nonNegInt(e.avgMs), peakLevel: Math.min(MAX_LEVEL, nonNegInt(e.peakLevel)) }];
   }).slice(-RECENT_KEPT);
 
+  const pairs: Record<string, MathOpStat> = {};
+  const rawPairs = r.pairs && typeof r.pairs === 'object' ? (r.pairs as Record<string, unknown>) : {};
+  for (const key of Object.keys(rawPairs)) {
+    if (!validPairKey(key)) continue;
+    const stat = normalizeStat(rawPairs[key]);
+    if (stat) pairs[key] = stat;
+  }
+
+  const problems: Record<string, MathProblemStat> = {};
+  const rawProblems = r.problems && typeof r.problems === 'object' ? (r.problems as Record<string, unknown>) : {};
+  for (const text of Object.keys(rawProblems).slice(0, MAX_PROBLEMS)) {
+    if (!PROBLEM_TEXT.test(text)) continue;
+    const stat = normalizeStat(rawProblems[text]);
+    const p = rawProblems[text] as Partial<MathProblemStat>;
+    if (!stat || typeof p.answer !== 'number' || !Number.isFinite(p.answer)) continue;
+    problems[text] = { ...stat, answer: p.answer, seen: nonNegInt(p.seen), ...(typeof p.lastWrong === 'string' && /^\d{0,8}$/.test(p.lastWrong) ? { lastWrong: p.lastWrong } : {}) };
+  }
+
   return {
     sprints: nonNegInt(r.sprints),
     best: nonNegInt(r.best),
@@ -162,15 +211,19 @@ export function normalizeMathStats(raw: unknown): MathStats {
     byLevel,
     cells,
     recent,
+    pairs,
+    problems,
+    drills: nonNegInt(r.drills),
   };
 }
 
 /** Record one completed sprint into stats without mutating `current`. */
 export function recordSprintStats(
   current: MathStats,
-  input: { score: number; answers: MathAnswerRecord[] },
+  input: { score: number; answers: MathAnswerRecord[]; mode?: 'sprint' | 'drill' },
   now: Date = new Date(),
 ): MathStats {
+  const drill = input.mode === 'drill';
   const base = normalizeMathStats(current);
   const safeScore = Math.min(MAX_ANSWERS_PER_SPRINT, nonNegInt(input.score));
   const answers = Array.isArray(input.answers) ? input.answers.slice(0, MAX_ANSWERS_PER_SPRINT) : [];
@@ -179,6 +232,10 @@ export function recordSprintStats(
   const byLevel = { ...base.byLevel };
   const cells = { ...base.cells };
   const cellCount = () => Object.keys(cells).length;
+  const pairs = { ...base.pairs };
+  const problems = { ...base.problems };
+  // A counter rather than a time, so the order stays right whatever the clock says.
+  let seen = Math.max(0, ...Object.values(problems).map((p) => p.seen));
 
   let addRight = 0;
   let addWrong = 0;
@@ -196,11 +253,26 @@ export function recordSprintStats(
     else addWrong += 1;
     addMs += ms;
 
+    const facts = validFacts(item.facts);
+    const pair = facts ? pairOf(op, facts) : null;
+    if (pair) add(pairs, pairKey(pair), right, ms);
+    if (typeof item.text === 'string' && PROBLEM_TEXT.test(item.text) && typeof item.answer === 'number' && Number.isFinite(item.answer)) {
+      const prev = problems[item.text];
+      const typed = typeof item.typed === 'string' && /^\d{0,8}$/.test(item.typed) ? item.typed : undefined;
+      problems[item.text] = {
+        right: (prev?.right ?? 0) + (right ? 1 : 0),
+        wrong: (prev?.wrong ?? 0) + (right ? 0 : 1),
+        totalMs: (prev?.totalMs ?? 0) + ms,
+        answer: item.answer,
+        seen: ++seen,
+        ...(right ? (prev?.lastWrong !== undefined ? { lastWrong: prev.lastWrong } : {}) : typed !== undefined ? { lastWrong: typed } : {}),
+      };
+    }
+
     const level = validLevel(item.level);
     if (level === null) continue;
     sprintPeak = Math.max(sprintPeak, level);
     add(byLevel, String(level), right, ms);
-    const facts = validFacts(item.facts);
     const keys = [`op:${op}`, ...(facts ? factTags(op, facts) : [])].map((k) => `${level}|${k}`);
     for (const key of keys) {
       if (!CELL_KEY.test(key) || (!cells[key] && cellCount() >= MAX_CELLS)) continue;
@@ -217,6 +289,16 @@ export function recordSprintStats(
     peakLevel: sprintPeak,
   };
 
+  // Keep the most recently seen problems.
+  const problemTexts = Object.keys(problems);
+  if (problemTexts.length > MAX_PROBLEMS) {
+    for (const text of problemTexts.sort((a, b) => problems[a].seen - problems[b].seen).slice(0, problemTexts.length - MAX_PROBLEMS)) delete problems[text];
+  }
+
+  if (drill) {
+    return { ...base, totalRight: base.totalRight + addRight, totalWrong: base.totalWrong + addWrong, totalMs: base.totalMs + addMs, byOp: byOp as Partial<Record<MathOp, MathOpStat>>, pairs, problems, drills: base.drills + 1 };
+  }
+
   return {
     sprints: base.sprints + 1,
     best: Math.max(base.best, safeScore),
@@ -228,6 +310,9 @@ export function recordSprintStats(
     byLevel,
     cells,
     recent: [...base.recent, log].slice(-RECENT_KEPT),
+    pairs,
+    problems,
+    drills: base.drills,
   };
 }
 
@@ -364,4 +449,90 @@ export function summarizeMathStats(stats: MathStats): MathStatsSummary {
     trend,
     recent: stats.recent,
   };
+}
+
+// ── Times table, progress, problems and drills ─────────────────────────────────
+
+export type GridCell = { a: number; b: number; attempts: number; accuracy: number; avgMs: number };
+
+/** The times-table grid: 2–12, or further when you've met bigger facts. Cells keyed "7x8" (smaller first). */
+export function timesGrid(stats: MathStats): { max: number; cells: Record<string, GridCell>; avgMs: number | null } {
+  const cells: Record<string, GridCell> = {};
+  let max = 12;
+  let total = 0, ms = 0;
+  for (const [key, s] of Object.entries(stats.pairs)) {
+    const [a, b] = key.split('x').map(Number);
+    const attempts = s.right + s.wrong;
+    if (!attempts) continue;
+    max = Math.max(max, b);
+    total += attempts;
+    ms += s.totalMs;
+    cells[key] = { a, b, attempts, accuracy: Math.round((s.right / attempts) * 100), avgMs: Math.round(s.totalMs / attempts) };
+  }
+  return { max: Math.min(GRID_MAX, max), cells, avgMs: total ? Math.round(ms / total) : null };
+}
+
+export type WeekProgress = { week: string; sprints: number; avgScore: number; accuracy: number; avgMs: number; topLevel: number };
+
+/** Monday of the week a time falls in, as YYYY-MM-DD (local time). */
+export function weekOf(iso: string): string {
+  const d = new Date(iso);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Sprints by week, oldest first. */
+export function weeklyProgress(stats: MathStats): WeekProgress[] {
+  const weeks = new Map<string, MathSprintLog[]>();
+  for (const r of stats.recent) {
+    const key = weekOf(r.at);
+    weeks.set(key, [...(weeks.get(key) ?? []), r]);
+  }
+  return [...weeks.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([week, list]) => {
+    const right = list.reduce((sum, r) => sum + r.score, 0);
+    const wrong = list.reduce((sum, r) => sum + r.misses, 0);
+    const answered = right + wrong;
+    return {
+      week,
+      sprints: list.length,
+      avgScore: Math.round((right / list.length) * 10) / 10,
+      accuracy: answered ? Math.round((right / answered) * 100) : 0,
+      avgMs: answered ? Math.round(list.reduce((sum, r) => sum + r.avgMs * (r.score + r.misses), 0) / answered) : 0,
+      topLevel: Math.max(0, ...list.map((r) => r.peakLevel)),
+    };
+  });
+}
+
+export type ProblemSummary = { text: string; answer: number; attempts: number; wrong: number; avgMs: number; lastWrong?: string };
+
+/** The problems you miss most and the ones that take longest. */
+export function problemHistory(stats: MathStats, limit = 8): { mostMissed: ProblemSummary[]; slowest: ProblemSummary[] } {
+  const all: ProblemSummary[] = Object.entries(stats.problems).map(([text, p]) => ({
+    text, answer: p.answer, attempts: p.right + p.wrong, wrong: p.wrong, avgMs: Math.round(p.totalMs / Math.max(1, p.right + p.wrong)), lastWrong: p.lastWrong,
+  }));
+  return {
+    mostMissed: all.filter((p) => p.wrong > 0).sort((a, b) => b.wrong / b.attempts - a.wrong / a.attempts || b.wrong - a.wrong || b.avgMs - a.avgMs).slice(0, limit),
+    // Right answers only count as slow; a miss is already in the other list.
+    slowest: all.filter((p) => p.attempts > p.wrong).sort((a, b) => b.avgMs - a.avgMs).slice(0, limit),
+  };
+}
+
+/**
+ * What a drill should aim at: times-table facts and kinds of problem that go worse
+ * than your usual, weighted by how much. Empty until there's something to go on.
+ */
+export function drillTargets(stats: MathStats): DrillTarget[] {
+  const grid = timesGrid(stats);
+  const targets: DrillTarget[] = [];
+  for (const cell of Object.values(grid.cells)) {
+    const slow = grid.avgMs ? cell.avgMs / grid.avgMs - 1 : 0;
+    const weight = (100 - cell.accuracy) / 25 + Math.max(0, slow) * 2;
+    if (cell.accuracy < 90 || slow > 0.3) targets.push({ pair: [cell.a, cell.b], weight: Math.max(0.5, weight) });
+  }
+  for (const fact of summarizeMathStats(stats).troubleFacts) {
+    const weight = Math.max(0.5, (fact.expectedAccuracy - fact.accuracy) / 20 + Math.max(0, fact.avgMs / Math.max(1, fact.expectedMs) - 1) * 2);
+    targets.push({ tag: fact.tag, weight });
+  }
+  return targets;
 }

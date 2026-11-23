@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import * as zlib from 'node:zlib';
-import { needsAutoRefill, puzzlesLeftNear, PUZZLES, ratingBuckets } from './puzzles';
+import { needsAutoRefill, puzzlesLeftNear, PUZZLES, ratingBuckets, solvedByBand } from './puzzles';
 import {
   boardSquares, checkedKing, playerColor, replaysCleanly, retry, showAnswer, showNextMove, solutionSan, solvedCleanly, startPuzzle, targetsFrom, tryMove,
   withPromotion, type Puzzle,
@@ -192,6 +192,12 @@ test('ratingBuckets splits bundled and loaded puzzles into 100-point bands witho
     { from: 900, bundled: 1, extra: 1 },
   ]);
   assert.deepEqual(ratingBuckets([], []), []);
+});
+
+test('solvedByBand counts a player’s solved puzzles in each 100-point band', () => {
+  const pool = [{ id: 'a', rating: 1012 }, { id: 'b', rating: 1099 }, { id: 'c', rating: 1150 }, { id: 'd', rating: 1500 }];
+  assert.deepEqual(solvedByBand(pool, ['a', 'b', 'c', 'zz']), { 1000: 2, 1100: 1 });
+  assert.deepEqual(solvedByBand(pool, []), {});
 });
 
 test('parseLichessPuzzleRow and fetchLichessPuzzles stream pzstd frames and stop once count is reached', async () => {
