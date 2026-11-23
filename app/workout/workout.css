@@ -870,11 +870,14 @@
 .workout-action-tile span:first-child { font-size: 1.15rem; line-height: 1; }
 
 /* Home: more pages as a compact grid instead of a stack of full-width buttons */
-/* Three to a row on a phone (a short last row stretches to fill), all in one row when there's room. */
+/* Three to a row (a short last row stretches to fill). The page is never wider than 430px, so a
+   viewport query for "all in one row" squeezed six tiles to ~60px on a desktop and labels spilled out. */
 .workout-link-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0.25rem; }
 .workout-link-grid > * { flex: 1 1 28%; min-width: 0; }
-@media (min-width: 560px) { .workout-link-grid > * { flex-basis: 15%; } }
-.workout-action-tile span:last-child { overflow-wrap: break-word; text-align: center; line-height: 1.2; }
+.workout-action-tile span:last-child { max-width: 100%; overflow-wrap: break-word; text-align: center; line-height: 1.2; }
+
+/* Home: rest games, a quiet card near the bottom rather than another tile in the page grid */
+.workout-rest-games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; margin-top: 0.6rem; }
 
 /* Home: one-tap "repeat a recent workout" buttons under Start */
 .workout-quick-starts { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.6rem 0 0.25rem; }

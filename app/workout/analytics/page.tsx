@@ -36,7 +36,7 @@ type Tab = 'summary' | 'coach' | 'lifts' | 'muscles' | 'history';
 function showTabInUrl(tab: Tab) {
   const url = new URL(window.location.href);
   url.searchParams.set('tab', tab);
-  window.history.replaceState(window.history.state, '', url);
+  window.history.replaceState(null, '', url); // null, not history.state: Next only updates useSearchParams for states it didn't write
   window.dispatchEvent(new Event('workout:tabchange'));
 }
 const TABS: { key: Tab; label: string }[] = [

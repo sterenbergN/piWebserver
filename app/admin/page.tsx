@@ -9,6 +9,7 @@ import AiPanel from '@/components/admin/AiPanel';
 import AccountsPanel from '@/components/admin/AccountsPanel';
 import TicketsPanel from '@/components/admin/TicketsPanel';
 import FoodPanel from '@/components/admin/FoodPanel';
+import ChessPanel from '@/components/admin/ChessPanel';
 import AdminQuickNav from '@/components/admin/AdminQuickNav';
 import './admin.css';
 
@@ -21,6 +22,7 @@ const TABS = [
   { id: 'daily', label: 'Daily', icon: '🧠' },
   { id: 'ai', label: 'AI', icon: '✨' },
   { id: 'food', label: 'Food', icon: '🍽️' },
+  { id: 'chess', label: 'Puzzles', icon: '♟️' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
@@ -53,6 +55,8 @@ export default function AdminDashboard() {
   const choose = (id: TabId) => {
     openTab(id);
     history.replaceState(null, '', `#${id}`);
+    // replaceState is silent; tell the navbar so the tab counts as a place you've been.
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
   };
   // New tickets get a dot on their tab; checked on load and again whenever the Tickets tab is left.
   useEffect(() => {
@@ -100,6 +104,7 @@ export default function AdminDashboard() {
               {t.id === 'ai' && <AiPanel />}
               {t.id === 'tickets' && <TicketsPanel />}
               {t.id === 'food' && <FoodPanel />}
+              {t.id === 'chess' && <ChessPanel />}
             </>
           )}
         </div>

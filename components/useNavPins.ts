@@ -60,10 +60,13 @@ export function useFoundPlaces(): Set<string> | null {
 
 /** Tick places off as you reach them. Says which were new, and whether you'd found anything before. */
 export function markFound(hrefs: string[]) {
-  const saved = read(FOUND_KEY) ?? read(RECENT_KEY);
-  const current = parse(saved) ?? [];
+  const found = read(FOUND_KEY);
+  const current = parse(found ?? read(RECENT_KEY)) ?? [];
   const fresh = hrefs.filter((h) => !current.includes(h));
-  if (fresh.length) write(FOUND_KEY, [...current, ...fresh]);
+  // Until there's a found list it starts from the recent pages, which already hold this page (the
+  // navbar notes it as recent first). Save it now: waiting for something fresh left it unsaved, so
+  // "found" stayed the last six pages and older ones came back as new places.
+  if (fresh.length || found === null) write(FOUND_KEY, [...current, ...fresh]);
   return { fresh, all: [...current, ...fresh], firstVisit: current.length === 0 };
 }
 

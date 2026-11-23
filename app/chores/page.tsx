@@ -65,7 +65,12 @@ export default function ChoresPage() {
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
   }, []);
-  const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
+  const chooseTab = (id: TabId) => {
+    setTab(id);
+    history.replaceState(history.state, '', `#${id}`);
+    // replaceState is silent; tell the navbar so the tab counts as a place you've been.
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  };
 
   // The profile level also counts habits and daily questions.
   const [otherXp, setOtherXp] = useState<{ habits: number; questions: number; study: number; skills: number } | null>(null);

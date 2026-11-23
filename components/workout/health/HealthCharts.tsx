@@ -17,6 +17,11 @@ const tooltipStyle = {
 };
 const tick = { fill: 'var(--muted)', fontSize: 10 };
 const shortNumber = (n: number) => (Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '')}K` : String(Math.round(n)));
+/**
+ * Room for the y-axis labels. A fixed 40px (less the chart's negative left margin) clipped the first
+ * digit of labels like "200.5" or "12.5K", so size it from the longest label the axis can show.
+ */
+const yAxisWidth = (labels: string[]) => Math.max(40, Math.ceil(Math.max(...labels.map((l) => l.length)) * 6.2) + 18);
 const clock = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
 
 /** Steps per day (or per day averaged over each week). */
@@ -27,7 +32,8 @@ export function StepsBars({ data, average, height = 150 }: { data: SeriesPoint[]
         <BarChart data={data} margin={{ top: 8, right: 4, bottom: 0, left: -6 }} barCategoryGap="22%">
           <CartesianGrid vertical={false} stroke="var(--surface-border)" />
           <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: 'var(--surface-border)' }} tick={tick} interval="preserveStartEnd" minTickGap={22} />
-          <YAxis tickLine={false} axisLine={false} tick={tick} tickFormatter={shortNumber} allowDecimals={false} width={40} />
+          <YAxis tickLine={false} axisLine={false} tick={tick} tickFormatter={shortNumber} allowDecimals={false}
+            width={yAxisWidth(data.map((d) => (typeof d.steps === 'number' ? shortNumber(d.steps * 1.25) : '')))} />
           {average !== null && <ReferenceLine y={average} stroke="var(--muted)" strokeDasharray="4 3" />}
           <Tooltip
             cursor={{ fill: 'rgba(var(--accent-rgb), 0.08)' }}
@@ -85,6 +91,10 @@ export function TrendLine({ data, dataKey, unit, digits = 0, height = 120 }: { d
   const min = Math.min(...values);
   const max = Math.max(...values);
   const pad = Math.max(digits ? 0.5 : 2, (max - min) * 0.2);
+  const lo = Math.floor(min - pad);
+  const hi = Math.ceil(max + pad);
+  // Ticks between whole numbers can land on 200.25; show them to the chart's own precision.
+  const label = (v: number) => String(Number(v.toFixed(digits)));
   const dots = data.length <= 31;
   return (
     <div className="an-chart" style={{ height }} role="img" aria-label={`${String(dataKey)} over time`}>
@@ -92,7 +102,8 @@ export function TrendLine({ data, dataKey, unit, digits = 0, height = 120 }: { d
         <LineChart data={data} margin={{ top: 10, right: 10, bottom: 0, left: -8 }}>
           <CartesianGrid vertical={false} stroke="var(--surface-border)" />
           <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: 'var(--surface-border)' }} tick={tick} interval="preserveStartEnd" minTickGap={22} />
-          <YAxis tickLine={false} axisLine={false} tick={tick} domain={[Math.floor(min - pad), Math.ceil(max + pad)]} allowDecimals={digits > 0} width={40} />
+          <YAxis tickLine={false} axisLine={false} tick={tick} domain={[lo, hi]} allowDecimals={digits > 0}
+            tickFormatter={label} width={yAxisWidth([label(lo), label(hi), (hi - 0.5).toFixed(digits)])} />
           <Tooltip
             cursor={{ stroke: 'var(--surface-border)' }}
             contentStyle={tooltipStyle}

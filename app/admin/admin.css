@@ -123,6 +123,17 @@
 .adm-check { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--foreground); cursor: pointer; }
 
 
+/* Puzzles: one row per 100 rating points */
+.adm-chess-buckets { display: flex; flex-direction: column; gap: 2px; }
+.adm-chess-bucket { display: grid; grid-template-columns: 3rem minmax(0, 1fr) minmax(4rem, auto); align-items: center; gap: 0.6rem; padding: 0.2rem 0.4rem; border: 0; border-radius: 6px; background: none; color: var(--foreground); font: inherit; font-size: 0.82rem; text-align: left; cursor: pointer; }
+.adm-chess-bucket:hover, .adm-chess-bucket:focus-visible { background: var(--card-bg); }
+.adm-chess-band { font-family: ui-monospace, monospace; color: var(--muted); }
+.adm-chess-bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--surface-border); }
+.adm-chess-bar > span { display: block; height: 100%; background: var(--accent); }
+.adm-chess-count { font-family: ui-monospace, monospace; white-space: nowrap; }
+.adm-chess-count em { font-family: inherit; font-style: normal; color: var(--accent-light); }
+.adm-chess-bucket.is-thin .adm-chess-count { color: var(--warning); }
+
 /* Notices */
 .adm-notice { padding: 0.7rem 0.9rem; border-radius: 10px; font-size: 0.9rem; margin-bottom: 1rem; border: 1px solid; }
 .adm-notice.is-success { color: var(--success-light); border-color: rgba(var(--success-rgb), 0.6); background: rgba(var(--success-rgb), 0.08); }

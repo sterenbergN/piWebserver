@@ -892,7 +892,6 @@ export default function WorkoutDashboard() {
           { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
           { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
           { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
-          { href: '/workout/practice', icon: '♟️', label: 'Rest games' },
           ...(isDemo ? [] : [{ href: '/workout/health', icon: '❤️', label: 'Health' }]),
         ].map((link) => (
           <a key={link.href} className="workout-action-tile" href={link.href}>
@@ -990,6 +989,14 @@ export default function WorkoutDashboard() {
         </div>
       )}
 
+      <section className="workout-tile" style={{ marginTop: '1rem' }} aria-labelledby="rest-games-heading">
+        <h3 id="rest-games-heading" style={{ margin: 0, fontSize: '1.05rem' }}>Rest games</h3>
+        <p className="workout-hint" style={{ margin: '0.2rem 0 0' }}>The same puzzles and mental math you get between sets, any time.</p>
+        <div className="workout-rest-games">
+          <a className="workout-action-tile" href="/workout/practice"><span aria-hidden>♟️</span><span>Chess puzzle</span></a>
+          <a className="workout-action-tile" href="/workout/practice?tab=math"><span aria-hidden>🔢</span><span>Quick math</span></a>
+        </div>
+      </section>
 
       {isDemo && (
         <div style={{ textAlign: 'center', marginTop: '2rem' }}>

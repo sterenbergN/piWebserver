@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { judge, makeProblem, MATH_OPS, MAX_LEVEL, nextLevel, type MathOp } from './rest-math';
+import { factLabel, factTags, judge, makeProblem, MATH_OPS, MAX_LEVEL, nextLevel, type MathOp } from './rest-math';
 import {
   emptyMathStats,
   normalizeMathStats,
@@ -81,8 +81,23 @@ test('normalizeMathStats validates and clamps fields and ignores unknown ops', (
       byOp: {
         add: { right: 5, wrong: 0, totalMs: 5000 },
       },
+      peakLevel: 0,
+      byLevel: {},
+      cells: {},
+      recent: [],
     },
   );
+  // Level data: bad keys, bad levels and bad sprint logs are dropped.
+  const withLevels = normalizeMathStats({
+    peakLevel: 12,
+    byLevel: { 3: { right: 2, wrong: 1, totalMs: 900 }, 9: { right: 1, wrong: 0, totalMs: 100 } },
+    cells: { '3|x7': { right: 1, wrong: 1, totalMs: 600 }, '3|nope': { right: 1, wrong: 0, totalMs: 1 }, '9|x7': { right: 1, wrong: 0, totalMs: 1 } },
+    recent: [{ at: '2026-11-20T10:00:00.000Z', score: 12, misses: 2, avgMs: 2500, peakLevel: 4 }, { at: 'never', score: 1 }],
+  });
+  assert.equal(withLevels.peakLevel, MAX_LEVEL);
+  assert.deepEqual(Object.keys(withLevels.byLevel), ['3']);
+  assert.deepEqual(Object.keys(withLevels.cells), ['3|x7']);
+  assert.equal(withLevels.recent.length, 1);
 });
 
 test('recordSprintStats clamps ms, caps answers, and accumulates per-op stats', () => {
@@ -94,7 +109,7 @@ test('recordSprintStats clamps ms, caps answers, and accumulates per-op stats', 
       { op: 'div', right: false, ms: 90_000 }, // clamped to 30_000
       { op: 'mul', right: true, ms: 1500 },
     ],
-  });
+  }, new Date('2026-11-23T12:00:00.000Z'));
 
   // Does not mutate input.
   assert.deepEqual(start, emptyMathStats());
@@ -109,6 +124,11 @@ test('recordSprintStats clamps ms, caps answers, and accumulates per-op stats', 
       mul: { right: 1, wrong: 0, totalMs: 1500 },
       div: { right: 0, wrong: 1, totalMs: 30_000 },
     },
+    // Answers without a level (older clients) still count, just not by level.
+    peakLevel: 0,
+    byLevel: {},
+    cells: {},
+    recent: [{ at: '2026-11-23T12:00:00.000Z', score: 2, misses: 1, avgMs: 10_533, peakLevel: 0 }],
   });
 
   // Caps answers at 200 and score at 200.
@@ -169,4 +189,69 @@ test('summarizeMathStats computes accuracy, avgMs, and troubleAreas', () => {
   // 3 categories with 50% accuracy (sub, mul, div) -> sorted by lowest accuracy then slowest avgMs, capped at 2 -> div (1100ms), sub/mul
   assert.equal(smallSummary.troubleAreas.length, 2);
   assert.equal(smallSummary.troubleAreas[0].op, 'div');
+});
+
+test('factTags names what a problem exercises, and makeProblem tags every problem', () => {
+  assert.deepEqual(factTags('mul', [7, 8]), ['x7', 'x8']);
+  assert.deepEqual(factTags('mul', [12, 12]), ['x12']);
+  assert.deepEqual(factTags('div', [42, 6]), ['/6']);
+  assert.deepEqual(factTags('add', [17, 25]), ['+carry']);
+  assert.deepEqual(factTags('add', [12, 31]), ['+plain']);
+  assert.deepEqual(factTags('sub', [42, 17]), ['-borrow']);
+  assert.deepEqual(factTags('sq', [13]), ['sq13']);
+  assert.deepEqual(factTags('pct', [25, 80]), ['25%']);
+  assert.equal(factLabel('x7'), '× 7');
+  assert.equal(factLabel('sq13'), '13²');
+  const random = seeded(7);
+  for (let level = 1; level <= MAX_LEVEL; level++) {
+    for (let i = 0; i < 50; i++) {
+      const p = makeProblem(level, random);
+      assert.ok(p.facts.length >= 1, p.text);
+      assert.ok(factTags(p.op, p.facts).length >= 1, p.text);
+    }
+  }
+});
+
+test('stats track levels and judge operations and numbers against the same levels', () => {
+  const at = (level: number, op: MathOp, facts: number[], right: boolean, ms: number) => ({ op, right, ms, level, facts });
+  const answers = [
+    // Level 3: additions all right and quick; × 7 goes badly, × 3 fine.
+    ...Array.from({ length: 6 }, () => at(3, 'add', [21, 14], true, 1500)),
+    at(3, 'mul', [7, 8], false, 5000),
+    at(3, 'mul', [6, 7], false, 4800),
+    at(3, 'mul', [7, 4], true, 4200),
+    at(3, 'mul', [3, 5], true, 1400),
+    at(3, 'mul', [3, 4], true, 1300),
+    at(3, 'mul', [3, 2], true, 1200),
+    // Level 6: everything is slower and less sure, so division at 50% there is normal.
+    ...Array.from({ length: 4 }, (_, i) => at(6, 'sq', [13], i < 2, 6000)),
+    ...Array.from({ length: 4 }, (_, i) => at(6, 'div', [91, 7], i < 2, 6000)),
+  ];
+  const stats = recordSprintStats(emptyMathStats(), { score: 14, answers });
+  assert.equal(stats.peakLevel, 6);
+  assert.deepEqual(stats.byLevel['3'], { right: 10, wrong: 2, totalMs: 9000 + 17_900 });
+  assert.deepEqual(stats.cells['3|x7'], { right: 1, wrong: 2, totalMs: 14_000 });
+
+  const summary = summarizeMathStats(stats);
+  assert.equal(summary.levelAdjusted, true);
+  assert.deepEqual(summary.levels.map((l) => [l.level, l.attempts, l.accuracy]), [[3, 12, 83], [6, 8, 50]]);
+  // Raw accuracy would flag division (50%); next to other level-6 answers it's ordinary.
+  assert.ok(!summary.troubleAreas.some((t) => t.op === 'div'));
+  assert.ok(summary.troubleAreas.some((t) => t.op === 'mul'));
+  const div = summary.categories.find((c) => c.op === 'div')!;
+  assert.equal(div.expectedAccuracy, 50);
+  // × 7 is the number that trips you up; × 3 isn't listed.
+  assert.equal(summary.troubleFacts[0].tag, 'x7');
+  assert.equal(summary.troubleFacts[0].accuracy, 33);
+  assert.ok(!summary.troubleFacts.some((f) => f.tag === 'x3'));
+  assert.equal(summary.trend, null);
+});
+
+test('the last sprints are kept for a trend', () => {
+  let stats = emptyMathStats();
+  for (let i = 0; i < 35; i++) {
+    stats = recordSprintStats(stats, { score: i < 30 ? 10 : 20, answers: [{ op: 'add', right: true, ms: 1000, level: 2, facts: [3, 4] }] });
+  }
+  assert.equal(stats.recent.length, 30);
+  assert.deepEqual(summarizeMathStats(stats).trend, { recent: 20, before: 10 });
 });

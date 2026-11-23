@@ -69,10 +69,6 @@ function WorkoutPracticeContent() {
   const [chess, setChess] = useState<ChessSummary | null>(null);
   const [math, setMath] = useState<MathStats | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const [loadCount, setLoadCount] = useState(250);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadMsg, setLoadMsg] = useState('');
-  const [loadErr, setLoadErr] = useState('');
 
   const loadStats = useCallback(async () => {
     const localChess = readLocalChessSummary();
@@ -123,30 +119,6 @@ function WorkoutPracticeContent() {
   useEffect(() => {
     void loadStats();
   }, [loadStats]);
-
-  const handleLoadMorePuzzles = async () => {
-    setLoadingMore(true);
-    setLoadMsg('');
-    setLoadErr('');
-    try {
-      const res = await fetch('/api/admin/chess', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: loadCount, minRating: 600, maxRating: 2400 }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) {
-        setLoadErr(data.error || 'Could not load more puzzles from Lichess.');
-        return;
-      }
-      setLoadMsg(`Added ${data.added} new puzzle${data.added === 1 ? '' : 's'} · pool now ${data.pool?.total?.toLocaleString() ?? ''}`);
-      await loadStats();
-    } catch {
-      setLoadErr('Network error while loading Lichess puzzles.');
-    } finally {
-      setLoadingMore(false);
-    }
-  };
 
   const chessWinPct = chess && chess.games > 0 ? Math.round((chess.solvedCount / chess.games) * 100) : null;
 
@@ -207,36 +179,9 @@ function WorkoutPracticeContent() {
               {chess.refilling ? ' Refilling more in the background…' : ''}
             </p>
             {chess.isAdmin && (
-              <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px solid var(--surface-border)' }}>
-                <div className="workout-flex-between" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', color: 'var(--muted)' }}>
-                    <span>Add puzzles</span>
-                    <select
-                      className="workout-input"
-                      aria-label="Number of puzzles to load"
-                      value={loadCount}
-                      disabled={loadingMore}
-                      onChange={(e) => setLoadCount(Number(e.target.value))}
-                      style={{ width: 'auto', minHeight: '36px', padding: '0.25rem 0.5rem' }}
-                    >
-                      <option value={100}>+100</option>
-                      <option value={250}>+250</option>
-                      <option value={500}>+500</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={loadingMore}
-                    onClick={() => void handleLoadMorePuzzles()}
-                    style={{ borderRadius: '10px', padding: '0.45rem 0.85rem', fontSize: '0.84rem' }}
-                  >
-                    {loadingMore ? 'Loading from Lichess…' : 'Load more puzzles'}
-                  </button>
-                </div>
-                {loadMsg && <p className="workout-hint" style={{ margin: '0.45rem 0 0', color: 'var(--success)' }}>{loadMsg}</p>}
-                {loadErr && <p className="workout-error" style={{ margin: '0.45rem 0 0' }}>{loadErr}</p>}
-              </div>
+              <a href="/admin#chess" className="workout-text-btn" style={{ display: 'inline-block', marginTop: '0.5rem' }}>
+                Puzzle pool and loading more: Admin › Puzzles →
+              </a>
             )}
           </>
         ) : (

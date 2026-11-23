@@ -82,6 +82,15 @@ function PartyLobby() {
     if (guide && guide in GAME_INFO) setGuideGame(guide as GameType);
   }, [searchParams]);
 
+  // Keep the tab in the address, so "Host a party" in the site menu counts once you've hosted from here.
+  const chooseTab = (next: 'join' | 'host') => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === 'host') url.searchParams.set('tab', 'host');
+    else url.searchParams.delete('tab');
+    window.history.replaceState(null, '', url); // null, not history.state: Next only updates useSearchParams for states it didn't write
+  };
+
   const seatPath = (seat: { roomCode: string; playerId: string; audience?: boolean; hostId?: string }) => {
     if (seat.audience) return `/party/audience/${seat.roomCode}/${seat.playerId}`;
     const q = seat.hostId ? `?hostId=${encodeURIComponent(seat.hostId)}` : '';
@@ -181,8 +190,8 @@ function PartyLobby() {
 
         <div className="party-card" style={tab === 'host' ? { maxWidth: 'min(880px, 100%)' } : undefined}>
           <div className="party-tab-bar">
-            <button className={`party-tab${tab === 'join' ? ' active' : ''}`} onClick={() => setTab('join')}>Join Game</button>
-            <button className={`party-tab${tab === 'host' ? ' active' : ''}`} onClick={() => setTab('host')}>Host Game</button>
+            <button className={`party-tab${tab === 'join' ? ' active' : ''}`} onClick={() => chooseTab('join')}>Join Game</button>
+            <button className={`party-tab${tab === 'host' ? ' active' : ''}`} onClick={() => chooseTab('host')}>Host Game</button>
           </div>
 
           {error && <div className="party-error">⚠️ {error}</div>}

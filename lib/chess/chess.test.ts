@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import * as zlib from 'node:zlib';
-import { needsAutoRefill, PUZZLES } from './puzzles';
+import { needsAutoRefill, puzzlesLeftNear, PUZZLES, ratingBuckets } from './puzzles';
 import {
   boardSquares, checkedKing, playerColor, replaysCleanly, retry, showAnswer, showNextMove, solutionSan, solvedCleanly, startPuzzle, targetsFrom, tryMove,
   withPromotion, type Puzzle,
@@ -173,6 +173,25 @@ test('needsAutoRefill triggers only when unsolved non-recent puzzles near rating
   assert.equal(needsAutoRefill(pool, { rating: 1100, solved: pool.slice(0, 6).map((p) => p.id), recent: [] }), true);
   // Rating far outside pool -> triggers refill.
   assert.equal(needsAutoRefill(pool, { rating: 2200, solved: [], recent: [] }), true);
+});
+
+test('puzzlesLeftNear counts unsolved, non-recent puzzles around where puzzles are aimed', () => {
+  const pool = [{ id: 'a', rating: 1000 }, { id: 'b', rating: 1100 }, { id: 'c', rating: 1200 }, { id: 'd', rating: 1500 }];
+  // Aimed at 1150, window 150: a (1000), b, c count; d is too far.
+  assert.equal(puzzlesLeftNear(pool, { rating: 1200, solved: [], recent: [] }), 3);
+  assert.equal(puzzlesLeftNear(pool, { rating: 1200, solved: ['a'], recent: ['b'] }), 1);
+  assert.equal(puzzlesLeftNear(pool, { rating: 1200, solved: [], recent: [] }, 150, 2), 2);
+});
+
+test('ratingBuckets splits bundled and loaded puzzles into 100-point bands without gaps', () => {
+  const buckets = ratingBuckets([{ rating: 612 }, { rating: 699 }, { rating: 905 }], [{ rating: 650 }, { rating: 910 }]);
+  assert.deepEqual(buckets, [
+    { from: 600, bundled: 2, extra: 1 },
+    { from: 700, bundled: 0, extra: 0 },
+    { from: 800, bundled: 0, extra: 0 },
+    { from: 900, bundled: 1, extra: 1 },
+  ]);
+  assert.deepEqual(ratingBuckets([], []), []);
 });
 
 test('parseLichessPuzzleRow and fetchLichessPuzzles stream pzstd frames and stop once count is reached', async () => {

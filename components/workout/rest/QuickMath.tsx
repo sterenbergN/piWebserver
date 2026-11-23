@@ -65,7 +65,7 @@ function readLocalStats(): MathStats {
 
 export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
   const [sprint, setSprint] = useState<Sprint>(() => kept ?? fresh());
-  const [stats, setStats] = useState<MathStats>(readLocalStats);
+  const [stats, setStats] = useState<MathStats>(emptyMathStats);
   const [signedIn, setSignedIn] = useState(false);
   const [showStats, setShowStats] = useState(false);
 
@@ -95,6 +95,11 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
 
   useEffect(() => {
     let active = true;
+    // This device's stats first (read after mount: the server can't see them, and reading them in
+    // the first render made its HTML differ from the browser's), then the account's if signed in.
+    const local = readLocalStats();
+    setStats(local);
+    statsRef.current = local;
     void (async () => {
       try {
         const res = await fetch('/api/workout/math', { cache: 'no-store' });
@@ -289,10 +294,18 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
 export function MathStatsPanel({ stats }: { stats: MathStats }) {
   const summary = summarizeMathStats(stats);
   const fmtSec = (ms: number | null) => (ms !== null ? `${(ms / 1000).toFixed(1)}s` : '—');
+  // Accuracy against your other answers at the same levels: a harder level doesn't count against you.
+  const vsLevel = (c: { accuracy: number; expectedAccuracy: number | null }) => {
+    if (c.expectedAccuracy === null) return { text: '—', tone: '' };
+    const d = c.accuracy - c.expectedAccuracy;
+    return { text: `${d > 0 ? '+' : ''}${d}`, tone: d <= -10 ? 'is-low' : d >= 5 ? 'is-high' : '' };
+  };
+  const sprintsShown = summary.recent.slice(-15);
+  const topScore = Math.max(1, ...sprintsShown.map((r) => r.score));
 
   return (
     <div className="rest-math-stats">
-      <div className="rest-math-pills">
+      <div className="rest-math-pills is-five">
         <div className="rest-math-pill">
           <span>Sprints</span>
           <strong>{stats.sprints}</strong>
@@ -309,13 +322,19 @@ export function MathStatsPanel({ stats }: { stats: MathStats }) {
           <span>Avg time</span>
           <strong>{fmtSec(summary.avgMs)}</strong>
         </div>
+        <div className="rest-math-pill">
+          <span>Top level</span>
+          <strong>{summary.peakLevel || '—'}</strong>
+        </div>
       </div>
 
       {summary.troubleAreas.length > 0 ? (
         <p className="rest-math-trouble is-warn">
-          Needs work:{' '}
+          Needs work{summary.levelAdjusted ? ' (next to your other answers at the same levels)' : ''}:{' '}
           {summary.troubleAreas
-            .map((t) => `${t.label} (${t.accuracy}%, ${fmtSec(t.avgMs)})`)
+            .map((t) => (t.expectedAccuracy !== null
+              ? `${t.label} (${t.accuracy}% vs ${t.expectedAccuracy}%, ${fmtSec(t.avgMs)} vs ${fmtSec(t.expectedMs)})`
+              : `${t.label} (${t.accuracy}%, ${fmtSec(t.avgMs)})`))
             .join(', ')}
         </p>
       ) : summary.totalAttempts >= 10 ? (
@@ -324,16 +343,75 @@ export function MathStatsPanel({ stats }: { stats: MathStats }) {
 
       {summary.categories.length > 0 ? (
         <div className="rest-math-ops" role="table" aria-label="Breakdown by operation">
-          {summary.categories.map((c) => (
-            <div className="rest-math-op" role="row" key={c.op}>
-              <span className="rest-math-op-name" role="cell">{c.label}</span>
-              <span className="rest-math-op-acc" role="cell">{c.accuracy}%</span>
-              <span className="rest-math-op-time" role="cell">{fmtSec(c.avgMs)}</span>
-            </div>
-          ))}
+          <div className="rest-math-op is-head is-four" role="row">
+            <span role="columnheader">Operation</span>
+            <span role="columnheader">Right</span>
+            <span role="columnheader" className="rest-math-op-vs" title="Accuracy compared with your other answers at the same levels">vs lvl</span>
+            <span role="columnheader" className="rest-math-op-time">Time</span>
+          </div>
+          {summary.categories.map((c) => {
+            const vs = vsLevel(c);
+            return (
+              <div className="rest-math-op is-four" role="row" key={c.op}>
+                <span className="rest-math-op-name" role="cell">{c.label} <span className="rest-muted">· {c.attempts}</span></span>
+                <span className="rest-math-op-acc" role="cell">{c.accuracy}%</span>
+                <span className={`rest-math-op-vs ${vs.tone}`} role="cell">{vs.text}</span>
+                <span className="rest-math-op-time" role="cell">{fmtSec(c.avgMs)}</span>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="rest-note">Finish a sprint to see your operation breakdown.</p>
+      )}
+
+      {summary.troubleFacts.length > 0 && (
+        <div>
+          <p className="rest-math-subhead">Numbers that trip you up</p>
+          <ul className="rest-math-facts">
+            {summary.troubleFacts.map((f) => (
+              <li key={f.tag} title={`Level ${f.levels[0] === f.levels[1] ? f.levels[0] : `${f.levels[0]}–${f.levels[1]}`}, ${f.attempts} tries`}>
+                <strong>{f.label}</strong>
+                <span>
+                  {f.accuracy}% <span className="rest-muted">(others {f.expectedAccuracy}%)</span> · {fmtSec(f.avgMs)} <span className="rest-muted">({fmtSec(f.expectedMs)})</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {summary.levels.length > 0 && (
+        <div>
+          <p className="rest-math-subhead">By level</p>
+          <div className="rest-math-ops" role="table" aria-label="Breakdown by level">
+            {summary.levels.map((l) => (
+              <div className="rest-math-op" role="row" key={l.level}>
+                <span className="rest-math-op-name" role="cell">Level {l.level} <span className="rest-muted">· {l.attempts}</span></span>
+                <span className="rest-math-op-acc" role="cell">{l.accuracy}%</span>
+                <span className="rest-math-op-time" role="cell">{fmtSec(l.avgMs)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {sprintsShown.length >= 2 && (
+        <div>
+          <p className="rest-math-subhead">
+            Recent sprints
+            {summary.trend && ` · last 5 average ${summary.trend.recent}, ${summary.trend.recent >= summary.trend.before ? 'up' : 'down'} from ${summary.trend.before}`}
+          </p>
+          <div className="rest-math-sprints" role="img" aria-label={`Scores of the last ${sprintsShown.length} sprints: ${sprintsShown.map((r) => r.score).join(', ')}`}>
+            {sprintsShown.map((r, i) => (
+              <span
+                key={`${r.at}-${i}`}
+                style={{ height: `${Math.max(6, (r.score / topScore) * 100)}%` }}
+                title={`${new Date(r.at).toLocaleDateString()}: ${r.score} right, ${r.misses} missed, up to level ${r.peakLevel || '?'}`}
+              />
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -345,6 +423,8 @@ function answered(s: Sprint, right: boolean): Sprint {
     op: s.problem.op,
     right,
     ms: Math.max(100, Math.round(s.problemMs)),
+    level: s.level,
+    ...(s.problem.facts ? { facts: s.problem.facts } : {}),
   };
   return {
     ...s,

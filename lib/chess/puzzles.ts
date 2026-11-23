@@ -112,6 +112,32 @@ export async function getPoolInfo(): Promise<PuzzlePoolInfo> {
   return summarizePool(extra.length ? [...PUZZLES, ...extra] : PUZZLES, extra.length);
 }
 
+/** How the background refill decides, for the admin page to explain it. */
+export const AUTO_REFILL_RULES = {
+  threshold: AUTO_REFILL_THRESHOLD,
+  window: AUTO_REFILL_WINDOW,
+  cooldownMinutes: REFILL_COOLDOWN_MS / 60_000,
+  count: 120,
+} as const;
+
+/** Unsolved, non-recent puzzles within `window` of where puzzles are aimed (`rating - 50`). */
+export function puzzlesLeftNear(
+  puzzles: Pick<Puzzle, 'id' | 'rating'>[],
+  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent'>,
+  window = AUTO_REFILL_WINDOW,
+  stopAt = Infinity,
+): number {
+  const solved = new Set(progress.solved);
+  const recent = new Set(progress.recent);
+  const aim = progress.rating - 50;
+  let remaining = 0;
+  for (const p of puzzles) {
+    if (solved.has(p.id) || recent.has(p.id)) continue;
+    if (Math.abs(p.rating - aim) <= window && ++remaining >= stopAt) break;
+  }
+  return remaining;
+}
+
 /** True when fewer than `threshold` unsolved, non-recent puzzles exist near `progress.rating - 50`. */
 export function needsAutoRefill(
   puzzles: Pick<Puzzle, 'id' | 'rating'>[],
@@ -119,18 +145,41 @@ export function needsAutoRefill(
   threshold = AUTO_REFILL_THRESHOLD,
   window = AUTO_REFILL_WINDOW,
 ): boolean {
-  const solved = new Set(progress.solved);
-  const recent = new Set(progress.recent);
-  const aim = progress.rating - 50;
-  let remaining = 0;
-  for (const p of puzzles) {
-    if (solved.has(p.id) || recent.has(p.id)) continue;
-    if (Math.abs(p.rating - aim) <= window) {
-      remaining++;
-      if (remaining >= threshold) return false;
+  return puzzlesLeftNear(puzzles, progress, window, threshold) < threshold;
+}
+
+export type RatingBucket = { from: number; bundled: number; extra: number };
+
+/** Puzzles per rating band (`from` to `from + size - 1`), lowest first, with no gaps between the ends. */
+export function ratingBuckets(bundled: Pick<Puzzle, 'rating'>[], extra: Pick<Puzzle, 'rating'>[], size = 100): RatingBucket[] {
+  const counts = new Map<number, RatingBucket>();
+  const add = (list: Pick<Puzzle, 'rating'>[], key: 'bundled' | 'extra') => {
+    for (const p of list) {
+      const from = Math.floor(p.rating / size) * size;
+      const bucket = counts.get(from) ?? { from, bundled: 0, extra: 0 };
+      bucket[key]++;
+      counts.set(from, bucket);
     }
-  }
-  return true;
+  };
+  add(bundled, 'bundled');
+  add(extra, 'extra');
+  if (!counts.size) return [];
+  const froms = [...counts.keys()];
+  const out: RatingBucket[] = [];
+  for (let from = Math.min(...froms); from <= Math.max(...froms); from += size) out.push(counts.get(from) ?? { from, bundled: 0, extra: 0 });
+  return out;
+}
+
+/** The pool plus its rating spread and when the next automatic refill could run. */
+export async function getPoolDetails() {
+  const extra = await loadExtraPuzzles();
+  const pool = summarizePool(extra.length ? [...PUZZLES, ...extra] : PUZZLES, extra.length);
+  return {
+    pool,
+    buckets: ratingBuckets(PUZZLES, extra),
+    maxExtra: MAX_EXTRA_PUZZLES,
+    autoRefill: { ...AUTO_REFILL_RULES, nextPossibleAt: lastAttemptAt ? new Date(lastAttemptAt + REFILL_COOLDOWN_MS).toISOString() : null },
+  };
 }
 
 export type RefillOptions = {
@@ -220,7 +269,7 @@ export function maybeAutoRefill(progress: ChessProgress, currentPool?: Puzzle[])
 
   const minRating = Math.max(400, Math.floor((progress.rating - 250) / 100) * 100);
   const maxRating = Math.min(2800, Math.ceil((progress.rating + 250) / 100) * 100);
-  void refillPuzzlePool({ count: 120, minRating, maxRating }).catch((err) => {
+  void refillPuzzlePool({ count: AUTO_REFILL_RULES.count, minRating, maxRating }).catch((err) => {
     console.error('Background chess puzzle refill failed:', err instanceof Error ? err.message : err);
   });
   return true;

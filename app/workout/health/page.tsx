@@ -20,6 +20,17 @@ import '@/components/workout/health/health.css';
 
 type Range = '14d' | '30d' | '90d' | '1y';
 type Tab = 'today' | 'plan' | 'trends';
+/**
+ * Keep the tab in the address, like Analytics does. The site menu counts "My plan" as a place you've
+ * found only at ?tab=plan, so switching tabs in place used to leave it unfound however often you went.
+ */
+function showTabInUrl(tab: Tab) {
+  const url = new URL(window.location.href);
+  if (tab === 'today') url.searchParams.delete('tab');
+  else url.searchParams.set('tab', tab);
+  window.history.replaceState(null, '', url); // null, not history.state: Next only updates useSearchParams for states it didn't write
+  window.dispatchEvent(new Event('workout:tabchange'));
+}
 const TABS: { key: Tab; label: string }[] = [
   { key: 'today', label: 'Today' },
   { key: 'plan', label: 'Plan' },
@@ -120,7 +131,7 @@ export default function HealthPage() {
   }, [loadHealth]);
 
   const chooseRange = (next: Range) => { setRange(next); savePref('workout:healthRange', next); };
-  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:healthTab', next); window.scrollTo({ top: 0 }); };
+  const chooseTab = (next: Tab) => { setTab(next); savePref('workout:healthTab', next); showTabInUrl(next); window.scrollTo({ top: 0 }); };
   /** Save plan/calculator settings; an ended plan is sent as null so it's removed, not kept. */
   const savePlan = async (patch: Omit<Partial<Calorie>, 'plan'> & { plan?: WeightPlan | null }) => {
     const res = await fetch('/api/workout/calculator-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ calculatorDefaults: { calorie: patch } }) });

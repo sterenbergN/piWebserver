@@ -58,7 +58,12 @@ export default function DailyPage() {
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
   }, []);
-  const chooseTab = (id: TabId) => { setTab(id); history.replaceState(history.state, '', `#${id}`); };
+  const chooseTab = (id: TabId) => {
+    setTab(id);
+    history.replaceState(history.state, '', `#${id}`);
+    // replaceState is silent; tell the navbar so the tab counts as a place you've been.
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  };
 
   useEffect(() => {
     if (!wanted || !d.day || d.state !== 'ready') return;
