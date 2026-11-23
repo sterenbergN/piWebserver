@@ -1,10 +1,227 @@
+import path from 'path';
+import { readJson, updateJson } from '@/lib/json-store';
 import data from './data/puzzles.json';
-import type { Puzzle } from './puzzle';
+import { type Puzzle } from './puzzle';
+import type { ChessProgress } from './rating';
+import { fetchLichessPuzzles } from './refill';
 
 // The bundled puzzles (from the Lichess puzzle database, CC0; rebuilt by
-// scripts/chess-puzzles-from-dump.mjs). Only the server reads this file, so the
-// browser never downloads the whole set.
+// scripts/chess-puzzles-from-dump.mjs), plus any extra puzzles fetched on the
+// server (auto-refill or admin load) stored in .data/workout/chess/extra-puzzles.json.
 
 export const PUZZLES = data as Puzzle[];
 
 export const puzzleById = (id: unknown) => (typeof id === 'string' ? PUZZLES.find((p) => p.id === id) ?? null : null);
+
+export const MAX_EXTRA_PUZZLES = 10_000;
+const AUTO_REFILL_THRESHOLD = 15;
+const AUTO_REFILL_WINDOW = 150;
+const REFILL_COOLDOWN_MS = 10 * 60_000;
+
+type ExtraPoolFile = { puzzles: Puzzle[]; updatedAt?: string };
+
+export type PuzzlePoolInfo = {
+  total: number;
+  bundled: number;
+  extra: number;
+  minRating: number;
+  maxRating: number;
+  refilling: boolean;
+  lastRefillAt: string | null;
+  lastRefillAdded: number;
+  lastError: string | null;
+};
+
+let cachedExtra: Puzzle[] | null = null;
+let inFlightRefill: Promise<{ added: number; pool: PuzzlePoolInfo }> | null = null;
+let lastAttemptAt = 0;
+let lastRefillAt: string | null = null;
+let lastRefillAdded = 0;
+let lastError: string | null = null;
+
+const extraFile = () => path.join(process.cwd(), '.data', 'workout', 'chess', 'extra-puzzles.json');
+
+function validStoredPuzzle(raw: unknown): raw is Puzzle {
+  if (!raw || typeof raw !== 'object') return false;
+  const r = raw as Partial<Puzzle>;
+  return (
+    typeof r.id === 'string' &&
+    typeof r.fen === 'string' &&
+    Array.isArray(r.moves) &&
+    r.moves.length >= 2 &&
+    typeof r.rating === 'number' &&
+    Number.isFinite(r.rating) &&
+    Array.isArray(r.themes)
+  );
+}
+
+async function loadExtraPuzzles(): Promise<Puzzle[]> {
+  if (cachedExtra !== null) return cachedExtra;
+  const stored = await readJson<ExtraPoolFile>(extraFile(), { puzzles: [] });
+  const bundledIds = new Set(PUZZLES.map((p) => p.id));
+  const seen = new Set<string>();
+  const valid: Puzzle[] = [];
+  for (const p of Array.isArray(stored.puzzles) ? stored.puzzles : []) {
+    if (validStoredPuzzle(p) && !bundledIds.has(p.id) && !seen.has(p.id)) {
+      seen.add(p.id);
+      valid.push(p);
+    }
+  }
+  cachedExtra = valid;
+  if (stored.updatedAt && !lastRefillAt) lastRefillAt = stored.updatedAt;
+  return cachedExtra;
+}
+
+/** Combined bundled + server-fetched puzzle pool. */
+export async function getAllPuzzles(): Promise<Puzzle[]> {
+  const extra = await loadExtraPuzzles();
+  return extra.length ? [...PUZZLES, ...extra] : PUZZLES;
+}
+
+/** Look up any puzzle by id across bundled and extra pools. */
+export async function findPuzzleById(id: unknown): Promise<Puzzle | null> {
+  if (typeof id !== 'string') return null;
+  const local = puzzleById(id);
+  if (local) return local;
+  const extra = await loadExtraPuzzles();
+  return extra.find((p) => p.id === id) ?? null;
+}
+
+function summarizePool(all: Puzzle[], extraCount: number): PuzzlePoolInfo {
+  let minRating = Infinity;
+  let maxRating = -Infinity;
+  for (const p of all) {
+    if (p.rating < minRating) minRating = p.rating;
+    if (p.rating > maxRating) maxRating = p.rating;
+  }
+  return {
+    total: all.length,
+    bundled: PUZZLES.length,
+    extra: extraCount,
+    minRating: Number.isFinite(minRating) ? minRating : 0,
+    maxRating: Number.isFinite(maxRating) ? maxRating : 0,
+    refilling: inFlightRefill !== null,
+    lastRefillAt,
+    lastRefillAdded,
+    lastError,
+  };
+}
+
+export async function getPoolInfo(): Promise<PuzzlePoolInfo> {
+  const extra = await loadExtraPuzzles();
+  return summarizePool(extra.length ? [...PUZZLES, ...extra] : PUZZLES, extra.length);
+}
+
+/** True when fewer than `threshold` unsolved, non-recent puzzles exist near `progress.rating - 50`. */
+export function needsAutoRefill(
+  puzzles: Pick<Puzzle, 'id' | 'rating'>[],
+  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent'>,
+  threshold = AUTO_REFILL_THRESHOLD,
+  window = AUTO_REFILL_WINDOW,
+): boolean {
+  const solved = new Set(progress.solved);
+  const recent = new Set(progress.recent);
+  const aim = progress.rating - 50;
+  let remaining = 0;
+  for (const p of puzzles) {
+    if (solved.has(p.id) || recent.has(p.id)) continue;
+    if (Math.abs(p.rating - aim) <= window) {
+      remaining++;
+      if (remaining >= threshold) return false;
+    }
+  }
+  return true;
+}
+
+export type RefillOptions = {
+  count?: number;
+  minRating?: number;
+  maxRating?: number;
+  fetcher?: typeof fetch;
+};
+
+/**
+ * Fetch new puzzles from the Lichess dump and merge them into
+ * `.data/workout/chess/extra-puzzles.json`. Serializes overlapping calls.
+ */
+export async function refillPuzzlePool(options: RefillOptions = {}): Promise<{ added: number; pool: PuzzlePoolInfo }> {
+  if (inFlightRefill) return inFlightRefill;
+
+  const task = (async () => {
+    lastAttemptAt = Date.now();
+    try {
+      const existingExtra = await loadExtraPuzzles();
+      if (existingExtra.length >= MAX_EXTRA_PUZZLES) {
+        lastError = null;
+        return { added: 0, pool: summarizePool([...PUZZLES, ...existingExtra], existingExtra.length) };
+      }
+
+      const remainingCap = MAX_EXTRA_PUZZLES - existingExtra.length;
+      const requested = Math.min(remainingCap, Math.max(1, Math.floor(options.count ?? 250)));
+      const existingIds = new Set<string>([
+        ...PUZZLES.map((p) => p.id),
+        ...existingExtra.map((p) => p.id),
+      ]);
+
+      const { added } = await fetchLichessPuzzles({
+        existingIds,
+        count: requested,
+        minRating: options.minRating,
+        maxRating: options.maxRating,
+        fetcher: options.fetcher,
+      });
+
+      const now = new Date().toISOString();
+      const updated = await updateJson<ExtraPoolFile, Puzzle[]>(extraFile(), { puzzles: [] }, (stored) => {
+        const bundledIds = new Set(PUZZLES.map((p) => p.id));
+        const byId = new Map<string, Puzzle>();
+        for (const p of Array.isArray(stored.puzzles) ? stored.puzzles : []) {
+          if (validStoredPuzzle(p) && !bundledIds.has(p.id)) byId.set(p.id, p);
+        }
+        for (const p of added) {
+          if (!bundledIds.has(p.id) && !byId.has(p.id) && byId.size < MAX_EXTRA_PUZZLES) {
+            byId.set(p.id, p);
+          }
+        }
+        const merged = [...byId.values()].sort((a, b) => a.rating - b.rating || a.id.localeCompare(b.id));
+        stored.puzzles = merged;
+        stored.updatedAt = now;
+        return merged;
+      });
+
+      cachedExtra = updated;
+      lastRefillAt = now;
+      lastRefillAdded = added.length;
+      lastError = null;
+      return { added: added.length, pool: summarizePool([...PUZZLES, ...updated], updated.length) };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : 'Failed to load puzzles from Lichess';
+      throw err;
+    } finally {
+      inFlightRefill = null;
+    }
+  })();
+
+  inFlightRefill = task;
+  return task;
+}
+
+/**
+ * Trigger a non-blocking background refill when the signed-in user is running
+ * low on unsolved puzzles near their current rating.
+ */
+export function maybeAutoRefill(progress: ChessProgress, currentPool?: Puzzle[]): boolean {
+  if (inFlightRefill) return false;
+  if (Date.now() - lastAttemptAt < REFILL_COOLDOWN_MS) return false;
+  if (cachedExtra && cachedExtra.length >= MAX_EXTRA_PUZZLES) return false;
+
+  const pool = currentPool ?? (cachedExtra ? [...PUZZLES, ...cachedExtra] : PUZZLES);
+  if (!needsAutoRefill(pool, progress)) return false;
+
+  const minRating = Math.max(400, Math.floor((progress.rating - 250) / 100) * 100);
+  const maxRating = Math.min(2800, Math.ceil((progress.rating + 250) / 100) * 100);
+  void refillPuzzlePool({ count: 120, minRating, maxRating }).catch((err) => {
+    console.error('Background chess puzzle refill failed:', err instanceof Error ? err.message : err);
+  });
+  return true;
+}

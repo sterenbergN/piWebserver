@@ -1,11 +1,13 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { PUZZLES } from './puzzles';
+import * as zlib from 'node:zlib';
+import { needsAutoRefill, PUZZLES } from './puzzles';
 import {
   boardSquares, checkedKing, playerColor, replaysCleanly, retry, showAnswer, showNextMove, solutionSan, solvedCleanly, startPuzzle, targetsFrom, tryMove,
   withPromotion, type Puzzle,
 } from './puzzle';
 import { emptyChessProgress, normalizeChessProgress, pickPuzzle, recordResult, START_RATING, updatedRating } from './rating';
+import { fetchLichessPuzzles, parseLichessPuzzleRow } from './refill';
 
 // Mate in 1 from a real Lichess puzzle: black's queen takes on h1, then Qf7 is mate.
 const MATE_IN_1: Puzzle = {
@@ -21,12 +23,12 @@ const UNDERPROMOTE: Puzzle = {
 };
 
 test('bundled puzzles all replay legally and are short', () => {
-  assert.ok(PUZZLES.length >= 10, 'some puzzles are bundled');
+  assert.ok(PUZZLES.length >= 1500, `expected expanded bundle, got ${PUZZLES.length}`);
   const ids = new Set<string>();
   for (const p of PUZZLES) {
     assert.ok(replaysCleanly(p), `${p.id} replays`);
     assert.ok(p.moves.length >= 2 && p.moves.length <= 5, `${p.id} is short`);
-    assert.ok(p.rating >= 600 && p.rating <= 2000, `${p.id} rating ${p.rating}`);
+    assert.ok(p.rating >= 600 && p.rating <= 2400, `${p.id} rating ${p.rating}`);
     assert.ok(!ids.has(p.id), `${p.id} is there once`);
     ids.add(p.id);
   }
@@ -162,4 +164,60 @@ test('pickPuzzle stays near the rating and skips solved and recent ones', () => 
   // All solved: it still hands one back rather than nothing.
   assert.ok(pickPuzzle(puzzles, { rating: 1100, solved: puzzles.map((p) => p.id), recent: [] }));
   assert.equal(pickPuzzle([], { rating: 1100, solved: [], recent: [] }), null);
+});
+
+test('needsAutoRefill triggers only when unsolved non-recent puzzles near rating drop below threshold', () => {
+  const pool = Array.from({ length: 20 }, (_, i) => ({ id: `x${i}`, rating: 1000 + (i % 5) * 20 }));
+  assert.equal(needsAutoRefill(pool, { rating: 1100, solved: [], recent: [] }), false);
+  // Solve 6 of the 20 -> 14 left (< 15 default threshold) -> triggers refill.
+  assert.equal(needsAutoRefill(pool, { rating: 1100, solved: pool.slice(0, 6).map((p) => p.id), recent: [] }), true);
+  // Rating far outside pool -> triggers refill.
+  assert.equal(needsAutoRefill(pool, { rating: 2200, solved: [], recent: [] }), true);
+});
+
+test('parseLichessPuzzleRow and fetchLichessPuzzles stream pzstd frames and stop once count is reached', async () => {
+  const goodRow1 = `new1,${MATE_IN_1.fen},${MATE_IN_1.moves.join(' ')},1050,60,95,500,mateIn1 short,`;
+  const goodRow2 = `new2,${FORK.fen},${FORK.moves.join(' ')},1250,60,92,400,fork short,`;
+  const badRating = `low1,${MATE_IN_1.fen},${MATE_IN_1.moves.join(' ')},450,60,95,500,mateIn1,`;
+  const dupRow = `dup1,${MATE_IN_1.fen},${MATE_IN_1.moves.join(' ')},1050,60,95,500,mateIn1,`;
+
+  assert.equal(parseLichessPuzzleRow(badRating, { minRating: 600, maxRating: 2400 }), null);
+  assert.equal(parseLichessPuzzleRow(dupRow, { existingIds: new Set(['dup1']) }), null);
+  assert.equal(parseLichessPuzzleRow(goodRow1)?.id, 'new1');
+
+  const csv = [
+    'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl',
+    dupRow,
+    badRating,
+    goodRow1,
+    goodRow2,
+  ].join('\n') + '\n';
+
+  const zstdCompressSync = (zlib as unknown as { zstdCompressSync: (buf: Uint8Array) => Buffer }).zstdCompressSync;
+  const compressed = zstdCompressSync(Buffer.from(csv, 'utf8'));
+  const skippable = Buffer.alloc(12);
+  skippable.writeUInt32LE(0x184d2a50, 0);
+  skippable.writeUInt32LE(4, 4);
+  skippable.writeUInt32LE(compressed.length, 8);
+  const frameBytes = Buffer.concat([skippable, compressed]);
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Split across odd chunk boundaries to test frame reassembly.
+      controller.enqueue(frameBytes.subarray(0, 7));
+      controller.enqueue(frameBytes.subarray(7, 25));
+      controller.enqueue(frameBytes.subarray(25));
+      controller.close();
+    },
+  });
+
+  const result = await fetchLichessPuzzles({
+    existingIds: ['dup1'],
+    count: 2,
+    minRating: 600,
+    maxRating: 2400,
+    fetcher: async () => new Response(stream, { status: 200 }),
+  });
+
+  assert.deepEqual(result.added.map((p) => p.id), ['new1', 'new2']);
 });

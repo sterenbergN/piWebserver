@@ -146,3 +146,9 @@
 .rest-math-op-name { color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rest-math-op-acc { font-weight: 600; color: var(--foreground); }
 .rest-math-op-time { color: var(--muted); min-width: 2.8rem; text-align: right; }
+
+/* Standalone practice page */
+.rest-practice-stage { display: flex; justify-content: center; margin-top: 0.75rem; }
+.rest-practice-stage > .rest-chess,
+.rest-practice-stage > .rest-math { width: 100%; }
+.rest-practice-stage > .rest-math { max-width: 340px; }

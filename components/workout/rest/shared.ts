@@ -34,6 +34,8 @@ export type ActivityProps = {
   /** Enough rest left to start something new (another puzzle, another sprint). */
   canStartNew: boolean;
   onSwitch: (to: Activity) => void;
+  /** Optional callback fired when a puzzle or sprint result is recorded. */
+  onResult?: () => void;
 };
 
 // ── Part-way through? ──

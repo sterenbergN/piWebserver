@@ -14,10 +14,10 @@ import { zstdDecompressSync } from 'node:zlib';
 
 const URL_DUMP = 'https://database.lichess.org/lichess_db_puzzle.csv.zst';
 const OUT = new URL('../lib/chess/data/puzzles.json', import.meta.url);
-const TARGET = Number(process.argv[2]) || 400;
-const MIN_RATING = 750;
-const MAX_RATING = 1850;
-const BANDS = 11; // 100-point bands, filled evenly
+const TARGET = Number(process.argv[2]) || 2000;
+const MIN_RATING = 600;
+const MAX_RATING = 2400;
+const BANDS = 18; // 100-point bands, filled evenly
 const MAX_SOLUTION = 4;
 const QUICK = new Set(['mateIn1', 'mateIn2', 'oneMove', 'short', 'fork', 'hangingPiece', 'pin', 'skewer', 'backRankMate', 'discoveredAttack']);
 const KEEP_THEMES = new Set([...QUICK, 'mate', 'opening', 'middlegame', 'endgame', 'crushing', 'advantage', 'sacrifice', 'promotion',

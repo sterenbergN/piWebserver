@@ -892,6 +892,7 @@ export default function WorkoutDashboard() {
           { href: isDemo ? '/workout/calculators?isDemo=1' : '/workout/calculators', icon: '🧮', label: 'Calculators' },
           { href: '/workout/report', icon: '🗓️', label: 'Weekly report' },
           { href: '/workout/analytics', icon: '📈', label: 'Analytics' },
+          { href: '/workout/practice', icon: '♟️', label: 'Rest games' },
           ...(isDemo ? [] : [{ href: '/workout/health', icon: '❤️', label: 'Health' }]),
         ].map((link) => (
           <a key={link.href} className="workout-action-tile" href={link.href}>

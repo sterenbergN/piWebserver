@@ -74,7 +74,7 @@ async function saveResult(saved: Saved, clean: boolean): Promise<Result> {
   return { clean, rating: after.rating, change: after.rating - before.rating, solvedCount: after.solved.length };
 }
 
-export default function ChessPuzzle({ canStartNew }: ActivityProps) {
+export default function ChessPuzzle({ canStartNew, onResult }: ActivityProps) {
   const [saved, setSaved] = useState<Saved | null>(restore);
   const [selected, setSelected] = useState<string | null>(null);
   /** The player's move on show for a moment before the reply. */
@@ -143,7 +143,8 @@ export default function ChessPuzzle({ canStartNew }: ActivityProps) {
         solvedCount: result.solvedCount ?? savedRef.current.solvedCount,
       });
     }
-  }, [update]);
+    onResult?.();
+  }, [update, onResult]);
 
   const play = (next: PuzzleState) => {
     if (next.beforeReply) setPreview(next.beforeReply);

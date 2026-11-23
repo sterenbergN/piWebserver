@@ -63,7 +63,7 @@ function readLocalStats(): MathStats {
   return legacyBest > 0 ? { ...empty, best: legacyBest } : empty;
 }
 
-export default function QuickMath({ canStartNew }: ActivityProps) {
+export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
   const [sprint, setSprint] = useState<Sprint>(() => kept ?? fresh());
   const [stats, setStats] = useState<MathStats>(readLocalStats);
   const [signedIn, setSignedIn] = useState(false);
@@ -72,7 +72,12 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
   const sprintRef = useRef(sprint);
   const statsRef = useRef(stats);
   const signedInRef = useRef(signedIn);
+  const onResultRef = useRef(onResult);
   const savedOverRef = useRef(sprint.phase === 'over');
+
+  useEffect(() => {
+    onResultRef.current = onResult;
+  }, [onResult]);
 
   useEffect(() => {
     sprintRef.current = sprint;
@@ -144,6 +149,7 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
     const nextDisplay = signedInRef.current ? recordSprintStats(statsRef.current, input) : nextLocal;
     setStats(nextDisplay);
     statsRef.current = nextDisplay;
+    onResultRef.current?.();
 
     if (!signedInRef.current) return;
     let active = true;
@@ -159,6 +165,7 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
           const serverStats = normalizeMathStats(body.stats);
           setStats(serverStats);
           statsRef.current = serverStats;
+          onResultRef.current?.();
         }
       } catch { /* keep local/optimistic stats */ }
     })();
@@ -279,7 +286,7 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
   );
 }
 
-function MathStatsPanel({ stats }: { stats: MathStats }) {
+export function MathStatsPanel({ stats }: { stats: MathStats }) {
   const summary = summarizeMathStats(stats);
   const fmtSec = (ms: number | null) => (ms !== null ? `${(ms / 1000).toFixed(1)}s` : '—');
 
