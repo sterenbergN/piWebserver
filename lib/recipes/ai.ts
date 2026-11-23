@@ -2,6 +2,7 @@
 // read back in. No API and no key: it works with whichever AI you already use,
 // the same way the study tests do.
 
+import { addDays, dayOfWeek, isDateKey, weekStart, type DateKey } from '@/lib/habits/dates';
 import { buildSections } from './import';
 import { DAY_NAMES, newKitchenId, type KitchenState } from './kitchen';
 import { CATEGORY_LABELS, MAX_SERVINGS, RECIPE_CATEGORIES, extractIngredients, normalizeRecipe, type Recipe, type RecipeCategory, type RecipeSection } from './recipes';
@@ -96,15 +97,39 @@ export function buildRecipePrompt(
   ].join('\n\n');
 }
 
+export type PlanRange = { start: DateKey; days: number };
+
+export function planRangeDates(range: PlanRange): { date: DateKey; week: DateKey; day: number; dayName: string }[] {
+  const count = Math.min(14, Math.max(1, range.days));
+  const out: { date: DateKey; week: DateKey; day: number; dayName: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const date = addDays(range.start, i);
+    const week = weekStart(date);
+    const day = (dayOfWeek(date) + 6) % 7;
+    out.push({ date, week, day, dayName: DAY_NAMES[day] });
+  }
+  return out;
+}
+
 /** A prompt for a whole week: a plan, and any recipes it needs that I don't have yet. */
 export function buildWeekPrompt(
-  options: AiRequest & { meals: number; prep: number; weekLabel: string },
+  options: AiRequest & { meals: number; prep: number; weekLabel: string; range?: PlanRange },
   kitchen: Pick<KitchenState, 'have' | 'pantry'> & { equipment?: string[] },
   recipes: Recipe[],
 ) {
   const prep = options.prep > 0 ? ` Make ${options.prep} of them meal prep, cooked ahead and eaten through the week.` : '';
+  const dates = options.range ? planRangeDates(options.range) : null;
+  const crossWeek = Boolean(dates && (weekStart(options.range!.start) !== options.range!.start || dates.length !== 7));
+  const opening = crossWeek
+    ? `Plan my meals for ${options.weekLabel} (${dates!.length} days): ${options.meals} ${options.meals === 1 ? 'meal' : 'meals'}, ${options.servings} servings each.${prep}${options.ask.trim() ? ` ${options.ask.trim()}` : ''}`
+    : `Plan my meals for the week of ${options.weekLabel}: ${options.meals} ${options.meals === 1 ? 'meal' : 'meals'}, ${options.servings} servings each.${prep}${options.ask.trim() ? ` ${options.ask.trim()}` : ''}`;
+  const exampleDay = crossWeek ? dates![0].date : 'Mon';
+  const dayRule = crossWeek
+    ? `- "day" is one of ${dates!.map((d) => `${d.date} (${d.dayName})`).join(', ')}, or "prep" for something cooked ahead.`
+    : `- "day" is one of ${DAY_NAMES.join(', ')}, or "prep" for something cooked ahead.`;
+
   return [
-    `Plan my meals for the week of ${options.weekLabel}: ${options.meals} ${options.meals === 1 ? 'meal' : 'meals'}, ${options.servings} servings each.${prep}${options.ask.trim() ? ` ${options.ask.trim()}` : ''}`,
+    opening,
     `Plan the week so ingredients overlap and little goes to waste, and put quick meals on busy-looking nights if I've said which those are.`,
     ...kitchenContext(kitchen, recipes, options),
     `Reply with one JSON code block and nothing else, in exactly this shape:
@@ -112,7 +137,7 @@ export function buildWeekPrompt(
 \`\`\`json
 {
   "plan": [
-    { "day": "Mon", "recipe": "Greek beef bowls", "servings": 4 },
+    { "day": "${exampleDay}", "recipe": "Greek beef bowls", "servings": 4 },
     { "day": "prep", "recipe": "Tzatziki", "servings": 8 }
   ],
   "recipes": [
@@ -121,7 +146,7 @@ export function buildWeekPrompt(
 }
 \`\`\``,
     `Rules for the plan:
-- "day" is one of ${DAY_NAMES.join(', ')}, or "prep" for something cooked ahead.
+${dayRule}
 - "recipe" is the exact title of a recipe, either one of mine or one in "recipes".
 - "recipes" holds every recipe the plan needs that I don't already have, written out in full.`,
     STEP_RULES,
@@ -130,7 +155,7 @@ export function buildWeekPrompt(
 
 // ─── Reading the reply ────────────────────────────────────────────────────────
 
-export type AiPlanEntry = { recipeId: string; title: string; servings: number; day: number | null };
+export type AiPlanEntry = { recipeId: string; title: string; servings: number; day: number | null; week?: DateKey; date?: DateKey };
 
 export type AiReply = {
   /** New recipes, ready to save, with ids already given so they can link to each other. */
@@ -196,16 +221,30 @@ function readJson(text: string): { value: unknown; cutOff: boolean } {
   throw new AiReplyError('That isn’t valid JSON. Ask the AI to send it again as one JSON code block.');
 }
 
-function readDay(value: unknown): number | null | undefined {
+function readDay(value: unknown, range?: PlanRange): { day: number | null; week?: DateKey; date?: DateKey } | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim().toLowerCase();
-  if (/^(prep|meal ?prep|ahead)/.test(text)) return null;
+  if (/^(prep|meal ?prep|ahead)/.test(text)) {
+    return { day: null, ...(range ? { week: weekStart(range.start) } : {}) };
+  }
+  const isoMatch = /\b(\d{4}-\d{2}-\d{2})\b/.exec(text);
+  if (isoMatch && isDateKey(isoMatch[1])) {
+    const iso = isoMatch[1];
+    return { day: (dayOfWeek(iso) + 6) % 7, week: weekStart(iso), date: iso };
+  }
   const day = DAY_NAMES.findIndex((name) => text.startsWith(name.toLowerCase()));
-  return day >= 0 ? day : undefined;
+  if (day >= 0) {
+    if (range) {
+      const slot = planRangeDates(range).find((s) => s.day === day);
+      if (slot) return { day: slot.day, week: slot.week, date: slot.date };
+    }
+    return { day };
+  }
+  return undefined;
 }
 
 /** Read what an AI wrote against the recipes you have. Throws AiReplyError when there's nothing to use. */
-export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4): AiReply {
+export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4, range?: PlanRange): AiReply {
   const { value, cutOff } = readJson(text);
   const root = isRecord(value) ? value : { recipes: value };
   const rawRecipes: unknown[] = Array.isArray(root.recipes) ? root.recipes : isRecord(value) && typeof value.title === 'string' ? [value] : [];
@@ -271,13 +310,31 @@ export function parseAiReply(text: string, mine: Recipe[], fallbackServings = 4)
   for (const raw of Array.isArray(root.plan) ? root.plan : []) {
     if (!isRecord(raw) || typeof raw.recipe !== 'string') continue;
     const recipeId = idFor(raw.recipe);
-    const day = readDay(raw.day);
+    const parsedDay = readDay(raw.day, range);
     if (!recipeId || dropped.has(recipeId)) {
       notes.push(`The plan mentions ${raw.recipe}, but there’s no recipe for it.`);
       continue;
     }
-    if (day === undefined) notes.push(`${raw.recipe} had no day I could read, so it went into meal prep.`);
-    plan.push({ recipeId, title: raw.recipe, servings: Math.min(MAX_SERVINGS, Math.max(1, Math.round(Number(raw.servings)) || fallbackServings)), day: day ?? null });
+    const servings = Math.min(MAX_SERVINGS, Math.max(1, Math.round(Number(raw.servings)) || fallbackServings));
+    if (parsedDay === undefined) {
+      notes.push(`${raw.recipe} had no day I could read, so it went into meal prep.`);
+      plan.push({
+        recipeId,
+        title: raw.recipe,
+        servings,
+        day: null,
+        ...(range ? { week: weekStart(range.start) } : {}),
+      });
+    } else {
+      plan.push({
+        recipeId,
+        title: raw.recipe,
+        servings,
+        day: parsedDay.day,
+        ...(parsedDay.week ? { week: parsedDay.week } : {}),
+        ...(parsedDay.date ? { date: parsedDay.date } : {}),
+      });
+    }
   }
 
   if (!recipes.length && !plan.length) throw new AiReplyError('I couldn’t find any recipes or a plan in that. Paste the whole reply.');

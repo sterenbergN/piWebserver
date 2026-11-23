@@ -5,7 +5,7 @@ import { isAdminAuthenticated } from '@/lib/security/server-auth';
 import { ApiError } from '@/lib/workout/api';
 import { cleanFood, parseFoodId } from './foods';
 import { cleanAmount, cleanSnapshot, isDateKey, isMeal, MAX_AMOUNT, snapshotFor, usageStats, type LogAction, type ResolvedItem } from './log';
-import { addNutrients, scaleNutrients, zeroNutrients } from './nutrients';
+import { addNutrients, ensureUnitServings, scaleNutrients, zeroNutrients } from './nutrients';
 import {
   lineNutrients, macrosNutrients, matchIngredients, neverCounted, prefFor, recipeFoodId, recipeSnapshot, type FoodLookup, type MatchLine, type RecipeSummary,
 } from './recipe-match';
@@ -60,6 +60,7 @@ export async function resolveItem(userId: string, input: ItemInput): Promise<{ i
     } catch { /* fall through to the snapshot */ }
   }
   if (food) {
+    food = ensureUnitServings(food);
     const serving = food.servings.find((s) => s.id === servingId) ?? (food.servings.length === 1 ? food.servings[0] : undefined);
     if (serving) return { item: { foodId, servingId: serving.id, amount, snapshot: snapshotFor(food, serving) }, food };
   }

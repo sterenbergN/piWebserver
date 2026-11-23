@@ -14,8 +14,8 @@ import { formatSeconds, readJsonPref, saveJsonPref, setInProgress, type Activity
 // account; signed out, on this device. A half-done puzzle waits for the next
 // rest, even across a reload.
 
-type Result = { clean: boolean; rating: number; change: number };
-type Saved = { state: PuzzleState; spent: number; result: Result | null; signedIn: boolean };
+type Result = { clean: boolean; rating: number; change: number; solvedCount?: number };
+type Saved = { state: PuzzleState; spent: number; result: Result | null; signedIn: boolean; userRating?: number; solvedCount?: number };
 
 const SAVED_PREF = 'workout:restChess';
 const LOCAL_PREF = 'workout:restChessLocal';
@@ -41,7 +41,12 @@ async function fetchPuzzle(skip: string | undefined) {
   const res = await fetch(`/api/workout/chess?${params}`, { cache: 'no-store' });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.success) throw new Error(body.message || 'Couldn’t get a puzzle. Try again.');
-  return body as { puzzle: Puzzle; signedIn: boolean };
+  return {
+    puzzle: body.puzzle as Puzzle,
+    signedIn: Boolean(body.signedIn),
+    rating: typeof body.rating === 'number' ? body.rating : local.rating,
+    solvedCount: typeof body.solvedCount === 'number' ? body.solvedCount : local.solved.length,
+  };
 }
 
 async function saveResult(saved: Saved, clean: boolean): Promise<Result> {
@@ -53,13 +58,20 @@ async function saveResult(saved: Saved, clean: boolean): Promise<Result> {
       body: JSON.stringify({ puzzleId: puzzle.id, clean }),
     });
     const body = await res.json().catch(() => ({}));
-    if (res.ok && body.success) return { clean, rating: body.rating, change: body.change };
+    if (res.ok && body.success) {
+      return {
+        clean,
+        rating: body.rating,
+        change: body.change,
+        solvedCount: typeof body.solvedCount === 'number' ? body.solvedCount : undefined,
+      };
+    }
     // Signed out since (or offline): keep it on this device instead.
   }
   const before = readLocal();
   const after = recordResult(before, puzzle, clean);
   saveJsonPref(LOCAL_PREF, after);
-  return { clean, rating: after.rating, change: after.rating - before.rating };
+  return { clean, rating: after.rating, change: after.rating - before.rating, solvedCount: after.solved.length };
 }
 
 export default function ChessPuzzle({ canStartNew }: ActivityProps) {
@@ -86,8 +98,8 @@ export default function ChessPuzzle({ canStartNew }: ActivityProps) {
     setError('');
     setSelected(null);
     try {
-      const { puzzle, signedIn } = await fetchPuzzle(savedRef.current?.state.puzzle.id);
-      update({ state: startPuzzle(puzzle), spent: 0, result: null, signedIn });
+      const { puzzle, signedIn, rating, solvedCount } = await fetchPuzzle(savedRef.current?.state.puzzle.id);
+      update({ state: startPuzzle(puzzle), spent: 0, result: null, signedIn, userRating: rating, solvedCount });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t get a puzzle. Try again.');
     } finally {
@@ -123,7 +135,14 @@ export default function ChessPuzzle({ canStartNew }: ActivityProps) {
     const done = { ...current, state };
     update(done);
     const result = await saveResult(done, solvedCleanly(state));
-    if (savedRef.current?.state.puzzle.id === state.puzzle.id) update({ ...savedRef.current, result });
+    if (savedRef.current?.state.puzzle.id === state.puzzle.id) {
+      update({
+        ...savedRef.current,
+        result,
+        userRating: result.rating,
+        solvedCount: result.solvedCount ?? savedRef.current.solvedCount,
+      });
+    }
   }, [update]);
 
   const play = (next: PuzzleState) => {
@@ -166,7 +185,7 @@ export default function ChessPuzzle({ canStartNew }: ActivityProps) {
     <div className="rest-chess">
       <p className="rest-chess-head">
         <span><span className={`rest-turn is-${color}`} aria-hidden /> {color === 'w' ? 'White' : 'Black'} to play · {mate}</span>
-        <span className="rest-muted">{state.puzzle.rating}</span>
+        <span className="rest-muted">Elo {saved.userRating ?? readLocal().rating} · Puzzle {state.puzzle.rating}</span>
       </p>
       <ChessBoard
         fen={shownFen}

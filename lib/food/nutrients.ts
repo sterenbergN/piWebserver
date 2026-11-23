@@ -128,6 +128,47 @@ export function per100FromServings(servings: Serving[]): Nutrients | undefined {
   return roundNutrients(scaleNutrients(s.nutrients, 100 / (s.grams ?? s.ml!)));
 }
 
+/**
+ * Append universal 1 oz / 1 g (or 1 fl oz / 1 ml) servings when a food has
+ * weight/volume data and doesn't already include them, up to 20 servings.
+ */
+export function ensureUnitServings(food: Food): Food {
+  if (food.partial || !food.servings.length) return food;
+  const per100 = food.per100 ?? per100FromServings(food.servings);
+  if (!per100) return food;
+
+  const hasGrams = food.servings.some((s) => s.grams !== undefined);
+  const hasMl = food.servings.some((s) => s.ml !== undefined);
+  const unit: 'g' | 'ml' = hasMl && !hasGrams ? 'ml' : 'g';
+
+  const servings = [...food.servings];
+  let added = false;
+  const per = (amount: number) => roundNutrients(scaleNutrients(per100, amount / 100));
+
+  if (unit === 'g') {
+    if (!servings.some((s) => s.id === 'oz' || (s.grams !== undefined && Math.abs(s.grams - 28.35) < 0.25)) && servings.length < 20) {
+      servings.push({ id: 'oz', label: '1 oz (28 g)', grams: 28.35, nutrients: per(28.35) });
+      added = true;
+    }
+    if (!servings.some((s) => s.id === 'g' || s.grams === 1) && servings.length < 20) {
+      servings.push({ id: 'g', label: '1 g', grams: 1, nutrients: per(1) });
+      added = true;
+    }
+  } else {
+    if (!servings.some((s) => s.id === 'floz' || (s.ml !== undefined && Math.abs(s.ml - 29.57) < 0.3)) && servings.length < 20) {
+      servings.push({ id: 'floz', label: '1 fl oz (30 ml)', ml: 29.57, nutrients: per(29.57) });
+      added = true;
+    }
+    if (!servings.some((s) => s.id === 'ml' || s.ml === 1) && servings.length < 20) {
+      servings.push({ id: 'ml', label: '1 ml', ml: 1, nutrients: per(1) });
+      added = true;
+    }
+  }
+
+  if (!added) return food;
+  return { ...food, per100: food.per100 ?? per100, servings };
+}
+
 /** The serving a food opens on: a household portion first, otherwise its first. */
 export function defaultServing(food: Pick<Food, 'servings'>): Serving | undefined {
   return food.servings[0];

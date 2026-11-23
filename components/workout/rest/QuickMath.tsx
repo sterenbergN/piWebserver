@@ -2,8 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { judge, makeProblem, nextLevel, SPRINT_SECONDS, type MathProblem } from '@/lib/workout/rest-math';
+import {
+  emptyMathStats,
+  normalizeMathStats,
+  recordSprintStats,
+  summarizeMathStats,
+  type MathAnswerRecord,
+  type MathStats,
+} from '@/lib/workout/rest-math-stats';
 import { readPref, savePref } from '@/lib/workout/device-prefs';
-import { formatSeconds, setInProgress, type ActivityProps } from './shared';
+import { formatSeconds, readJsonPref, saveJsonPref, setInProgress, type ActivityProps } from './shared';
 
 // A 60-second sprint of mental arithmetic, all on this device. On-screen keys,
 // so the phone keyboard never covers the page. The clock only runs while it's
@@ -18,6 +26,8 @@ type Sprint = {
   score: number;
   misses: number;
   problem: MathProblem;
+  problemMs: number;
+  answers: MathAnswerRecord[];
   typed: string;
   /** The last answer, for a moment: right, or wrong with what it should have been. */
   flash: { right: boolean; answer: number } | null;
@@ -25,23 +35,78 @@ type Sprint = {
 };
 
 const BEST_PREF = 'workout:restMathBest';
+const STATS_PREF = 'workout:restMathStats';
 const fresh = (level = 1): Sprint => ({
-  phase: 'idle', left: SPRINT_SECONDS, level, streak: 0, score: 0, misses: 0, problem: makeProblem(level), typed: '', flash: null, newBest: false,
+  phase: 'idle',
+  left: SPRINT_SECONDS,
+  level,
+  streak: 0,
+  score: 0,
+  misses: 0,
+  problem: makeProblem(level),
+  problemMs: 0,
+  answers: [],
+  typed: '',
+  flash: null,
+  newBest: false,
 });
 
 // Kept here between rests (the panel unmounts this while you lift).
 let kept: Sprint | null = null;
 const readBest = () => Math.max(0, Number(readPref(BEST_PREF)) || 0);
 
+function readLocalStats(): MathStats {
+  const raw = readJsonPref<unknown>(STATS_PREF);
+  if (raw !== null) return normalizeMathStats(raw);
+  const legacyBest = readBest();
+  const empty = emptyMathStats();
+  return legacyBest > 0 ? { ...empty, best: legacyBest } : empty;
+}
+
 export default function QuickMath({ canStartNew }: ActivityProps) {
   const [sprint, setSprint] = useState<Sprint>(() => kept ?? fresh());
-  const [best, setBest] = useState(readBest);
+  const [stats, setStats] = useState<MathStats>(readLocalStats);
+  const [signedIn, setSignedIn] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+
   const sprintRef = useRef(sprint);
+  const statsRef = useRef(stats);
+  const signedInRef = useRef(signedIn);
+  const savedOverRef = useRef(sprint.phase === 'over');
+
   useEffect(() => {
     sprintRef.current = sprint;
     kept = sprint;
     setInProgress('math', sprint.phase === 'running');
   }, [sprint]);
+
+  useEffect(() => {
+    statsRef.current = stats;
+  }, [stats]);
+
+  useEffect(() => {
+    signedInRef.current = signedIn;
+  }, [signedIn]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/workout/math', { cache: 'no-store' });
+        const body = await res.json().catch(() => ({}));
+        if (!active || !res.ok || !body.success) return;
+        const isSignedIn = Boolean(body.signedIn);
+        setSignedIn(isSignedIn);
+        signedInRef.current = isSignedIn;
+        if (isSignedIn) {
+          const remote = normalizeMathStats(body.stats);
+          setStats(remote);
+          statsRef.current = remote;
+        }
+      } catch { /* offline, stay on local stats */ }
+    })();
+    return () => { active = false; };
+  }, []);
 
   // The clock, from real time (a slow tick or a backgrounded tab doesn't stretch it).
   const running = sprint.phase === 'running';
@@ -55,18 +120,50 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
       setSprint((s) => {
         if (s.phase !== 'running') return s;
         const left = Math.max(0, s.left - step);
-        if (left > 0) return { ...s, left };
-        return { ...s, left: 0, phase: 'over', newBest: s.score > readBest(), flash: null };
+        const problemMs = s.problemMs + step * 1000;
+        if (left > 0) return { ...s, left, problemMs };
+        return { ...s, left: 0, problemMs, phase: 'over', newBest: s.score > statsRef.current.best, flash: null };
       });
     }, 200);
     return () => clearInterval(handle);
   }, [running]);
 
   useEffect(() => {
-    if (sprint.phase !== 'over' || !sprint.newBest) return;
-    savePref(BEST_PREF, String(sprint.score));
-    setBest(sprint.score);
-  }, [sprint.phase, sprint.newBest, sprint.score]);
+    if (sprint.phase === 'running') {
+      savedOverRef.current = false;
+      return;
+    }
+    if (sprint.phase !== 'over' || savedOverRef.current) return;
+    savedOverRef.current = true;
+
+    const input = { score: sprint.score, answers: sprint.answers };
+    const nextLocal = recordSprintStats(readLocalStats(), input);
+    saveJsonPref(STATS_PREF, nextLocal);
+    savePref(BEST_PREF, String(nextLocal.best));
+
+    const nextDisplay = signedInRef.current ? recordSprintStats(statsRef.current, input) : nextLocal;
+    setStats(nextDisplay);
+    statsRef.current = nextDisplay;
+
+    if (!signedInRef.current) return;
+    let active = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/workout/math', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (active && res.ok && body.success && body.stats) {
+          const serverStats = normalizeMathStats(body.stats);
+          setStats(serverStats);
+          statsRef.current = serverStats;
+        }
+      } catch { /* keep local/optimistic stats */ }
+    })();
+    return () => { active = false; };
+  }, [sprint.phase, sprint.score, sprint.answers]);
 
   // The right/wrong mark fades after a moment.
   useEffect(() => {
@@ -100,27 +197,60 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [running]);
 
-  const start = () => setSprint({ ...fresh(Math.max(1, sprintRef.current.level - 1)), phase: 'running' });
+  const start = () => {
+    savedOverRef.current = false;
+    setSprint({ ...fresh(Math.max(1, sprintRef.current.level - 1)), phase: 'running' });
+  };
 
   if (sprint.phase === 'idle') {
     return (
       <div className="rest-math">
-        <p className="rest-note">A minute of mental math. How many can you get?{best > 0 && <> Your best: <strong>{best}</strong>.</>}</p>
-        {canStartNew
-          ? <button type="button" className="rest-btn is-primary" onClick={start}>Start the 60 seconds</button>
-          : <p className="rest-note">Not long enough for a sprint, just breathe.</p>}
+        <p className="rest-note">
+          A minute of mental math. How many can you get?
+          {stats.best > 0 && <> Your best: <strong>{stats.best}</strong>.</>}
+        </p>
+        <div className="rest-actions">
+          {canStartNew
+            ? <button type="button" className="rest-btn is-primary" onClick={start}>Start the 60 seconds</button>
+            : <p className="rest-note">Not long enough for a sprint, just breathe.</p>}
+          <button
+            type="button"
+            className="rest-link rest-math-stats-toggle"
+            aria-expanded={showStats}
+            onClick={() => setShowStats((v) => !v)}
+          >
+            {showStats ? 'Hide stats' : 'Stats'}
+          </button>
+        </div>
+        {showStats && <MathStatsPanel stats={stats} />}
       </div>
     );
   }
 
   if (sprint.phase === 'over') {
+    const sprintAvgSec = sprint.answers.length > 0
+      ? (sprint.answers.reduce((sum, a) => sum + Math.min(30_000, Math.max(100, a.ms)), 0) / sprint.answers.length / 1000).toFixed(1)
+      : null;
+
     return (
       <div className="rest-math">
         <p className="rest-result">
           <strong>Time!</strong> {sprint.score} right{sprint.misses ? `, ${sprint.misses} missed` : ''}.{' '}
-          {sprint.newBest ? 'A new best 🎉' : `Best: ${best}.`}
+          {sprint.newBest ? 'A new best 🎉' : `Best: ${stats.best}.`}
+          {sprintAvgSec && <span className="rest-muted"> · Avg {sprintAvgSec}s/problem</span>}
         </p>
-        {canStartNew && <button type="button" className="rest-btn" onClick={start}>Go again</button>}
+        <div className="rest-actions">
+          {canStartNew && <button type="button" className="rest-btn" onClick={start}>Go again</button>}
+          <button
+            type="button"
+            className="rest-link rest-math-stats-toggle"
+            aria-expanded={showStats}
+            onClick={() => setShowStats((v) => !v)}
+          >
+            {showStats ? 'Hide stats' : 'Stats'}
+          </button>
+        </div>
+        {showStats && <MathStatsPanel stats={stats} />}
       </div>
     );
   }
@@ -149,10 +279,73 @@ export default function QuickMath({ canStartNew }: ActivityProps) {
   );
 }
 
+function MathStatsPanel({ stats }: { stats: MathStats }) {
+  const summary = summarizeMathStats(stats);
+  const fmtSec = (ms: number | null) => (ms !== null ? `${(ms / 1000).toFixed(1)}s` : '—');
+
+  return (
+    <div className="rest-math-stats">
+      <div className="rest-math-pills">
+        <div className="rest-math-pill">
+          <span>Sprints</span>
+          <strong>{stats.sprints}</strong>
+        </div>
+        <div className="rest-math-pill">
+          <span>Best</span>
+          <strong>{stats.best}</strong>
+        </div>
+        <div className="rest-math-pill">
+          <span>Accuracy</span>
+          <strong>{summary.accuracy !== null ? `${summary.accuracy}%` : '—'}</strong>
+        </div>
+        <div className="rest-math-pill">
+          <span>Avg time</span>
+          <strong>{fmtSec(summary.avgMs)}</strong>
+        </div>
+      </div>
+
+      {summary.troubleAreas.length > 0 ? (
+        <p className="rest-math-trouble is-warn">
+          Needs work:{' '}
+          {summary.troubleAreas
+            .map((t) => `${t.label} (${t.accuracy}%, ${fmtSec(t.avgMs)})`)
+            .join(', ')}
+        </p>
+      ) : summary.totalAttempts >= 10 ? (
+        <p className="rest-math-trouble is-ok">Solid across all areas so far</p>
+      ) : null}
+
+      {summary.categories.length > 0 ? (
+        <div className="rest-math-ops" role="table" aria-label="Breakdown by operation">
+          {summary.categories.map((c) => (
+            <div className="rest-math-op" role="row" key={c.op}>
+              <span className="rest-math-op-name" role="cell">{c.label}</span>
+              <span className="rest-math-op-acc" role="cell">{c.accuracy}%</span>
+              <span className="rest-math-op-time" role="cell">{fmtSec(c.avgMs)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rest-note">Finish a sprint to see your operation breakdown.</p>
+      )}
+    </div>
+  );
+}
+
 function answered(s: Sprint, right: boolean): Sprint {
   const { level, streak } = nextLevel(s.level, s.streak, right);
+  const record: MathAnswerRecord = {
+    op: s.problem.op,
+    right,
+    ms: Math.max(100, Math.round(s.problemMs)),
+  };
   return {
-    ...s, level, streak, typed: '',
+    ...s,
+    level,
+    streak,
+    typed: '',
+    problemMs: 0,
+    answers: [...s.answers, record],
     score: s.score + (right ? 1 : 0),
     misses: s.misses + (right ? 0 : 1),
     problem: makeProblem(level),

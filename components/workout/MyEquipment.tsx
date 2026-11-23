@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Gym, Station } from '@/lib/workout/types';
 import { copyStation } from '@/lib/workout/equipment-library';
-import { kindKey, liftLinkSuggestions, machineKindLibrary, suggestKindMatches, type KindCopy, type KindMatch, type LiftLinkSuggestion, type MachineKind } from '@/lib/workout/equipment-kinds';
+import { kindKey, liftLinkSuggestions, machineKindLibrary, stationSpecLabel, suggestKindMatches, type KindCopy, type KindMatch, type LiftLinkSuggestion, type MachineKind } from '@/lib/workout/equipment-kinds';
 import { STATION_TYPE_META } from '@/lib/workout/station-summary';
 import Sheet from './Sheet';
 
@@ -205,7 +205,7 @@ function MachineKindSheet({ kind, kinds, gyms, busy, error, onRename, onUnlink, 
           <div key={copy.stationId} className="workout-lift-row" style={{ cursor: 'default' }}>
             <span className="workout-card-text">
               <span className="workout-card-title">{copyLabel(kind, copy)}</span>
-              <span className="workout-card-meta">{copy.weights}</span>
+              <span className="workout-card-meta">{stationSpecLabel(copy) ? `${stationSpecLabel(copy)} · ` : ''}{copy.weights}</span>
               <span className="workout-card-meta">{copy.exercises.length ? copy.exercises.join(', ') : 'No lifts yet'}</span>
             </span>
             {kind.copies.length > 1 && (

@@ -41,3 +41,29 @@ test('finalizeLift keeps the attachment and fills defaults', () => {
   assert.equal(lift.progressionProfile, 'standard');
   assert.equal(lift.secondaryMuscle, 'None');
 });
+
+test('finalizeStation trims, truncates, and drops blank manufacturer and model', () => {
+  const lists = listFieldsFromStation(undefined);
+  const s1 = finalizeStation(
+    { id: 's4', name: 'Chest Press', type: 'stack', manufacturer: '  Life Fitness  ', model: '  Insignia  ', lifts: [] },
+    lists
+  );
+  assert.equal(s1.manufacturer, 'Life Fitness');
+  assert.equal(s1.model, 'Insignia');
+
+  const longBrand = 'A'.repeat(100);
+  const longModel = 'B'.repeat(95);
+  const s2 = finalizeStation(
+    { id: 's5', name: 'Row', type: 'stack', manufacturer: ` ${longBrand} `, model: longModel, lifts: [] },
+    lists
+  );
+  assert.equal(s2.manufacturer?.length, 80);
+  assert.equal(s2.model?.length, 80);
+
+  const s3 = finalizeStation(
+    { id: 's6', name: 'Row', type: 'stack', manufacturer: '   ', model: '', lifts: [] },
+    lists
+  );
+  assert.equal(s3.manufacturer, undefined);
+  assert.equal(s3.model, undefined);
+});

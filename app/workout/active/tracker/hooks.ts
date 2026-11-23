@@ -6,7 +6,7 @@ import { getPossibleWeights, snapToPossibleWeight } from '@/lib/workout/equipmen
 import { exerciseKey, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { restTargetSeconds } from '@/lib/workout/session-insights';
 import { isLoadStation } from '@/lib/workout/types';
-import { alertIsTooLate, audioIsRunning, playBeep, readPref, savePref, unlockAudio, vibrate, watchAudioUnlock } from '@/lib/workout/device-prefs';
+import { alertIsTooLate, audioIsRunning, playBeep, readPref, savePref, subscribeAudioState, unlockAudio, vibrate, watchAudioUnlock } from '@/lib/workout/device-prefs';
 import { relatedStartingWeight } from '@/lib/workout/related-exercises';
 import { getBaselineReps, topSet, uidOf, type HistoricStats, type Suggestion } from '@/lib/workout/tracker-utils';
 
@@ -86,7 +86,7 @@ type RestTimerOptions = {
 export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey, saved, syncToServer }: RestTimerOptions) {
   // The account's times win over this device's (they may be newer, from another phone).
   const [restTimes, setRestTimes] = useState<Record<string, number>>(() => ({ ...readRestTimes(), ...(saved || {}) }));
-  const [sound, setSound] = useState(() => readPref('workout:restSound') === '1');
+  const [sound, setSound] = useState(() => readPref('workout:restSound') !== '0');
   const [audioReady, setAudioReady] = useState(true);
   const notifiedFor = useRef<number | null>(null);
   const soundRef = useRef(sound);
@@ -123,20 +123,25 @@ export function useRestTimer({ lastSetAt, reps, defaultSeconds, enabled, liftKey
 
   // Every tap re-unlocks the shared audio context, which iPhones suspend when
   // the screen locks or another app plays sound — otherwise the next beep is
-  // silently dropped.
+  // silently dropped. Active even before Set 1 so early taps unlock audio.
   useEffect(() => {
-    if (!sound || !enabled) return;
+    if (!sound) return;
     return watchAudioUnlock();
-  }, [sound, enabled]);
+  }, [sound]);
 
   // Is the chime currently able to sound? (Not after a reload or an iOS interrupt, until a tap.)
   useEffect(() => {
     if (!sound || !enabled) { setAudioReady(true); return; }
     const check = () => setAudioReady(audioIsRunning());
     check();
+    const unsubscribe = subscribeAudioState(check);
     const handle = setInterval(check, 1000);
     document.addEventListener('visibilitychange', check);
-    return () => { clearInterval(handle); document.removeEventListener('visibilitychange', check); };
+    return () => {
+      unsubscribe();
+      clearInterval(handle);
+      document.removeEventListener('visibilitychange', check);
+    };
   }, [sound, enabled]);
 
   // Save to the account shortly after the last ±15 tap (one request, not one per tap).

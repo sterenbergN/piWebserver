@@ -107,28 +107,37 @@ type HistoryWorkout = {
   liftMeta?: Record<string, { name?: string; exercise?: string; stationType?: string; stationId?: string }>;
 };
 
-/** The lift to find at another gym: its calibration key, and its exercise and machine kind when known. */
-export type ReferenceTarget = { liftKey: string; exerciseKey?: string; kindKey?: string };
+/** The lift to find at another gym: its calibration key, and its exercise, machine kind, and make/model when known. */
+export type ReferenceTarget = { liftKey: string; exerciseKey?: string; kindKey?: string; makeModelKey?: string };
 
 /**
  * The most recent session of a lift at another gym (pass the history newest
- * first), with its last set. When the machine kinds are known (`stationKinds`:
- * station id → kind key, see stationKindIndex), the same exercise on the same
- * kind of machine wins — "Row" on the Row Machine, not on the cable row —
- * falling back to any lift with the same name.
+ * first), with its last set. When make/model or machine kinds are known
+ * (`stationMakeModels`, `stationKinds`: station id → key), the same exercise on
+ * the exact same brand/model wins first, then the same kind of machine —
+ * "Row" on the Row Machine, not on the cable row — falling back to any lift
+ * with the same name.
  */
 export function findReferenceLift<T extends HistoryWorkout>(
   otherGymHistory: T[],
   target: ReferenceTarget,
   stationKinds?: Map<string, string>,
+  stationMakeModels?: Map<string, string>,
 ): { workout: T; liftId: string; lastSet: { weight: number; reps: number } } | null {
   type Meta = NonNullable<HistoryWorkout['liftMeta']>[string];
   const sameName = (meta: Meta) => normalizeLiftKey(exerciseName(meta)) === target.liftKey;
+  const sameMakeModel = (meta: Meta) => {
+    const makeModel = meta?.stationId ? stationMakeModels?.get(meta.stationId) : undefined;
+    return !!makeModel && makeModel === target.makeModelKey && (sameName(meta) || (!!target.exerciseKey && exerciseKey(meta) === target.exerciseKey));
+  };
   const sameKind = (meta: Meta) => {
     const kind = meta?.stationId ? stationKinds?.get(meta.stationId) : undefined;
     return !!kind && kind === target.kindKey && (sameName(meta) || (!!target.exerciseKey && exerciseKey(meta) === target.exerciseKey));
   };
-  const passes = target.kindKey && stationKinds?.size ? [sameKind, sameName] : [sameName];
+  const passes: ((meta: Meta) => boolean)[] = [];
+  if (target.makeModelKey && stationMakeModels?.size) passes.push(sameMakeModel);
+  if (target.kindKey && stationKinds?.size) passes.push(sameKind);
+  passes.push(sameName);
   for (const matches of passes) {
     for (const workout of otherGymHistory) {
       const metaMap = workout.liftMeta || {};
@@ -147,7 +156,8 @@ export function findReferenceLift<T extends HistoryWorkout>(
  * For stack/cable lifts done at a gym for the first time, infer a scale factor
  * from the most recent session of the same lift at another gym (pin-loaded
  * stacks rarely weigh the same between brands). `stationKinds` (see
- * stationKindIndex) prefers that lift on the same kind of machine.
+ * stationKindIndex) and `stationMakeModels` (see stationMakeModelIndex)
+ * prefer that lift on the same brand/model or kind of machine.
  */
 export function inferCalibrationsForWorkout(
   userId: string,
@@ -156,6 +166,7 @@ export function inferCalibrationsForWorkout(
   store: CalibrationStore,
   calcE1RM: (weight: number, reps: number) => number,
   stationKinds?: Map<string, string>,
+  stationMakeModels?: Map<string, string>,
 ): CalibrationEntry[] {
   const gymId = workout.gymId;
   if (!gymId || !workout.logs) return [];
@@ -188,7 +199,8 @@ export function inferCalibrationsForWorkout(
       liftKey,
       exerciseKey: exerciseKey(meta),
       kindKey: meta?.stationId ? stationKinds?.get(meta.stationId) : undefined,
-    }, stationKinds);
+      makeModelKey: meta?.stationId ? stationMakeModels?.get(meta.stationId) : undefined,
+    }, stationKinds, stationMakeModels);
     const reference = found && {
       gymId: found.workout.gymId as string,
       gymName: found.workout.gymName,
@@ -241,6 +253,7 @@ export function recalibrateAfterEdit(
   store: CalibrationStore,
   calcE1RM: (weight: number, reps: number) => number,
   stationKinds?: Map<string, string>,
+  stationMakeModels?: Map<string, string>,
 ): CalibrationEntry[] {
   if (!before.gymId) return [];
   const lastSetByKey = new Map<string, { weight: number; reps: number }>();
@@ -258,6 +271,6 @@ export function recalibrateAfterEdit(
   if (stale.length === 0) return [];
   const staleKeys = new Set(stale.map((c) => c.liftKey));
   const without = { ...store, calibrations: store.calibrations.filter((c) => !derived(c)) };
-  return inferCalibrationsForWorkout(userId, after, previousUserHistory, without, calcE1RM, stationKinds)
+  return inferCalibrationsForWorkout(userId, after, previousUserHistory, without, calcE1RM, stationKinds, stationMakeModels)
     .filter((entry) => staleKeys.has(entry.liftKey));
 }

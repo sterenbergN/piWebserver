@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import GenerateReply from '@/components/ai/GenerateReply';
-import { addDays, daysBetween, localToday, type DateKey } from '@/lib/habits/dates';
+import { addDays, daysBetween, isDateKey, localToday, weekStart, type DateKey } from '@/lib/habits/dates';
 import {
   AI_EDIT_PRESETS,
   AiReplyError,
@@ -12,12 +12,16 @@ import {
   categoryLabel,
   parseAiEditReply,
   parseAiReply,
+  planRangeDates,
   type AiReply,
+  type PlanRange,
 } from '@/lib/recipes/ai';
-import { currentWeek, dayInfo, newKitchenId, weekLabel } from '@/lib/recipes/kitchen';
+import { currentWeek, DAY_NAMES, dayInfo, newKitchenId, weekLabel } from '@/lib/recipes/kitchen';
 import { buildSchedule, extractIngredients, resolveRecipes, type Recipe } from '@/lib/recipes/recipes';
 import { formatMinutes } from './shared';
 import type { Kitchen } from './useKitchen';
+
+const monthDay = (key: DateKey) => new Date(`${key}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 function Stepper({ label, unit, value, min, max, onChange }: { label: string; unit: [string, string]; value: number; min: number; max: number; onChange: (n: number) => void }) {
   return (
@@ -74,12 +78,21 @@ export default function AiSheet({
   const [useMine, setUseMine] = useState(true);
   const [includeNotes, setIncludeNotes] = useState(true);
   const [useEquipment, setUseEquipment] = useState(true);
-  // Late in the week, "this week" is mostly gone, so planning starts from the next one.
-  const [week, setWeek] = useState(() => {
+  const [startDate, setStartDate] = useState<DateKey>(() => {
     const now = currentWeek();
     if (initialWeek > now) return initialWeek;
-    return daysBetween(now, localToday()) >= 5 ? addDays(now, 7) : now;
+    // Late in the week (Fri–Sun), start from today so planning covers the next 7 days across weeks.
+    return daysBetween(now, localToday()) >= 4 ? localToday() : now;
   });
+
+  const today = localToday();
+  const thisWeek = currentWeek(today);
+  const nextWeek = addDays(thisWeek, 7);
+  const planRange: PlanRange = useMemo(() => ({ start: startDate, days: 7 }), [startDate]);
+  const rangeLabel = useMemo(
+    () => (weekStart(startDate) === startDate ? weekLabel(startDate) : `${monthDay(startDate)} – ${monthDay(addDays(startDate, 6))}`),
+    [startDate],
+  );
 
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [showPrompt, setShowPrompt] = useState(false);
@@ -115,8 +128,30 @@ export default function AiSheet({
     const options = { ask, servings, usePantry, useMine };
     return mode === 'recipes'
       ? buildRecipePrompt({ ...options, count }, kitchen.state, recipes)
-      : buildWeekPrompt({ ...options, meals, prep, weekLabel: weekLabel(week) }, kitchen.state, recipes);
-  }, [mode, selectedRecipe, ask, servings, includeNotes, usePantry, useEquipment, useMine, count, meals, prep, week, kitchen.state, recipes]);
+      : buildWeekPrompt({ ...options, meals, prep, weekLabel: rangeLabel, range: planRange }, kitchen.state, recipes);
+  }, [mode, selectedRecipe, ask, servings, includeNotes, usePantry, useEquipment, useMine, count, meals, prep, rangeLabel, planRange, kitchen.state, recipes]);
+
+  const changeStartDate = (next: DateKey) => {
+    if (!isDateKey(next)) return;
+    setStartDate(next);
+    setCopied('idle');
+    if (reply) {
+      const slots = planRangeDates({ start: next, days: 7 });
+      const nextWeekStart = weekStart(next);
+      setReply((prev) =>
+        prev
+          ? {
+              ...prev,
+              plan: prev.plan.map((p) => {
+                if (p.day === null) return { ...p, week: nextWeekStart };
+                const slot = slots.find((s) => s.day === p.day);
+                return slot ? { ...p, week: slot.week, date: slot.date } : { ...p, week: nextWeekStart, date: undefined };
+              }),
+            }
+          : prev,
+      );
+    }
+  };
 
   const switchMode = (next: 'recipes' | 'edit' | 'week') => {
     setMode(next);
@@ -159,7 +194,7 @@ export default function AiSheet({
         if (!selectedRecipe) return 'Choose a recipe to edit first.';
         parseAiEditReply(text, selectedRecipe, recipes);
       } else {
-        parseAiReply(text, recipes, servings);
+        parseAiReply(text, recipes, servings, mode === 'week' ? planRange : undefined);
       }
       return null;
     } catch (err) {
@@ -178,7 +213,7 @@ export default function AiSheet({
         setEditResult(parseAiEditReply(text, selectedRecipe, recipes));
         return;
       }
-      const parsed = parseAiReply(text, recipes, servings);
+      const parsed = parseAiReply(text, recipes, servings, mode === 'week' ? planRange : undefined);
       const singleToCheck =
         parsed.recipes.length === 1 &&
         !parsed.plan.length &&
@@ -228,7 +263,7 @@ export default function AiSheet({
         saved.push(data.recipe);
       }
       const planned = reply.plan.filter((p) => !skipped.includes(p.recipeId));
-      for (const entry of planned) kitchen.addToPlan(week, entry.recipeId, entry.servings, entry.day);
+      for (const entry of planned) kitchen.addToPlan(entry.week ?? weekStart(startDate), entry.recipeId, entry.servings, entry.day);
       const parts = [
         saved.length ? `${saved.length} ${saved.length === 1 ? 'recipe' : 'recipes'} added` : '',
         planned.length ? `${planned.length} ${planned.length === 1 ? 'meal' : 'meals'} planned` : '',
@@ -284,7 +319,7 @@ export default function AiSheet({
     }
   };
 
-  const dayName = (day: number | null) => (day === null ? 'Meal prep' : dayInfo(week, day).name);
+  const dayName = (day: number | null) => (day === null ? 'Meal prep' : dayInfo(weekStart(startDate), day).name);
 
   return (
     <div className="rc-sheet-backdrop" onClick={onClose}>
@@ -380,15 +415,29 @@ export default function AiSheet({
               {reply.plan.length > 0 && (
                 <>
                   <div className="rc-ai-week">
-                    <h3 className="rc-ai-head">{weekLabel(week)}</h3>
-                    <button type="button" className="rc-link-small" onClick={() => setWeek(week === currentWeek() ? addDays(currentWeek(), 7) : currentWeek())}>
-                      {week === currentWeek() ? 'Use next week' : 'Use this week'}
-                    </button>
+                    <h3 className="rc-ai-head">{rangeLabel}</h3>
+                    <div className="rc-chips rc-chips-wrap" role="group" aria-label="Target dates">
+                      {startDate !== today && (
+                        <button type="button" className="rc-link-small" onClick={() => changeStartDate(today)}>
+                          Use next 7 days
+                        </button>
+                      )}
+                      {startDate !== thisWeek && (
+                        <button type="button" className="rc-link-small" onClick={() => changeStartDate(thisWeek)}>
+                          Use this week
+                        </button>
+                      )}
+                      {startDate !== nextWeek && (
+                        <button type="button" className="rc-link-small" onClick={() => changeStartDate(nextWeek)}>
+                          Use next week
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <ul className="rc-ai-plan">
                     {reply.plan.filter((p) => !skipped.includes(p.recipeId)).map((p, i) => (
                       <li key={i}>
-                        <strong>{dayName(p.day)}</strong> {p.title} <small>· {p.servings}</small>
+                        <strong>{p.date ? `${DAY_NAMES[p.day!]} ${monthDay(p.date)}` : dayName(p.day)}</strong> {p.title} <small>· {p.servings}</small>
                       </li>
                     ))}
                   </ul>
@@ -463,11 +512,44 @@ export default function AiSheet({
               </label>
 
               {mode === 'week' && (
-                <div className="rc-ai-week">
-                  <h3 className="rc-ai-head">{weekLabel(week)}</h3>
-                  <button type="button" className="rc-link-small" onClick={() => setWeek(week === currentWeek() ? addDays(currentWeek(), 7) : currentWeek())}>
-                    {week === currentWeek() ? 'Use next week' : 'Use this week'}
-                  </button>
+                <div className="rc-field">
+                  <div className="rc-ai-week">
+                    <h3 className="rc-ai-head">{rangeLabel}</h3>
+                    <input
+                      type="date"
+                      className="rc-input"
+                      aria-label="Start date"
+                      value={startDate}
+                      onChange={(e) => changeStartDate(e.target.value)}
+                      style={{ width: 'auto', height: '32px', padding: '0.2rem 0.5rem', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                  <div className="rc-chips rc-chips-wrap" role="group" aria-label="Date range">
+                    <button
+                      type="button"
+                      className={`rc-chip${startDate === today ? ' is-active' : ''}`}
+                      aria-pressed={startDate === today}
+                      onClick={() => changeStartDate(today)}
+                    >
+                      Next 7 days
+                    </button>
+                    <button
+                      type="button"
+                      className={`rc-chip${startDate === thisWeek ? ' is-active' : ''}`}
+                      aria-pressed={startDate === thisWeek}
+                      onClick={() => changeStartDate(thisWeek)}
+                    >
+                      This week
+                    </button>
+                    <button
+                      type="button"
+                      className={`rc-chip${startDate === nextWeek ? ' is-active' : ''}`}
+                      aria-pressed={startDate === nextWeek}
+                      onClick={() => changeStartDate(nextWeek)}
+                    >
+                      Next week
+                    </button>
+                  </div>
                 </div>
               )}
 

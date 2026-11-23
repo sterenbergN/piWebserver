@@ -1,4 +1,4 @@
-import { cleanNutrients, per100FromServings, round, servingsFromPer100 } from './nutrients';
+import { cleanNutrients, ensureUnitServings, per100FromServings, round, servingsFromPer100 } from './nutrients';
 import { NUTRIENT_KEYS, type Food, type FoodSource, type Nutrients, type Serving } from './types';
 
 // Making foods safe to store: anything that arrives from a browser or another
@@ -131,5 +131,5 @@ export function sameNutrients(a: Nutrients, b: Nutrients) {
 export function forViewer<T extends Food | null>(food: T): T {
   if (!food) return food;
   const { savedAt: _s, fetchedAt: _f, createdBy: _c, ...rest } = food as Food & { savedAt?: string; fetchedAt?: string; createdBy?: string };
-  return rest as T;
+  return ensureUnitServings(rest) as T;
 }

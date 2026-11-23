@@ -33,6 +33,8 @@ export function copyStation(station: Station, liftIds?: string[]): Station {
     ...station,
     id: newRecordId(),
     photo: undefined, // a photo of another gym's machine
+    manufacturer: undefined, // another gym's machine may be a different brand/model
+    model: undefined,
 
     lifts: (station.lifts || []).filter((l) => !keep || keep.has(l.id)).map((l): Lift => ({ ...l, id: newRecordId() })),
   };

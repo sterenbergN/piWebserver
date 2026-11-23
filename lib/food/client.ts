@@ -27,11 +27,50 @@ export function dayLabel(key: string, today = localDateKey()): string {
 export const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 export const grams = (n: number) => `${Math.round(n)} g`;
 
-/** "1.5 × 1 cup (80 g)" or just the serving when it's one. */
-export function amountLabel(amount: number, servingLabel: string): string {
+const fmtQty = (n: number) => String(Math.round(n * 100) / 100);
+
+const PLURAL_UNIT: Record<string, [string, string]> = {
+  cup: ['cup', 'cups'],
+  cups: ['cup', 'cups'],
+  serving: ['serving', 'servings'],
+  servings: ['serving', 'servings'],
+  lb: ['lb', 'lbs'],
+  lbs: ['lb', 'lbs'],
+};
+
+const SERVING_QTY_RE =
+  /^\s*(?:(\d+)\s+(\d+)\s*\/\s*(\d+)|(\d+)\s*\/\s*(\d+)|(\d+(?:\.\d+)?))\s*(fl\s+oz|servings?|cups?|lbs?|tbsp|tsp|oz|kg|mg|ml|g|l)\b/i;
+
+/** "8 oz", "235 g", "1 cup (120 g)", or "2 × medium banana" when it isn't a unit; or just the serving when it's one. */
+export function amountLabel(amount: number, servingLabel: string, meta?: { grams?: number; ml?: number }): string {
   if (amount === 1) return servingLabel;
-  const a = Math.round(amount * 100) / 100;
-  return `${a} × ${servingLabel}`;
+  const match = SERVING_QTY_RE.exec(servingLabel);
+  if (match) {
+    let baseQty: number | null = null;
+    if (match[1] !== undefined) {
+      const den = Number(match[3]);
+      if (den > 0) baseQty = Number(match[1]) + Number(match[2]) / den;
+    } else if (match[4] !== undefined) {
+      const den = Number(match[5]);
+      if (den > 0) baseQty = Number(match[4]) / den;
+    } else if (match[6] !== undefined) {
+      baseQty = Number(match[6]);
+    }
+    if (baseQty !== null && Number.isFinite(baseQty)) {
+      const roundedQty = Math.round(baseQty * amount * 100) / 100;
+      const rawUnit = match[7].replace(/\s+/g, ' ');
+      const pair = PLURAL_UNIT[rawUnit.toLowerCase()];
+      const unitStr = pair ? (roundedQty === 1 ? pair[0] : pair[1]) : rawUnit;
+      const rest = servingLabel.slice(match[0].length).replace(/\((\d+(?:\.\d+)?)\s*(g|ml)\)/gi, (_, num, u) => {
+        const lowerU = u.toLowerCase();
+        const metaVal = lowerU === 'g' ? meta?.grams : meta?.ml;
+        const scaled = metaVal && metaVal > 0 ? Math.round(metaVal * amount) : Math.round(Number(num) * amount);
+        return `(${scaled} ${lowerU})`;
+      });
+      return `${roundedQty} ${unitStr}${rest}`;
+    }
+  }
+  return `${fmtQty(amount)} × ${servingLabel}`;
 }
 
 export class FoodApiError extends Error {

@@ -40,6 +40,10 @@ export interface Station {
   bodyWeightAdditions?: number[];
   /** Photo id (see lib/workout/photos.ts), to recognise the machine. */
   photo?: string;
+  /** Optional machine brand, e.g. "Life Fitness" or "Hammer Strength". */
+  manufacturer?: string;
+  /** Optional machine model or line, e.g. "Insignia" or "Plate-Loaded". */
+  model?: string;
   /**
    * The machine kind this station is when that differs from its name (e.g.
    * "Machine Row" here that is the "Row Machine" at another gym). Stations of

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateId, getWorkoutData, updateWorkoutData } from '@/lib/workout/data';
-import { stationKindIndex } from '@/lib/workout/equipment-kinds';
+import { stationKindIndex, stationMakeModelIndex } from '@/lib/workout/equipment-kinds';
 import { applyWorkoutEdit, HISTORY_FILE, isCardioHistoryItem, loadUserHistory, sanitizeWorkoutPayload } from '@/lib/workout/history';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { getCalibrationStore, inferCalibrationsForWorkout, recalibrateAfterEdit, upsertCalibrationEntries } from '@/lib/workout/calibration';
@@ -60,9 +60,11 @@ export async function POST(request: Request) {
       // Calibration is best-effort; a failure here must not fail the save.
       try {
         const [store, gymData] = await Promise.all([getCalibrationStore(), getWorkoutData('gyms.json', { gyms: [] as any[] })]);
-        // Same kind of machine at the other gym is the best reference.
-        const stationKinds = stationKindIndex((gymData.gyms || []).filter((g: any) => g.ownerId === userId));
-        const inferred = inferCalibrationsForWorkout(userId, entry, previousUserHistory, store, calcAverage1RM, stationKinds);
+        // Same brand/model or kind of machine at the other gym is the best reference.
+        const userGyms = (gymData.gyms || []).filter((g: any) => g.ownerId === userId);
+        const stationKinds = stationKindIndex(userGyms);
+        const stationMakeModels = stationMakeModelIndex(userGyms);
+        const inferred = inferCalibrationsForWorkout(userId, entry, previousUserHistory, store, calcAverage1RM, stationKinds, stationMakeModels);
         await upsertCalibrationEntries(inferred);
       } catch (error) {
         console.error('Calibration inference failed:', error);
@@ -108,8 +110,10 @@ export async function PATCH(request: Request) {
       // Redo machine calibrations that came from the old numbers (best-effort).
       try {
         const [store, gymData] = await Promise.all([getCalibrationStore(), getWorkoutData('gyms.json', { gyms: [] as any[] })]);
-        const stationKinds = stationKindIndex((gymData.gyms || []).filter((g: any) => g.ownerId === userId));
-        await upsertCalibrationEntries(recalibrateAfterEdit(userId, before, workout, previousUserHistory, store, calcAverage1RM, stationKinds));
+        const userGyms = (gymData.gyms || []).filter((g: any) => g.ownerId === userId);
+        const stationKinds = stationKindIndex(userGyms);
+        const stationMakeModels = stationMakeModelIndex(userGyms);
+        await upsertCalibrationEntries(recalibrateAfterEdit(userId, before, workout, previousUserHistory, store, calcAverage1RM, stationKinds, stationMakeModels));
       } catch (error) {
         console.error('Recalibration after edit failed:', error);
       }

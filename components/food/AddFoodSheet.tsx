@@ -140,7 +140,7 @@ export default function AddFoodSheet({ date, meal: initialMeal, day, onChanged, 
       <button type="button" className="food-result-main" onClick={() => void openRecent(r)}>
         <span className="food-entry-name">
           <strong>{r.snapshot.name}</strong>
-          <small>{r.snapshot.brand ? `${r.snapshot.brand} · ` : ''}{amountLabel(r.amount, r.snapshot.servingLabel)}{list === 'frequent' ? ` · ${r.count}×` : ''}</small>
+          <small>{r.snapshot.brand ? `${r.snapshot.brand} · ` : ''}{amountLabel(r.amount, r.snapshot.servingLabel, { grams: r.snapshot.grams, ml: r.snapshot.ml })}{list === 'frequent' ? ` · ${r.count}×` : ''}</small>
         </span>
         <span className="food-entry-kcal">{fmt(r.snapshot.nutrients.kcal * r.amount)}</span>
       </button>

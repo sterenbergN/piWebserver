@@ -1310,7 +1310,6 @@
 
 /* Bottom tab bar on phones: Train · Progress · Coach · Health */
 .wtb { display: none; }
-.wtb-spacer { display: none; }
 @media (max-width: 700px) {
   .wtb {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
@@ -1328,7 +1327,10 @@
   .wtb a > span:first-child { font-size: 1.15rem; line-height: 1; filter: grayscale(0.6); opacity: 0.85; }
   .wtb a.is-current { color: var(--foreground); background: rgba(var(--accent-rgb), 0.14); }
   .wtb a.is-current > span:first-child { filter: none; opacity: 1; }
-  .wtb-spacer { display: block; height: calc(64px + env(safe-area-inset-bottom)); }
+  body:has(.wtb) {
+    --dock-h: calc(64px + env(safe-area-inset-bottom));
+    padding-bottom: var(--dock-h);
+  }
 }
 
 /* Experience profile: what each lifter level means */
@@ -1381,7 +1383,6 @@
   }
 
   .wtb,
-  .wtb-spacer,
   .workout-no-print,
   .workout-back,
   nav.site-nav,

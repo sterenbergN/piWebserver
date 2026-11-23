@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AiReplyError, buildRecipePrompt, buildWeekPrompt, parseAiReply } from './ai';
+import { AiReplyError, buildRecipePrompt, buildWeekPrompt, parseAiReply, planRangeDates, type PlanRange } from './ai';
 import { emptyKitchen, type KitchenState } from './kitchen';
 import { DEFAULT_RECIPES, extractIngredients, resolveRecipes } from './recipes';
 
@@ -131,4 +131,71 @@ test('a cut-off week reply keeps valid plan entries without bleeding across arra
   const parsedMid = parseAiReply(cutMidPlan, []);
   assert.deepEqual(parsedMid.recipes.map((r) => r.title), ['Eggs']);
   assert.deepEqual(parsedMid.plan.map((p) => [p.title, p.day, p.servings]), [['Eggs', 4, 48]]);
+});
+
+test('cross-week buildWeekPrompt includes explicit dates and round-trips its example', () => {
+  const range: PlanRange = { start: '2026-11-27', days: 7 };
+  const slots = planRangeDates(range);
+  assert.equal(slots.length, 7);
+  assert.deepEqual(slots[0], { date: '2026-11-27', week: '2026-11-23', day: 4, dayName: 'Fri' });
+  assert.deepEqual(slots[6], { date: '2026-12-03', week: '2026-11-30', day: 3, dayName: 'Thu' });
+
+  const prompt = buildWeekPrompt({ ...options, meals: 5, prep: 1, weekLabel: 'Nov 27 – Dec 3', range }, kitchen, []);
+  assert.match(prompt, /Plan my meals for Nov 27 – Dec 3 \(7 days\): 5 meals/);
+  for (const slot of slots) {
+    assert.ok(prompt.includes(`${slot.date} (${slot.dayName})`), `missing ${slot.date} (${slot.dayName})`);
+  }
+
+  const parsed = parseAiReply(exampleOf(prompt), [], 4, range);
+  assert.deepEqual(
+    parsed.plan.map((p) => [p.title, p.day, p.week, p.date, p.servings]),
+    [
+      ['Greek beef bowls', 4, '2026-11-23', '2026-11-27', 4],
+      ['Tzatziki', null, '2026-11-23', undefined, 8],
+    ],
+  );
+
+  // A Mon–Sun 7-day range keeps the classic prompt wording.
+  const classic = buildWeekPrompt(
+    { ...options, meals: 5, prep: 0, weekLabel: 'Nov 23 – Nov 29', range: { start: '2026-11-23', days: 7 } },
+    kitchen,
+    [],
+  );
+  assert.match(classic, /Plan my meals for the week of Nov 23 – Nov 29:/);
+  assert.match(classic, /"day" is one of Mon, Tue, Wed, Thu, Fri, Sat, Sun/);
+});
+
+test('parseAiReply maps ISO dates and weekday names across week boundaries against range', () => {
+  const range: PlanRange = { start: '2026-11-27', days: 7 };
+  const r0 = DEFAULT_RECIPES[0];
+  const r1 = DEFAULT_RECIPES[1];
+  const reply = parseAiReply(
+    JSON.stringify({
+      plan: [
+        { day: '2026-11-28', recipe: r0.title, servings: 2 },
+        { day: '2026-12-02', recipe: r1.title, servings: 4 },
+        { day: 'Fri', recipe: r0.title, servings: 3 },
+        { day: 'Tue', recipe: r1.title, servings: 4 },
+        { day: 'prep', recipe: r0.title, servings: 6 },
+        { day: 'Someday', recipe: r1.title, servings: 2 },
+      ],
+    }),
+    DEFAULT_RECIPES,
+    4,
+    range,
+  );
+
+  assert.deepEqual(
+    reply.plan.map((p) => ({ title: p.title, day: p.day, week: p.week, date: p.date, servings: p.servings })),
+    [
+      { title: r0.title, day: 5, week: '2026-11-23', date: '2026-11-28', servings: 2 },
+      { title: r1.title, day: 2, week: '2026-11-30', date: '2026-12-02', servings: 4 },
+      { title: r0.title, day: 4, week: '2026-11-23', date: '2026-11-27', servings: 3 },
+      { title: r1.title, day: 1, week: '2026-11-30', date: '2026-12-01', servings: 4 },
+      { title: r0.title, day: null, week: '2026-11-23', date: undefined, servings: 6 },
+      { title: r1.title, day: null, week: '2026-11-23', date: undefined, servings: 2 },
+    ],
+  );
+  assert.equal(reply.notes.length, 1);
+  assert.match(reply.notes[0], /meal prep/);
 });

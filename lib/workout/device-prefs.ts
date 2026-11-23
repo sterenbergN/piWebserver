@@ -13,20 +13,72 @@ export function savePref(key: string, value: string) {
 // One audio context for the whole page session. It used to live in a component
 // ref, so navigating away and back gave a fresh, locked one until the next tap.
 let sharedCtx: AudioContext | null = null;
+let primedCtx: AudioContext | null = null;
+const audioListeners = new Set<() => void>();
+const stateWatched = new WeakSet<AudioContext>();
+
+function notifyAudioListeners() {
+  audioListeners.forEach((listener) => {
+    try { listener(); } catch { /* ignore listener errors */ }
+  });
+}
+
+/** Subscribe to shared audio context state changes (created, resumed, interrupted). */
+export function subscribeAudioState(onChange: () => void): () => void {
+  audioListeners.add(onChange);
+  return () => { audioListeners.delete(onChange); };
+}
 
 function sharedContext() {
+  if (sharedCtx && (sharedCtx.state as string) === 'closed') {
+    sharedCtx = null;
+    primedCtx = null;
+  }
   if (sharedCtx) return sharedCtx;
   try {
-    sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return null;
+    sharedCtx = new AudioCtx();
+    if (sharedCtx && !stateWatched.has(sharedCtx)) {
+      stateWatched.add(sharedCtx);
+      sharedCtx.addEventListener?.('statechange', notifyAudioListeners);
+    }
+    notifyAudioListeners();
   } catch {
     sharedCtx = null;
   }
   return sharedCtx;
 }
 
+/**
+ * Once the context is actually running, push both a silent oscillator graph and
+ * a 1-frame buffer through the destination so iOS Safari routes audio properly.
+ */
+function primeOutput(context: AudioContext) {
+  if ((context.state as string) !== 'running' || primedCtx === context) return;
+  try {
+    const now = context.currentTime || 0;
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0, now);
+    osc.connect(gain).connect(context.destination);
+    osc.start(now);
+    osc.stop(now + 0.02);
+
+    const silent = context.createBufferSource();
+    silent.buffer = context.createBuffer(1, 1, context.sampleRate || 22050);
+    silent.connect(context.destination);
+    silent.start(0);
+
+    primedCtx = context;
+  } catch {
+    // No audio output.
+  }
+}
+
 /** True when a beep would actually be heard right now. */
 export function audioIsRunning() {
-  return sharedCtx?.state === 'running';
+  return (sharedCtx?.state as string) === 'running';
 }
 
 /**
@@ -40,11 +92,21 @@ export function unlockAudio(_ctx?: AudioContext | null) {
   try {
     const context = sharedContext();
     if (!context) return null;
-    if (context.state !== 'running') context.resume().catch(() => {});
-    const silent = context.createBufferSource();
-    silent.buffer = context.createBuffer(1, 1, 22050);
-    silent.connect(context.destination);
-    silent.start(0);
+    const state = context.state as string;
+    if (state !== 'running') {
+      primedCtx = null;
+      Promise.resolve(context.resume()).then(() => {
+        primeOutput(context);
+        notifyAudioListeners();
+      }, () => {});
+      // Older WebKit also expects a silent buffer scheduled synchronously in the gesture.
+      const silent = context.createBufferSource();
+      silent.buffer = context.createBuffer(1, 1, context.sampleRate || 22050);
+      silent.connect(context.destination);
+      silent.start(0);
+    } else if (primedCtx !== context) {
+      primeOutput(context);
+    }
     return context;
   } catch {
     return null;
@@ -53,15 +115,27 @@ export function unlockAudio(_ctx?: AudioContext | null) {
 
 /**
  * Re-unlock audio on every tap/key (pointerdown alone doesn't count as a user
- * activation on iOS touch, so click/touchend are needed) and try to resume when
- * the page comes back to the front. Returns the cleanup.
+ * activation on iOS touch, so touchend/click/keydown are used) and try to
+ * resume when the page comes back to the front. Returns the cleanup.
  */
 export function watchAudioUnlock() {
   const unlock = () => { unlockAudio(); };
   const onVisible = () => {
-    if (document.visibilityState === 'visible' && sharedCtx && sharedCtx.state !== 'running') sharedCtx.resume().catch(() => {});
+    if (document.visibilityState === 'visible' && sharedCtx && (sharedCtx.state as string) !== 'running') {
+      if ((sharedCtx.state as string) === 'closed') {
+        sharedCtx = null;
+        primedCtx = null;
+        notifyAudioListeners();
+        return;
+      }
+      const ctx = sharedCtx;
+      Promise.resolve(ctx.resume()).then(() => {
+        primeOutput(ctx);
+        notifyAudioListeners();
+      }, () => {});
+    }
   };
-  const events = ['pointerdown', 'touchend', 'click', 'keydown'] as const;
+  const events = ['touchend', 'click', 'keydown'] as const;
   events.forEach((e) => document.addEventListener(e, unlock, true));
   document.addEventListener('visibilitychange', onVisible);
   return () => {
@@ -79,7 +153,7 @@ export function alertIsTooLate(due: number, now: number) {
 
 /** Two short beeps (one for a quick test). Resumes a suspended context first. */
 export function playBeep(given: AudioContext | null, count = 2) {
-  const ctx = given ?? sharedCtx;
+  const ctx = given ?? sharedContext();
   if (!ctx) return;
   const play = () => {
     try {
@@ -98,8 +172,12 @@ export function playBeep(given: AudioContext | null, count = 2) {
       // No audio output.
     }
   };
-  if (ctx.state === 'running') play();
-  else ctx.resume().then(play, () => {});
+  if ((ctx.state as string) === 'running') play();
+  else Promise.resolve(ctx.resume()).then(() => {
+    primeOutput(ctx);
+    notifyAudioListeners();
+    play();
+  }, () => {});
 }
 
 export function vibrate(pattern: number | number[]) {

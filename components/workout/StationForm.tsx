@@ -135,6 +135,17 @@ export default function StationForm({ initial, preset, copyFrom, saving = false,
         <input className="workout-input" placeholder="e.g. Squat Rack" value={draft.name || ''} autoFocus={!isEditing && !preset && !copyFrom} onChange={(e) => update({ name: e.target.value })} />
       </label>
 
+      <div className="workout-grid-2">
+        <label className="workout-field" style={{ display: 'block' }}>
+          <span className="workout-label">Manufacturer (optional)</span>
+          <input className="workout-input" placeholder="e.g. Life Fitness" maxLength={80} value={draft.manufacturer || ''} onChange={(e) => update({ manufacturer: e.target.value })} />
+        </label>
+        <label className="workout-field" style={{ display: 'block' }}>
+          <span className="workout-label">Model (optional)</span>
+          <input className="workout-input" placeholder="e.g. Insignia" maxLength={80} value={draft.model || ''} onChange={(e) => update({ model: e.target.value })} />
+        </label>
+      </div>
+
       <div className="workout-field">
         <span className="workout-label">Kind of equipment</span>
         <div className="workout-choice-grid" role="radiogroup" aria-label="Kind of equipment">

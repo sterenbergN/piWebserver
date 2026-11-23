@@ -6,6 +6,7 @@ import type { Gym, Lift, Station } from '@/lib/workout/types';
 import { upsertLift } from '@/lib/workout/stations';
 import { GYM_TEMPLATES, stationFromPreset, stationsFromTemplate, type EquipmentPreset } from '@/lib/workout/catalog';
 import { copyStation } from '@/lib/workout/equipment-library';
+import { stationSpecLabel } from '@/lib/workout/equipment-kinds';
 import type { Exercise } from '@/lib/workout/exercises';
 import { STATION_TYPE_META, describeStationWeights } from '@/lib/workout/station-summary';
 import StationForm from './StationForm';
@@ -154,7 +155,7 @@ export default function GymStations({ gym, library = [], saving = false, saveSta
                     <StationThumb photo={st.photo} icon={meta?.icon} label={meta?.label} />
                     <span className="workout-card-text">
                       <span className="workout-card-title">{st.name}</span>
-                      <span className="workout-card-meta">{describeStationWeights(st)}</span>
+                      <span className="workout-card-meta">{stationSpecLabel(st) ? `${stationSpecLabel(st)} · ` : ''}{describeStationWeights(st)}</span>
                       <span className="workout-card-meta">{st.lifts.length ? plural(st.lifts.length, 'lift') : 'No lifts yet'}{st.attachments?.length ? ` · ${st.attachments.join(', ')}` : ''}</span>
                     </span>
                     <span className={`workout-chevron${isOpen ? ' is-open' : ''}`} aria-hidden>›</span>

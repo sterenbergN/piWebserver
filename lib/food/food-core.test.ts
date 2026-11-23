@@ -1,8 +1,9 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
 import { checkDigitOk, computeCheckDigit, expandUpcE, toGtin13, barcodeVariants } from './barcode';
+import { amountLabel } from './client';
 import { buildCustomFood, cleanFood, FoodInputError, macroLine, parseFoodId } from './foods';
-import { addNutrients, cleanNutrients, isNutrients, per100FromServings, roundNutrients, scaleNutrients, servingsFromPer100, sumNutrients, toNumber } from './nutrients';
+import { addNutrients, cleanNutrients, ensureUnitServings, isNutrients, per100FromServings, roundNutrients, scaleNutrients, servingsFromPer100, sumNutrients, toNumber } from './nutrients';
 import { mergeResults, normalizeText, scoreMatch, stem, tokenize, TokenIndex } from './search';
 import type { Food } from './types';
 
@@ -185,4 +186,72 @@ test('mergeResults collapses duplicates onto the better source and lifts foods y
   // Library foods get a small lift too.
   const lib = mergeResults([{ food: food('usda:1', 'Apple'), score: 5 }, { food: food('custom:a', 'Apple pie'), score: 5 }], {}, '', new Set(['custom:a']));
   assert.equal(lib[0].food.id, 'custom:a');
+});
+
+// ─── Serving label math & universal unit servings ─────────────────────────────
+
+test('amountLabel scales leading quantities, parenthetical weights, and plural units', () => {
+  assert.equal(amountLabel(1, '4 oz (113 g)'), '4 oz (113 g)');
+  assert.equal(amountLabel(2, '4 oz'), '8 oz');
+  assert.equal(amountLabel(2, '4 oz (113 g)'), '8 oz (226 g)');
+  assert.equal(amountLabel(235, '1 g'), '235 g');
+  assert.equal(amountLabel(10, '1 oz (28 g)', { grams: 28.35 }), '10 oz (284 g)');
+  assert.equal(amountLabel(1.5, '100 g'), '150 g');
+  assert.equal(amountLabel(2, '1/2 cup (60 g)'), '1 cup (120 g)');
+  assert.equal(amountLabel(2, '1 cup (240 ml)'), '2 cups (480 ml)');
+  assert.equal(amountLabel(0.5, '2 cups'), '1 cup');
+  assert.equal(amountLabel(2, '1 1/2 cups'), '3 cups');
+  assert.equal(amountLabel(2, '1 serving'), '2 servings');
+  assert.equal(amountLabel(2, '1 lb'), '2 lbs');
+  assert.equal(amountLabel(0.5, '2 lbs'), '1 lb');
+  assert.equal(amountLabel(2, '1 fl oz (30 ml)', { ml: 29.57 }), '2 fl oz (59 ml)');
+  assert.equal(amountLabel(2, 'medium banana'), '2 × medium banana');
+  assert.equal(amountLabel(2, '1 bar'), '2 × 1 bar');
+});
+
+test('ensureUnitServings adds oz/g or floz/ml without duplicates and skips partial foods', () => {
+  const beef: Food = {
+    id: 'fatsecret:1', source: 'fatsecret', sourceId: '1', name: 'Ground beef',
+    servings: [
+      { id: 's4', label: '4 oz', grams: 113.4, nutrients: { kcal: 280, protein: 20, carbs: 0, fat: 22 } },
+      { id: 's100', label: '100 g', grams: 100, nutrients: { kcal: 247, protein: 17.6, carbs: 0, fat: 19.4 } },
+    ],
+  };
+  const enriched = ensureUnitServings(beef);
+  assert.notEqual(enriched, beef);
+  assert.deepEqual(enriched.servings.map((s) => s.id), ['s4', 's100', 'oz', 'g']);
+  assert.equal(enriched.servings[2].label, '1 oz (28 g)');
+  assert.equal(enriched.servings[2].grams, 28.35);
+  assert.equal(enriched.servings[3].label, '1 g');
+  assert.equal(enriched.servings[3].grams, 1);
+  assert.equal(enriched.per100!.kcal, 247);
+  // Idempotent: calling again returns the same object.
+  assert.equal(ensureUnitServings(enriched), enriched);
+
+  // Avoids duplicate oz when food already has a ~28.35 g serving.
+  const cheese: Food = {
+    id: 'fatsecret:2', source: 'fatsecret', sourceId: '2', name: 'Cheddar',
+    per100: { kcal: 403, protein: 24.9, carbs: 1.3, fat: 33.1 },
+    servings: [{ id: '30127', label: '1 oz', grams: 28.35, nutrients: { kcal: 114, protein: 7.1, carbs: 0.4, fat: 9.4 } }],
+  };
+  assert.deepEqual(ensureUnitServings(cheese).servings.map((s) => s.id), ['30127', 'g']);
+
+  // Liquid foods get floz and ml.
+  const milk: Food = {
+    id: 'custom:1', source: 'custom', sourceId: '1', name: 'Milk',
+    servings: [{ id: 's', label: '1 cup (240 ml)', ml: 240, nutrients: { kcal: 150, protein: 8, carbs: 12, fat: 8 } }],
+  };
+  const enrichedMilk = ensureUnitServings(milk);
+  assert.deepEqual(enrichedMilk.servings.map((s) => s.id), ['s', 'floz', 'ml']);
+  assert.equal(enrichedMilk.servings[1].label, '1 fl oz (30 ml)');
+  assert.equal(enrichedMilk.servings[2].label, '1 ml');
+
+  // Partial foods and foods with no weights are returned unchanged.
+  const partial: Food = { ...beef, partial: true };
+  assert.equal(ensureUnitServings(partial), partial);
+  const weightless: Food = {
+    id: 'custom:2', source: 'custom', sourceId: '2', name: 'Mystery',
+    servings: [{ id: 's', label: '1 serving', nutrients: { kcal: 200, protein: 10, carbs: 20, fat: 5 } }],
+  };
+  assert.equal(ensureUnitServings(weightless), weightless);
 });

@@ -131,3 +131,18 @@
 .rest-keypad button { min-height: 42px; border-radius: 9px; border: 1px solid var(--surface-border); background: var(--surface-glass); color: var(--foreground); font: inherit; font-size: 1.15rem; font-weight: 700; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .rest-keypad button:active { background: rgba(var(--accent-rgb), 0.2); }
 .rest-keypad .is-skip { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.rest-math-stats-toggle { font-size: 0.8rem; }
+.rest-math-stats { margin-top: 0.55rem; padding: 0.55rem; border-radius: 10px; border: 1px solid var(--surface-border); background: var(--surface-glass); display: flex; flex-direction: column; gap: 0.45rem; }
+.rest-math-pills { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.3rem; }
+.rest-math-pill { display: flex; flex-direction: column; align-items: center; padding: 0.3rem 0.2rem; border-radius: 8px; background: var(--input-bg); font-variant-numeric: tabular-nums; text-align: center; }
+.rest-math-pill span { font-size: 0.65rem; color: var(--muted); line-height: 1.2; }
+.rest-math-pill strong { font-size: 0.85rem; font-weight: 700; color: var(--foreground); line-height: 1.25; }
+.rest-math-trouble { margin: 0; padding: 0.3rem 0.5rem; border-radius: 8px; font-size: 0.76rem; line-height: 1.35; }
+.rest-math-trouble.is-warn { background: rgba(var(--danger-rgb), 0.14); color: var(--danger); }
+.rest-math-trouble.is-ok { background: rgba(var(--success-rgb), 0.14); color: var(--success); }
+.rest-math-ops { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.rest-math-op { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.5rem; padding: 0.2rem 0.35rem; border-radius: 6px; }
+.rest-math-op:nth-child(odd) { background: var(--input-bg); }
+.rest-math-op-name { color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rest-math-op-acc { font-weight: 600; color: var(--foreground); }
+.rest-math-op-time { color: var(--muted); min-width: 2.8rem; text-align: right; }

@@ -64,6 +64,8 @@ export function finalizeStation(draft: Partial<Station>, lists: StationListField
     bodyWeightAdditions: type === 'bodyweight' ? parseWeightList(lists.bodyWeight, { positiveOnly: true }) : undefined,
     // Only kept when it differs from the name; otherwise the name is the kind.
     kind: draft.kind?.trim() && !sameName(draft.kind, draft.name || '') ? draft.kind.trim().slice(0, 120) : undefined,
+    manufacturer: draft.manufacturer?.trim().slice(0, 80) || undefined,
+    model: draft.model?.trim().slice(0, 80) || undefined,
   };
 
   // Attachments only exist on cable stations; drop ones that were removed.

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  kindPairKey, liftLinkSuggestions, machineKindLibrary, renameDismissedPairs, setKindInGyms, suggestKindMatches, unlinkStation,
+  kindPairKey, liftLinkSuggestions, machineKindLibrary, renameDismissedPairs, setKindInGyms, stationMakeModelIndex, stationSpecLabel, suggestKindMatches, unlinkStation,
 } from './equipment-kinds';
-import { equipmentLibrary } from './equipment-library';
+import { copyStation, equipmentLibrary } from './equipment-library';
 import { findReferenceLift } from './calibration';
 import { finalizeStation, listFieldsFromStation } from './stations';
 import type { Gym, Station, StationType } from './types';
@@ -130,4 +130,41 @@ test('calibration prefers the same exercise on the same kind of machine', () => 
   // No kind known: the newest lift with the same name, as before.
   assert.equal(findReferenceLift(history, { liftKey: 'row' })?.liftId, 'x');
   assert.equal(findReferenceLift(history, { liftKey: 'row', kindKey: 'leg press' }, kinds)?.liftId, 'x');
+});
+
+test('stationSpecLabel, stationMakeModelIndex, KindCopy, and copyStation handle manufacturer and model', () => {
+  assert.equal(stationSpecLabel({ manufacturer: ' Life Fitness ', model: ' Insignia ' }), 'Life Fitness Insignia');
+  assert.equal(stationSpecLabel({ manufacturer: 'Hammer Strength', model: '  ' }), 'Hammer Strength');
+  assert.equal(stationSpecLabel({ model: 'Plate-Loaded' }), 'Plate-Loaded');
+  assert.equal(stationSpecLabel({ manufacturer: '  ', model: '' }), '');
+  assert.equal(stationSpecLabel(undefined), '');
+
+  const s1 = station('s1', 'Chest Press', 'stack', [lift('l1', 'Chest Press')], {
+    manufacturer: 'Life Fitness',
+    model: 'Insignia',
+    photo: 'p1',
+  });
+  const s2 = station('s2', 'Chest Press', 'stack', [], {
+    manufacturer: '  life  fitness ',
+    model: 'INSIGNIA!',
+  });
+  const s3 = station('s3', 'Leg Press', 'stack', []);
+  const gyms = [gym('a', [s1, s3]), gym('b', [s2])];
+
+  const kinds = machineKindLibrary(gyms);
+  const chestKind = kinds.find((k) => k.key === 'chest press');
+  assert.equal(chestKind?.copies[0].manufacturer, 'Life Fitness');
+  assert.equal(chestKind?.copies[0].model, 'Insignia');
+
+  const index = stationMakeModelIndex(gyms);
+  assert.equal(index.get('s1'), 'life fitness insignia');
+  assert.equal(index.get('s2'), 'life fitness insignia');
+  assert.equal(index.has('s3'), false);
+
+  const copied = copyStation(s1);
+  assert.notEqual(copied.id, s1.id);
+  assert.equal(copied.photo, undefined);
+  assert.equal(copied.manufacturer, undefined);
+  assert.equal(copied.model, undefined);
+  assert.equal(copied.lifts.length, 1);
 });

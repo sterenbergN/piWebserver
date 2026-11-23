@@ -186,7 +186,7 @@ export default function FoodPage() {
                         <button type="button" className="food-entry-main" onClick={() => setEditing(e)}>
                           <span className="food-entry-name">
                             <strong>{e.snapshot.name}</strong>
-                            <small>{e.snapshot.brand ? `${e.snapshot.brand} · ` : ''}{amountLabel(e.amount, e.snapshot.servingLabel)} · {Math.round(e.snapshot.nutrients.protein * e.amount)} g protein</small>
+                            <small>{e.snapshot.brand ? `${e.snapshot.brand} · ` : ''}{amountLabel(e.amount, e.snapshot.servingLabel, { grams: e.snapshot.grams, ml: e.snapshot.ml })} · {Math.round(e.snapshot.nutrients.protein * e.amount)} g protein</small>
                           </span>
                           <span className="food-entry-kcal">{fmt(e.snapshot.nutrients.kcal * e.amount)}</span>
                         </button>

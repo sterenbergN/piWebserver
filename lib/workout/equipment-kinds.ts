@@ -34,6 +34,8 @@ export type KindCopy = {
   stationId: string;
   stationName: string;
   stationType: StationType;
+  manufacturer?: string;
+  model?: string;
   /** e.g. "10–200 lb by 10" (see describeStationWeights). */
   weights: string;
   /** Lightest and heaviest setting, for comparing machines. */
@@ -44,6 +46,19 @@ export type KindCopy = {
 };
 
 export type MachineKind = { key: string; name: string; copies: KindCopy[] };
+
+/** Display label combining manufacturer and model when present. */
+export function stationSpecLabel(station: { manufacturer?: string; model?: string } | null | undefined): string {
+  return [station?.manufacturer?.trim(), station?.model?.trim()].filter(Boolean).join(' ');
+}
+
+/** Normalized comparison key for matching the same brand/model across gyms. */
+export function stationMakeModelKey(station: { manufacturer?: string; model?: string } | null | undefined): string {
+  const manufacturer = station?.manufacturer?.trim() || '';
+  const model = station?.model?.trim() || '';
+  if (!manufacturer && !model) return '';
+  return exerciseKeyFromName(`${manufacturer} ${model}`);
+}
 
 /** Every machine kind across the given gyms (pass only your own), A–Z. */
 export function machineKindLibrary(gyms: Gym[]): MachineKind[] {
@@ -64,6 +79,8 @@ export function machineKindLibrary(gyms: Gym[]): MachineKind[] {
         stationId: station.id,
         stationName: station.name,
         stationType: station.type,
+        manufacturer: station.manufacturer?.trim() || undefined,
+        model: station.model?.trim() || undefined,
         weights: describeStationWeights(station),
         range: weights.length ? [weights[0], weights[weights.length - 1]] : null,
         liftCount: station.lifts?.length || 0,
@@ -78,6 +95,18 @@ export function machineKindLibrary(gyms: Gym[]): MachineKind[] {
 export function stationKindIndex(gyms: Pick<Gym, 'stations'>[]): Map<string, string> {
   const index = new Map<string, string>();
   for (const gym of gyms) for (const station of gym.stations || []) index.set(station.id, kindKey(station));
+  return index;
+}
+
+/** Station id → normalized make/model key, for matching identical machines across gyms. */
+export function stationMakeModelIndex(gyms: Pick<Gym, 'stations'>[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const gym of gyms) {
+    for (const station of gym.stations || []) {
+      const key = stationMakeModelKey(station);
+      if (key) index.set(station.id, key);
+    }
+  }
   return index;
 }
 

@@ -35,21 +35,19 @@ export default function WorkoutTabBar() {
   }, [pathname]);
   if (!mounted || HIDDEN.some((p) => pathname.startsWith(p))) return null;
   // Into <body>: the page's fade-in uses a transform, which would pin a fixed bar to the page instead of the screen.
-  return (
-    <>
-      <div className="wtb-spacer" aria-hidden />
-      {/* One column per tab (the stylesheet's default is four). */}
-      {createPortal(<nav className="wtb" aria-label="Workout sections" style={{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }}>
-        {TABS.map((t) => {
-          const current = t.match(pathname, tab);
-          return (
-            <a key={t.href} href={t.href} className={current ? 'is-current' : ''} aria-current={current ? 'page' : undefined}>
-              <span aria-hidden>{t.icon}</span>
-              <span>{t.label}</span>
-            </a>
-          );
-        })}
-      </nav>, document.body)}
-    </>
+  // One column per tab (the stylesheet's default is four); workout.css pads <body> via body:has(.wtb) so the footer clears the bar.
+  return createPortal(
+    <nav className="wtb" aria-label="Workout sections" style={{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }}>
+      {TABS.map((t) => {
+        const current = t.match(pathname, tab);
+        return (
+          <a key={t.href} href={t.href} className={current ? 'is-current' : ''} aria-current={current ? 'page' : undefined}>
+            <span aria-hidden>{t.icon}</span>
+            <span>{t.label}</span>
+          </a>
+        );
+      })}
+    </nav>,
+    document.body,
   );
 }
