@@ -1,3 +1,4 @@
+import { choiceFromParam, customManifestIcons } from '@/lib/home-icons';
 // Study as its own app on a home screen, apart from the site's main one
 // (app/manifest.ts), which opens on the home page.
 
@@ -23,6 +24,9 @@ const MANIFEST = {
   ],
 };
 
-export function GET() {
-  return new Response(JSON.stringify(MANIFEST), { headers: { 'Content-Type': 'application/manifest+json' } });
+// ?icon= swaps in the symbol and colour chosen for this app (lib/home-icons.ts).
+export function GET(request: Request) {
+  const choice = choiceFromParam(new URL(request.url).searchParams.get('icon'));
+  const manifest = choice ? { ...MANIFEST, icons: customManifestIcons(choice) } : MANIFEST;
+  return new Response(JSON.stringify(manifest), { headers: { 'Content-Type': 'application/manifest+json' } });
 }

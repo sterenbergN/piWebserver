@@ -533,6 +533,21 @@ main { min-height: calc(100vh - 120px); }
 
 /* Add to home screen steps (components/AddToHomeScreen.tsx) */
 .home-screen-steps { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.45rem; line-height: 1.45; }
+.home-screen-card { max-height: calc(100dvh - 2rem); overflow-y: auto; }
+.signin-backdrop:has(.home-screen-card) { padding-top: max(1rem, 4vh); }
+.hs-picker { display: flex; flex-direction: column; gap: 0.45rem; }
+.hs-preview { display: flex; align-items: center; gap: 0.8rem; }
+.hs-preview img { border-radius: 16px; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.hs-preview div { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.hs-preview span { font-size: 0.82rem; color: var(--muted); }
+.hs-reset { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent-light); font-size: 0.82rem; text-decoration: underline; cursor: pointer; }
+.hs-label { margin: 0.35rem 0 0; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.hs-colors { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.4rem; }
+.hs-colors button { aspect-ratio: 1; min-height: 36px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.hs-symbols { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 0.35rem; }
+.hs-symbols button { aspect-ratio: 1; min-height: 44px; display: grid; place-items: center; border-radius: 10px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.hs-colors button[aria-pressed="true"], .hs-symbols button[aria-pressed="true"] { border-color: var(--foreground); box-shadow: 0 0 0 2px var(--background) inset; }
+.hs-colors button:disabled, .hs-symbols button:disabled { cursor: wait; }
 
 /* Keep Launcher room headers visible when opened over full-screen pages (/reader, /notes) that hide site headers. */
 html body .lc-backdrop .lc-panel .rm-room > header.rm-head { display: flex !important; }

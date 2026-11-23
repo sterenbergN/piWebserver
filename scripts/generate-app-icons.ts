@@ -2,15 +2,15 @@
 // symbol in white on its room's colour. Run on Windows (npm run icons:apps), whose
 // Segoe UI Emoji font draws the symbols as clean outlines; the Pi has no such font,
 // so the icons are made here and kept in public/icons.
+//
+//   npm run icons:apps                 every section's icons
+//   npm run icons:apps -- --glyphs     only the white symbols the icon picker uses
+//                                      (public/icons/glyphs, laid over a colour on the Pi)
 import sharp from 'sharp';
 import { mkdir } from 'node:fs/promises';
 import { appIcon, HOME_APPS } from '../lib/home-apps';
+import { ICON_SYMBOLS, shade, symbolId, SYMBOL_SCALE } from '../lib/home-icons';
 
-function shade(hex: string, by: number) {
-  const n = parseInt(hex.slice(1), 16);
-  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * by))).toString(16).padStart(2, '0');
-  return `#${c(n >> 16)}${c((n >> 8) & 255)}${c(n & 255)}`;
-}
 
 /** `scale`: how much of the square the symbol fills (maskable icons keep it inside the safe zone). */
 function svg(glyph: string, color: string, scale: number) {
@@ -23,7 +23,24 @@ function svg(glyph: string, color: string, scale: number) {
 </svg>`;
 }
 
+/** A symbol alone, white on clear, placed exactly as on an icon (scale SYMBOL_SCALE.any of a 512 square). */
+function glyphSvg(glyph: string) {
+  const s = 512;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
+  <text x="${s / 2}" y="${s / 2}" font-size="${Math.round(s * SYMBOL_SCALE.any)}" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI Emoji, Segoe UI Symbol" fill="#fff">${glyph.replace(/️/g, '')}</text>
+</svg>`;
+}
+
+async function glyphs() {
+  await mkdir('public/icons/glyphs', { recursive: true });
+  for (const glyph of ICON_SYMBOLS) {
+    await sharp(Buffer.from(glyphSvg(glyph))).png().toFile(`public/icons/glyphs/${symbolId(glyph)}.png`);
+  }
+  console.log(`${ICON_SYMBOLS.length} symbols written to public/icons/glyphs`);
+}
+
 async function main() {
+  if (process.argv.includes('--glyphs')) return glyphs();
   await mkdir('public/icons', { recursive: true });
   for (const app of HOME_APPS) {
     const out = (kind: Parameters<typeof appIcon>[1]) => `public${appIcon(app.slug, kind)}`;

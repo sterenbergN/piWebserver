@@ -85,6 +85,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
                 <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
                 <a href="/api/account/export" download onClick={() => setMenuOpen(false)}><span aria-hidden>📦</span>Download my data</a>
                 {!homeScreen.installed && <button type="button" onClick={() => { setMenuOpen(false); homeScreen.add(); }}><span aria-hidden>📲</span>Add this page to home screen</button>}
+                {homeScreen.installed && homeScreen.canPickIcon() && <button type="button" onClick={() => { setMenuOpen(false); homeScreen.changeIcon(); }}><span aria-hidden>🎨</span>Home screen icon</button>}
               </>
             ) : (
               <button type="button" onClick={() => { setMenuOpen(false); setDialogOpen(true); }}><span aria-hidden>👤</span>Sign in to your account</button>

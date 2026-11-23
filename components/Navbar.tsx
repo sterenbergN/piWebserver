@@ -10,6 +10,7 @@ import { useTheme } from './ThemeProvider';
 import { Icon, studyGlyph } from './study/Icon';
 import { allPlaces, atPlace, isCurrentItem, isStudyPath, navGroups, placesFor, sectionOf, type NavItem } from './nav-links';
 import { markFound, rememberPage, useNavPins } from './useNavPins';
+import { useHomeIconLinks } from './useHomeIcons';
 import Calculator from './daily/Calculator';
 
 // Loaded when first opened: it brings the recipe and habit code along for its counts.
@@ -41,6 +42,7 @@ const EVERYWHERE_KEY = 'nav:everywhere-shown';
 export default function Navbar({ isAdmin, user }: { isAdmin: boolean; user: NavUser }) {
   useSessionCheck(isAdmin, user?.username);
   const pathname = usePathname();
+  useHomeIconLinks(pathname);
   const search = useSearchParams().toString();
   const hash = useSyncExternalStore(subscribeHash, readHash, () => '');
   const { theme, toggleTheme } = useTheme();
