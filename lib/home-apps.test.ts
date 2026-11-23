@@ -11,7 +11,7 @@ test('every section in the navigation goes on the home screen as some app', () =
   const sections = new Set(allPlaces(navGroups(true)).map((p) => `/${p.href.split(/[?#]/)[0].split('/')[1]}`));
   const ownManifest = (s: string) => fs.existsSync(path.join(root, 'app', s, 'manifest.webmanifest', 'route.ts'));
   for (const section of sections) {
-    if (section === '/' || section === '/workout') continue; // the site's main app
+    if (section === '/') continue; // the site's main app
     assert.ok(homeApp(section.slice(1)) || ownManifest(section.slice(1)), `${section} has no home-screen app`);
   }
 });
@@ -37,4 +37,10 @@ test('a section’s app opens on that section and stays in it', () => {
   assert.equal(manifest.short_name, 'Journal');
   assert.equal(homeScreenMetadata('journal').manifest, '/apps/journal/manifest.webmanifest');
   assert.throws(() => homeScreenMetadata('nope'));
+});
+
+test('the workout tracker installs as itself, not as the home page', () => {
+  const manifest = appManifest(homeApp('workout')!);
+  assert.equal(manifest.start_url, '/workout');
+  assert.equal(manifest.scope, '/workout');
 });

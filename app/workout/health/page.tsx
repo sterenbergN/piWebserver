@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/workout/PageHeader';
 import ReadinessCard from '@/components/workout/health/ReadinessCard';
 import HealthSetupSheet from '@/components/workout/health/HealthSetupSheet';
@@ -13,7 +13,7 @@ import { HeartRangeChart, HeartRateChart, RefLegend, SleepBars, StepsBars, Trend
 import { fetchWorkoutJson } from '@/lib/workout/offline-cache';
 import { readPref, readTodayIntensity, savePref, saveTodayIntensity } from '@/lib/workout/device-prefs';
 import { dailyBurn, daysSince, fullWearDays, formatMinutes, healthSeries, lastKeys, localKey, rangeStats, readiness, shiftKey, timeAgo, typicalSleepTimes, type RangeStats } from '@/lib/workout/health-insights';
-import { describeSync, STALE_HEART_RATE_MS, type HealthDay, type MatchCheck, type PublicHealth } from '@/lib/workout/health';
+import { describeSync, intakeOn, STALE_HEART_RATE_MS, type HealthDay, type MatchCheck, type PublicHealth } from '@/lib/workout/health';
 import { flushWorkoutQueue, getQueuedWorkouts } from '@/lib/workout/offline-queue';
 import '../analytics/analytics.css';
 import '@/components/workout/health/health.css';
@@ -89,12 +89,6 @@ export default function HealthPage() {
   const [tab, setTab] = useState<Tab>('today');
   // The calorie calculator's saved settings, which hold the weight plan.
   const [calorie, setCalorie] = useState<Calorie | null>(null);
-  const [dailyWeight, setDailyWeight] = useState('');
-  const [dailyCalories, setDailyCalories] = useState('');
-  const [dailyProtein, setDailyProtein] = useState('');
-  const [dailySaving, setDailySaving] = useState(false);
-  const [dailyMsg, setDailyMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
-  const dailyInitializedRef = useRef(false);
 
   useEffect(() => {
     const saved = readPref('workout:healthRange');
@@ -155,43 +149,7 @@ export default function HealthPage() {
   }, [health, weights]);
 
   const today = localKey(new Date());
-  useEffect(() => {
-    if (loading || dailyInitializedRef.current) return;
-    dailyInitializedRef.current = true;
-    const todayDay = days[today];
-    if (todayDay?.weight !== undefined) setDailyWeight(String(todayDay.weight));
-    if (todayDay?.intakeKcal !== undefined) setDailyCalories(String(todayDay.intakeKcal));
-    if (todayDay?.proteinG !== undefined) setDailyProtein(String(todayDay.proteinG));
-  }, [loading, days, today]);
-
-  const saveDailyCheckin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (dailySaving) return;
-    setDailySaving(true);
-    setDailyMsg(null);
-    try {
-      const res = await fetch('/api/workout/health', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'logDaily',
-          date: today,
-          weight: dailyWeight.trim() !== '' ? parseFloat(dailyWeight) : undefined,
-          calories: dailyCalories.trim() !== '' ? parseFloat(dailyCalories) : undefined,
-          protein: dailyProtein.trim() !== '' ? parseFloat(dailyProtein) : undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success) throw new Error(data.message || 'Could not save check-in');
-      if (data.health) setHealth(data.health);
-      if (Array.isArray(data.entries)) setWeights(data.entries);
-      setDailyMsg({ tone: 'ok', text: 'Saved for today.' });
-    } catch (err) {
-      setDailyMsg({ tone: 'err', text: err instanceof Error ? err.message : 'Could not save check-in' });
-    } finally {
-      setDailySaving(false);
-    }
-  };
+  const eatenToday = useMemo(() => intakeOn(today, health?.intake, days), [today, health, days]);
   const yesterday = shiftKey(today, 1);
   const burnYesterday = useMemo(() => (fullWearDays(days).has(yesterday) ? dailyBurn(days[yesterday])! : null), [days, yesterday]);
   const spec = RANGES.find((r) => r.key === range)!;
@@ -256,68 +214,8 @@ export default function HealthPage() {
       </nav>
 
       {tab === 'today' && (() => {
-        const manualCard = (
-          <form className="workout-tile an-card" onSubmit={saveDailyCheckin}>
-            <div className="an-card-head">
-              <h2>Log Today&apos;s Weight &amp; Calories/Protein</h2>
-              <span className="workout-hint">{today}</span>
-            </div>
-            <div className="workout-grid-3" style={{ gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <label className="pp-field">
-                <span>Weight (lb)</span>
-                <input
-                  className="workout-input"
-                  type="number"
-                  step="0.1"
-                  inputMode="decimal"
-                  placeholder={weights.length ? String(weights[weights.length - 1].weight) : '180'}
-                  value={dailyWeight}
-                  onChange={(e) => { setDailyWeight(e.target.value); setDailyMsg(null); }}
-                />
-              </label>
-              <label className="pp-field">
-                <span>Calories</span>
-                <input
-                  className="workout-input"
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="2400"
-                  value={dailyCalories}
-                  onChange={(e) => { setDailyCalories(e.target.value); setDailyMsg(null); }}
-                />
-              </label>
-              <label className="pp-field">
-                <span>Protein (g)</span>
-                <input
-                  className="workout-input"
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="170"
-                  value={dailyProtein}
-                  onChange={(e) => { setDailyProtein(e.target.value); setDailyMsg(null); }}
-                />
-              </label>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button
-                type="submit"
-                className="workout-button is-primary is-small"
-                disabled={dailySaving || (!dailyWeight.trim() && !dailyCalories.trim() && !dailyProtein.trim())}
-              >
-                {dailySaving ? 'Saving…' : 'Save today'}
-              </button>
-              {dailyMsg && (
-                <span className={dailyMsg.tone === 'err' ? 'workout-error' : 'workout-hint'} style={{ margin: 0, color: dailyMsg.tone === 'ok' ? 'var(--success)' : undefined }}>
-                  {dailyMsg.text}
-                </span>
-              )}
-            </div>
-          </form>
-        );
-
         return !hasData ? (
           <div className="an-stack">
-            {manualCard}
             <section className="workout-tile hc-hero">
               <span className="hc-hero-icon" aria-hidden>❤️</span>
               <h2>Bring in Apple Health</h2>
@@ -342,21 +240,19 @@ export default function HealthPage() {
               </section>
             )}
 
-            {manualCard}
-
             <section className="an-tiles hc-tiles" aria-label="At a glance">
               <Tile icon="🌙" label="Last night" value={days[today]?.sleep ? formatMinutes(days[today].sleep!.asleepMin) : '—'} sub="asleep" />
               <Tile icon="👣" label="Steps yesterday" value={days[yesterday]?.steps !== undefined ? fmtSteps(days[yesterday].steps!) : '—'} />
               <Tile icon="🔥" label="Burned yesterday" value={burnYesterday !== null ? burnYesterday.toLocaleString() : '—'} unit="kcal"
                 sub={burnYesterday !== null ? 'resting + active' : days[yesterday]?.activeKcal ? 'Watch off part of the day' : undefined} />
               <Tile icon="⚖" label="Weight" value={weights.length ? String(weights[weights.length - 1].weight) : '—'} unit="lb" sub={weights.length ? 'latest weigh-in' : undefined} />
-              {(days[today]?.intakeKcal !== undefined || days[today]?.proteinG !== undefined) && (
+              {(eatenToday.kcal !== null || eatenToday.protein !== null) && (
                 <Tile
                   icon="🍽️"
-                  label="Intake today"
-                  value={days[today]?.intakeKcal !== undefined ? days[today].intakeKcal!.toLocaleString() : `${days[today].proteinG}g`}
-                  unit={days[today]?.intakeKcal !== undefined ? 'kcal' : undefined}
-                  sub={days[today]?.proteinG !== undefined ? `${days[today].proteinG} g protein` : 'logged today'}
+                  label="Eaten today"
+                  value={eatenToday.kcal !== null ? eatenToday.kcal.toLocaleString() : `${eatenToday.protein}g`}
+                  unit={eatenToday.kcal !== null ? 'kcal' : undefined}
+                  sub={eatenToday.protein !== null ? `${eatenToday.protein} g protein${eatenToday.fromFood ? ' · Food log' : ''}` : 'logged today'}
                 />
               )}
             </section>
@@ -372,7 +268,7 @@ export default function HealthPage() {
 
       {tab === 'plan' && (
         calorie ? (
-          <PlanPanel calorie={calorie} onSave={savePlan} days={days} weighIns={weights} onLog={logWeight} today={today} />
+          <PlanPanel calorie={calorie} onSave={savePlan} days={days} intake={h.intake} weighIns={weights} onLog={logWeight} today={today} />
         ) : <p className="workout-hint">Loading your plan…</p>
       )}
 

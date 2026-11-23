@@ -3,15 +3,18 @@ import { navGroups } from '@/components/nav-links';
 
 // Every section of the site can go on a phone's home screen as its own app, opening
 // straight to that section, not to the site's main app (app/manifest.ts, which opens on
-// the workout tracker). The list comes from the site's navigation, so a new section
+// the home page). The list comes from the site's navigation, so a new section
 // joins it; its icon is made once by `npm run icons:apps` and kept in public/icons.
 
 export type HomeApp = { slug: string; path: string; name: string; short: string; description: string; glyph: string; color: string };
 
 /** Sections that already are apps of their own, with hand-drawn icons and offline extras. */
 const OWN_APPS = new Set(['/recipes', '/notes', '/reader', '/study']);
-/** Sections that stay part of the main app, as they always have. */
-const MAIN_APP = new Set(['/', '/workout']);
+/**
+ * Sections that stay part of the main app. Workout used to, while the main app opened on it;
+ * since that opens on the home page, Workout is an app of its own so it installs onto /workout.
+ */
+const MAIN_APP = new Set(['/']);
 
 /** The rooms' colours (the dark theme's), which tint each icon. */
 const ROOM_HEX: Record<string, string> = {

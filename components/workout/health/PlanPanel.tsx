@@ -8,7 +8,8 @@ import { useSitePopup } from '@/components/SitePopup';
 import { ACTIVITY_LEVELS, calculateMifflinStJeor, type ActivityLevel, type CalculatorDefaults } from '@/lib/workout/calculators';
 import { describeActivity, measuredActivity, restingVsFormula } from '@/lib/workout/coach';
 import { addDays, planProgress, projectDaily, type WeighIn, type WeightPlan } from '@/lib/workout/weight-plan';
-import type { HealthDay } from '@/lib/workout/health';
+import { intakeOn, type DailyIntake, type HealthDay } from '@/lib/workout/health';
+import { estimateMaintenance, KCAL_PER_LB, MIN_DAY_KCAL } from '@/lib/food/maintenance';
 
 type Calorie = NonNullable<CalculatorDefaults['calorie']>;
 
@@ -28,6 +29,8 @@ type Props = {
   /** Save calculator/plan settings (merged into what's saved). */
   onSave: (patch: Omit<Partial<Calorie>, 'plan'> & { plan?: WeightPlan | null }) => Promise<void>;
   days: Record<string, HealthDay>;
+  /** What you ate each day, from the Food log. */
+  intake?: DailyIntake;
   weighIns: WeighIn[];
   onLog: (weight: number) => Promise<void>;
   today: string;
@@ -68,6 +71,68 @@ function RestingCard({ resting }: { resting: NonNullable<ReturnType<typeof resti
             : `Your Watch reads ${-pct}% below ${resting.best.name}. That's unusual — it can mean wrist fit, an out-of-date age, height or weight in the Health app, or genuinely low resting burn. Your weigh-in trend is the tiebreaker.`}
         {resting.bodyFat === null && ' Log body fat from your scale to compare against the lean-mass formulas too.'}
       </p>
+    </section>
+  );
+}
+
+/**
+ * What you ate against the plan: today so far and the last 7 full days. A day counts once it holds
+ * a real day's food (a half-logged day would drag the average down), the same rule as maintenance.
+ */
+function EatingCard({ intake, days, today, target, eaten, shortfall }: {
+  intake: DailyIntake | undefined;
+  days: Record<string, HealthDay>;
+  today: string;
+  target: number | null;
+  eaten: ReturnType<typeof estimateMaintenance>['estimate'];
+  shortfall: ReturnType<typeof estimateMaintenance>['shortfall'];
+}) {
+  const week = Array.from({ length: 7 }, (_, i) => addDays(today, -(i + 1)))
+    .map((date) => intakeOn(date, intake, days))
+    .filter((d): d is { kcal: number; protein: number | null; fromFood: boolean } => d.kcal !== null && d.kcal >= MIN_DAY_KCAL);
+  const now = intakeOn(today, intake, days);
+  const anyFood = Object.keys(intake ?? {}).length > 0;
+  if (!anyFood && !week.length) {
+    return (
+      <section className="workout-tile an-card">
+        <h2>What you eat</h2>
+        <p className="workout-hint" style={{ margin: 0 }}>
+          Log meals in the <a href="/workout/food" className="workout-text-btn" style={{ textDecoration: 'underline' }}>Food log</a> and they count here:
+          how you&apos;re eating against the plan, and after two weeks your real maintenance from what you ate and what the scale did.
+        </p>
+      </section>
+    );
+  }
+  const avg = week.length ? Math.round(week.reduce((sum, d) => sum + d.kcal, 0) / week.length) : null;
+  const proteins = week.flatMap((d) => (d.protein !== null ? [d.protein] : []));
+  const avgProtein = proteins.length ? Math.round(proteins.reduce((a, b) => a + b, 0) / proteins.length) : null;
+  const gap = avg !== null && target ? avg - target : null;
+  // Against your real maintenance when there is one, the plan's numbers otherwise.
+  const weekly = avg !== null && eaten ? ((avg - eaten.kcal) * 7) / KCAL_PER_LB : null;
+  return (
+    <section className="workout-tile an-card">
+      <div className="an-card-head"><h2>What you eat</h2><a href="/workout/food" className="workout-hint">Food log ›</a></div>
+      <div className="pp-estimates">
+        <div className="is-best">
+          <span>Last 7 days · {week.length} logged</span>
+          <strong>{avg !== null ? avg.toLocaleString() : '—'} <small>kcal a day{avgProtein !== null ? ` · ${avgProtein} g protein` : ''}</small></strong>
+          <small>
+            {gap === null ? 'No full days logged this week.' : target ? `${Math.abs(gap) < 50 ? 'right on' : `${Math.abs(gap).toLocaleString()} ${gap > 0 ? 'over' : 'under'}`} the plan's ${target.toLocaleString()}` : ''}
+            {weekly !== null && ` · about ${Math.abs(weekly).toFixed(1)} lb a week ${weekly < 0 ? 'down' : 'up'} at your real maintenance`}
+          </small>
+        </div>
+        <div>
+          <span>Today so far</span>
+          <strong>{now.kcal !== null ? now.kcal.toLocaleString() : '—'} <small>kcal{target && now.kcal !== null ? ` of ${target.toLocaleString()}` : ''}</small></strong>
+          {now.protein !== null && <small>{now.protein} g protein</small>}
+        </div>
+      </div>
+      {!eaten && shortfall && (
+        <p className="workout-hint" style={{ margin: '0.6rem 0 0' }}>
+          Your real maintenance from what you eat needs {shortfall.needDays} logged days and {shortfall.needWeighIns} weigh-ins over two weeks:
+          {' '}{shortfall.loggedDays} of {shortfall.needDays} days and {shortfall.weighIns} of {shortfall.needWeighIns} weigh-ins in the last four weeks so far.
+        </p>
+      )}
     </section>
   );
 }
@@ -190,7 +255,7 @@ function PlanForm({ calorie, latestWeight, measured, plan, today, onSubmit, subm
  * available — weigh-ins, Apple Health, the formula — and the activity level
  * your data shows. Without a plan, a short form starts one.
  */
-export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, today }: Props) {
+export default function PlanPanel({ calorie, onSave, days, intake, weighIns, onLog, today }: Props) {
   const { confirm, popup } = useSitePopup();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -205,11 +270,23 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
   const measured = useMemo(() => (profile ? measuredActivity(days, profile) : null), [days, profile]);
   const resting = useMemo(() => (profile ? restingVsFormula(days, profile) : null), [days, profile]);
   const progress = useMemo(() => (plan ? planProgress(plan, weighIns, today) : null), [plan, weighIns, today]);
+  // Maintenance from what you actually ate (Food log, or older typed-in days) and the scale.
+  const eatenMaintenance = useMemo(() => {
+    const kcalByDay: Record<string, number> = {};
+    for (const date of new Set([...Object.keys(intake ?? {}), ...Object.keys(days)])) {
+      const kcal = intakeOn(date, intake, days).kcal;
+      if (kcal !== null) kcalByDay[date] = kcal;
+    }
+    return estimateMaintenance(kcalByDay, weighIns, today);
+  }, [intake, days, weighIns, today]);
+  const eaten = eatenMaintenance.estimate;
 
   const chosenLevel = plan?.activityLevel ?? calorie.activityLevel ?? 'moderate';
   const formula = profile ? Math.round(calculateMifflinStJeor({ ...profile, activityLevel: chosenLevel }).maintenanceCalories) : null;
   const estimates = [
-    progress?.realMaintenance ? { key: 'weighins', label: 'From your weigh-ins', kcal: progress.realMaintenance.kcal, note: `trend since ${fmtDate(plan!.startDate).replace(/, \d{4}$/, '')}, if you ate the plan's calories` } : null,
+    eaten ? { key: 'eaten', label: 'From what you ate', kcal: eaten.kcal, note: `${eaten.loggedDays} logged days averaging ${eaten.avgIntake.toLocaleString()} kcal, and ${eaten.weighIns} weigh-ins` } : null,
+    // Assumes you ate the plan's calories, so it steps aside once there's a record of what you did eat.
+    progress?.realMaintenance && !eaten ? { key: 'weighins', label: 'From your weigh-ins', kcal: progress.realMaintenance.kcal, note: `trend since ${fmtDate(plan!.startDate).replace(/, \d{4}$/, '')}, if you ate the plan's calories` } : null,
     measured?.maintenance && measured.basis === 'calories' ? { key: 'health', label: 'From Apple Health', kcal: measured.maintenance, note: `resting + active, last ${measured.days} day${measured.days === 1 ? '' : 's'}` } : null,
     formula ? { key: 'formula', label: 'From the formula', kcal: formula, note: `your size and ${ACTIVITY_LEVELS.find((l) => l.value === chosenLevel)?.label} activity` } : null,
   ].filter((e): e is { key: string; label: string; kcal: number; note: string } => !!e);
@@ -236,7 +313,7 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
   return (
     <div className="an-stack">
       {plan ? (
-        <WeightPlanCard plan={plan} entries={weighIns} today={today} onLog={onLog} onEdit={() => setEditing(true)} onEnd={endPlan} />
+        <WeightPlanCard plan={plan} entries={weighIns} today={today} onLog={onLog} onEdit={() => setEditing(true)} onEnd={endPlan} eaten={eaten} />
       ) : (
         <section className="workout-tile an-card">
           <h2>Start a plan</h2>
@@ -269,6 +346,8 @@ export default function PlanPanel({ calorie, onSave, days, weighIns, onLog, toda
           </p>
         )}
       </section>
+
+      <EatingCard intake={intake} days={days} today={today} target={plan?.targetCalories ?? null} eaten={eaten} shortfall={eatenMaintenance.shortfall} />
 
       {resting && <RestingCard resting={resting} />}
 

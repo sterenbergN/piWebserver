@@ -42,10 +42,21 @@ export type HealthDay = {
   hrAvg?: number;
   hrMin?: number;
   hrMax?: number;
-  /** Manual daily intake (kcal) and protein (g) logged on Health -> Today. */
+  /** Daily intake (kcal) and protein (g) typed in on Health -> Today before the Food log took over. */
   intakeKcal?: number;
   proteinG?: number;
 };
+
+/** What was eaten each day, from the Food log (kcal and grams of protein). */
+export type DailyIntake = Record<string, { kcal: number; protein: number }>;
+
+/** A day's intake: the Food log's when anything is logged, else an older typed-in number. */
+export function intakeOn(date: string, intake: DailyIntake | undefined, days: Record<string, HealthDay>): { kcal: number | null; protein: number | null; fromFood: boolean } {
+  const food = intake?.[date];
+  if (food) return { kcal: food.kcal, protein: food.protein, fromFood: true };
+  const day = days[date];
+  return { kcal: day?.intakeKcal ?? null, protein: day?.proteinG ?? null, fromFood: false };
+}
 
 /** A workout session recorded by the watch (if the sender can read workouts). */
 export type WatchWorkout = { start: string; end: string; name?: string; kcal?: number };
@@ -765,9 +776,10 @@ export function matchChecks(health: UserHealth, history: LoggedWorkout[], now = 
 }
 
 /** What the page gets: everything except the key and the raw samples (plus checks on unmatched recent workouts). */
-export function publicHealth(health: UserHealth | undefined, history: LoggedWorkout[] = []) {
+export function publicHealth(health: UserHealth | undefined, history: LoggedWorkout[] = [], intake: DailyIntake = {}) {
   const h = health || emptyUserHealth();
   return {
+    intake,
     waiting: matchChecks(h, history),
     connected: !!h.keyHash,
     keyHint: h.keyHint || null,

@@ -308,6 +308,17 @@ export function dayTotals(entries: LogEntry[] = []): Nutrients {
   return entries.length ? roundNutrients(sumNutrients(entries.map(entryNutrients))) : zeroNutrients();
 }
 
+/** Calories and protein for each day with something logged, for Health's plan. */
+export function intakeByDay(data: FoodUserData): Record<string, { kcal: number; protein: number }> {
+  const out: Record<string, { kcal: number; protein: number }> = {};
+  for (const [date, entries] of Object.entries(data.days)) {
+    if (!entries?.length) continue;
+    const t = dayTotals(entries);
+    out[date] = { kcal: Math.round(t.kcal), protein: Math.round(t.protein) };
+  }
+  return out;
+}
+
 export function mealTotals(entries: LogEntry[] = []): Record<Meal, Nutrients> {
   return Object.fromEntries(MEALS.map((m) => [m, dayTotals(entries.filter((e) => e.meal === m))])) as Record<Meal, Nutrients>;
 }

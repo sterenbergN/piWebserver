@@ -3,8 +3,11 @@ import OverflowGuard from '@/components/workout/OverflowGuard';
 import NoZoom from '@/components/workout/NoZoom';
 import WorkoutTabBar from '@/components/workout/WorkoutTabBar';
 import { Metadata, Viewport } from 'next';
+import { homeScreenMetadata } from '@/lib/home-apps';
 
+// Its own app on a home screen, opening on /workout (the site's main app opens on the home page).
 export const metadata: Metadata = {
+  ...homeScreenMetadata('workout'),
   title: 'Workout Tracker',
   description: 'Mobile-first workout tracker',
 };

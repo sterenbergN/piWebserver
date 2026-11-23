@@ -13,6 +13,8 @@ type Props = {
   onLog?: (weight: number) => Promise<void>;
   onEdit: () => void;
   onEnd: () => void;
+  /** Maintenance worked out from the Food log and the scale, when there's enough of both. */
+  eaten?: { kcal: number; avgIntake: number } | null;
 };
 
 const tooltipStyle = { background: 'var(--background)', border: '1px solid var(--surface-border)', borderRadius: 10, fontSize: 12, color: 'var(--foreground)' };
@@ -72,7 +74,7 @@ function PlanChart({ plan, progress }: { plan: WeightPlan; progress: ReturnType<
  * line with your weigh-ins and their trend over it, and the same calories
  * re-projected from where you are now.
  */
-export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, onEnd }: Props) {
+export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, onEnd, eaten }: Props) {
   const progress = useMemo(() => planProgress(plan, entries, today), [plan, entries, today]);
   const [input, setInput] = useState('');
   const [logging, setLogging] = useState(false);
@@ -143,7 +145,13 @@ export default function WeightPlanCard({ plan, entries, today, onLog, onEdit, on
           <small>{neededCalories !== null ? `${signed(neededCalories - plan.targetCalories, 0)} vs plan a day` : 'needs a week left'}</small>
         </div>
       </div>
-      {progress.realMaintenance && Math.abs(progress.realMaintenance.kcal - progress.realMaintenance.calculator) >= 100 && (
+      {eaten && progress.realMaintenance && Math.abs(eaten.kcal - progress.realMaintenance.calculator) >= 100 && (
+        <p className="workout-hint wp-note">
+          <strong>Your real maintenance looks like about {eaten.kcal.toLocaleString()} kcal</strong> a day — the calculator assumes {progress.realMaintenance.calculator.toLocaleString()}.
+          That&apos;s from the {eaten.avgIntake.toLocaleString()} kcal a day in your Food log and how your weight moved.
+        </p>
+      )}
+      {!eaten && progress.realMaintenance && Math.abs(progress.realMaintenance.kcal - progress.realMaintenance.calculator) >= 100 && (
         <p className="workout-hint wp-note">
           <strong>Your real maintenance looks like about {progress.realMaintenance.kcal.toLocaleString()} kcal</strong> a day — the calculator assumes {progress.realMaintenance.calculator.toLocaleString()}.
           That's worked out from your weigh-ins, assuming you've been eating about {plan.targetCalories.toLocaleString()} a day; if you've eaten more or less, adjust for that.

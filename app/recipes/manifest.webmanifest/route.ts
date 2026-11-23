@@ -1,5 +1,5 @@
 // The recipe box as its own app on a home screen, apart from the site's main one
-// (app/manifest.ts), which opens on the workout tracker.
+// (app/manifest.ts), which opens on the home page.
 
 const ICON = [{ src: '/icons/recipes-192.png', sizes: '192x192' }];
 
