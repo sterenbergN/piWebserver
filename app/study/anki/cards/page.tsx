@@ -212,7 +212,7 @@ function CardMaker() {
         onChange={(text) => { setReply(text); setRemoved([]); setSaveError(''); }}
         prompt={prompt}
         check={(text) => readPack(text).error ?? null}
-        material={source === 'notes' ? { label: 'Your notes, for the AI to write from', placeholder: 'Paste your notes as text. For a PDF or slides, copy the prompt into your own AI instead.', required: true } : undefined}
+        material={source === 'notes' ? { label: 'Your notes, for the AI to write from', placeholder: 'Paste notes here, or attach PDFs and photos below', required: true, files: true } : undefined}
       >
         {error && <div className="hb-banner is-error" role="alert"><span>{error}</span></div>}
         {pack && (

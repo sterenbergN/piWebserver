@@ -201,7 +201,7 @@ function Syllabus({ planner }: { planner: Planner }) {
         prompt={prompt}
         onReply={(text) => { setReply(text); setNotice(''); }}
         check={(text) => readPack(text, today).error ?? null}
-        material={{ label: 'The syllabus or schedule, as text', placeholder: 'Paste the syllabus here. For a PDF, copy the prompt into your own AI instead.', required: true }}
+        material={{ label: 'The syllabus or schedule', placeholder: 'Paste the syllabus here, or attach it as a PDF or photos below', required: true, files: true }}
       />
       <textarea className="sd-reply" rows={6} value={reply} placeholder="Paste the whole reply here" aria-label="The AI’s reply" onChange={(e) => { setReply(e.target.value); setNotice(''); }} />
       {readError && <div className="hb-banner is-error" role="alert"><span>{readError}</span></div>}

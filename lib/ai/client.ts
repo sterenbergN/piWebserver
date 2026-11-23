@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 
+import type { AiAttachment } from './attachments';
 import { stripCodeFence } from './reply';
 import type { AiTask } from './tasks';
 
@@ -53,10 +54,10 @@ async function readError(r: Response) {
  * Write a reply to `prompt` with the connected AI, without a code fence wrapped around
  * the whole of it. Throws AiClientError with a short reason.
  */
-export async function generateReply(prompt: string, task: AiTask, signal?: AbortSignal): Promise<string> {
+export async function generateReply(prompt: string, task: AiTask, signal?: AbortSignal, attachments: AiAttachment[] = []): Promise<string> {
   let r: Response;
   try {
-    r = await fetch('/api/ai/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, task }), signal });
+    r = await fetch('/api/ai/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, task, ...(attachments.length ? { attachments } : {}) }), signal });
   } catch {
     throw new AiClientError(signal?.aborted ? 'Stopped.' : 'Couldn’t reach the site.', signal?.aborted ? 'cancelled' : 'network');
   }

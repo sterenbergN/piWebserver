@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AiClientError, generateReply, useAiStatus } from '@/lib/ai/client';
+import type { AiAttachment } from '@/lib/ai/attachments';
 import type { AiTask } from '@/lib/ai/tasks';
+import { fileSize, pickFiles } from './attach-files';
 import './ai.css';
 
 // "Generate" for any copy-prompt / paste-reply flow. It only shows when the site has
@@ -15,8 +17,10 @@ export type GenerateMaterial = {
   /** Asks for the text the prompt expects to be attached (notes, a syllabus…). */
   label: string;
   placeholder?: string;
-  /** Without it Generate stays off: the prompt makes no sense without the text. */
+  /** Without it Generate stays off: the prompt makes no sense without the text (or a file). */
   required?: boolean;
+  /** Offer to attach PDFs and photos, sent to the AI with the prompt. */
+  files?: boolean;
 };
 
 export default function GenerateReply({ task, prompt, onReply, check, material, disabled, className }: {
@@ -37,6 +41,10 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
   const [message, setMessage] = useState('');
   const [seconds, setSeconds] = useState(0);
   const [text, setText] = useState('');
+  const [files, setFiles] = useState<AiAttachment[]>([]);
+  const [reading, setReading] = useState(false);
+  const [fileProblems, setFileProblems] = useState<string[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
   const run = useRef<AbortController | null>(null);
 
   // Leaving the page stops the job.
@@ -50,7 +58,20 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
 
   if (!status?.ready) return null;
   const model = status.models?.[task] ?? status.model;
-  const needsText = !!material?.required && !text.trim();
+  const needsText = !!material?.required && !text.trim() && !files.length;
+
+  const attach = async (chosen: File[]) => {
+    if (!chosen.length) return;
+    setReading(true);
+    try {
+      const picked = await pickFiles(chosen, files);
+      setFiles((prev) => [...prev, ...picked.attachments]);
+      if (picked.text.length) setText((prev) => [prev.trim(), ...picked.text.map((t) => t.trim())].filter(Boolean).join('\n\n'));
+      setFileProblems(picked.problems);
+    } finally {
+      setReading(false);
+    }
+  };
 
   const go = async () => {
     run.current?.abort();
@@ -63,7 +84,7 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
       const base = typeof prompt === 'string' ? prompt : await prompt();
       if (!base.trim()) throw new AiClientError('There’s nothing to ask yet.');
       const full = material && text.trim() ? `${base}\n\n<material>\n${text.trim()}\n</material>` : base;
-      const reply = await generateReply(full, task, controller.signal);
+      const reply = await generateReply(full, task, controller.signal, material?.files ? files : []);
       if (controller.signal.aborted) return;
       onReply(reply);
       const problem = check?.(reply);
@@ -96,6 +117,35 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
           <textarea rows={text ? 5 : 3} value={text} placeholder={material.placeholder ?? 'Paste the text here'} onChange={(e) => setText(e.target.value)} disabled={state === 'busy'} />
         </label>
       )}
+      {material?.files && (
+        <div className="ai-gen-files">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,image/*,text/plain,.txt,.md"
+            onChange={(e) => { const chosen = [...(e.target.files ?? [])]; e.target.value = ''; void attach(chosen); }}
+          />
+          <button type="button" className="ai-gen-attach" disabled={state === 'busy' || reading} onClick={() => picker.current?.click()}>
+            <span aria-hidden>📎</span> {reading ? 'Reading…' : files.length ? 'Attach more' : 'Attach PDFs or photos'}
+          </button>
+          {files.length > 0 && (
+            <ul className="ai-gen-file-list" aria-label="Attached files">
+              {files.map((f, i) => (
+                <li key={`${f.name}-${i}`}>
+                  <span aria-hidden>{f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+                  <span className="ai-gen-file-name">{f.name}</span>
+                  <span className="ai-gen-file-size">{fileSize(f)}</span>
+                  <button type="button" aria-label={`Remove ${f.name}`} disabled={state === 'busy'} onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}>×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {fileProblems.map((p) => <p key={p} className="ai-gen-error" role="alert">{p}</p>)}
+          {files.length > 0 && <p className="ai-gen-hint">Sent to {model} with this request only; not kept on this site. Slides: save as PDF first.</p>}
+        </div>
+      )}
       <div className="ai-gen-row">
         {state === 'busy' ? (
           <>
@@ -105,11 +155,11 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
           </>
         ) : (
           <>
-            <button type="button" className="btn btn-primary ai-gen-btn" disabled={disabled || needsText} onClick={go}>
+            <button type="button" className="btn btn-primary ai-gen-btn" disabled={disabled || needsText || reading} onClick={go}>
               <span aria-hidden>✨</span> {state === 'idle' ? 'Generate' : 'Generate again'}
             </button>
             <span className="ai-gen-note">
-              {needsText ? `Add the text above, or copy the prompt into your own AI.` : `with ${model}, or paste a reply from your own AI`}
+              {needsText ? (material?.files ? 'Attach your notes or paste them above, or copy the prompt into your own AI.' : 'Add the text above, or copy the prompt into your own AI.') : `with ${model}, or paste a reply from your own AI`}
             </span>
           </>
         )}

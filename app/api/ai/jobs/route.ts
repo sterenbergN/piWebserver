@@ -7,19 +7,20 @@ export const dynamic = 'force-dynamic';
 
 const STATUS: Record<string, number> = { 'not-set-up': 503, 'not-allowed': 403, rate: 429, busy: 409, empty: 400, 'too-long': 413 };
 
-/** Start writing a reply to a prompt. Answers with a job id to check on. */
+/** Start writing a reply to a prompt, with any attached files (PDFs, photos). Answers with a job id to check on. */
 export async function POST(request: Request) {
   const caller = await aiCaller();
   if (!caller) return NextResponse.json({ error: 'Sign in to use the AI.' }, { status: 401 });
   let prompt: unknown;
   let task: unknown;
+  let attachments: unknown;
   try {
-    ({ prompt, task } = ((await request.json()) as { prompt?: unknown; task?: unknown }) ?? {});
+    ({ prompt, task, attachments } = ((await request.json()) as { prompt?: unknown; task?: unknown; attachments?: unknown }) ?? {});
   } catch {
     return NextResponse.json({ error: 'Bad request.' }, { status: 400 });
   }
   try {
-    const job = await aiJobs.start(caller.key, typeof prompt === 'string' ? prompt : '', caller.who, isAiTask(task) ? task : undefined);
+    const job = await aiJobs.start(caller.key, typeof prompt === 'string' ? prompt : '', caller.who, isAiTask(task) ? task : undefined, attachments);
     return NextResponse.json(job, { status: 202 });
   } catch (error) {
     if (error instanceof AiError) return NextResponse.json({ error: error.message, errorKind: error.kind }, { status: STATUS[error.kind] ?? 500 });

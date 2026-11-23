@@ -4,7 +4,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { createAiJobs } from './jobs';
-import { AiError, geminiError, providerFor, readGeminiReply, type Provider } from './providers';
+import { AttachmentError, base64Bytes, cleanAttachments, MAX_ATTACHMENT_BYTES, unsupportedReason } from './attachments';
+import { AiError, anthropicContent, geminiError, geminiParts, providerFor, readGeminiReply, SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_FILES, systemPromptFor, type Provider } from './providers';
 import { currentCatalog, modelForTask, savedCatalog } from './catalog';
 import { resolveChoice } from './providers-list';
 import { stripCodeFence } from './reply';
@@ -423,3 +424,67 @@ test('fences that are part of the content are left alone', () => {
   same('Use ```code``` sparingly.');
 });
 
+
+// ── Attached files ────────────────────────────────────────────────────────────
+
+const pdf = { name: 'Lecture 4.pdf', type: 'application/pdf' as const, data: Buffer.from('%PDF-1.7 tiny').toString('base64') };
+const photo = { name: 'board.jpg', type: 'image/jpeg' as const, data: Buffer.from('jpeg bytes').toString('base64') };
+
+test('attachments: PDFs and photos only, five at most, 15 MB in all, intact base64', () => {
+  assert.deepEqual(cleanAttachments(undefined), []);
+  assert.deepEqual(cleanAttachments([pdf, photo]), [pdf, photo]);
+  assert.throws(() => cleanAttachments([{ ...pdf, type: 'application/vnd.ms-powerpoint' }]), AttachmentError);
+  assert.throws(() => cleanAttachments([{ ...pdf, data: 'not base64!' }]), AttachmentError);
+  assert.throws(() => cleanAttachments(Array.from({ length: 6 }, () => photo)), AttachmentError);
+  const big = { ...pdf, data: 'A'.repeat(Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 8) };
+  assert.throws(() => cleanAttachments([big]), /MB/);
+  assert.equal(base64Bytes(Buffer.from('abcd').toString('base64')), 4);
+  assert.match(unsupportedReason('Week 3.pptx', '') ?? '', /PDF/);
+  assert.match(unsupportedReason('notes.docx', '') ?? '', /PDF/);
+  assert.equal(unsupportedReason('scan.pdf', 'application/pdf'), null);
+});
+
+test('attachments: Claude gets documents and images before the prompt, and is told they are attached', () => {
+  assert.equal(anthropicContent('Write a test'), 'Write a test');
+  assert.deepEqual(anthropicContent('Write a test', [pdf, photo]), [
+    { type: 'document', title: 'Lecture 4.pdf', source: { type: 'base64', media_type: 'application/pdf', data: pdf.data } },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: photo.data } },
+    { type: 'text', text: 'Write a test' },
+  ]);
+  assert.equal(systemPromptFor([]), SYSTEM_PROMPT);
+  assert.equal(systemPromptFor([pdf]), SYSTEM_PROMPT_WITH_FILES);
+  assert.match(SYSTEM_PROMPT_WITH_FILES, /attached/);
+  assert.doesNotMatch(SYSTEM_PROMPT_WITH_FILES, /Nothing is attached/);
+});
+
+test('attachments: Gemini gets them as inline data next to the prompt', async () => {
+  const realFetch = globalThis.fetch;
+  let body: { systemInstruction?: { parts: { text: string }[] }; contents?: { parts: Record<string, unknown>[] }[] } = {};
+  globalThis.fetch = (async (_input: string, init: RequestInit) => {
+    body = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }] }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await providerFor('gemini').generate({ apiKey: 'k', model: 'gemini-3.8-flash', prompt: 'Write a test', attachments: [pdf, photo], timeoutMs: 5000 });
+    assert.deepEqual(body.contents?.[0].parts, [
+      { inlineData: { mimeType: 'application/pdf', data: pdf.data } },
+      { inlineData: { mimeType: 'image/jpeg', data: photo.data } },
+      { text: 'Write a test' },
+    ]);
+    assert.equal(body.systemInstruction?.parts[0].text, SYSTEM_PROMPT_WITH_FILES);
+    assert.deepEqual(geminiParts('p'), [{ text: 'p' }]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('attachments: a job hands them to the provider; bad ones stop it before any call', async () => {
+  let seen: unknown;
+  let calls = 0;
+  const jobs = createAiJobs({ loadSettings: async () => ready, providerFor: () => fakeProvider(async ({ attachments }) => { calls++; seen = attachments; return 'x'; }) });
+  const started = await jobs.start('user:a', 'Write a test', as('a'), 'study-tests', [pdf]);
+  await settle(jobs, 'user:a', started.id);
+  assert.deepEqual(seen, [pdf]);
+  await assert.rejects(jobs.start('user:a', 'Write a test', as('a'), 'study-tests', [{ ...pdf, type: 'text/html' }]), (e: unknown) => e instanceof AiError && /PDFs and photos/.test(e.message));
+  assert.equal(calls, 1);
+});

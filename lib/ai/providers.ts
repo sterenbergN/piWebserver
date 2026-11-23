@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { AiAttachment } from './attachments';
 import type { CatalogModel, ProviderId } from './providers-list';
 
 // The calls themselves, one small pair per provider: `generate` writes a reply to a
@@ -14,7 +15,7 @@ export class AiError extends Error {
   }
 }
 
-export type GenerateRequest = { apiKey: string; model: string; prompt: string; signal?: AbortSignal; timeoutMs: number };
+export type GenerateRequest = { apiKey: string; model: string; prompt: string; attachments?: AiAttachment[]; signal?: AbortSignal; timeoutMs: number };
 export type CheckRequest = { apiKey: string; model: string; timeoutMs: number };
 
 export type Provider = {
@@ -28,11 +29,42 @@ export type Provider = {
  * Said before every prompt. The prompts were written for someone pasting them into a
  * chat app, often with notes attached, and the reply goes straight into a parser.
  */
-export const SYSTEM_PROMPT = [
+const REPLY_RULES = [
   'Your reply is read by an app, not shown in a chat, so it is pasted straight into a parser.',
   'Follow the output format the prompt asks for exactly, and write the whole thing in one reply: there is no chance to ask questions or continue later.',
+];
+export const SYSTEM_PROMPT = [
+  ...REPLY_RULES,
   'Nothing is attached. Where the prompt mentions attached or pasted notes, files or a syllabus, use the text included in the message (often between <material> tags); if there is none, work from the prompt alone.',
 ].join(' ');
+/** Said instead when files came with the prompt. */
+export const SYSTEM_PROMPT_WITH_FILES = [
+  ...REPLY_RULES,
+  'The notes, files or syllabus the prompt mentions are attached to this message (PDFs and images), along with any text between <material> tags. Work from all of them.',
+].join(' ');
+
+export const systemPromptFor = (attachments?: AiAttachment[]) => (attachments?.length ? SYSTEM_PROMPT_WITH_FILES : SYSTEM_PROMPT);
+
+type AnthropicBlock =
+  | { type: 'text'; text: string }
+  | { type: 'document'; title: string; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png' | 'image/webp'; data: string } };
+
+/** Claude's message: the files first (documents and images read best before the question), then the prompt. */
+export function anthropicContent(prompt: string, attachments: AiAttachment[] = []): string | AnthropicBlock[] {
+  if (!attachments.length) return prompt;
+  return [
+    ...attachments.map((a): AnthropicBlock => (a.type === 'application/pdf'
+      ? { type: 'document', title: a.name, source: { type: 'base64', media_type: 'application/pdf', data: a.data } }
+      : { type: 'image', source: { type: 'base64', media_type: a.type, data: a.data } })),
+    { type: 'text', text: prompt },
+  ];
+}
+
+/** Gemini's parts: the files as inline data, then the prompt. */
+export function geminiParts(prompt: string, attachments: AiAttachment[] = []) {
+  return [...attachments.map((a) => ({ inlineData: { mimeType: a.type, data: a.data } })), { text: prompt }];
+}
 
 function anthropicError(error: unknown): AiError {
   if (error instanceof AiError) return error;
@@ -56,7 +88,7 @@ function anthropicError(error: unknown): AiError {
 }
 
 const anthropic: Provider = {
-  async generate({ apiKey, model, prompt, signal, timeoutMs }) {
+  async generate({ apiKey, model, prompt, attachments, signal, timeoutMs }) {
     const client = new Anthropic({ apiKey, maxRetries: 1, timeout: timeoutMs });
     try {
       // Streamed, so a long reply (a whole practice test) doesn't hit the HTTP timeout.
@@ -66,8 +98,8 @@ const anthropic: Provider = {
         max_tokens: 32000,
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: prompt }],
+        system: systemPromptFor(attachments),
+        messages: [{ role: 'user', content: anthropicContent(prompt, attachments) }],
       }, { signal, timeout: timeoutMs }).finalMessage();
       if (message.stop_reason === 'refusal') throw new AiError('refused', 'The AI declined to write this one.');
       const text = message.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('').trim();
@@ -158,15 +190,15 @@ export function readGeminiReply(reply: GeminiReply): string {
 }
 
 const gemini: Provider = {
-  async generate({ apiKey, model, prompt, signal, timeoutMs }) {
+  async generate({ apiKey, model, prompt, attachments, signal, timeoutMs }) {
     const signals = [AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])];
     const res = await geminiFetch(`${geminiBase()}/v1beta/models/${geminiModel(model)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       signal: AbortSignal.any(signals),
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        systemInstruction: { parts: [{ text: systemPromptFor(attachments) }] },
+        contents: [{ role: 'user', parts: geminiParts(prompt, attachments) }],
         generationConfig: { maxOutputTokens: 32000 },
       }),
     });

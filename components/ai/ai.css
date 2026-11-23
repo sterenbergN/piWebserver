@@ -86,3 +86,15 @@
 @media (prefers-reduced-motion: reduce) {
   .ai-gen-spinner { animation-duration: 2.4s; }
 }
+
+/* Files attached to a Generate request */
+.ai-gen-files { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.1rem 0 0.6rem; }
+.ai-gen-attach { align-self: flex-start; display: inline-flex; align-items: center; gap: 0.35rem; min-height: 40px; padding: 0.4rem 0.8rem; border-radius: 10px; border: 1px dashed var(--surface-border); background: none; color: var(--foreground); font: inherit; font-size: 0.88rem; cursor: pointer; }
+.ai-gen-attach:hover:not(:disabled) { border-color: var(--accent); }
+.ai-gen-attach:disabled { opacity: 0.6; cursor: default; }
+.ai-gen-file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.ai-gen-file-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 8px; border: 1px solid var(--surface-border); font-size: 0.85rem; }
+.ai-gen-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-gen-file-size { color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.ai-gen-file-list button { min-width: 32px; min-height: 32px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
+.ai-gen-file-list button:hover:not(:disabled) { color: var(--danger); }

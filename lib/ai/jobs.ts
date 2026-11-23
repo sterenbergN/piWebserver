@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { createLimiter } from '@/lib/security/rate-limit';
+import { AttachmentError, cleanAttachments } from './attachments';
 import { AiError, type Provider } from './providers';
 import { modelForTask } from './catalog';
 import { connectionFor, isAiReady, type ActiveConnection, type AiCaller, type AiSettings } from './settings';
@@ -51,11 +52,20 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (con
   const view = (job: AiJob): AiJobView => ({ id: job.id, status: job.status, text: job.text, error: job.error, errorKind: job.errorKind });
 
   return {
-    /** Start writing a reply to `prompt` for `owner` (who is `who`). Throws AiError when it can't start. */
-    async start(owner: string, prompt: string, who: AiCaller, task?: AiTask): Promise<AiJobView> {
+    /**
+     * Start writing a reply to `prompt` for `owner` (who is `who`), with any attached files
+     * (checked here; held in memory only while the request runs). Throws AiError when it can't start.
+     */
+    async start(owner: string, prompt: string, who: AiCaller, task?: AiTask, files?: unknown): Promise<AiJobView> {
       prune();
       if (typeof prompt !== 'string' || !prompt.trim()) throw new AiError('empty', 'There’s no prompt to send.');
       if (prompt.length > MAX_PROMPT_CHARS) throw new AiError('too-long', 'That prompt is too long to send.');
+      let attachments;
+      try {
+        attachments = cleanAttachments(files);
+      } catch (error) {
+        throw new AiError('too-long', error instanceof AttachmentError ? error.message : 'Those files couldn’t be read.');
+      }
       const settings = await loadSettings();
       // The account's own key if the admin gave it one, else the site's if it may share it.
       const conn = connectionFor(settings, who);
@@ -81,7 +91,7 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (con
       };
       // Not awaited: the page asks how it's going.
       void providerFor(conn.provider)
-        .generate({ apiKey: conn.apiKey, model, prompt, signal: controller.signal, timeoutMs })
+        .generate({ apiKey: conn.apiKey, model, prompt, attachments, signal: controller.signal, timeoutMs })
         .then((text) => finish({ status: 'done', text }))
         .catch((error) => {
           const e = error instanceof AiError ? error : new AiError('unknown', 'Something went wrong talking to the AI.');
