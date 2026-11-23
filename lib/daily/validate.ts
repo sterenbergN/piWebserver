@@ -5,7 +5,7 @@
 
 import katex from 'katex';
 import { isDateKey } from '@/lib/habits/dates';
-import { TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type SolutionFigure, type SolutionWidget, type Source, type WidgetKind } from './types';
+import { POLY_VARIABLES, TRACKS, type Answer, type DailyDay, type DailyPack, type Formula, type Mistake, type Part, type PracticeSet, type Question, type SolutionFigure, type SolutionWidget, type Source, type WidgetKind } from './types';
 import { WIDGET_KINDS, WIDGETS } from './widgets';
 
 type Errors = string[];
@@ -55,7 +55,14 @@ function checkAnswer(raw: any, where: string, errors: Errors): Answer | null {
     case 'coefficients': {
       const poly = (v: unknown) => Array.isArray(v) && v.length >= 1 && v.length <= 10 && v.every(isNum);
       if (!poly(raw.numerator) || !poly(raw.denominator) || raw.denominator[0] === 0 || !tol(raw.tolerance)) break;
-      return { type: 'coefficients', numerator: raw.numerator, denominator: raw.denominator, ...(raw.tolerance !== undefined ? { tolerance: raw.tolerance } : {}) };
+      if (raw.variable !== undefined && !POLY_VARIABLES.includes(raw.variable)) {
+        errors.push(`${where}: a coefficients answer's variable must be 's' or 'z'`);
+        return null;
+      }
+      return {
+        type: 'coefficients', numerator: raw.numerator, denominator: raw.denominator,
+        ...(raw.tolerance !== undefined ? { tolerance: raw.tolerance } : {}), ...(raw.variable !== undefined ? { variable: raw.variable } : {}),
+      };
     }
     case 'order':
       if (!options(raw.items, 2, 10) || new Set(raw.items).size !== raw.items.length) break;

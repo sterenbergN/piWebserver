@@ -75,7 +75,7 @@ export function toResponse(input: PublicInput, draft: Draft): PartResponse | nul
   }
 }
 
-/** A polynomial in s from coefficients, highest power first. */
+/** A polynomial in `variable` (s unless given) from coefficients, highest power first. */
 export function polyLatex(coeffs: number[], variable = 's') {
   const n = coeffs.length - 1;
   const terms = coeffs.map((c, i) => {
@@ -104,8 +104,10 @@ export function AnswerText({ answer }: { answer: Answer }) {
       return <ul className="dq-answer-list">{answer.correct.map((i) => <li key={i}><MathText className="is-inline">{answer.options[i]}</MathText></li>)}</ul>;
     case 'range':
       return <Tex latex={`${answer.min === null ? '-\\infty' : fmt(answer.min)} < x < ${answer.max === null ? '\\infty' : fmt(answer.max)}`} />;
-    case 'coefficients':
-      return <Tex latex={`\\dfrac{${polyLatex(answer.numerator)}}{${polyLatex(answer.denominator)}}`} />;
+    case 'coefficients': {
+      const v = answer.variable ?? 's';
+      return <Tex latex={`\\dfrac{${polyLatex(answer.numerator, v)}}{${polyLatex(answer.denominator, v)}}`} />;
+    }
     case 'order':
       return <ol className="dq-answer-list">{answer.items.map((item) => <li key={item}><MathText className="is-inline">{item}</MathText></li>)}</ol>;
   }
@@ -171,12 +173,13 @@ export default function AnswerInput({ id, input, draft, onChange, locked }: Prop
     case 'coefficients': {
       const num = readList(draft.num);
       const den = readList(draft.den);
+      const v = input.variable ?? 's';
       return (
         <div className="dq-coeffs">
-          <p className="dq-hint">Coefficients from the highest power of s down, separated by commas. For example, s² + 3s + 2 is <code>1, 3, 2</code>.</p>
+          <p className="dq-hint">Coefficients from the highest power of {v} down, separated by commas. For example, {v}² + 3{v} + 2 is <code>1, 3, 2</code>.</p>
           <label><span>Numerator</span><input autoComplete="off" placeholder="e.g. 10" value={draft.num ?? ''} disabled={locked} onChange={(e) => set({ num: e.target.value })} /></label>
           <label><span>Denominator</span><input autoComplete="off" placeholder="e.g. 1, 3, 2" value={draft.den ?? ''} disabled={locked} onChange={(e) => set({ den: e.target.value })} /></label>
-          {num && den && <div className="dq-coeffs-preview" aria-label="Preview"><Tex display latex={`\\dfrac{${polyLatex(num)}}{${polyLatex(den)}}`} /></div>}
+          {num && den && <div className="dq-coeffs-preview" aria-label="Preview"><Tex display latex={`\\dfrac{${polyLatex(num, v)}}{${polyLatex(den, v)}}`} /></div>}
         </div>
       );
     }

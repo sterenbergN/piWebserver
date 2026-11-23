@@ -776,7 +776,7 @@ export function summarizeAnswer(a: Answer): string {
     case 'choice': return a.options[a.correct] ?? '';
     case 'multi': return a.correct.map((i) => a.options[i]).filter(Boolean).join('; ');
     case 'range': return `${a.min ?? '−∞'} to ${a.max ?? '∞'}`;
-    case 'coefficients': return `numerator [${a.numerator.join(', ')}], denominator [${a.denominator.join(', ')}]`;
+    case 'coefficients': return `numerator [${a.numerator.join(', ')}], denominator [${a.denominator.join(', ')}] (in ${a.variable ?? 's'})`;
     case 'order': return a.items.join(' → ');
   }
 }

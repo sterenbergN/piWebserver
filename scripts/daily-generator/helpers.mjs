@@ -27,10 +27,11 @@ export const range = (id, min, max, opts = {}) => ({
   answer: { type: 'range', min, max, ...(opts.abs !== undefined ? { abs: opts.abs } : {}) },
 });
 
+/** Polynomials highest power first, in s; pass { variable: 'z' } for a discrete-time transfer function. */
 export const coeffs = (id, numerator, denominator, opts = {}) => ({
   id,
   ...(opts.prompt ? { prompt: opts.prompt } : {}),
-  answer: { type: 'coefficients', numerator, denominator },
+  answer: { type: 'coefficients', numerator, denominator, ...(opts.variable ? { variable: opts.variable } : {}) },
 });
 
 export const order = (id, items, opts = {}) => ({

@@ -129,6 +129,27 @@ test('grading each answer type', () => {
   assert.equal(isPartCorrect({ type: 'order', items: ['a', 'b', 'c'] }, { type: 'order', items: ['b', 'a', 'c'] }), false);
 });
 
+test('coefficients answers in z validate, grade like s, and reach the answer box', () => {
+  // ZOH of 1/(s+1) at T = 0.5 s: 0.3935 / (z − 0.6065)
+  const zAnswer = { type: 'coefficients' as const, numerator: [0.3935], denominator: [1, -0.6065], variable: 'z' as const };
+  const { day: d, errors } = validateDay(day({ core: question({ parts: [{ id: 'a', answer: zAnswer }] }) }));
+  assert.deepEqual(errors, []);
+  const q = d!.core;
+  assert.deepEqual(q.parts[0].answer, zAnswer);
+  assert.deepEqual(publicDay(d!).core.parts[0].input, { type: 'coefficients', variable: 'z' });
+  assert.equal(gradeQuestion(q, { a: { type: 'coefficients', numerator: [0.787], denominator: [2, -1.213] } }).status, 'solved', 'scaled, still monic-equal');
+  assert.equal(gradeQuestion(q, { a: { type: 'coefficients', numerator: [0.3935], denominator: [1, 0.6065] } }).status, 'wrong');
+
+  // No variable means s, and stays out of the public input.
+  const sDay = validateDay(day({ core: question({ parts: [{ id: 'a', answer: { type: 'coefficients', numerator: [5], denominator: [1, 2, 1] } }] }) })).day!;
+  assert.equal('variable' in sDay.core.parts[0].answer, false);
+  assert.deepEqual(publicDay(sDay).core.parts[0].input, { type: 'coefficients' });
+
+  const bad = validateDay(day({ core: question({ parts: [{ id: 'a', answer: { ...zAnswer, variable: 'w' } as any }] }) }));
+  assert.equal(bad.day, null);
+  assert.match(bad.errors.join('\n'), /variable must be 's' or 'z'/);
+});
+
 test('gradeQuestion: partial credit and known-mistake notes; parseResponses drops junk', () => {
   const q = validateDay(day({ core: question({ parts: [
     { id: 'a', answer: { type: 'numeric', value: 6 }, mistakes: [{ value: 4, note: 'Wrong support.' }] },

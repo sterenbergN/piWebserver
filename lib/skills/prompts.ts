@@ -380,7 +380,7 @@ Answer types for a graded part (one per part, up to 8 parts):
 - { "type": "multi", "options": ["...", "...", "..."], "correct": [0, 2] }
 - { "type": "order", "items": ["first", "second", "third"] }  (listed in the correct order; I see them shuffled)
 - { "type": "range", "min": 0, "max": 6 }  (an interval like 0 < K < 6; null for unbounded)
-- { "type": "coefficients", "numerator": [1], "denominator": [1, 3, 2] }  (polynomials, highest power first)`;
+- { "type": "coefficients", "numerator": [1], "denominator": [1, 3, 2] }  (polynomials in s, highest power first; add "variable": "z" for a discrete-time transfer function in z)`;
 }
 
 // ── Lookups & Knowledge Inquiries ────────────────────────────────────────────

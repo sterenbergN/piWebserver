@@ -1,7 +1,7 @@
 // Grading, and the public view of a question (everything except answers and
 // the worked solution, which are only sent once you've answered or given up).
 
-import type { Answer, DailyDay, Formula, Part, PartResponse, Question } from './types';
+import type { Answer, DailyDay, Formula, Part, PartResponse, PolyVariable, Question } from './types';
 
 const DEFAULT_TOLERANCE = 0.02;
 
@@ -124,7 +124,7 @@ export type PublicInput =
   | { type: 'choice'; options: string[] }
   | { type: 'multi'; options: string[] }
   | { type: 'range' }
-  | { type: 'coefficients' }
+  | { type: 'coefficients'; variable?: PolyVariable }
   | { type: 'order'; items: string[] };
 
 export type PublicQuestion = Omit<Question, 'parts' | 'solution' | 'solutionFigures' | 'solutionWidgets' | 'check'> & {
@@ -151,7 +151,7 @@ function publicInput(answer: Answer, seed: string): PublicInput {
     case 'choice': return { type: 'choice', options: answer.options };
     case 'multi': return { type: 'multi', options: answer.options };
     case 'range': return { type: 'range' };
-    case 'coefficients': return { type: 'coefficients' };
+    case 'coefficients': return { type: 'coefficients', ...(answer.variable && answer.variable !== 's' ? { variable: answer.variable } : {}) };
     case 'order': return { type: 'order', items: shuffled(answer.items, seed) };
   }
 }

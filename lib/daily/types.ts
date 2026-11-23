@@ -6,6 +6,10 @@ export const TRACKS = ['mechanical', 'controls', 'automation'] as const;
 export type Track = (typeof TRACKS)[number];
 export const TRACK_LABEL: Record<Track, string> = { mechanical: 'Mechanical', controls: 'Controls', automation: 'Automation' };
 
+/** The variable a coefficients answer's polynomials are in. */
+export const POLY_VARIABLES = ['s', 'z'] as const;
+export type PolyVariable = (typeof POLY_VARIABLES)[number];
+
 /** How a part is answered and graded. */
 export type Answer =
   /** A number in the unit the part asks for. Within `tolerance` (relative, default 2%) or `abs`. */
@@ -16,8 +20,11 @@ export type Answer =
   | { type: 'multi'; options: string[]; correct: number[] }
   /** An interval like 0 < K < 6. `null` means unbounded on that side. */
   | { type: 'range'; min: number | null; max: number | null; tolerance?: number; abs?: number }
-  /** Polynomial coefficients, highest power first (e.g. a transfer function). Compared after scaling so the denominator is monic. */
-  | { type: 'coefficients'; numerator: number[]; denominator: number[]; tolerance?: number }
+  /**
+   * Polynomial coefficients, highest power first (e.g. a transfer function). Compared after scaling so the denominator is monic.
+   * `variable` is the one the polynomials are in, for the boxes and the rendered answer: 's' (the default) or 'z'.
+   */
+  | { type: 'coefficients'; numerator: number[]; denominator: number[]; tolerance?: number; variable?: PolyVariable }
   /** Put these items in order (listed here in the correct order; shown shuffled). */
   | { type: 'order'; items: string[] };
 

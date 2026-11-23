@@ -58,7 +58,7 @@ export function partText(part: SheetQuestion['parts'][number], index: number, co
     case 'range':
       return `${asked}\n${BLANK} < x < ${BLANK}`;
     case 'coefficients':
-      return `${asked}\nNumerator (highest power first): ${BLANK}\nDenominator: ${BLANK}`;
+      return `${asked}\nNumerator in ${input.variable ?? 's'} (highest power first): ${BLANK}\nDenominator: ${BLANK}`;
     case 'order':
       return [`${asked}\nPut in order:`, ...input.items.map((item) => `• ${mathToPlain(item)}`)].join('\n');
   }

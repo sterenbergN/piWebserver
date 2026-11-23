@@ -123,6 +123,10 @@ solution should read** (working, meaning, real-world use, computed diagrams, a s
 - **Units**: say the unit the answer is wanted in (the `unit` of a numeric
   part). Pick numbers so the default 2 % tolerance can't accept a wrong method;
   use `abs` for answers at or near zero.
+- **Coefficient answers** are polynomials in s unless you say otherwise. For a
+  discrete-time transfer function in z, write
+  `coeffs(id, num, den, { variable: 'z' })` so the answer boxes, the preview and
+  the revealed answer all use z; don't explain the box labels in the prompt.
 - **Prompt**: self-contained, realistic numbers, one clear question per part.
 - **Hints**: 1–3, each a step further, never the answer.
 - **Solution**: teach the idea, not just the answer. Three parts, each under
