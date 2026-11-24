@@ -2,12 +2,13 @@ import { createReadStream } from 'fs';
 import { Readable } from 'stream';
 import { NextResponse } from 'next/server';
 import { conversionById, kindOf } from '@/lib/convert/formats';
+import { cleanOfficeOptions } from '@/lib/convert/office-options';
 import { createConvertJobs, PI_MAX_BYTES, toolWorks } from '@/lib/convert/pi-jobs';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 
 // Tools › File converter, the conversions that run on the Pi (signed in only).
 //   GET                 → which tools the Pi has: { signedIn, ffmpeg, office }
-//   POST (form: file, conversion) → starts a job: { id, status }
+//   POST (form: file, conversion, options?) → starts a job: { id, status }; options are Office layout choices (JSON)
 //   GET ?id=            → how it's going
 //   GET ?id=&download=1 → the finished file
 //   DELETE ?id=         → stop it and delete its files
@@ -78,7 +79,9 @@ export async function POST(request: Request) {
   const available = await tools();
   if (!available[conversion.tool]) return fail(`${conversion.tool === 'ffmpeg' ? 'ffmpeg' : 'LibreOffice'} isn’t installed on the Pi yet.`, 503);
   try {
-    const job = await jobs.start(who, conversion, file.name, new Uint8Array(await file.arrayBuffer()));
+    let options = {};
+    try { options = cleanOfficeOptions(JSON.parse(String(form.get('options') ?? '{}'))); } catch { /* none */ }
+    const job = await jobs.start(who, conversion, file.name, new Uint8Array(await file.arrayBuffer()), options);
     return NextResponse.json({ success: true, job }, { status: 202, headers: PRIVATE });
   } catch (error) {
     return fail(error instanceof Error ? error.message : 'Couldn’t start that.', 400);

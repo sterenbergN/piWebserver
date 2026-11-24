@@ -25,12 +25,11 @@ export const base64Bytes = (data: string) => Math.floor((data.length * 3) / 4) -
 
 export const isAttachmentType = (value: unknown): value is AttachmentType => ATTACHMENT_TYPES.includes(value as AttachmentType);
 
-/** Office files the AIs can't read, with what to do instead. */
+/** Office files the AIs can't read, with what to do instead (when the Pi can't turn them into PDFs first). */
 export function unsupportedReason(name: string, type: string): string | null {
   const lower = name.toLowerCase();
   if (/\.(pptx?|key)$/.test(lower) || type.includes('presentation')) return `${name}: slides can’t be sent from here. Save them as a PDF (PowerPoint or Keynote: Export › PDF) and attach that, or copy the prompt and give it and the slides to an AI of your choice (“Use your own AI instead”).`;
   if (/\.(docx?|pages)$/.test(lower) || type.includes('wordprocessing') || type === 'application/msword') return `${name}: Word files can’t be sent from here. Save it as a PDF and attach that, paste its text into the box, or copy the prompt into an AI of your choice (“Use your own AI instead”).`;
-  if (/\.hei[cf]$/.test(lower) || type.includes('heic') || type.includes('heif')) return `${name}: this photo format can’t be read here. Choose it from Photos instead of Files, or take a screenshot.`;
   return null;
 }
 

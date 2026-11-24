@@ -4,6 +4,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { buildIco, conversionById, conversionsFor, ConvertError, csvToJson, jsonToCsv, kindOf, parseCsv, parsePageRanges, renamed, uniqueNames } from './formats';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { cleanOfficeOptions, patchSheetXml, patchXlsx, pdfFilter } from './office-options';
 import { createConvertJobs, piCommand, type Runner } from './pi-jobs';
 
 test('file kinds come from the extension, then the type', () => {
@@ -160,6 +162,66 @@ test('Pi jobs: failures and missing tools come back as short messages; limits ho
     await assert.rejects(slow.start('user:c', mp3, '4.wav', new Uint8Array([1])), /3 files converting/);
     await slow.remove('user:c', first.id);
     assert.ok(await eventually(() => slow.get('user:c', first.id) === null), 'the stopped job was forgotten');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Office options: only sensible values, and LibreOffice gets page range and notes', () => {
+  assert.deepEqual(cleanOfficeOptions({ pages: ' 1-3, 5 ', notes: true, orientation: 'landscape', fit: 'scale', scale: 900, paper: 'a4', gridlines: true, junk: 1 }),
+    { pages: '1-3,5', notes: true, orientation: 'landscape', fit: 'scale', scale: 400, paper: 'a4', gridlines: true });
+  assert.deepEqual(cleanOfficeOptions({ pages: '1; rm -rf', orientation: 'sideways', fit: 'scale' }), {});
+  assert.equal(pdfFilter('doc', {}), 'pdf');
+  assert.equal(pdfFilter('slides', { notes: true, pages: '2-4' }), 'pdf:impress_pdf_Export:{"PageRange":{"type":"string","value":"2-4"},"ExportNotesPages":{"type":"boolean","value":"true"}}');
+  assert.equal(pdfFilter('doc', { notes: true }), 'pdf');
+  const cmd = piCommand(conversionById('office-pdf')!, '/tmp/j/input.pptx', '/tmp/j', '/tmp/lo', { notes: true });
+  assert.match(cmd.args[cmd.args.indexOf('--convert-to') + 1], /^pdf:impress_pdf_Export:.*ExportNotesPages/);
+});
+
+test('Office options: a sheet gets orientation, paper, fitting and gridlines in the right places', () => {
+  const plain = '<worksheet xmlns="x"><sheetData/><pageMargins left="0.7"/><drawing r:id="a"/></worksheet>';
+  const wide = patchSheetXml(plain, { orientation: 'landscape', fit: 'width', paper: 'a4', gridlines: true });
+  assert.equal(wide, '<worksheet xmlns="x"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetData/><printOptions gridLines="1"/><pageMargins left="0.7"/><pageSetup orientation="landscape" paperSize="9" fitToWidth="1" fitToHeight="0"/><drawing r:id="a"/></worksheet>');
+  // Existing settings are changed, not doubled.
+  const had = '<worksheet><sheetPr codeName="S"><tabColor rgb="F"/><pageSetUpPr fitToPage="1"/></sheetPr><sheetData/><pageSetup paperSize="1" orientation="portrait" fitToWidth="1"/></worksheet>';
+  const scaled = patchSheetXml(had, { fit: 'scale', scale: 80, orientation: 'landscape' });
+  assert.equal(scaled, '<worksheet><sheetPr codeName="S"><tabColor rgb="F"/><pageSetUpPr fitToPage="0"/></sheetPr><sheetData/><pageSetup paperSize="1" fitToWidth="1" orientation="landscape" scale="80"/></worksheet>');
+  assert.equal(patchSheetXml('<worksheet><sheetPr/><sheetData/></worksheet>', { fit: 'page' }), '<worksheet><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetData/><pageSetup fitToWidth="1" fitToHeight="1"/></worksheet>');
+  assert.equal(patchSheetXml(plain, {}), plain);
+});
+
+test('Office options: every sheet in an .xlsx is patched; other files pass through', () => {
+  const xlsx = zipSync({ 'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData/></worksheet>'), 'xl/worksheets/sheet2.xml': strToU8('<worksheet><sheetData/></worksheet>'), 'xl/workbook.xml': strToU8('<workbook/>') });
+  const out = unzipSync(patchXlsx(xlsx, { orientation: 'landscape' }));
+  assert.match(strFromU8(out['xl/worksheets/sheet1.xml']), /orientation="landscape"/);
+  assert.match(strFromU8(out['xl/worksheets/sheet2.xml']), /orientation="landscape"/);
+  assert.equal(strFromU8(out['xl/workbook.xml']), '<workbook/>');
+  const notZip = new Uint8Array([1, 2, 3]);
+  assert.equal(patchXlsx(notZip, { orientation: 'landscape' }), notZip);
+  assert.equal(patchXlsx(xlsx, {}), xlsx);
+});
+
+test('Pi jobs: an .xlsx is laid out before LibreOffice opens it, and slides carry the notes setting', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'convert-test-'));
+  try {
+    const seen: { args: string[]; sheet?: string }[] = [];
+    const runner: Runner = async (_cmd, args) => {
+      const input = args[args.length - 1];
+      const entry: { args: string[]; sheet?: string } = { args };
+      if (input.endsWith('.xlsx')) entry.sheet = strFromU8(unzipSync(new Uint8Array(await fs.readFile(input)))['xl/worksheets/sheet1.xml']);
+      seen.push(entry);
+      const out = path.join(args[args.indexOf('--outdir') + 1]);
+      await fs.mkdir(out, { recursive: true });
+      await fs.writeFile(path.join(out, 'input.pdf'), '%PDF');
+    };
+    const jobs = createConvertJobs({ root, runner });
+    const xlsx = zipSync({ 'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData/></worksheet>') });
+    const a = await jobs.start('user:a', conversionById('office-pdf')!, 'Budget.xlsx', xlsx, { orientation: 'landscape', fit: 'width' });
+    await settle(jobs, 'user:a', a.id);
+    const b = await jobs.start('user:a', conversionById('office-pdf')!, 'Week 3.pptx', new Uint8Array([1]), { notes: true });
+    await settle(jobs, 'user:a', b.id);
+    assert.match(seen[0].sheet!, /<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"\/>/);
+    assert.match(seen[1].args[seen[1].args.indexOf('--convert-to') + 1], /ExportNotesPages/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

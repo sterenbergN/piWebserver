@@ -1,56 +1,24 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CONVERSIONS, ConvertError, conversionsFor, kindOf, type Conversion, type FileKind } from '@/lib/convert/formats';
+import { CONVERSIONS, conversionsFor, extensionOf, kindOf, type Conversion, type FileKind } from '@/lib/convert/formats';
+import type { OfficeOptions } from '@/lib/convert/office-options';
+import { FilePreview, KIND_ICON, Thumb } from './converter/FilePreview';
 import { DEFAULT_OPTIONS, runInBrowser, type ConvertOptions, type Output } from './converter/run-browser';
+import { loadPiTools, runOnPi, type PiTools } from './converter/run-pi';
 
 // Tools › File converter: the conversions people otherwise hand to a random website.
 // Most run right here (nothing is uploaded); audio, video and Office files go to
 // the Pi for signed-in accounts, and are deleted there afterwards.
 
-type PiTools = { signedIn: boolean; ffmpeg: boolean; office: boolean };
 type Picked = { id: string; file: File; kind: FileKind };
 type Result = Output & { url: string };
 
 const GROUPS: Conversion['group'][] = ['Images', 'PDF', 'Audio & video', 'Office', 'Data & files'];
-const KIND_ICON: Record<FileKind, string> = { image: '🖼️', heic: '🖼️', pdf: '📄', audio: '🎵', video: '🎬', doc: '📝', slides: '📊', sheet: '📈', csv: '🧾', json: '🧾', zip: '🗜️', other: '📦' };
 const MAX_SIDES = [0, 4000, 2000, 1200, 800];
 
 const size = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 let nextId = 0;
-
-/** Send one file to the Pi and wait for the result, reporting how it's going. */
-async function runOnPi(conversion: Conversion, file: File, onStatus: (text: string) => void, signal: AbortSignal): Promise<Output> {
-  const form = new FormData();
-  form.append('conversion', conversion.id);
-  form.append('file', file);
-  onStatus(`Sending ${file.name} to the Pi…`);
-  const start = await fetch('/api/tools/convert', { method: 'POST', body: form, signal });
-  const started = await start.json().catch(() => ({}));
-  if (!start.ok || !started.success) throw new ConvertError(started.error || 'The Pi wouldn’t take that file.');
-  const id: string = started.job.id;
-  const stop = () => { void fetch(`/api/tools/convert?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); };
-  signal.addEventListener('abort', stop, { once: true });
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 1500));
-    if (signal.aborted) throw new ConvertError('Stopped.');
-    const res = await fetch(`/api/tools/convert?id=${encodeURIComponent(id)}`, { cache: 'no-store', signal }).then((r) => r.json()).catch(() => null);
-    const job = res?.job;
-    if (!job) continue;
-    if (job.status === 'queued') onStatus(`${file.name}: waiting for the Pi${job.ahead ? ` (${job.ahead} ahead)` : ''}…`);
-    if (job.status === 'running') onStatus(`${file.name}: converting on the Pi…`);
-    if (job.status === 'error') throw new ConvertError(job.error || 'The Pi couldn’t convert that.');
-    if (job.status === 'done') {
-      onStatus(`${file.name}: fetching the result…`);
-      const dl = await fetch(`/api/tools/convert?id=${encodeURIComponent(id)}&download=1`, { signal });
-      if (!dl.ok) throw new ConvertError('The result couldn’t be fetched from the Pi.');
-      const blob = await dl.blob();
-      signal.removeEventListener('abort', stop);
-      stop(); // got it: the Pi can delete its copy now
-      return { name: job.outName, blob };
-    }
-  }
-}
 
 export default function ConverterTool() {
   const [files, setFiles] = useState<Picked[]>([]);
@@ -62,11 +30,14 @@ export default function ConverterTool() {
   const [error, setError] = useState('');
   const [results, setResults] = useState<Result[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [office, setOffice] = useState<OfficeOptions>({});
+  /** The file or result whose bigger preview is open. */
+  const [open, setOpen] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const run = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    fetch('/api/tools/convert', { cache: 'no-store' }).then((r) => r.json()).then((d) => setPi({ signedIn: !!d.signedIn, ffmpeg: !!d.ffmpeg, office: !!d.office })).catch(() => setPi({ signedIn: false, ffmpeg: false, office: false }));
+    void loadPiTools().then(setPi);
     return () => run.current?.abort();
   }, []);
   // Results are object URLs: let them go when they're replaced.
@@ -113,7 +84,7 @@ export default function ConverterTool() {
       let out: Output[];
       if (conversion.where === 'pi') {
         out = [];
-        for (const f of files) out.push(await runOnPi(conversion, f.file, setStatus, controller.signal));
+        for (const f of files) out.push(await runOnPi(conversion, f.file, setStatus, controller.signal, conversion.id === 'office-pdf' ? office : {}));
       } else {
         setStatus(conversion.combine ? 'Working…' : `Converting 1 of ${files.length}…`);
         out = await runInBrowser(conversion, files.map((f) => f.file), options, (done) => setStatus(done < files.length ? `Converting ${done + 1} of ${files.length}…` : 'Finishing…'));
@@ -165,9 +136,11 @@ export default function ConverterTool() {
       {files.length > 0 && (
         <ul className="tl-conv-files" aria-label="Files to convert">
           {files.map((f, i) => (
-            <li key={f.id}>
-              <span aria-hidden>{KIND_ICON[f.kind]}</span>
+            <li key={f.id} className="tl-conv-item">
+              <div className="tl-conv-row">
+              <Thumb blob={f.file} name={f.file.name} />
               <span className="tl-conv-name">{f.file.name}</span>
+              <button type="button" className="tl-conv-link" aria-expanded={open === f.id} onClick={() => setOpen(open === f.id ? null : f.id)}>{open === f.id ? 'Hide' : 'Preview'}</button>
               <span className="tl-conv-size">{size(f.file.size)}</span>
               {files.length > 1 && (
                 <>
@@ -176,6 +149,8 @@ export default function ConverterTool() {
                 </>
               )}
               <button type="button" aria-label={`Remove ${f.file.name}`} disabled={busy} onClick={() => { setFiles((prev) => prev.filter((x) => x.id !== f.id)); setResults([]); }}>×</button>
+              </div>
+              {open === f.id && <FilePreview blob={f.file} name={f.file.name} />}
             </li>
           ))}
           <li className="tl-conv-files-foot">
@@ -258,6 +233,52 @@ export default function ConverterTool() {
               </select>
             </label>
           )}
+          {conversion.id === 'office-pdf' && (() => {
+            const xlsx = files.some((f) => extensionOf(f.file.name) === 'xlsx');
+            const otherSheets = files.some((f) => f.kind === 'sheet' && extensionOf(f.file.name) !== 'xlsx');
+            const slides = files.some((f) => f.kind === 'slides');
+            const setO = <K extends keyof OfficeOptions>(key: K, value: OfficeOptions[K]) => setOffice((o) => ({ ...o, [key]: value }));
+            return (
+              <>
+                <label>Pages <input value={office.pages ?? ''} placeholder="All, or like 1-3, 5" onChange={(e) => setO('pages', e.target.value)} /></label>
+                {slides && (
+                  <label className="tl-conv-check"><input type="checkbox" checked={!!office.notes} onChange={(e) => setO('notes', e.target.checked)} /> Add a page of speaker notes for each slide</label>
+                )}
+                {xlsx && (<>
+                  <label>Orientation
+                    <select value={office.orientation ?? 'keep'} onChange={(e) => setO('orientation', e.target.value === 'keep' ? undefined : e.target.value as OfficeOptions['orientation'])}>
+                      <option value="keep">As the spreadsheet says</option>
+                      <option value="portrait">Portrait (tall)</option>
+                      <option value="landscape">Landscape (wide)</option>
+                    </select>
+                  </label>
+                  <label>Fit
+                    <select value={office.fit ?? 'keep'} onChange={(e) => setO('fit', e.target.value === 'keep' ? undefined : e.target.value as OfficeOptions['fit'])}>
+                      <option value="keep">As the spreadsheet says</option>
+                      <option value="width">All columns on one page width</option>
+                      <option value="page">Each sheet on one page</option>
+                      <option value="scale">Scale to a percentage</option>
+                    </select>
+                  </label>
+                  {office.fit === 'scale' && (
+                    <label>Scale <strong>{office.scale ?? 100}%</strong>
+                      <input type="range" min={25} max={200} step={5} value={office.scale ?? 100} onChange={(e) => setO('scale', Number(e.target.value))} />
+                    </label>
+                  )}
+                  <label>Paper
+                    <select value={office.paper ?? 'keep'} onChange={(e) => setO('paper', e.target.value === 'keep' ? undefined : e.target.value as OfficeOptions['paper'])}>
+                      <option value="keep">As the spreadsheet says</option>
+                      <option value="letter">Letter</option>
+                      <option value="legal">Legal</option>
+                      <option value="a4">A4</option>
+                    </select>
+                  </label>
+                  <label className="tl-conv-check"><input type="checkbox" checked={!!office.gridlines} onChange={(e) => setO('gridlines', e.target.checked)} /> Print the gridlines</label>
+                </>)}
+                {otherSheets && <p className="tl-conv-note">Orientation, fitting and paper can be set for .xlsx files. Older .xls and .ods files print as they’re set up.</p>}
+              </>
+            );
+          })()}
           <div className="tl-conv-go">
             <button type="button" className="btn btn-primary tl-btn" disabled={busy || !!reason} onClick={() => void convert()}>
               {busy ? 'Working…' : `${conversion.label}${files.length > 1 && !conversion.combine ? ` (${files.length} files)` : ''}`}
@@ -275,10 +296,15 @@ export default function ConverterTool() {
           <p className="tl-conv-group">Ready</p>
           <ul>
             {results.map((r) => (
-              <li key={r.url}>
-                <span className="tl-conv-name">{r.name}</span>
-                <span className="tl-conv-size">{size(r.blob.size)}</span>
-                <a className="btn btn-secondary" href={r.url} download={r.name}>Download</a>
+              <li key={r.url} className="tl-conv-item">
+                <div className="tl-conv-row">
+                  <Thumb blob={r.blob} name={r.name} />
+                  <span className="tl-conv-name">{r.name}</span>
+                  <button type="button" className="tl-conv-link" aria-expanded={open === r.url} onClick={() => setOpen(open === r.url ? null : r.url)}>{open === r.url ? 'Hide' : 'Preview'}</button>
+                  <span className="tl-conv-size">{size(r.blob.size)}</span>
+                  <a className="btn btn-secondary" href={r.url} download={r.name}>Download</a>
+                </div>
+                {open === r.url && <FilePreview blob={r.blob} name={r.name} />}
               </li>
             ))}
           </ul>

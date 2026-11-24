@@ -5,6 +5,8 @@ import { AiClientError, generateReply, useAiStatus } from '@/lib/ai/client';
 import type { AiAttachment } from '@/lib/ai/attachments';
 import type { AiTask } from '@/lib/ai/tasks';
 import { fileSize, pickFiles } from './attach-files';
+import { conversionById } from '@/lib/convert/formats';
+import { loadPiTools, runOnPi } from '@/components/tools/converter/run-pi';
 import './ai.css';
 
 // "Generate" for any copy-prompt / paste-reply flow. It only shows when the site has
@@ -43,6 +45,7 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
   const [text, setText] = useState('');
   const [files, setFiles] = useState<AiAttachment[]>([]);
   const [reading, setReading] = useState(false);
+  const [readingNote, setReadingNote] = useState('');
   const [fileProblems, setFileProblems] = useState<string[]>([]);
   const picker = useRef<HTMLInputElement>(null);
   const run = useRef<AbortController | null>(null);
@@ -64,12 +67,20 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
     if (!chosen.length) return;
     setReading(true);
     try {
-      const picked = await pickFiles(chosen, files);
+      // PowerPoint, Word and Excel can't go to the AI, but the Pi can make PDFs of them first.
+      const toPdf = async (file: File) => {
+        const pi = await loadPiTools();
+        if (!pi.signedIn || !pi.office) return null;
+        const out = await runOnPi(conversionById('office-pdf')!, file, (text) => setReadingNote(text.replace(/converting on the Pi/, 'turning it into a PDF on the Pi')));
+        return new File([out.blob], out.name, { type: 'application/pdf' });
+      };
+      const picked = await pickFiles(chosen, files, toPdf);
       setFiles((prev) => [...prev, ...picked.attachments]);
       if (picked.text.length) setText((prev) => [prev.trim(), ...picked.text.map((t) => t.trim())].filter(Boolean).join('\n\n'));
       setFileProblems(picked.problems);
     } finally {
       setReading(false);
+      setReadingNote('');
     }
   };
 
@@ -124,12 +135,13 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
             type="file"
             multiple
             hidden
-            accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,image/*,text/plain,.txt,.md"
+            accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,image/*,.heic,.heif,text/plain,.txt,.md,.pptx,.ppt,.odp,.docx,.doc,.odt,.rtf,.xlsx,.xls,.ods"
             onChange={(e) => { const chosen = [...(e.target.files ?? [])]; e.target.value = ''; void attach(chosen); }}
           />
           <button type="button" className="ai-gen-attach" disabled={state === 'busy' || reading} onClick={() => picker.current?.click()}>
-            <span aria-hidden>📎</span> {reading ? 'Reading…' : files.length ? 'Attach more' : 'Attach PDFs or photos'}
+            <span aria-hidden>📎</span> {reading ? 'Reading…' : files.length ? 'Attach more' : 'Attach PDFs, slides or photos'}
           </button>
+          {readingNote && <p className="ai-gen-hint" role="status">{readingNote}</p>}
           {files.length > 0 && (
             <ul className="ai-gen-file-list" aria-label="Attached files">
               {files.map((f, i) => (

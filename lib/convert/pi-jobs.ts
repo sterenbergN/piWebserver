@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { extensionOf, renamed, type Conversion, type PiTool } from './formats';
+import { extensionOf, kindOf, renamed, type Conversion, type PiTool } from './formats';
+import { patchXlsx, pdfFilter, type OfficeOptions } from './office-options';
 
 // The converter's jobs that run on the Pi: audio and video through ffmpeg, Office
 // files through LibreOffice. One at a time (they're heavy for a Pi), each in its
@@ -24,6 +25,7 @@ type Job = {
   owner: string;
   conversion: Conversion;
   name: string;
+  options: OfficeOptions;
   dir: string;
   input: string;
   status: JobStatus;
@@ -59,7 +61,7 @@ const FFMPEG_ARGS: Record<string, string[]> = {
 };
 
 /** The command for one job: what to run, and where its result lands. */
-export function piCommand(conversion: Conversion, input: string, dir: string, profileDir: string): { cmd: string; args: string[]; output: string; timeoutMs: number } {
+export function piCommand(conversion: Conversion, input: string, dir: string, profileDir: string, options: OfficeOptions = {}): { cmd: string; args: string[]; output: string; timeoutMs: number } {
   const ext = conversion.ext!;
   if (conversion.tool === 'ffmpeg') {
     const extra = FFMPEG_ARGS[conversion.id];
@@ -68,7 +70,8 @@ export function piCommand(conversion: Conversion, input: string, dir: string, pr
     // Only local files: a crafted media file can't make ffmpeg fetch from the network.
     return { cmd: ffmpegPath(), args: ['-hide_banner', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe', '-i', input, ...extra, output], output, timeoutMs: 20 * 60_000 };
   }
-  const filter = OFFICE_FILTER[ext];
+  // A PDF can carry export settings (page range, speaker notes); the other targets use their fixed filter.
+  const filter = ext === 'pdf' ? pdfFilter(kindOf(input), options) : OFFICE_FILTER[ext];
   if (!filter) throw new Error(`No LibreOffice filter for ${ext}`);
   const out = path.join(dir, 'out');
   const profile = `file:///${profileDir.replace(/\\/g, '/').replace(/^\/+/, '')}`;
@@ -135,7 +138,7 @@ export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'),
     busy = true;
     job.status = 'running';
     try {
-      const { cmd, args, output, timeoutMs } = piCommand(job.conversion, job.input, job.dir, profileDir);
+      const { cmd, args, output, timeoutMs } = piCommand(job.conversion, job.input, job.dir, profileDir, job.options);
       await runner(cmd, args, timeoutMs, job.controller.signal);
       const stat = await fs.stat(output).catch(() => null);
       if (!stat?.size) throw new Error('no output');
@@ -162,7 +165,7 @@ export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'),
 
   return {
     /** Queue a file for a Pi conversion. Throws with a short reason when it can't. */
-    async start(owner: string, conversion: Conversion, name: string, bytes: Uint8Array): Promise<JobView> {
+    async start(owner: string, conversion: Conversion, name: string, bytes: Uint8Array, options: OfficeOptions = {}): Promise<JobView> {
       prune();
       if (conversion.where !== 'pi' || !conversion.tool) throw new Error('That conversion runs in the browser.');
       if (bytes.length > PI_MAX_BYTES) throw new Error(`Files for the Pi can be up to ${PI_MAX_BYTES / 1024 / 1024} MB.`);
@@ -174,8 +177,10 @@ export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'),
       await fs.mkdir(dir, { recursive: true });
       // A fixed, plain name: the original name never reaches a command line.
       const input = path.join(dir, `input.${extensionOf(name).replace(/[^a-z0-9]/g, '') || 'bin'}`);
-      await fs.writeFile(input, bytes);
-      const job: Job = { id, owner, conversion, name, dir, input, status: 'queued', controller: new AbortController() };
+      // A spreadsheet's orientation, paper and scaling are set in the workbook before LibreOffice reads it.
+      const ready = conversion.id === 'office-pdf' && extensionOf(name) === 'xlsx' ? patchXlsx(bytes, options) : bytes;
+      await fs.writeFile(input, ready);
+      const job: Job = { id, owner, conversion, name, options, dir, input, status: 'queued', controller: new AbortController() };
       jobs.set(id, job);
       queue.push(job);
       void next();
