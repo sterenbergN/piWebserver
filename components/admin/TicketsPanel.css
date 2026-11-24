@@ -58,3 +58,7 @@
 .tkp-scope { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .tkp-scope button { font: inherit; font-size: 0.8rem; padding: 0.35rem 0.7rem; min-height: 36px; border-radius: 999px; border: 1px solid var(--surface-border); background: none; color: var(--foreground); cursor: pointer; }
 .tkp-scope button.is-on { border-color: var(--accent-light); color: var(--accent-light); font-weight: 700; }
+
+/* Tickets the site filed itself */
+.tkp-auto { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px dashed var(--surface-border); }
+.tkp-sample { margin: 0; padding: 0.45rem 0.6rem; border-radius: 8px; background: var(--card-bg); font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }

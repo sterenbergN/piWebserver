@@ -7,7 +7,7 @@ import type { PuzzlePoolInfo, RatingBucket } from '@/lib/chess/puzzles';
 // ships with the site; more come from the Lichess puzzle dump, either on their
 // own when someone runs low near their rating, or loaded here by hand.
 
-type Player = { name: string; rating: number; games: number; solved: number; leftNear: number; solvedByBand: Record<string, number> };
+type Player = { name: string; rating: number; aim?: number; games: number; solved: number; leftNear: number; solvedByBand: Record<string, number> };
 type View = {
   pool: PuzzlePoolInfo;
   buckets: RatingBucket[];
@@ -86,11 +86,13 @@ export default function ChessPanel() {
 
   const { pool, buckets, players, autoRefill } = view;
   const biggest = Math.max(1, ...buckets.map((b) => b.bundled + b.extra));
-  const playersIn = (from: number) => players.filter((p) => p.rating - 50 >= from && p.rating - 50 < from + 100);
+  // Where each player's puzzles are aimed (tuned to them), else 50 below their Elo.
+  const aimOf = (p: Player) => p.aim ?? p.rating - 50;
+  const playersIn = (from: number) => players.filter((p) => aimOf(p) >= from && aimOf(p) < from + 100);
   // Bands anyone has used, plus the one each player's puzzles are aimed at.
   const usedBands = [...new Set([
     ...players.flatMap((p) => Object.keys(p.solvedByBand ?? {}).map(Number)),
-    ...players.map((p) => Math.floor((p.rating - 50) / 100) * 100),
+    ...players.map((p) => Math.floor(aimOf(p) / 100) * 100),
   ])].sort((a, b) => a - b);
   const bandTotal = (from: number) => { const b = buckets.find((x) => x.from === from); return b ? b.bundled + b.extra : 0; };
   const mostUsed = (p: Player) => Object.entries(p.solvedByBand ?? {})
@@ -158,7 +160,7 @@ export default function ChessPanel() {
                   const used = p.solvedByBand?.[String(from)] ?? 0;
                   const share = used / Math.max(1, total);
                   const tone = share >= USED_LOW ? 'is-low' : share >= USED_WARN ? 'is-warn' : '';
-                  const here = Math.floor((p.rating - 50) / 100) * 100 === from;
+                  const here = Math.floor(aimOf(p) / 100) * 100 === from;
                   return (
                     <span role="cell" key={p.name} className={`adm-chess-used-cell ${tone}`} title={here ? `${p.name}'s puzzles are aimed here` : undefined}>
                       <span className="adm-chess-bar" aria-hidden><span style={{ width: `${Math.min(100, share * 100)}%` }} /></span>

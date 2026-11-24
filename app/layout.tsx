@@ -9,6 +9,7 @@ import FeedbackButton from "@/components/tickets/FeedbackButton";
 import { signedInUser } from "@/lib/security/session";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import AutoErrorReporter from "@/components/AutoErrorReporter";
 import "./globals.css";
 
 const siteUrl = process.env.SITE_URL || "https://noahstuf.com";
@@ -52,6 +53,7 @@ export default async function RootLayout({
         <ThemeProvider>
           <AnalyticsTracker />
           <ServiceWorkerRegistrar />
+          <AutoErrorReporter />
           <Suspense fallback={null}>
             <Navbar isAdmin={isAdmin} user={user} />
           </Suspense>

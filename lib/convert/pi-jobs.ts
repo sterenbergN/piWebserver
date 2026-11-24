@@ -108,9 +108,9 @@ export function toolWorks(tool: PiTool, runner: Runner = runCommand): Promise<bo
   return runner(cmd, [tool === 'ffmpeg' ? '-version' : '--version'], 15_000, new AbortController().signal).then(() => true, () => false);
 }
 
-type Options = { root?: string; runner?: Runner; keepMs?: number; now?: () => number };
+type Options = { root?: string; runner?: Runner; keepMs?: number; now?: () => number; onFailure?: (conversionId: string, message: string) => void };
 
-export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'), runner = runCommand, keepMs = KEEP_MS, now = Date.now }: Options = {}) {
+export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'), runner = runCommand, keepMs = KEEP_MS, now = Date.now, onFailure }: Options = {}) {
   const jobs = new Map<string, Job>();
   const queue: Job[] = [];
   let busy = false;
@@ -147,7 +147,10 @@ export function createConvertJobs({ root = path.join(os.tmpdir(), 'pi-convert'),
       job.outName = renamed(job.name, job.conversion.ext!);
       job.status = 'done';
     } catch (error) {
-      if (!job.controller.signal.aborted) console.warn(`Conversion ${job.conversion.id} failed: ${error instanceof Error ? error.message : error}`);
+      if (!job.controller.signal.aborted) {
+        console.warn(`Conversion ${job.conversion.id} failed: ${error instanceof Error ? error.message : error}`);
+        onFailure?.(job.conversion.id, error instanceof Error ? error.message : String(error));
+      }
       job.status = 'error';
       const missing = error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
       job.error = job.controller.signal.aborted ? 'Stopped.'

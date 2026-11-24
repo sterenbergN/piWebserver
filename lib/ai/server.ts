@@ -3,6 +3,7 @@ import { currentCatalog, modelForTask } from './catalog';
 import { createAiJobs } from './jobs';
 import { providerFor } from './providers';
 import { getAiSettings, type AiCaller } from './settings';
+import { recordServerIssue } from '@/lib/tickets/auto-store';
 
 // The one job runner for the whole server, and who's asking.
 
@@ -12,6 +13,8 @@ export const aiJobs = globalJobs.__aiJobs ??= createAiJobs({
   loadSettings: getAiSettings,
   providerFor,
   pickModel: async (conn, task) => modelForTask(conn, await currentCatalog(conn, providerFor(conn.provider)), task).id,
+  // The message is the site's own short one: never the prompt, the reply or the key.
+  onFailure: ({ task, kind, message, model }) => recordServerIssue({ source: 'ai', title: `AI ${task ?? 'reply'} failed (${kind}): ${message}`, detail: `Model: ${model}` }),
 });
 
 /**

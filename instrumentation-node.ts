@@ -1,6 +1,10 @@
 // Node.js-only startup work, loaded by instrumentation.ts (never bundled for the Edge runtime).
 export async function registerNode() {
   {
+    // An install deploy.sh had to roll back becomes one of the site's own tickets.
+    const { fileDeployEvents } = await import('./lib/tickets/deploy-events');
+    void fileDeployEvents().then((n) => { if (n) console.log(`Filed ${n} rolled-back install(s) as tickets`); }, () => {});
+
     // Nightly data backups (settings live in the admin page).
     const { startBackupScheduler } = await import('./lib/backup');
     startBackupScheduler();

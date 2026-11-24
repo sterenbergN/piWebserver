@@ -44,7 +44,19 @@ export type MathStats = {
   problems: Record<string, MathProblemStat>;
   /** Drills done (they're practice: not in best, sprints or the trend). */
   drills: number;
+  /** How many right in a row this person needs to level up, tuned from how they do (absent: the site's default). */
+  levelRule?: LevelRule;
 };
+
+/**
+ * Levelling up that sticks: after each level-up, a miss within the next two answers
+ * counts as dropping straight back. Every LEVEL_RULE_SAMPLE level-ups, too many drops
+ * ask for one more right in a row; almost none, one fewer.
+ */
+export type LevelRule = { streakUp: number; ups: number; bounces: number; changes: { at: string; from: number; to: number; dropRate: number }[] };
+export const LEVEL_RULE_SAMPLE = 12;
+export const STREAK_MIN = 2;
+export const STREAK_MAX = 5;
 
 export type MathCategorySummary = {
   op: MathOp;
@@ -200,6 +212,16 @@ export function normalizeMathStats(raw: unknown): MathStats {
     problems[text] = { ...stat, answer: p.answer, seen: nonNegInt(p.seen), ...(typeof p.lastWrong === 'string' && /^\d{0,8}$/.test(p.lastWrong) ? { lastWrong: p.lastWrong } : {}) };
   }
 
+  const lr = r.levelRule && typeof r.levelRule === 'object' ? r.levelRule as Partial<LevelRule> : null;
+  const levelRule: LevelRule | undefined = lr && typeof lr.streakUp === 'number'
+    ? {
+      streakUp: Math.min(STREAK_MAX, Math.max(STREAK_MIN, Math.round(lr.streakUp))),
+      ups: nonNegInt(lr.ups),
+      bounces: nonNegInt(lr.bounces),
+      changes: (Array.isArray(lr.changes) ? lr.changes : []).filter((c) => c && typeof c.at === 'string').slice(-5),
+    }
+    : undefined;
+
   return {
     sprints: nonNegInt(r.sprints),
     best: nonNegInt(r.best),
@@ -214,7 +236,37 @@ export function normalizeMathStats(raw: unknown): MathStats {
     pairs,
     problems,
     drills: nonNegInt(r.drills),
+    ...(levelRule ? { levelRule } : {}),
   };
+}
+
+/** Right answers in a row this person needs to go up a level. */
+export const streakUpFor = (stats: Pick<MathStats, 'levelRule'>, siteDefault = 3) => stats.levelRule?.streakUp ?? siteDefault;
+
+/** Level-ups in a sprint's answers, and how many dropped straight back (a miss within the next two). */
+export function levelUpsIn(answers: MathAnswerRecord[]): { ups: number; bounces: number } {
+  let ups = 0;
+  let bounces = 0;
+  for (let i = 0; i + 1 < answers.length; i++) {
+    const before = answers[i].level;
+    const after = answers[i + 1].level;
+    if (typeof before !== 'number' || typeof after !== 'number' || after <= before) continue;
+    ups++;
+    if (answers.slice(i + 1, i + 3).some((a) => a.right !== true)) bounces++;
+  }
+  return { ups, bounces };
+}
+
+/** Add a sprint's level-ups to the rule, and move it by one when there's enough to go on. */
+export function tuneLevelRule(rule: LevelRule | undefined, sprint: { ups: number; bounces: number }, siteDefault: number, now: Date): LevelRule {
+  const next: LevelRule = rule ? { ...rule, changes: [...rule.changes] } : { streakUp: siteDefault, ups: 0, bounces: 0, changes: [] };
+  next.ups += sprint.ups;
+  next.bounces += sprint.bounces;
+  if (next.ups < LEVEL_RULE_SAMPLE) return next;
+  const dropRate = next.bounces / next.ups;
+  const to = dropRate > 0.4 ? Math.min(STREAK_MAX, next.streakUp + 1) : dropRate < 0.1 ? Math.max(STREAK_MIN, next.streakUp - 1) : next.streakUp;
+  if (to !== next.streakUp) next.changes = [...next.changes, { at: now.toISOString(), from: next.streakUp, to, dropRate: Math.round(dropRate * 100) / 100 }].slice(-5);
+  return { ...next, streakUp: to, ups: 0, bounces: 0 };
 }
 
 /** Record one completed sprint into stats without mutating `current`. */
@@ -222,6 +274,7 @@ export function recordSprintStats(
   current: MathStats,
   input: { score: number; answers: MathAnswerRecord[]; mode?: 'sprint' | 'drill' },
   now: Date = new Date(),
+  siteStreakUp = 3,
 ): MathStats {
   const drill = input.mode === 'drill';
   const base = normalizeMathStats(current);
@@ -313,6 +366,8 @@ export function recordSprintStats(
     pairs,
     problems,
     drills: base.drills,
+    // Each sprint teaches the level rule how this person does after levelling up.
+    levelRule: tuneLevelRule(base.levelRule, levelUpsIn(answers.filter((a) => a && typeof a === 'object')), siteStreakUp, now),
   };
 }
 

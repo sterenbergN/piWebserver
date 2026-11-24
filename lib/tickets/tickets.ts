@@ -2,6 +2,8 @@
 // Pure logic only (cleaning input, the stored shape, the size cap); files and
 // sessions live in store.ts and the routes.
 
+import type { AutoInfo } from './auto';
+
 export const KINDS = ['bug', 'idea', 'question', 'other'] as const;
 export const SEVERITIES = ['minor', 'annoying', 'blocking'] as const;
 export const STATUSES = ['open', 'in_progress', 'done', 'wontfix'] as const;
@@ -58,6 +60,8 @@ export type Ticket = {
   note?: string;
   /** When the admin first opened it; absent means new. */
   seenAt?: string;
+  /** Filed by the site itself (lib/tickets/auto.ts): how often, where and on which builds. */
+  auto?: AutoInfo;
 };
 
 export type TicketsData = { tickets: Ticket[] };

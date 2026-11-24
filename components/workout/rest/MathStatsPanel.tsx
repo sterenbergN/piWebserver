@@ -18,7 +18,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 const fmtSec = (ms: number | null) => (ms !== null ? `${(ms / 1000).toFixed(1)}s` : '—');
 
-export function MathStatsPanel({ stats }: { stats: MathStats }) {
+export function MathStatsPanel({ stats, onResetLevelRule }: { stats: MathStats; onResetLevelRule?: () => void }) {
   const [tab, setTab] = useState<Tab>('overview');
   return (
     <div className="rest-math-stats">
@@ -27,7 +27,7 @@ export function MathStatsPanel({ stats }: { stats: MathStats }) {
           <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}>{t.label}</button>
         ))}
       </div>
-      {tab === 'overview' && <Overview stats={stats} />}
+      {tab === 'overview' && <Overview stats={stats} onResetLevelRule={onResetLevelRule} />}
       {tab === 'grid' && <TimesTable stats={stats} />}
       {tab === 'progress' && <Progress stats={stats} />}
       {tab === 'problems' && <Problems stats={stats} />}
@@ -182,7 +182,22 @@ function Problems({ stats }: { stats: MathStats }) {
   );
 }
 
-function Overview({ stats }: { stats: MathStats }) {
+/** How many right in a row levels you up, and why it's that many for you. */
+function LevelRuleNote({ stats, onReset }: { stats: MathStats; onReset?: () => void }) {
+  const rule = stats.levelRule;
+  const last = rule?.changes[rule.changes.length - 1];
+  const n = rule?.streakUp ?? 3;
+  return (
+    <p className="rest-note" style={{ margin: 0 }}>
+      You go up a level after <strong>{n}</strong> right in a row{last ? ', tuned to you' : ''}.
+      {last && ` On ${new Date(last.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} it went from ${last.from} to ${last.to}: you dropped straight back after ${Math.round(last.dropRate * 100)}% of level-ups${last.to > last.from ? ', so levels now wait until you’re steadier' : ', so you can climb faster'}.`}
+      {!last && rule && rule.ups > 0 && ` It adjusts to how often you drop straight back (${rule.ups} of 12 level-ups so far).`}
+      {last && onReset && <> <button type="button" className="rest-link" onClick={onReset}>Reset</button></>}
+    </p>
+  );
+}
+
+function Overview({ stats, onResetLevelRule }: { stats: MathStats; onResetLevelRule?: () => void }) {
   const summary = summarizeMathStats(stats);
   // Accuracy against your other answers at the same levels: a harder level doesn't count against you.
   const vsLevel = (c: { accuracy: number; expectedAccuracy: number | null }) => {
@@ -193,6 +208,7 @@ function Overview({ stats }: { stats: MathStats }) {
 
   return (
     <div className="rest-math-overview">
+      <LevelRuleNote stats={stats} onReset={onResetLevelRule} />
       <div className="rest-math-pills is-five">
         <div className="rest-math-pill">
           <span>Sprints</span>

@@ -75,6 +75,8 @@ export default function AddTestPage() {
   const [style, setStyle] = useState<PromptStyle>('vignette');
   const askedStyle = useRef<PromptStyle | null>(null);
   const [difficulty, setDifficulty] = useState(3);
+  /** The level was moved for her from the last test's score: from what, to what, and why. */
+  const [autoMoved, setAutoMoved] = useState<{ from: number; to: number; why: string } | null>(null);
   const [useWeak, setUseWeak] = useState(true);
   const [use, setUse] = useState(ALL_RESULTS);
   const [reply, setReply] = useState('');
@@ -118,7 +120,10 @@ export default function AddTestPage() {
       setStyle(askedStyle.current ?? set.style);
       askedStyle.current = null;
       setCount(set.count);
-      setDifficulty(set.difficulty);
+      // Tuned to her: a step up or down from how the last test in the set went (undo shown).
+      const tuned = suggestDifficulty(body.brief, set.difficulty);
+      setDifficulty(tuned?.level ?? set.difficulty);
+      setAutoMoved(tuned ? { from: set.difficulty, to: tuned.level, why: tuned.why } : null);
     }).catch(() => { if (!cancelled) setTarget(NEW_SET); });
     return () => { cancelled = true; };
   }, [target]);
@@ -133,7 +138,7 @@ export default function AddTestPage() {
   }), [source, course, focus, count, style, difficulty, use, useWeak, offerOverall, weakTopics, brief]);
   const { pack, error } = useMemo(() => readPack(reply, brief?.stems ?? []), [reply, brief]);
   const keptQuestions = useMemo(() => (pack ? pack.questions.filter((q) => !excluded.includes(q.stem)) : []), [pack, excluded]);
-  const nudge = brief ? suggestDifficulty(brief, difficulty) : null;
+  const nudge = brief && !autoMoved ? suggestDifficulty(brief, difficulty) : null;
   const level = DIFFICULTIES[difficulty - 1] ?? DIFFICULTIES[2];
   const sameName = target === NEW_SET ? sets.find((s) => s.title.toLowerCase() === setName.trim().toLowerCase()) : undefined;
 
@@ -219,6 +224,12 @@ export default function AddTestPage() {
                 <span className="sd-difficulty-ends" aria-hidden><span>Easier</span><span>Harder</span></span>
                 <small className="hb-hint">{level.blurb}</small>
               </label>
+              {autoMoved && difficulty === autoMoved.to && (
+                <div className="sd-wide sd-nudge">
+                  <span>{autoMoved.why}</span>
+                  <button type="button" className="hb-small-btn" onClick={() => setDifficulty(autoMoved.from)}>Keep level {autoMoved.from}</button>
+                </div>
+              )}
               {nudge && (
                 <div className="sd-wide sd-nudge">
                   <span>{nudge.why}</span>

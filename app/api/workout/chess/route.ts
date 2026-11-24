@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { findPuzzleById, getAllPuzzles, getPoolInfo, maybeAutoRefill } from '@/lib/chess/puzzles';
-import { normalizeChessProgress, pickPuzzle } from '@/lib/chess/rating';
+import { aimOffset, normalizeChessProgress, pickPuzzle } from '@/lib/chess/rating';
+import { getSiteTuning } from '@/lib/tuning/site';
 import { readChessProgress, saveChessResult } from '@/lib/chess/store';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
     const progress = userId
       ? await readChessProgress(userId)
       : normalizeChessProgress({ rating: Number(params.get('rating')) || undefined, solved: idList(params.get('solved')) });
-    const [puzzles, pool] = await Promise.all([getAllPuzzles(), getPoolInfo()]);
+    const [puzzles, pool, tuning] = await Promise.all([getAllPuzzles(), getPoolInfo(), getSiteTuning()]);
 
     if (params.get('stats') === '1') {
       return NextResponse.json(
@@ -40,6 +41,9 @@ export async function GET(request: Request) {
           minRating: pool.minRating,
           maxRating: pool.maxRating,
           refilling: pool.refilling,
+          // How far below the Elo puzzles are aimed for this person, and the last time it moved.
+          aimOffset: aimOffset(progress, tuning.chessAimOffset),
+          aimChange: progress.aim?.changes[progress.aim.changes.length - 1] ?? null,
           isAdmin,
           signedIn: !!userId,
         },
@@ -47,9 +51,9 @@ export async function GET(request: Request) {
       );
     }
 
-    if (userId) maybeAutoRefill(progress, puzzles);
+    if (userId) maybeAutoRefill(progress, puzzles, tuning.refill, tuning.chessAimOffset);
 
-    const puzzle = pickPuzzle(puzzles, progress, { exclude: skip });
+    const puzzle = pickPuzzle(puzzles, progress, { exclude: skip, siteAimOffset: tuning.chessAimOffset });
     if (!puzzle) throw new ApiError(404, 'No puzzles here yet');
     return NextResponse.json(
       {

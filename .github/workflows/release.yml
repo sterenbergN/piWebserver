@@ -60,7 +60,8 @@ jobs:
           up=
           for i in $(seq 1 30); do curl -fs http://127.0.0.1:3999/api/health && up=1 && break; sleep 1; done
           # /api/media loads sharp (native): a thumbnail proves photos and PDFs will serve.
-          [ -n "$up" ] && curl -fsS -o /dev/null -w 'thumbnail %{http_code} %{content_type}\n' 'http://127.0.0.1:3999/api/media/icons/icon-192.png?w=128' && exit 0
+          # Then the same page check deploy.sh runs on the Pi: a page that errors stops the release here.
+          [ -n "$up" ] && curl -fsS -o /dev/null -w 'thumbnail %{http_code} %{content_type}\n' 'http://127.0.0.1:3999/api/media/icons/icon-192.png?w=128' && node /tmp/smoke/smoke-check.mjs http://127.0.0.1:3999 && exit 0
           cat /tmp/smoke.log; exit 1
 
       - name: Attest build provenance

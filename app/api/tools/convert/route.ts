@@ -5,6 +5,7 @@ import { conversionById, kindOf } from '@/lib/convert/formats';
 import { cleanOfficeOptions } from '@/lib/convert/office-options';
 import { createConvertJobs, PI_MAX_BYTES, toolWorks } from '@/lib/convert/pi-jobs';
 import { getAuthenticatedWorkoutUserId, isAdminAuthenticated } from '@/lib/security/server-auth';
+import { recordServerIssue } from '@/lib/tickets/auto-store';
 
 // Tools › File converter, the conversions that run on the Pi (signed in only).
 //   GET                 → which tools the Pi has: { signedIn, ffmpeg, office }
@@ -18,7 +19,10 @@ const PRIVATE = { 'Cache-Control': 'no-store, private' };
 
 const globalJobs = globalThis as unknown as { __convertJobs?: ReturnType<typeof createConvertJobs>; __convertTools?: { at: number; tools: Promise<{ ffmpeg: boolean; office: boolean }> } };
 // Kept on globalThis so a dev-server reload doesn't lose running jobs.
-const jobs = (globalJobs.__convertJobs ??= createConvertJobs());
+const jobs = (globalJobs.__convertJobs ??= createConvertJobs({
+  // Grouped by conversion; the tool's last lines of output say why.
+  onFailure: (id, message) => recordServerIssue({ source: 'job', title: `Converting (${id}) failed on the Pi`, detail: message.slice(0, 500) }),
+}));
 
 /** Checked once every ten minutes, so installing one shows up without a restart. */
 function tools() {

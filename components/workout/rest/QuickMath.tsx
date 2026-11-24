@@ -5,6 +5,7 @@ import { judge, makeDrillProblem, makeProblem, nextLevel, SPRINT_SECONDS, type D
 import {
   drillTargets,
   emptyMathStats,
+  streakUpFor,
   normalizeMathStats,
   recordSprintStats,
   type MathAnswerRecord,
@@ -25,6 +26,8 @@ type Sprint = {
   /** A sprint climbs the levels; a drill serves your weak spots and doesn't count toward your best. */
   mode: 'sprint' | 'drill';
   targets: DrillTarget[];
+  /** Right answers in a row to go up a level, for this sprint (tuned to the person). */
+  streakUp: number;
   /** Seconds left. */
   left: number;
   level: number;
@@ -42,10 +45,11 @@ type Sprint = {
 
 const BEST_PREF = 'workout:restMathBest';
 const STATS_PREF = 'workout:restMathStats';
-const fresh = (level = 1, mode: Sprint['mode'] = 'sprint', targets: DrillTarget[] = []): Sprint => ({
+const fresh = (level = 1, mode: Sprint['mode'] = 'sprint', targets: DrillTarget[] = [], streakUp = 3): Sprint => ({
   phase: 'idle',
   mode,
   targets,
+  streakUp,
   left: SPRINT_SECONDS,
   level,
   streak: 0,
@@ -76,6 +80,8 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
   const [stats, setStats] = useState<MathStats>(emptyMathStats);
   const [signedIn, setSignedIn] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  /** The site's starting level rule, until this person's own is tuned (from the server). */
+  const siteStreakUp = useRef(3);
 
   const sprintRef = useRef(sprint);
   const statsRef = useRef(stats);
@@ -114,6 +120,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
         const body = await res.json().catch(() => ({}));
         if (!active || !res.ok || !body.success) return;
         const isSignedIn = Boolean(body.signedIn);
+        if (typeof body.siteStreakUp === 'number') siteStreakUp.current = body.siteStreakUp;
         setSignedIn(isSignedIn);
         signedInRef.current = isSignedIn;
         if (isSignedIn) {
@@ -217,10 +224,14 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [running]);
 
+  const resetLevelRule = async () => {
+    const res = await fetch('/api/workout/math', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resetLevelRule' }) }).then((r) => r.json()).catch(() => null);
+    if (res?.success && res.stats) { const next = normalizeMathStats(res.stats); setStats(next); statsRef.current = next; }
+  };
   const targets = drillTargets(stats);
   const start = (mode: Sprint['mode'] = sprintRef.current.mode) => {
     savedOverRef.current = false;
-    const next = mode === 'drill' ? fresh(1, 'drill', drillTargets(statsRef.current)) : fresh(Math.max(1, (sprintRef.current.mode === 'drill' ? 2 : sprintRef.current.level) - 1));
+    const next = mode === 'drill' ? fresh(1, 'drill', drillTargets(statsRef.current)) : fresh(Math.max(1, (sprintRef.current.mode === 'drill' ? 2 : sprintRef.current.level) - 1), 'sprint', [], streakUpFor(statsRef.current, siteStreakUp.current));
     setSprint({ ...next, phase: 'running' });
   };
   const drillButton = (
@@ -255,7 +266,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
             {showStats ? 'Hide stats' : 'Stats'}
           </button>
         </div>
-        {showStats && <MathStatsPanel stats={stats} />}
+        {showStats && <MathStatsPanel stats={stats} onResetLevelRule={signedIn ? resetLevelRule : undefined} />}
       </div>
     );
   }
@@ -285,7 +296,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
             {showStats ? 'Hide stats' : 'Stats'}
           </button>
         </div>
-        {showStats && <MathStatsPanel stats={stats} />}
+        {showStats && <MathStatsPanel stats={stats} onResetLevelRule={signedIn ? resetLevelRule : undefined} />}
       </div>
     );
   }
@@ -316,7 +327,7 @@ export default function QuickMath({ canStartNew, onResult }: ActivityProps) {
 
 function answered(s: Sprint, right: boolean, typed: string): Sprint {
   const drill = s.mode === 'drill';
-  const { level, streak } = drill ? { level: s.level, streak: 0 } : nextLevel(s.level, s.streak, right);
+  const { level, streak } = drill ? { level: s.level, streak: 0 } : nextLevel(s.level, s.streak, right, s.streakUp ?? 3);
   const record: MathAnswerRecord = {
     op: s.problem.op,
     right,

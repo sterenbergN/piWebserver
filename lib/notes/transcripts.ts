@@ -108,6 +108,12 @@ async function runJob(job: Job) {
     console.log(`Transcribing ${recording} ${finished ? 'finished' : 'stopped to start over'}`);
   } catch (error) {
     const problem = error instanceof TranscribeProblem ? error.message : `Something went wrong turning it into text${error instanceof Error ? `: ${error.message}` : '.'}`;
+    // Problems explained to the person (no sound yet, no ffmpeg) aren't bugs; anything else is.
+    if (!(error instanceof TranscribeProblem)) {
+      const { describeError, recordServerIssue } = await import('@/lib/tickets/auto-store');
+      const { title, detail } = describeError(error);
+      recordServerIssue({ source: 'job', title: `Transcribing a recording failed: ${title}`, detail });
+    }
     await change(userId, notebook, recording, run, (t) => { t.status = 'failed'; t.problem = problem; });
   }
 }

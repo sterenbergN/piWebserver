@@ -24,6 +24,9 @@ type ChessSummary = {
   maxRating: number;
   refilling: boolean;
   isAdmin: boolean;
+  /** How far below the Elo puzzles are aimed (tuned to the person), and the last move. */
+  aimOffset?: number;
+  aimChange?: { at: string; from: number; to: number; cleanRate: number } | null;
 };
 
 const CHESS_LOCAL_PREF = 'workout:restChessLocal';
@@ -90,6 +93,8 @@ function WorkoutPracticeContent() {
           maxRating: typeof chessRes.maxRating === 'number' ? chessRes.maxRating : localChess.maxRating,
           refilling: Boolean(chessRes.refilling),
           isAdmin: Boolean(chessRes.isAdmin),
+          aimOffset: typeof chessRes.aimOffset === 'number' ? chessRes.aimOffset : undefined,
+          aimChange: chessRes.aimChange ?? null,
         };
         setChess(
           isSignedIn
@@ -173,6 +178,14 @@ function WorkoutPracticeContent() {
                 <strong>{chessWinPct !== null ? `${chessWinPct}%` : '—'}</strong>
               </div>
             </div>
+            {chess.aimOffset !== undefined && (
+              <p className="workout-hint" style={{ margin: '0.55rem 0 0' }}>
+                Puzzles are aimed {chess.aimOffset > 0 ? `${chess.aimOffset} below` : chess.aimOffset < 0 ? `${-chess.aimOffset} above` : 'right at'} your Elo, since it’s between sets
+                {chess.aimChange
+                  ? `, tuned to you: you solved ${Math.round(chess.aimChange.cleanRate * 100)}% cleanly, so on ${new Date(chess.aimChange.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} they got ${chess.aimChange.to < chess.aimChange.from ? 'harder' : 'easier'}.`
+                  : '. It adjusts to keep about two in three solved cleanly.'}
+              </p>
+            )}
             <p className="workout-hint" style={{ margin: '0.55rem 0 0' }}>
               Puzzles are picked near your Elo from {chess.poolSize.toLocaleString()} Lichess puzzles ({chess.minRating}–{chess.maxRating})
               {chess.extraCount > 0 ? ` · ${chess.extraCount.toLocaleString()} added beyond the bundle` : ''}.
@@ -194,7 +207,7 @@ function WorkoutPracticeContent() {
           <h2 style={{ margin: 0, fontSize: '1.05rem' }}>🔢 Mental math stats</h2>
           {signedIn === false && <span className="workout-hint">Saved on this device</span>}
         </div>
-        {math ? <MathStatsPanel stats={math} /> : <p className="workout-hint" style={{ margin: 0 }}>Loading math stats…</p>}
+        {math ? <MathStatsPanel stats={math} onResetLevelRule={signedIn ? () => void fetch('/api/workout/math', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resetLevelRule' }) }).then(() => loadStats()) : undefined} /> : <p className="workout-hint" style={{ margin: 0 }}>Loading math stats…</p>}
       </div>
     </div>
   );

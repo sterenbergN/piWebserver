@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { emptyMathStats, type MathAnswerRecord } from '@/lib/workout/rest-math-stats';
-import { readMathStats, saveMathSprint } from '@/lib/workout/rest-math-store';
+import { readMathStats, resetMathLevelRule, saveMathSprint } from '@/lib/workout/rest-math-store';
+import { getSiteTuning } from '@/lib/tuning/site';
 
 // Mental math sprint statistics for the rest panel.
 // Signed in: kept per account in .data/workout/math/<userId>.json.
@@ -20,7 +21,7 @@ export async function GET() {
       );
     }
     return NextResponse.json(
-      { success: true, stats: await readMathStats(userId), signedIn: true },
+      { success: true, stats: await readMathStats(userId), signedIn: true, siteStreakUp: (await getSiteTuning()).mathStreakUp },
       { headers: PRIVATE },
     );
   } catch (error) {
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
   try {
     const userId = await requireWorkoutUserId();
     const body = await readJsonObject(request);
+    if (body.action === 'resetLevelRule') {
+      return NextResponse.json({ success: true, stats: await resetMathLevelRule(userId) }, { headers: PRIVATE });
+    }
     if (typeof body.score !== 'number' || !Number.isFinite(body.score) || body.score < 0) {
       throw new ApiError(400, 'Invalid score');
     }

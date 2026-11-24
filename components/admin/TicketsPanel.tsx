@@ -18,7 +18,8 @@ const STATUSES: { id: Exclude<Filter, 'all'>; label: string }[] = [
 ];
 const STATUS_LABEL = Object.fromEntries(STATUSES.map((s) => [s.id, s.label])) as Record<string, string>;
 const KIND_ICON: Record<string, string> = { bug: '🐞', idea: '💡', question: '❓', other: '📝' };
-const KIND_FILTERS = [{ id: 'all', label: 'All kinds' }, { id: 'bug', label: '🐞 Bugs' }, { id: 'idea', label: '💡 Ideas' }, { id: 'question', label: '❓ Questions' }, { id: 'other', label: '📝 Other' }];
+const KIND_FILTERS = [{ id: 'all', label: 'All kinds' }, { id: 'bug', label: '🐞 Bugs' }, { id: 'idea', label: '💡 Ideas' }, { id: 'question', label: '❓ Questions' }, { id: 'other', label: '📝 Other' }, { id: 'auto', label: '🤖 Filed by the site' }, { id: 'people', label: '🙋 From people' }];
+const SOURCE_LABEL: Record<string, string> = { browser: 'Error in someone’s browser', server: 'Server error', ai: 'AI problem', job: 'Background job', deploy: 'Install rolled back' };
 const SEVERITY_LABEL: Record<string, string> = { minor: 'Minor', annoying: 'Annoying', blocking: 'Can’t use it' };
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -136,7 +137,8 @@ export default function TicketsPanel() {
     return c;
   }, [tickets]);
   const newCount = tickets.filter((t) => !t.seenAt).length;
-  const shown = tickets.filter((t) => (filter === 'all' || t.status === filter) && (kind === 'all' || t.kind === kind));
+  const kindMatches = (t: Ticket) => kind === 'all' || (kind === 'auto' ? !!t.auto : kind === 'people' ? !t.auto : t.kind === kind);
+  const shown = tickets.filter((t) => (filter === 'all' || t.status === filter) && kindMatches(t));
 
   const forScope = (s: Scope) => tickets.filter((t) => (s === 'all' ? true : s === 'selected' ? selected.has(t.id) : t.status === 'open' || t.status === 'in_progress'));
   const toCopy = forScope(scope);
@@ -211,6 +213,7 @@ export default function TicketsPanel() {
                     <span className={`tkp-status is-${t.status}`}>{STATUS_LABEL[t.status] ?? t.status}</span>
                     <span>{t.context.path}</span><span>{displayName(t)}</span><span>{age(t.createdAt)}</span>
                     {(t.comments?.length ?? 0) > 0 && <span>💬 {t.comments!.length}</span>}
+                    {t.auto && <span title={`Seen ${t.auto.count} times, last ${when(t.auto.lastSeen)}`}>🤖 ×{t.auto.count} · last {age(t.auto.lastSeen)}</span>}
                   </span>
                 </button>
               </div>
@@ -361,6 +364,18 @@ function Detail({ t, onSave, onDelete }: {
       </div>
       <p className="tkp-message">{t.message}</p>
 
+      {t.auto && (
+        <div className="tkp-auto">
+          <p className="adm-muted" style={{ margin: 0 }}>
+            🤖 {SOURCE_LABEL[t.auto.source] ?? t.auto.source}, noticed by the site itself. Seen <strong>{t.auto.count}</strong> time{t.auto.count === 1 ? '' : 's'}, first {when(t.auto.firstSeen)}, last {when(t.auto.lastSeen)}.
+            {t.auto.reopened ? ` Came back ${t.auto.reopened} time${t.auto.reopened === 1 ? '' : 's'} after being marked done.` : ''}
+          </p>
+          {t.auto.pages.length > 0 && <p className="adm-muted" style={{ margin: 0 }}>Pages: {t.auto.pages.join(', ')}</p>}
+          {t.auto.builds.length > 0 && <p className="adm-muted" style={{ margin: 0 }}>Builds: {t.auto.builds.join(', ')}</p>}
+          {t.auto.samples.map((s, i) => <pre key={i} className="tkp-sample">{s}</pre>)}
+        </div>
+      )}
+
       {(t.comments ?? []).map((cm, i) => (
         <div key={i} className="tkp-comment"><span className="adm-muted">Follow-up · {when(cm.at)}</span><p>{cm.text}</p></div>
       ))}
@@ -377,10 +392,12 @@ function Detail({ t, onSave, onDelete }: {
         ))}
       </div>
 
-      <label className="adm-field">Reply (they will see this)
-        <textarea className="tkp-text" rows={3} maxLength={4000} value={reply} onChange={(e) => setReply(e.target.value)} />
-      </label>
-      <div><button type="button" className="tkp-btn" disabled={reply.trim() === (t.reply?.text ?? '')} onClick={() => void onSave(t, { reply }, 'Reply saved')}>Save reply</button></div>
+      {!t.auto && (<>
+        <label className="adm-field">Reply (they will see this)
+          <textarea className="tkp-text" rows={3} maxLength={4000} value={reply} onChange={(e) => setReply(e.target.value)} />
+        </label>
+        <div><button type="button" className="tkp-btn" disabled={reply.trim() === (t.reply?.text ?? '')} onClick={() => void onSave(t, { reply }, 'Reply saved')}>Save reply</button></div>
+      </>)}
 
       <label className="adm-field">Private note (only you)
         <textarea className="tkp-text" rows={2} maxLength={4000} value={note} onChange={(e) => setNote(e.target.value)} />

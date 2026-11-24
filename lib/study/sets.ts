@@ -210,12 +210,18 @@ export function setBrief(data: TestsData, progress: ProgressData, setId: string)
 }
 
 /** A nudge from her last score, which she's free to ignore. Null means leave it where it is. */
+/**
+ * The next test's level from how the last one went: a step up from the level it was
+ * taken at after 85% or more, a step down after under 50%. Null when the level shown
+ * (`current`) is already there or past it, so applying it can't step twice.
+ */
 export function suggestDifficulty(brief: SetBrief, current: number) {
   const last = brief.scores[brief.scores.length - 1];
   if (!last?.total) return null;
   const share = last.right / last.total;
-  if (share >= 0.85 && current < MAX_DIFFICULTY) return { level: current + 1, why: `You got ${Math.round(share * 100)}% on ${last.title}, so a harder one might be worth it.` };
-  if (share < 0.5 && current > 1) return { level: current - 1, why: `You got ${Math.round(share * 100)}% on ${last.title}, so an easier one might help the basics stick.` };
+  const base = last.difficulty ?? current;
+  if (share >= 0.85 && base < MAX_DIFFICULTY && current < base + 1) return { level: base + 1, why: `You got ${Math.round(share * 100)}% on ${last.title}, so the next one is a step harder.` };
+  if (share < 0.5 && base > 1 && current > base - 1) return { level: base - 1, why: `You got ${Math.round(share * 100)}% on ${last.title}, so the next one is a step easier, to help the basics stick.` };
   return null;
 }
 

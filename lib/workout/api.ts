@@ -18,6 +18,11 @@ export function handleApiError(error: unknown, context?: string) {
     return jsonError(error.status, error.message);
   }
   console.error(context ? `${context}:` : 'Workout API error:', error);
+  // Filed as the site's own ticket; loaded only when something has actually gone wrong.
+  void import('@/lib/tickets/auto-store').then(({ describeError, recordServerIssue }) => {
+    const { title, detail } = describeError(error);
+    recordServerIssue({ source: 'server', title: `${context ?? 'API error'}: ${title}`, detail });
+  }).catch(() => {});
   return jsonError(500, 'Server error');
 }
 

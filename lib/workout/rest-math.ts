@@ -152,11 +152,11 @@ export function makeDrillProblem(targets: DrillTarget[], random: () => number = 
   return makeProblem(4, random);
 }
 
-/** The level after an answer, and the run of right answers so far. */
-export function nextLevel(level: number, streak: number, right: boolean): { level: number; streak: number } {
+/** The level after an answer, and the run of right answers so far. `streakUp` is tuned to each person. */
+export function nextLevel(level: number, streak: number, right: boolean, streakUp = STREAK_UP): { level: number; streak: number } {
   if (!right) return { level: Math.max(1, level - 1), streak: 0 };
   const run = streak + 1;
-  return run >= STREAK_UP ? { level: Math.min(MAX_LEVEL, level + 1), streak: 0 } : { level, streak: run };
+  return run >= streakUp ? { level: Math.min(MAX_LEVEL, level + 1), streak: 0 } : { level, streak: run };
 }
 
 /** Checked once enough digits are typed: right, wrong, or keep typing. */

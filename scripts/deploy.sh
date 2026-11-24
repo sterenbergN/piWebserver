@@ -17,8 +17,10 @@
 #
 # Safety: downloads over HTTPS from GitHub, checks the SHA-256 published with
 # the release (and GitHub's build attestation when the `gh` CLI is installed),
-# switches with an atomic symlink swap, health-checks the new build and
-# automatically rolls back if it doesn't come up. Data is never inside a
+# switches with an atomic symlink swap, health-checks the new build, loads its
+# main pages (smoke-check.mjs, shipped in each release) and automatically rolls
+# back if it doesn't come up or a page fails. A rollback is noted in
+# shared/data/deploy-events.jsonl, which the site files as one of its own tickets. Data is never inside a
 # release, so an update can't overwrite it.
 set -euo pipefail
 
@@ -125,6 +127,19 @@ wait_healthy() { # wait_healthy <expected-build>
   return 1
 }
 
+record_event() { # record_event <kind> <message> — a line the site turns into a ticket on its next start
+  mkdir -p "$SHARED/data"
+  node -e 'const [file, kind, tag, prev, msg] = process.argv.slice(1); require("fs").appendFileSync(file, JSON.stringify({ at: new Date().toISOString(), kind, tag, previous: prev, message: msg }) + "
+")'     "$SHARED/data/deploy-events.jsonl" "$1" "${tag:-}" "${previous:-}" "$2" || true
+}
+
+smoke_ok() { # smoke_ok <release-dir> — the release's own page check, if it has one
+  [[ -f "$1/smoke-check.mjs" ]] || return 0
+  node "$1/smoke-check.mjs" "http://127.0.0.1:$PORT" > "$TMP/smoke.log" 2>&1 && return 0
+  cat "$TMP/smoke.log"
+  return 1
+}
+
 prune() {
   local keep_now; keep_now="$(current_tag)"
   ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r dir; do
@@ -215,13 +230,21 @@ log "Switching ${previous:-(none)} -> $tag"
 switch_to "$dest"
 restart_app
 
-if wait_healthy "$build_id"; then
+healthy=1; problem=""
+if ! wait_healthy "$build_id"; then
+  healthy=""; problem="did not become healthy within ${HEALTH_TIMEOUT}s"
+elif ! smoke_ok "$dest"; then
+  healthy=""; problem="$(tail -n1 "$TMP/smoke.log" 2>/dev/null || echo 'a page failed')"
+fi
+
+if [[ -n "$healthy" ]]; then
   log "✔ $tag is live"
   cp "$dest/deploy.sh" "$APP_DIR/deploy.sh" 2>/dev/null && chmod +x "$APP_DIR/deploy.sh" || true
   prune
   rm -rf "$TMP"
 else
-  log "New build did not become healthy within ${HEALTH_TIMEOUT}s"
+  log "New build $problem"
+  record_event "rolled-back" "$problem"
   if [[ -n "$previous" && -d "$RELEASES/$previous" ]]; then
     switch_to "$RELEASES/$previous"; restart_app
     if wait_healthy "$(json_field "$RELEASES/$previous/build-info.json" 'r.id')"; then log "Rolled back to $previous — site is up"; else log "Rolled back to $previous but it is not answering yet"; fi

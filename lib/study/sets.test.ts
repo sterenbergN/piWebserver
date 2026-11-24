@@ -233,7 +233,9 @@ test('difficulty nudges follow the last score', () => {
   const progress = emptyProgress();
   assert.equal(suggestDifficulty(setBrief(data, progress, set.id)!, 3), null, 'nothing taken yet');
   take(progress, first, [0, 0, 0]);
-  assert.equal(suggestDifficulty(setBrief(data, progress, set.id)!, 3)?.level, 4);
+  // Taken at level 2 with 100%: one step up from there, not from wherever the slider is.
+  assert.equal(suggestDifficulty(setBrief(data, progress, set.id)!, 2)?.level, 3);
+  assert.equal(suggestDifficulty(setBrief(data, progress, set.id)!, 3), null, 'already a step up, so applying it can’t step twice');
   assert.equal(suggestDifficulty(setBrief(data, progress, set.id)!, 5), null, 'already at the top');
   take(progress, second, [1, 1]);
   const low = suggestDifficulty(setBrief(data, progress, set.id)!, 3);

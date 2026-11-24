@@ -2,7 +2,7 @@ import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
 import data from './data/puzzles.json';
 import { type Puzzle } from './puzzle';
-import type { ChessProgress } from './rating';
+import { aimOffset, type ChessProgress } from './rating';
 import { fetchLichessPuzzles } from './refill';
 
 // The bundled puzzles (from the Lichess puzzle database, CC0; rebuilt by
@@ -120,16 +120,17 @@ export const AUTO_REFILL_RULES = {
   count: 120,
 } as const;
 
-/** Unsolved, non-recent puzzles within `window` of where puzzles are aimed (`rating - 50`). */
+/** Unsolved, non-recent puzzles within `window` of where this person's puzzles are aimed. */
 export function puzzlesLeftNear(
   puzzles: Pick<Puzzle, 'id' | 'rating'>[],
-  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent'>,
+  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent' | 'aim'>,
   window = AUTO_REFILL_WINDOW,
   stopAt = Infinity,
+  siteAimOffset?: number,
 ): number {
   const solved = new Set(progress.solved);
   const recent = new Set(progress.recent);
-  const aim = progress.rating - 50;
+  const aim = progress.rating - aimOffset(progress, siteAimOffset);
   let remaining = 0;
   for (const p of puzzles) {
     if (solved.has(p.id) || recent.has(p.id)) continue;
@@ -138,10 +139,10 @@ export function puzzlesLeftNear(
   return remaining;
 }
 
-/** True when fewer than `threshold` unsolved, non-recent puzzles exist near `progress.rating - 50`. */
+/** True when fewer than `threshold` unsolved, non-recent puzzles exist near where this person's puzzles are aimed. */
 export function needsAutoRefill(
   puzzles: Pick<Puzzle, 'id' | 'rating'>[],
-  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent'>,
+  progress: Pick<ChessProgress, 'rating' | 'solved' | 'recent' | 'aim'>,
   threshold = AUTO_REFILL_THRESHOLD,
   window = AUTO_REFILL_WINDOW,
 ): boolean {
@@ -183,18 +184,39 @@ export function solvedByBand(puzzles: Pick<Puzzle, 'id' | 'rating'>[], solved: s
 }
 
 /** The pool plus its rating spread and when the next automatic refill could run. */
-export async function getPoolDetails() {
+export async function getPoolDetails(rules: RefillRules = AUTO_REFILL_RULES) {
   const extra = await loadExtraPuzzles();
   const pool = summarizePool(extra.length ? [...PUZZLES, ...extra] : PUZZLES, extra.length);
   return {
     pool,
     buckets: ratingBuckets(PUZZLES, extra),
     maxExtra: MAX_EXTRA_PUZZLES,
-    autoRefill: { ...AUTO_REFILL_RULES, nextPossibleAt: lastAttemptAt ? new Date(lastAttemptAt + REFILL_COOLDOWN_MS).toISOString() : null },
+    autoRefill: { ...rules, nextPossibleAt: lastAttemptAt ? new Date(lastAttemptAt + rules.cooldownMinutes * 60_000).toISOString() : null },
   };
 }
 
+export type RefillRules = { threshold: number; window: number; count: number; cooldownMinutes: number };
+
+/** One top-up, for the admin's numbers and tuning suggestions (.data/workout/chess/refill-log.json, the last 100). */
+export type RefillLogEntry = { at: string; trigger: 'auto' | 'admin'; requested: number; added: number; forRating?: number; error?: string };
+const refillLogFile = () => path.join(process.cwd(), '.data', 'workout', 'chess', 'refill-log.json');
+
+export async function readRefillLog(): Promise<RefillLogEntry[]> {
+  const stored = await readJson<{ entries?: RefillLogEntry[] }>(refillLogFile(), { entries: [] }).catch(() => ({ entries: [] }));
+  return Array.isArray(stored.entries) ? stored.entries : [];
+}
+
+async function logRefill(entry: RefillLogEntry) {
+  await updateJson<{ entries: RefillLogEntry[] }, void>(refillLogFile(), { entries: [] }, (stored) => {
+    stored.entries = [...(Array.isArray(stored.entries) ? stored.entries : []), entry].slice(-100);
+  }).catch(() => {});
+}
+
 export type RefillOptions = {
+  /** Who asked: the background top-up or the admin (for the log). */
+  trigger?: 'auto' | 'admin';
+  /** The rating of the player the top-up was for. */
+  forRating?: number;
   count?: number;
   minRating?: number;
   maxRating?: number;
@@ -254,9 +276,11 @@ export async function refillPuzzlePool(options: RefillOptions = {}): Promise<{ a
       lastRefillAt = now;
       lastRefillAdded = added.length;
       lastError = null;
+      void logRefill({ at: now, trigger: options.trigger ?? 'admin', requested, added: added.length, ...(options.forRating ? { forRating: options.forRating } : {}) });
       return { added: added.length, pool: summarizePool([...PUZZLES, ...updated], updated.length) };
     } catch (err) {
       lastError = err instanceof Error ? err.message : 'Failed to load puzzles from Lichess';
+      void logRefill({ at: new Date().toISOString(), trigger: options.trigger ?? 'admin', requested: options.count ?? 0, added: 0, error: lastError });
       throw err;
     } finally {
       inFlightRefill = null;
@@ -271,17 +295,19 @@ export async function refillPuzzlePool(options: RefillOptions = {}): Promise<{ a
  * Trigger a non-blocking background refill when the signed-in user is running
  * low on unsolved puzzles near their current rating.
  */
-export function maybeAutoRefill(progress: ChessProgress, currentPool?: Puzzle[]): boolean {
+export function maybeAutoRefill(progress: ChessProgress, currentPool?: Puzzle[], rules: RefillRules = AUTO_REFILL_RULES, siteAimOffset?: number): boolean {
   if (inFlightRefill) return false;
-  if (Date.now() - lastAttemptAt < REFILL_COOLDOWN_MS) return false;
+  if (Date.now() - lastAttemptAt < rules.cooldownMinutes * 60_000) return false;
   if (cachedExtra && cachedExtra.length >= MAX_EXTRA_PUZZLES) return false;
 
   const pool = currentPool ?? (cachedExtra ? [...PUZZLES, ...cachedExtra] : PUZZLES);
-  if (!needsAutoRefill(pool, progress)) return false;
+  if (!needsAutoRefill(pool, progress, rules.threshold, rules.window)) return false;
 
-  const minRating = Math.max(400, Math.floor((progress.rating - 250) / 100) * 100);
-  const maxRating = Math.min(2800, Math.ceil((progress.rating + 250) / 100) * 100);
-  void refillPuzzlePool({ count: AUTO_REFILL_RULES.count, minRating, maxRating }).catch((err) => {
+  // Around where this person's puzzles are aimed, not just their rating.
+  const center = progress.rating - aimOffset(progress, siteAimOffset);
+  const minRating = Math.max(400, Math.floor((center - 250) / 100) * 100);
+  const maxRating = Math.min(2800, Math.ceil((center + 250) / 100) * 100);
+  void refillPuzzlePool({ count: rules.count, minRating, maxRating, trigger: 'auto', forRating: progress.rating }).catch((err) => {
     console.error('Background chess puzzle refill failed:', err instanceof Error ? err.message : err);
   });
   return true;

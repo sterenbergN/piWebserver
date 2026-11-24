@@ -6,7 +6,7 @@ import {
   boardSquares, checkedKing, playerColor, replaysCleanly, retry, showAnswer, showNextMove, solutionSan, solvedCleanly, startPuzzle, targetsFrom, tryMove,
   withPromotion, type Puzzle,
 } from './puzzle';
-import { emptyChessProgress, normalizeChessProgress, pickPuzzle, recordResult, START_RATING, updatedRating } from './rating';
+import { aimOffset, emptyChessProgress, normalizeChessProgress, pickPuzzle, recordResult, START_RATING, tuneAim, updatedRating } from './rating';
 import { fetchLichessPuzzles, parseLichessPuzzleRow } from './refill';
 
 // Mate in 1 from a real Lichess puzzle: black's queen takes on h1, then Qf7 is mate.
@@ -245,4 +245,28 @@ test('parseLichessPuzzleRow and fetchLichessPuzzles stream pzstd frames and stop
   });
 
   assert.deepEqual(result.added.map((p) => p.id), ['new1', 'new2']);
+});
+
+test('puzzle difficulty tunes itself toward 55–75% clean between sets', () => {
+  const now = new Date('2026-11-24T12:00:00Z');
+  let aim = tuneAim(undefined, true, 50, now);
+  for (let i = 0; i < 10; i++) aim = tuneAim(aim, true, 50, now);
+  assert.equal(aim.offset, 50, 'not enough puzzles yet');
+  aim = tuneAim(aim, true, 50, now);
+  assert.equal(aim.offset, 25, 'all clean: aimed closer to the rating');
+  assert.deepEqual(aim.changes, [{ at: now.toISOString(), from: 50, to: 25, cleanRate: 1 }]);
+  assert.deepEqual(aim.results, []);
+  for (let i = 0; i < 12; i++) aim = tuneAim(aim, i % 3 === 0, 50, now);
+  assert.equal(aim.offset, 50, 'a third clean: further below again');
+  for (let i = 0; i < 12; i++) aim = tuneAim(aim, i % 3 !== 0, 50, now);
+  assert.equal(aim.offset, 50, 'two thirds clean is about right: no change');
+  for (let r = 0; r < 20; r++) for (let i = 0; i < 12; i++) aim = tuneAim(aim, false, 50, now);
+  assert.equal(aim.offset, 250, 'never more than 250 below');
+  // Picking follows the tuned aim, and recordResult keeps tuning it.
+  const pool = [{ id: 'easy', rating: 900 }, { id: 'near', rating: 1150 }];
+  const tuned = { ...emptyChessProgress(), rating: 1200, aim: { offset: 300, results: [], changes: [] } };
+  assert.equal(pickPuzzle(pool, tuned, { random: () => 0 })?.id, 'easy');
+  assert.equal(pickPuzzle(pool, { ...tuned, aim: undefined }, { random: () => 0 })?.id, 'near');
+  assert.equal(recordResult(emptyChessProgress(), { id: 'p', rating: 1100 }, true, 75).aim?.offset, 75);
+  assert.equal(aimOffset({}, 60), 60);
 });

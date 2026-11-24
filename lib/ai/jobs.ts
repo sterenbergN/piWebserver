@@ -36,9 +36,11 @@ type Options = {
   perHour?: number;
   keepMs?: number;
   now?: () => number;
+  /** Told about failures worth a look (not rate limits, busy or a missing setup). */
+  onFailure?: (failure: { task?: AiTask; kind: string; message: string; model: string }) => void;
 };
 
-export function createAiJobs({ loadSettings, providerFor, pickModel = async (conn, task) => modelForTask(conn, null, task).id, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now }: Options) {
+export function createAiJobs({ loadSettings, providerFor, pickModel = async (conn, task) => modelForTask(conn, null, task).id, timeoutMs = 5 * 60_000, perHour = 30, keepMs = 15 * 60_000, now = Date.now, onFailure }: Options) {
   const jobs = new Map<string, AiJob & { controller: AbortController }>();
   const limiter = createLimiter({ max: perHour, windowMs: 60 * 60_000 });
 
@@ -97,6 +99,7 @@ export function createAiJobs({ loadSettings, providerFor, pickModel = async (con
           const e = error instanceof AiError ? error : new AiError('unknown', 'Something went wrong talking to the AI.');
           // The kind only: never the prompt, the reply or anything with the key in it.
           console.warn(`AI reply failed (${e.kind})`);
+          if (!['rate', 'busy', 'not-set-up', 'not-allowed'].includes(e.kind)) onFailure?.({ task, kind: e.kind, message: e.message, model });
           finish({ status: 'error', error: e.message, errorKind: e.kind });
         });
       return view(job);

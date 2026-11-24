@@ -75,6 +75,8 @@ for (const file of git('ls-files', 'public/uploads', 'public/content').split('\n
 
 // The deploy script travels with each release so updates can update it too.
 await cp(path.join(root, 'scripts', 'deploy.sh'), path.join(out, 'deploy.sh'));
+// deploy.sh runs the new build's own page check after switching to it.
+await cp(path.join(root, 'scripts', 'smoke-check.mjs'), path.join(out, 'smoke-check.mjs'));
 
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 await writeFile(path.join(out, 'build-info.json'), JSON.stringify({

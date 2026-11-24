@@ -5,6 +5,7 @@ import { AiClientError, generateReply, useAiStatus } from '@/lib/ai/client';
 import type { AiAttachment } from '@/lib/ai/attachments';
 import type { AiTask } from '@/lib/ai/tasks';
 import { fileSize, pickFiles } from './attach-files';
+import { reportProblem } from '@/components/AutoErrorReporter';
 import { conversionById, kindOf } from '@/lib/convert/formats';
 import { loadPiTools, runOnPi } from '@/components/tools/converter/run-pi';
 import './ai.css';
@@ -102,6 +103,8 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
       onReply(reply);
       const problem = check?.(reply);
       if (problem) {
+        // Counted as the site's own ticket: a prompt or a reader that keeps failing needs work.
+        reportProblem(`AI reply for ${task} couldn’t be read by the page`, { source: 'ai', detail: `${model}: ${problem}` });
         setState('error');
         // The page's own message is about pasting, so it isn't repeated here; the text is in the box to look at.
         setMessage(`${model}’s reply came out in a form this page can’t read. Generate again, or copy the prompt into your own AI.`);

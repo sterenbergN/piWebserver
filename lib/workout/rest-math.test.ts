@@ -5,7 +5,10 @@ import {
   emptyMathStats,
   normalizeMathStats,
   drillTargets,
+  levelUpsIn,
   problemHistory,
+  streakUpFor,
+  tuneLevelRule,
   recordSprintStats,
   summarizeMathStats,
   timesGrid,
@@ -139,6 +142,7 @@ test('recordSprintStats clamps ms, caps answers, and accumulates per-op stats', 
     pairs: {},
     problems: {},
     drills: 0,
+    levelRule: { streakUp: 3, ups: 0, bounces: 0, changes: [] },
   });
 
   // Caps answers at 200 and score at 200.
@@ -339,4 +343,25 @@ test('drills aim at weak facts, and their problems are well formed', () => {
     }
   }
   assert.ok(makeDrillProblem([], random).text);
+});
+
+test('the level rule tunes itself: drops straight back ask for more right in a row, none ask for fewer', () => {
+  const a = (level: number, right: boolean) => ({ op: 'add' as const, right, ms: 1000, level });
+  // Up from 2 to 3 then a miss right away (a drop); up from 2 to 3 again, then 3 to 4, both sticking.
+  assert.deepEqual(levelUpsIn([a(2, true), a(3, false), a(2, true), a(2, true), a(3, true), a(4, true), a(4, true), a(4, true)]), { ups: 3, bounces: 1 });
+  const now = new Date('2026-11-24T12:00:00Z');
+  let rule = tuneLevelRule(undefined, { ups: 6, bounces: 4 }, 3, now);
+  assert.equal(rule.streakUp, 3, 'not enough level-ups to go on yet');
+  rule = tuneLevelRule(rule, { ups: 6, bounces: 2 }, 3, now);
+  assert.equal(rule.streakUp, 4, '6 of 12 dropped straight back');
+  assert.deepEqual(rule.changes, [{ at: now.toISOString(), from: 3, to: 4, dropRate: 0.5 }]);
+  assert.equal(rule.ups, 0);
+  rule = tuneLevelRule(rule, { ups: 12, bounces: 0 }, 3, now);
+  assert.equal(rule.streakUp, 3, 'none dropped: one fewer');
+  for (let i = 0; i < 5; i++) rule = tuneLevelRule(rule, { ups: 12, bounces: 12 }, 3, now);
+  assert.equal(rule.streakUp, 5, 'never past 5');
+  assert.equal(streakUpFor({}, 3), 3);
+  assert.equal(streakUpFor({ levelRule: rule }, 3), 5);
+  assert.deepEqual(nextLevel(2, 3, true, 5), { level: 2, streak: 4 });
+  assert.deepEqual(nextLevel(2, 4, true, 5), { level: 3, streak: 0 });
 });

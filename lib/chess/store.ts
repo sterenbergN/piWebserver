@@ -1,5 +1,6 @@
 import path from 'path';
 import { readJson, updateJson } from '@/lib/json-store';
+import { getSiteTuning } from '@/lib/tuning/site';
 import { emptyChessProgress, normalizeChessProgress, recordResult, type ChessProgress } from './rating';
 
 // One small file per account: .data/workout/chess/<userId>.json, the puzzle
@@ -15,9 +16,10 @@ export async function readChessProgress(userId: string): Promise<ChessProgress> 
 }
 
 export async function saveChessResult(userId: string, puzzle: { id: string; rating: number }, cleanSolve: boolean) {
+  const { chessAimOffset: siteAimOffset } = await getSiteTuning();
   return updateJson<ChessProgress, { before: number; after: ChessProgress }>(chessFile(userId), emptyChessProgress(), (stored) => {
     const current = normalizeChessProgress(stored);
-    const next = recordResult(current, puzzle, cleanSolve);
+    const next = recordResult(current, puzzle, cleanSolve, siteAimOffset);
     Object.assign(stored, next);
     return { before: current.rating, after: next };
   });
