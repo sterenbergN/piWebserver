@@ -96,6 +96,20 @@ Without it, "Turn into text" says so and nothing else is affected. Set
 A new recording starts being turned into text as soon as its sound reaches the
 Pi, and the text shows as it's heard; older ones wait for the button.
 
+Tools › File converter does images, PDFs, zips and CSV/JSON in the browser, with
+nothing to install. Its audio and video conversions use the same ffmpeg, and its
+Office ones (PowerPoint, Word, Excel to PDF and back) need LibreOffice, which is a
+large install, so it's left to you:
+
+```sh
+sudo apt install --no-install-recommends libreoffice-impress libreoffice-writer libreoffice-calc
+```
+
+Until then those options say what's missing. The converter checks every ten
+minutes, so no restart is needed. Set `SOFFICE_PATH` in `shared/env` for a
+LibreOffice somewhere other than the PATH. Files sent to the Pi are converted one
+at a time in the system temp folder and deleted 30 minutes after they finish.
+
 The Reader can save a YouTube video's sound as an audio book ("Add a book" →
 "Audio from YouTube"). That needs ffmpeg (above) and yt-dlp. Install yt-dlp's
 own build rather than Pi OS's package, which falls behind YouTube's changes:

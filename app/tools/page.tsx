@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react';
 import CalculatorTool from '@/components/tools/CalculatorTool';
 import MoviePickerTool from '@/components/tools/MoviePickerTool';
 import RestaurantPickerTool from '@/components/tools/RestaurantPickerTool';
+import ConverterTool from '@/components/tools/ConverterTool';
 import './tools.css';
 
 const TOOLS = [
   { id: 'calculators', icon: '🧮', label: 'Calculators' },
   { id: 'movies', icon: '🎬', label: 'Movie picker' },
   { id: 'food', icon: '🍽️', label: 'Where to eat' },
+  { id: 'convert', icon: '🔄', label: 'File converter' },
 ] as const;
 type ToolId = (typeof TOOLS)[number]['id'];
 
@@ -55,6 +57,7 @@ export default function ToolsPage() {
         {tool === 'calculators' && <CalculatorTool />}
         {tool === 'movies' && <MoviePickerTool />}
         {tool === 'food' && <RestaurantPickerTool />}
+        {tool === 'convert' && <ConverterTool />}
       </div>
     </div>
   );

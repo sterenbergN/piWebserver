@@ -214,6 +214,7 @@ export function navGroups(isAdmin: boolean): NavGroup[] {
         { href: '/golf', label: 'Golf & disc golf', icon: '⛳', short: 'Golf', blurb: 'Score rounds, measure shots, see your numbers', keywords: 'golf disc golf scorecard handicap gps distance basket frisbee lost disc' },
         { href: '/tools#movies', label: 'Movie picker', icon: '🎬', short: 'Movies', blurb: 'What to watch tonight', keywords: 'film random' },
         { href: '/tools#food', label: 'Where to eat', icon: '🍽️', short: 'Eat', blurb: 'Pick a restaurant for you', keywords: 'restaurant dinner' },
+        { href: '/tools#convert', label: 'File converter', icon: '🔄', short: 'Convert', blurb: 'PDFs, photos, audio, Office files: no sketchy websites', keywords: 'convert pdf png jpg jpeg heic webp ico mp3 mp4 gif docx pptx powerpoint word excel csv json zip unzip merge split rotate' },
       ],
     },
     {

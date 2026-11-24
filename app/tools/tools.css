@@ -439,3 +439,34 @@
 .tl-price-per { flex: 1 1 6rem; display: flex; flex-direction: column; align-items: flex-end; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .tl-price-per small { font-size: 0.72rem; font-weight: 700; color: var(--success-light); }
 .tl-price-per small.tl-muted { color: var(--muted); }
+
+/* File converter (components/tools/ConverterTool.tsx) */
+.tl-conv { display: flex; flex-direction: column; gap: 0.9rem; }
+.tl-conv-intro, .tl-conv-note { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+.tl-conv-drop { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.75rem; padding: 1.4rem 1rem; border: 2px dashed var(--surface-border); border-radius: 14px; color: var(--muted); font-size: 0.9rem; }
+.tl-conv-drop.is-over { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.06); }
+.tl-conv-files, .tl-conv-results ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.tl-conv-files li, .tl-conv-results li { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; border: 1px solid var(--surface-border); border-radius: 10px; font-size: 0.9rem; }
+.tl-conv-files li button { min-width: 32px; min-height: 32px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 1rem; }
+.tl-conv-files li button:hover:not(:disabled) { color: var(--foreground); background: var(--input-bg); }
+.tl-conv-files li button:disabled { opacity: 0.35; cursor: default; }
+.tl-conv-files li.tl-conv-files-foot { border: 0; padding: 0; justify-content: flex-end; }
+.tl-conv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-conv-size { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl-conv-link { padding: 0; border: 0; background: none; color: var(--accent-light); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.85rem; }
+.tl-conv-choices { display: flex; flex-direction: column; gap: 0.6rem; }
+.tl-conv-group { margin: 0 0 0.3rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.tl-conv-pi { opacity: 0.75; font-weight: 500; }
+.tl-conv .tl-chip:disabled { opacity: 0.5; }
+.tl-conv-options { display: flex; flex-direction: column; gap: 0.65rem; padding-top: 0.75rem; border-top: 1px solid var(--surface-border); }
+.tl-conv-options > label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); }
+.tl-conv-options > label strong { color: var(--foreground); }
+.tl-conv-options > label.tl-conv-check { flex-direction: row; align-items: center; gap: 0.5rem; color: var(--foreground); }
+.tl-conv-go { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.tl-conv-where { font-size: 0.8rem; color: var(--muted); }
+.tl-conv-status { margin: 0; font-size: 0.88rem; }
+.tl-conv-error { margin: 0; font-size: 0.88rem; color: var(--danger); }
+.tl-conv-results { display: flex; flex-direction: column; gap: 0.5rem; }
+.tl-conv-results li .btn { padding: 0.35rem 0.8rem; font-size: 0.85rem; }
+.tl-conv-list summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.tl-conv-list ul { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; line-height: 1.6; color: var(--muted); }

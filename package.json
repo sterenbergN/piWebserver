@@ -23,6 +23,7 @@
     "barcode-detector": "3.2.4",
     "chess.js": "1.4.0",
     "fflate": "^0.8.3",
+    "heic-to": "^1.6.7",
     "katex": "^0.16.47",
     "leaflet": "^1.9.4",
     "mathjax-full": "^3.2.2",
