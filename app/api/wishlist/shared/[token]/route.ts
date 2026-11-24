@@ -3,7 +3,7 @@ import { clientAddress, createLimiter } from '@/lib/security/rate-limit';
 import { getAuthenticatedWorkoutUserId } from '@/lib/security/server-auth';
 import { ApiError, handleApiError, readJsonObject } from '@/lib/workout/api';
 import { ClaimError, claimItem, unclaimItem, whoFromKey } from '@/lib/wishlist/claims';
-import { isShareToken } from '@/lib/wishlist/model';
+import { groupSiblings, isShareToken } from '@/lib/wishlist/model';
 import { loadSharedView } from '@/lib/wishlist/shared';
 import { editClaims, newId, resolveShare } from '@/lib/wishlist/store';
 
@@ -35,7 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ token:
       try {
         const who = whoFromKey(body.key);
         await editClaims(found.ownerId, (claims) => {
-          if (body.action === 'claim') claimItem(claims, item, who, body, newId);
+          if (body.action === 'claim') claimItem(claims, item, who, body, newId, undefined, groupSiblings(found.list, item.id));
           else unclaimItem(claims, item.id, who);
         });
       } catch (error) {

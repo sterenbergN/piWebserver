@@ -4,9 +4,11 @@ import { useMemo, useState } from 'react';
 import type { Suggestion } from '@/lib/wishlist/ai';
 import { shoppingSearchUrl } from '@/lib/wishlist/ai';
 import {
-  formatPrice, listAsText, mustHaveTotal, PRIORITY_LABELS, sortItems, type ItemFields, type ItemView, type ListKind, type OwnerList, type SortMode,
+  arrangeGroups, formatPrice, listAsText, mustHaveTotal, pickOfGroup, PRIORITY_LABELS, sortItems,
+  type ItemFields, type ItemView, type ListKind, type OwnerList, type SortMode,
 } from '@/lib/wishlist/model';
 import GiverList, { Thumb } from './GiverList';
+import GroupSheet from './GroupSheet';
 import { IdeasSheet, ItemSheet, ListSheet, ShareSheet } from './Sheets';
 import { ReceivedSheet, TidySheet } from './Tidy';
 import { useWishlist } from './useWishlist';
@@ -14,7 +16,16 @@ import './wishlist.css';
 
 type Selection = { src: 'own'; id: string } | { src: 'shared'; ownerId: string; id: string };
 
-const clientId = () => `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+/** "2 hours ago", for when the daily check last read a price. */
+function checkedAgo(iso: string): string {
+  const hours = Math.round((Date.now() - Date.parse(iso)) / 3_600_000);
+  if (!(hours >= 1)) return 'just now';
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+const clientId = () =>`w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 /** /wishlist: my lists (things I want, and private gift ideas for other people) and lists shared with me. */
 export default function WishlistApp() {
@@ -22,17 +33,28 @@ export default function WishlistApp() {
   const [sel, setSel] = useState<Selection | null>(null);
   const [sort, setSort] = useState<SortMode>('mine');
   const [sheet, setSheet] = useState<
-    | { type: 'newList'; kind: ListKind } | { type: 'editList' } | { type: 'item'; id: string | null } | { type: 'share' } | { type: 'ideas' } | { type: 'tidy' } | { type: 'received' } | null
+    | { type: 'newList'; kind: ListKind } | { type: 'editList' } | { type: 'item'; id: string | null } | { type: 'share' } | { type: 'ideas' } | { type: 'tidy' } | { type: 'received' }
+    | { type: 'group'; id: string | null } | null
   >(null);
   const [link, setLink] = useState('');
   const [adding, setAdding] = useState(false);
   const [notice, setNotice] = useState('');
+  const [checking, setChecking] = useState(false);
 
   const own = w.lists.find((l) => sel?.src === 'own' && l.id === sel.id) ?? (sel ? null : w.lists[0] ?? null);
   const shared = sel?.src === 'shared' ? w.shared.find((s) => s.ownerId === sel.ownerId) : undefined;
   const sharedList = shared?.lists.find((l) => sel?.src === 'shared' && l.id === sel.id);
 
   const items = useMemo(() => (own ? sortItems(own.items, sort) : []), [own, sort]);
+  // Each group of alternatives as one block, the one its price rules pick on top.
+  const rows = useMemo(() => {
+    if (!own) return [];
+    const groups = own.groups.map((g) => {
+      const pick = pickOfGroup(g, own.items);
+      return { id: g.id, name: g.name, pick: pick?.itemId ?? '', reason: pick?.reason ?? '' };
+    });
+    return arrangeGroups(items, groups);
+  }, [own, items]);
 
   if (w.status === 'loading') return <div className="wl-page"><p className="wl-empty">Loading…</p></div>;
   if (w.status === 'signed-out') {
@@ -106,6 +128,55 @@ export default function WishlistApp() {
 
   const quickStart = async () => {
     for (const name of [['Wants', '🎁'], ['House', '🏠'], ['Needs', '🛒']]) await w.act({ type: 'addList', kind: 'mine', fields: { name: name[0], emoji: name[1] } });
+  };
+
+  const checkPricesNow = async () => {
+    setChecking(true);
+    setNotice('');
+    try {
+      const s = await w.checkPrices();
+      setNotice(s.checked
+        ? `Checked ${s.checked} price${s.checked === 1 ? '' : 's'}: ${s.updated} up to date${s.failed ? `, ${s.failed} couldn’t be read (see the note on each)` : ''}.`
+        : 'Nothing with a link to check.');
+    } catch (error) {
+      setNotice((error as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const renderItem = (listId: string, item: ItemView, onTop: boolean) => {
+    const index = items.indexOf(item);
+    return (
+      <li key={item.id} className={`wl-item${item.gotIt ? ' is-got' : ''}${onTop ? ' is-top' : ''}`}>
+        <Thumb url={item.imageUrl} title={item.title} />
+        <div className="wl-item-body">
+          <div className="wl-item-top">
+            <h3 className="wl-item-title">{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer nofollow">{item.title}</a> : item.title}</h3>
+            {onTop ? <span className="wl-pri wl-top">On top</span> : <span className={`wl-pri wl-pri-${item.priority}`}>{PRIORITY_LABELS[item.priority]}</span>}
+          </div>
+          <p className="wl-item-meta">
+            {item.price !== null && <strong>{formatPrice(item.price, item.currency)}</strong>}
+            {item.quantity > 1 && <span>x{item.quantity}</span>}
+            {item.store && <span>{item.store}</span>}
+            {item.gotIt && <span className="wl-got">Got it myself</span>}
+            {item.checkedAt && !item.checkNote && <span title={new Date(item.checkedAt).toLocaleString()}>price checked {checkedAgo(item.checkedAt)}</span>}
+            {item.checkNote && <span className="wl-check-note" title="From the daily price check">⚠ {item.checkNote}</span>}
+          </p>
+          {item.description && <p className="wl-item-desc">{item.description}</p>}
+          {item.note && <p className="wl-item-note">📝 {item.note}</p>}
+          <div className="wl-row wl-item-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'item', id: item.id })}>Edit</button>
+            {sort === 'mine' && (
+              <>
+                <button type="button" className="wl-icon" aria-label="Move up" disabled={index === 0} onClick={() => void w.act({ type: 'moveItem', listId, id: item.id, dir: -1 })}>↑</button>
+                <button type="button" className="wl-icon" aria-label="Move down" disabled={index === items.length - 1} onClick={() => void w.act({ type: 'moveItem', listId, id: item.id, dir: 1 })}>↓</button>
+              </>
+            )}
+          </div>
+        </div>
+      </li>
+    );
   };
 
   return (
@@ -214,6 +285,8 @@ export default function WishlistApp() {
           <div className="wl-toolbar">
             <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'ideas' })}>✨ Find more ideas</button>
             <button type="button" className="btn btn-secondary" disabled={!own.items.length} onClick={copyText}>📋 Copy as text</button>
+            <button type="button" className="btn btn-secondary" disabled={own.items.length < 2} onClick={() => setSheet({ type: 'group', id: null })}>🔀 Group alternatives</button>
+            <button type="button" className="btn btn-secondary" disabled={checking || !own.items.some((i) => i.url)} onClick={checkPricesNow}>{checking ? 'Checking prices…' : '↻ Check prices'}</button>
             <label className="wl-sort">Sort
               <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
                 <option value="mine">My order</option>
@@ -228,32 +301,16 @@ export default function WishlistApp() {
             <p className="wl-empty">Nothing here yet. Paste a link above, or find ideas.</p>
           ) : (
             <ul className="wl-items">
-              {items.map((item, index) => (
-                <li key={item.id} className={`wl-item${item.gotIt ? ' is-got' : ''}`}>
-                  <Thumb url={item.imageUrl} title={item.title} />
-                  <div className="wl-item-body">
-                    <div className="wl-item-top">
-                      <h3 className="wl-item-title">{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer nofollow">{item.title}</a> : item.title}</h3>
-                      <span className={`wl-pri wl-pri-${item.priority}`}>{PRIORITY_LABELS[item.priority]}</span>
+              {rows.map((row) => row.kind === 'item' ? renderItem(own.id, row.item, false) : (
+                <li key={row.id} className="wl-group">
+                  <div className="wl-group-head">
+                    <div>
+                      <h3><span aria-hidden>🔀</span> {row.name}</h3>
+                      <p className="wl-hint">Any one of these.{row.reason ? ` On top because ${row.reason}.` : ''}</p>
                     </div>
-                    <p className="wl-item-meta">
-                      {item.price !== null && <strong>{formatPrice(item.price, item.currency)}</strong>}
-                      {item.quantity > 1 && <span>x{item.quantity}</span>}
-                      {item.store && <span>{item.store}</span>}
-                      {item.gotIt && <span className="wl-got">Got it myself</span>}
-                    </p>
-                    {item.description && <p className="wl-item-desc">{item.description}</p>}
-                    {item.note && <p className="wl-item-note">📝 {item.note}</p>}
-                    <div className="wl-row wl-item-actions">
-                      <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'item', id: item.id })}>Edit</button>
-                      {sort === 'mine' && (
-                        <>
-                          <button type="button" className="wl-icon" aria-label="Move up" disabled={index === 0} onClick={() => void w.act({ type: 'moveItem', listId: own.id, id: item.id, dir: -1 })}>↑</button>
-                          <button type="button" className="wl-icon" aria-label="Move down" disabled={index === items.length - 1} onClick={() => void w.act({ type: 'moveItem', listId: own.id, id: item.id, dir: 1 })}>↓</button>
-                        </>
-                      )}
-                    </div>
+                    <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'group', id: row.id })}>Edit group</button>
                   </div>
+                  <ul className="wl-items">{row.items.map((item) => renderItem(own.id, item, item.id === row.pick))}</ul>
                 </li>
               ))}
             </ul>
@@ -292,6 +349,11 @@ export default function WishlistApp() {
       {sheet?.type === 'tidy' && <TidySheet lists={w.lists} onClose={() => setSheet(null)} onDone={() => void w.load()} />}
       {sheet?.type === 'received' && <ReceivedSheet onClose={() => setSheet(null)} />}
       {sheet?.type === 'ideas' && own && <IdeasSheet list={own as OwnerList} onAdd={addIdea} onClose={() => setSheet(null)} />}
+      {sheet?.type === 'group' && own && (
+        <GroupSheet key={sheet.id ?? 'new'} list={own} group={own.groups.find((g) => g.id === sheet.id) ?? null} onClose={() => setSheet(null)}
+          onSave={async (draft) => { if (await w.act({ type: 'saveGroup', listId: own.id, id: sheet.id ?? clientId(), ...draft })) setSheet(null); }}
+          onDelete={sheet.id ? async () => { if (await w.act({ type: 'removeGroup', listId: own.id, id: sheet.id! })) setSheet(null); } : undefined} />
+      )}
     </div>
   );
 }

@@ -23,6 +23,17 @@ export async function registerNode() {
       setInterval(() => void resume(), 10 * 60_000).unref();
     }
 
+    // Wishlist prices are re-read once a day: looked at hourly, run when 23 hours have passed.
+    if (!(global as { _wishlistPricesStarted?: boolean })._wishlistPricesStarted) {
+      (global as { _wishlistPricesStarted?: boolean })._wishlistPricesStarted = true;
+      const checkPrices = async () => {
+        const { runDailyCheckIfDue } = await import('./lib/wishlist/prices');
+        await runDailyCheckIfDue(); // catches its own errors
+      };
+      setTimeout(() => void checkPrices().catch(() => {}), 2 * 60_000).unref();
+      setInterval(() => void checkPrices().catch(() => {}), 60 * 60_000).unref();
+    }
+
     // Try to prevent multiple intervals in dev mode HMR
     if (!(global as any)._statsCollectorStarted) {
       (global as any)._statsCollectorStarted = true;

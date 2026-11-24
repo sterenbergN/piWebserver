@@ -40,7 +40,9 @@ export function normalizeClaims(raw: unknown): ClaimsData {
 
 /**
  * Claim `qty` of an item (replacing this person's earlier claim on it). You can't
- * take more than are still wanted after everyone else's claims.
+ * take more than are still wanted after everyone else's claims. `siblings` are the
+ * other items in its group: one claim covers them all, so nobody else may claim
+ * one, and this person's claim on another moves to this one.
  */
 export function claimItem(
   data: ClaimsData,
@@ -49,14 +51,18 @@ export function claimItem(
   input: { qty?: unknown; name?: unknown; note?: unknown },
   newId: () => string,
   now = new Date(),
+  siblings: Pick<WishItem, 'id' | 'gotIt'>[] = [],
 ): void {
-  if (item.gotIt) throw new ClaimError('That one isn’t on the list any more.');
+  if (item.gotIt || siblings.some((s) => s.gotIt)) throw new ClaimError('That one isn’t on the list any more.');
+  const siblingIds = new Set(siblings.map((s) => s.id));
+  if (data.claims.some((c) => siblingIds.has(c.itemId) && c.who !== who)) throw new ClaimError('Someone is already getting one of these.');
   const qty = Math.round(Number(input.qty ?? 1));
   if (!Number.isFinite(qty) || qty < 1) throw new ClaimError('Pick how many you’re getting.');
   const others = data.claims.filter((c) => c.itemId === item.id && c.who !== who).reduce((sum, c) => sum + c.qty, 0);
   const left = item.quantity - others;
   if (left < 1) throw new ClaimError('Someone has just claimed the last one.');
   if (qty > left) throw new ClaimError(left === 1 ? 'Only 1 is still wanted.' : `Only ${left} are still wanted.`);
+  data.claims = data.claims.filter((c) => !(siblingIds.has(c.itemId) && c.who === who));
   const mine = data.claims.find((c) => c.itemId === item.id && c.who === who);
   if (!mine && data.claims.length >= MAX_CLAIMS) throw new ClaimError('This list has too many claims.');
   const next: Claim = { id: mine?.id ?? newId(), itemId: item.id, who, name: cleanText(input.name, 40), note: cleanText(input.note, 200), qty, at: now.toISOString() };

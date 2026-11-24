@@ -31,6 +31,7 @@ Work like a lead engineer: split big jobs, run the pieces in parallel, and check
 - **Pi-only tools:** ffmpeg and LibreOffice are installed on the Pi but not on the dev PC. Test conversions with a stand-in runner (`createConvertJobs({ runner })`), and say that the real run happens on the Pi.
 - **A connected AI** isn't set up locally. To see Generate-first layouts, load a page fresh, replace `window.fetch` so `/api/ai` answers `{ ready: true, … }`, then move with `window.next.router.push(…)`. The AI status is cached per page load, so a page that already asked has to be reloaded first.
 - **Self-filed tickets** are only sent from production builds. Set `localStorage['autoTickets:dev'] = '1'` to try them locally.
+- **Wishlist prices:** the Amazon price service (amazon-scraper) isn't on the dev PC. Run a stand-in that answers `/products/details?product=<ASIN>` with `{ price: { amount, currency } }`, point Admin › Wishlist prices at it, and clear the address afterwards.
 - **Install checks:** `node scripts/smoke-check.mjs http://127.0.0.1:3000` is the page check `deploy.sh` and CI run. Add new top-level pages to its list.
 
 ## Gotchas this codebase has already hit

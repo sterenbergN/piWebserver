@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { formatPrice, PRIORITY_LABELS, type GiverItem, type GiverList as GiverListData } from '@/lib/wishlist/model';
+import { arrangeGroups, formatPrice, PRIORITY_LABELS, type GiverItem, type GiverList as GiverListData } from '@/lib/wishlist/model';
 import './wishlist.css';
 
 export type ClaimInput = { qty: number; name: string; note: string };
@@ -17,17 +17,28 @@ export default function GiverList({ list, askName, onClaim, onUnclaim, readOnly 
   readOnly?: boolean;
 }) {
   if (!list.items.length) return <p className="wl-empty">Nothing on this list yet.</p>;
+  const row = (item: GiverItem, onTop = false) => (
+    <GiverRow key={item.id} item={item} onTop={onTop} askName={askName} readOnly={readOnly} onClaim={onClaim} onUnclaim={onUnclaim} />
+  );
   return (
     <ul className="wl-items">
-      {list.items.map((item) => (
-        <GiverRow key={item.id} item={item} askName={askName} readOnly={readOnly} onClaim={onClaim} onUnclaim={onUnclaim} />
+      {arrangeGroups(list.items, list.groups ?? []).map((r) => r.kind === 'item' ? row(r.item) : (
+        <li key={r.id} className="wl-group">
+          <div className="wl-group-head">
+            <div>
+              <h3><span aria-hidden>🔀</span> {r.name}</h3>
+              <p className="wl-hint">Any one of these would do. Best pick right now is first{r.reason ? `: ${r.reason}` : ''}.</p>
+            </div>
+          </div>
+          <ul className="wl-items">{r.items.map((item) => row(item, item.id === r.pick))}</ul>
+        </li>
       ))}
     </ul>
   );
 }
 
-function GiverRow({ item, askName, readOnly, onClaim, onUnclaim }: {
-  item: GiverItem; askName: boolean; readOnly?: boolean;
+function GiverRow({ item, onTop, askName, readOnly, onClaim, onUnclaim }: {
+  item: GiverItem; onTop: boolean; askName: boolean; readOnly?: boolean;
   onClaim: (itemId: string, input: ClaimInput) => Promise<void>;
   onUnclaim: (itemId: string) => Promise<void>;
 }) {
@@ -39,7 +50,8 @@ function GiverRow({ item, askName, readOnly, onClaim, onUnclaim }: {
   const [qty, setQty] = useState(item.mine?.qty ?? 1);
   const [name, setName] = useState(item.mine?.name ?? '');
   const [note, setNote] = useState(item.mine?.note ?? '');
-  const soldOut = !item.mine && left < 1;
+  // Someone is getting another of its group, which covers this one.
+  const soldOut = !item.mine && (left < 1 || item.groupTaken);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -48,12 +60,12 @@ function GiverRow({ item, askName, readOnly, onClaim, onUnclaim }: {
   };
 
   return (
-    <li className={`wl-item${soldOut ? ' is-taken' : ''}`}>
+    <li className={`wl-item${soldOut ? ' is-taken' : ''}${onTop ? ' is-top' : ''}`}>
       <Thumb url={item.imageUrl} title={item.title} />
       <div className="wl-item-body">
         <div className="wl-item-top">
           <h3 className="wl-item-title">{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer nofollow">{item.title}</a> : item.title}</h3>
-          <span className={`wl-pri wl-pri-${item.priority}`}>{PRIORITY_LABELS[item.priority]}</span>
+          {onTop ? <span className="wl-pri wl-top">Best pick</span> : <span className={`wl-pri wl-pri-${item.priority}`}>{PRIORITY_LABELS[item.priority]}</span>}
         </div>
         <p className="wl-item-meta">
           {item.price !== null && <strong>{formatPrice(item.price, item.currency)}</strong>}
@@ -72,7 +84,7 @@ function GiverRow({ item, askName, readOnly, onClaim, onUnclaim }: {
                 <button type="button" className="wl-link" disabled={busy} onClick={() => run(() => onUnclaim(item.id))}>Undo</button>
               </p>
             ) : soldOut ? (
-              <p className="wl-claim-taken">Someone is already getting {item.quantity > 1 ? 'all of these' : 'this'}.</p>
+              <p className="wl-claim-taken">{item.groupTaken ? 'Someone is already getting one of these.' : `Someone is already getting ${item.quantity > 1 ? 'all of these' : 'this'}.`}</p>
             ) : (
               <>
                 {othersTaken > 0 && <p className="wl-claim-taken">{othersTaken} of {item.quantity} already taken.</p>}

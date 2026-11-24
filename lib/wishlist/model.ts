@@ -29,7 +29,33 @@ export type WishItem = {
   /** Bought it themselves: hidden from anyone given the list. */
   gotIt: boolean;
   addedAt: string;
+  /** Id of the group of alternatives it belongs to (one of its list's `groups`), or ''. */
+  group: string;
+  /** When the daily price check last read this item's price (ISO), or ''. Set only by the check. */
+  checkedAt: string;
+  /** Why the last price check didn't get a price ("The shop didn't say"), or ''. Set only by the check. */
+  checkNote: string;
 };
+
+/**
+ * Alternatives for one want ("a vacuum"): any one of them will do. Givers see the
+ * one the rules pick on top, and getting any of them covers the whole group.
+ */
+export type WishGroup = {
+  id: string;
+  name: string;
+  /** Tried in order; the first that holds picks its item. */
+  rules: PriceRule[];
+  /** Picked when no rule holds; '' means the group's first item. */
+  fallback: string;
+};
+
+/**
+ * "Pick <pick> if <subject> costs at most / more than <amount>", or with `other`:
+ * "if <subject> costs at most <amount> more than <other>". A rule whose prices
+ * aren't known is passed over.
+ */
+export type PriceRule = { pick: string; subject: string; op: 'atMost' | 'over' | 'withinOf'; amount: number; other?: string };
 
 export type ListKind = 'mine' | 'for';
 
@@ -47,6 +73,7 @@ export type WishList = {
   /** Only "mine" lists can have one. Whoever has the link can see the list. */
   shareToken: string | null;
   items: WishItem[];
+  groups: WishGroup[];
 };
 
 /** One thing the owner was given, kept after a tidy-up. Who gave it is only known because the owner chose to look. */
@@ -81,6 +108,8 @@ export type WishlistData = {
 export const MAX_RECEIVED_GROUPS = 60;
 
 export const MAX_LISTS = 40;
+export const MAX_GROUPS = 40;
+export const MAX_RULES = 8;
 export const MAX_ITEMS = 300;
 export const MAX_QUANTITY = 99;
 
@@ -160,6 +189,9 @@ export function normalizeItem(raw: unknown, fallbackId: string, now = new Date()
     note: cleanText(r.note, 300),
     gotIt: r.gotIt === true,
     addedAt: typeof r.addedAt === 'string' && !Number.isNaN(Date.parse(r.addedAt)) ? r.addedAt : now.toISOString(),
+    group: isId(r.group) ? r.group : '',
+    checkedAt: typeof r.checkedAt === 'string' && !Number.isNaN(Date.parse(r.checkedAt)) ? r.checkedAt : '',
+    checkNote: cleanText(r.checkNote, 160),
   };
 }
 
@@ -185,7 +217,82 @@ export function normalizeList(raw: unknown, fallbackId: string, newId: () => str
     note: cleanText(r.note, 500, true),
     shareToken: kind === 'mine' && isShareToken(r.shareToken) ? r.shareToken : null,
     items,
+    groups: normalizeGroups(r.groups, items),
   };
+}
+
+const RULE_OPS: PriceRule['op'][] = ['atMost', 'over', 'withinOf'];
+
+function cleanRule(raw: unknown, members: Set<string>): PriceRule | null {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const pick = r.pick as string;
+  const subject = r.subject as string;
+  const op = r.op as PriceRule['op'];
+  if (!members.has(pick) || !members.has(subject) || !RULE_OPS.includes(op)) return null;
+  const amount = cleanPrice(r.amount);
+  if (amount === null) return null;
+  if (op !== 'withinOf') return { pick, subject, op, amount };
+  const other = r.other as string;
+  if (!members.has(other) || other === subject) return null;
+  return { pick, subject, op, amount, other };
+}
+
+/**
+ * Keep groups that still have items, and rules that only name their own items.
+ * Items pointing at a group that isn't there any more are let go (`group` = '').
+ * Changes `items` in place.
+ */
+export function normalizeGroups(raw: unknown, items: WishItem[]): WishGroup[] {
+  const groups: WishGroup[] = [];
+  for (const entry of (Array.isArray(raw) ? raw : []).slice(0, MAX_GROUPS)) {
+    const g = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    if (!isId(g.id) || groups.some((x) => x.id === g.id)) continue;
+    const members = new Set(items.filter((i) => i.group === g.id).map((i) => i.id));
+    if (!members.size) continue;
+    const rules = (Array.isArray(g.rules) ? g.rules : []).slice(0, MAX_RULES).map((x) => cleanRule(x, members)).filter((x): x is PriceRule => !!x);
+    groups.push({ id: g.id, name: cleanText(g.name, 60) || 'Any one of these', rules, fallback: members.has(g.fallback as string) ? (g.fallback as string) : '' });
+  }
+  const kept = new Set(groups.map((g) => g.id));
+  for (const item of items) if (item.group && !kept.has(item.group)) item.group = '';
+  return groups;
+}
+
+export type GroupPick = { itemId: string; /** Why, in words ("Robot vac is $480, no more than $500"); '' when nothing in particular picked it. */ reason: string };
+
+type Priced = Pick<WishItem, 'id' | 'title' | 'price' | 'currency' | 'gotIt' | 'group'>;
+
+/** Which of a group's items to show on top right now, and why. Null if none is still wanted. */
+export function pickOfGroup(group: Pick<WishGroup, 'id' | 'rules' | 'fallback'>, items: Priced[]): GroupPick | null {
+  const members = items.filter((i) => i.group === group.id && !i.gotIt);
+  if (!members.length) return null;
+  const by = new Map(members.map((i) => [i.id, i]));
+  for (const rule of group.rules) {
+    const pick = by.get(rule.pick);
+    const subject = by.get(rule.subject);
+    if (!pick || !subject || subject.price === null) continue;
+    const money = (n: number) => formatPrice(n, subject.currency);
+    if (rule.op === 'atMost' && subject.price <= rule.amount) {
+      return { itemId: pick.id, reason: `${subject.title} is ${money(subject.price)}, no more than ${money(rule.amount)}` };
+    }
+    if (rule.op === 'over' && subject.price > rule.amount) {
+      return { itemId: pick.id, reason: `${subject.title} is ${money(subject.price)}, over ${money(rule.amount)}` };
+    }
+    if (rule.op === 'withinOf') {
+      const other = rule.other ? by.get(rule.other) : undefined;
+      if (!other || other.price === null || other.currency !== subject.currency) continue;
+      const diff = Math.round((subject.price - other.price) * 100) / 100;
+      if (diff <= rule.amount) {
+        return { itemId: pick.id, reason: diff <= 0 ? `${subject.title} costs no more than ${other.title}` : `${subject.title} is only ${money(diff)} more than ${other.title}` };
+      }
+    }
+  }
+  return { itemId: by.has(group.fallback) ? group.fallback : members[0].id, reason: '' };
+}
+
+/** The other items in an item's group (none if it isn't in one). */
+export function groupSiblings<T extends Pick<WishItem, 'id' | 'group'>>(list: { items: T[] }, itemId: string): T[] {
+  const item = list.items.find((i) => i.id === itemId);
+  return item?.group ? list.items.filter((i) => i.group === item.group && i.id !== itemId) : [];
 }
 
 const cleanIso = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : '');
@@ -253,7 +360,18 @@ export type WishlistAction =
   | { type: 'updateItem'; listId: string; id: string; fields: ItemFields }
   | { type: 'removeItem'; listId: string; id: string }
   | { type: 'moveItem'; listId: string; id: string; dir: -1 | 1 }
-  | { type: 'transferItem'; listId: string; id: string; toListId: string };
+  | { type: 'transferItem'; listId: string; id: string; toListId: string }
+  | { type: 'saveGroup'; listId: string; id?: string; name?: string; itemIds: string[]; rules?: PriceRule[]; fallback?: string }
+  | { type: 'removeGroup'; listId: string; id: string };
+
+/** What only the site sets: an item's group changes through saveGroup, its check fields through the price check. */
+function ownerFields(fields: unknown): Record<string, unknown> {
+  const copy = { ...((fields && typeof fields === 'object' ? fields : {}) as Record<string, unknown>) };
+  delete copy.group;
+  delete copy.checkedAt;
+  delete copy.checkNote;
+  return copy;
+}
 
 function findList(data: WishlistData, id: unknown): WishList {
   const list = isId(id) ? data.lists.find((l) => l.id === id) : undefined;
@@ -300,7 +418,7 @@ export function applyWishlistAction(data: WishlistData, action: WishlistAction, 
       const list = findList(data, action.listId);
       if (list.items.length >= MAX_ITEMS) throw new WishlistInputError(`That list is full (${MAX_ITEMS} items).`);
       const id = isId(action.id) && !list.items.some((i) => i.id === action.id) ? action.id : newId();
-      const item = normalizeItem({ ...(action.item ?? {}), id }, id, now);
+      const item = normalizeItem({ ...ownerFields(action.item), id }, id, now);
       if (!item.title && !item.url) throw new WishlistInputError('Give it a name or a link.');
       if (!item.title) item.title = item.store || 'Something I want';
       list.items.push(item);
@@ -310,7 +428,7 @@ export function applyWishlistAction(data: WishlistData, action: WishlistAction, 
       const list = findList(data, action.listId);
       const index = findItem(list, action.id);
       const old = list.items[index];
-      const merged = normalizeItem({ ...old, ...(action.fields ?? {}), id: old.id, addedAt: old.addedAt }, old.id, now);
+      const merged = normalizeItem({ ...old, ...ownerFields(action.fields), id: old.id, addedAt: old.addedAt }, old.id, now);
       if (!merged.title) merged.title = old.title || 'Something I want';
       list.items[index] = merged;
       return;
@@ -318,6 +436,7 @@ export function applyWishlistAction(data: WishlistData, action: WishlistAction, 
     case 'removeItem': {
       const list = findList(data, action.listId);
       list.items.splice(findItem(list, action.id), 1);
+      list.groups = normalizeGroups(list.groups, list.items);
       return;
     }
     case 'moveItem': {
@@ -331,7 +450,30 @@ export function applyWishlistAction(data: WishlistData, action: WishlistAction, 
       if (from === to) return;
       if (to.items.length >= MAX_ITEMS) throw new WishlistInputError('The other list is full.');
       const [item] = from.items.splice(findItem(from, action.id), 1);
-      to.items.push(item);
+      to.items.push({ ...item, group: '' });
+      from.groups = normalizeGroups(from.groups, from.items);
+      return;
+    }
+    case 'saveGroup': {
+      const list = findList(data, action.listId);
+      const ids = new Set((Array.isArray(action.itemIds) ? action.itemIds : []).filter((id) => list.items.some((i) => i.id === id)));
+      if (ids.size < 2) throw new WishlistInputError('Pick at least two things that could stand in for each other.');
+      const existing = isId(action.id) ? list.groups.find((g) => g.id === action.id) : undefined;
+      if (!existing && list.groups.length >= MAX_GROUPS) throw new WishlistInputError(`That’s the most groups for one list (${MAX_GROUPS}).`);
+      const id = existing?.id ?? (isId(action.id) ? action.id : newId());
+      for (const item of list.items) {
+        if (ids.has(item.id)) item.group = id;
+        else if (item.group === id) item.group = '';
+      }
+      const raw = { id, name: action.name, rules: action.rules, fallback: action.fallback };
+      list.groups = normalizeGroups(existing ? list.groups.map((g) => (g.id === id ? raw : g)) : [...list.groups, raw], list.items);
+      return;
+    }
+    case 'removeGroup': {
+      const list = findList(data, action.listId);
+      if (!list.groups.some((g) => g.id === action.id)) throw new WishlistInputError('That group isn’t there any more.');
+      for (const item of list.items) if (item.group === action.id) item.group = '';
+      list.groups = list.groups.filter((g) => g.id !== action.id);
       return;
     }
     default:
@@ -376,12 +518,16 @@ export type Claim = { id: string; itemId: string; /** who: "k:<hash of a browser
 /** One claim as the claimer sees it. */
 export type MyClaim = { qty: number; name: string; note: string };
 
-export type GiverItem = ItemView & {
+export type GiverItem = Omit<ItemView, 'checkedAt' | 'checkNote'> & {
   /** How many of the wanted ones are already spoken for (by anyone). */
   claimed: number;
   /** This viewer's own claim, so they can change or undo it. */
   mine: MyClaim | null;
+  /** Someone is getting another item in its group, which covers this one too. */
+  groupTaken: boolean;
 };
+/** A group as givers see it: which item is on top and why. */
+export type GiverGroup = { id: string; name: string; pick: string; reason: string };
 export type GiverList = {
   id: string;
   name: string;
@@ -390,10 +536,15 @@ export type GiverList = {
   date: string;
   note: string;
   items: GiverItem[];
+  groups: GiverGroup[];
 };
 
-/** The list as someone other than the owner sees it: no "got it myself" items, with claims. */
+/**
+ * The list as someone other than the owner sees it, with claims. "Got it myself"
+ * items are left out, and so is the rest of their group: any one of those would do.
+ */
 export function giverView(list: WishList, claims: Claim[], who: string | null, imageUrl: (id: string) => string): GiverList {
+  const done = new Set(list.items.filter((i) => i.gotIt && i.group).map((i) => i.group));
   return {
     id: list.id,
     name: list.name,
@@ -402,22 +553,30 @@ export function giverView(list: WishList, claims: Claim[], who: string | null, i
     date: list.date,
     note: list.note,
     items: list.items
-      .filter((item) => !item.gotIt)
+      .filter((item) => !item.gotIt && !(item.group && done.has(item.group)))
       .map((item) => {
         const mine = who ? claims.find((c) => c.itemId === item.id && c.who === who) : undefined;
+        const { checkedAt, checkNote, ...view } = itemView(item, imageUrl);
+        void checkedAt; void checkNote;
+        const siblings = new Set(groupSiblings(list, item.id).map((i) => i.id));
         return {
-          ...itemView(item, imageUrl),
+          ...view,
           claimed: claims.filter((c) => c.itemId === item.id).reduce((sum, c) => sum + c.qty, 0),
           mine: mine ? { qty: mine.qty, name: mine.name, note: mine.note } : null,
+          groupTaken: claims.some((c) => siblings.has(c.itemId)),
         };
       }),
+    groups: list.groups.filter((g) => !done.has(g.id)).flatMap((g) => {
+      const pick = pickOfGroup(g, list.items);
+      return pick ? [{ id: g.id, name: g.name, pick: pick.itemId, reason: pick.reason }] : [];
+    }),
   };
 }
 
 /** The list for its owner opening their own share link: the giver layout, minus every claim. */
 export function ownerPreview(list: WishList, imageUrl: (id: string) => string): GiverList {
   const view = giverView(list, [], null, imageUrl);
-  return { ...view, items: view.items.map((item) => { const { claimed, mine, ...rest } = item; void claimed; void mine; return rest as GiverItem; }) };
+  return { ...view, items: view.items.map((item) => { const { claimed, mine, groupTaken, ...rest } = item; void claimed; void mine; void groupTaken; return rest as GiverItem; }) };
 }
 
 // ---- Money and text ----------------------------------------------------------
@@ -466,4 +625,31 @@ export function listAsText(list: Pick<WishList, 'name' | 'emoji' | 'occasion' | 
     lines.push(`- ${item.title}${bits.length ? ` (${bits.join(', ')})` : ''}${item.url ? `\n  ${item.url}` : ''}`);
   }
   return lines.join('\n').trim();
+}
+
+// ---- Laying a list out with its groups ------------------------------------------
+
+export type Arranged<T> =
+  | { kind: 'item'; item: T }
+  | { kind: 'group'; id: string; name: string; pick: string; reason: string; items: T[] };
+
+/**
+ * Items in display order, with each group's items gathered into one block where
+ * its first item would be, the picked one first. Items of a group not in `groups`
+ * stay plain items.
+ */
+export function arrangeGroups<T extends { id: string; group: string }>(items: T[], groups: { id: string; name: string; pick: string; reason: string }[]): Arranged<T>[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  const out: Arranged<T>[] = [];
+  const placed = new Set<string>();
+  for (const item of items) {
+    const group = item.group ? byId.get(item.group) : undefined;
+    if (!group) { out.push({ kind: 'item', item }); continue; }
+    if (placed.has(group.id)) continue;
+    placed.add(group.id);
+    const members = items.filter((i) => i.group === group.id);
+    members.sort((a, b) => Number(b.id === group.pick) - Number(a.id === group.pick));
+    out.push({ kind: 'group', id: group.id, name: group.name, pick: group.pick, reason: group.reason, items: members });
+  }
+  return out;
 }

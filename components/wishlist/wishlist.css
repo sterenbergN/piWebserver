@@ -110,3 +110,20 @@
 .wl-check-inline { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; color: var(--foreground); min-height: 2.2rem; }
 .wl-check-inline input { width: 1.2rem; height: 1.2rem; }
 @media (max-width: 480px) { .wl-tidy-row .wl-thumb { width: 56px; height: 56px; } }
+
+/* Groups of alternatives: one block, the one on top first. */
+.wl-group { border: 1px dashed var(--surface-border); border-radius: 14px; padding: 0.6rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.wl-group-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; flex-wrap: wrap; }
+.wl-group-head h3 { margin: 0; font-size: 1rem; }
+.wl-item.is-top { border-color: rgba(var(--accent-rgb), 0.6); }
+.wl-pri.wl-top { color: var(--accent-light); border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.15); }
+.wl-check-note { color: var(--muted); font-style: italic; }
+.wl-group-pick { border: 1px solid var(--surface-border); border-radius: 10px; padding: 0.5rem 0.7rem; display: flex; flex-direction: column; gap: 0.35rem; margin: 0; }
+.wl-group-pick legend { font-size: 0.85rem; color: var(--muted); padding: 0 0.3rem; }
+.wl-group-pick em { color: var(--muted); font-style: normal; }
+.wl-rules { display: flex; flex-direction: column; gap: 0.5rem; }
+.wl-rules-title { font-size: 0.85rem; color: var(--muted); }
+.wl-form .wl-rule, .wl-rule { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.35rem; font-size: 0.88rem; color: var(--foreground); }
+.wl-form .wl-rule select, .wl-rule select { width: auto; max-width: 12rem; flex: 0 1 auto; }
+.wl-form .wl-rule input[type="number"], .wl-rule input[type="number"] { width: 6rem; flex: 0 0 auto; }
+.wl-rule-tools { display: inline-flex; gap: 0.2rem; margin-left: auto; }

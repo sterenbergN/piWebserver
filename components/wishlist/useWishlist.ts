@@ -72,7 +72,14 @@ export function useWishlist() {
     setShared((all) => all.map((s) => (s.ownerId === ownerId ? { ...s, lists: body.lists } : s)));
   }, []);
 
-  return { status, me, lists, shared, error, setError, busy: busy > 0, act, load, importLink, importImage, householdClaim };
+  /** Re-read every linked item's price now (the site also does it daily). Resolves to what happened. */
+  const checkPrices = useCallback(async () => {
+    const body = await call<{ lists: OwnerList[]; summary: { checked: number; updated: number; failed: number } }>('/api/wishlist/prices', {});
+    setLists(body.lists);
+    return body.summary;
+  }, []);
+
+  return { status, me, lists, shared, error, setError, busy: busy > 0, act, load, importLink, importImage, householdClaim, checkPrices };
 }
 
 export type Wishlist = ReturnType<typeof useWishlist>;

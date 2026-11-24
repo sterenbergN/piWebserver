@@ -89,6 +89,8 @@ export function applyTidy(
     }
     const list = data.lists.find((l) => l.id === row.listId)!;
     const index = list.items.findIndex((i) => i.id === row.itemId);
+    // Already gone with the rest of its group (another of them was got).
+    if (index < 0) continue;
     const item = list.items[index];
     const qty = Math.min(row.claimedQty, item.quantity);
     group.items.push({
@@ -97,6 +99,12 @@ export function applyTidy(
     });
     if (item.quantity - qty > 0) item.quantity -= qty;
     else list.items.splice(index, 1);
+    // Any one of a group would do, so the rest of it goes too.
+    if (item.group) {
+      for (const other of list.items.filter((i) => i.group === item.group)) done.add(other.id);
+      list.items = list.items.filter((i) => i.group !== item.group);
+      list.groups = list.groups.filter((g) => g.id !== item.group);
+    }
   }
 
   // Clear what was shown, and nothing newer.

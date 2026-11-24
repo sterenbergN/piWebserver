@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ApiError, handleApiError, readJsonObject, requireWorkoutUserId } from '@/lib/workout/api';
 import { ClaimError, claimItem, unclaimItem, whoFromUser } from '@/lib/wishlist/claims';
-import { isId } from '@/lib/wishlist/model';
+import { groupSiblings, isId } from '@/lib/wishlist/model';
 import { householdLists } from '@/lib/wishlist/shared';
 import { editClaims, loadWishlist, newId, sharesHousehold } from '@/lib/wishlist/store';
 
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
     try {
       await editClaims(ownerId, (claims) => {
-        if (body.action === 'claim') claimItem(claims, item, whoFromUser(me), body, newId);
+        if (body.action === 'claim') claimItem(claims, item, whoFromUser(me), body, newId, undefined, groupSiblings(list, item.id));
         else if (body.action === 'unclaim') unclaimItem(claims, item.id, whoFromUser(me));
         else throw new ClaimError('That isn’t something I can do.');
       });
