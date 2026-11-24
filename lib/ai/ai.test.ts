@@ -441,6 +441,8 @@ test('attachments: PDFs and photos only, five at most, 15 MB in all, intact base
   assert.equal(base64Bytes(Buffer.from('abcd').toString('base64')), 4);
   assert.match(unsupportedReason('Week 3.pptx', '') ?? '', /PDF/);
   assert.match(unsupportedReason('notes.docx', '') ?? '', /PDF/);
+  assert.match(unsupportedReason('Budget.xlsx', '') ?? '', /spreadsheets/);
+  assert.match(unsupportedReason('grades.xls', 'application/vnd.ms-excel') ?? '', /spreadsheets/);
   assert.equal(unsupportedReason('scan.pdf', 'application/pdf'), null);
 });
 

@@ -57,11 +57,13 @@ export async function pickFiles(files: File[], already: AiAttachment[], toPdf?: 
   let bytes = already.reduce((sum, a) => sum + base64Bytes(a.data), 0);
   for (const picked of files) {
     let file = picked;
-    const why = unsupportedReason(picked.name, picked.type);
+    // Office files go by what they are, so every kind (slides, Word, spreadsheets) gets the Pi's PDF.
+    const kind = kindOf(picked.name, picked.type);
+    const office = kind === 'slides' || kind === 'doc' || kind === 'sheet';
+    const why = unsupportedReason(picked.name, picked.type) ?? (office ? `${picked.name}: Office files can’t be sent from here. Save it as a PDF and attach that, or copy the prompt into an AI of your choice (“Use your own AI instead”).` : null);
     if (why) {
-      const kind = kindOf(picked.name, picked.type);
       let pdf: File | null = null;
-      if (toPdf && (kind === 'slides' || kind === 'doc' || kind === 'sheet')) {
+      if (toPdf && office) {
         try {
           pdf = await toPdf(picked);
         } catch (e) {

@@ -5,7 +5,7 @@ import { AiClientError, generateReply, useAiStatus } from '@/lib/ai/client';
 import type { AiAttachment } from '@/lib/ai/attachments';
 import type { AiTask } from '@/lib/ai/tasks';
 import { fileSize, pickFiles } from './attach-files';
-import { conversionById } from '@/lib/convert/formats';
+import { conversionById, kindOf } from '@/lib/convert/formats';
 import { loadPiTools, runOnPi } from '@/components/tools/converter/run-pi';
 import './ai.css';
 
@@ -71,7 +71,9 @@ export default function GenerateReply({ task, prompt, onReply, check, material, 
       const toPdf = async (file: File) => {
         const pi = await loadPiTools();
         if (!pi.signedIn || !pi.office) return null;
-        const out = await runOnPi(conversionById('office-pdf')!, file, (text) => setReadingNote(text.replace(/converting on the Pi/, 'turning it into a PDF on the Pi')));
+        // A spreadsheet split across pages is hard to read, so it goes landscape with every column on the page.
+        const layout = kindOf(file.name, file.type) === 'sheet' ? { orientation: 'landscape' as const, fit: 'width' as const } : {};
+        const out = await runOnPi(conversionById('office-pdf')!, file, (text) => setReadingNote(text.replace(/converting on the Pi/, 'turning it into a PDF on the Pi')), undefined, layout);
         return new File([out.blob], out.name, { type: 'application/pdf' });
       };
       const picked = await pickFiles(chosen, files, toPdf);
