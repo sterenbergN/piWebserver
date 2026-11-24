@@ -1,6 +1,7 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { bestE1RMByLift, findPreviousSameType, restTargetSeconds, workoutVolume } from './session-insights';
+import { cleanWarmupPlan } from './warmup';
+import { bestE1RMByLift, findPreviousSameType, restTargetSeconds, workoutVolume, warmupFor, warmupSets } from './session-insights';
 
 test('rest target scales with rep range', () => {
   assert.equal(restTargetSeconds(3), 180);
@@ -104,4 +105,24 @@ test('bodyweightTrend smooths with a 7-entry average and reports 30-day change',
   assert.equal(trend.latest?.weight, 196.1);
   assert.ok(trend.change30 !== null && trend.change30 < -2.5 && trend.change30 > -3.5, `change ${trend.change30}`);
   assert.equal(bodyweightTrend([]).latest, null);
+});
+
+test('a lift’s own warm-up: plates per side on its bar or sled, the day’s reps unless set', () => {
+  const bench = { warmup: { kind: 'sets' as const, sets: [{ perSide: 45 }] } };
+  assert.deepEqual(warmupFor(bench, { baseWeight: 45, type: 'plates' }, 185, 8, []), [{ weight: 135, reps: 8 }]);
+  const legPress = { warmup: { kind: 'sets' as const, sets: [{ perSide: 90, reps: 10 }] } };
+  assert.deepEqual(warmupFor(legPress, { baseWeight: 100, type: 'plates' }, 360, 12, []), [{ weight: 280, reps: 10 }]);
+  // A warm-up as heavy as the work is left out; none means none; nothing set means the usual ramp.
+  assert.deepEqual(warmupFor(bench, { baseWeight: 45, type: 'plates' }, 135, 8, []), []);
+  assert.deepEqual(warmupFor({ warmup: { kind: 'none' } }, { baseWeight: 45 }, 225, 5, [45, 95, 135, 185]), []);
+  assert.deepEqual(warmupFor({}, { baseWeight: 45 }, 225, 5, [45, 95, 135, 185]), warmupSets(225, [45, 95, 135, 185]));
+  assert.deepEqual(warmupFor({ warmup: { kind: 'sets', sets: [{ weight: 50 }] } }, { type: 'stack' }, 120, 10, []), [{ weight: 50, reps: 10 }]);
+});
+
+test('warm-up plans are cleaned when saved', () => {
+  assert.equal(cleanWarmupPlan(undefined), undefined);
+  assert.deepEqual(cleanWarmupPlan({ kind: 'none' }), { kind: 'none' });
+  assert.deepEqual(cleanWarmupPlan({ kind: 'sets', sets: [{ perSide: 45.1, reps: 8 }, { weight: -5 }, { perSide: 'x' }] }), { kind: 'sets', sets: [{ perSide: 45, reps: 8 }] });
+  assert.deepEqual(cleanWarmupPlan({ kind: 'sets', sets: [] }), { kind: 'none' });
+  assert.equal(cleanWarmupPlan({ kind: 'weird' }), undefined);
 });

@@ -22,7 +22,20 @@ export interface Lift {
   exercise?: string;
   /** Id of the lift this was copied from when imported from someone's shared workout. */
   sourceId?: string;
+  /** How this lift is warmed up; absent means the usual ramp. See warmupFor() in session-insights.ts. */
+  warmup?: WarmupPlan;
 }
+
+/**
+ * Warm-ups for one lift: none, the usual ramp (~40%×8, 60%×5, 80%×3), or the sets
+ * you always do. On plate-loaded equipment a set is plates per side (45 for one 45,
+ * 90 for two), so it follows the bar or sled weight; elsewhere it's the total. Reps
+ * left out mean the day's working reps.
+ */
+export type WarmupPlan =
+  | { kind: 'none' }
+  | { kind: 'ramp' }
+  | { kind: 'sets'; sets: { perSide?: number; weight?: number; reps?: number }[] };
 
 export interface Station {
   id: string;

@@ -14,6 +14,8 @@ type SetLoggerProps = {
   /** Suggested warm-up ramp for today's working weight. */
   warmups: WarmupSet[];
   warmupsDone: WarmupSet[];
+  /** Open the lift's editor to change how it's warmed up. */
+  onEditWarmups?: () => void;
   onToggleWarmup: (set: WarmupSet) => void;
   /** Last session on this lift (or exercise) and where it was. */
   lastTime: { sets: LoggedSet[]; date?: string; where?: string } | null;
@@ -44,7 +46,7 @@ export default function SetLogger(props: SetLoggerProps) {
       <div className="workout-tile" style={{ background: 'var(--input-bg)', padding: compact ? '0.65rem' : undefined }}>
         {sets.length === 0 ? (warmups.length > 0 && (
           <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
-            <span className="workout-hint">Warm-up — tap each one as you do it</span>
+            <span className="workout-hint">Warm-up — tap each one as you do it{props.onEditWarmups && <> · <button type="button" className="workout-text-btn" onClick={props.onEditWarmups}>Change</button></>}</span>
             <div className="tracker-warmups">
               {warmups.map((w) => {
                 const done = warmupsDone.some((d) => sameSet(d, w));

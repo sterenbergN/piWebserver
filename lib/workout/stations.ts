@@ -1,4 +1,5 @@
 import { EMPTY_LIFT, isLoadStation, type Lift, type Station, type StationType } from './types';
+import { cleanWarmupPlan } from './warmup';
 
 export function newRecordId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -92,6 +93,7 @@ export function finalizeLift(draft: Partial<Lift>): Lift {
     progressionProfile: draft.progressionProfile || 'standard',
     attachment: draft.attachment || undefined,
     notes: draft.notes?.trim().slice(0, 200) || undefined,
+    warmup: cleanWarmupPlan(draft.warmup),
     // Only kept when it differs from the name; otherwise the name is the exercise.
     exercise: draft.exercise?.trim() && sameName(draft.exercise, draft.name || '') === false ? draft.exercise.trim().slice(0, 120) : undefined,
   };

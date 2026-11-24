@@ -1,4 +1,5 @@
 import { calcAverage1RM } from './analytics';
+import type { WarmupPlan } from './types';
 import { exerciseKey, exerciseKeyFromName, exerciseName } from './exercises';
 
 /**
@@ -135,6 +136,29 @@ export function warmupSets(workingWeight: number, possibleWeights: number[]): { 
     ramp.push({ weight, reps });
   }
   return ramp;
+}
+
+/**
+ * Today's warm-ups for a lift: its own plan if it has one (per-side weights on the
+ * station's bar or sled, the day's reps unless set), else the usual ramp. A set as
+ * heavy as the working weight is left out.
+ */
+export function warmupFor(
+  lift: { warmup?: WarmupPlan } | undefined,
+  station: { baseWeight?: number; type?: string } | undefined,
+  workingWeight: number,
+  workingReps: number,
+  possibleWeights: number[],
+): { weight: number; reps: number }[] {
+  const plan = lift?.warmup;
+  if (plan?.kind === 'none') return [];
+  if (plan?.kind !== 'sets') return warmupSets(workingWeight, possibleWeights);
+  const base = station?.baseWeight ?? 0;
+  return plan.sets.flatMap((s) => {
+    const weight = s.perSide !== undefined ? base + 2 * s.perSide : s.weight ?? 0;
+    if (!(weight > 0) || weight >= workingWeight) return [];
+    return [{ weight, reps: s.reps ?? workingReps }];
+  });
 }
 
 export type LiftSession = {

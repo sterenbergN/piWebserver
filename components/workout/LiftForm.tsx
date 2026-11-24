@@ -7,6 +7,7 @@ import {
   type Lift,
   type ProgressionProfile,
   type Station,
+  type WarmupPlan,
 } from '@/lib/workout/types';
 import { finalizeLift } from '@/lib/workout/stations';
 import { CATALOG_LIFT_NAMES, inferLiftDetails } from '@/lib/workout/catalog';
@@ -160,6 +161,8 @@ export default function LiftForm({ station, initial, saving = false, onSave, onC
         <input type="checkbox" checked={draft.singleArmLeg === true} onChange={(e) => updateDetail({ singleArmLeg: e.target.checked })} />
       </label>
 
+      <WarmupEditor station={station} plan={draft.warmup} onChange={(warmup) => update({ warmup })} />
+
       <label className="workout-field" style={{ display: 'block' }}>
         <span className="workout-label">Setup notes (optional)</span>
         <input className="workout-input" placeholder="e.g. seat 4, pin 3, neutral grip" maxLength={200} value={draft.notes || ''} onChange={(e) => update({ notes: e.target.value })} />
@@ -169,6 +172,57 @@ export default function LiftForm({ station, initial, saving = false, onSave, onC
         <button type="button" className="workout-button is-danger is-block" style={{ marginTop: '0.5rem' }} onClick={onDelete}>Delete this lift</button>
       )}
     </Sheet>
+  );
+}
+
+/**
+ * How this lift is warmed up: the usual ramp, none, or your own sets. On plate-loaded
+ * equipment each set is plates per side (45 for one 45, 90 for two), added to the bar
+ * or sled; elsewhere it's the total weight. Reps left blank use the day's reps.
+ */
+function WarmupEditor({ station, plan, onChange }: { station: Station; plan?: WarmupPlan; onChange: (plan: WarmupPlan | undefined) => void }) {
+  const kind = plan?.kind ?? 'ramp';
+  const perSide = station.type === 'plates';
+  const base = station.baseWeight ?? 0;
+  const sets = plan?.kind === 'sets' ? plan.sets : [];
+  const setAt = (i: number, patch: { perSide?: number; weight?: number; reps?: number }) =>
+    onChange({ kind: 'sets', sets: sets.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
+  const num = (v: string) => (v.trim() === '' ? undefined : Math.max(0, Number(v)) || undefined);
+  return (
+    <div className="workout-field">
+      <span className="workout-label">Warm-up</span>
+      <select className="workout-input" value={kind} onChange={(e) => {
+        const next = e.target.value;
+        if (next === 'ramp') onChange(undefined);
+        else if (next === 'none') onChange({ kind: 'none' });
+        else onChange({ kind: 'sets', sets: sets.length ? sets : [perSide ? { perSide: 45 } : { weight: Math.round(base || 20) }] });
+      }}>
+        <option value="ramp">The usual ramp (3 lighter sets)</option>
+        <option value="sets">My own warm-up sets</option>
+        <option value="none">No warm-up</option>
+      </select>
+      {kind === 'sets' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.45rem' }}>
+          {sets.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+              <input className="workout-input" style={{ width: '6.5rem' }} type="number" inputMode="decimal" min={0} step={2.5}
+                aria-label={perSide ? `Set ${i + 1}: pounds per side` : `Set ${i + 1}: weight`}
+                value={(perSide ? s.perSide : s.weight) ?? ''}
+                onChange={(e) => setAt(i, perSide ? { perSide: num(e.target.value), weight: undefined } : { weight: num(e.target.value), perSide: undefined })} />
+              <span className="workout-hint">{perSide ? `lb a side${s.perSide ? ` (${base + 2 * s.perSide} lb)` : ''}` : 'lb'} ×</span>
+              <input className="workout-input" style={{ width: '5.5rem' }} type="number" inputMode="numeric" min={1} placeholder="day’s" aria-label={`Set ${i + 1}: reps`}
+                value={s.reps ?? ''} onChange={(e) => setAt(i, { reps: num(e.target.value) })} />
+              <span className="workout-hint">reps</span>
+              <button type="button" className="workout-text-btn" aria-label={`Remove warm-up set ${i + 1}`} onClick={() => onChange(sets.length > 1 ? { kind: 'sets', sets: sets.filter((_, j) => j !== i) } : { kind: 'none' })}>✕</button>
+            </div>
+          ))}
+          {sets.length < 4 && (
+            <button type="button" className="workout-text-btn" style={{ alignSelf: 'flex-start' }} onClick={() => onChange({ kind: 'sets', sets: [...sets, perSide ? { perSide: (sets.at(-1)?.perSide ?? 0) + 45 } : { weight: (sets.at(-1)?.weight ?? 0) + 10 }] })}>+ Add a warm-up set</button>
+          )}
+          <span className="workout-hint">{perSide ? `Per side${base > 0 ? `, on the ${base} lb ${base >= 70 ? 'sled' : 'bar'}` : ''}: 45 is one plate a side, 90 two. ` : ''}Blank reps use the day’s reps. A set as heavy as the working weight is skipped.</span>
+        </div>
+      )}
+    </div>
   );
 }
 

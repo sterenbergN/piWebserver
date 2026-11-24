@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { withGymLifts } from '@/lib/workout/gym-lifts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
-import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, restTargetSeconds, warmupSets } from '@/lib/workout/session-insights';
+import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, restTargetSeconds, warmupFor } from '@/lib/workout/session-insights';
 import { calculatePlates, getPossibleWeights, stepWeight } from '@/lib/workout/equipment';
 import { exerciseKey, exerciseKeyFromName, exerciseName, lastSessionForLift } from '@/lib/workout/exercises';
 import { formatProjection, goalLabel, goalProgress, goalsFor, setMeetsGoal, type Goal } from '@/lib/workout/goals';
@@ -174,7 +174,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
   const activeGoalProgress = useMemo(() => (activeGoal ? goalProgress(activeGoal, pastHistory) : null), [activeGoal, pastHistory]);
 
   const warmups = activeLogs.length === 0 && activeLift?.station?.type !== 'bodyweight' && suggestion
-    ? warmupSets(suggestedWeight, possibleWeights)
+    ? warmupFor(activeLift, activeLift.station, suggestedWeight, suggestedReps, possibleWeights)
     : [];
 
   // ─── Persistence (resume after closing the page) ────────────────────────────
@@ -665,6 +665,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
             warmups={warmups}
             warmupsDone={warmupsDone[activeUid] || []}
             onToggleWarmup={toggleWarmup}
+            onEditWarmups={activeLift?.station?.id && !offline ? () => setEditTarget('lift') : undefined}
             lastTime={lastTime}
             liftDone={liftDone}
             nextLiftName={nextLiftIndex !== null ? localPlan.lifts[nextLiftIndex].name : null}

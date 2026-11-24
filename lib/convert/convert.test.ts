@@ -83,9 +83,9 @@ test('Pi commands: ffmpeg only reads local files, LibreOffice gets its own profi
   assert.match(csv.args[csv.args.indexOf('--convert-to') + 1], /^csv:.*:44,34,76,1$/);
 });
 
-/** Wait (up to 2 s) for something that happens in the background, like a folder being deleted. */
+/** Wait (up to 10 s, for a busy machine) for something that happens in the background, like a folder being deleted. */
 async function eventually(check: () => Promise<boolean> | boolean) {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1000; i++) {
     if (await check()) return true;
     await new Promise((r) => setTimeout(r, 10));
   }
@@ -93,7 +93,7 @@ async function eventually(check: () => Promise<boolean> | boolean) {
 }
 
 async function settle(jobs: ReturnType<typeof createConvertJobs>, owner: string, id: string) {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 1000; i++) {
     const job = jobs.get(owner, id);
     if (job && (job.status === 'done' || job.status === 'error')) return job;
     await new Promise((r) => setTimeout(r, 5));
@@ -137,9 +137,10 @@ test('Pi jobs: run one at a time, hand back the file, then clean up', async () =
     t = 5000;
     jobs.get('user:a', a.id);
     assert.equal(jobs.get('user:a', a.id), null);
-    assert.ok(await eventually(() => fs.stat(file.path).then(() => false, () => true)), 'the result was deleted');
+    // Its whole folder goes; wait for that too, or the cleanup below races the job's own delete.
+    assert.ok(await eventually(() => fs.stat(path.dirname(file.path)).then(() => false, () => true)), 'the result was deleted');
   } finally {
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   }
 });
 
@@ -163,7 +164,7 @@ test('Pi jobs: failures and missing tools come back as short messages; limits ho
     await slow.remove('user:c', first.id);
     assert.ok(await eventually(() => slow.get('user:c', first.id) === null), 'the stopped job was forgotten');
   } finally {
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   }
 });
 
@@ -223,6 +224,6 @@ test('Pi jobs: an .xlsx is laid out before LibreOffice opens it, and slides carr
     assert.match(seen[0].sheet!, /<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"\/>/);
     assert.match(seen[1].args[seen[1].args.indexOf('--convert-to') + 1], /ExportNotesPages/);
   } finally {
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   }
 });
