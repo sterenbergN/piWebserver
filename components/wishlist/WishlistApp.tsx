@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import type { Suggestion } from '@/lib/wishlist/ai';
 import { shoppingSearchUrl } from '@/lib/wishlist/ai';
 import {
-  arrangeGroups, formatPrice, listAsText, mustHaveTotal, pickOfGroup, PRIORITY_LABELS, sortItems,
+  arrangeGroups, formatPrice, isAmazonLink, listAsText, mustHaveTotal, pickOfGroup, PRIORITY_LABELS, sortItems,
   type ItemFields, type ItemView, type ListKind, type OwnerList, type SortMode,
 } from '@/lib/wishlist/model';
 import GiverList, { Thumb } from './GiverList';
@@ -137,7 +137,7 @@ export default function WishlistApp() {
       const s = await w.checkPrices();
       setNotice(s.checked
         ? `Checked ${s.checked} price${s.checked === 1 ? '' : 's'}: ${s.updated} up to date${s.failed ? `, ${s.failed} couldn’t be read (see the note on each)` : ''}.`
-        : 'Nothing with a link to check.');
+        : 'Nothing to check: Amazon prices are kept up to date by hand.');
     } catch (error) {
       setNotice((error as Error).message);
     } finally {
@@ -161,6 +161,10 @@ export default function WishlistApp() {
             {item.store && <span>{item.store}</span>}
             {item.gotIt && <span className="wl-got">Got it myself</span>}
             {item.checkedAt && !item.checkNote && <span title={new Date(item.checkedAt).toLocaleString()}>price checked {checkedAgo(item.checkedAt)}</span>}
+            {/* Amazon blocks automatic checks, so its price is kept up to date by hand. */}
+            {item.url && !item.gotIt && isAmazonLink(item.url) && (
+              <a className="wl-check-link" href={item.url} target="_blank" rel="noopener noreferrer nofollow" title="Amazon prices aren’t checked automatically. Update it with Edit.">check price on Amazon ↗</a>
+            )}
             {item.checkNote && <span className="wl-check-note" title="From the daily price check">⚠ {item.checkNote}</span>}
           </p>
           {item.description && <p className="wl-item-desc">{item.description}</p>}
@@ -286,7 +290,7 @@ export default function WishlistApp() {
             <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'ideas' })}>✨ Find more ideas</button>
             <button type="button" className="btn btn-secondary" disabled={!own.items.length} onClick={copyText}>📋 Copy as text</button>
             <button type="button" className="btn btn-secondary" disabled={own.items.length < 2} onClick={() => setSheet({ type: 'group', id: null })}>🔀 Group alternatives</button>
-            <button type="button" className="btn btn-secondary" disabled={checking || !own.items.some((i) => i.url)} onClick={checkPricesNow}>{checking ? 'Checking prices…' : '↻ Check prices'}</button>
+            <button type="button" className="btn btn-secondary" disabled={checking || !own.items.some((i) => i.url && !i.gotIt && !isAmazonLink(i.url))} onClick={checkPricesNow}>{checking ? 'Checking prices…' : '↻ Check prices'}</button>
             <label className="wl-sort">Sort
               <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
                 <option value="mine">My order</option>

@@ -134,7 +134,7 @@ export default function GroupSheet({ list, group, onSave, onDelete, onClose }: {
           </div>
         )}
 
-        <p className="wl-hint">People see the one on top first, with the others below. When someone gets any of them, the rest are covered too. Prices with a link are checked every day.</p>
+        <p className="wl-hint">People see the one on top first, with the others below. When someone gets any of them, the rest are covered too. Prices from shops other than Amazon are checked every day.</p>
         <div className="wl-row">
           <button type="submit" className="btn btn-primary" disabled={members.length < 2}>Save group</button>
           {onDelete && <button type="button" className="btn btn-secondary wl-danger" onClick={onDelete}>Ungroup</button>}

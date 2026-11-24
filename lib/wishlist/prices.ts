@@ -1,15 +1,15 @@
 // The daily price check: re-read the price of every linked wishlist item that
-// isn't marked "got it". Ordinary shops are read from their page; Amazon blocks
-// that, so its prices come from the price service set up in Admin › Wishlist
-// prices. A check that fails never wipes a price: the typed or last-read price
-// stays, with a short note saying why it couldn't be refreshed.
+// isn't marked "got it", from the shop's own page. Amazon blocks those reads, so
+// Amazon links are passed over (the list offers a "check on Amazon" link instead;
+// an Amazon-only price service was tried and dropped as too much to install).
+// A check that fails never wipes a price: the typed or last-read price stays,
+// with a short note saying why it couldn't be refreshed.
 
 import fs from 'fs/promises';
 import path from 'path';
 import { readJson, writeJsonAtomic } from '@/lib/json-store';
 import { fetchPublic } from '@/lib/recipes/import-fetch';
-import { isId, type WishlistData } from './model';
-import { countryForHost, fetchAmazonPrice, loadPriceService, PriceServiceError, type PriceServiceSettings } from './price-service';
+import { isAmazonLink, isId, type WishlistData } from './model';
 import { parseProductHtml } from './parse';
 import { landedElsewhere } from './fetch-product';
 
@@ -19,10 +19,6 @@ export type PriceRun = { lastRunAt: string; lastSummary: PriceSummary | null };
 export const RECENT_HOURS = 20;
 export const MAX_PER_RUN = 150;
 export const SHOP_DELAY_MS = 1500;
-const SHORT_HOSTS = new Set(['amzn.to', 'a.co']);
-
-export const NEEDS_SERVICE = 'Amazon prices need the price service (Admin › Wishlist prices)';
-
 const hostOf = (url: string) => {
   try {
     return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -31,43 +27,10 @@ const hostOf = (url: string) => {
   }
 };
 
-export const isAmazonHost = (host: string) => /(^|\.)amazon\.[a-z.]{2,}$/.test(host) || host === 'amzn.com' || host.endsWith('.amzn.com') || SHORT_HOSTS.has(host);
-
-/** The 10-character product number in an Amazon link, or null (also for any other site). */
-export function asinFromUrl(raw: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (!isAmazonHost(url.hostname.toLowerCase())) return null;
-  const inPath = /\/(?:dp|gp\/product|gp\/aw\/d|product)\/([A-Z0-9]{10})(?:[/?#]|$)/.exec(url.pathname);
-  if (inPath) return inPath[1];
-  const q = url.searchParams.get('asin') ?? url.searchParams.get('ASIN');
-  return q && /^[A-Z0-9]{10}$/.test(q) ? q : null;
-}
-
-/** Follow a short link (amzn.to, a.co) one hop at a time, asking only the short-link host, until it points at Amazon. */
-export async function resolveShortLink(start: string, fetchImpl: typeof fetch = fetch): Promise<string> {
-  let url = start;
-  for (let hop = 0; hop < 4; hop++) {
-    if (!SHORT_HOSTS.has(hostOf(url))) return url;
-    const res = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (compatible; wishlist-price-check)' } });
-    const next = res.headers.get('location');
-    if (!next) throw new Error('no redirect');
-    url = new URL(next, url).toString();
-  }
-  return url;
-}
-
 export type PriceDeps = {
   load: (userId: string) => Promise<WishlistData>;
   edit: (userId: string, fn: (data: WishlistData) => void) => Promise<unknown>;
   fetchPage: (url: string) => Promise<{ body: string; finalUrl: string }>;
-  resolveShort: (url: string) => Promise<string>;
-  getService: () => Promise<PriceServiceSettings>;
-  fetchService?: typeof fetch;
   now: () => Date;
   /** Pause between two requests to the same shop. */
   delayMs: number;
@@ -83,8 +46,6 @@ const defaults = (): PriceDeps => ({
     const page = await fetchPublic(url, { maxBytes: 3 * 1024 * 1024 });
     return { body: page.body.toString('utf8'), finalUrl: page.finalUrl };
   },
-  resolveShort: (url) => resolveShortLink(url),
-  getService: loadPriceService,
   now: () => new Date(),
   delayMs: SHOP_DELAY_MS,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -92,24 +53,6 @@ const defaults = (): PriceDeps => ({
 
 class CheckFailed extends Error {}
 type Read = { price: number; currency: string };
-
-async function readAmazon(url: string, deps: PriceDeps): Promise<Read> {
-  const service = await deps.getService();
-  if (!service.baseUrl) throw new CheckFailed(NEEDS_SERVICE);
-  let asin = asinFromUrl(url);
-  let storeHost = hostOf(url);
-  if (!asin && SHORT_HOSTS.has(storeHost)) {
-    const final = await deps.resolveShort(url).catch(() => '');
-    asin = final ? asinFromUrl(final) : null;
-    if (final) storeHost = hostOf(final);
-  }
-  if (!asin) throw new CheckFailed('Couldn’t find the Amazon product number in that link');
-  try {
-    return await fetchAmazonPrice(service, asin, countryForHost(storeHost), deps.fetchService);
-  } catch (error) {
-    throw new CheckFailed(error instanceof PriceServiceError && /show a price/.test(error.message) ? 'The Amazon price service didn’t show a price' : 'Amazon price service didn’t answer');
-  }
-}
 
 async function readShop(url: string, deps: PriceDeps): Promise<Read> {
   let page;
@@ -124,10 +67,8 @@ async function readShop(url: string, deps: PriceDeps): Promise<Read> {
   return { price: info.price, currency: info.currency };
 }
 
-/** One link's current price, by whichever route fits its shop. Throws CheckFailed with a short reason. */
-export async function readPrice(url: string, deps: PriceDeps): Promise<Read> {
-  return isAmazonHost(hostOf(url)) ? readAmazon(url, deps) : readShop(url, deps);
-}
+/** One link's current price, read from the shop's page. Throws CheckFailed with a short reason. */
+export const readPrice = (url: string, deps: PriceDeps): Promise<Read> => readShop(url, deps);
 
 type Outcome = { url: string; ok: true; price: number; currency: string; at: string } | { url: string; ok: false; note: string };
 
@@ -142,7 +83,8 @@ export async function checkPricesFor(userId: string, overrides: Partial<PriceDep
     for (const item of list.items) {
       const last = Date.parse(item.checkedAt);
       const recent = Number.isFinite(last) && nowMs - last < RECENT_HOURS * 3_600_000;
-      if (!item.url || item.gotIt || (recent && !deps.force)) summary.skipped++;
+      // Amazon blocks page reads, so its items keep the price typed in.
+      if (!item.url || item.gotIt || isAmazonLink(item.url) || (recent && !deps.force)) summary.skipped++;
       else due.push({ listId: list.id, itemId: item.id, url: item.url, checkedAt: item.checkedAt });
     }
   }

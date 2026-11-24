@@ -1,13 +1,9 @@
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import test from 'node:test';
-import { normalizeWishlist, type WishItem, type WishlistData } from './model';
-import { asinFromUrl, checkIsDue, checkPricesFor, MAX_PER_RUN, NEEDS_SERVICE, runDailyCheck, type PriceDeps } from './prices';
-import { cleanBaseUrl, readServicePrice, toPublicPriceService } from './price-service';
+import { isAmazonLink, normalizeWishlist, type WishItem, type WishlistData } from './model';
+import { checkIsDue, checkPricesFor, MAX_PER_RUN, runDailyCheck, type PriceDeps } from './prices';
 
 const NOW = new Date('2026-11-24T12:00:00Z');
-const AMAZON = 'https://www.amazon.com/Some-Thing/dp/B08N5WRWNW/ref=sr_1_1?th=1';
 
 const page = (price: string, currency = 'USD') =>
   `<html><head><title>Thing</title><meta property="product:price:amount" content="${price}"><meta property="product:price:currency" content="${currency}"></head><body></body></html>`;
@@ -23,129 +19,26 @@ function store(items: Partial<WishItem>[]) {
       now: () => NOW,
       delayMs: 0,
       sleep: async () => {},
-      getService: async () => ({ baseUrl: '', apiKey: '' }),
       fetchPage: async () => { throw new Error('no network in tests'); },
-      resolveShort: async (u) => u,
       ...extra,
     }),
   };
 }
 
-type Stand = { url: string; seen: http.IncomingHttpHeaders[]; close: () => Promise<void> };
-async function standIn(answer: (req: http.IncomingMessage) => { status: number; body: unknown }): Promise<Stand> {
-  const seen: http.IncomingHttpHeaders[] = [];
-  const server = http.createServer((req, res) => {
-    seen.push(req.headers);
-    const { status, body } = answer(req);
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(body));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  return { url: `http://127.0.0.1:${port}`, seen, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
-}
-
-test('ASIN comes from each Amazon link form, and only from Amazon links', () => {
-  assert.equal(asinFromUrl('https://www.amazon.com/dp/B08N5WRWNW'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://www.amazon.com/Some-Name/dp/B08N5WRWNW/ref=x?th=1'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://www.amazon.co.uk/gp/product/B08N5WRWNW?psc=1'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://www.amazon.ca/gp/aw/d/B08N5WRWNW'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://amazon.de/product/B08N5WRWNW'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://www.amazon.com/gp/offer-listing?asin=B08N5WRWNW'), 'B08N5WRWNW');
-  assert.equal(asinFromUrl('https://amzn.to/3abcDEF'), null);
-  assert.equal(asinFromUrl('https://www.amazon.com/dp/tooShort'), null);
-  assert.equal(asinFromUrl('https://www.target.com/p/thing/dp/B08N5WRWNW'), null);
-  assert.equal(asinFromUrl('not a link'), null);
+test('Amazon links are told apart from other shops', () => {
+  for (const url of ['https://www.amazon.com/dp/B08N5WRWNW', 'https://amazon.co.uk/x', 'https://smile.amazon.ca/x', 'https://amzn.to/3abc', 'https://a.co/d/xyz']) assert.equal(isAmazonLink(url), true, url);
+  for (const url of ['https://www.target.com/p/amazon-thing', 'https://notamazon.com/x', 'not a link', '']) assert.equal(isAmazonLink(url), false, url);
 });
 
-test('the service answer is read from the top or from under data, as a number or a string', () => {
-  assert.deepEqual(readServicePrice({ price: { amount: 449.99, currency: 'USD' } }), { price: 449.99, currency: 'USD' });
-  assert.deepEqual(readServicePrice({ data: { price: { amount: '$1,299.00', currency: 'cad' } } }), { price: 1299, currency: 'CAD' });
-  assert.equal(readServicePrice({ price: { currency: 'USD' } }), null);
-  assert.equal(readServicePrice({ price: null }), null);
-  assert.equal(readServicePrice('nope'), null);
-});
-
-test('the address must be http(s); the key is shown only as its last four characters', () => {
-  assert.equal(cleanBaseUrl('http://127.0.0.1:8000/'), 'http://127.0.0.1:8000');
-  assert.equal(cleanBaseUrl('ftp://x.example'), '');
-  assert.throws(() => cleanBaseUrl('javascript:alert(1)', true));
-  const view = toPublicPriceService({ baseUrl: 'http://127.0.0.1:8000', apiKey: 'secret-key-1234' });
-  assert.equal(view.keyHint, '1234');
-  assert.ok(!JSON.stringify(view).includes('secret-key'));
-});
-
-test('Amazon price comes from the service; with a key the two RapidAPI headers go along', async () => {
-  const svc = await standIn(() => ({ status: 200, body: { price: { amount: 449.99, currency: 'USD' } } }));
-  try {
-    const s = store([{ url: AMAZON, price: 500, checkNote: 'old trouble' }]);
-    const summary = await checkPricesFor('u1', s.deps({ getService: async () => ({ baseUrl: svc.url, apiKey: 'abcd1234' }) }));
-    assert.deepEqual(summary, { checked: 1, updated: 1, failed: 0, skipped: 0 });
-    assert.equal(s.item(0).price, 449.99);
-    assert.equal(s.item(0).currency, 'USD');
-    assert.equal(s.item(0).checkedAt, NOW.toISOString());
-    assert.equal(s.item(0).checkNote, '');
-    assert.equal(svc.seen[0]['x-rapidapi-key'], 'abcd1234');
-    assert.equal(svc.seen[0]['x-rapidapi-host'], new URL(svc.url).host);
-  } finally {
-    await svc.close();
-  }
-});
-
-test('no key means no RapidAPI headers', async () => {
-  const svc = await standIn(() => ({ status: 200, body: { data: { price: { amount: '$10.50', currency: 'USD' } } } }));
-  try {
-    const s = store([{ url: AMAZON }]);
-    await checkPricesFor('u1', s.deps({ getService: async () => ({ baseUrl: svc.url, apiKey: '' }) }));
-    assert.equal(s.item(0).price, 10.5);
-    assert.equal(svc.seen[0]['x-rapidapi-key'], undefined);
-  } finally {
-    await svc.close();
-  }
-});
-
-test('a short link is followed to its ASIN before asking the service', async () => {
-  const svc = await standIn((req) => ({ status: 200, body: { price: { amount: req.url?.includes('product=B08N5WRWNW') ? 20 : 99, currency: 'USD' } } }));
-  try {
-    const s = store([{ url: 'https://amzn.to/3abc' }]);
-    await checkPricesFor('u1', s.deps({ getService: async () => ({ baseUrl: svc.url, apiKey: '' }), resolveShort: async () => AMAZON }));
-    assert.equal(s.item(0).price, 20);
-  } finally {
-    await svc.close();
-  }
-});
-
-test('service down: the typed price stays, a note is set, checkedAt is unchanged', async () => {
-  const svc = await standIn(() => ({ status: 500, body: {} }));
-  const url = svc.url;
-  await svc.close();
-  const was = '2026-11-01T00:00:00.000Z';
-  const s = store([{ url: AMAZON, price: 500, currency: 'USD', checkedAt: was }]);
-  const summary = await checkPricesFor('u1', s.deps({ getService: async () => ({ baseUrl: url, apiKey: '' }) }));
-  assert.deepEqual(summary, { checked: 1, updated: 0, failed: 1, skipped: 0 });
+test('Amazon items are passed over: no request, price and notes left as they are', async () => {
+  const fetched: string[] = [];
+  const s = store([{ url: 'https://www.amazon.com/Some-Thing/dp/B08N5WRWNW', price: 500 }, { url: 'https://shop.example/x', price: 30 }]);
+  const summary = await checkPricesFor('u1', s.deps({ fetchPage: async (url) => { fetched.push(url); return { body: page('25'), finalUrl: url }; } }));
+  assert.deepEqual(fetched, ['https://shop.example/x']);
+  assert.deepEqual(summary, { checked: 1, updated: 1, failed: 0, skipped: 1 });
   assert.equal(s.item(0).price, 500);
-  assert.equal(s.item(0).checkedAt, was);
-  assert.equal(s.item(0).checkNote, 'Amazon price service didn’t answer');
-});
-
-test('service answers without a price: price kept, note set', async () => {
-  const svc = await standIn(() => ({ status: 200, body: { title: 'Thing' } }));
-  try {
-    const s = store([{ url: AMAZON, price: 500 }]);
-    await checkPricesFor('u1', s.deps({ getService: async () => ({ baseUrl: svc.url, apiKey: '' }) }));
-    assert.equal(s.item(0).price, 500);
-    assert.equal(s.item(0).checkedAt, '');
-    assert.match(s.item(0).checkNote, /didn’t show a price/);
-  } finally {
-    await svc.close();
-  }
-});
-
-test('Amazon with no price service set leaves the price and says what is needed', async () => {
-  const s = store([{ url: AMAZON, price: 500 }]);
-  await checkPricesFor('u1', s.deps());
-  assert.equal(s.item(0).price, 500);
-  assert.equal(s.item(0).checkNote, NEEDS_SERVICE);
+  assert.equal(s.item(0).checkNote, '');
+  assert.equal(s.item(1).price, 25);
 });
 
 test('another shop is read from its page; a page without a price keeps the old one', async () => {
@@ -239,10 +132,4 @@ test('a daily check is due only after 23 hours', () => {
   assert.equal(checkIsDue('', NOW), true);
   assert.equal(checkIsDue(new Date(NOW.getTime() - 22 * 3_600_000).toISOString(), NOW), false);
   assert.equal(checkIsDue(new Date(NOW.getTime() - 24 * 3_600_000).toISOString(), NOW), true);
-});
-
-test('the price service key file is never restored from a backup', async () => {
-  const { isRestorablePath } = await import('@/lib/backup');
-  assert.equal(isRestorablePath('.data/wishlist-private/price-service.json'), false);
-  assert.equal(isRestorablePath('.data/wishlist/lists/u1.json'), true);
 });

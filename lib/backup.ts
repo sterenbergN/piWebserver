@@ -4,8 +4,6 @@ import { AI_FOLDER } from './ai/settings';
 
 /** Holds the FatSecret secret, which stays on the server like the AI key. */
 const FOOD_SETTINGS = '.data/food/settings.json';
-// The Amazon price service's address and key (Admin › Wishlist prices) stay on the server too.
-const WISHLIST_PRIVATE = '.data/wishlist-private/';
 import { ZipWriter, extractZipEntry, readZipEntries, readZipEntry } from './zip-stream';
 
 // Backups of everything the site stores: private data (.data), home-page
@@ -136,7 +134,7 @@ export async function collectBackupFiles(includeMedia: boolean): Promise<string[
     // they can be huge, and notes and reading positions (in .data/reader) are always kept.
     // The same goes for the PDFs, pictures and recordings in .data/notes-files, and the ink in .data/notes.
     // The AI connection and the food settings hold API keys, so they never leave the server in a backup.
-    .filter((p) => !p.startsWith('.data/party/') && !p.startsWith(AI_FOLDER) && p !== FOOD_SETTINGS && !p.startsWith(WISHLIST_PRIVATE) && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
+    .filter((p) => !p.startsWith('.data/party/') && !p.startsWith(AI_FOLDER) && p !== FOOD_SETTINGS && !p.endsWith('.tmp') && !p.endsWith('.incoming') && (includeMedia || (!p.startsWith('.data/reader-books/') && !p.startsWith('.data/notes-files/'))));
   const content = (await walk(path.join(root(), 'public', 'content'))).map(rel);
   const uploads = (await walk(path.join(root(), 'public', 'uploads')))
     .map(rel)
@@ -285,7 +283,6 @@ export function isRestorablePath(entry: string) {
     && RESTORE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
     && normalized !== '.data/backup-settings.json'
     && !normalized.startsWith(AI_FOLDER)
-    && !normalized.startsWith(WISHLIST_PRIVATE)
     && normalized !== FOOD_SETTINGS;
 }
 

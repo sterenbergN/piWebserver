@@ -118,6 +118,7 @@
 .wl-item.is-top { border-color: rgba(var(--accent-rgb), 0.6); }
 .wl-pri.wl-top { color: var(--accent-light); border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.15); }
 .wl-check-note { color: var(--muted); font-style: italic; }
+.wl-check-link { color: var(--accent-light); font-size: inherit; }
 .wl-group-pick { border: 1px solid var(--surface-border); border-radius: 10px; padding: 0.5rem 0.7rem; display: flex; flex-direction: column; gap: 0.35rem; margin: 0; }
 .wl-group-pick legend { font-size: 0.85rem; color: var(--muted); padding: 0 0.3rem; }
 .wl-group-pick em { color: var(--muted); font-style: normal; }

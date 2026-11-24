@@ -9,7 +9,6 @@ import AiPanel from '@/components/admin/AiPanel';
 import AccountsPanel from '@/components/admin/AccountsPanel';
 import TicketsPanel from '@/components/admin/TicketsPanel';
 import FoodPanel from '@/components/admin/FoodPanel';
-import WishlistPricesPanel from '@/components/admin/WishlistPricesPanel';
 import ChessPanel from '@/components/admin/ChessPanel';
 import TuningPanel from '@/components/admin/TuningPanel';
 import AdminQuickNav from '@/components/admin/AdminQuickNav';
@@ -24,7 +23,6 @@ const TABS = [
   { id: 'daily', label: 'Daily', icon: '🧠' },
   { id: 'ai', label: 'AI', icon: '✨' },
   { id: 'food', label: 'Food', icon: '🍽️' },
-  { id: 'wishlist-prices', label: 'Wishlist prices', icon: '🛒' },
   { id: 'chess', label: 'Puzzles', icon: '♟️' },
   { id: 'tuning', label: 'Tuning', icon: '🎚️' },
 ] as const;
@@ -108,7 +106,6 @@ export default function AdminDashboard() {
               {t.id === 'ai' && <AiPanel />}
               {t.id === 'tickets' && <TicketsPanel />}
               {t.id === 'food' && <FoodPanel />}
-              {t.id === 'wishlist-prices' && <WishlistPricesPanel />}
               {t.id === 'chess' && <ChessPanel />}
               {t.id === 'tuning' && <TuningPanel />}
             </>

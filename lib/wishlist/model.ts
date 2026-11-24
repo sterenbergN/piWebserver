@@ -144,6 +144,16 @@ export function cleanUrl(value: unknown): string {
   }
 }
 
+/** An Amazon product or short link. Amazon blocks automatic page reads, so its prices are checked by hand. */
+export function isAmazonLink(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return /(^|\.)amazon\.[a-z.]{2,}$/.test(host) || /(^|\.)amzn\.(com|to)$/.test(host) || host === 'a.co';
+  } catch {
+    return false;
+  }
+}
+
 export function storeFromUrl(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./i, '').slice(0, 80);
