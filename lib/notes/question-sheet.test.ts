@@ -92,3 +92,22 @@ test('svgSize reads width/height, or the viewBox', () => {
   assert.deepEqual(svgSize('<svg viewBox="0 0 300 150">'), { w: 300, h: 150 });
   assert.deepEqual(svgSize('<svg viewBox="0 0 300 150" width="600">'), { w: 600, h: 300 });
 });
+
+test('when formulas would push the parts off the page, they shrink until every part fits with room to work', () => {
+  const pub = publicQuestion(question);
+  // Like the question that went wrong (Nov 24): three formulas, each with a six-row symbols table.
+  const where = ['a', 'b', 'c', 'd', 'e', 'f'].map((symbol) => ({ symbol, meaning: 'something it stands for' }));
+  const many = Array.from({ length: 3 }, (_, i) => ({ name: `Formula ${i}`, latex: `f_${i}`, where, source: 'Nise' }));
+  // Typeset math about as tall as the real pictures: a formula 3 lines high, the table 6 rows.
+  const math = (latex: string, size: number) => (latex.startsWith('\begin{array}') ? { w: size * 18, h: size * 8.4 } : { w: size * 12, h: size * 3 });
+  const { boxes, h } = layoutQuestionSheet(pub, many, 'Nov 24', measure, { figure: svgSize(question.figure!), math });
+  assert.equal(h, SHEET_PAGE.h);
+  const parts = boxes.filter((b) => b.kind === 'text' && b.role === 'part');
+  assert.equal(parts.length, 4);
+  const last = parts[parts.length - 1];
+  assert.ok(last.y + last.h <= SHEET_PAGE.h - 40, `the last part ends at ${Math.round(last.y + last.h)}, past the page`);
+  for (const [i, p] of parts.slice(0, -1).entries()) assert.ok(parts[i + 1].y - (p.y + p.h) >= 28, `room under part ${i}`);
+  const formulaMath = boxes.filter((b) => b.kind === 'math' && b.y > boxes.find((x) => x.kind === 'text' && x.text === 'Formulas')!.y);
+  assert.ok(formulaMath.length && formulaMath.every((m) => m.kind === 'math' && m.size < 9.5), 'the formulas were drawn smaller');
+  for (const [i, b] of boxes.entries()) for (const later of boxes.slice(i + 1)) assert.ok(later.y >= b.y + b.h - 0.01, `box ${i} overlaps the next`);
+});

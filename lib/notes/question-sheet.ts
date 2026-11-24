@@ -101,13 +101,51 @@ export function promptPieces(prompt: string) {
   return pieces;
 }
 
+/** How much the formulas (and then the figure) shrink, step by step, until the parts fit on the page. */
+const SHRINK_STEPS = [1, 0.88, 0.78, 0.68, 0.6, 0.52];
+
 /**
  * Where everything goes. `figure` is the picture's natural size, if the question has one; it is
  * scaled to fit beside the margin. `math` sizes typeset math; without it, math is written as
  * text. The parts share what's left of the page, spaced out so each has room under it for
- * working. The page is always letter size, so a long sheet leaves less room under each part.
+ * working. The page is always letter size, so a long sheet leaves less room under each part,
+ * and when the formulas would push the parts off the page they're drawn smaller (then the
+ * figure too) until every part fits with at least a little room to work under it.
  */
 export function layoutQuestionSheet(q: SheetQuestion, formulas: SheetFormula[], dateLabel: string, measure: Measure, options: { figure?: { w: number; h: number }; math?: MathSize } = {}): SheetLayout {
+  const parts = q.parts.map((p, i) => {
+    const text = partText(p, i, q.parts.length);
+    return { text, h: measure({ text, w: PART_W, size: 11, bold: false }) };
+  });
+  const partsNeed = parts.reduce((sum, p) => sum + p.h, 0) + ROOM.min * Math.max(0, parts.length - 1);
+  const bottom = SHEET_PAGE.h - MARGIN;
+
+  let laid = topOfSheet(q, formulas, dateLabel, measure, options, 1, 1);
+  for (const scale of SHRINK_STEPS.slice(1)) {
+    if (laid.y + partsNeed <= bottom) break;
+    laid = topOfSheet(q, formulas, dateLabel, measure, options, scale, 1);
+  }
+  // Still too much: the figure gives way as well.
+  for (const figureScale of [0.75, 0.55]) {
+    if (laid.y + partsNeed <= bottom) break;
+    laid = topOfSheet(q, formulas, dateLabel, measure, options, SHRINK_STEPS[SHRINK_STEPS.length - 1], figureScale);
+  }
+
+  const { boxes } = laid;
+  let { y } = laid;
+  const room = SHEET_PAGE.h - MARGIN - y - parts.reduce((sum, p) => sum + p.h, 0);
+  // Room under every part but the last, which has the rest of the page below it anyway.
+  const gap = Math.min(ROOM.max, Math.max(ROOM.min, room / Math.max(1, parts.length)));
+  for (const [i, p] of parts.entries()) {
+    boxes.push({ kind: 'text', role: 'part', x: MARGIN, y, w: PART_W, h: p.h, text: p.text, size: 11, color: '#1f4e8c' });
+    y += p.h + (i < parts.length - 1 ? gap : 0);
+  }
+  // Always a regular page: one taller page makes Notes zoom the whole notebook out to fit it.
+  return { boxes, h: SHEET_PAGE.h };
+}
+
+/** Everything above the parts, with the formulas drawn at `scale` and the figure at most `figureScale` of its usual size. */
+function topOfSheet(q: SheetQuestion, formulas: SheetFormula[], dateLabel: string, measure: Measure, options: { figure?: { w: number; h: number }; math?: MathSize }, scale: number, figureScale: number) {
   const boxes: SheetBox[] = [];
   let y = MARGIN;
   const add = (role: SheetText['role'], text: string, size: number, opts: { x?: number; w?: number; bold?: boolean; color?: string; after?: number } = {}) => {
@@ -138,43 +176,32 @@ export function layoutQuestionSheet(q: SheetQuestion, formulas: SheetFormula[], 
   }
   const { figure } = options;
   if (figure && figure.w > 0 && figure.h > 0) {
-    const scale = Math.min(1, 320 / figure.w, 220 / figure.h);
-    const w = figure.w * scale;
-    const h = figure.h * scale;
+    const fit = Math.min(1, 320 / figure.w, 220 / figure.h) * figureScale;
+    const w = figure.w * fit;
+    const h = figure.h * fit;
     boxes.push({ kind: 'figure', x: MARGIN, y, w, h });
     y += h + 12;
   }
 
   if (formulas.length) {
-    add('formulas', 'Formulas', 10.5, { bold: true, color: '#374151', after: 6 });
+    // Sizes and spacing shrink together, so a smaller formulas block keeps its look.
+    const k = (n: number) => Math.round(n * scale * 100) / 100;
+    add('formulas', 'Formulas', k(10.5), { bold: true, color: '#374151', after: k(6) });
     const x = MARGIN + INDENT;
     for (const f of formulas) {
-      add('formulas', f.name, 9.5, { x, bold: true, color: '#374151', after: 4 });
-      if (!addMath(f.latex, 12, x + INDENT, 6)) add('formulas', mathToPlain(`$${f.latex}$`), 10.5, { x: x + INDENT, after: 6 });
+      add('formulas', f.name, k(9.5), { x, bold: true, color: '#374151', after: k(4) });
+      if (!addMath(f.latex, k(12), x + INDENT, k(6))) add('formulas', mathToPlain(`$${f.latex}$`), k(10.5), { x: x + INDENT, after: k(6) });
       if (f.where?.length) {
-        add('formulas', 'where', 8.5, { x, color: '#6b7280', after: 2 });
-        if (!addMath(symbolsLatex(f.where), 9.5, x + INDENT, 6)) add('formulas', symbolsText(f.where), 9.5, { x: x + INDENT, after: 6 });
+        add('formulas', 'where', k(8.5), { x, color: '#6b7280', after: k(2) });
+        if (!addMath(symbolsLatex(f.where), k(9.5), x + INDENT, k(6))) add('formulas', symbolsText(f.where), k(9.5), { x: x + INDENT, after: k(6) });
       }
-      if (f.note) add('formulas', mathToPlain(f.note), 9, { x, color: '#4b5563', after: 2 });
-      if (f.source) add('formulas', `Source: ${f.source}`, 8, { x, color: '#6b7280', after: 4 });
-      y += 8;
+      if (f.note) add('formulas', mathToPlain(f.note), k(9), { x, color: '#4b5563', after: k(2) });
+      if (f.source) add('formulas', `Source: ${f.source}`, k(8), { x, color: '#6b7280', after: k(4) });
+      y += k(8);
     }
-    y += 6;
+    y += k(6);
   }
-
-  const parts = q.parts.map((p, i) => {
-    const text = partText(p, i, q.parts.length);
-    return { text, h: measure({ text, w: PART_W, size: 11, bold: false }) };
-  });
-  const room = SHEET_PAGE.h - MARGIN - y - parts.reduce((sum, p) => sum + p.h, 0);
-  // Room under every part but the last, which has the rest of the page below it anyway.
-  const gap = Math.min(ROOM.max, Math.max(ROOM.min, room / Math.max(1, parts.length)));
-  for (const [i, p] of parts.entries()) {
-    boxes.push({ kind: 'text', role: 'part', x: MARGIN, y, w: PART_W, h: p.h, text: p.text, size: 11, color: '#1f4e8c' });
-    y += p.h + (i < parts.length - 1 ? gap : 0);
-  }
-  // Always a regular page: one taller page makes Notes zoom the whole notebook out to fit it.
-  return { boxes, h: SHEET_PAGE.h };
+  return { boxes, y };
 }
 
 /** A figure's natural size from its SVG, for when the picture itself can't say. */

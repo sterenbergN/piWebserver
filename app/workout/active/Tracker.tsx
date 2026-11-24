@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { withGymLifts } from '@/lib/workout/gym-lifts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { calcAverage1RM } from '@/lib/workout/analytics';
 import { bestE1RMByExercise, bestE1RMByLift, detectStalledLifts, restTargetSeconds, warmupSets } from '@/lib/workout/session-insights';
@@ -58,6 +59,10 @@ type TrackerProps = {
  * suggestions, partner mode) in ./tracker hooks.
  */
 export default function Tracker({ plan, allLifts, user, pastHistory, goals = [], resumeState, sharedSessionId: sharedSessionIdProp, offline = false }: TrackerProps) {
+  // The gym's lifts as they are now: rebuilt when equipment is edited during the workout,
+  // so "Change lift" never offers a deleted machine or old weights.
+  const [gymLifts, setGymLifts] = useState<any[]>(allLifts || []);
+  useEffect(() => { setGymLifts(allLifts || []); }, [allLifts]);
   const { confirm, popup } = useSitePopup();
   const compact = useCompactLayout();
 
@@ -390,6 +395,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
    * refresh every planned lift on a changed station, keeping its plan state.
    */
   const applyGymUpdate = (updatedGym: Gym) => {
+    setGymLifts((prev) => withGymLifts(prev, updatedGym));
     const stationIds = new Set(updatedGym.stations.map((s) => s.id));
     invalidate(localPlan.lifts.filter((lift: any) => stationIds.has(lift.station?.id)).map(uidOf));
     setLocalPlan((prev: any) => ({
@@ -595,7 +601,7 @@ export default function Tracker({ plan, allLifts, user, pastHistory, goals = [],
 
   // Swap candidates: every other lift at this gym, closest to the current one first.
   const liftIdsInPlan = new Set(localPlan.lifts.map((lift: any) => lift.id));
-  const alternatives = rankSwapCandidates(activeLift, (allLifts || []).filter((l: any) =>
+  const alternatives = rankSwapCandidates(activeLift, gymLifts.filter((l: any) =>
     !liftIdsInPlan.has(l.id)
     && (!localPlan.gymName || !l.gymName || l.gymName === localPlan.gymName)), localPlan.type?.muscles || []);
 
