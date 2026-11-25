@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { DRIFT_TIER_COLORS, ITEM_META, KartItemType } from '@/lib/party/kart-shared';
+import { DRIFT_TIER_COLORS, KartItemType } from '@/lib/party/kart-shared';
 import { KartTrack, projectOntoTrack, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 
@@ -290,6 +290,58 @@ function makeNoiseTexture(seed: number, base = 200, spread = 55) {
   });
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   return tex;
+}
+
+function makePlanetTexture() {
+  return canvasTexture(512, (ctx, w, h) => {
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#3b1d7a');
+    g.addColorStop(0.2, '#7c3aed');
+    g.addColorStop(0.38, '#c084fc');
+    g.addColorStop(0.52, '#f472b6');
+    g.addColorStop(0.66, '#6d28d9');
+    g.addColorStop(0.84, '#22d3ee');
+    g.addColorStop(1, '#1e1b4b');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    const rng = mulberry32(4242);
+    for (let i = 0; i < 42; i++) {
+      const y = rng() * h;
+      const bh = 3 + rng() * 14;
+      ctx.fillStyle = rng() > 0.5 ? 'rgba(255,255,255,0.16)' : 'rgba(15,10,45,0.22)';
+      ctx.fillRect(0, y, w, bh);
+    }
+    // Great storm eye
+    const sg = ctx.createRadialGradient(w * 0.62, h * 0.56, 2, w * 0.62, h * 0.56, 36);
+    sg.addColorStop(0, 'rgba(254,240,138,0.85)');
+    sg.addColorStop(0.5, 'rgba(244,114,182,0.55)');
+    sg.addColorStop(1, 'rgba(244,114,182,0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.ellipse(w * 0.62, h * 0.56, 42, 22, -0.15, 0, Math.PI * 2);
+    ctx.fill();
+  }, 256);
+}
+
+function makePlanetRingTexture() {
+  return canvasTexture(256, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2;
+    const cy = h / 2;
+    const bands: [number, number, string][] = [
+      [0.29, 0.34, 'rgba(167,139,250,0.45)'],
+      [0.345, 0.39, 'rgba(244,114,182,0.75)'],
+      [0.405, 0.445, 'rgba(56,189,248,0.68)'],
+      [0.455, 0.49, 'rgba(250,204,21,0.5)'],
+    ];
+    for (const [r0, r1, col] of bands) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = (r1 - r0) * w;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ((r0 + r1) * 0.5) * w, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
 }
 
 function makeChevronTexture(colorA: string, colorB: string, bg: string) {
@@ -644,6 +696,196 @@ function signGeometry() {
   ]);
 }
 
+function sailboatGeometry() {
+  return merged([
+    colored(placed(new THREE.BoxGeometry(3.2, 1.1, 8.6), 0, 0.6, 0), '#f8fafc'),
+    colored(placed(new THREE.ConeGeometry(1.65, 3.2, 4), 0, 0.6, 5.4, { rx: Math.PI / 2, ry: Math.PI / 4 }), '#0ea5e9'),
+    colored(placed(new THREE.CylinderGeometry(0.14, 0.18, 12, 5), 0, 6.8, -0.4), '#cbd5e1'),
+    colored(placed(new THREE.ConeGeometry(3.4, 9.6, 3), 0, 7.6, -1.6, { sz: 0.12 }), '#ffffff'),
+    colored(placed(new THREE.ConeGeometry(2.1, 7.2, 3), 0, 6.2, 2.0, { sz: 0.1 }), '#38bdf8'),
+  ]);
+}
+
+function findStraightawaySpots(track: KartTrack, count: number) {
+  const m = track.samples.length;
+  const wall = track.wallWidth;
+  const candidates: number[] = [];
+  for (let i = 0; i < m; i++) {
+    const s = track.samples[i];
+    if (s.progress < 0.08 || s.progress > 0.9) continue;
+    if (Math.abs(s.curvature) > 0.0052) continue;
+    const clearRamp = track.ramps.every((r) => {
+      const d = Math.abs(s.progress - r.progress);
+      return Math.min(d, 1 - d) > 0.045;
+    });
+    if (!clearRamp) continue;
+    const clearItem = track.itemBoxes.every((b) => {
+      const d = Math.abs(s.progress - b.progress);
+      return Math.min(d, 1 - d) > 0.025;
+    });
+    if (!clearItem) continue;
+    const legOff = wall + 4.8;
+    const lx = s.x - s.nx * legOff;
+    const lz = s.z - s.nz * legOff;
+    const rx = s.x + s.nx * legOff;
+    const rz = s.z + s.nz * legOff;
+    let clear = true;
+    for (let j = 0; j < m; j += 2) {
+      const o = track.samples[j];
+      if (Math.hypot(lx - o.x, lz - o.z) < wall + 2.8 || Math.hypot(rx - o.x, rz - o.z) < wall + 2.8) {
+        clear = false;
+        break;
+      }
+    }
+    if (clear) candidates.push(i);
+  }
+  if (candidates.length === 0) return [];
+  const picked: KartTrack['samples'][number][] = [];
+  const minSampleSep = Math.floor(m / (count + 1));
+  for (const idx of candidates) {
+    if (picked.every((p) => {
+      const d = Math.abs(idx - Math.round(p.progress * m));
+      return Math.min(d, m - d) >= minSampleSep * 0.72;
+    })) {
+      picked.push(track.samples[idx]);
+      if (picked.length >= count) break;
+    }
+  }
+  return picked;
+}
+
+function buildBiomeArches(
+  track: KartTrack,
+  group: THREE.Group,
+  propMat: THREE.Material,
+  glowMat: THREE.Material,
+  disposers: (() => void)[],
+  pulseMats: THREE.MeshBasicMaterial[],
+) {
+  const spots = findStraightawaySpots(track, track.biome === 'space' ? 4 : 3);
+  if (spots.length === 0) return;
+  const span = track.wallWidth + 4.8;
+
+  if (track.biome === 'lava') {
+    const parts: THREE.BufferGeometry[] = [];
+    const glowParts: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      parts.push(
+        colored(placed(new THREE.CylinderGeometry(2.6, 4.0, 17, 6), side * span, 8.5, 0), '#1d1412'),
+        colored(placed(new THREE.DodecahedronGeometry(3.5, 0), side * (span - 2), 16.5, 0, { sx: 1.4, sy: 0.9 }), '#281916'),
+      );
+      glowParts.push(colored(placed(new THREE.BoxGeometry(0.45, 11, 0.45), side * (span - 2.3), 7, 0), '#ff5a1f'));
+    }
+    for (let i = -3; i <= 3; i++) {
+      const t = i / 3;
+      const x = t * (span - 2);
+      const y = 18.5 + (1 - t * t) * 5.5;
+      parts.push(colored(placed(new THREE.DodecahedronGeometry(4.2 - Math.abs(t) * 0.8, 0), x, y, 0, { sx: 1.5, sy: 0.8, rz: -t * 0.35 }), i % 2 === 0 ? '#241714' : '#18100e'));
+    }
+    const geo = merged(parts);
+    const gGeo = merged(glowParts);
+    const tf = spots.map((s) => ({ x: s.x, y: s.y - 1.5, z: s.z, ry: s.angle, s: 1 }));
+    instanced(group, geo, propMat, tf, disposers);
+    instanced(group, gGeo, glowMat, tf, disposers);
+    return;
+  }
+
+  if (track.biome === 'canyon') {
+    const parts: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      parts.push(
+        colored(placed(new THREE.CylinderGeometry(3.4, 5.2, 16, 7), side * span, 7.5, 0), '#9a4323'),
+        colored(placed(new THREE.CylinderGeometry(3.8, 4.4, 5, 7), side * (span - 0.8), 15.5, 0, { rz: side * 0.25 }), '#b85a30'),
+      );
+    }
+    for (let i = -4; i <= 4; i++) {
+      const t = i / 4;
+      const x = t * (span - 1.2);
+      const y = 17.5 + (1 - t * t) * 6.5;
+      parts.push(colored(placed(new THREE.BoxGeometry(8.5, 3.8, 6.2 - Math.abs(t) * 1.4), x, y, 0, { rz: -t * 0.42 }), i % 2 === 0 ? '#a84b28' : '#c66838'));
+    }
+    const geo = merged(parts);
+    const tf = spots.map((s) => ({ x: s.x, y: s.y - 2, z: s.z, ry: s.angle, s: 1 }));
+    instanced(group, geo, propMat, tf, disposers);
+    return;
+  }
+
+  if (track.biome === 'snow') {
+    const iceMat = new THREE.MeshPhongMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.86,
+      shininess: 110,
+      specular: '#ffffff',
+      emissive: '#38bdf8',
+      emissiveIntensity: 0.18,
+    });
+    disposers.push(() => iceMat.dispose());
+    const parts: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      parts.push(
+        colored(placed(new THREE.OctahedronGeometry(3.2, 0), side * span, 8, 0, { sy: 3.1 }), '#bae6fd'),
+        colored(placed(new THREE.OctahedronGeometry(2.2, 0), side * (span + 2.4), 5, 1.5, { sy: 2.2, rz: -side * 0.2 }), '#7dd3fc'),
+      );
+    }
+    for (let i = -3; i <= 3; i++) {
+      const t = i / 3;
+      const x = t * (span - 1.5);
+      const y = 17 + (1 - t * t) * 6.2;
+      parts.push(colored(placed(new THREE.OctahedronGeometry(3.2, 0), x, y, 0, { sx: 2.1, sy: 0.9, rz: -t * 0.45 }), i % 2 === 0 ? '#e0f2fe' : '#93c5fd'));
+    }
+    const geo = merged(parts);
+    const tf = spots.map((s) => ({ x: s.x, y: s.y - 1.5, z: s.z, ry: s.angle, s: 1 }));
+    instanced(group, geo, iceMat, tf, disposers);
+    return;
+  }
+
+  if (track.biome === 'space') {
+    const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false, transparent: true, opacity: 0.9 });
+    disposers.push(() => ringMat.dispose());
+    pulseMats.push(ringMat);
+    const frameParts: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      frameParts.push(
+        colored(placed(new THREE.BoxGeometry(1.4, 15, 1.4), side * span, 6.5, 0), '#312e81'),
+        colored(placed(new THREE.OctahedronGeometry(1.7, 0), side * span, 14.5, 0), '#c084fc'),
+      );
+    }
+    const frameGeo = merged(frameParts);
+    const ringGeo = new THREE.TorusGeometry(span * 0.86, 0.65, 8, 32, Math.PI * 1.18);
+    ringGeo.rotateZ(-Math.PI * 0.09);
+    ringGeo.translate(0, 6.5, 0);
+    const tf = spots.map((s, idx) => ({
+      x: s.x,
+      y: s.y - 1,
+      z: s.z,
+      ry: s.angle,
+      s: 1,
+      color: new THREE.Color(idx % 2 === 0 ? '#22d3ee' : '#f472b6'),
+    }));
+    instanced(group, frameGeo, propMat, tf, disposers);
+    instanced(group, ringGeo, ringMat, tf, disposers);
+    return;
+  }
+
+  if (track.biome === 'city') {
+    const trussParts: THREE.BufferGeometry[] = [];
+    const neonParts: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      trussParts.push(colored(placed(new THREE.BoxGeometry(1.8, 17.5, 1.8), side * span, 8.75, 0), '#1e293b'));
+      neonParts.push(colored(placed(new THREE.BoxGeometry(0.35, 13, 0.35), side * (span - 0.95), 8.5, 0), side > 0 ? '#00f5ff' : '#ff4fd8'));
+    }
+    trussParts.push(colored(placed(new THREE.BoxGeometry(span * 2 + 2.4, 2.1, 2.2), 0, 17.2, 0), '#0f172a'));
+    neonParts.push(
+      colored(placed(new THREE.BoxGeometry(span * 1.85, 0.42, 2.35), 0, 17.6, 0), '#00f5ff'),
+      colored(placed(new THREE.BoxGeometry(span * 1.85, 0.42, 2.35), 0, 16.6, 0), '#ff4fd8'),
+    );
+    const tf = spots.map((s) => ({ x: s.x, y: s.y - 1, z: s.z, ry: s.angle, s: 1 }));
+    instanced(group, merged(trussParts), propMat, tf, disposers);
+    instanced(group, merged(neonParts), glowMat, tf, disposers);
+  }
+}
+
 function instanced(
   group: THREE.Group,
   geo: THREE.BufferGeometry,
@@ -675,7 +917,16 @@ function instanced(
   return mesh;
 }
 
-function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group, propMat: THREE.Material, glowMat: THREE.Material, disposers: (() => void)[]) {
+function buildScenery(
+  track: KartTrack,
+  terrain: TerrainInfo,
+  group: THREE.Group,
+  propMat: THREE.Material,
+  glowMat: THREE.Material,
+  disposers: (() => void)[],
+  pulseMats: THREE.MeshBasicMaterial[],
+  lowestRoad: number,
+): THREE.Object3D | null {
   const rng = mulberry32(hashString(track.id) ^ 0x51ed);
   const wall = track.wallWidth;
   const xs = track.samples.map((s) => s.x);
@@ -701,12 +952,85 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
     return out;
   };
 
+  let lighthouseBeam: THREE.Object3D | null = null;
+
   switch (track.biome) {
-    case 'beach':
+    case 'beach': {
       instanced(group, palmGeometry(), propMat, scatter(120, 5, 150, [0.9, 1.5]).filter((p) => p.y > -1), disposers);
       instanced(group, umbrellaGeometry(), propMat, scatter(26, 3, 26, [1, 1.3]), disposers);
       instanced(group, rockGeometry('#8d8678'), propMat, scatter(34, 6, 200, [0.6, 2.2]), disposers);
+      // Distant sailboats out on the ocean
+      const oceanY = lowestRoad - 7;
+      const boats: { x: number; y: number; z: number; ry: number; s: number }[] = [];
+      for (let tries = 0; tries < 400 && boats.length < 16; tries++) {
+        const x = minX - 240 + rng() * (maxX - minX + 480);
+        const z = minZ - 240 + rng() * (maxZ - minZ + 480);
+        if (terrain.nearestDist(x, z) < wall + 115) continue;
+        if (terrain.heightAt(x, z) > oceanY - 1.2) continue;
+        boats.push({ x, y: oceanY - 0.2, z, ry: rng() * Math.PI * 2, s: 1.2 + rng() * 1.1 });
+      }
+      instanced(group, sailboatGeometry(), propMat, boats, disposers);
+
+      // Coastal lighthouse landmark on a clear headland
+      let lhPos: { x: number; y: number; z: number } | null = null;
+      for (let tries = 0; tries < 300; tries++) {
+        const x = minX + rng() * (maxX - minX);
+        const z = minZ + rng() * (maxZ - minZ);
+        const d = terrain.nearestDist(x, z);
+        if (d < wall + 46 || d > wall + 145) continue;
+        const h = terrain.heightAt(x, z);
+        if (h > lowestRoad - 2 && h < lowestRoad + 18) {
+          lhPos = { x, y: h - 0.5, z };
+          break;
+        }
+      }
+      if (lhPos) {
+        const lhParts: THREE.BufferGeometry[] = [
+          colored(placed(new THREE.CylinderGeometry(4.4, 5.4, 3, 12), 0, 1.5, 0), '#64748b'),
+          colored(placed(new THREE.CylinderGeometry(3.5, 4.1, 7, 12), 0, 6.5, 0), '#f8fafc'),
+          colored(placed(new THREE.CylinderGeometry(2.9, 3.5, 7, 12), 0, 13.5, 0), '#ef4444'),
+          colored(placed(new THREE.CylinderGeometry(2.3, 2.9, 7, 12), 0, 20.5, 0), '#f8fafc'),
+          colored(placed(new THREE.CylinderGeometry(1.9, 2.3, 6, 12), 0, 27, 0), '#ef4444'),
+          colored(placed(new THREE.CylinderGeometry(2.6, 2.2, 1.2, 12), 0, 30.6, 0), '#0f172a'),
+          colored(placed(new THREE.ConeGeometry(2.5, 3.2, 12), 0, 36.2, 0), '#ef4444'),
+        ];
+        const lhGeo = merged(lhParts);
+        const lhMesh = new THREE.Mesh(lhGeo, propMat);
+        lhMesh.position.set(lhPos.x, lhPos.y, lhPos.z);
+        group.add(lhMesh);
+        disposers.push(() => lhGeo.dispose());
+
+        const lanternGeo = new THREE.CylinderGeometry(1.7, 1.7, 3.8, 12);
+        const lanternMat = new THREE.MeshBasicMaterial({ color: '#fef08a', toneMapped: false });
+        const lantern = new THREE.Mesh(lanternGeo, lanternMat);
+        lantern.position.set(lhPos.x, lhPos.y + 33, lhPos.z);
+        group.add(lantern);
+        disposers.push(() => { lanternGeo.dispose(); lanternMat.dispose(); });
+
+        const beamPivot = new THREE.Group();
+        beamPivot.position.set(lhPos.x, lhPos.y + 33, lhPos.z);
+        const coneGeo = new THREE.ConeGeometry(9, 72, 14, 1, true);
+        coneGeo.translate(0, -36, 0);
+        coneGeo.rotateX(Math.PI / 2);
+        const coneMat = new THREE.MeshBasicMaterial({
+          color: '#fef9c3',
+          transparent: true,
+          opacity: 0.14,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          toneMapped: false,
+        });
+        const coneA = new THREE.Mesh(coneGeo, coneMat);
+        const coneB = new THREE.Mesh(coneGeo, coneMat);
+        coneB.rotation.y = Math.PI;
+        beamPivot.add(coneA, coneB);
+        group.add(beamPivot);
+        lighthouseBeam = beamPivot;
+        disposers.push(() => { coneGeo.dispose(); coneMat.dispose(); });
+      }
       break;
+    }
     case 'canyon':
       instanced(group, cactusGeometry(), propMat, scatter(90, 4, 90, [0.9, 1.6]), disposers);
       instanced(group, rockGeometry('#a35128'), propMat, scatter(70, 11, 120, [0.7, 3]), disposers);
@@ -754,13 +1078,16 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
     }
   }
 
+  buildBiomeArches(track, group, propMat, glowMat, disposers, pulseMats);
+
   // Trackside furniture every so often along the barrier
   const m = track.samples.length;
   const flags: { x: number; y: number; z: number; ry: number; s: number; color?: THREE.Color }[] = [];
+  const lamps: { x: number; y: number; z: number; ry: number; s: number }[] = [];
+  const lampHeads: { x: number; y: number; z: number; ry: number; s: number; color?: THREE.Color }[] = [];
   const signs: { x: number; y: number; z: number; ry: number; s: number }[] = [];
   const boards: { x: number; y: number; z: number; ry: number; s: number }[] = [];
-  const isNight = track.biome === 'city' || track.biome === 'lava' || track.biome === 'space';
-  const lampHeads: { x: number; y: number; z: number; ry: number; s: number; color?: THREE.Color }[] = [];
+  const useLamps = track.biome === 'city' || track.biome === 'lava';
   const accent = new THREE.Color(track.theme.accentColor);
   for (let i = 0; i < m; i++) {
     const s = track.samples[i];
@@ -770,8 +1097,17 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
       const x = s.x + s.nx * off;
       const z = s.z + s.nz * off;
       const y = s.y + Math.sin(s.bank) * wall * side;
-      flags.push({ x, y, z, ry: -s.angle + (side > 0 ? 0 : Math.PI), s: 1, color: accent });
-      if (isNight) lampHeads.push({ x: x, y: y + 9.9, z: z, ry: 0, s: 1, color: accent });
+      if (useLamps) {
+        // Point the lamp arm inward toward the road centerline
+        const ry = Math.atan2(s.nx * side, s.nz * side);
+        lamps.push({ x, y, z, ry, s: 1 });
+        const headCol = track.biome === 'city'
+          ? new THREE.Color(i % 16 === 0 ? '#00f5ff' : '#ff4fd8')
+          : new THREE.Color('#ff8a1f');
+        lampHeads.push({ x: x - Math.sin(ry) * 2.35, y: y + 9.85, z: z - Math.cos(ry) * 2.35, ry: 0, s: 1, color: headCol });
+      } else if (track.biome !== 'space') {
+        flags.push({ x, y, z, ry: -s.angle + (side > 0 ? 0 : Math.PI), s: 1, color: accent });
+      }
     }
     // Chevrons on the outside of proper corners
     if (i % 6 === 0 && Math.abs(s.curvature) > 0.0088) {
@@ -782,12 +1118,13 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
       boards.push({ x: s.x + s.nx * off, y: y + 3.4, z: s.z + s.nz * off, ry: s.angle, s: outside });
     }
   }
-  if (track.biome !== 'space') instanced(group, flagGeometry(), propMat, flags, disposers);
+  if (flags.length) instanced(group, flagGeometry(), propMat, flags, disposers);
+  if (lamps.length) instanced(group, lampGeometry(), propMat, lamps, disposers);
   instanced(group, signGeometry(), propMat, signs, disposers);
 
   if (lampHeads.length) {
-    const head = new THREE.SphereGeometry(0.5, 6, 5);
-    const headMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+    const head = new THREE.SphereGeometry(0.55, 8, 6);
+    const headMat = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false });
     disposers.push(() => headMat.dispose());
     instanced(group, head, headMat, lampHeads, disposers);
   }
@@ -819,6 +1156,7 @@ function buildScenery(track: KartTrack, terrain: TerrainInfo, group: THREE.Group
   const mirrored = new THREE.PlaneGeometry(4.6, 2.2);
   mirrored.scale(-1, 1, 1);
   instanced(group, mirrored, boardMat, right.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })), disposers);
+  return lighthouseBeam;
 }
 
 // ─── Kart models ─────────────────────────────────────────────────────────────
@@ -856,80 +1194,129 @@ function kartBodyGeometry(style: string) {
   // Painted with the driver's colour
   if (style === 'rocket') {
     return merged([
-      placed(new THREE.CylinderGeometry(0.62, 0.86, 3.4, 12), 0, 0.72, -0.1, { rx: Math.PI / 2 }).toNonIndexed(),
-      placed(new THREE.ConeGeometry(0.62, 1.4, 12), 0, 0.72, 2.25, { rx: Math.PI / 2 }).toNonIndexed(),
-      placed(new THREE.BoxGeometry(2.9, 0.1, 1.2), 0, 0.5, -0.8, { ry: 0 }).toNonIndexed(),
-      placed(new THREE.BoxGeometry(0.12, 1.1, 1), 0, 1.5, -1.4).toNonIndexed(),
+      placed(new THREE.CylinderGeometry(0.64, 0.88, 3.5, 14), 0, 0.72, -0.1, { rx: Math.PI / 2 }).toNonIndexed(),
+      placed(new THREE.ConeGeometry(0.64, 1.45, 14), 0, 0.72, 2.3, { rx: Math.PI / 2 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(3.0, 0.12, 1.25), 0, 0.5, -0.8, { ry: 0 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.14, 1.15, 1.05), 0, 1.5, -1.4).toNonIndexed(),
     ].map((g) => { g.deleteAttribute('uv'); return g; }));
   }
   if (style === 'cyber') {
-    const g = extrudeBody(4.3, 0.92, 1.9);
+    const g = extrudeBody(4.35, 0.94, 1.9);
     return merged([
       g.index ? g.toNonIndexed() : g,
-      placed(new THREE.BoxGeometry(0.1, 0.8, 1.3), 1.08, 0.86, -1.1, { rx: -0.3 }).toNonIndexed(),
-      placed(new THREE.BoxGeometry(0.1, 0.8, 1.3), -1.08, 0.86, -1.1, { rx: -0.3 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.12, 0.85, 1.35), 1.08, 0.88, -1.1, { rx: -0.3 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.12, 0.85, 1.35), -1.08, 0.88, -1.1, { rx: -0.3 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.42, 0.36, 1.8), 1.02, 0.44, 0.15).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.42, 0.36, 1.8), -1.02, 0.44, 0.15).toNonIndexed(),
     ].map((p) => { if (p.getAttribute('uv')) p.deleteAttribute('uv'); return p; }));
   }
   if (style === 'bruiser') {
     return merged([
-      placed(new THREE.BoxGeometry(2.3, 0.82, 3.4), 0, 0.72, 0).toNonIndexed(),
-      placed(new THREE.BoxGeometry(2.0, 0.42, 1.0), 0, 1.25, 1.1, { rx: 0.18 }).toNonIndexed(),
-      placed(new THREE.BoxGeometry(2.4, 0.7, 0.8), 0, 1.1, -1.5).toNonIndexed(),
+      placed(new THREE.BoxGeometry(2.34, 0.82, 3.45), 0, 0.72, 0).toNonIndexed(),
+      placed(new THREE.BoxGeometry(2.04, 0.44, 1.05), 0, 1.26, 1.1, { rx: 0.18 }).toNonIndexed(),
+      placed(new THREE.BoxGeometry(2.44, 0.72, 0.85), 0, 1.12, -1.5).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.38, 0.42, 2.6), 1.25, 0.62, 0).toNonIndexed(),
+      placed(new THREE.BoxGeometry(0.38, 0.42, 2.6), -1.25, 0.62, 0).toNonIndexed(),
     ].map((g) => { g.deleteAttribute('uv'); return g; }));
   }
-  const body = extrudeBody(4.1, 1.05, 1.7);
+  const body = extrudeBody(4.15, 1.05, 1.72);
   const nonIdx = body.index ? body.toNonIndexed() : body;
   return merged([
     nonIdx,
-    placed(new THREE.BoxGeometry(0.46, 0.46, 1.9), 1.1, 0.52, -0.3).toNonIndexed(),
-    placed(new THREE.BoxGeometry(0.46, 0.46, 1.9), -1.1, 0.52, -0.3).toNonIndexed(),
+    placed(new THREE.BoxGeometry(0.48, 0.46, 1.95), 1.1, 0.52, -0.3).toNonIndexed(),
+    placed(new THREE.BoxGeometry(0.48, 0.46, 1.95), -1.1, 0.52, -0.3).toNonIndexed(),
   ].map((p) => { if (p.getAttribute('uv')) p.deleteAttribute('uv'); return p; }));
 }
 
 function kartTrimGeometry(style: string, accent: string) {
-  // Vertex-coloured detail shared by every style: wings, seat, exhausts, steering wheel
+  // Vertex-coloured detail shared by every style: wings, seat, racing stripe, diffuser, chrome exhausts, roll hoop
   const dark = '#141824';
-  const metal = '#c5ced9';
+  const metal = '#d8e1ec';
+  const chrome = '#eef4fb';
+  const stripe = '#f8fafc';
   const parts: THREE.BufferGeometry[] = [
-    colored(placed(new THREE.BoxGeometry(1.1, 0.8, 0.28), 0, 1.08, -0.7, { rx: -0.25 }), dark), // seat back
-    colored(placed(new THREE.TorusGeometry(0.34, 0.06, 6, 12), 0, 1.15, 0.55, { rx: -0.7 }), dark), // wheel
-    colored(placed(new THREE.CylinderGeometry(0.13, 0.17, 0.9, 8), -0.62, 0.86, -2.0, { rx: Math.PI / 2 - 0.25 }), metal),
-    colored(placed(new THREE.CylinderGeometry(0.13, 0.17, 0.9, 8), 0.62, 0.86, -2.0, { rx: Math.PI / 2 - 0.25 }), metal),
+    colored(placed(new THREE.BoxGeometry(1.12, 0.82, 0.28), 0, 1.08, -0.7, { rx: -0.25 }), dark), // seat back
+    colored(placed(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 6), 0, 0.92, 0.36, { rx: -0.65 }), dark), // steering column
+    colored(placed(new THREE.BoxGeometry(1.55, 0.22, 0.44), 0, 0.34, -1.92), dark), // rear diffuser
+    colored(placed(new THREE.BoxGeometry(0.28, 0.08, 1.9), 0, 0.92, 0.85, { rx: 0.16 }), stripe), // hood racing stripe
+    // Chrome twin exhausts + flared tips
+    colored(placed(new THREE.CylinderGeometry(0.13, 0.17, 0.9, 10), -0.62, 0.86, -2.0, { rx: Math.PI / 2 - 0.25 }), metal),
+    colored(placed(new THREE.CylinderGeometry(0.13, 0.17, 0.9, 10), 0.62, 0.86, -2.0, { rx: Math.PI / 2 - 0.25 }), metal),
+    colored(placed(new THREE.CylinderGeometry(0.17, 0.15, 0.22, 10), -0.62, 0.97, -2.38, { rx: Math.PI / 2 - 0.25 }), chrome),
+    colored(placed(new THREE.CylinderGeometry(0.17, 0.15, 0.22, 10), 0.62, 0.97, -2.38, { rx: Math.PI / 2 - 0.25 }), chrome),
+    // Roll hoop behind cockpit
+    colored(placed(new THREE.TorusGeometry(0.62, 0.075, 6, 12, Math.PI), 0, 1.38, -0.82), metal),
   ];
   if (style === 'classic') {
     parts.push(
-      colored(placed(new THREE.BoxGeometry(2.5, 0.12, 0.62), 0, 0.34, 2.28), dark),
-      colored(placed(new THREE.BoxGeometry(2.4, 0.16, 0.7), 0, 1.68, -1.86), accent),
+      colored(placed(new THREE.BoxGeometry(2.55, 0.12, 0.66), 0, 0.34, 2.28), dark),
+      colored(placed(new THREE.BoxGeometry(2.45, 0.07, 0.24), 0, 0.4, 2.42), accent),
+      colored(placed(new THREE.BoxGeometry(2.45, 0.16, 0.72), 0, 1.68, -1.86), accent),
       colored(placed(new THREE.BoxGeometry(0.12, 0.62, 0.5), 1.0, 1.36, -1.86), dark),
       colored(placed(new THREE.BoxGeometry(0.12, 0.62, 0.5), -1.0, 1.36, -1.86), dark),
+      colored(placed(new THREE.BoxGeometry(0.16, 0.34, 0.85), 1.24, 1.68, -1.86), dark),
+      colored(placed(new THREE.BoxGeometry(0.16, 0.34, 0.85), -1.24, 1.68, -1.86), dark),
     );
   } else if (style === 'rocket') {
     parts.push(
-      colored(placed(new THREE.CylinderGeometry(0.72, 0.5, 0.7, 12), 0, 0.72, -2.0, { rx: Math.PI / 2 }), metal),
-      colored(placed(new THREE.BoxGeometry(3.05, 0.14, 0.34), 0, 0.5, -0.36), accent),
+      colored(placed(new THREE.CylinderGeometry(0.76, 0.54, 0.75, 14), 0, 0.72, -2.0, { rx: Math.PI / 2 }), chrome),
+      colored(placed(new THREE.BoxGeometry(3.15, 0.14, 0.34), 0, 0.5, -0.36), accent),
+      colored(placed(new THREE.BoxGeometry(0.24, 0.08, 1.5), 0, 1.38, 0.3), stripe),
+      colored(placed(new THREE.BoxGeometry(0.18, 0.55, 0.9), 1.48, 0.68, -0.8), accent),
+      colored(placed(new THREE.BoxGeometry(0.18, 0.55, 0.9), -1.48, 0.68, -0.8), accent),
     );
   } else if (style === 'cyber') {
     parts.push(
-      colored(placed(new THREE.BoxGeometry(2.05, 0.08, 3.5), 0, 0.28, 0), accent),
-      colored(placed(new THREE.BoxGeometry(1.2, 0.3, 0.8), 0, 1.0, 0.9, { rx: 0.5 }), '#0b1020'),
+      colored(placed(new THREE.BoxGeometry(2.15, 0.08, 3.6), 0, 0.28, 0), accent),
+      colored(placed(new THREE.BoxGeometry(1.24, 0.28, 0.85), 0, 1.0, 0.92, { rx: 0.5 }), '#0b1020'),
+      colored(placed(new THREE.BoxGeometry(2.3, 0.14, 0.55), 0, 1.32, -1.62), dark),
+      colored(placed(new THREE.BoxGeometry(2.32, 0.08, 0.2), 0, 1.4, -1.72), accent),
     );
   } else {
     parts.push(
-      colored(placed(new THREE.TorusGeometry(1.05, 0.12, 6, 14, Math.PI), 0, 0.5, 2.0), metal),
-      colored(placed(new THREE.TorusGeometry(0.85, 0.09, 6, 14, Math.PI), 0, 1.3, -0.8), dark),
-      colored(placed(new THREE.CylinderGeometry(0.16, 0.2, 1.4, 8), -1.0, 1.7, -1.5), metal),
-      colored(placed(new THREE.CylinderGeometry(0.16, 0.2, 1.4, 8), 1.0, 1.7, -1.5), metal),
+      colored(placed(new THREE.TorusGeometry(1.08, 0.13, 6, 14, Math.PI), 0, 0.5, 2.02), chrome),
+      colored(placed(new THREE.BoxGeometry(2.2, 0.24, 0.4), 0, 0.42, 1.88), dark),
+      colored(placed(new THREE.TorusGeometry(0.88, 0.1, 6, 14, Math.PI), 0, 1.32, -0.8), dark),
+      colored(placed(new THREE.CylinderGeometry(0.16, 0.2, 1.45, 8), -1.0, 1.7, -1.5), chrome),
+      colored(placed(new THREE.CylinderGeometry(0.16, 0.2, 1.45, 8), 1.0, 1.7, -1.5), chrome),
     );
   }
   return merged(parts);
 }
 
+function brakeLightGeometry(style: string) {
+  const z = style === 'rocket' ? -1.85 : style === 'cyber' ? -2.05 : -1.96;
+  const y = style === 'bruiser' ? 1.12 : 0.92;
+  const x = style === 'bruiser' ? 0.82 : 0.68;
+  return merged([
+    placed(new THREE.BoxGeometry(0.38, 0.16, 0.12), -x, y, z),
+    placed(new THREE.BoxGeometry(0.38, 0.16, 0.12), x, y, z),
+  ]);
+}
+
+function exhaustGlowGeometry() {
+  return merged([
+    placed(new THREE.CylinderGeometry(0.15, 0.11, 0.34, 8), -0.62, 0.99, -2.42, { rx: Math.PI / 2 - 0.25 }),
+    placed(new THREE.CylinderGeometry(0.15, 0.11, 0.34, 8), 0.62, 0.99, -2.42, { rx: Math.PI / 2 - 0.25 }),
+  ]);
+}
+
 function wheelGeometry(radius: number, width: number) {
-  const tire = colored(placed(new THREE.CylinderGeometry(radius, radius, width, 14), 0, 0, 0, { rz: Math.PI / 2 }), '#0d1017');
-  const hub = colored(placed(new THREE.CylinderGeometry(radius * 0.55, radius * 0.55, width + 0.04, 10), 0, 0, 0, { rz: Math.PI / 2 }), '#d6dde6');
-  const spoke = colored(placed(new THREE.BoxGeometry(width + 0.06, radius * 1.1, radius * 0.2), 0, 0, 0), '#475569');
-  const spoke2 = colored(placed(new THREE.BoxGeometry(width + 0.06, radius * 0.2, radius * 1.1), 0, 0, 0), '#475569');
-  return merged([tire, hub, spoke, spoke2]);
+  const tire = colored(placed(new THREE.CylinderGeometry(radius, radius, width, 16), 0, 0, 0, { rz: Math.PI / 2 }), '#0f131c');
+  const innerRim = colored(placed(new THREE.CylinderGeometry(radius * 0.62, radius * 0.62, width + 0.02, 14), 0, 0, 0, { rz: Math.PI / 2 }), '#1e293b');
+  const outerRing = colored(placed(new THREE.TorusGeometry(radius * 0.56, radius * 0.08, 6, 14), width * 0.48, 0, 0, { ry: Math.PI / 2 }), '#e2e8f0');
+  const outerRingL = colored(placed(new THREE.TorusGeometry(radius * 0.56, radius * 0.08, 6, 14), -width * 0.48, 0, 0, { ry: Math.PI / 2 }), '#e2e8f0');
+  const spoke = colored(placed(new THREE.BoxGeometry(width + 0.07, radius * 1.12, radius * 0.2), 0, 0, 0), '#cbd5e1');
+  const spoke2 = colored(placed(new THREE.BoxGeometry(width + 0.07, radius * 0.2, radius * 1.12), 0, 0, 0), '#cbd5e1');
+  const hubCap = colored(placed(new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, width + 0.1, 8), 0, 0, 0, { rz: Math.PI / 2 }), '#f8fafc');
+  return merged([tire, innerRim, outerRing, outerRingL, spoke, spoke2, hubCap]);
+}
+
+function coinGeometry() {
+  const outer = colored(placed(new THREE.CylinderGeometry(0.85, 0.85, 0.22, 16), 0, 0, 0, { rx: Math.PI / 2 }), '#facc15');
+  const inner = colored(placed(new THREE.CylinderGeometry(0.64, 0.64, 0.25, 14), 0, 0, 0, { rx: Math.PI / 2 }), '#eab308');
+  const slot = colored(placed(new THREE.BoxGeometry(0.24, 0.78, 0.3), 0, 0, 0), '#fef08a');
+  return merged([outer, inner, slot]);
 }
 
 const WHEEL_SPECS: Record<string, { front: [number, number, number]; rear: [number, number, number]; r: number; w: number }> = {
@@ -941,19 +1328,33 @@ const WHEEL_SPECS: Record<string, { front: [number, number, number]; rear: [numb
 
 interface KartVisual {
   root: THREE.Group;
+  chassisGroup: THREE.Group;
   bodyMat: THREE.MeshPhongMaterial;
   baseColor: THREE.Color;
+  brakeLightMat: THREE.MeshBasicMaterial;
+  exhaustGlow: THREE.Mesh;
+  exhaustGlowMat: THREE.MeshBasicMaterial;
+  steerWheel: THREE.Mesh;
+  driverUpper: THREE.Group;
+  leftArm: THREE.Group;
+  rightArm: THREE.Group;
   frontL: THREE.Mesh;
   frontR: THREE.Mesh;
   rear: THREE.Mesh;
   head: THREE.Sprite;
   tag: THREE.Sprite;
+  tagMat: THREE.SpriteMaterial;
   shadow: THREE.Mesh;
-  flame: THREE.Mesh;
-  flameMat: THREE.MeshBasicMaterial;
+  shadowMat: THREE.MeshBasicMaterial;
+  flameOuter: THREE.Mesh;
+  flameOuterMat: THREE.MeshBasicMaterial;
+  flameInner: THREE.Mesh;
   aura: THREE.Sprite;
   auraMat: THREE.SpriteMaterial;
-  itemSprite: THREE.Sprite;
+  hornRing: THREE.Mesh;
+  hornRingMat: THREE.MeshBasicMaterial;
+  heldItemAnchor: THREE.Group;
+  heldItemMesh: THREE.Mesh;
   shownItem: KartItemType | null;
   disposables: { dispose: () => void }[];
   x: number;
@@ -971,10 +1372,15 @@ interface KartVisual {
   rx: number;
   spin: number;
   squash: number;
+  prevHopT: number;
   wheelRot: number;
   sparkAcc: number;
   dustAcc: number;
   flameAcc: number;
+  skidAcc: number;
+  revAcc: number;
+  slipAcc: number;
+  hornPhase: number;
   data: SnapKart;
 }
 
@@ -1119,6 +1525,7 @@ interface CameraRig {
   z: number;
   fov: number;
   shake: number;
+  driftLook: number;
   ready: boolean;
 }
 
@@ -1130,6 +1537,8 @@ export interface SceneViewport {
   h: number;
 }
 
+const SKID_CAP = 360;
+
 export class KartScene {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -1138,14 +1547,31 @@ export class KartScene {
   private hazards = new Map<string, THREE.Object3D>();
   private hazardGeos: Record<string, THREE.BufferGeometry> = {};
   private hazardMats: Record<string, THREE.Material> = {};
+  private heldItemAssets = new Map<KartItemType, { geo: THREE.BufferGeometry; mat: THREE.Material }>();
   private rigs = new Map<string, CameraRig>();
-  private additive = new ParticlePool(1800, true);
-  private smoke = new ParticlePool(900, false);
+  private additive = new ParticlePool(2200, true);
+  private smoke = new ParticlePool(1000, false);
   private disposers: (() => void)[] = [];
   private animated: { tex: THREE.Texture; speed: number }[] = [];
+  private shaderTimes: THREE.ShaderMaterial[] = [];
+  private pulseMats: THREE.MeshBasicMaterial[] = [];
   private gantryLights: THREE.MeshBasicMaterial[] = [];
   private itemBoxMesh!: THREE.InstancedMesh;
+  private itemBoxShadowMesh!: THREE.InstancedMesh;
   private itemBoxSlots = new Map<string, { index: number; x: number; y: number; z: number; scale: number; active: boolean }>();
+  private coinMesh!: THREE.InstancedMesh;
+  private coinSlots = new Map<string, { index: number; x: number; y: number; z: number; scale: number; active: boolean }>();
+  private skidMesh!: THREE.InstancedMesh;
+  private skidCursor = 0;
+  private skidColor = new THREE.Color();
+  private shadowTex!: THREE.Texture;
+  private shadowGeo!: THREE.PlaneGeometry;
+  private craterPos: THREE.Vector3 | null = null;
+  private craterAcc = 0;
+  private lighthouseBeam: THREE.Object3D | null = null;
+  private spaceBodies: THREE.Object3D[] = [];
+  private trafficMesh: THREE.InstancedMesh | null = null;
+  private trafficLanes: { cx: number; cz: number; r: number; y: number; speed: number; phase: number; dir: number }[] = [];
   private snapshot: KartTelemetrySnapshot | null = null;
   private snapshotAt = 0;
   private lastEventId = 0;
@@ -1161,7 +1587,6 @@ export class KartScene {
   private clearColor: THREE.Color;
   private dummy = new THREE.Object3D();
   private rampSpans: { start: number; end: number; height: number }[] = [];
-  private itemTextures = new Map<KartItemType, THREE.Texture>();
   private onEvent?: (e: KartEvent) => void;
   private rng = mulberry32(12345);
   private confettiUntil = 0;
@@ -1191,12 +1616,20 @@ export class KartScene {
 
   private buildEnvironment() {
     const t = this.track.theme;
+    const biome = this.track.biome;
     this.scene.add(this.track2(new THREE.HemisphereLight(t.ambient, t.groundLow, 1.15)));
-    const sun = this.track2(new THREE.DirectionalLight(t.sun, 2.1));
+    const sun = this.track2(new THREE.DirectionalLight(t.sun, 2.05));
     sun.position.set(t.sunDir[0] * 500, t.sunDir[1] * 500, t.sunDir[2] * 500);
     this.scene.add(sun);
 
-    // Gradient sky dome that follows the camera
+    // Cool counter-directional rim light opposite sunDir so karts and edges pop
+    const rim = this.track2(new THREE.DirectionalLight('#a8ccff', 0.65));
+    rim.position.set(-t.sunDir[0] * 400, Math.max(140, Math.abs(t.sunDir[1]) * 260), -t.sunDir[2] * 400);
+    this.scene.add(rim);
+
+    const sunDir = new THREE.Vector3(...t.sunDir).normalize();
+
+    // Rich gradient sky dome with atmospheric sun halo & horizon scatter
     const skyMat = this.track2(new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
@@ -1205,13 +1638,27 @@ export class KartScene {
         top: { value: new THREE.Color(t.skyTop) },
         horizon: { value: new THREE.Color(t.skyHorizon) },
         ground: { value: new THREE.Color(t.fog) },
+        uSunDir: { value: sunDir.clone() },
+        uSunColor: { value: new THREE.Color(t.sun) },
+        uScatter: { value: biome === 'canyon' ? 0.52 : biome === 'beach' ? 0.42 : 0.25 },
       },
       vertexShader: `varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
       fragmentShader: `
-        uniform vec3 top; uniform vec3 horizon; uniform vec3 ground; varying vec3 vDir;
+        uniform vec3 top;
+        uniform vec3 horizon;
+        uniform vec3 ground;
+        uniform vec3 uSunDir;
+        uniform vec3 uSunColor;
+        uniform float uScatter;
+        varying vec3 vDir;
         void main() {
-          float h = normalize(vDir).y;
+          vec3 dir = normalize(vDir);
+          float h = dir.y;
           vec3 c = h > 0.0 ? mix(horizon, top, pow(min(1.0, h * 1.6), 0.62)) : mix(horizon, ground, min(1.0, -h * 8.0));
+          float sunDot = max(0.0, dot(dir, normalize(uSunDir)));
+          float halo = pow(sunDot, 10.0) * 0.35 + pow(sunDot, 84.0) * 0.7;
+          float band = pow(1.0 - min(1.0, abs(h)), 4.0) * 0.22;
+          c += uSunColor * (halo * uScatter + band * uScatter * 0.6);
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }
@@ -1221,17 +1668,60 @@ export class KartScene {
     this.sky.renderOrder = -10;
     this.skyGroup.add(this.sky);
 
-    const biome = this.track.biome;
     const rng = mulberry32(hashString(this.track.id) + 77);
 
     // Sun, moon or planet glow
-    const sunDir = new THREE.Vector3(...t.sunDir).normalize();
     const sunTex = this.track2(makeBlobTexture(biome === 'city' || biome === 'space' ? 'rgba(255,255,255,0.9)' : 'rgba(255,250,225,1)', 'rgba(255,240,200,0)'));
     const sunSprite = new THREE.Sprite(this.track2(new THREE.SpriteMaterial({ map: sunTex, fog: false, depthWrite: false, blending: THREE.AdditiveBlending, transparent: true, toneMapped: false })));
-    sunSprite.scale.setScalar(biome === 'beach' ? 520 : 420);
+    sunSprite.scale.setScalar(biome === 'beach' ? 560 : 440);
     sunSprite.position.copy(sunDir.clone().multiplyScalar(2000));
     sunSprite.renderOrder = -9;
     this.skyGroup.add(sunSprite);
+
+    if (biome === 'snow') {
+      // Animated Aurora Borealis curtain in the alpine sky
+      const auroraMat = this.track2(new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        fog: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: { uTime: { value: 0 } },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          varying vec2 vUv;
+          void main() {
+            float wave1 = sin(vUv.x * 22.0 + uTime * 0.45 + sin(vUv.x * 7.0 - uTime * 0.25) * 1.4);
+            float wave2 = sin(vUv.x * 38.0 - uTime * 0.35 + vUv.y * 3.0);
+            float curtain = pow(max(0.0, 0.55 + 0.45 * wave1), 2.2) * (0.65 + 0.35 * wave2);
+            float vFade = smoothstep(0.0, 0.28, vUv.y) * smoothstep(1.0, 0.22, vUv.y);
+            float hFade = smoothstep(0.0, 0.14, vUv.x) * smoothstep(1.0, 0.86, vUv.x);
+            vec3 emerald = vec3(0.14, 0.96, 0.62);
+            vec3 cyan = vec3(0.22, 0.78, 0.98);
+            vec3 violet = vec3(0.68, 0.34, 0.96);
+            vec3 col = mix(emerald, cyan, smoothstep(0.15, 0.65, vUv.y));
+            col = mix(col, violet, smoothstep(0.55, 0.95, vUv.y));
+            float a = curtain * vFade * hFade * 0.62;
+            gl_FragColor = vec4(col, a);
+            #include <colorspace_fragment>
+          }
+        `,
+      }));
+      this.shaderTimes.push(auroraMat);
+      const auroraGeo = this.track2(new THREE.CylinderGeometry(1650, 1780, 560, 64, 4, true, 0.2, Math.PI * 1.25));
+      const aurora = new THREE.Mesh(auroraGeo, auroraMat);
+      aurora.position.y = 520;
+      aurora.rotation.y = 0.8;
+      aurora.renderOrder = -8;
+      this.skyGroup.add(aurora);
+    }
 
     if (biome === 'space' || biome === 'city' || biome === 'lava') {
       const count = biome === 'space' ? 1600 : 500;
@@ -1261,7 +1751,7 @@ export class KartScene {
           ctx.fillRect(0, 0, w, h);
         }
       }, 128));
-      const cloudMat = this.track2(new THREE.SpriteMaterial({ map: cloudTex, fog: false, depthWrite: false, transparent: true, opacity: biome === 'canyon' ? 0.45 : 0.9, color: biome === 'canyon' ? '#ffd1a8' : '#ffffff' }));
+      const cloudMat = this.track2(new THREE.SpriteMaterial({ map: cloudTex, fog: false, depthWrite: false, transparent: true, opacity: biome === 'canyon' ? 0.5 : 0.9, color: biome === 'canyon' ? '#ffd1a8' : '#ffffff' }));
       for (let i = 0; i < 18; i++) {
         const a = rng() * Math.PI * 2;
         const elev = 0.08 + rng() * 0.28;
@@ -1274,26 +1764,30 @@ export class KartScene {
     }
 
     if (biome === 'space') {
-      // A ringed planet hanging over the course
+      // Multi-band ringed gas giant + moon slowly rotating in deep space
+      const planetTex = this.track2(makePlanetTexture());
       const planet = new THREE.Mesh(
-        this.track2(new THREE.SphereGeometry(190, 32, 20)),
-        this.track2(new THREE.MeshBasicMaterial({ color: '#b34fd8', fog: false })),
+        this.track2(new THREE.SphereGeometry(200, 36, 24)),
+        this.track2(new THREE.MeshBasicMaterial({ map: planetTex, fog: false })),
       );
       planet.position.set(-1100, 460, 900);
+      planet.rotation.z = 0.25;
+      const ringTex = this.track2(makePlanetRingTexture());
       const ring = new THREE.Mesh(
-        this.track2(new THREE.RingGeometry(250, 360, 64)),
-        this.track2(new THREE.MeshBasicMaterial({ color: '#f5c6ff', side: THREE.DoubleSide, fog: false, transparent: true, opacity: 0.5 })),
+        this.track2(new THREE.PlaneGeometry(760, 760)),
+        this.track2(new THREE.MeshBasicMaterial({ map: ringTex, side: THREE.DoubleSide, fog: false, transparent: true, depthWrite: false })),
       );
       ring.position.copy(planet.position);
-      ring.rotation.x = 1.25;
-      ring.rotation.y = 0.3;
+      ring.rotation.x = 1.24;
+      ring.rotation.y = 0.28;
       const moon = new THREE.Mesh(
-        this.track2(new THREE.SphereGeometry(60, 20, 14)),
+        this.track2(new THREE.SphereGeometry(62, 24, 16)),
         this.track2(new THREE.MeshBasicMaterial({ color: '#5de0ff', fog: false })),
       );
       moon.position.set(1300, 300, -700);
       planet.renderOrder = ring.renderOrder = moon.renderOrder = -8;
       this.skyGroup.add(planet, ring, moon);
+      this.spaceBodies.push(planet, ring);
     }
 
     this.scene.add(this.skyGroup);
@@ -1302,8 +1796,9 @@ export class KartScene {
     const weather = {
       snow: { color: '#ffffff', count: 500, size: 1.5, fall: 7, drift: 3, additive: false },
       lava: { color: '#ff7a2a', count: 300, size: 1.4, fall: -5, drift: 2.2, additive: true },
-      space: { color: '#c7d2ff', count: 240, size: 0.9, fall: 0, drift: 1, additive: true },
+      space: { color: '#c7d2ff', count: 260, size: 0.9, fall: 0, drift: 1, additive: true },
       city: { color: '#9dc9ff', count: 500, size: 0.7, fall: 70, drift: 0.5, additive: true },
+      canyon: { color: '#ffd4a3', count: 180, size: 1.15, fall: 0.3, drift: 4.5, additive: true },
     }[biome as string];
     if (weather) {
       const pos = new Float32Array(weather.count * 3);
@@ -1372,33 +1867,137 @@ export class KartScene {
       group.add(terrain.mesh);
     }
 
-    // Sea or lava lake below the terrain, far out to the horizon
-    if (track.biome === 'beach' || track.biome === 'lava') {
-      const isLava = track.biome === 'lava';
-      const liquidTex = this.track2(canvasTexture(256, (ctx, w, h) => {
-        const rng = mulberry32(99);
-        ctx.fillStyle = isLava ? '#c2330c' : '#1f8fd6';
-        ctx.fillRect(0, 0, w, h);
-        for (let i = 0; i < 420; i++) {
-          ctx.fillStyle = isLava
-            ? (rng() > 0.5 ? 'rgba(255,190,70,0.55)' : 'rgba(90,10,0,0.5)')
-            : (rng() > 0.5 ? 'rgba(160,230,255,0.28)' : 'rgba(10,70,140,0.3)');
-          ctx.beginPath();
-          ctx.ellipse(rng() * w, rng() * h, 6 + rng() * 22, 2 + rng() * 7, rng() * 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
+    const lowestRoad = Math.min(...track.samples.map((sample) => sample.y));
+
+    // Custom GLSL Ocean or Molten Lava shader below the terrain, zero tiling repetition
+    if (track.biome === 'beach') {
+      const sunDir = new THREE.Vector3(...t.sunDir).normalize();
+      const oceanMat = this.track2(new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uSunDir: { value: sunDir },
+          uSunColor: { value: new THREE.Color(t.sun) },
+          uFogColor: { value: new THREE.Color(t.fog) },
+          uFogDensity: { value: t.fogDensity },
+        },
+        vertexShader: `
+          varying vec3 vWorldPos;
+          void main() {
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vWorldPos = wp.xyz;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec3 uSunDir;
+          uniform vec3 uSunColor;
+          uniform vec3 uFogColor;
+          uniform float uFogDensity;
+          varying vec3 vWorldPos;
+          float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float vnoise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), u.x),
+                       mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x), u.y);
+          }
+          float fbm2(vec2 p) {
+            float s = 0.0; float a = 0.5;
+            for (int i = 0; i < 3; i++) { s += vnoise(p) * a; p *= 2.04; a *= 0.5; }
+            return s;
+          }
+          void main() {
+            vec2 xz = vWorldPos.xz;
+            float w1 = sin(xz.x * 0.075 + uTime * 1.4 + xz.y * 0.03);
+            float w2 = cos(xz.y * 0.09 - uTime * 1.15 + xz.x * 0.025);
+            float w3 = sin((xz.x - xz.y) * 0.14 + uTime * 1.9);
+            float swell = fbm2(xz * 0.014 + vec2(uTime * 0.03, -uTime * 0.02));
+            float waveH = (w1 * 0.4 + w2 * 0.35 + w3 * 0.25);
+            vec3 nrm = normalize(vec3(
+              (cos(xz.x * 0.075 + uTime * 1.4 + xz.y * 0.03) * 0.14 + cos((xz.x - xz.y) * 0.14 + uTime * 1.9) * 0.08),
+              1.0,
+              (-sin(xz.y * 0.09 - uTime * 1.15 + xz.x * 0.025) * 0.14 - cos((xz.x - xz.y) * 0.14 + uTime * 1.9) * 0.08)
+            ));
+            vec3 viewDir = normalize(cameraPosition - vWorldPos);
+            float fresnel = pow(1.0 - max(0.0, dot(viewDir, nrm)), 3.2);
+            vec3 deepCol = vec3(0.04, 0.28, 0.56);
+            vec3 turqCol = vec3(0.08, 0.68, 0.78);
+            vec3 col = mix(deepCol, turqCol, clamp(swell * 1.15 + waveH * 0.12, 0.0, 1.0));
+            col = mix(col, vec3(0.55, 0.86, 0.98), fresnel * 0.45);
+            vec3 refl = reflect(-normalize(uSunDir), nrm);
+            float spec = pow(max(0.0, dot(viewDir, refl)), 56.0);
+            col += uSunColor * spec * 1.15;
+            float crest = smoothstep(0.68, 0.96, waveH * 0.5 + 0.5 + (swell - 0.5) * 0.4);
+            col = mix(col, vec3(0.85, 0.97, 1.0), crest * 0.24);
+            float dist = length(cameraPosition - vWorldPos);
+            float fogF = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);
+            col = mix(col, uFogColor, clamp(fogF, 0.0, 1.0));
+            gl_FragColor = vec4(col, 1.0);
+            #include <colorspace_fragment>
+          }
+        `,
       }));
-      liquidTex.wrapS = liquidTex.wrapT = THREE.RepeatWrapping;
-      liquidTex.repeat.set(70, 70);
-      liquidTex.anisotropy = anisotropy;
-      this.animated.push({ tex: liquidTex, speed: isLava ? 0.05 : 0.025 });
-      const plane = new THREE.Mesh(
-        this.track2(new THREE.PlaneGeometry(6000, 6000)),
-        this.track2(new THREE.MeshBasicMaterial({ map: liquidTex })),
-      );
+      this.shaderTimes.push(oceanMat);
+      const plane = new THREE.Mesh(this.track2(new THREE.PlaneGeometry(6000, 6000)), oceanMat);
       plane.rotation.x = -Math.PI / 2;
-      // Always below the lowest stretch of road, or it floods the shoulders
-      const lowestRoad = Math.min(...track.samples.map((sample) => sample.y));
+      plane.position.set(terrain.center.x, lowestRoad - 7, terrain.center.z);
+      group.add(plane);
+    } else if (track.biome === 'lava') {
+      const lavaMat = this.track2(new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uFogColor: { value: new THREE.Color(t.fog) },
+          uFogDensity: { value: t.fogDensity },
+        },
+        vertexShader: `
+          varying vec3 vWorldPos;
+          void main() {
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vWorldPos = wp.xyz;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform vec3 uFogColor;
+          uniform float uFogDensity;
+          varying vec3 vWorldPos;
+          float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float vnoise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), u.x),
+                       mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x), u.y);
+          }
+          float fbm2(vec2 p) {
+            float s = 0.0; float a = 0.5;
+            for (int i = 0; i < 4; i++) { s += vnoise(p) * a; p *= 2.03; a *= 0.5; }
+            return s;
+          }
+          void main() {
+            vec2 p = vWorldPos.xz * 0.022;
+            vec2 warp = vec2(fbm2(p + uTime * 0.05), fbm2(p + vec2(5.2, 1.3) - uTime * 0.04));
+            float n = fbm2(p + warp * 1.6);
+            float crack = 1.0 - smoothstep(0.0, 0.16, abs(n - 0.5));
+            float pulse = 0.85 + 0.15 * sin(uTime * 2.2 + n * 10.0);
+            vec3 crust = vec3(0.11, 0.05, 0.04);
+            vec3 magma = mix(vec3(0.75, 0.12, 0.02), vec3(1.0, 0.55, 0.08), crack);
+            magma = mix(magma, vec3(1.0, 0.92, 0.45), pow(crack, 3.0)) * pulse;
+            vec3 col = mix(crust, magma, clamp(crack * 1.15 + smoothstep(0.62, 0.88, n) * 0.45, 0.0, 1.0));
+            float dist = length(cameraPosition - vWorldPos);
+            float fogF = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);
+            col = mix(col, uFogColor, clamp(fogF, 0.0, 1.0));
+            gl_FragColor = vec4(col, 1.0);
+            #include <colorspace_fragment>
+          }
+        `,
+      }));
+      this.shaderTimes.push(lavaMat);
+      const plane = new THREE.Mesh(this.track2(new THREE.PlaneGeometry(6000, 6000)), lavaMat);
+      plane.rotation.x = -Math.PI / 2;
       plane.position.set(terrain.center.x, lowestRoad - 7, terrain.center.z);
       group.add(plane);
     } else if (track.biome !== 'space') {
@@ -1412,9 +2011,10 @@ export class KartScene {
       group.add(plane);
     }
 
-    // Volcano crater glow
+    // Volcano crater glow & erupting ember anchor
     if (terrain.volcanoRadius > 0) {
       const craterY = terrain.heightAt(terrain.center.x, terrain.center.z) + 0.6;
+      this.craterPos = new THREE.Vector3(terrain.center.x, craterY, terrain.center.z);
       const crater = new THREE.Mesh(
         this.track2(new THREE.CircleGeometry(terrain.volcanoRadius * 0.2, 24)),
         this.track2(new THREE.MeshBasicMaterial({ color: '#ff8a2a', toneMapped: false })),
@@ -1429,13 +2029,22 @@ export class KartScene {
       group.add(glow);
     }
 
-    // Road
+    // Road (with glossy rain-slick sheen on cyber-metro)
     const roadTex = this.track2(makeRoadTexture(track));
     roadTex.anisotropy = anisotropy;
     const roadGeo = this.track2(ribbon(samples, -halfW, halfW, 0.06, { length: track.totalLength, vScale: 26 }));
     const roadMat = this.track2(t.rainbowRoad
       ? new THREE.MeshBasicMaterial({ map: roadTex, toneMapped: false })
-      : new THREE.MeshLambertMaterial({ map: roadTex, emissive: t.glowRoad ? new THREE.Color(t.roadStripeColor) : new THREE.Color('#000000'), emissiveIntensity: t.glowRoad ? 0.1 : 0, emissiveMap: t.glowRoad ? roadTex : null }));
+      : track.biome === 'city'
+        ? new THREE.MeshPhongMaterial({
+            map: roadTex,
+            shininess: 120,
+            specular: new THREE.Color('#7dd3fc'),
+            emissive: new THREE.Color(t.roadStripeColor),
+            emissiveIntensity: 0.14,
+            emissiveMap: roadTex,
+          })
+        : new THREE.MeshLambertMaterial({ map: roadTex, emissive: t.glowRoad ? new THREE.Color(t.roadStripeColor) : new THREE.Color('#000000'), emissiveIntensity: t.glowRoad ? 0.1 : 0, emissiveMap: t.glowRoad ? roadTex : null }));
     group.add(new THREE.Mesh(roadGeo, roadMat));
 
     // Shoulders run from the road edge out under the barrier
@@ -1473,7 +2082,33 @@ export class KartScene {
     // Scenery
     const propMat = this.track2(new THREE.MeshLambertMaterial({ vertexColors: true }));
     const glowMat = this.track2(new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }));
-    buildScenery(track, terrain, group, propMat, glowMat, this.disposers);
+    this.lighthouseBeam = buildScenery(track, terrain, group, propMat, glowMat, this.disposers, this.pulseMats, lowestRoad);
+
+    // Distant flying traffic light streaks in Cyber Metropolis
+    if (track.biome === 'city') {
+      const trafficCount = 42;
+      const streakGeo = this.track2(new THREE.BoxGeometry(0.8, 0.4, 11));
+      const streakMat = this.track2(new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }));
+      const trafficMesh = this.track2(new THREE.InstancedMesh(streakGeo, streakMat, trafficCount));
+      trafficMesh.frustumCulled = false;
+      const tRng = mulberry32(hashString(track.id) + 909);
+      const colors = ['#00f5ff', '#ff4fd8', '#facc15', '#38bdf8'];
+      for (let i = 0; i < trafficCount; i++) {
+        this.trafficLanes.push({
+          cx: terrain.center.x + (tRng() - 0.5) * 180,
+          cz: terrain.center.z + (tRng() - 0.5) * 180,
+          r: 220 + tRng() * 380,
+          y: 48 + tRng() * 110,
+          speed: 0.14 + tRng() * 0.22,
+          phase: tRng() * Math.PI * 2,
+          dir: i % 2 === 0 ? 1 : -1,
+        });
+        trafficMesh.setColorAt(i, new THREE.Color(colors[i % colors.length]));
+      }
+      if (trafficMesh.instanceColor) trafficMesh.instanceColor.needsUpdate = true;
+      group.add(trafficMesh);
+      this.trafficMesh = trafficMesh;
+    }
 
     this.buildStartLine(group, anisotropy);
 
@@ -1541,22 +2176,88 @@ export class KartScene {
       group.add(new THREE.Mesh(this.track2(geo), rampMat));
     }
 
+    // Shared contact shadow texture & geometry for item boxes and stationary hazards
+    this.shadowTex = this.track2(makeBlobTexture('rgba(0,0,0,0.68)', 'rgba(0,0,0,0)'));
+    this.shadowGeo = this.track2(new THREE.PlaneGeometry(1, 1));
+    this.shadowGeo.rotateX(-Math.PI / 2);
+
     // Item boxes share one instanced mesh; the slots are animated each frame
     const boxTex = this.track2(makeItemBoxTexture());
     const boxMat = this.track2(new THREE.MeshBasicMaterial({ map: boxTex, transparent: true, opacity: 0.92, toneMapped: false }));
     const boxGeo = this.track2(new THREE.BoxGeometry(3.1, 3.1, 3.1));
-    this.itemBoxMesh = this.track2(new THREE.InstancedMesh(boxGeo, boxMat, track.itemBoxes.length + 16));
+    const maxBoxes = track.itemBoxes.length + 16;
+    this.itemBoxMesh = this.track2(new THREE.InstancedMesh(boxGeo, boxMat, maxBoxes));
     this.itemBoxMesh.frustumCulled = false;
-    this.itemBoxMesh.count = track.itemBoxes.length + 16;
+    this.itemBoxMesh.count = maxBoxes;
+
+    const boxShadowMat = this.track2(new THREE.MeshBasicMaterial({
+      map: this.shadowTex,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      toneMapped: false,
+    }));
+    this.itemBoxShadowMesh = this.track2(new THREE.InstancedMesh(this.shadowGeo, boxShadowMat, maxBoxes));
+    this.itemBoxShadowMesh.frustumCulled = false;
+    this.itemBoxShadowMesh.renderOrder = 2;
+    this.itemBoxShadowMesh.count = maxBoxes;
+
     this.dummy.position.set(0, -500, 0);
     this.dummy.scale.setScalar(0);
     this.dummy.rotation.set(0, 0, 0);
     this.dummy.updateMatrix();
-    for (let i = 0; i < this.itemBoxMesh.count; i++) this.itemBoxMesh.setMatrixAt(i, this.dummy.matrix);
+    for (let i = 0; i < maxBoxes; i++) {
+      this.itemBoxMesh.setMatrixAt(i, this.dummy.matrix);
+      this.itemBoxShadowMesh.setMatrixAt(i, this.dummy.matrix);
+    }
     track.itemBoxes.forEach((b, index) => {
       this.itemBoxSlots.set(b.id, { index, x: b.x, y: b.y, z: b.z, scale: 1, active: true });
     });
-    group.add(this.itemBoxMesh);
+    group.add(this.itemBoxMesh, this.itemBoxShadowMesh);
+
+    // Spinning 3D gold coins
+    const coinCount = Math.max(1, track.coins.length);
+    const cGeo = this.track2(coinGeometry());
+    const cMat = this.track2(new THREE.MeshPhongMaterial({
+      vertexColors: true,
+      shininess: 110,
+      specular: new THREE.Color('#ffffff'),
+      emissive: new THREE.Color('#ca8a04'),
+      emissiveIntensity: 0.25,
+    }));
+    this.coinMesh = this.track2(new THREE.InstancedMesh(cGeo, cMat, coinCount));
+    this.coinMesh.frustumCulled = false;
+    for (let i = 0; i < coinCount; i++) this.coinMesh.setMatrixAt(i, this.dummy.matrix);
+    track.coins.forEach((c, index) => {
+      this.coinSlots.set(c.id, { index, x: c.x, y: c.y, z: c.z, scale: 1, active: true });
+    });
+    group.add(this.coinMesh);
+
+    // Tire skidmark ring buffer
+    const skidGeo = this.track2(new THREE.PlaneGeometry(0.46, 2.1));
+    skidGeo.rotateX(-Math.PI / 2);
+    const skidMat = this.track2(new THREE.MeshBasicMaterial({
+      color: '#ffffff',
+      transparent: true,
+      opacity: 0.56,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    }));
+    this.skidMesh = this.track2(new THREE.InstancedMesh(skidGeo, skidMat, SKID_CAP));
+    this.skidMesh.frustumCulled = false;
+    this.skidMesh.renderOrder = 1;
+    const initSkidCol = new THREE.Color('#141820');
+    for (let i = 0; i < SKID_CAP; i++) {
+      this.skidMesh.setMatrixAt(i, this.dummy.matrix);
+      this.skidMesh.setColorAt(i, initSkidCol);
+    }
+    if (this.skidMesh.instanceColor) this.skidMesh.instanceColor.needsUpdate = true;
+    group.add(this.skidMesh);
   }
 
   private buildStartLine(group: THREE.Group, anisotropy: number) {
@@ -1707,38 +2408,85 @@ export class KartScene {
 
   private createKart(k: SnapKart): KartVisual {
     const root = new THREE.Group();
+    const chassisGroup = new THREE.Group();
+    root.add(chassisGroup);
     const disposables: { dispose: () => void }[] = [];
     const keep = <T extends { dispose: () => void }>(r: T) => {
       disposables.push(r);
       return r;
     };
     const baseColor = new THREE.Color(k.color);
-    const bodyMat = keep(new THREE.MeshPhongMaterial({ color: baseColor.clone(), shininess: 90, specular: new THREE.Color('#ffffff'), side: THREE.DoubleSide }));
-    const trimMat = keep(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40 }));
+    const bodyMat = keep(new THREE.MeshPhongMaterial({ color: baseColor.clone(), shininess: 95, specular: new THREE.Color('#ffffff'), side: THREE.DoubleSide }));
+    const trimMat = keep(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 85, specular: new THREE.Color('#e2e8f0') }));
 
     const body = new THREE.Mesh(keep(kartBodyGeometry(k.kartStyle)), bodyMat);
     const trim = new THREE.Mesh(keep(kartTrimGeometry(k.kartStyle, k.sparksColor)), trimMat);
-    root.add(body, trim);
+    chassisGroup.add(body, trim);
 
-    // Driver: suit in the player's colour with their avatar as the head
-    const torso = new THREE.Mesh(keep(new THREE.CapsuleGeometry(0.42, 0.5, 3, 8)), bodyMat);
-    torso.position.set(0, 1.28, -0.2);
-    root.add(torso);
+    // LED Brake / Tail lights
+    const brakeLightMat = keep(new THREE.MeshBasicMaterial({ color: '#551111', toneMapped: false }));
+    const brakeLights = new THREE.Mesh(keep(brakeLightGeometry(k.kartStyle)), brakeLightMat);
+    chassisGroup.add(brakeLights);
+
+    // Exhaust tip rev glow
+    const exhaustGlowMat = keep(new THREE.MeshBasicMaterial({ color: '#ff8a1f', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    const exhaustGlow = new THREE.Mesh(keep(exhaustGlowGeometry()), exhaustGlowMat);
+    exhaustGlow.visible = false;
+    chassisGroup.add(exhaustGlow);
+
+    // Animated steering wheel
+    const steerWheelGeo = keep(merged([
+      colored(placed(new THREE.TorusGeometry(0.32, 0.055, 6, 12), 0, 0, 0), '#141824'),
+      colored(placed(new THREE.BoxGeometry(0.56, 0.08, 0.06), 0, 0, 0), k.sparksColor),
+    ]));
+    const steerWheel = new THREE.Mesh(steerWheelGeo, trimMat);
+    steerWheel.position.set(0, 1.15, 0.54);
+    steerWheel.rotation.x = -0.68;
+    chassisGroup.add(steerWheel);
+
+    // Driver: upper body with shoulders, collar, animated arms, and crisp avatar emoji head
+    const driverUpper = new THREE.Group();
+    driverUpper.position.set(0, 1.05, -0.22);
+    chassisGroup.add(driverUpper);
+
+    const torso = new THREE.Mesh(keep(new THREE.CapsuleGeometry(0.38, 0.42, 3, 8)), bodyMat);
+    torso.position.set(0, 0.25, 0);
+    const shoulderGeo = keep(merged([
+      colored(placed(new THREE.BoxGeometry(1.06, 0.26, 0.42), 0, 0.46, 0), k.color),
+      colored(placed(new THREE.CylinderGeometry(0.3, 0.34, 0.16, 10), 0, 0.62, 0), '#f8fafc'),
+      colored(placed(new THREE.SphereGeometry(0.54, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), 0, 1.08, 0.02, { rx: -0.25 }), '#1e293b'),
+    ]));
+    const shoulders = new THREE.Mesh(shoulderGeo, trimMat);
+    driverUpper.add(torso, shoulders);
+
+    const armGeo = keep(merged([
+      colored(placed(new THREE.CapsuleGeometry(0.11, 0.48, 3, 6), 0, 0, 0.28, { rx: Math.PI / 2 - 0.18 }), k.color),
+      colored(placed(new THREE.SphereGeometry(0.13, 6, 6), 0, -0.06, 0.6), '#1e293b'),
+    ]));
+    const leftArm = new THREE.Group();
+    leftArm.position.set(0.46, 0.44, 0.06);
+    leftArm.add(new THREE.Mesh(armGeo, trimMat));
+    const rightArm = new THREE.Group();
+    rightArm.position.set(-0.46, 0.44, 0.06);
+    rightArm.add(new THREE.Mesh(armGeo, trimMat));
+    driverUpper.add(leftArm, rightArm);
+
     const headTex = keep(makeEmojiTexture(k.avatar || '🏎️'));
     const head = new THREE.Sprite(keep(new THREE.SpriteMaterial({ map: headTex, transparent: true, toneMapped: false, depthWrite: false })));
-    head.position.set(0, 2.2, -0.15);
-    head.scale.setScalar(1.95);
-    root.add(head);
+    head.position.set(0, 1.15, 0.06);
+    head.scale.setScalar(1.88);
+    driverUpper.add(head);
 
     const tagTex = keep(makeNameTagTexture(k.name, k.color, k.isBot));
-    const tag = new THREE.Sprite(keep(new THREE.SpriteMaterial({ map: tagTex, transparent: true, toneMapped: false, depthWrite: false, fog: false })));
-    tag.position.set(0, 4.1, 0);
-    tag.scale.set(k.isBot ? 4.4 : 5.6, k.isBot ? 1.1 : 1.4, 1);
+    const tagMat = keep(new THREE.SpriteMaterial({ map: tagTex, transparent: true, toneMapped: false, depthWrite: false, fog: false }));
+    const tag = new THREE.Sprite(tagMat);
+    tag.position.set(0, 4.15, 0);
+    tag.scale.set(k.isBot ? 4.3 : 5.6, k.isBot ? 1.08 : 1.4, 1);
     root.add(tag);
 
     // Wheels
     const spec = WHEEL_SPECS[k.kartStyle] || WHEEL_SPECS.classic;
-    const wheelMat = keep(new THREE.MeshLambertMaterial({ vertexColors: true }));
+    const wheelMat = keep(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color('#ffffff') }));
     const wheelGeo = keep(wheelGeometry(spec.r, spec.w));
     const frontL = new THREE.Mesh(wheelGeo, wheelMat);
     frontL.position.set(spec.front[0], spec.front[1], spec.front[2]);
@@ -1752,29 +2500,43 @@ export class KartScene {
     ]));
     const rear = new THREE.Mesh(rearGeo, wheelMat);
     rear.position.set(0, spec.rear[1], spec.rear[2]);
-    root.add(frontL, frontR, rear);
+    chassisGroup.add(frontL, frontR, rear);
 
-    // Contact shadow
+    // Contact shadow placed directly in scene at road height (immune to trick flips, crisp polygonOffset)
     const shadowTex = keep(makeBlobTexture());
-    const shadowGeo = keep(new THREE.PlaneGeometry(5.4, 6.2));
+    const shadowGeo = keep(new THREE.PlaneGeometry(5.5, 6.3));
     shadowGeo.rotateX(-Math.PI / 2);
-    const shadow = new THREE.Mesh(shadowGeo, keep(new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, toneMapped: false })));
-    shadow.position.y = 0.05;
+    const shadowMat = keep(new THREE.MeshBasicMaterial({
+      map: shadowTex,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      toneMapped: false,
+    }));
+    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
     shadow.renderOrder = 2;
-    root.add(shadow);
+    this.scene.add(shadow);
 
-    // Exhaust flame
-    const flameParts = [-0.62, 0.62].map((x) => {
-      const g = new THREE.ConeGeometry(0.38, 2.4, 8);
-      g.rotateX(-Math.PI / 2);
-      g.translate(x, 0.9, -3.3);
-      return g.toNonIndexed();
-    });
-    flameParts.forEach((g) => g.deleteAttribute('uv'));
-    const flameMat = keep(new THREE.MeshBasicMaterial({ color: '#ff8a1f', transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-    const flame = new THREE.Mesh(keep(merged(flameParts)), flameMat);
-    flame.visible = false;
-    root.add(flame);
+    // Dual-core exhaust boost flames (outer tier-colored + inner white-hot core)
+    const makeFlameGeo = (radius: number, length: number, zOff: number) => {
+      const parts = [-0.62, 0.62].map((x) => {
+        const g = new THREE.ConeGeometry(radius, length, 8);
+        g.rotateX(-Math.PI / 2);
+        g.translate(x, 0.96, zOff);
+        return g.toNonIndexed();
+      });
+      parts.forEach((g) => g.deleteAttribute('uv'));
+      return keep(merged(parts));
+    };
+    const flameOuterMat = keep(new THREE.MeshBasicMaterial({ color: '#ff8a1f', transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    const flameOuter = new THREE.Mesh(makeFlameGeo(0.42, 2.7, -3.45), flameOuterMat);
+    flameOuter.visible = false;
+    const flameInnerMat = keep(new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.96, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    const flameInner = new THREE.Mesh(makeFlameGeo(0.21, 1.85, -3.1), flameInnerMat);
+    flameInner.visible = false;
+    chassisGroup.add(flameOuter, flameInner);
 
     // Star / shell-warning aura
     const auraTex = keep(makeBlobTexture('rgba(255,255,255,0.7)', 'rgba(255,255,255,0)'));
@@ -1785,12 +2547,22 @@ export class KartScene {
     aura.visible = false;
     root.add(aura);
 
-    // What you're carrying rides behind you, so rivals can see the shell coming
-    const itemSprite = new THREE.Sprite(keep(new THREE.SpriteMaterial({ transparent: true, toneMapped: false, depthWrite: false })));
-    itemSprite.position.set(0, 2.5, -2.6);
-    itemSprite.scale.setScalar(1.55);
-    itemSprite.visible = false;
-    root.add(itemSprite);
+    // Expanding sonic ring for Super Horn / honk
+    const hornGeo = keep(new THREE.TorusGeometry(1, 0.09, 6, 32));
+    hornGeo.rotateX(Math.PI / 2);
+    const hornRingMat = keep(new THREE.MeshBasicMaterial({ color: '#d946ef', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    const hornRing = new THREE.Mesh(hornGeo, hornRingMat);
+    hornRing.position.set(0, 1.4, 0);
+    hornRing.visible = false;
+    root.add(hornRing);
+
+    // Real 3D trailing held item behind the rear bumper
+    const heldItemAnchor = new THREE.Group();
+    heldItemAnchor.position.set(0, 1.15, -2.9);
+    heldItemAnchor.visible = false;
+    const heldItemMesh = new THREE.Mesh(new THREE.BufferGeometry(), keep(new THREE.MeshBasicMaterial()));
+    heldItemAnchor.add(heldItemMesh);
+    root.add(heldItemAnchor);
 
     if (k.kartStyle === 'cyber') {
       const glowTex = keep(makeBlobTexture('rgba(255,255,255,0.8)', 'rgba(255,255,255,0)'));
@@ -1799,25 +2571,39 @@ export class KartScene {
       const under = new THREE.Mesh(g, keep(new THREE.MeshBasicMaterial({ map: glowTex, color: k.sparksColor, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })));
       under.position.y = 0.09;
       under.renderOrder = 3;
-      root.add(under);
+      chassisGroup.add(under);
     }
 
     this.scene.add(root);
     return {
       root,
+      chassisGroup,
       bodyMat,
       baseColor,
+      brakeLightMat,
+      exhaustGlow,
+      exhaustGlowMat,
+      steerWheel,
+      driverUpper,
+      leftArm,
+      rightArm,
       frontL,
       frontR,
       rear,
       head,
       tag,
+      tagMat,
       shadow,
-      flame,
-      flameMat,
+      shadowMat,
+      flameOuter,
+      flameOuterMat,
+      flameInner,
       aura,
       auraMat,
-      itemSprite,
+      hornRing,
+      hornRingMat,
+      heldItemAnchor,
+      heldItemMesh,
       shownItem: null,
       disposables,
       x: k.x,
@@ -1835,12 +2621,116 @@ export class KartScene {
       rx: 0,
       spin: 0,
       squash: 0,
+      prevHopT: 0,
       wheelRot: 0,
       sparkAcc: 0,
       dustAcc: 0,
       flameAcc: 0,
+      skidAcc: 0,
+      revAcc: 0,
+      slipAcc: 0,
+      hornPhase: 0,
       data: k,
     };
+  }
+
+  private heldItemAsset(item: KartItemType): { geo: THREE.BufferGeometry; mat: THREE.Material } {
+    const cached = this.heldItemAssets.get(item);
+    if (cached) return cached;
+
+    let geo: THREE.BufferGeometry;
+    let mat: THREE.Material;
+    const phong = (emissive = '#000000', emissiveIntensity = 0) =>
+      new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 90, specular: '#ffffff', emissive, emissiveIntensity });
+
+    switch (item) {
+      case 'green_shell':
+      case 'red_shell':
+      case 'spiny_shell':
+      case 'banana':
+      case 'fake_box': {
+        const haz = this.hazardAsset(item);
+        geo = haz.geo.clone();
+        const s = item === 'fake_box' ? 0.44 : item === 'spiny_shell' ? 0.48 : item === 'banana' ? 0.72 : 0.62;
+        geo.scale(s, s, s);
+        if (item === 'banana') geo.translate(0, -0.5, 0);
+        mat = haz.mat;
+        this.disposers.push(() => geo.dispose());
+        const entry = { geo, mat };
+        this.heldItemAssets.set(item, entry);
+        return entry;
+      }
+      case 'mushroom':
+      case 'golden_mushroom': {
+        const isGold = item === 'golden_mushroom';
+        const capCol = isGold ? '#facc15' : '#ef4444';
+        const spotCol = isGold ? '#fef9c3' : '#ffffff';
+        const parts: THREE.BufferGeometry[] = [
+          colored(placed(new THREE.CylinderGeometry(0.32, 0.4, 0.55, 10), 0, -0.25, 0), '#fef3c7'),
+          colored(placed(new THREE.SphereGeometry(0.68, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.58), 0, 0.02, 0), capCol),
+        ];
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2;
+          parts.push(colored(placed(new THREE.SphereGeometry(0.18, 6, 5), Math.cos(a) * 0.46, 0.34, Math.sin(a) * 0.46), spotCol));
+        }
+        parts.push(colored(placed(new THREE.SphereGeometry(0.2, 6, 5), 0, 0.62, 0), spotCol));
+        if (isGold) {
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + 0.4;
+            parts.push(colored(placed(new THREE.ConeGeometry(0.12, 0.3, 5), Math.cos(a) * 0.28, 0.72, Math.sin(a) * 0.28), '#fde047'));
+          }
+        }
+        geo = merged(parts);
+        mat = phong(isGold ? '#eab308' : '#000000', isGold ? 0.28 : 0);
+        break;
+      }
+      case 'star': {
+        const shape = new THREE.Shape();
+        for (let i = 0; i < 10; i++) {
+          const r = i % 2 === 0 ? 0.78 : 0.36;
+          const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+          const x = Math.cos(a) * r;
+          const y = Math.sin(a) * r;
+          if (i === 0) shape.moveTo(x, y);
+          else shape.lineTo(x, y);
+        }
+        shape.closePath();
+        const raw = new THREE.ExtrudeGeometry(shape, { depth: 0.24, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.06, bevelSegments: 1 });
+        raw.translate(0, 0, -0.12);
+        geo = colored(raw, '#fde047');
+        mat = phong('#facc15', 0.45);
+        break;
+      }
+      case 'super_horn': {
+        geo = merged([
+          colored(placed(new THREE.CylinderGeometry(0.55, 0.2, 0.9, 12), 0, 0.1, 0.08, { rx: Math.PI / 2 - 0.15 }), '#9333ea'),
+          colored(placed(new THREE.TorusGeometry(0.55, 0.08, 6, 14), 0, 0.17, 0.52), '#facc15'),
+          colored(placed(new THREE.CylinderGeometry(0.1, 0.12, 0.42, 8), 0, -0.22, -0.05), '#e2e8f0'),
+        ]);
+        mat = phong('#a855f7', 0.25);
+        break;
+      }
+      case 'lightning': {
+        const shape = new THREE.Shape();
+        shape.moveTo(0.15, 0.85);
+        shape.lineTo(-0.35, 0.08);
+        shape.lineTo(0.04, 0.08);
+        shape.lineTo(-0.22, -0.85);
+        shape.lineTo(0.38, -0.04);
+        shape.lineTo(-0.02, -0.04);
+        shape.closePath();
+        const raw = new THREE.ExtrudeGeometry(shape, { depth: 0.18, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.04, bevelSegments: 1 });
+        raw.translate(0, 0, -0.09);
+        geo = colored(raw, '#fde047');
+        mat = phong('#38bdf8', 0.35);
+        break;
+      }
+    }
+    this.disposers.push(() => geo.dispose());
+    this.disposers.push(() => mat.dispose());
+    const entry = { geo, mat };
+    this.heldItemAssets.set(item, entry);
+    return entry;
   }
 
   /** Called for every telemetry tick. */
@@ -1870,6 +2760,7 @@ export class KartScene {
     }
     this.syncHazards(snap.hazards);
     this.syncItemBoxes(snap.itemBoxes);
+    this.syncCoins(snap.coins || []);
   }
 
   private burst(pool: ParticlePool, x: number, y: number, z: number, count: number, speed: number, color: THREE.ColorRepresentation | (() => THREE.ColorRepresentation), size: number, life: number, gravity = 18, upBias = 0.6) {
@@ -1955,6 +2846,22 @@ export class KartScene {
         break;
       case 'horn':
         if (e.value && v) this.burst(this.additive, v.x, y, v.z, 40, 26, '#d8b4fe', 1.2, 0.5, 0);
+        if (v) v.hornPhase = 0.01;
+        break;
+      case 'coin':
+        this.burst(this.additive, x, y + 0.3, z, 20, 14, () => (this.rng() > 0.35 ? '#fde047' : '#ffffff'), 1.35, 0.55);
+        break;
+      case 'hop':
+        if (v) this.burst(this.smoke, v.x, v.y + 0.25, v.z, 6, 5, this.dustColor(), 1.4, 0.35, -1, 0.05);
+        break;
+      case 'drift_tier':
+        if (v) {
+          const col = DRIFT_TIER_COLORS[e.value || 1];
+          this.burst(this.additive, v.x, v.y + 0.4, v.z, 10 + (e.value || 1) * 5, 13, col, 1.1, 0.42);
+        }
+        break;
+      case 'slipstream':
+        if (v) this.burst(this.additive, v.x, v.y + 1.0, v.z, 16, 15, () => (this.rng() > 0.4 ? '#38bdf8' : '#ffffff'), 1.2, 0.45, 0);
         break;
       default:
         break;
@@ -2067,6 +2974,11 @@ export class KartScene {
     for (const [id, obj] of this.hazards) {
       if (!live.has(id)) {
         this.scene.remove(obj);
+        if (obj.userData.shadow) {
+          const sh = obj.userData.shadow as THREE.Mesh;
+          this.scene.remove(sh);
+          (sh.material as THREE.Material).dispose();
+        }
         // Shockwaves own a material clone because each fades on its own
         if (obj.userData.ownMat) ((obj as THREE.Mesh).material as THREE.Material).dispose();
         this.hazards.delete(id);
@@ -2078,16 +2990,37 @@ export class KartScene {
         const asset = this.hazardAsset(h.kind);
         const mat = h.kind === 'shockwave' ? asset.mat.clone() : asset.mat;
         obj = new THREE.Mesh(asset.geo, mat);
+        const baseY = h.kind === 'banana' || h.kind === 'fake_box' || h.kind === 'shockwave' ? this.roadY(h.x, h.z) : 0;
+        let shadow: THREE.Mesh | undefined;
+        if (h.kind === 'banana' || h.kind === 'fake_box') {
+          const shMat = new THREE.MeshBasicMaterial({
+            map: this.shadowTex,
+            transparent: true,
+            opacity: h.kind === 'fake_box' ? 0.55 : 0.62,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+            toneMapped: false,
+          });
+          shadow = new THREE.Mesh(this.shadowGeo, shMat);
+          const shScale = h.kind === 'fake_box' ? 3.8 : 2.6;
+          shadow.scale.set(shScale, 1, shScale);
+          shadow.position.set(h.x, baseY + 0.12, h.z);
+          shadow.renderOrder = 2;
+          this.scene.add(shadow);
+        }
         obj.userData = {
           ownMat: h.kind === 'shockwave',
           kind: h.kind,
           hint: undefined as number | undefined,
-          baseY: h.kind === 'banana' || h.kind === 'fake_box' || h.kind === 'shockwave' ? this.roadY(h.x, h.z) : 0,
+          baseY,
+          shadow,
           tx: h.x,
           tz: h.z,
           born: performance.now(),
         };
-        obj.position.set(h.x, obj.userData.baseY, h.z);
+        obj.position.set(h.x, baseY, h.z);
         this.scene.add(obj);
         this.hazards.set(h.id, obj);
       }
@@ -2096,6 +3029,13 @@ export class KartScene {
       obj.userData.age = h.age;
       obj.userData.ttl = h.ttl;
       obj.userData.angle = h.angle;
+    }
+  }
+
+  private syncCoins(list: KartTelemetrySnapshot['coins']) {
+    for (const c of list) {
+      const slot = this.coinSlots.get(c.id);
+      if (slot) slot.active = c.active;
     }
   }
 
@@ -2175,7 +3115,7 @@ export class KartScene {
       const sBehind = sampleTrackAtProgress(track, progress - 3 / track.totalLength);
       const groundY = s.y + Math.sin(s.bank) * v.tLat;
 
-      // Jump arc: leaves from the ramp lip and lands back on the road
+      // Jump arc & drift hop
       let lift = this.rampLift(progress);
       let airborne = false;
       if (k.airT > 0) {
@@ -2183,7 +3123,13 @@ export class KartScene {
         const H = 3.2 + k.speed * 0.05;
         lift = 2.6 * (1 - k.airT) + 4 * H * k.airT * (1 - k.airT);
       }
-      const targetY = groundY + lift + 0.05;
+      const hopLift = k.hopT > 0 ? Math.sin(k.hopT * Math.PI) * 1.15 : 0;
+      if (v.prevHopT > 0 && k.hopT === 0) {
+        v.squash = Math.max(v.squash, 0.45);
+      }
+      v.prevHopT = k.hopT;
+
+      const targetY = groundY + lift + hopLift + 0.05;
       v.y = v.y === 0 ? targetY : v.y + (targetY - v.y) * (1 - Math.exp(-dt * 30));
       v.root.position.set(v.x, v.y, v.z);
 
@@ -2207,12 +3153,39 @@ export class KartScene {
       const sq = v.squash * 0.22;
       v.root.scale.set(shrink * (1 + sq), shrink * (1 - sq), shrink * (1 + sq));
 
-      // Wheels
+      // Countdown rev chassis vibration & exhaust cone glow
+      if (k.launchRev > 0) {
+        const vib = 0.045 * Math.min(1.6, k.launchRev);
+        v.chassisGroup.position.set((this.rng() - 0.5) * vib * 2, Math.sin(this.time * 68) * vib, 0);
+        v.exhaustGlow.visible = true;
+        const overheat = k.launchRev > 1.2;
+        if (overheat) {
+          const pulseRed = Math.sin(this.time * 28) > 0 ? '#ff2222' : '#ff6b00';
+          v.exhaustGlowMat.color.set(pulseRed);
+          v.exhaustGlowMat.opacity = 0.95;
+        } else {
+          v.exhaustGlowMat.color.set('#ff8a1f');
+          v.exhaustGlowMat.opacity = 0.5 + Math.min(0.45, k.launchRev * 0.35);
+        }
+      } else {
+        v.chassisGroup.position.set(0, 0, 0);
+        v.exhaustGlow.visible = false;
+      }
+
+      // LED Brake lights
+      v.brakeLightMat.color.set(k.braking ? '#ff2222' : '#551111');
+
+      // Wheels & animated driver steering
       v.wheelRot += dt * (k.speed || 0) * 1.9;
       const steerAngle = k.drifting ? -k.driftDir * 0.35 + (k.steer || 0) * -0.3 : -(k.steer || 0) * 0.5;
       v.frontL.rotation.set(v.wheelRot, steerAngle, 0);
       v.frontR.rotation.set(v.wheelRot, steerAngle, 0);
       v.rear.rotation.x = v.wheelRot;
+      v.steerWheel.rotation.z = -steerAngle * 1.15;
+      v.driverUpper.rotation.z = steerAngle * 0.28;
+      v.driverUpper.rotation.y = steerAngle * 0.35;
+      v.leftArm.rotation.y = steerAngle * 0.38;
+      v.rightArm.rotation.y = steerAngle * 0.38;
 
       // Paint & auras
       if (k.starTimer > 0) {
@@ -2231,40 +3204,136 @@ export class KartScene {
         }
       }
 
+      // Real 3D trailing held item
       if (k.heldItem !== v.shownItem) {
         v.shownItem = k.heldItem;
-        v.itemSprite.visible = Boolean(k.heldItem);
+        v.heldItemAnchor.visible = Boolean(k.heldItem);
         if (k.heldItem) {
-          (v.itemSprite.material as THREE.SpriteMaterial).map = this.itemTexture(k.heldItem);
-          (v.itemSprite.material as THREE.SpriteMaterial).needsUpdate = true;
+          const asset = this.heldItemAsset(k.heldItem);
+          v.heldItemMesh.geometry = asset.geo;
+          v.heldItemMesh.material = asset.mat;
         }
       }
-
-      // Flames
-      const boosting = k.boostTimer > 0 || k.starTimer > 0;
-      v.flame.visible = boosting;
-      if (boosting) {
-        const pulse = 0.85 + Math.sin(this.time * 48 + v.tx) * 0.25;
-        v.flame.scale.set(pulse, pulse, 1 + Math.sin(this.time * 31) * 0.3);
-        v.flameMat.color.set(k.goldenShroomTimer > 0 ? '#ffd700' : k.starTimer > 0 ? '#ffffff' : '#ff8a1f');
+      if (v.heldItemAnchor.visible) {
+        v.heldItemAnchor.position.y = 1.15 + Math.sin(this.time * 4.5 + v.tx) * 0.14;
+        v.heldItemMesh.rotation.y = this.time * 2.6;
       }
 
-      // Shadow lays on the road even when the kart is in the air
-      const airGap = Math.max(0, v.y - groundY);
-      v.shadow.position.y = -airGap / shrink + 0.05;
-      (v.shadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0.2, 1 - airGap * 0.1);
+      // Horn expanding sonic ring
+      if (k.horn || v.hornPhase > 0) {
+        v.hornRing.visible = true;
+        v.hornPhase += dt * 2.8;
+        if (v.hornPhase >= 1) {
+          v.hornPhase = k.horn ? 0.01 : 0;
+          v.hornRing.visible = Boolean(k.horn);
+        }
+        const rs = 1.5 + v.hornPhase * 7.5;
+        v.hornRing.scale.set(rs, rs, 1);
+        v.hornRingMat.opacity = Math.max(0, (1 - v.hornPhase) * 0.85);
+      } else {
+        v.hornRing.visible = false;
+      }
 
-      this.emitKartParticles(v, dt, airborne);
+      // Layered dual-core boost flames
+      const boosting = k.boostTimer > 0 || k.starTimer > 0;
+      v.flameOuter.visible = boosting;
+      v.flameInner.visible = boosting;
+      if (boosting) {
+        const pulse = 0.88 + Math.sin(this.time * 48 + v.tx) * 0.22;
+        const lenPulse = 1 + Math.sin(this.time * 31) * 0.28;
+        v.flameOuter.scale.set(pulse, pulse, lenPulse);
+        v.flameInner.scale.set(pulse * 0.9, pulse * 0.9, lenPulse * 1.05);
+        v.flameOuterMat.color.set(
+          k.goldenShroomTimer > 0
+            ? '#ffd700'
+            : k.starTimer > 0
+              ? '#22d3ee'
+              : k.driftLevel > 0
+                ? DRIFT_TIER_COLORS[k.driftLevel]
+                : '#ff8a1f',
+        );
+      }
+
+      // Crisp contact shadow on the road (polygonOffset + slope/bank aligned)
+      const airGap = Math.max(0, v.y - groundY);
+      v.shadow.position.set(v.x, groundY + 0.12, v.z);
+      v.shadow.rotation.order = 'YXZ';
+      v.shadow.rotation.set(-Math.atan(slope) * Math.cos(rel), v.angle + v.spin, -s.bank * Math.cos(rel));
+      const shadowScale = shrink * Math.max(0.55, 1 - airGap * 0.05);
+      v.shadow.scale.set(shadowScale, 1, shadowScale);
+      v.shadowMat.opacity = Math.max(0.14, 0.9 - airGap * 0.085);
+
+      this.emitKartParticles(v, dt, airborne, groundY, Math.atan(slope) * Math.cos(rel), s.bank * Math.cos(rel));
     }
   }
 
-  private emitKartParticles(v: KartVisual, dt: number, airborne: boolean) {
+  private emitKartParticles(v: KartVisual, dt: number, airborne: boolean, groundY: number, roadPitch: number, roadBank: number) {
     const k = v.data;
     const heading = v.angle + v.spin;
     const sinA = Math.sin(heading);
     const cosA = Math.cos(heading);
     const rearX = (lat: number, back: number) => v.x - sinA * back + cosA * lat;
     const rearZ = (lat: number, back: number) => v.z - cosA * back - sinA * lat;
+
+    // Tire skidmarks while drifting on the road
+    if (k.drifting && !airborne && Math.abs(k.speed) > 10 && (k.hopT <= 0 || k.hopT > 0.7)) {
+      v.skidAcc += dt * Math.abs(k.speed);
+      const biome = this.track.biome;
+      if (biome === 'snow') this.skidColor.set('#e0f2fe');
+      else if (biome === 'space' || biome === 'city') this.skidColor.set(k.driftDir > 0 ? '#22d3ee' : '#ec4899');
+      else this.skidColor.set('#141820');
+      while (v.skidAcc >= 1.45) {
+        v.skidAcc -= 1.45;
+        for (const side of [-1.25, 1.25]) {
+          const idx = this.skidCursor;
+          this.skidCursor = (this.skidCursor + 1) % SKID_CAP;
+          this.dummy.position.set(rearX(side, 1.35), groundY + 0.09, rearZ(side, 1.35));
+          this.dummy.rotation.order = 'YXZ';
+          this.dummy.rotation.set(-roadPitch, v.velAngle, -roadBank);
+          this.dummy.scale.setScalar(1);
+          this.dummy.updateMatrix();
+          this.skidMesh.setMatrixAt(idx, this.dummy.matrix);
+          this.skidMesh.setColorAt(idx, this.skidColor);
+        }
+        this.skidMesh.instanceMatrix.needsUpdate = true;
+        if (this.skidMesh.instanceColor) this.skidMesh.instanceColor.needsUpdate = true;
+      }
+    }
+
+    // Countdown revving sparks & overheat smoke
+    if (k.launchRev > 0) {
+      const overheat = k.launchRev > 1.2;
+      v.revAcc += dt * (overheat ? 34 : 18);
+      while (v.revAcc >= 1) {
+        v.revAcc -= 1;
+        const side = this.rng() > 0.5 ? 0.62 : -0.62;
+        if (overheat) {
+          this.smoke.emit(rearX(side, 2.5), v.y + 0.95, rearZ(side, 2.5), -sinA * 6 + (this.rng() - 0.5) * 4, 2 + this.rng() * 4, -cosA * 6 + (this.rng() - 0.5) * 4, '#27272a', 2.4, 0.55, -3, 0.8);
+          this.additive.emit(rearX(side, 2.5), v.y + 0.95, rearZ(side, 2.5), -sinA * 10 + (this.rng() - 0.5) * 6, 1 + this.rng() * 4, -cosA * 10 + (this.rng() - 0.5) * 6, '#ff2a2a', 1.2, 0.35, 10, 0.6);
+        } else {
+          this.additive.emit(rearX(side, 2.5), v.y + 0.95, rearZ(side, 2.5), -sinA * 11 + (this.rng() - 0.5) * 5, 1 + this.rng() * 3, -cosA * 11 + (this.rng() - 0.5) * 5, this.rng() > 0.4 ? '#ff9f1c' : '#fde047', 1.1, 0.32, 8, 0.8);
+        }
+      }
+    }
+
+    // Slipstream wind-tunnel streaks curving past the kart
+    if (k.slipstreaming) {
+      v.slipAcc += dt * 36;
+      while (v.slipAcc >= 1) {
+        v.slipAcc -= 1;
+        const side = this.rng() > 0.5 ? 1.55 : -1.55;
+        const hOff = 0.7 + this.rng() * 1.1;
+        this.additive.emit(
+          rearX(side, -1.6), v.y + hOff, rearZ(side, -1.6),
+          -sinA * 26 + cosA * side * -2.2, (this.rng() - 0.5) * 1.5, -cosA * 26 - sinA * side * -2.2,
+          this.rng() > 0.45 ? '#e0f7ff' : '#38bdf8',
+          0.95,
+          0.26,
+          0,
+          1.2,
+        );
+      }
+    }
 
     if (k.drifting && !airborne) {
       v.sparkAcc += dt * (k.driftLevel > 0 ? 70 : 22);
@@ -2355,13 +3424,34 @@ export class KartScene {
     for (const slot of this.itemBoxSlots.values()) {
       const target = slot.active ? 1 : 0;
       slot.scale += (target - slot.scale) * Math.min(1, dt * (slot.active ? 5 : 16));
-      this.dummy.position.set(slot.x, slot.y + 3 + Math.sin(this.time * 2.6 + slot.x) * 0.35, slot.z);
+      const bob = Math.sin(this.time * 2.6 + slot.x) * 0.35;
+      this.dummy.position.set(slot.x, slot.y + 3 + bob, slot.z);
       this.dummy.rotation.set(this.time * 0.9 + slot.x, this.time * 1.5, 0.3);
       this.dummy.scale.setScalar(Math.max(0.0001, slot.scale));
       this.dummy.updateMatrix();
       this.itemBoxMesh.setMatrixAt(slot.index, this.dummy.matrix);
+
+      this.dummy.position.set(slot.x, slot.y + 0.12, slot.z);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.scale.setScalar(Math.max(0.0001, slot.scale * (3.7 - bob * 0.5)));
+      this.dummy.updateMatrix();
+      this.itemBoxShadowMesh.setMatrixAt(slot.index, this.dummy.matrix);
     }
     this.itemBoxMesh.instanceMatrix.needsUpdate = true;
+    this.itemBoxShadowMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateCoins(dt: number) {
+    for (const slot of this.coinSlots.values()) {
+      const target = slot.active ? 1 : 0;
+      slot.scale += (target - slot.scale) * Math.min(1, dt * (slot.active ? 7 : 20));
+      this.dummy.position.set(slot.x, slot.y + 1.45 + Math.sin(this.time * 3.5 + slot.x) * 0.25, slot.z);
+      this.dummy.rotation.set(0, this.time * 3.2 + slot.x * 0.2, 0);
+      this.dummy.scale.setScalar(Math.max(0.0001, slot.scale));
+      this.dummy.updateMatrix();
+      this.coinMesh.setMatrixAt(slot.index, this.dummy.matrix);
+    }
+    this.coinMesh.instanceMatrix.needsUpdate = true;
   }
 
   private updateGantry(snap: KartTelemetrySnapshot) {
@@ -2383,19 +3473,10 @@ export class KartScene {
 
   // ─── Cameras ───────────────────────────────────────────────────────────────
 
-  private itemTexture(item: KartItemType) {
-    let tex = this.itemTextures.get(item);
-    if (!tex) {
-      tex = this.track2(makeEmojiTexture(ITEM_META[item].emoji));
-      this.itemTextures.set(item, tex);
-    }
-    return tex;
-  }
-
   private rig(key: string): CameraRig {
     let rig = this.rigs.get(key);
     if (!rig) {
-      rig = { cam: new THREE.PerspectiveCamera(68, 1.6, 0.6, 5200), yaw: 0, x: 0, y: 0, z: 0, fov: 68, shake: 0, ready: false };
+      rig = { cam: new THREE.PerspectiveCamera(68, 1.6, 0.6, 5200), yaw: 0, x: 0, y: 0, z: 0, fov: 68, shake: 0, driftLook: 0, ready: false };
       this.rigs.set(key, rig);
     }
     return rig;
@@ -2417,6 +3498,9 @@ export class KartScene {
     if (dYaw > Math.PI) dYaw -= Math.PI * 2;
     if (dYaw < -Math.PI) dYaw += Math.PI * 2;
     rig.yaw += dYaw * (1 - Math.exp(-dt * (k.drifting ? 4.2 : 6.5)));
+
+    const targetDriftLook = !preRace && !k.finished && k.drifting ? k.driftDir * 3.4 : 0;
+    rig.driftLook += (targetDriftLook - rig.driftLook) * (1 - Math.exp(-dt * 4.5));
 
     if (k.finished) {
       // Victory orbit in front of the kart
@@ -2453,7 +3537,10 @@ export class KartScene {
       const shakeX = rig.shake > 0 ? (this.rng() - 0.5) * rig.shake * 0.9 : 0;
       const shakeY = rig.shake > 0 ? (this.rng() - 0.5) * rig.shake * 0.9 : 0;
       rig.cam.position.set(rig.x + shakeX, rig.y + shakeY, rig.z);
-      rig.cam.lookAt(v.x + Math.sin(rig.yaw) * 14, v.y + 2, v.z + Math.cos(rig.yaw) * 14);
+      // Subtle apex look-ahead offset into the corner when drifting
+      const lookX = v.x + Math.sin(rig.yaw) * 14 - Math.cos(rig.yaw) * rig.driftLook;
+      const lookZ = v.z + Math.cos(rig.yaw) * 14 + Math.sin(rig.yaw) * rig.driftLook;
+      rig.cam.lookAt(lookX, v.y + 2, lookZ);
     }
     if (rig.shake > 0) rig.shake = Math.max(0, rig.shake - dt * 2.4);
 
@@ -2518,9 +3605,24 @@ export class KartScene {
     this.smoke.setScale(scale);
 
     for (const v of this.karts.values()) {
-      // Your own name tag just gets in your way
+      // Hide own nameplate; distance-scale & fade bot tags beyond 38..65m so pack battles stay clean
+      if (v.data.id === ownKartId) {
+        v.tag.visible = false;
+        continue;
+      }
       const d = Math.hypot(v.x - rig.cam.position.x, v.z - rig.cam.position.z);
-      v.tag.visible = v.data.id !== ownKartId && d < (v.data.isBot ? 90 : 240);
+      const maxD = v.data.isBot ? 65 : 220;
+      if (d >= maxD) {
+        v.tag.visible = false;
+        continue;
+      }
+      v.tag.visible = true;
+      const fadeStart = v.data.isBot ? 38 : 160;
+      v.tagMat.opacity = d > fadeStart ? Math.max(0, 1 - smoothstep(fadeStart, maxD, d)) : 1;
+      const distScale = v.data.isBot
+        ? Math.max(0.72, 1 - smoothstep(20, 65, d) * 0.28)
+        : Math.min(1.35, 1 + smoothstep(40, 180, d) * 0.35);
+      v.tag.scale.set((v.data.isBot ? 4.3 : 5.6) * distScale, (v.data.isBot ? 1.08 : 1.4) * distScale, 1);
     }
 
     this.renderer.setViewport(vp.x, vp.y, w, h);
@@ -2544,11 +3646,59 @@ export class KartScene {
     }
 
     for (const { tex, speed } of this.animated) tex.offset.y = (tex.offset.y - dt * speed) % 1;
+    for (const mat of this.shaderTimes) mat.uniforms.uTime.value = this.time;
     if (this.weatherMat) this.weatherMat.uniforms.uTime.value = this.time;
+    if (this.pulseMats.length > 0) {
+      const p = 0.65 + 0.35 * Math.sin(this.time * 3.4);
+      for (const m of this.pulseMats) m.opacity = p;
+    }
+    if (this.lighthouseBeam) this.lighthouseBeam.rotation.y += dt * 0.85;
+    for (const b of this.spaceBodies) b.rotation.y += dt * 0.025;
+
+    // Distant flying traffic streaks in Cyber Metropolis
+    if (this.trafficMesh && this.trafficLanes.length > 0) {
+      for (let i = 0; i < this.trafficLanes.length; i++) {
+        const lane = this.trafficLanes[i];
+        const a = lane.phase + this.time * lane.speed * lane.dir;
+        this.dummy.position.set(lane.cx + Math.cos(a) * lane.r, lane.y, lane.cz + Math.sin(a) * lane.r);
+        this.dummy.rotation.set(0, -a + (lane.dir > 0 ? 0 : Math.PI), 0);
+        this.dummy.scale.setScalar(1);
+        this.dummy.updateMatrix();
+        this.trafficMesh.setMatrixAt(i, this.dummy.matrix);
+      }
+      this.trafficMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // Volcano crater erupting ember fountain
+    if (this.craterPos) {
+      this.craterAcc += dt * 28;
+      while (this.craterAcc >= 1) {
+        this.craterAcc -= 1;
+        const a = this.rng() * Math.PI * 2;
+        const sp = 6 + this.rng() * 14;
+        this.additive.emit(
+          this.craterPos.x + (this.rng() - 0.5) * 6,
+          this.craterPos.y + 1,
+          this.craterPos.z + (this.rng() - 0.5) * 6,
+          Math.cos(a) * sp,
+          28 + this.rng() * 24,
+          Math.sin(a) * sp,
+          this.rng() > 0.35 ? '#ff7a1f' : '#fde047',
+          1.6 + this.rng() * 1.4,
+          1.4 + this.rng() * 0.8,
+          22,
+          0.2,
+        );
+        if (this.rng() < 0.25) {
+          this.smoke.emit(this.craterPos.x + (this.rng() - 0.5) * 8, this.craterPos.y + 4, this.craterPos.z + (this.rng() - 0.5) * 8, (this.rng() - 0.5) * 5, 12 + this.rng() * 8, (this.rng() - 0.5) * 5, '#2b1d19', 4.5, 2.2, -3, 0.3);
+        }
+      }
+    }
 
     this.updateKarts(dt, now);
     this.updateHazards(dt);
     this.updateItemBoxes(dt);
+    this.updateCoins(dt);
     this.updateGantry(snap);
 
     // Finish-line confetti for whoever just won
@@ -2624,24 +3774,32 @@ export class KartScene {
   dispose() {
     for (const v of this.karts.values()) {
       this.scene.remove(v.root);
+      this.scene.remove(v.shadow);
       v.disposables.forEach((d) => d.dispose());
     }
     this.karts.clear();
     for (const obj of this.hazards.values()) {
       this.scene.remove(obj);
+      if (obj.userData.shadow) {
+        const sh = obj.userData.shadow as THREE.Mesh;
+        this.scene.remove(sh);
+        (sh.material as THREE.Material).dispose();
+      }
       if (obj.userData.ownMat) ((obj as THREE.Mesh).material as THREE.Material).dispose();
     }
     this.hazards.clear();
-    for (const tex of this.itemTextures.values()) {
-      tex.dispose();
-    }
-    this.itemTextures.clear();
+    this.heldItemAssets.clear();
     this.disposers.forEach((d) => d());
     this.disposers = [];
     this.rigs.clear();
     this.itemBoxSlots.clear();
+    this.coinSlots.clear();
     this.gantryLights = [];
     this.animated = [];
+    this.shaderTimes = [];
+    this.pulseMats = [];
+    this.spaceBodies = [];
+    this.trafficLanes = [];
     this.additive.dispose();
     this.smoke.dispose();
     this.scene.clear();
