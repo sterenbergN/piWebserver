@@ -27,7 +27,7 @@ Work like a lead engineer: split big jobs, run the pieces in parallel, and check
 ## Testing locally
 
 - `npm test` (all unit tests), `npx tsc --noEmit -p tsconfig.json`, and `npx eslint <files>`. Errors only under `.next-dev/dev/types` are left over from the dev server, not real.
-- Dev server: `.claude/launch.json` ("dev", port 3000). It can stop between sessions, so start it again if pages don't load.
+- Dev server: `.claude/launch.json` ("dev", port 3000). It can stop between sessions, so start it again if pages don't load. Next allows one `next dev` per folder: if another session's server is already up, the new one exits ("Another next dev server is already running"), so browse that one on http://localhost:3000 instead (it hot-reloads your edits).
 - **Sign-ins:** `npm run seed:workout` creates `tester` / `tester-pass` (and `partner`). The admin passcode for `npm run dev` is in `.env.development.local` (local only, gitignored). Use them on localhost only.
 - **Pi-only tools:** ffmpeg and LibreOffice are installed on the Pi but not on the dev PC. Test conversions with a stand-in runner (`createConvertJobs({ runner })`), and say that the real run happens on the Pi.
 - **A connected AI** isn't set up locally. To see Generate-first layouts, load a page fresh, replace `window.fetch` so `/api/ai` answers `{ ready: true, … }`, then move with `window.next.router.push(…)`. The AI status is cached per page load, so a page that already asked has to be reloaded first.

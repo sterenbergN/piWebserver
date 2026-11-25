@@ -9,6 +9,7 @@ export const AI_TASKS = {
   skills: 'Skills plans, schedules, questions and answers',
   notes: 'Recording summaries',
   wishlist: 'Wishlist gift ideas',
+  party: 'Party game prompts and questions',
 } as const;
 
 export type AiTask = keyof typeof AI_TASKS;

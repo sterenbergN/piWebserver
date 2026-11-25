@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { BluffFact, PromptLists, PromptsData, SpyfallLocation, TriviaQuestion, WavelengthSpectrum } from '@/lib/party/prompts';
+import { buildImportPrompt, checkImport, clampCount, describeExisting, IMPORT_COUNT, parseImport } from '@/lib/party/import-prompt';
+import GenerateReply from '@/components/ai/GenerateReply';
 
 type GameKey = keyof PromptLists;
 type TextKey = 'quipClash' | 'theFaker' | 'bracketBattles' | 'herdMentality' | 'emojiTelephone';
@@ -45,6 +47,10 @@ export default function AdminPage() {
   const [showImport, setShowImport] = useState<GameKey | null>(null);
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState<'merge'|'replace'>('merge');
+  // "Write them with AI": what they're about and how many.
+  const [aiTheme, setAiTheme] = useState('');
+  const [aiCount, setAiCount] = useState(IMPORT_COUNT.default);
+  const [copied, setCopied] = useState('');
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState('');
 
@@ -130,42 +136,29 @@ export default function AdminPage() {
     }
   };
 
+  const openImport = (k: GameKey) => {
+    setShowImport(k);
+    setAiTheme(pack?.name || '');
+    setCopied('');
+  };
+
   const handleImport = () => {
     if (!showImport) return;
-    const lines = importText.split('\n').map(l => l.trim()).filter(l => l);
-    const cells = (line: string) => line.split('|').map(p => p.trim());
-    const roleList = (text: string) => text.split(',').map(r => r.trim()).filter(Boolean);
-    const put = (items: unknown[]) => edit(p => ({ ...p, [showImport]: importMode === 'merge' ? [...(p[showImport] as unknown[]), ...items] : items }));
-    if (showImport === 'spyfallLocations') {
-      // Emoji | Name | role, role, …   (the emoji is optional)
-      put(lines.map(cells).filter(c => c.length >= 2).map(c => c.length >= 3
-        ? { emoji: c[0], name: c[1], roles: roleList(c[2]) }
-        : { emoji: '', name: c[0], roles: roleList(c[1]) }));
-    } else if (showImport === 'wavelengthSpectrums') {
-      put(lines.map(cells).filter(c => c.length >= 2).map(c => ({ left: c[0], right: c[1] })));
-    } else if (showImport === 'bluffFacts') {
-      put(lines.map(cells).filter(c => c.length >= 2).map(c => ({ prompt: c[0], truth: c[1], decoys: c.slice(2).filter(Boolean) })));
-    } else if (showImport === 'triviaQuestions') {
-      const parsed: TriviaQuestion[] = [];
-      for (const line of lines) {
-        const parts = line.split('|').map(p => p.trim());
-        if (parts.length >= 6) {
-          const q = parts[0];
-          const choices = [parts[1], parts[2], parts[3], parts[4]] as [string,string,string,string];
-          const ans = parseInt(parts[5], 10);
-          if (!isNaN(ans) && ans >= 0 && ans <= 3) {
-            parsed.push({ question: q, choices, answer: ans, ...(parts[6] ? { category: parts[6] } : {}) });
-          }
-        }
-      }
-      edit(p => ({ ...p, triviaQuestions: importMode === 'merge' ? [...p.triviaQuestions, ...parsed] : parsed }));
-    } else {
-      edit(p => ({ ...p, [showImport]: importMode === 'merge' ? [...p[showImport], ...lines] : lines }));
-    }
+    const items = parseImport(showImport, importText) as unknown[];
+    edit(p => ({ ...p, [showImport]: importMode === 'merge' ? [...(p[showImport] as unknown[]), ...items] : items }));
     setShowImport(null);
     setImportText('');
-    showToast('📦 Import added! Remember to save.');
+    showToast(`📦 Added ${items.length} entr${items.length === 1 ? 'y' : 'ies'}. Remember to save.`);
   };
+
+  const aiPrompt = showImport ? buildImportPrompt(showImport, {
+    theme: aiTheme, count: aiCount, existing: importMode === 'merge' ? describeExisting(showImport, lists) : [],
+  }) : '';
+  const copyPrompt = async () => {
+    try { await navigator.clipboard.writeText(aiPrompt); setCopied('Copied. Paste it into your AI app, then paste its reply below.'); }
+    catch { setCopied('Open "See the prompt" and copy it from there.'); }
+  };
+  const readyCount = showImport ? parseImport(showImport, importText).length : 0;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -213,6 +206,26 @@ export default function AdminPage() {
             </div>
             <div className="admin-modal-body">
               <div className="mb-4 text-sm text-muted">{IMPORT_FORMAT[showImport] || 'Format: One prompt per line.'}</div>
+
+              <div className="admin-ai-box">
+                <div style={{ fontWeight: 800, marginBottom: '0.5rem' }}>✨ Write them with AI</div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <label style={{ flex: '1 1 14rem', display: 'grid', gap: '0.25rem', fontSize: '0.8rem' }}>Theme (optional)
+                    <input className="party-input" value={aiTheme} maxLength={120} onChange={e => setAiTheme(e.target.value)} placeholder="90s movies, office party, family friendly…" />
+                  </label>
+                  <label style={{ flex: '0 0 6rem', display: 'grid', gap: '0.25rem', fontSize: '0.8rem' }}>How many
+                    <input className="party-input" type="number" min={IMPORT_COUNT.min} max={IMPORT_COUNT.max} value={aiCount}
+                      onChange={e => setAiCount(Number(e.target.value))} onBlur={() => setAiCount(clampCount(aiCount))} />
+                  </label>
+                  <button type="button" className="party-btn party-btn-outline party-btn-inline" style={{ padding: '0.55rem 0.9rem' }} onClick={copyPrompt}>📋 Copy prompt</button>
+                </div>
+                {copied && <p role="status" style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: 'var(--party-text-muted)' }}>{copied}</p>}
+                <details style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                  <summary style={{ cursor: 'pointer', color: 'var(--party-text-muted)' }}>See the prompt</summary>
+                  <textarea readOnly className="admin-textarea" style={{ minHeight: '8rem', marginTop: '0.5rem' }} value={aiPrompt} onFocus={e => e.currentTarget.select()} />
+                </details>
+                <GenerateReply task="party" prompt={aiPrompt} onReply={setImportText} check={text => checkImport(showImport, text)} />
+              </div>
               
               <label className="admin-file-label">
                 <div>📁 Click to upload a .txt or .csv file</div>
@@ -220,7 +233,10 @@ export default function AdminPage() {
               </label>
               <div className="text-center text-muted mb-4 text-sm font-bold">OR PASTE TEXT</div>
               
-              <textarea className="admin-textarea" value={importText} onChange={e => setImportText(e.target.value)} placeholder="Paste prompts here..." />
+              <textarea className="admin-textarea" value={importText} onChange={e => setImportText(e.target.value)} placeholder="Paste prompts (or the AI's reply) here..." />
+              {importText.trim() && <p role="status" style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', fontWeight: 700, color: readyCount ? 'var(--party-green)' : 'var(--party-red)' }}>
+                {readyCount ? `Ready to add ${readyCount} entr${readyCount === 1 ? 'y' : 'ies'}.` : 'No lines in the format above yet.'}
+              </p>}
               
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -235,7 +251,7 @@ export default function AdminPage() {
             </div>
             <div className="admin-modal-footer">
               <button className="party-btn party-btn-outline" style={{width:'auto'}} onClick={() => setShowImport(null)}>Cancel</button>
-              <button className="party-btn party-btn-primary" style={{width:'auto'}} onClick={handleImport}>Import</button>
+              <button className="party-btn party-btn-primary" style={{width:'auto'}} disabled={!readyCount} onClick={handleImport}>Import</button>
             </div>
           </div>
         </div>
@@ -284,7 +300,7 @@ export default function AdminPage() {
                   <div className="admin-section-header-left"><span className="admin-section-title">{LabelMap[k]}</span></div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span className="admin-section-count">{lists[k].length}</span>
-                    <button onClick={() => setShowImport(k)} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
+                    <button onClick={() => openImport(k)} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
                   </div>
                 </div>
                 <div className="admin-prompt-list">
@@ -309,7 +325,7 @@ export default function AdminPage() {
               <div className="admin-section-header-left"><span className="admin-section-title">{LabelMap.triviaQuestions}</span></div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <span className="admin-section-count">{lists.triviaQuestions.length}</span>
-                <button onClick={() => setShowImport('triviaQuestions')} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
+                <button onClick={() => openImport('triviaQuestions')} className="party-btn party-btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>📋 Import</button>
               </div>
             </div>
             <div className="admin-prompt-list" style={{ maxHeight: '80vh' }}>
@@ -338,7 +354,7 @@ export default function AdminPage() {
           </div>
 
           {/* SPYFALL LOCATIONS */}
-          <AdminSection k="spyfallLocations" count={lists.spyfallLocations.length} onImport={() => setShowImport('spyfallLocations')}
+          <AdminSection k="spyfallLocations" count={lists.spyfallLocations.length} onImport={() => openImport('spyfallLocations')}
             hint="Each game draws up to 16. Every location needs at least one role; roles repeat when players outnumber them."
             addLabel="+ Add Location" onAdd={() => append('spyfallLocations', { emoji: '', name: '', roles: [] })}>
             {lists.spyfallLocations.map((loc, i) => matches(filter, loc.name, ...loc.roles) && (
@@ -353,7 +369,7 @@ export default function AdminPage() {
           </AdminSection>
 
           {/* WAVELENGTH SPECTRUMS */}
-          <AdminSection k="wavelengthSpectrums" count={lists.wavelengthSpectrums.length} onImport={() => setShowImport('wavelengthSpectrums')}
+          <AdminSection k="wavelengthSpectrums" count={lists.wavelengthSpectrums.length} onImport={() => openImport('wavelengthSpectrums')}
             addLabel="+ Add Spectrum" onAdd={() => append('wavelengthSpectrums', { left: '', right: '' })}>
             {lists.wavelengthSpectrums.map((sp, i) => matches(filter, sp.left, sp.right) && (
               <div key={i} className="admin-prompt-row">
@@ -367,7 +383,7 @@ export default function AdminPage() {
           </AdminSection>
 
           {/* BLUFF CLASH FACTS */}
-          <AdminSection k="bluffFacts" count={lists.bluffFacts.length} onImport={() => setShowImport('bluffFacts')}
+          <AdminSection k="bluffFacts" count={lists.bluffFacts.length} onImport={() => openImport('bluffFacts')}
             hint={'Write the fact with "_____" where the answer goes. House lies fill the ballot when few players bluff.'}
             addLabel="+ Add Fact" onAdd={() => append('bluffFacts', { prompt: '', truth: '', decoys: [] })}>
             {lists.bluffFacts.map((f, i) => matches(filter, f.prompt, f.truth, ...f.decoys) && (

@@ -1364,6 +1364,7 @@
 .admin-textarea:focus { border-color: var(--party-purple-lt); outline: none; }
 .admin-file-label { display: block; border: 2px dashed rgba(255,255,255,0.2); border-radius: 12px; padding: 2rem; text-align: center; cursor: pointer; margin-bottom: 1rem; transition: border 0.2s; }
 .admin-file-label:hover { border-color: var(--party-purple-lt); background: rgba(168,85,247,0.05); }
+.admin-ai-box { border: 1px solid rgba(168,85,247,0.35); background: rgba(168,85,247,0.08); border-radius: 12px; padding: 0.9rem 1rem; margin-bottom: 1rem; }
 
 /* ----------------------------------------------------------
    BRACKET BATTLES
