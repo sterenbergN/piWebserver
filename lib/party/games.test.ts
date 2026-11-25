@@ -1064,6 +1064,9 @@ test('Kart Clash: AI bots hold the road, and a hands-off human is kept going by 
     raceId: 'race-1',
     trackId: 'canyon-driftway',
     racers,
+    // This checks steering, so no shells: a random hit spins a bot off the road and failed
+    // about 1 run in 5. Items mode 'pure' still hands out mushrooms, so boosts are covered.
+    itemsMode: 'pure',
   });
   // Skip countdown and step 360 ticks (12 seconds of racing around curves)
   sim.countdownMs = 0;
