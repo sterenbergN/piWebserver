@@ -1656,6 +1656,7 @@ export default function HostPage({ params }: { params: Promise<{ roomCode: strin
             sendAction={sendAction}
             soundPrefs={show.prefs}
             setSoundPrefs={show.setPrefs}
+            onEnableSound={show.unlockSoundQuietly}
             onRequestQuit={() => setShowQuitDialog(true)}
           />
         )}

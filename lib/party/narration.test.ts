@@ -1,8 +1,19 @@
 import test from 'node:test';
 import { strict as assert } from 'node:assert';
-import { chooseVoice, rankVoices, speakable, splitForSpeech, voiceRate } from './narration';
+import {
+  chooseVoice,
+  hasQualityVoice,
+  rankVoices,
+  speakable,
+  splitForSpeech,
+  voiceRate,
+  waitForVoices,
+  type SpeechVoicesSource,
+  type VoiceInfo,
+} from './narration';
 
-const v = (name: string, lang = 'en-GB') => ({ name, lang });
+const v = (name: string, lang = 'en-GB', localService?: boolean): VoiceInfo =>
+  localService === undefined ? { name, lang } : { name, lang, localService };
 
 test('the narrator prefers natural English voices and never picks a novelty one', () => {
   const voices = [
@@ -48,4 +59,77 @@ test('long lines are spoken in sentence-sized pieces, short bits stay together',
   assert.ok(pieces.length > 1 && pieces.every((p) => p.length <= 180), 'a run-on sentence is broken up');
   assert.equal(pieces.join(' ').replace(/\s+/g, ' '), long.trim().replace(/\s+/g, ' '), 'nothing is lost');
   assert.deepEqual(splitForSpeech(''), []);
+});
+
+test('cloud/network voices beat local robotic voices and keep natural pace', () => {
+  const david = v('Microsoft David - English (United States)', 'en-US', true);
+  const cloudHost = v('Edge Cloud Voice', 'en-US', false);
+  const google = v('Google US English', 'en-US', false);
+  const natural = v('Microsoft Ryan Online (Natural) - English (United Kingdom)', 'en-GB', false);
+
+  const ranked = rankVoices([david, cloudHost, google, natural]).map((x) => x.name);
+  assert.deepEqual(ranked, [
+    'Microsoft Ryan Online (Natural) - English (United Kingdom)',
+    'Google US English',
+    'Edge Cloud Voice',
+    'Microsoft David - English (United States)',
+  ]);
+
+  assert.equal(voiceRate(natural), 1.0);
+  assert.equal(voiceRate(google), 1.0);
+  assert.equal(voiceRate(cloudHost), 1.0);
+  assert.ok(voiceRate(david) > 1.0);
+});
+
+test('hasQualityVoice ignores initial local SAPI voices until natural/network or preferred arrives', () => {
+  const localOnly = [
+    v('Microsoft David - English (United States)', 'en-US', true),
+    v('Microsoft Mark - English (United States)', 'en-US', true),
+    v('Microsoft Zira - English (United States)', 'en-US', true),
+  ];
+  assert.equal(hasQualityVoice(localOnly), false);
+  assert.equal(hasQualityVoice(localOnly, 'Google US English'), false);
+  assert.equal(hasQualityVoice(localOnly, 'Microsoft Zira - English (United States)'), true);
+
+  const withNetwork = [...localOnly, v('Google US English', 'en-US', false)];
+  assert.equal(hasQualityVoice(withNetwork), true);
+  assert.equal(hasQualityVoice(withNetwork, 'Google US English'), true);
+});
+
+test('waitForVoices waits past initial local voices until voiceschanged delivers natural/network voices', async () => {
+  const david = v('Microsoft David - English (United States)', 'en-US', true);
+  const zira = v('Microsoft Zira - English (United States)', 'en-US', true);
+  const google = v('Google UK English Male', 'en-GB', false);
+
+  let currentVoices: VoiceInfo[] = [david, zira];
+  const listeners = new Set<() => void>();
+  const source: SpeechVoicesSource = {
+    getVoices: () => currentVoices,
+    addEventListener: (_type, fn) => listeners.add(fn),
+    removeEventListener: (_type, fn) => listeners.delete(fn),
+  };
+
+  let resolved = false;
+  const p = waitForVoices(source, undefined, 500).then(() => {
+    resolved = true;
+  });
+
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(resolved, false, 'must not settle immediately when only local SAPI voices are present');
+  assert.equal(listeners.size, 1);
+
+  currentVoices = [david, zira, google];
+  for (const fn of [...listeners]) fn();
+  await p;
+  assert.equal(resolved, true);
+  assert.equal(listeners.size, 0, 'cleans up voiceschanged listener after resolving');
+
+  // Local-only device with no voiceschanged still settles cleanly after timeout
+  let fallbackResolved = false;
+  currentVoices = [david];
+  await waitForVoices(source, undefined, 25).then(() => {
+    fallbackResolved = true;
+  });
+  assert.equal(fallbackResolved, true);
+  assert.equal(listeners.size, 0);
 });

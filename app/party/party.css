@@ -2051,6 +2051,8 @@ body.party-tv main.container, body.party-phone main.container { max-width: none;
 .party-root select.party-voice-select,
 .party-voice-select { width: auto; background: rgba(255,255,255,0.08); border: 1px solid var(--party-border); color: var(--party-text); border-radius: 999px; padding: 0.35rem 0.7rem; font-size: 0.85rem; max-width: 15rem; cursor: pointer; }
 .party-voice-select option { background: var(--party-surface); color: var(--party-text); }
+.party-root select.kart-voice-select,
+.kart-voice-select { width: 100%; max-width: 100%; border-radius: 8px; padding: 0.28rem 0.45rem; font-size: 0.72rem; font-weight: 800; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); }
 .party-sound-cta {
   background: var(--party-yellow); color: #111; border: none; border-radius: 999px;
   padding: 0.5rem 1rem; font-weight: 900; cursor: pointer; animation: btnPulse 1.6s ease-in-out infinite;

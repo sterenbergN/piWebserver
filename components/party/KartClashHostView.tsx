@@ -15,6 +15,7 @@ import { KART_TRACKS, KartTrack, TRACK_LIST, TrackBiome, TrackId } from '@/lib/p
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 import type { KartHeat } from '@/lib/party/games/kart-clash';
 import { line, partyAudio, type SoundPrefs } from '@/components/party/audio';
+import { VoicePicker } from '@/components/party/HostShow';
 import { CameraMode, KartScene, computeSplitGrid } from '@/components/party/kart/kartScene';
 import { KartAudio } from '@/components/party/kart/kartAudio';
 import TrackMinimap from '@/components/party/kart/TrackMinimap';
@@ -233,6 +234,7 @@ function RaceView({
   sendAction,
   soundPrefs,
   setSoundPrefs,
+  onEnableSound,
   onRequestQuit,
 }: {
   hd: any;
@@ -240,6 +242,7 @@ function RaceView({
   sendAction: (action: any) => void;
   soundPrefs?: SoundPrefs;
   setSoundPrefs?: (next: SoundPrefs) => void;
+  onEnableSound?: () => void;
   onRequestQuit?: () => void;
 }) {
   const trackId: TrackId = hd.trackId || 'sunny-circuit';
@@ -259,7 +262,12 @@ function RaceView({
   const [webglFailed, setWebglFailed] = useState(false);
   const snapRef = useRef<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
   const prefsRef = useRef(soundPrefs);
+  const onEnableSoundRef = useRef(onEnableSound);
   const lastSpeakAtRef = useRef(0);
+
+  useEffect(() => {
+    onEnableSoundRef.current = onEnableSound;
+  }, [onEnableSound]);
   const finalLapCalledRef = useRef(false);
   const finishCalledRef = useRef(false);
   const lastBlueShellAnnounceRef = useRef('');
@@ -458,6 +466,7 @@ function RaceView({
   const unlockAllAudio = () => {
     audioRef.current?.resume();
     partyAudio.unlock();
+    onEnableSoundRef.current?.();
   };
 
   return (
@@ -655,7 +664,10 @@ function RaceView({
                 onClick={() => {
                   const cur = soundPrefs || { music: true, sfx: true, voice: true };
                   const nextVoice = cur.voice === false;
-                  if (nextVoice) partyAudio.unlock();
+                  if (nextVoice) {
+                    partyAudio.unlock();
+                    onEnableSoundRef.current?.();
+                  }
                   setSoundPrefs?.({ ...cur, voice: nextVoice });
                 }}
               >
@@ -664,6 +676,14 @@ function RaceView({
             </>
           )}
         </div>
+
+        {!needsSoundTap && soundPrefs?.voice !== false && setSoundPrefs && (
+          <VoicePicker
+            prefs={soundPrefs || { music: true, sfx: true, voice: true }}
+            setPrefs={setSoundPrefs}
+            className="party-voice-select kart-voice-select"
+          />
+        )}
 
         <div style={{ display: 'flex', gap: '0.25rem' }}>
           <button type="button" className="kart-side-btn" onClick={() => sendAction({ type: 'FINISH_KART_RACE' })}>⏭️ End race</button>
@@ -684,6 +704,7 @@ export default function KartClashHostView({
   sendAction,
   soundPrefs,
   setSoundPrefs,
+  onEnableSound,
   onRequestQuit,
 }: {
   state: any;
@@ -693,6 +714,7 @@ export default function KartClashHostView({
   sendAction: (action: any) => void;
   soundPrefs?: SoundPrefs;
   setSoundPrefs?: (next: SoundPrefs) => void;
+  onEnableSound?: () => void;
   onRequestQuit?: () => void;
 }) {
   const hd = state.hostData || {};
@@ -1201,6 +1223,7 @@ export default function KartClashHostView({
         sendAction={sendAction}
         soundPrefs={soundPrefs}
         setSoundPrefs={setSoundPrefs}
+        onEnableSound={onEnableSound}
         onRequestQuit={onRequestQuit}
       />
     );

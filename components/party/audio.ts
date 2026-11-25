@@ -2,7 +2,7 @@
 // plus sound effects — and a narrator voice via the browser's speech engine.
 // No audio files, so nothing to download or license.
 
-import { chooseVoice, rankVoices, speakable, splitForSpeech, voiceRate } from '@/lib/party/narration';
+import { chooseVoice, hasQualityVoice, rankVoices, speakable, splitForSpeech, voiceRate, waitForVoices } from '@/lib/party/narration';
 
 type Sfx = 'pop' | 'whoosh' | 'tick' | 'ding' | 'buzzer' | 'fanfare' | 'drumroll' | 'slam' | 'boo' | 'cheer';
 
@@ -42,6 +42,8 @@ class PartyAudio {
   private step = 0;
   private nextTime = 0;
   private speakingListeners = new Set<(speaking: boolean) => void>();
+  private activeUtterances = new Set<SpeechSynthesisUtterance>();
+  private duckGuard: ReturnType<typeof setTimeout> | null = null;
   prefs: SoundPrefs = { music: true, sfx: true, voice: true };
 
   onSpeaking(fn: (speaking: boolean) => void): () => void {
@@ -53,9 +55,18 @@ class PartyAudio {
     this.speakingListeners.forEach((fn) => fn(speaking));
   }
 
+  private clearSpeechTracking() {
+    this.activeUtterances.clear();
+    if (this.duckGuard) {
+      clearTimeout(this.duckGuard);
+      this.duckGuard = null;
+    }
+  }
+
   /** Browsers only allow audio after a user gesture; call from a click. */
   unlock() {
     if (typeof window === 'undefined') return;
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices();
     if (!this.ctx) {
       const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!Ctx) return;
@@ -159,6 +170,7 @@ class PartyAudio {
     if (!prefs.music) { const m = this.mood; this.music(null); this.mood = m; }
     if (!prefs.voice && typeof speechSynthesis !== 'undefined') {
       this.sayId++;
+      this.clearSpeechTracking();
       speechSynthesis.cancel();
       this.emitSpeaking(false);
     }
@@ -170,6 +182,7 @@ class PartyAudio {
     this.music(null);
     this.mood = m;
     this.sayId++;
+    this.clearSpeechTracking();
     if (typeof speechSynthesis !== 'undefined') {
       speechSynthesis.cancel();
       this.emitSpeaking(false);
@@ -192,9 +205,12 @@ class PartyAudio {
     const chunks = splitForSpeech(speakable(text));
     if (!chunks.length) return;
     const id = ++this.sayId;
-    if (interrupt) speechSynthesis.cancel();
-    // Chrome loads its voice list late; wait for it so the first line isn't in the default voice.
-    whenVoicesReady().then(() => {
+    if (interrupt) {
+      this.clearSpeechTracking();
+      speechSynthesis.cancel();
+    }
+    // Chrome/Edge load network/natural voices after local SAPI voices; wait briefly for them.
+    whenVoicesReady(this.prefs.voiceName).then(() => {
       if (id !== this.sayId || !this.prefs.voice) return;
       // Chrome can drop a line spoken in the same tick as cancel(), so give it a beat.
       setTimeout(() => this.speakChunks(id, chunks), interrupt ? 60 : 0);
@@ -202,7 +218,7 @@ class PartyAudio {
   }
 
   private speakChunks(id: number, chunks: string[]) {
-    if (id !== this.sayId) return;
+    if (id !== this.sayId || !this.prefs.voice) return;
     const voice = chooseVoice(speechSynthesis.getVoices(), this.prefs.voiceName);
     const duck = (down: boolean) => {
       this.emitSpeaking(down);
@@ -210,16 +226,33 @@ class PartyAudio {
       this.musicGain.gain.setTargetAtTime(down ? 0.07 : 0.22, this.ctx.currentTime, down ? 0.1 : 0.3);
     };
     duck(true);
+    if (this.duckGuard) clearTimeout(this.duckGuard);
+    this.duckGuard = setTimeout(() => {
+      if (id === this.sayId) {
+        this.duckGuard = null;
+        duck(false);
+      }
+    }, Math.max(5000, chunks.join(' ').length * 140));
     speechSynthesis.resume(); // Chrome sometimes leaves the engine paused
     chunks.forEach((chunk, i) => {
       const u = new SpeechSynthesisUtterance(chunk);
       if (voice) { u.voice = voice; u.lang = voice.lang; }
       u.rate = voiceRate(voice);
       u.pitch = 1;
-      if (i === chunks.length - 1) {
-        // Bring the music back once the whole line is done (or cut off by the next one).
-        u.onend = u.onerror = () => { if (id === this.sayId) duck(false); };
-      }
+      // Keep a strong reference until completion so Chromium doesn't GC the utterance mid-speech.
+      this.activeUtterances.add(u);
+      const cleanup = () => {
+        this.activeUtterances.delete(u);
+        if (i === chunks.length - 1) {
+          if (this.duckGuard) {
+            clearTimeout(this.duckGuard);
+            this.duckGuard = null;
+          }
+          if (id === this.sayId) duck(false);
+        }
+      };
+      u.onend = cleanup;
+      u.onerror = cleanup;
       speechSynthesis.speak(u);
     });
   }
@@ -230,17 +263,22 @@ class PartyAudio {
   }
 }
 
-let voicesReady: Promise<void> | null = null;
+let voicesSettled = false;
+let pendingVoicesWait: Promise<void> | null = null;
 
-/** Resolves once the speech engine has listed its voices (or after a second, whatever happens). */
-export function whenVoicesReady(): Promise<void> {
-  if (typeof speechSynthesis === 'undefined' || speechSynthesis.getVoices().length) return Promise.resolve();
-  voicesReady ||= new Promise<void>((resolve) => {
-    const done = () => { speechSynthesis.removeEventListener('voiceschanged', done); resolve(); };
-    speechSynthesis.addEventListener('voiceschanged', done);
-    setTimeout(done, 1000);
+/** Resolves once a human-like / preferred voice is available (or once settled after timeout). */
+export function whenVoicesReady(preferredName?: string): Promise<void> {
+  if (typeof speechSynthesis === 'undefined') return Promise.resolve();
+  if (hasQualityVoice(speechSynthesis.getVoices(), preferredName)) {
+    voicesSettled = true;
+    return Promise.resolve();
+  }
+  if (voicesSettled) return Promise.resolve();
+  pendingVoicesWait ||= waitForVoices(speechSynthesis, preferredName, 900).then(() => {
+    voicesSettled = true;
+    pendingVoicesWait = null;
   });
-  return voicesReady;
+  return pendingVoicesWait;
 }
 
 export const partyAudio = new PartyAudio();

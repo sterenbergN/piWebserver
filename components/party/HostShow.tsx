@@ -237,6 +237,7 @@ export function useShowDirector(state: HostState | null, secondsLeft: number | n
     const p = loadPrefs();
     setPrefsState(p);
     partyAudio.prefs = p;
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.getVoices();
   }, []);
 
   const enableSound = () => {
@@ -244,6 +245,11 @@ export function useShowDirector(state: HostState | null, secondsLeft: number | n
     setSoundOn(true);
     if (state) partyAudio.music(moodFor(state));
     partyAudio.say('Welcome to the party!');
+  };
+
+  const unlockSoundQuietly = () => {
+    partyAudio.unlock();
+    setSoundOn(true);
   };
 
   const setPrefs = (next: SoundPrefs) => {
@@ -305,7 +311,7 @@ export function useShowDirector(state: HostState | null, secondsLeft: number | n
     if (s === 0) partyAudio.sfx('buzzer');
   }, [secondsLeft]);
 
-  return { prefs, setPrefs, soundOn, enableSound, card };
+  return { prefs, setPrefs, soundOn, enableSound, unlockSoundQuietly, card };
 }
 
 export function SoundBar({ prefs, setPrefs, soundOn, enableSound }: Pick<ReturnType<typeof useShowDirector>, 'prefs' | 'setPrefs' | 'soundOn' | 'enableSound'>) {
@@ -341,23 +347,36 @@ export function SoundBar({ prefs, setPrefs, soundOn, enableSound }: Pick<ReturnT
 const VOICE_SAMPLES = ['Welcome to the party! Let’s play.', 'And the winner is… you, obviously.', 'This is how I sound. Ready when you are!'];
 
 /** Choose the narrator's voice from the ones this device has, best first, and hear a sample. */
-function VoicePicker({ prefs, setPrefs }: { prefs: SoundPrefs; setPrefs: (next: SoundPrefs) => void }) {
+export function VoicePicker({
+  prefs,
+  setPrefs,
+  className = 'party-voice-select',
+}: {
+  prefs: SoundPrefs;
+  setPrefs: (next: SoundPrefs) => void;
+  className?: string;
+}) {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   useEffect(() => {
     if (typeof speechSynthesis === 'undefined') return;
     const refresh = () => setVoices(partyAudio.voices());
     refresh();
     speechSynthesis.addEventListener('voiceschanged', refresh);
-    return () => speechSynthesis.removeEventListener('voiceschanged', refresh);
+    const timer = setTimeout(refresh, 500);
+    return () => {
+      clearTimeout(timer);
+      speechSynthesis.removeEventListener('voiceschanged', refresh);
+    };
   }, []);
   if (voices.length < 2) return null;
   const current = voices.some((v) => v.name === prefs.voiceName) ? prefs.voiceName! : '';
   return (
     <select
-      className="party-voice-select"
+      className={className}
       aria-label="Narrator voice"
       value={current}
       onChange={(e) => {
+        partyAudio.unlock();
         setPrefs({ ...prefs, voiceName: e.target.value || undefined });
         partyAudio.say(line(VOICE_SAMPLES));
       }}

@@ -22,10 +22,55 @@ export function rankVoice(v: VoiceInfo): number {
   let score = 0;
   if (GOOD.test(v.name)) score += 100;
   else if (/google/i.test(v.name)) score += 60; // Chrome's network voices: far better than the built-in ones
+  else if (v.localService === false) score += 40; // Any other cloud/network voice beats robotic local SAPI voices
   if (/^en[-_]GB/i.test(v.lang)) score += 20;
   else if (/^en[-_](US|AU|IE|CA|NZ)/i.test(v.lang)) score += 10;
   if (HOST.test(v.name)) score += 8;
   return score;
+}
+
+/** Whether a voice is a human-like (neural/network) voice rather than a built-in local synth. */
+export function isQualityVoice(v: VoiceInfo): boolean {
+  return rankVoice(v) >= 40;
+}
+
+/** Whether the voice list already includes the requested voice, or at least one quality voice. */
+export function hasQualityVoice(voices: VoiceInfo[], preferredName?: string | null): boolean {
+  if (preferredName) return voices.some((v) => v.name === preferredName);
+  return voices.some(isQualityVoice);
+}
+
+export interface SpeechVoicesSource {
+  getVoices(): VoiceInfo[];
+  addEventListener(type: 'voiceschanged', listener: () => void): void;
+  removeEventListener(type: 'voiceschanged', listener: () => void): void;
+}
+
+/**
+ * Wait until the speech engine has loaded the preferred voice or a human-like voice,
+ * rather than resolving immediately when Chromium only returns local robotic SAPI voices.
+ */
+export function waitForVoices(
+  source: SpeechVoicesSource,
+  preferredName?: string | null,
+  timeoutMs = 900,
+): Promise<void> {
+  if (hasQualityVoice(source.getVoices(), preferredName)) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      source.removeEventListener('voiceschanged', onChange);
+      resolve();
+    };
+    const onChange = () => {
+      if (hasQualityVoice(source.getVoices(), preferredName)) finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    source.addEventListener('voiceschanged', onChange);
+  });
 }
 
 /** The English voices worth offering, best first. */
@@ -46,9 +91,9 @@ export function chooseVoice<T extends VoiceInfo>(voices: T[], preferredName?: st
   return rankVoices(voices)[0] || null;
 }
 
-/** Natural voices already pace themselves well; the robotic ones need a nudge. */
+/** Natural/network voices already pace themselves well; the robotic ones need a nudge. */
 export function voiceRate(v: VoiceInfo | null): number {
-  return v && GOOD.test(v.name) ? 1.0 : 1.05;
+  return v && (GOOD.test(v.name) || /google/i.test(v.name) || v.localService === false) ? 1.0 : 1.05;
 }
 
 /** Turn display text into something that reads well out loud. */
