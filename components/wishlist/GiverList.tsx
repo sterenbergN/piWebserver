@@ -18,7 +18,7 @@ export default function GiverList({ list, askName, onClaim, onUnclaim, readOnly 
 }) {
   if (!list.items.length) return <p className="wl-empty">Nothing on this list yet.</p>;
   const row = (item: GiverItem, onTop = false) => (
-    <GiverRow key={item.id} item={item} onTop={onTop} askName={askName} readOnly={readOnly} onClaim={onClaim} onUnclaim={onUnclaim} />
+    <GiverRow key={item.id} item={item} emoji={list.emoji} onTop={onTop} askName={askName} readOnly={readOnly} onClaim={onClaim} onUnclaim={onUnclaim} />
   );
   return (
     <ul className="wl-items">
@@ -37,8 +37,8 @@ export default function GiverList({ list, askName, onClaim, onUnclaim, readOnly 
   );
 }
 
-function GiverRow({ item, onTop, askName, readOnly, onClaim, onUnclaim }: {
-  item: GiverItem; onTop: boolean; askName: boolean; readOnly?: boolean;
+function GiverRow({ item, emoji, onTop, askName, readOnly, onClaim, onUnclaim }: {
+  item: GiverItem; emoji: string; onTop: boolean; askName: boolean; readOnly?: boolean;
   onClaim: (itemId: string, input: ClaimInput) => Promise<void>;
   onUnclaim: (itemId: string) => Promise<void>;
 }) {
@@ -61,7 +61,7 @@ function GiverRow({ item, onTop, askName, readOnly, onClaim, onUnclaim }: {
 
   return (
     <li className={`wl-item${soldOut ? ' is-taken' : ''}${onTop ? ' is-top' : ''}`}>
-      <Thumb url={item.imageUrl} title={item.title} />
+      <Thumb url={item.imageUrl} title={item.title} emoji={emoji} store={item.store} />
       <div className="wl-item-body">
         <div className="wl-item-top">
           <h3 className="wl-item-title">{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer nofollow">{item.title}</a> : item.title}</h3>
@@ -116,9 +116,24 @@ function GiverRow({ item, onTop, askName, readOnly, onClaim, onUnclaim }: {
   );
 }
 
-export function Thumb({ url, title }: { url: string | null; title: string }) {
+/** A steady tint per item (from its name), so a grid of pictureless items isn't one flat colour. */
+function tintOf(text: string): number {
+  let h = 0;
+  for (const ch of text) h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return (h % 8) + 1;
+}
+
+/**
+ * An item's picture, or a soft tinted tile when it has none: the list's emoji when we know it,
+ * else the shop's (or the item's) first letter.
+ */
+export function Thumb({ url, title, emoji, store }: { url: string | null; title: string; emoji?: string; store?: string }) {
   // The picture is kept on this site, so it's a plain <img>, not a remote one.
-  return url
-    ? <img className="wl-thumb" src={url} alt="" loading="lazy" />
-    : <div className="wl-thumb wl-thumb-empty" aria-hidden>{title.trim().charAt(0).toUpperCase() || '🎁'}</div>;
+  if (url) return <img className="wl-thumb" src={url} alt="" loading="lazy" />;
+  const initial = Array.from((store || title).trim())[0]?.toUpperCase() ?? '';
+  return (
+    <div className={`wl-thumb wl-thumb-empty wl-tint-${tintOf(title || store || '')}`} aria-hidden>
+      {emoji ? <span className="wl-thumb-emoji">{emoji}</span> : <span className="wl-thumb-initial">{initial || '🎁'}</span>}
+    </div>
+  );
 }

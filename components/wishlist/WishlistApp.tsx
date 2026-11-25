@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import type { Suggestion } from '@/lib/wishlist/ai';
 import { shoppingSearchUrl } from '@/lib/wishlist/ai';
@@ -9,12 +10,12 @@ import {
 } from '@/lib/wishlist/model';
 import GiverList, { Thumb } from './GiverList';
 import GroupSheet from './GroupSheet';
+import { Chevron, ListPicker, NewListMenu, type Selection } from './ListPicker';
+import Menu from './Menu';
 import { IdeasSheet, ItemSheet, ListSheet, ShareSheet } from './Sheets';
 import { ReceivedSheet, TidySheet } from './Tidy';
 import { useWishlist } from './useWishlist';
 import './wishlist.css';
-
-type Selection = { src: 'own'; id: string } | { src: 'shared'; ownerId: string; id: string };
 
 /** "2 hours ago", for when the daily check last read a price. */
 function checkedAgo(iso: string): string {
@@ -71,7 +72,6 @@ export default function WishlistApp() {
   if (w.status === 'error') return <div className="wl-page"><p className="wl-error">{w.error || 'Couldn’t load your wishlists.'}</p><button className="btn btn-secondary" onClick={() => void w.load()}>Try again</button></div>;
 
   const mine = w.lists.filter((l) => l.kind === 'mine');
-  const forOthers = w.lists.filter((l) => l.kind === 'for');
   const editing: ItemView | null = sheet?.type === 'item' && sheet.id && own ? own.items.find((i) => i.id === sheet.id) ?? null : null;
 
   const addByLink = async (e: React.FormEvent) => {
@@ -145,11 +145,12 @@ export default function WishlistApp() {
     }
   };
 
-  const renderItem = (listId: string, item: ItemView, onTop: boolean) => {
+  const renderItem = (list: OwnerList, item: ItemView, onTop: boolean) => {
+    const listId = list.id;
     const index = items.indexOf(item);
     return (
       <li key={item.id} className={`wl-item${item.gotIt ? ' is-got' : ''}${onTop ? ' is-top' : ''}`}>
-        <Thumb url={item.imageUrl} title={item.title} />
+        <Thumb url={item.imageUrl} title={item.title} emoji={list.emoji} store={item.store} />
         <div className="wl-item-body">
           <div className="wl-item-top">
             <h3 className="wl-item-title">{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer nofollow">{item.title}</a> : item.title}</h3>
@@ -170,7 +171,7 @@ export default function WishlistApp() {
           {item.description && <p className="wl-item-desc">{item.description}</p>}
           {item.note && <p className="wl-item-note">📝 {item.note}</p>}
           <div className="wl-row wl-item-actions">
-            <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'item', id: item.id })}>Edit</button>
+            <button type="button" className="btn btn-secondary wl-btn-sm" onClick={() => setSheet({ type: 'item', id: item.id })}>Edit</button>
             {sort === 'mine' && (
               <>
                 <button type="button" className="wl-icon" aria-label="Move up" disabled={index === 0} onClick={() => void w.act({ type: 'moveItem', listId, id: item.id, dir: -1 })}>↑</button>
@@ -183,52 +184,35 @@ export default function WishlistApp() {
     );
   };
 
+  const picker = (heading: boolean) => (
+    <ListPicker
+      lists={w.lists}
+      shared={w.shared}
+      selected={sharedList ? sel : own ? { src: 'own', id: own.id } : null}
+      current={sharedList ? { emoji: sharedList.emoji, name: sharedList.name } : own ? { emoji: own.emoji, name: own.name } : null}
+      onPick={select}
+      heading={heading}
+    />
+  );
+  const newList = <NewListMenu onNew={(kind) => setSheet({ type: 'newList', kind })} />;
+  const canCheck = !!own?.items.some((i) => i.url && !i.gotIt && !isAmazonLink(i.url));
+
   return (
     <div className="wl-page animate-fade-in">
       <header className="wl-head">
         <div>
           <h1><span aria-hidden>🎁</span> Wishlist</h1>
           <p className="wl-sub">Things you want, with links and pictures. Share a list so people know what to get you.</p>
-          {mine.length > 0 && (
-            <div className="wl-head-actions">
-              <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'tidy' })}>🎉 After the occasion: tidy up</button>
-              <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'received' })}>📦 Received</button>
-            </div>
-          )}
         </div>
+        {mine.length > 0 && (
+          <div className="wl-head-actions">
+            <button type="button" className="btn btn-secondary wl-btn-sm" onClick={() => setSheet({ type: 'tidy' })}>🎉 After the occasion: tidy up</button>
+            <button type="button" className="btn btn-secondary wl-btn-sm" onClick={() => setSheet({ type: 'received' })}>📦 Received</button>
+          </div>
+        )}
       </header>
 
       {w.error && <p className="wl-error" role="alert">{w.error} <button type="button" className="wl-link" onClick={() => w.setError('')}>Dismiss</button></p>}
-
-      <nav className="wl-tabs" aria-label="Lists">
-        {mine.map((l) => (
-          <button key={l.id} type="button" className={`wl-tab${own?.id === l.id && sel?.src !== 'shared' ? ' is-on' : ''}`} onClick={() => select({ src: 'own', id: l.id })}>
-            <span aria-hidden>{l.emoji}</span> {l.name} <em>{l.items.length}</em>
-          </button>
-        ))}
-        <button type="button" className="wl-tab wl-tab-add" onClick={() => setSheet({ type: 'newList', kind: 'mine' })}>+ List</button>
-      </nav>
-      {(forOthers.length > 0 || w.lists.length > 0) && (
-        <nav className="wl-tabs wl-tabs-quiet" aria-label="Gift ideas for others">
-          <span className="wl-tabs-label">Gift ideas</span>
-          {forOthers.map((l) => (
-            <button key={l.id} type="button" className={`wl-tab${own?.id === l.id && sel?.src !== 'shared' ? ' is-on' : ''}`} onClick={() => select({ src: 'own', id: l.id })}>
-              <span aria-hidden>{l.emoji}</span> {l.name}{l.person ? ` · ${l.person}` : ''} <em>{l.items.length}</em>
-            </button>
-          ))}
-          <button type="button" className="wl-tab wl-tab-add" onClick={() => setSheet({ type: 'newList', kind: 'for' })}>+ For someone</button>
-        </nav>
-      )}
-      {w.shared.length > 0 && (
-        <nav className="wl-tabs wl-tabs-quiet" aria-label="Shared with me">
-          <span className="wl-tabs-label">Shared with me</span>
-          {w.shared.flatMap((s) => s.lists.map((l) => (
-            <button key={`${s.ownerId}:${l.id}`} type="button" className={`wl-tab${sel?.src === 'shared' && sel.id === l.id && sel.ownerId === s.ownerId ? ' is-on' : ''}`} onClick={() => select({ src: 'shared', ownerId: s.ownerId, id: l.id })}>
-              <span aria-hidden>{l.emoji}</span> {s.ownerName}: {l.name}
-            </button>
-          )))}
-        </nav>
-      )}
 
       {emptyAll && !sharedList && (
         <section className="wl-card wl-start">
@@ -238,14 +222,15 @@ export default function WishlistApp() {
             <button type="button" className="btn btn-primary" onClick={() => void quickStart()}>Make Wants, House and Needs</button>
             <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'newList', kind: 'mine' })}>Make my own</button>
           </div>
+          {w.shared.length > 0 && <div className="wl-row"><span className="wl-hint">Or open a list someone shared with you:</span>{picker(false)}</div>}
         </section>
       )}
 
       {sharedList && shared && (
         <section className="wl-card">
           <div className="wl-list-head">
-            <div>
-              <h2><span aria-hidden>{sharedList.emoji}</span> {sharedList.name}</h2>
+            <div className="wl-list-title">
+              <div className="wl-pick-row">{picker(true)}{newList}</div>
               <p className="wl-sub">{shared.ownerName}’s list{sharedList.occasion ? ` · ${sharedList.occasion}` : ''}. {shared.ownerName} can’t see what you claim.</p>
               {sharedList.note && <p className="wl-note">{sharedList.note}</p>}
             </div>
@@ -262,8 +247,8 @@ export default function WishlistApp() {
       {own && sel?.src !== 'shared' && (
         <section className="wl-card">
           <div className="wl-list-head">
-            <div>
-              <h2><span aria-hidden>{own.emoji}</span> {own.name}</h2>
+            <div className="wl-list-title">
+              <div className="wl-pick-row">{picker(true)}{newList}</div>
               <p className="wl-sub">
                 {own.kind === 'for' ? `Private ideas for ${own.person || 'someone'}` : own.shareToken ? 'Shared by link' : 'Not shared'}
                 {own.occasion ? ` · ${own.occasion}` : ''}
@@ -271,6 +256,15 @@ export default function WishlistApp() {
                 {own.items.length ? ` · ${own.items.length} item${own.items.length === 1 ? '' : 's'}` : ''}
                 {mustHaveTotal(own) ? ` · must-haves ${mustHaveTotal(own)}` : ''}
               </p>
+              {own.kind === 'mine' && (
+                <p className="wl-household">
+                  <button type="button" className="wl-quiet-link" onClick={() => setSheet({ type: 'editList' })} title="Change it in the list’s details">
+                    {own.householdHidden ? <><span aria-hidden>🔒</span> Hidden from your household</> : <><span aria-hidden>👪</span> Your household can see this list</>}
+                  </button>
+                  <span aria-hidden> · </span>
+                  <Link href="/household" className="wl-quiet-link">Manage household</Link>
+                </p>
+              )}
               {own.note && <p className="wl-note">{own.note}</p>}
             </div>
             <div className="wl-row wl-list-actions">
@@ -287,34 +281,46 @@ export default function WishlistApp() {
           {notice && <p className="wl-notice" role="status">{notice}</p>}
 
           <div className="wl-toolbar">
-            <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'ideas' })}>✨ Find more ideas</button>
-            <button type="button" className="btn btn-secondary" disabled={!own.items.length} onClick={copyText}>📋 Copy as text</button>
-            <button type="button" className="btn btn-secondary" disabled={own.items.length < 2} onClick={() => setSheet({ type: 'group', id: null })}>🔀 Group alternatives</button>
-            <button type="button" className="btn btn-secondary" disabled={checking || !own.items.some((i) => i.url && !i.gotIt && !isAmazonLink(i.url))} onClick={checkPricesNow}>{checking ? 'Checking prices…' : '↻ Check prices'}</button>
-            <label className="wl-sort">Sort
-              <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
-                <option value="mine">My order</option>
-                <option value="priority">Priority</option>
-                <option value="price-low">Price, low to high</option>
-                <option value="price-high">Price, high to low</option>
-              </select>
-            </label>
+            {own.items.length > 1 && (
+              <label className="wl-sort"><span>Sort</span>
+                <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
+                  <option value="mine">My order</option>
+                  <option value="priority">Priority</option>
+                  <option value="price-low">Price, low to high</option>
+                  <option value="price-high">Price, high to low</option>
+                </select>
+              </label>
+            )}
+            <Menu label="More for this list" align="right" buttonClass="wl-more" button={checking ? <>Checking prices…</> : <>More <Chevron /></>}>
+              <button type="button" role="menuitem" className="wl-menu-item" onClick={() => setSheet({ type: 'ideas' })}>
+                <span className="wl-menu-emoji" aria-hidden>✨</span><span className="wl-menu-text">Find more ideas<small>Ask an AI for gift ideas</small></span>
+              </button>
+              <button type="button" role="menuitem" className="wl-menu-item" disabled={!own.items.length} onClick={() => void copyText()}>
+                <span className="wl-menu-emoji" aria-hidden>📋</span><span className="wl-menu-text">Copy as text<small>{own.items.length ? 'To paste in a message' : 'Nothing on the list yet'}</small></span>
+              </button>
+              <button type="button" role="menuitem" className="wl-menu-item" disabled={own.items.length < 2} onClick={() => setSheet({ type: 'group', id: null })}>
+                <span className="wl-menu-emoji" aria-hidden>🔀</span><span className="wl-menu-text">Group alternatives<small>{own.items.length < 2 ? 'Needs two or more things' : 'Any one of these would do'}</small></span>
+              </button>
+              <button type="button" role="menuitem" className="wl-menu-item" disabled={checking || !canCheck} onClick={() => void checkPricesNow()}>
+                <span className="wl-menu-emoji" aria-hidden>↻</span><span className="wl-menu-text">Check prices<small>{canCheck ? 'Read today’s prices from the shops' : 'Nothing to check (Amazon prices are typed in)'}</small></span>
+              </button>
+            </Menu>
           </div>
 
           {own.items.length === 0 ? (
-            <p className="wl-empty">Nothing here yet. Paste a link above, or find ideas.</p>
+            <p className="wl-empty">Nothing here yet. Paste a link above, or find ideas under More.</p>
           ) : (
             <ul className="wl-items">
-              {rows.map((row) => row.kind === 'item' ? renderItem(own.id, row.item, false) : (
+              {rows.map((row) => row.kind === 'item' ? renderItem(own, row.item, false) : (
                 <li key={row.id} className="wl-group">
                   <div className="wl-group-head">
                     <div>
                       <h3><span aria-hidden>🔀</span> {row.name}</h3>
                       <p className="wl-hint">Any one of these.{row.reason ? ` On top because ${row.reason}.` : ''}</p>
                     </div>
-                    <button type="button" className="btn btn-secondary" onClick={() => setSheet({ type: 'group', id: row.id })}>Edit group</button>
+                    <button type="button" className="btn btn-secondary wl-btn-sm" onClick={() => setSheet({ type: 'group', id: row.id })}>Edit group</button>
                   </div>
-                  <ul className="wl-items">{row.items.map((item) => renderItem(own.id, item, item.id === row.pick))}</ul>
+                  <ul className="wl-items">{row.items.map((item) => renderItem(own, item, item.id === row.pick))}</ul>
                 </li>
               ))}
             </ul>

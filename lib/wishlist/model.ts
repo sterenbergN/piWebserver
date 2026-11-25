@@ -72,6 +72,8 @@ export type WishList = {
   note: string;
   /** Only "mine" lists can have one. Whoever has the link can see the list. */
   shareToken: string | null;
+  /** "mine" lists show to the owner's household (Shared with me) unless this is on. */
+  householdHidden: boolean;
   items: WishItem[];
   groups: WishGroup[];
 };
@@ -226,6 +228,7 @@ export function normalizeList(raw: unknown, fallbackId: string, newId: () => str
     date: cleanDate(r.date),
     note: cleanText(r.note, 500, true),
     shareToken: kind === 'mine' && isShareToken(r.shareToken) ? r.shareToken : null,
+    householdHidden: kind === 'mine' && r.householdHidden === true,
     items,
     groups: normalizeGroups(r.groups, items),
   };
@@ -358,7 +361,7 @@ export function normalizeWishlist(raw: unknown, newId: () => string = () => `x${
 
 // ---- Changes the owner can make ------------------------------------------------
 
-export type ListFields = Partial<Pick<WishList, 'name' | 'emoji' | 'person' | 'occasion' | 'date' | 'note'>>;
+export type ListFields = Partial<Pick<WishList, 'name' | 'emoji' | 'person' | 'occasion' | 'date' | 'note' | 'householdHidden'>>;
 export type ItemFields = Partial<Omit<WishItem, 'id' | 'addedAt'>>;
 
 export type WishlistAction =
@@ -411,8 +414,8 @@ export function applyWishlistAction(data: WishlistData, action: WishlistAction, 
     }
     case 'updateList': {
       const list = findList(data, action.id);
-      const next = normalizeList({ ...list, ...pick(action.fields, ['name', 'emoji', 'person', 'occasion', 'date', 'note']) }, list.id, newId);
-      Object.assign(list, { name: next.name, emoji: next.emoji, person: next.person, occasion: next.occasion, date: next.date, note: next.note });
+      const next = normalizeList({ ...list, ...pick(action.fields, ['name', 'emoji', 'person', 'occasion', 'date', 'note', 'householdHidden']) }, list.id, newId);
+      Object.assign(list, { name: next.name, emoji: next.emoji, person: next.person, occasion: next.occasion, date: next.date, note: next.note, householdHidden: next.householdHidden });
       return;
     }
     case 'removeList':

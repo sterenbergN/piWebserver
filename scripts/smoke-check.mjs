@@ -13,7 +13,7 @@ const base = (process.argv[2] || 'http://127.0.0.1:3000').replace(/\/+$/, '');
 /** Pages anyone can open (signed-out views render too), and APIs that answer without an account. */
 const SMOKE_PATHS = [
   '/', '/today', '/workout', '/workout/practice', '/workout/calculators', '/tools', '/recipes', '/journal',
-  '/study', '/notes', '/reader', '/game', '/blog', '/gallery', '/party', '/login',
+  '/household', '/study', '/notes', '/reader', '/game', '/blog', '/gallery', '/party', '/login',
   '/api/health', '/api/ai', '/api/tools/convert', '/api/workout/chess?stats=1', '/api/home-icons',
 ];
 

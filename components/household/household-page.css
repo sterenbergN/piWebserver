@@ -1,0 +1,18 @@
+.hp { max-width: 720px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+.hp h1 { margin: 0 0 0.35rem; font-size: 1.6rem; }
+.hp-lead { color: var(--muted); line-height: 1.5; margin: 0 0 1.25rem; }
+.hp h2 { font-size: 1.15rem; margin: 1.6rem 0 0.7rem; }
+.hp-error { color: var(--danger); margin: 0 0 1rem; }
+.hp-cards { display: grid; gap: 0.75rem; }
+.hp-card { padding: 1rem; border-radius: 16px; border: 1px solid var(--surface-border); background: var(--surface-glass); }
+.hp-card h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+.hp-card p { margin: 0 0 0.5rem; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+.hp-card a.hp-link { font-weight: 600; font-size: 0.9rem; }
+.hp-lists { list-style: none; margin: 0.6rem 0; padding: 0; display: grid; gap: 0.4rem; }
+.hp-lists li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid var(--surface-border); background: var(--input-bg); }
+.hp-list-name { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.hp-switch { display: inline-flex; align-items: center; gap: 0.5rem; flex: none; font-size: 0.85rem; color: var(--muted); cursor: pointer; }
+.hp-switch input { width: 1.1rem; height: 1.1rem; accent-color: var(--primary-bg); }
+.hp-note { font-size: 0.85rem; color: var(--muted); margin: 0.4rem 0 0.6rem; line-height: 1.5; }
+.hp-empty { text-align: center; }
+.hp-empty .btn { margin-top: 0.5rem; }

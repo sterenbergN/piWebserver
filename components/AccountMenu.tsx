@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { announceAccountChange, signOut } from './account-session';
 import { useHomeScreen } from './AddToHomeScreen';
 import { useTheme } from './ThemeProvider';
+import FeedbackLink from '@/components/tickets/FeedbackLink';
 
 export type NavUser = { username: string; /** Starts on PA Today, not the main site. */ studyHome?: boolean } | null;
 
@@ -80,6 +81,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
                 <Link href="/daily" onClick={() => setMenuOpen(false)}><span aria-hidden>🧠</span>Questions</Link>
                 <Link href="/habits" onClick={() => setMenuOpen(false)}><span aria-hidden>✅</span>Habits</Link>
                 <Link href="/chores" onClick={() => setMenuOpen(false)}><span aria-hidden>🧹</span>Chores</Link>
+                <Link href="/household" onClick={() => setMenuOpen(false)}><span aria-hidden>🏠</span>Household</Link>
                 <Link href="/journal" onClick={() => setMenuOpen(false)}><span aria-hidden>📓</span>Journal</Link>
                 <Link href="/recipes?view=list" onClick={() => setMenuOpen(false)}><span aria-hidden>🛒</span>Grocery list</Link>
                 <Link href="/workout" onClick={() => setMenuOpen(false)}><span aria-hidden>🏋️</span>Workout</Link>
@@ -91,6 +93,7 @@ export default function AccountMenu({ user, isAdmin }: { user: NavUser; isAdmin:
               <button type="button" onClick={() => { setMenuOpen(false); setDialogOpen(true); }}><span aria-hidden>👤</span>Sign in to your account</button>
             )}
             {isAdmin && <Link href="/admin" onClick={() => setMenuOpen(false)}><span aria-hidden>🔧</span>Admin</Link>}
+            <FeedbackLink onOpen={() => setMenuOpen(false)}><span aria-hidden>💬</span>Feedback</FeedbackLink>
             <button type="button" onClick={() => { toggleTheme(); setMenuOpen(false); }}>
               <span aria-hidden>{theme === 'dark' ? '☀️' : '🌙'}</span>
               {theme === 'dark' ? 'Light mode' : 'Dark mode'}

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import HouseholdPanel from '@/components/chores/HouseholdPanel';
 import type { useSitePopup } from '@/components/SitePopup';
@@ -58,6 +59,7 @@ export default function HouseholdSheet({
           </button>
         </div>
         <p className="rc-meta">Everyone in it sees the same meal plan, grocery list and chores, and can change them from their own phone.</p>
+        <p className="rc-meta"><Link href="/household">Manage household</Link></p>
         {error && <p className="rc-sheet-error" role="alert">{error}</p>}
         <HouseholdPanel
           members={household.members}

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import type { useSitePopup } from '@/components/SitePopup';
 import type { Member } from './useChores';
@@ -18,6 +20,7 @@ export default function HouseholdPanel({ members, me, invite, op, confirm }: Pro
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const onHouseholdPage = usePathname() === '/household';
 
   const run = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
   const join = () => run(async () => {
@@ -55,7 +58,7 @@ export default function HouseholdPanel({ members, me, invite, op, confirm }: Pro
         {invite ? (
           <>
             <div className="hh-code" aria-label={`Invite code ${invite.split('').join(' ')}`}>{invite}</div>
-            <p className="hh-hint">They sign in with their own account, open <strong>Chores → Household</strong> or the <strong>Grocery list</strong>, and enter this code. It keeps working until you turn it off.</p>
+            <p className="hh-hint">They sign in with their own account, open <strong>Household</strong> from their account menu (top right), and enter this code. It keeps working until you turn it off.</p>
             <div className="hh-code-actions">
               <button type="button" className="hh-btn is-primary" onClick={copy}>{copied ? '✓ Copied' : 'Copy code'}</button>
               <button type="button" className="hh-btn" disabled={busy} onClick={() => run(() => op('invite'))}>New code</button>
@@ -78,6 +81,7 @@ export default function HouseholdPanel({ members, me, invite, op, confirm }: Pro
           <button type="submit" className="btn btn-secondary" disabled={busy || code.replace(/\W/g, '').length < 6}>Join</button>
         </form>
       </section>
+      {!onHouseholdPage && <p className="hh-hint"><Link href="/household">Manage household</Link>: see everything it shares, including wishlists.</p>}
     </>
   );
 }

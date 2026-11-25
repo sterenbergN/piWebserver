@@ -36,7 +36,7 @@ export function ListSheet({ list, kind, onSave, onDelete, onClose }: {
 }) {
   const [f, setF] = useState<Required<ListFields>>({
     name: list?.name ?? '', emoji: list?.emoji ?? (kind === 'for' ? '💡' : '🎁'), person: list?.person ?? '',
-    occasion: list?.occasion ?? '', date: list?.date ?? '', note: list?.note ?? '',
+    occasion: list?.occasion ?? '', date: list?.date ?? '', note: list?.note ?? '', householdHidden: list?.householdHidden ?? false,
   });
   const set = (patch: Partial<ListFields>) => setF((old) => ({ ...old, ...patch }));
   const isFor = (list?.kind ?? kind) === 'for';
@@ -53,6 +53,12 @@ export function ListSheet({ list, kind, onSave, onDelete, onClose }: {
           <label>Date (optional)<input type="date" value={f.date} onChange={(e) => set({ date: e.target.value })} /></label>
         </div>
         <label>Note (optional)<textarea rows={2} value={f.note} maxLength={500} onChange={(e) => set({ note: e.target.value })} placeholder={isFor ? 'Anything to remember' : 'Shown to people you share it with'} /></label>
+        {!isFor && (
+          <label className="wl-check">
+            <input type="checkbox" checked={!f.householdHidden} onChange={(e) => set({ householdHidden: !e.target.checked })} />
+            Show to my household (they see it under “Shared with me”, and can say what they’re getting)
+          </label>
+        )}
         {isFor && <p className="wl-hint">Gift ideas are private to you. They’re never shared, not even with {f.person || 'them'}.</p>}
         <div className="wl-row">
           <button type="submit" className="btn btn-primary" disabled={!f.name.trim()}>Save</button>

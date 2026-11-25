@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const { ownerId, listId, itemId } = body;
     if (!isId(ownerId) || !isId(listId) || !isId(itemId)) throw new ApiError(400, 'Missing item');
     if (!(await sharesHousehold(me, ownerId))) throw new ApiError(403, 'That isn’t a list you can see.');
-    const list = (await loadWishlist(ownerId)).lists.find((l) => l.id === listId && l.kind === 'mine');
+    const list = (await loadWishlist(ownerId)).lists.find((l) => l.id === listId && l.kind === 'mine' && !l.householdHidden);
     const item = list?.items.find((i) => i.id === itemId);
     if (!list || !item || item.gotIt) throw new ApiError(404, 'That item isn’t on the list any more.');
 

@@ -125,3 +125,14 @@ test('layout: a group is one block where its first item was, picked item first',
   const rows = arrangeGroups(items, [{ id: 'G', name: 'Vac', pick: 'D', reason: 'cheaper' }]);
   assert.deepEqual(rows.map((r) => (r.kind === 'item' ? r.item.id : `[${r.items.map((i) => i.id).join(',')}]`)), ['A', '[D,B]', 'C', 'E']);
 });
+
+test('household: a list can be hidden from the household; gift-idea lists never show', async () => {
+  const d = emptyWishlist();
+  apply(d, { type: 'addList', id: 'A', kind: 'mine', fields: { name: 'Wants' } });
+  apply(d, { type: 'addList', id: 'B', kind: 'mine', fields: { name: 'Surprise for them', householdHidden: true } });
+  apply(d, { type: 'addList', id: 'C', kind: 'for', fields: { name: 'Ideas', householdHidden: true } });
+  assert.deepEqual(d.lists.map((l) => l.householdHidden), [false, true, false]);
+  apply(d, { type: 'updateList', id: 'A', fields: { householdHidden: true } });
+  assert.equal(d.lists[0].householdHidden, true);
+  assert.equal(normalizeWishlist({ lists: [{ id: 'X', kind: 'mine' }] }).lists[0].householdHidden, false);
+});

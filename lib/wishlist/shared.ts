@@ -29,9 +29,9 @@ export async function loadSharedView(token: string, viewerId: string | null, key
   return { ownerName: name, isOwner: false, list: giverView(found.list, claims, safeWho(key), imageUrl) };
 }
 
-/** A household member's own "mine" lists as the other person sees them. */
+/** A household member's own "mine" lists as the other person sees them (not ones they hid from the household). */
 export async function householdLists(ownerId: string, viewerId: string): Promise<GiverList[]> {
   const [data, claims] = await Promise.all([loadWishlist(ownerId), loadClaims(ownerId)]);
   const imageUrl = imageUrlFor(ownerId);
-  return data.lists.filter((l: WishList) => l.kind === 'mine').map((l) => giverView(l, claims.claims, whoFromUser(viewerId), imageUrl));
+  return data.lists.filter((l: WishList) => l.kind === 'mine' && !l.householdHidden).map((l) => giverView(l, claims.claims, whoFromUser(viewerId), imageUrl));
 }
