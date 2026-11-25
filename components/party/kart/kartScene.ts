@@ -5,7 +5,17 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DRIFT_TIER_COLORS, KartItemType } from '@/lib/party/kart-shared';
-import { KartTrack, projectOntoTrack, sampleTrackAtProgress } from '@/lib/party/kart-tracks';
+import {
+  KartTrack,
+  SplitSectionDef,
+  TrackFeatureDef,
+  getMovingHazardPosition,
+  getTrackBoundsAt,
+  isShortcutWallOpening,
+  projectOntoShortcut,
+  projectOntoTrack,
+  sampleTrackAtProgress,
+} from '@/lib/party/kart-tracks';
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 
 export type CameraMode = 'split' | 'leader' | 'helicopter' | 'action';
@@ -126,14 +136,22 @@ function merged(parts: THREE.BufferGeometry[]) {
   return g;
 }
 
-/** A strip following the road at two lateral offsets. */
-function ribbon(
-  samples: KartTrack['samples'],
-  offA: number,
-  offB: number,
-  yOffset: number,
-  opts: { vScale?: number; length?: number; color?: (i: number) => THREE.Color; flipUvAcross?: boolean } = {},
+type BoundsSlice = ReturnType<typeof getTrackBoundsAt>;
+
+/** Dynamic per-sample ribbon supporting split widenings and elevated decks. */
+function dynamicRibbon(
+  track: KartTrack,
+  getSlice: (s: KartTrack['samples'][number], b: BoundsSlice, i: number) => {
+    offA: number;
+    offB: number;
+    yA: number;
+    yB: number;
+    uvA?: number;
+    uvB?: number;
+  },
+  opts: { vScale?: number; length?: number; color?: (s: KartTrack['samples'][number], b: BoundsSlice, i: number) => THREE.Color } = {},
 ) {
+  const samples = track.samples;
   const m = samples.length;
   const pos: number[] = [];
   const uv: number[] = [];
@@ -142,18 +160,19 @@ function ribbon(
   const vScale = opts.vScale ?? 40;
   for (let i = 0; i <= m; i++) {
     const s = samples[i % m];
+    const b = getTrackBoundsAt(track, s.progress);
+    const sl = getSlice(s, b, i % m);
     const sinB = Math.sin(s.bank);
     const v = (i / m) * Math.round((opts.length ?? 0) / vScale || 1);
-    pos.push(s.x + s.nx * offA, s.y + sinB * offA + yOffset, s.z + s.nz * offA);
-    pos.push(s.x + s.nx * offB, s.y + sinB * offB + yOffset, s.z + s.nz * offB);
-    uv.push(0, v, 1, v);
+    pos.push(s.x + s.nx * sl.offA, s.y + sinB * sl.offA + sl.yA, s.z + s.nz * sl.offA);
+    pos.push(s.x + s.nx * sl.offB, s.y + sinB * sl.offB + sl.yB, s.z + s.nz * sl.offB);
+    uv.push(sl.uvA ?? 0, v, sl.uvB ?? 1, v);
     if (opts.color) {
-      const c = opts.color(i % m);
+      const c = opts.color(s, b, i % m);
       col.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
     if (i < m) {
       const a = i * 2;
-      // Winding keeps the top face pointing up since +n is the right-hand side
       idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
     }
   }
@@ -166,17 +185,16 @@ function ribbon(
   return geo;
 }
 
-/** A raised box section following the road with alternating colour stripes (curbs and walls). */
-function stripedBarrier(
-  samples: KartTrack['samples'],
-  inner: number,
-  outer: number,
-  yBottom: number,
-  yTop: number,
+/** Dynamic striped barrier supporting split widenings, elevated decks, and shortcut wall openings. */
+function dynamicBarrier(
+  track: KartTrack,
+  getSpan: (b: BoundsSlice) => { inner: number; outer: number; yBottom: number; yTop: number; active: boolean },
   colorA: THREE.Color,
   colorB: THREE.Color,
   stripePeriod: number,
+  skipSegment?: (s: KartTrack['samples'][number], b: BoundsSlice) => boolean,
 ) {
+  const samples = track.samples;
   const m = samples.length;
   const pos: number[] = [];
   const col: number[] = [];
@@ -187,25 +205,32 @@ function stripedBarrier(
   for (let i = 0; i < m; i++) {
     const s0 = samples[i];
     const s1 = samples[(i + 1) % m];
+    const b0 = getTrackBoundsAt(track, s0.progress);
+    const b1 = getTrackBoundsAt(track, s1.progress);
+    if (skipSegment && skipSegment(s0, b0)) continue;
+    const sp0 = getSpan(b0);
+    const sp1 = getSpan(b1);
+    if (!sp0.active && !sp1.active) continue;
     const c = Math.floor(i / stripePeriod) % 2 === 0 ? colorA : colorB;
     const dark = c.clone().multiplyScalar(0.72);
-    const p = (s: KartTrack['samples'][number], off: number, y: number) => [
+    const p = (s: KartTrack['samples'][number], off: number, y: number, innerRef: number) => [
       s.x + s.nx * off,
-      s.y + Math.sin(s.bank) * Math.min(Math.abs(off), Math.abs(inner)) * Math.sign(off) + y,
+      s.y + Math.sin(s.bank) * Math.min(Math.abs(off), Math.abs(innerRef)) * (Math.sign(off) || 1) + y,
       s.z + s.nz * off,
     ];
-    const sign = Math.sign(inner + outer) || 1;
-    const near = sign > 0 ? inner : outer;
-    const far = sign > 0 ? outer : inner;
-    // Top, road-facing side, far side. Winding depends on which side of the road we're on.
+    const sign = Math.sign(sp0.inner + sp0.outer) || Math.sign(sp1.inner + sp1.outer) || 1;
+    const near0 = sign > 0 ? sp0.inner : sp0.outer;
+    const far0 = sign > 0 ? sp0.outer : sp0.inner;
+    const near1 = sign > 0 ? sp1.inner : sp1.outer;
+    const far1 = sign > 0 ? sp1.outer : sp1.inner;
     if (sign > 0) {
-      quad(p(s0, near, yTop), p(s0, far, yTop), p(s1, near, yTop), p(s1, far, yTop), c);
-      quad(p(s0, near, yBottom), p(s0, near, yTop), p(s1, near, yBottom), p(s1, near, yTop), dark);
-      quad(p(s0, far, yTop), p(s0, far, yBottom), p(s1, far, yTop), p(s1, far, yBottom), dark);
+      quad(p(s0, near0, sp0.yTop, sp0.inner), p(s0, far0, sp0.yTop, sp0.inner), p(s1, near1, sp1.yTop, sp1.inner), p(s1, far1, sp1.yTop, sp1.inner), c);
+      quad(p(s0, near0, sp0.yBottom, sp0.inner), p(s0, near0, sp0.yTop, sp0.inner), p(s1, near1, sp1.yBottom, sp1.inner), p(s1, near1, sp1.yTop, sp1.inner), dark);
+      quad(p(s0, far0, sp0.yTop, sp0.inner), p(s0, far0, sp0.yBottom, sp0.inner), p(s1, far1, sp1.yTop, sp1.inner), p(s1, far1, sp1.yBottom, sp1.inner), dark);
     } else {
-      quad(p(s0, far, yTop), p(s0, near, yTop), p(s1, far, yTop), p(s1, near, yTop), c);
-      quad(p(s0, near, yTop), p(s0, near, yBottom), p(s1, near, yTop), p(s1, near, yBottom), dark);
-      quad(p(s0, far, yBottom), p(s0, far, yTop), p(s1, far, yBottom), p(s1, far, yTop), dark);
+      quad(p(s0, far0, sp0.yTop, sp0.inner), p(s0, near0, sp0.yTop, sp0.inner), p(s1, far1, sp1.yTop, sp1.inner), p(s1, near1, sp1.yTop, sp1.inner), c);
+      quad(p(s0, near0, sp0.yTop, sp0.inner), p(s0, near0, sp0.yBottom, sp0.inner), p(s1, near1, sp1.yTop, sp1.inner), p(s1, near1, sp1.yBottom, sp1.inner), dark);
+      quad(p(s0, far0, sp0.yBottom, sp0.inner), p(s0, far0, sp0.yTop, sp0.inner), p(s1, far1, sp1.yBottom, sp1.inner), p(s1, far1, sp1.yTop, sp1.inner), dark);
     }
   }
   const geo = new THREE.BufferGeometry();
@@ -462,7 +487,7 @@ interface TerrainInfo {
 
 function buildTerrain(track: KartTrack, noiseTex: THREE.Texture): TerrainInfo {
   const samples = track.samples;
-  const coarse = samples.filter((_, i) => i % 4 === 0);
+  const coarse = samples.filter((_, i) => i % 3 === 0);
   const xs = samples.map((s) => s.x);
   const zs = samples.map((s) => s.z);
   const minX = Math.min(...xs);
@@ -474,22 +499,23 @@ function buildTerrain(track: KartTrack, noiseTex: THREE.Texture): TerrainInfo {
   const nearest = (x: number, z: number) => {
     let best = Infinity;
     let y = 0;
+    let wallWidth = track.wallWidth;
     for (const s of coarse) {
       const d = (x - s.x) * (x - s.x) + (z - s.z) * (z - s.z);
       if (d < best) {
         best = d;
         y = s.y;
+        wallWidth = getTrackBoundsAt(track, s.progress).wallWidth;
       }
     }
-    return { dist: Math.sqrt(best), y };
+    return { dist: Math.sqrt(best), y, wallWidth };
   };
 
   const volcanoRadius = track.biome === 'lava' ? Math.max(40, nearest(center.x, center.z).dist - track.wallWidth - 14) : 0;
   const biome = track.biome;
-  const wall = track.wallWidth;
 
   const heightAt = (x: number, z: number) => {
-    const { dist, y } = nearest(x, z);
+    const { dist, y, wallWidth: wall } = nearest(x, z);
     const n = fbm(x * 0.006 + 11, z * 0.006 - 7);
     const n2 = fbm(x * 0.02 - 3, z * 0.02 + 5, 3);
     const near = smoothstep(wall + 2, wall + 70, dist);
@@ -531,7 +557,11 @@ function buildTerrain(track: KartTrack, noiseTex: THREE.Texture): TerrainInfo {
       default:
         h = -40;
     }
-    // Sink the ground below the road and its barriers, then blend out to the landscape
+    // Sink the ground below the road, widened splits, and hidden shortcuts
+    const sc = projectOntoShortcut(track, x, z);
+    if (sc && sc.dist < sc.shortcut.width * 0.85) {
+      return Math.min(sc.point.y - 2.2, (y - 6.5));
+    }
     const blend = smoothstep(wall + 2, wall + 26, dist);
     return (y - 6.5) * (1 - blend) + (h + y * (1 - ring)) * blend;
   };
@@ -943,8 +973,11 @@ function buildScenery(
     for (let tries = 0; tries < count * 30 && out.length < count; tries++) {
       const x = minX + rng() * (maxX - minX);
       const z = minZ + rng() * (maxZ - minZ);
-      const d = terrain.nearestDist(x, z);
-      if (d < wall + minGap || d > wall + maxGap) continue;
+      const proj = projectOntoTrack(track, x, z);
+      const localWall = getTrackBoundsAt(track, proj.progress).wallWidth;
+      const d = proj.distanceToCenter;
+      if (d < localWall + minGap || d > localWall + maxGap) continue;
+      if (projectOntoShortcut(track, x, z)) continue;
       const cd = Math.hypot(x - terrain.center.x, z - terrain.center.z);
       if (terrain.volcanoRadius > 0 && cd < terrain.volcanoRadius * 1.02) continue;
       out.push({ x, y: terrain.heightAt(x, z) - 0.2, z, ry: rng() * Math.PI * 2, s: scale[0] + rng() * (scale[1] - scale[0]) });
@@ -1080,7 +1113,7 @@ function buildScenery(
 
   buildBiomeArches(track, group, propMat, glowMat, disposers, pulseMats);
 
-  // Trackside furniture every so often along the barrier
+  // Trackside furniture every so often along the barrier (avoiding shortcut openings & adjusting for split widenings/lifts)
   const m = track.samples.length;
   const flags: { x: number; y: number; z: number; ry: number; s: number; color?: THREE.Color }[] = [];
   const lamps: { x: number; y: number; z: number; ry: number; s: number }[] = [];
@@ -1091,18 +1124,20 @@ function buildScenery(
   const accent = new THREE.Color(track.theme.accentColor);
   for (let i = 0; i < m; i++) {
     const s = track.samples[i];
-    const side = i % 16 < 8 ? 1 : -1;
-    if (i % 8 === 0 && Math.abs(s.curvature) < 0.0092) {
-      const off = side * (wall + 2.4);
+    const b = getTrackBoundsAt(track, s.progress);
+    const side = (i % 16 < 8 ? 1 : -1) as -1 | 1;
+    if (i % 10 === 0 && Math.abs(s.curvature) < 0.0092 && !isShortcutWallOpening(track, s.progress, side)) {
+      const off = side * (b.wallWidth + 2.4);
+      const lift = b.upperSide === side ? b.upperLift : 0;
       const x = s.x + s.nx * off;
       const z = s.z + s.nz * off;
-      const y = s.y + Math.sin(s.bank) * wall * side;
+      const y = s.y + Math.sin(s.bank) * b.wallWidth * side + lift;
       if (useLamps) {
         // Point the lamp arm inward toward the road centerline
         const ry = Math.atan2(s.nx * side, s.nz * side);
         lamps.push({ x, y, z, ry, s: 1 });
         const headCol = track.biome === 'city'
-          ? new THREE.Color(i % 16 === 0 ? '#00f5ff' : '#ff4fd8')
+          ? new THREE.Color(i % 20 === 0 ? '#00f5ff' : '#ff4fd8')
           : new THREE.Color('#ff8a1f');
         lampHeads.push({ x: x - Math.sin(ry) * 2.35, y: y + 9.85, z: z - Math.cos(ry) * 2.35, ry: 0, s: 1, color: headCol });
       } else if (track.biome !== 'space') {
@@ -1110,12 +1145,15 @@ function buildScenery(
       }
     }
     // Chevrons on the outside of proper corners
-    if (i % 6 === 0 && Math.abs(s.curvature) > 0.0088) {
-      const outside = s.curvature > 0 ? 1 : -1;
-      const off = outside * (wall + 3);
-      const y = s.y + Math.sin(s.bank) * wall * outside;
-      signs.push({ x: s.x + s.nx * off, y, z: s.z + s.nz * off, ry: s.angle, s: 1 });
-      boards.push({ x: s.x + s.nx * off, y: y + 3.4, z: s.z + s.nz * off, ry: s.angle, s: outside });
+    if (i % 7 === 0 && Math.abs(s.curvature) > 0.0088) {
+      const outside = (s.curvature > 0 ? 1 : -1) as -1 | 1;
+      if (!isShortcutWallOpening(track, s.progress, outside)) {
+        const off = outside * (b.wallWidth + 3);
+        const lift = b.upperSide === outside ? b.upperLift : 0;
+        const y = s.y + Math.sin(s.bank) * b.wallWidth * outside + lift;
+        signs.push({ x: s.x + s.nx * off, y, z: s.z + s.nz * off, ry: s.angle, s: 1 });
+        boards.push({ x: s.x + s.nx * off, y: y + 3.4, z: s.z + s.nz * off, ry: s.angle, s: outside });
+      }
     }
   }
   if (flags.length) instanced(group, flagGeometry(), propMat, flags, disposers);
@@ -1157,6 +1195,526 @@ function buildScenery(
   mirrored.scale(-1, 1, 1);
   instanced(group, mirrored, boardMat, right.map((b) => ({ ...b, ry: b.ry + Math.PI, s: 1 })), disposers);
   return lighthouseBeam;
+}
+
+const PERK_LABELS: Record<SplitSectionDef['leftPerk'], string> = {
+  boosts: '⚡ BOOSTS',
+  coins: '🪙 COINS',
+  boxes: '🎁 ITEMS',
+  fast: '🚀 HIGH LINE',
+};
+
+function buildSplitStructures(
+  track: KartTrack,
+  group: THREE.Group,
+  propMat: THREE.Material,
+  glowMat: THREE.Material,
+  disposers: (() => void)[],
+) {
+  const track2 = <T extends { dispose: () => void }>(res: T): T => {
+    disposers.push(() => res.dispose());
+    return res;
+  };
+  const samples = track.samples;
+  const m = samples.length;
+  const vertexMat = track2(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+
+  // Elevated deck underside skirts & support pillars
+  const pillarSpots: { x: number; y: number; z: number; ry: number; s: number; sy: number }[] = [];
+  for (let i = 0; i < m; i++) {
+    const s0 = samples[i];
+    const b0 = getTrackBoundsAt(track, s0.progress);
+    if (b0.upperSide !== 0 && b0.upperLift > 0.8 && i % 5 === 0) {
+      const midOff = b0.upperSide * (b0.dividerHalf + (b0.halfRoad - b0.dividerHalf) * 0.5);
+      const h = b0.upperLift + 9;
+      pillarSpots.push({
+        x: s0.x + s0.nx * midOff,
+        y: s0.y + Math.sin(s0.bank) * midOff + b0.upperLift - 0.6 - h * 0.5,
+        z: s0.z + s0.nz * midOff,
+        ry: s0.angle,
+        s: 1,
+        sy: h,
+      });
+    }
+  }
+  if (pillarSpots.length > 0) {
+    const pilGeo = colored(new THREE.BoxGeometry(2.6, 1, 2.6), track.biome === 'canyon' ? '#8c3b1f' : track.biome === 'snow' ? '#7dd3fc' : '#1e293b');
+    instanced(group, pilGeo, propMat, pillarSpots, disposers);
+
+    const underGeo = track2(dynamicRibbon(track, (_s, b) => {
+      if (b.upperSide === 0 || b.upperLift <= 0.1) {
+        return { offA: 0, offB: 0, yA: -10, yB: -10 };
+      }
+      const offA = b.upperSide < 0 ? -b.halfRoad - 0.4 : b.dividerHalf - 0.2;
+      const offB = b.upperSide < 0 ? -b.dividerHalf + 0.2 : b.halfRoad + 0.4;
+      return { offA, offB, yA: b.upperLift - 0.85, yB: b.upperLift - 0.85 };
+    }));
+    const underMat = track2(new THREE.MeshLambertMaterial({ color: track.biome === 'canyon' ? '#6e2f18' : track.biome === 'snow' ? '#38bdf8' : '#0f172a', side: THREE.DoubleSide }));
+    group.add(new THREE.Mesh(underGeo, underMat));
+  }
+
+  // Central Split Island / Divider per SplitSectionDef
+  for (const split of track.splitSections) {
+    const startIdx = Math.max(0, Math.floor(split.startProgress * m) - 1);
+    const endIdx = Math.min(m - 1, Math.ceil(split.endProgress * m) + 1);
+    const pos: number[] = [];
+    const col: number[] = [];
+    const quad = (a: number[], b: number[], c: number[], d: number[], color: THREE.Color) => {
+      pos.push(...a, ...c, ...b, ...b, ...c, ...d);
+      for (let k = 0; k < 6; k++) col.push(color.r, color.g, color.b);
+    };
+
+    const topCol = new THREE.Color(
+      split.theme === 'island' ? '#3fa34d'
+        : split.theme === 'mesa-pillar' ? '#b85a30'
+        : split.theme === 'ice-bridge' ? '#bae6fd'
+        : split.theme === 'lava-chasm' ? '#ff6a1f'
+        : split.theme === 'median' ? '#1e293b'
+        : '#1e1b4b',
+    );
+    const sideCol = new THREE.Color(
+      split.theme === 'island' ? '#e9d38f'
+        : split.theme === 'mesa-pillar' ? '#7c2d12'
+        : split.theme === 'ice-bridge' ? '#38bdf8'
+        : split.theme === 'lava-chasm' ? '#2a1a16'
+        : split.theme === 'median' ? '#0f172a'
+        : '#312e81',
+    );
+
+    const islandPalms: { x: number; y: number; z: number; ry: number; s: number }[] = [];
+    const neonRailPos: number[] = [];
+    const neonRailCol: number[] = [];
+
+    for (let i = startIdx; i < endIdx; i++) {
+      const s0 = samples[i % m];
+      const s1 = samples[(i + 1) % m];
+      const b0 = getTrackBoundsAt(track, s0.progress);
+      const b1 = getTrackBoundsAt(track, s1.progress);
+      if (b0.dividerHalf <= 0.3 && b1.dividerHalf <= 0.3) continue;
+
+      const d0 = Math.max(0.2, b0.dividerHalf - 0.35);
+      const d1 = Math.max(0.2, b1.dividerHalf - 0.35);
+      const e0 = d0 / Math.max(0.5, split.dividerHalfWidth);
+      const e1 = d1 / Math.max(0.5, split.dividerHalfWidth);
+
+      if (split.theme === 'neon-split') {
+        const cLeft = new THREE.Color('#ec4899');
+        const cRight = new THREE.Color('#22d3ee');
+        const pushStrip = (off0: number, off1: number, c: THREE.Color) => {
+          const pA = [s0.x + s0.nx * (off0 - 0.4), s0.y + Math.sin(s0.bank) * off0 + 0.25, s0.z + s0.nz * (off0 - 0.4)];
+          const pB = [s0.x + s0.nx * (off0 + 0.4), s0.y + Math.sin(s0.bank) * off0 + 0.25, s0.z + s0.nz * (off0 + 0.4)];
+          const pC = [s1.x + s1.nx * (off1 - 0.4), s1.y + Math.sin(s1.bank) * off1 + 0.25, s1.z + s1.nz * (off1 - 0.4)];
+          const pD = [s1.x + s1.nx * (off1 + 0.4), s1.y + Math.sin(s1.bank) * off1 + 0.25, s1.z + s1.nz * (off1 + 0.4)];
+          neonRailPos.push(...pA, ...pC, ...pB, ...pB, ...pC, ...pD);
+          for (let k = 0; k < 6; k++) neonRailCol.push(c.r, c.g, c.b);
+        };
+        pushStrip(-d0, -d1, cLeft);
+        pushStrip(d0, d1, cRight);
+        continue;
+      }
+
+      if (split.theme === 'lava-chasm') {
+        const floorY0 = s0.y - 1.2;
+        const floorY1 = s1.y - 1.2;
+        const pA = [s0.x - s0.nx * d0, floorY0, s0.z - s0.nz * d0];
+        const pB = [s0.x + s0.nx * d0, floorY0, s0.z + s0.nz * d0];
+        const pC = [s1.x - s1.nx * d1, floorY1, s1.z - s1.nz * d1];
+        const pD = [s1.x + s1.nx * d1, floorY1, s1.z + s1.nz * d1];
+        neonRailPos.push(...pA, ...pC, ...pB, ...pB, ...pC, ...pD);
+        for (let k = 0; k < 6; k++) neonRailCol.push(topCol.r, topCol.g, topCol.b);
+        continue;
+      }
+
+      const hPeak =
+        split.theme === 'island' ? 2.5
+          : split.theme === 'mesa-pillar' ? 7.4
+          : split.theme === 'ice-bridge' ? 6.2
+          : 2.3;
+      const yTop0 = s0.y + hPeak * e0;
+      const yTop1 = s1.y + hPeak * e1;
+      const yBot0 = s0.y - 2.0;
+      const yBot1 = s1.y - 2.0;
+
+      const L0T = [s0.x - s0.nx * d0, yTop0, s0.z - s0.nz * d0];
+      const R0T = [s0.x + s0.nx * d0, yTop0, s0.z + s0.nz * d0];
+      const L1T = [s1.x - s1.nx * d1, yTop1, s1.z - s1.nz * d1];
+      const R1T = [s1.x + s1.nx * d1, yTop1, s1.z + s1.nz * d1];
+      const L0B = [s0.x - s0.nx * (d0 + 0.5), yBot0, s0.z - s0.nz * (d0 + 0.5)];
+      const R0B = [s0.x + s0.nx * (d0 + 0.5), yBot0, s0.z + s0.nz * (d0 + 0.5)];
+      const L1B = [s1.x - s1.nx * (d1 + 0.5), yBot1, s1.z - s1.nz * (d1 + 0.5)];
+      const R1B = [s1.x + s1.nx * (d1 + 0.5), yBot1, s1.z + s1.nz * (d1 + 0.5)];
+
+      quad(L0T, R0T, L1T, R1T, topCol);
+      quad(L0B, L0T, L1B, L1T, sideCol);
+      quad(R0T, R0B, R1T, R1B, sideCol);
+
+      if (split.theme === 'island' && e0 > 0.55 && i % 5 === 0) {
+        islandPalms.push({ x: s0.x, y: yTop0 - 0.3, z: s0.z, ry: i * 1.1, s: 0.72 + e0 * 0.35 });
+      }
+      if (split.theme === 'median') {
+        const cNeon = new THREE.Color(i % 4 < 2 ? '#00f5ff' : '#ff4fd8');
+        const nA = [s0.x - s0.nx * 0.45, yTop0 + 0.12, s0.z - s0.nz * 0.45];
+        const nB = [s0.x + s0.nx * 0.45, yTop0 + 0.12, s0.z + s0.nz * 0.45];
+        const nC = [s1.x - s1.nx * 0.45, yTop1 + 0.12, s1.z - s1.nz * 0.45];
+        const nD = [s1.x + s1.nx * 0.45, yTop1 + 0.12, s1.z + s1.nz * 0.45];
+        neonRailPos.push(...nA, ...nC, ...nB, ...nB, ...nC, ...nD);
+        for (let k = 0; k < 6; k++) neonRailCol.push(cNeon.r, cNeon.g, cNeon.b);
+      }
+    }
+
+    if (pos.length > 0) {
+      const divGeo = track2(new THREE.BufferGeometry());
+      divGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      divGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      divGeo.computeVertexNormals();
+      if (split.theme === 'ice-bridge') {
+        const iceDivMat = track2(new THREE.MeshPhongMaterial({
+          vertexColors: true,
+          shininess: 100,
+          specular: '#ffffff',
+          emissive: '#0284c7',
+          emissiveIntensity: 0.2,
+          side: THREE.DoubleSide,
+        }));
+        group.add(new THREE.Mesh(divGeo, iceDivMat));
+      } else {
+        group.add(new THREE.Mesh(divGeo, vertexMat));
+      }
+    }
+    if (neonRailPos.length > 0) {
+      const nGeo = track2(new THREE.BufferGeometry());
+      nGeo.setAttribute('position', new THREE.Float32BufferAttribute(neonRailPos, 3));
+      nGeo.setAttribute('color', new THREE.Float32BufferAttribute(neonRailCol, 3));
+      group.add(new THREE.Mesh(nGeo, glowMat));
+    }
+    if (islandPalms.length > 0) {
+      instanced(group, palmGeometry(), propMat, islandPalms, disposers);
+    }
+
+    // Overhead split signpost just before the fork
+    const signP = ((split.startProgress - 0.015) + 1) % 1;
+    const signS = sampleTrackAtProgress(track, signP);
+    const signB = getTrackBoundsAt(track, signP);
+    const gantry = new THREE.Group();
+    gantry.position.set(signS.x, signS.y, signS.z);
+    gantry.rotation.y = signS.angle;
+    const pDist = signB.wallWidth + 1.8;
+    const pGeo = track2(new THREE.BoxGeometry(1.1, 13, 1.1));
+    const pMat = track2(new THREE.MeshLambertMaterial({ color: '#1e293b' }));
+    const lp = new THREE.Mesh(pGeo, pMat);
+    lp.position.set(-pDist, 6.5, 0);
+    const rp = new THREE.Mesh(pGeo, pMat);
+    rp.position.set(pDist, 6.5, 0);
+    const signTex = track2(canvasTexture(768, (ctx, w, h) => {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = track.theme.accentColor;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(4, 4, w - 8, h - 8);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '700 26px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText((split.name || 'SPLIT ROUTE').toUpperCase(), w / 2, 34);
+      ctx.font = '900 44px Arial, sans-serif';
+      ctx.fillStyle = '#38bdf8';
+      ctx.textAlign = 'left';
+      ctx.fillText(`◀ ${PERK_LABELS[split.leftPerk]}`, 36, 98);
+      ctx.fillStyle = '#facc15';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${PERK_LABELS[split.rightPerk]} ▶`, w - 36, 98);
+    }, 144));
+    const signBoard = new THREE.Mesh(
+      track2(new THREE.BoxGeometry(pDist * 2 + 1.5, 4.2, 1.0)),
+      [
+        pMat,
+        pMat,
+        pMat,
+        pMat,
+        track2(new THREE.MeshBasicMaterial({ map: signTex, toneMapped: false })),
+        track2(new THREE.MeshBasicMaterial({ map: signTex, toneMapped: false })),
+      ],
+    );
+    signBoard.position.set(0, 12.2, 0);
+    gantry.add(lp, rp, signBoard);
+    group.add(gantry);
+  }
+}
+
+function buildShortcuts(
+  track: KartTrack,
+  group: THREE.Group,
+  glowMat: THREE.Material,
+  disposers: (() => void)[],
+  pulseMats: THREE.MeshBasicMaterial[],
+) {
+  const track2 = <T extends { dispose: () => void }>(res: T): T => {
+    disposers.push(() => res.dispose());
+    return res;
+  };
+  const biome = track.biome;
+
+  for (const sc of track.shortcuts) {
+    const pts = sc.points;
+    if (pts.length < 2) continue;
+    const hw = sc.width * 0.5;
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const col: number[] = [];
+    const idx: number[] = [];
+    const railPos: number[] = [];
+    const railCol: number[] = [];
+
+    const roadColA = new THREE.Color(
+      biome === 'beach' ? '#e9c46a'
+        : biome === 'canyon' ? '#c2410c'
+        : biome === 'snow' ? '#bae6fd'
+        : biome === 'space' ? '#a855f7'
+        : biome === 'lava' ? '#1c1917'
+        : '#1e293b',
+    );
+    const roadColB = new THREE.Color(
+      biome === 'beach' ? '#f4d58d'
+        : biome === 'canyon' ? '#9a3412'
+        : biome === 'snow' ? '#e0f2fe'
+        : biome === 'space' ? '#22d3ee'
+        : biome === 'lava' ? '#292524'
+        : '#0f172a',
+    );
+    const trimCol = new THREE.Color(
+      biome === 'beach' ? '#f97316'
+        : biome === 'canyon' ? '#fbbf24'
+        : biome === 'snow' ? '#38bdf8'
+        : biome === 'space' ? '#f472b6'
+        : biome === 'lava' ? '#ff5a1f'
+        : '#00f5ff',
+    );
+
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      const lift = sc.kind === 'hidden-ramp' && i >= 5 && i <= 11 ? ((i - 5) / 6) * 2.2 : 0;
+      const y = pt.y + 0.08 + lift;
+      pos.push(pt.x - pt.nx * hw, y, pt.z - pt.nz * hw);
+      pos.push(pt.x + pt.nx * hw, y, pt.z + pt.nz * hw);
+      const t = i / (pts.length - 1);
+      uv.push(0, t * 4, 1, t * 4);
+      const c = biome === 'space'
+        ? new THREE.Color().setHSL((t * 1.4) % 1, 0.9, 0.58)
+        : i % 2 === 0 ? roadColA : roadColB;
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      if (i < pts.length - 1) {
+        const a = i * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+
+      if (i < pts.length - 1) {
+        const pt1 = pts[i + 1];
+        const lift1 = sc.kind === 'hidden-ramp' && i + 1 >= 5 && i + 1 <= 11 ? ((i - 4) / 6) * 2.2 : 0;
+        const y1 = pt1.y + 0.14 + lift1;
+        for (const sgn of [-1, 1]) {
+          const p0A = [pt.x + pt.nx * sgn * (hw - 0.5), y + 0.06, pt.z + pt.nz * sgn * (hw - 0.5)];
+          const p0B = [pt.x + pt.nx * sgn * (hw + 0.3), y + 0.06, pt.z + pt.nz * sgn * (hw + 0.3)];
+          const p1A = [pt1.x + pt1.nx * sgn * (hw - 0.5), y1, pt1.z + pt1.nz * sgn * (hw - 0.5)];
+          const p1B = [pt1.x + pt1.nx * sgn * (hw + 0.3), y1, pt1.z + pt1.nz * sgn * (hw + 0.3)];
+          railPos.push(...p0A, ...p1A, ...p0B, ...p0B, ...p1A, ...p1B);
+          for (let k = 0; k < 6; k++) railCol.push(trimCol.r, trimCol.g, trimCol.b);
+        }
+      }
+    }
+
+    const geo = track2(new THREE.BufferGeometry());
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mat = biome === 'space' || biome === 'city' || biome === 'snow'
+      ? track2(new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }))
+      : track2(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    group.add(new THREE.Mesh(geo, mat));
+
+    const rGeo = track2(new THREE.BufferGeometry());
+    rGeo.setAttribute('position', new THREE.Float32BufferAttribute(railPos, 3));
+    rGeo.setAttribute('color', new THREE.Float32BufferAttribute(railCol, 3));
+    group.add(new THREE.Mesh(rGeo, glowMat));
+
+    // Entrance & exit portal markers
+    const archMat = track2(new THREE.MeshBasicMaterial({ color: trimCol, toneMapped: false, transparent: true, opacity: 0.88 }));
+    pulseMats.push(archMat);
+    for (const endIdx of [1, pts.length - 2]) {
+      const pt = pts[endIdx];
+      const ry = Math.atan2(pt.tx, pt.tz);
+      const portal = new THREE.Group();
+      portal.position.set(pt.x, pt.y, pt.z);
+      portal.rotation.y = ry;
+      const postGeo = track2(new THREE.CylinderGeometry(0.45, 0.55, 7.5, 8));
+      const postCol = biome === 'beach' ? '#7a4a1f' : biome === 'canyon' ? '#9a4323' : '#1e293b';
+      const postMat = track2(new THREE.MeshLambertMaterial({ color: postCol }));
+      const lp = new THREE.Mesh(postGeo, postMat);
+      lp.position.set(-hw - 0.4, 3.75, 0);
+      const rp = new THREE.Mesh(postGeo, postMat);
+      rp.position.set(hw + 0.4, 3.75, 0);
+      portal.add(lp, rp);
+
+      if (biome === 'beach' || biome === 'lava') {
+        const flameGeo = track2(new THREE.ConeGeometry(0.65, 1.5, 7));
+        const lf = new THREE.Mesh(flameGeo, archMat);
+        lf.position.set(-hw - 0.4, 8.1, 0);
+        const rf = new THREE.Mesh(flameGeo, archMat);
+        rf.position.set(hw + 0.4, 8.1, 0);
+        portal.add(lf, rf);
+      } else {
+        const archGeo = track2(new THREE.TorusGeometry(hw + 0.4, 0.42, 8, 22, Math.PI));
+        const arch = new THREE.Mesh(archGeo, archMat);
+        arch.position.set(0, 7.2, 0);
+        portal.add(arch);
+      }
+      group.add(portal);
+    }
+
+    if (sc.kind === 'boost-gate') {
+      const gatePt = pts[Math.min(pts.length - 1, 3)];
+      const padTex = track2(makeChevronTexture('#fde047', '#00f5ff', '#0f172a'));
+      const padGeo = track2(new THREE.PlaneGeometry(sc.width * 0.72, 7.5));
+      padGeo.rotateX(-Math.PI / 2);
+      const pad = new THREE.Mesh(padGeo, track2(new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false, transparent: true, opacity: 0.92 })));
+      pad.position.set(gatePt.x, gatePt.y + 0.16, gatePt.z);
+      pad.rotation.y = Math.atan2(gatePt.tx, gatePt.tz);
+      group.add(pad);
+    }
+  }
+}
+
+interface MovingHazardVisual {
+  def: TrackFeatureDef;
+  group: THREE.Group;
+  shadow: THREE.Mesh;
+  spinTarget: THREE.Object3D;
+  pulsePart?: THREE.Object3D;
+  prevLat: number;
+}
+
+function buildMovingHazardMesh(
+  biome: KartTrack['biome'],
+  disposers: (() => void)[],
+): { group: THREE.Group; spinTarget: THREE.Object3D; pulsePart?: THREE.Object3D } {
+  const track2 = <T extends { dispose: () => void }>(res: T): T => {
+    disposers.push(() => res.dispose());
+    return res;
+  };
+  const group = new THREE.Group();
+  const spinTarget = new THREE.Group();
+  group.add(spinTarget);
+  const phong = track2(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 75, specular: '#ffffff' }));
+
+  if (biome === 'beach') {
+    // Giant scuttling red crab
+    const bodyGeo = track2(merged([
+      colored(placed(new THREE.SphereGeometry(2.1, 12, 8), 0, 1.4, 0, { sx: 1.35, sy: 0.55, sz: 0.95 }), '#ef4444'),
+      colored(placed(new THREE.CylinderGeometry(0.14, 0.14, 0.9, 6), -0.75, 2.3, 1.0), '#dc2626'),
+      colored(placed(new THREE.CylinderGeometry(0.14, 0.14, 0.9, 6), 0.75, 2.3, 1.0), '#dc2626'),
+      colored(placed(new THREE.SphereGeometry(0.3, 8, 6), -0.75, 2.8, 1.05), '#ffffff'),
+      colored(placed(new THREE.SphereGeometry(0.3, 8, 6), 0.75, 2.8, 1.05), '#ffffff'),
+      colored(placed(new THREE.SphereGeometry(0.15, 6, 5), -0.75, 2.85, 1.28), '#0f172a'),
+      colored(placed(new THREE.SphereGeometry(0.15, 6, 5), 0.75, 2.85, 1.28), '#0f172a'),
+      // 6 legs
+      ...[-1, 1].flatMap((side) =>
+        [-0.8, 0, 0.8].map((zOff) =>
+          colored(placed(new THREE.BoxGeometry(1.7, 0.24, 0.28), side * 2.55, 0.8, zOff, { rz: -side * 0.55 }), '#b91c1c'),
+        ),
+      ),
+    ]));
+    spinTarget.add(new THREE.Mesh(bodyGeo, phong));
+    const claws = new THREE.Mesh(
+      track2(merged([
+        colored(placed(new THREE.SphereGeometry(0.85, 8, 6), -2.2, 2.5, 1.8, { sx: 1.1, sy: 0.75 }), '#f97316'),
+        colored(placed(new THREE.SphereGeometry(0.85, 8, 6), 2.2, 2.5, 1.8, { sx: 1.1, sy: 0.75 }), '#f97316'),
+      ])),
+      phong,
+    );
+    spinTarget.add(claws);
+    return { group, spinTarget, pulsePart: claws };
+  }
+
+  if (biome === 'canyon') {
+    const geo = track2(merged([
+      colored(placed(new THREE.DodecahedronGeometry(2.7, 1), 0, 2.6, 0), '#9a4323'),
+      colored(placed(new THREE.TorusGeometry(2.45, 0.35, 6, 12), 0, 2.6, 0, { rx: 0.6 }), '#d97706'),
+      colored(placed(new THREE.TorusGeometry(2.4, 0.3, 6, 12), 0, 2.6, 0, { ry: 0.9 }), '#5c2612'),
+    ]));
+    spinTarget.add(new THREE.Mesh(geo, phong));
+    return { group, spinTarget };
+  }
+
+  if (biome === 'snow') {
+    const geo = track2(merged([
+      colored(placed(new THREE.IcosahedronGeometry(2.75, 1), 0, 2.7, 0), '#f8fafc'),
+      colored(placed(new THREE.DodecahedronGeometry(1.3, 0), 1.6, 3.2, 0.8), '#bae6fd'),
+      colored(placed(new THREE.DodecahedronGeometry(1.1, 0), -1.5, 2.2, -1.0), '#e0f2fe'),
+    ]));
+    spinTarget.add(new THREE.Mesh(geo, phong));
+    return { group, spinTarget };
+  }
+
+  if (biome === 'space') {
+    const ufoGeo = track2(merged([
+      colored(placed(new THREE.CylinderGeometry(1.2, 3.0, 0.8, 16), 0, 4.4, 0), '#94a3b8'),
+      colored(placed(new THREE.CylinderGeometry(3.0, 1.4, 0.65, 16), 0, 3.7, 0), '#475569'),
+      colored(placed(new THREE.SphereGeometry(1.45, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 4.75, 0), '#22d3ee'),
+      colored(placed(new THREE.TorusGeometry(2.9, 0.18, 6, 18), 0, 4.05, 0, { rx: Math.PI / 2 }), '#f472b6'),
+    ]));
+    spinTarget.add(new THREE.Mesh(ufoGeo, phong));
+    const beamGeo = track2(new THREE.ConeGeometry(2.5, 3.8, 14, 1, true));
+    const beamMat = track2(new THREE.MeshBasicMaterial({
+      color: '#22d3ee',
+      transparent: true,
+      opacity: 0.34,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }));
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.y = 1.9;
+    group.add(beam);
+    return { group, spinTarget, pulsePart: beam };
+  }
+
+  if (biome === 'lava') {
+    const ventGeo = track2(merged([
+      colored(placed(new THREE.CylinderGeometry(2.2, 3.1, 1.0, 12), 0, 0.5, 0), '#1d1412'),
+      colored(placed(new THREE.CylinderGeometry(1.5, 1.9, 0.4, 12), 0, 0.9, 0), '#ff5a1f'),
+    ]));
+    group.add(new THREE.Mesh(ventGeo, phong));
+    const plumeGeo = track2(new THREE.ConeGeometry(1.6, 6.2, 10));
+    plumeGeo.translate(0, 3.1, 0);
+    const plumeMat = track2(new THREE.MeshBasicMaterial({
+      color: '#ff8a1f',
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    }));
+    const plume = new THREE.Mesh(plumeGeo, plumeMat);
+    group.add(plume);
+    return { group, spinTarget, pulsePart: plume };
+  }
+
+  // City: hovering neon-ringed Cyber Drone
+  const droneGeo = track2(merged([
+    colored(placed(new THREE.OctahedronGeometry(1.5, 0), 0, 2.8, 0, { sy: 0.65 }), '#0f172a'),
+    colored(placed(new THREE.SphereGeometry(0.55, 8, 6), 0, 2.8, 1.1), '#ff2255'),
+  ]));
+  group.add(new THREE.Mesh(droneGeo, phong));
+  const ringGeo = track2(merged([
+    colored(placed(new THREE.TorusGeometry(2.5, 0.2, 6, 18), 0, 0, 0, { rx: Math.PI / 2 }), '#00f5ff'),
+    colored(placed(new THREE.BoxGeometry(0.4, 0.25, 4.9), 0, 0, 0), '#ff4fd8'),
+  ]));
+  const ringMat = track2(new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }));
+  const holoRing = new THREE.Mesh(ringGeo, ringMat);
+  holoRing.position.y = 2.8;
+  spinTarget.add(holoRing);
+  return { group, spinTarget, pulsePart: holoRing };
 }
 
 // ─── Kart models ─────────────────────────────────────────────────────────────
@@ -1373,6 +1931,7 @@ interface KartVisual {
   spin: number;
   squash: number;
   prevHopT: number;
+  launchLift: number;
   wheelRot: number;
   sparkAcc: number;
   dustAcc: number;
@@ -1586,7 +2145,10 @@ export class KartScene {
   private size = { w: 0, h: 0 };
   private clearColor: THREE.Color;
   private dummy = new THREE.Object3D();
-  private rampSpans: { start: number; end: number; height: number }[] = [];
+  private rampSpans: { start: number; end: number; height: number; latMin?: number; latMax?: number }[] = [];
+  private movingHazards: MovingHazardVisual[] = [];
+  private boostRings: { ring: THREE.Object3D; inner: THREE.Object3D }[] = [];
+  private aerialStars: THREE.Object3D[] = [];
   private onEvent?: (e: KartEvent) => void;
   private rng = mulberry32(12345);
   private confettiUntil = 0;
@@ -1850,11 +2412,8 @@ export class KartScene {
   private buildTrack() {
     const track = this.track;
     const t = track.theme;
-    const samples = track.samples;
     const group = new THREE.Group();
     this.scene.add(group);
-    const halfW = track.roadWidth / 2;
-    const wall = track.wallWidth;
     const anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
 
     const noiseTex = this.track2(makeNoiseTexture(hashString(track.id), 225, 28));
@@ -2029,10 +2588,9 @@ export class KartScene {
       group.add(glow);
     }
 
-    // Road (with glossy rain-slick sheen on cyber-metro)
+    // Dynamic split-capable road (left branch [-halfRoad, -dividerHalf], right branch [+dividerHalf, +halfRoad])
     const roadTex = this.track2(makeRoadTexture(track));
     roadTex.anisotropy = anisotropy;
-    const roadGeo = this.track2(ribbon(samples, -halfW, halfW, 0.06, { length: track.totalLength, vScale: 26 }));
     const roadMat = this.track2(t.rainbowRoad
       ? new THREE.MeshBasicMaterial({ map: roadTex, toneMapped: false })
       : track.biome === 'city'
@@ -2045,44 +2603,98 @@ export class KartScene {
             emissiveMap: roadTex,
           })
         : new THREE.MeshLambertMaterial({ map: roadTex, emissive: t.glowRoad ? new THREE.Color(t.roadStripeColor) : new THREE.Color('#000000'), emissiveIntensity: t.glowRoad ? 0.1 : 0, emissiveMap: t.glowRoad ? roadTex : null }));
-    group.add(new THREE.Mesh(roadGeo, roadMat));
+    const leftRoadGeo = this.track2(dynamicRibbon(track, (_s, b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { offA: -b.halfRoad, offB: -b.dividerHalf, yA: 0.06 + lift, yB: 0.06 + lift, uvA: 0, uvB: 0.5 };
+    }, { length: track.totalLength, vScale: 26 }));
+    const rightRoadGeo = this.track2(dynamicRibbon(track, (_s, b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { offA: b.dividerHalf, offB: b.halfRoad, yA: 0.06 + lift, yB: 0.06 + lift, uvA: 0.5, uvB: 1 };
+    }, { length: track.totalLength, vScale: 26 }));
+    group.add(new THREE.Mesh(leftRoadGeo, roadMat), new THREE.Mesh(rightRoadGeo, roadMat));
 
-    // Shoulders run from the road edge out under the barrier
+    // Shoulders follow dynamic road/wall bounds and upper-deck elevation
     const shoulderMat = this.track2(new THREE.MeshLambertMaterial({ color: t.shoulder, map: noiseTex }));
-    group.add(new THREE.Mesh(this.track2(ribbon(samples, -wall - 2.4, -halfW, -0.05, { length: track.totalLength, vScale: 14 })), shoulderMat));
-    group.add(new THREE.Mesh(this.track2(ribbon(samples, halfW, wall + 2.4, -0.05, { length: track.totalLength, vScale: 14 })), shoulderMat));
+    group.add(new THREE.Mesh(this.track2(dynamicRibbon(track, (_s, b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { offA: -b.wallWidth - 2.4, offB: -b.halfRoad, yA: -0.05 + lift, yB: -0.05 + lift };
+    }, { length: track.totalLength, vScale: 14 })), shoulderMat));
+    group.add(new THREE.Mesh(this.track2(dynamicRibbon(track, (_s, b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { offA: b.halfRoad, offB: b.wallWidth + 2.4, yA: -0.05 + lift, yB: -0.05 + lift };
+    }, { length: track.totalLength, vScale: 14 })), shoulderMat));
 
     if (track.biome === 'space') {
-      // The road is a floating ribbon, so give it a glowing underside
-      const under = new THREE.Mesh(
-        this.track2(ribbon(samples, -wall - 1.6, wall + 1.6, -1.6, { length: track.totalLength })),
-        this.track2(new THREE.MeshBasicMaterial({ color: '#5b21b6', side: THREE.DoubleSide, transparent: true, opacity: 0.55 })),
-      );
-      group.add(under);
+      // Twin glowing undersides split cleanly when the star ribbons diverge
+      const underMat = this.track2(new THREE.MeshBasicMaterial({ color: '#5b21b6', side: THREE.DoubleSide, transparent: true, opacity: 0.55 }));
+      group.add(new THREE.Mesh(this.track2(dynamicRibbon(track, (_s, b) => {
+        const lift = b.upperSide === -1 ? b.upperLift : 0;
+        return { offA: -b.wallWidth - 1.6, offB: -b.dividerHalf, yA: -1.6 + lift, yB: -1.6 + lift };
+      }, { length: track.totalLength })), underMat));
+      group.add(new THREE.Mesh(this.track2(dynamicRibbon(track, (_s, b) => {
+        const lift = b.upperSide === 1 ? b.upperLift : 0;
+        return { offA: b.dividerHalf, offB: b.wallWidth + 1.6, yA: -1.6 + lift, yB: -1.6 + lift };
+      }, { length: track.totalLength })), underMat));
     }
 
-    // Curbs and barriers
+    // Dynamic curbs & barriers (with real physical openings for hidden shortcuts!)
     const vertexMat = this.track2(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
     const curbA = new THREE.Color(t.curbColorA);
     const curbB = new THREE.Color(t.curbColorB);
     const curbW = 1.9;
-    group.add(new THREE.Mesh(this.track2(stripedBarrier(samples, -halfW - curbW, -halfW + 0.3, -0.2, 0.2, curbA, curbB, 2)), vertexMat));
-    group.add(new THREE.Mesh(this.track2(stripedBarrier(samples, halfW - 0.3, halfW + curbW, -0.2, 0.2, curbA, curbB, 2)), vertexMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { inner: -b.halfRoad - curbW, outer: -b.halfRoad + 0.3, yBottom: -0.2 + lift, yTop: 0.2 + lift, active: true };
+    }, curbA, curbB, 2, (s) => isShortcutWallOpening(track, s.progress, -1))), vertexMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { inner: b.halfRoad - 0.3, outer: b.halfRoad + curbW, yBottom: -0.2 + lift, yTop: 0.2 + lift, active: true };
+    }, curbA, curbB, 2, (s) => isShortcutWallOpening(track, s.progress, 1))), vertexMat));
+
+    // Inner split curbs along the central divider
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { inner: -b.dividerHalf - 0.2, outer: -b.dividerHalf + 1.3, yBottom: -0.2 + lift, yTop: 0.22 + lift, active: b.dividerHalf > 0.4 };
+    }, curbA, curbB, 2, (_s, b) => b.dividerHalf <= 0.35)), vertexMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { inner: b.dividerHalf - 1.3, outer: b.dividerHalf + 0.2, yBottom: -0.2 + lift, yTop: 0.22 + lift, active: b.dividerHalf > 0.4 };
+    }, curbA, curbB, 2, (_s, b) => b.dividerHalf <= 0.35)), vertexMat));
 
     const wallA = new THREE.Color(t.wallColor);
     const wallB = wallA.clone().lerp(new THREE.Color(t.wallTop), 0.28);
     const wallH = t.wallHeight;
-    group.add(new THREE.Mesh(this.track2(stripedBarrier(samples, -wall - 1.3, -wall, -9, wallH, wallA, wallB, 4)), vertexMat));
-    group.add(new THREE.Mesh(this.track2(stripedBarrier(samples, wall, wall + 1.3, -9, wallH, wallA, wallB, 4)), vertexMat));
-    // A bright rail along the top so the road edge reads at speed
-    const railMat = this.track2(new THREE.MeshBasicMaterial({ color: t.wallTop, toneMapped: false }));
-    group.add(new THREE.Mesh(this.track2(ribbon(samples, -wall - 0.85, -wall - 0.35, wallH + 0.04, {})), railMat));
-    group.add(new THREE.Mesh(this.track2(ribbon(samples, wall + 0.35, wall + 0.85, wallH + 0.04, {})), railMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { inner: -b.wallWidth - 1.3, outer: -b.wallWidth, yBottom: -9, yTop: wallH + lift, active: true };
+    }, wallA, wallB, 4, (s) => isShortcutWallOpening(track, s.progress, -1))), vertexMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { inner: b.wallWidth, outer: b.wallWidth + 1.3, yBottom: -9, yTop: wallH + lift, active: true };
+    }, wallA, wallB, 4, (s) => isShortcutWallOpening(track, s.progress, 1))), vertexMat));
 
-    // Scenery
+    // Bright top rail along barriers (omitted across shortcut openings so the gap is obvious)
+    const railMat = this.track2(new THREE.MeshBasicMaterial({ color: t.wallTop, toneMapped: false }));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === -1 ? b.upperLift : 0;
+      return { inner: -b.wallWidth - 0.85, outer: -b.wallWidth - 0.35, yBottom: wallH + lift - 0.04, yTop: wallH + lift + 0.05, active: true };
+    }, new THREE.Color(t.wallTop), new THREE.Color(t.wallTop), 1, (s) => isShortcutWallOpening(track, s.progress, -1))), railMat));
+    group.add(new THREE.Mesh(this.track2(dynamicBarrier(track, (b) => {
+      const lift = b.upperSide === 1 ? b.upperLift : 0;
+      return { inner: b.wallWidth + 0.35, outer: b.wallWidth + 0.85, yBottom: wallH + lift - 0.04, yTop: wallH + lift + 0.05, active: true };
+    }, new THREE.Color(t.wallTop), new THREE.Color(t.wallTop), 1, (s) => isShortcutWallOpening(track, s.progress, 1))), railMat));
+
+    // Scenery, split dividers/signposts, and hidden shortcuts
     const propMat = this.track2(new THREE.MeshLambertMaterial({ vertexColors: true }));
     const glowMat = this.track2(new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }));
     this.lighthouseBeam = buildScenery(track, terrain, group, propMat, glowMat, this.disposers, this.pulseMats, lowestRoad);
+    buildSplitStructures(track, group, propMat, glowMat, this.disposers);
+    buildShortcuts(track, group, glowMat, this.disposers, this.pulseMats);
+
+    // Shared contact shadow texture & geometry for item boxes, stationary hazards & moving hazards
+    this.shadowTex = this.track2(makeBlobTexture('rgba(0,0,0,0.68)', 'rgba(0,0,0,0)'));
+    this.shadowGeo = this.track2(new THREE.PlaneGeometry(1, 1));
+    this.shadowGeo.rotateX(-Math.PI / 2);
 
     // Distant flying traffic light streaks in Cyber Metropolis
     if (track.biome === 'city') {
@@ -2147,10 +2759,12 @@ export class KartScene {
       const steps = 8;
       for (let i = 0; i <= steps; i++) {
         const f = i / steps;
-        const s = sampleTrackAtProgress(track, startP + (ramp.progress - startP) * f);
+        const p = startP + (ramp.progress - startP) * f;
+        const s = sampleTrackAtProgress(track, p);
+        const rw = getTrackBoundsAt(track, p).halfRoad;
         const lift = RAMP_H * f + 0.08;
         for (const side of [-1, 1]) {
-          const off = side * (halfW + 0.5);
+          const off = side * (rw + 0.5);
           pos.push(s.x + s.nx * off, s.y + Math.sin(s.bank) * off + lift, s.z + s.nz * off);
           uv.push((side + 1) / 2, f * 2);
         }
@@ -2162,8 +2776,9 @@ export class KartScene {
       // Rear face drops back to the road
       const lastTop = steps * 2;
       const end = sampleTrackAtProgress(track, ramp.progress);
+      const endW = getTrackBoundsAt(track, ramp.progress).halfRoad;
       for (const side of [-1, 1]) {
-        const off = side * (halfW + 0.5);
+        const off = side * (endW + 0.5);
         pos.push(end.x + end.nx * off, end.y + Math.sin(end.bank) * off - 0.2, end.z + end.nz * off);
         uv.push((side + 1) / 2, 0);
       }
@@ -2176,10 +2791,131 @@ export class KartScene {
       group.add(new THREE.Mesh(this.track2(geo), rampMat));
     }
 
-    // Shared contact shadow texture & geometry for item boxes and stationary hazards
-    this.shadowTex = this.track2(makeBlobTexture('rgba(0,0,0,0.68)', 'rgba(0,0,0,0)'));
-    this.shadowGeo = this.track2(new THREE.PlaneGeometry(1, 1));
-    this.shadowGeo.rotateX(-Math.PI / 2);
+    // Interactive Track Features: boost_ring, mega_ramp, moving_hazard
+    const megaTex = this.track2(makeChevronTexture('#fde047', '#00f5ff', '#0c4a6e'));
+    megaTex.repeat.set(2, 2);
+    megaTex.anisotropy = anisotropy;
+    this.animated.push({ tex: megaTex, speed: 1.5 });
+    const megaMat = this.track2(new THREE.MeshBasicMaterial({ map: megaTex, side: THREE.DoubleSide, toneMapped: false }));
+    const ringOuterMat = this.track2(new THREE.MeshBasicMaterial({ color: '#00f5ff', transparent: true, opacity: 0.9, toneMapped: false }));
+    const ringInnerMat = this.track2(new THREE.MeshBasicMaterial({ color: '#facc15', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    this.pulseMats.push(ringOuterMat);
+    const starGeo = this.track2(new THREE.OctahedronGeometry(0.95, 0));
+    const starMat = this.track2(new THREE.MeshBasicMaterial({ color: '#fde047', toneMapped: false }));
+
+    for (const feat of track.features) {
+      if (feat.kind === 'boost_ring') {
+        const portal = new THREE.Group();
+        portal.position.set(feat.x, feat.y, feat.z);
+        portal.rotation.y = feat.angle;
+        const outer = new THREE.Mesh(this.track2(new THREE.TorusGeometry(5.2, 0.36, 10, 28)), ringOuterMat);
+        outer.position.y = 3.5;
+        const inner = new THREE.Mesh(this.track2(new THREE.TorusGeometry(4.1, 0.22, 8, 20)), ringInnerMat);
+        inner.position.y = 3.5;
+        const pylonGeo = this.track2(new THREE.BoxGeometry(0.9, 3.8, 0.9));
+        const pylonMat = this.track2(new THREE.MeshLambertMaterial({ color: '#0f172a' }));
+        const lp = new THREE.Mesh(pylonGeo, pylonMat);
+        lp.position.set(-5.2, 1.8, 0);
+        const rp = new THREE.Mesh(pylonGeo, pylonMat);
+        rp.position.set(5.2, 1.8, 0);
+        portal.add(outer, inner, lp, rp);
+        group.add(portal);
+        this.boostRings.push({ ring: outer, inner });
+      } else if (feat.kind === 'mega_ramp') {
+        const MEGA_LEN = 14;
+        const MEGA_H = 4.2;
+        const startP = feat.progress - MEGA_LEN / track.totalLength;
+        const bFeat = getTrackBoundsAt(track, feat.progress);
+        const rampHalf = Math.min(bFeat.halfRoad * 0.8, Math.max(10, bFeat.halfRoad * 0.72));
+        const centerOff = feat.lateral * bFeat.halfRoad;
+        const latMin = Math.max(-bFeat.halfRoad, centerOff - rampHalf);
+        const latMax = Math.min(bFeat.halfRoad, centerOff + rampHalf);
+        this.rampSpans.push({ start: startP, end: feat.progress, height: MEGA_H, latMin, latMax });
+
+        const pos: number[] = [];
+        const uv: number[] = [];
+        const idx: number[] = [];
+        const steps = 10;
+        for (let i = 0; i <= steps; i++) {
+          const f = i / steps;
+          const p = startP + (feat.progress - startP) * f;
+          const s = sampleTrackAtProgress(track, p);
+          const b = getTrackBoundsAt(track, p);
+          const lift = MEGA_H * f * f * 0.4 + MEGA_H * f * 0.6 + 0.1;
+          for (const side of [-1, 1]) {
+            const off = side < 0 ? latMin : latMax;
+            const upper = b.upperSide !== 0 && Math.sign(off) === b.upperSide ? b.upperLift : 0;
+            pos.push(s.x + s.nx * off, s.y + Math.sin(s.bank) * off + upper + lift, s.z + s.nz * off);
+            uv.push((side + 1) / 2, f * 2.5);
+          }
+          if (i < steps) {
+            const a = i * 2;
+            idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+          }
+        }
+        const lastTop = steps * 2;
+        const end = sampleTrackAtProgress(track, feat.progress);
+        const endB = getTrackBoundsAt(track, feat.progress);
+        for (const side of [-1, 1]) {
+          const off = side < 0 ? latMin : latMax;
+          const upper = endB.upperSide !== 0 && Math.sign(off) === endB.upperSide ? endB.upperLift : 0;
+          pos.push(end.x + end.nx * off, end.y + Math.sin(end.bank) * off + upper - 0.2, end.z + end.nz * off);
+          uv.push((side + 1) / 2, 0);
+        }
+        idx.push(lastTop, lastTop + 2, lastTop + 1, lastTop + 1, lastTop + 2, lastTop + 3);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        group.add(new THREE.Mesh(this.track2(geo), megaMat));
+
+        // Floating parabolic aerial star/coin arc above the mega jump trajectory
+        for (let k = 1; k <= 6; k++) {
+          const arcT = k / 7;
+          const pArc = feat.progress + (arcT * 52) / track.totalLength;
+          const sArc = sampleTrackAtProgress(track, pArc);
+          const bArc = getTrackBoundsAt(track, pArc);
+          const upperArc = bArc.upperSide !== 0 && Math.sign(centerOff) === bArc.upperSide ? bArc.upperLift : 0;
+          const arcY = sArc.y + Math.sin(sArc.bank) * centerOff + upperArc + MEGA_H + Math.sin(arcT * Math.PI) * 9.5;
+          const star = new THREE.Mesh(starGeo, starMat);
+          star.position.set(sArc.x + sArc.nx * centerOff, arcY, sArc.z + sArc.nz * centerOff);
+          group.add(star);
+          this.aerialStars.push(star);
+        }
+      } else if (feat.kind === 'moving_hazard') {
+        const haz = buildMovingHazardMesh(track.biome, this.disposers);
+        const initPos = getMovingHazardPosition(track, feat, 0);
+        haz.group.position.set(initPos.x, initPos.y, initPos.z);
+        haz.group.rotation.y = initPos.angle;
+        group.add(haz.group);
+
+        const shMat = this.track2(new THREE.MeshBasicMaterial({
+          map: this.shadowTex,
+          transparent: true,
+          opacity: 0.65,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+          toneMapped: false,
+        }));
+        const shadow = new THREE.Mesh(this.shadowGeo, shMat);
+        shadow.scale.set(5.4, 1, 5.4);
+        shadow.position.set(initPos.x, initPos.y + 0.12, initPos.z);
+        shadow.renderOrder = 2;
+        group.add(shadow);
+
+        this.movingHazards.push({
+          def: feat,
+          group: haz.group,
+          shadow,
+          spinTarget: haz.spinTarget,
+          pulsePart: haz.pulsePart,
+          prevLat: initPos.lateralOffset,
+        });
+      }
+    }
 
     // Item boxes share one instanced mesh; the slots are animated each frame
     const boxTex = this.track2(makeItemBoxTexture());
@@ -2622,6 +3358,7 @@ export class KartScene {
       spin: 0,
       squash: 0,
       prevHopT: 0,
+      launchLift: 2.6,
       wheelRot: 0,
       sparkAcc: 0,
       dustAcc: 0,
@@ -2773,8 +3510,12 @@ export class KartScene {
   }
 
   private roadY(x: number, z: number, hint?: number) {
+    const sc = projectOntoShortcut(this.track, x, z);
+    if (sc && sc.dist < sc.shortcut.width * 0.65) return sc.point.y;
     const p = projectOntoTrack(this.track, x, z, hint);
-    return p.sample.y + Math.sin(p.sample.bank) * p.lateralOffset;
+    const b = getTrackBoundsAt(this.track, p.progress);
+    const lift = b.upperSide !== 0 && Math.sign(p.lateralOffset) === b.upperSide ? b.upperLift : 0;
+    return p.sample.y + Math.sin(p.sample.bank) * p.lateralOffset + lift;
   }
 
   private handleEvent(e: KartEvent) {
@@ -2862,6 +3603,9 @@ export class KartScene {
         break;
       case 'slipstream':
         if (v) this.burst(this.additive, v.x, v.y + 1.0, v.z, 16, 15, () => (this.rng() > 0.4 ? '#38bdf8' : '#ffffff'), 1.2, 0.45, 0);
+        break;
+      case 'shortcut':
+        if (v) this.burst(this.additive, v.x, y + 1.2, v.z, 34, 20, rainbow, 1.6, 0.75);
         break;
       default:
         break;
@@ -3073,8 +3817,11 @@ export class KartScene {
 
   // ─── Frame update ──────────────────────────────────────────────────────────
 
-  private rampLift(progress: number) {
+  private rampLift(progress: number, lateral: number) {
     for (const r of this.rampSpans) {
+      if (typeof r.latMin === 'number' && typeof r.latMax === 'number') {
+        if (lateral < r.latMin || lateral > r.latMax) continue;
+      }
       const p = progress < r.start && r.start > 0.9 ? progress + 1 : progress;
       if (p >= r.start && p <= r.end) return ((p - r.start) / (r.end - r.start)) * r.height;
     }
@@ -3113,15 +3860,33 @@ export class KartScene {
       const s = sampleTrackAtProgress(track, progress);
       const sAhead = sampleTrackAtProgress(track, progress + 3 / track.totalLength);
       const sBehind = sampleTrackAtProgress(track, progress - 3 / track.totalLength);
-      const groundY = s.y + Math.sin(s.bank) * v.tLat;
+      const bounds = getTrackBoundsAt(track, progress);
+      const upperLift = bounds.upperSide !== 0 && Math.sign(v.tLat) === bounds.upperSide ? bounds.upperLift : 0;
+      let groundY = s.y + Math.sin(s.bank) * v.tLat + upperLift;
+      let roadSlope = (sAhead.y - sBehind.y) / 6;
+      let roadBank = s.bank;
+      let refAngle = s.angle;
+      if (k.onShortcut) {
+        const sc = projectOntoShortcut(track, v.x, v.z);
+        if (sc) {
+          groundY = sc.point.y;
+          roadSlope = 0;
+          roadBank = 0;
+          refAngle = Math.atan2(sc.point.tx, sc.point.tz);
+        }
+      }
 
-      // Jump arc & drift hop
-      let lift = this.rampLift(progress);
+      // Jump arc & drift hop (with extra height for mega ramps)
+      let lift = k.onShortcut ? 0 : this.rampLift(progress, v.tLat);
+      if (lift > 0.2) v.launchLift = Math.max(v.launchLift, lift);
       let airborne = false;
       if (k.airT > 0) {
         airborne = true;
-        const H = 3.2 + k.speed * 0.05;
-        lift = 2.6 * (1 - k.airT) + 4 * H * k.airT * (1 - k.airT);
+        const isMega = v.launchLift > 3.1;
+        const H = (isMega ? 7.8 : 3.2) + k.speed * (isMega ? 0.085 : 0.05);
+        lift = v.launchLift * (1 - k.airT) + 4 * H * k.airT * (1 - k.airT);
+      } else if (lift <= 0.05) {
+        v.launchLift = 2.6;
       }
       const hopLift = k.hopT > 0 ? Math.sin(k.hopT * Math.PI) * 1.15 : 0;
       if (v.prevHopT > 0 && k.hopT === 0) {
@@ -3133,10 +3898,10 @@ export class KartScene {
       v.y = v.y === 0 ? targetY : v.y + (targetY - v.y) * (1 - Math.exp(-dt * 30));
       v.root.position.set(v.x, v.y, v.z);
 
-      const rel = v.angle - s.angle;
-      const slope = (sAhead.y - sBehind.y) / 6;
+      const rel = v.angle - refAngle;
+      const slope = roadSlope;
       const pitch = -Math.atan(slope) * Math.cos(rel) - (airborne ? (0.5 - k.airT) * 0.5 : 0);
-      const roll = -s.bank * Math.cos(rel) * 0.9 + (k.steer || 0) * 0.08 + (k.drifting ? k.driftDir * 0.12 : 0);
+      const roll = -roadBank * Math.cos(rel) * 0.9 + (k.steer || 0) * 0.08 + (k.drifting ? k.driftDir * 0.12 : 0);
 
       // Spin-outs and tricks are presentation only: the heading stays as simulated
       if (v.spin > 0) {
@@ -3258,12 +4023,12 @@ export class KartScene {
       const airGap = Math.max(0, v.y - groundY);
       v.shadow.position.set(v.x, groundY + 0.12, v.z);
       v.shadow.rotation.order = 'YXZ';
-      v.shadow.rotation.set(-Math.atan(slope) * Math.cos(rel), v.angle + v.spin, -s.bank * Math.cos(rel));
+      v.shadow.rotation.set(-Math.atan(slope) * Math.cos(rel), v.angle + v.spin, -roadBank * Math.cos(rel));
       const shadowScale = shrink * Math.max(0.55, 1 - airGap * 0.05);
       v.shadow.scale.set(shadowScale, 1, shadowScale);
       v.shadowMat.opacity = Math.max(0.14, 0.9 - airGap * 0.085);
 
-      this.emitKartParticles(v, dt, airborne, groundY, Math.atan(slope) * Math.cos(rel), s.bank * Math.cos(rel));
+      this.emitKartParticles(v, dt, airborne, groundY, Math.atan(slope) * Math.cos(rel), roadBank * Math.cos(rel));
     }
   }
 
@@ -3412,7 +4177,9 @@ export class KartScene {
         default: {
           const p = projectOntoTrack(this.track, obj.position.x, obj.position.z, u.hint);
           u.hint = p.sampleIdx;
-          obj.position.y = p.sample.y + Math.sin(p.sample.bank) * p.lateralOffset + 0.25;
+          const b = getTrackBoundsAt(this.track, p.progress);
+          const lift = b.upperSide !== 0 && Math.sign(p.lateralOffset) === b.upperSide ? b.upperLift : 0;
+          obj.position.y = p.sample.y + Math.sin(p.sample.bank) * p.lateralOffset + lift + 0.25;
           obj.rotation.y = this.time * 14;
           this.smoke.emit(obj.position.x, obj.position.y + 0.3, obj.position.z, 0, 1, 0, '#ffffff', 1.1, 0.25);
         }
@@ -3701,6 +4468,48 @@ export class KartScene {
     this.updateCoins(dt);
     this.updateGantry(snap);
 
+    // Animate moving hazards, boost rings & aerial mega-ramp stars
+    const raceSec = (snap.raceTimeMs || 0) / 1000;
+    for (const mh of this.movingHazards) {
+      const pos = getMovingHazardPosition(this.track, mh.def, raceSec);
+      mh.group.position.set(pos.x, pos.y, pos.z);
+      mh.shadow.position.set(pos.x, pos.y + 0.12, pos.z);
+      const dLat = pos.lateralOffset - mh.prevLat;
+      mh.prevLat = pos.lateralOffset;
+      if (this.track.biome === 'canyon' || this.track.biome === 'snow') {
+        mh.group.rotation.y = pos.angle;
+        mh.spinTarget.rotation.z -= dLat * 0.42;
+      } else if (this.track.biome === 'beach') {
+        mh.group.rotation.y = pos.angle + (dLat >= 0 ? -Math.PI / 2 : Math.PI / 2);
+        if (mh.pulsePart) mh.pulsePart.position.y = Math.abs(Math.sin(this.time * 10)) * 0.35;
+      } else if (this.track.biome === 'lava') {
+        mh.group.rotation.y = pos.angle;
+        if (mh.pulsePart) {
+          const s = 0.65 + 0.45 * Math.sin(this.time * 8 + mh.def.progress * 12);
+          mh.pulsePart.scale.set(0.9 + s * 0.2, s, 0.9 + s * 0.2);
+        }
+        if (this.rng() < dt * 16) {
+          this.additive.emit(pos.x + (this.rng() - 0.5) * 2, pos.y + 3.5, pos.z + (this.rng() - 0.5) * 2, (this.rng() - 0.5) * 4, 8 + this.rng() * 7, (this.rng() - 0.5) * 4, '#ff8a1f', 1.2, 0.5, 14);
+        }
+      } else {
+        mh.group.rotation.y = pos.angle;
+        mh.spinTarget.rotation.y += dt * 3.2;
+        mh.spinTarget.position.y = Math.sin(this.time * 4 + mh.def.progress * 10) * 0.35;
+        if (mh.pulsePart && this.track.biome === 'space') {
+          mh.pulsePart.scale.setScalar(0.9 + 0.14 * Math.sin(this.time * 7));
+        }
+      }
+    }
+    for (const br of this.boostRings) {
+      br.inner.rotation.z += dt * 2.8;
+      const p = 1 + Math.sin(this.time * 5) * 0.05;
+      br.ring.scale.setScalar(p);
+    }
+    for (let i = 0; i < this.aerialStars.length; i++) {
+      this.aerialStars[i].rotation.y = this.time * 3 + i * 0.5;
+      this.aerialStars[i].rotation.x = this.time * 1.4;
+    }
+
     // Finish-line confetti for whoever just won
     if (this.time < this.confettiUntil) {
       const colors = ['#ff4fd8', '#ffe11f', '#3bf06b', '#1fd9ff', '#ff8a1f', '#ffffff'];
@@ -3800,6 +4609,10 @@ export class KartScene {
     this.pulseMats = [];
     this.spaceBodies = [];
     this.trafficLanes = [];
+    this.rampSpans = [];
+    this.movingHazards = [];
+    this.boostRings = [];
+    this.aerialStars = [];
     this.additive.dispose();
     this.smoke.dispose();
     this.scene.clear();

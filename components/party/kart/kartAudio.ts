@@ -982,6 +982,16 @@ export class KartAudio {
       case 'trick':
         [784, 988, 1175].forEach((f, i) => this.synthNote(t + i * 0.045, f, 0.13, 0.24, 'triangle', bus));
         break;
+      case 'shortcut':
+        if (humanInvolved) {
+          [1046.5, 1318.5, 1568.0, 1975.5, 2093.0].forEach((f, i, arr) => {
+            const at = t + i * 0.052;
+            const dur = i === arr.length - 1 ? 0.34 : 0.16;
+            this.synthNote(at, f, dur, 0.22, 'triangle', bus);
+            this.synthNote(at, f * 2, dur * 0.8, 0.09, 'sine', bus);
+          });
+        }
+        break;
       case 'land':
         if (humanInvolved) this.synthNote(t, 85, 0.15, 0.45, 'sine', bus, { glideTo: 42 });
         break;
