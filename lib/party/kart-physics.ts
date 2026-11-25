@@ -1,6 +1,16 @@
 import { partyEmitter } from './emitter';
 import { BOT_LEVELS, KART_STYLES, KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle, MAX_COINS } from './kart-shared';
-import { KART_TRACKS, KartTrack, TrackId, projectOntoTrack, sampleTrackAtProgress } from './kart-tracks';
+import {
+  KART_TRACKS,
+  KartTrack,
+  TrackId,
+  getMovingHazardPosition,
+  getTrackBoundsAt,
+  isShortcutWallOpening,
+  projectOntoShortcut,
+  projectOntoTrack,
+  sampleTrackAtProgress,
+} from './kart-tracks';
 
 export type { KartBotLevel, KartItemType, KartItemsMode, KartSpeedClass, KartStyle } from './kart-shared';
 
@@ -86,6 +96,10 @@ export interface KartState {
   airDuration: number;
   trickDone: boolean;
   lastRampLap: Record<string, number>;
+  // Multi-path & shortcuts
+  activeShortcutId: string | null;
+  lastShortcutLap: Record<string, number>;
+  lastFeatureLap: Record<string, number>;
   // Status effects
   spinOutTimer: number;
   hitImmuneTimer: number;
@@ -157,7 +171,7 @@ export interface KartRaceStats {
 export type KartEventType =
   | 'box' | 'boost' | 'pad' | 'miniturbo' | 'rocket' | 'stall' | 'shell' | 'drop' | 'hit' | 'explosion'
   | 'lightning' | 'horn' | 'wall' | 'bump' | 'jump' | 'land' | 'trick' | 'lap' | 'final_lap' | 'finish'
-  | 'star' | 'lead' | 'clash' | 'go' | 'hop' | 'drift_tier' | 'coin' | 'slipstream';
+  | 'star' | 'lead' | 'clash' | 'go' | 'hop' | 'drift_tier' | 'coin' | 'slipstream' | 'shortcut';
 
 export interface KartEvent {
   id: number;
@@ -284,6 +298,7 @@ export interface KartTelemetrySnapshot {
     itemRoulette: boolean;
     coins: number;
     rankDelta: number;
+    onShortcut: boolean;
     statusText: string | null;
   }[];
   itemBoxes: { id: string; x: number; z: number; active: boolean; bonus?: boolean }[];
@@ -561,6 +576,9 @@ export function createKartSimulation(opts: {
       airDuration: 0,
       trickDone: false,
       lastRampLap: {},
+      activeShortcutId: null,
+      lastShortcutLap: {},
+      lastFeatureLap: {},
       spinOutTimer: 0,
       hitImmuneTimer: 0,
       shrinkTimer: 0,
@@ -1081,7 +1099,8 @@ function botWantsItem(sim: KartRaceSim, k: KartState, curvAhead: number): boolea
 function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputState {
   const track = sim.track;
   const m = track.samples.length;
-  const halfRoad = track.roadWidth * 0.5;
+  const bounds = getTrackBoundsAt(track, k.progress);
+  const halfRoad = bounds.halfRoad;
   const ds = track.totalLength / m;
 
   // Average curvature over the next stretch to anticipate the corner
@@ -1093,17 +1112,65 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   curvAhead /= lookSamples - 1;
   k.aiCurvAhead = curvAhead;
 
+  let useItem = false;
+  if (!k.finished && k.heldItem && botWantsItem(sim, k, curvAhead)) {
+    useItem = true;
+    k.aiUseItemDelay = (0.8 + Math.random() * 1.4) * BOT_LEVELS[sim.botLevel].itemDelay;
+  }
+
+  // While traversing a hidden shortcut, steer cleanly down its Bezier centerline
+  if (k.activeShortcutId) {
+    const scMatch = projectOntoShortcut(track, k.x, k.z);
+    if (scMatch && scMatch.shortcut.id === k.activeShortcutId) {
+      const pts = scMatch.shortcut.points;
+      const curIdx = Math.min(pts.length - 1, Math.round(scMatch.t * (pts.length - 1)));
+      const aimPt = pts[Math.min(pts.length - 1, curIdx + 3)];
+      const headingErr = normalizeAngle(Math.atan2(aimPt.x - k.x, aimPt.z - k.z) - k.angle);
+      return {
+        steer: clamp(-headingErr * 2.6, -1, 1),
+        drift: false,
+        brake: false,
+        useItem,
+        updatedAt: Date.now(),
+      };
+    }
+  }
+
   // Positive curvature = left turn; the inside of a left turn is negative lateral offset
   const apex = -clamp(curvAhead * 55, -1, 1) * halfRoad * 0.55;
   let laneTarget = apex + Math.sin(sim.elapsedMs / 2300 + k.aiPhase) * halfRoad * 0.22;
 
+  const aheadProgress = ((k.sampleIdx + lookSamples) % m) / m;
+  const aheadBounds = getTrackBoundsAt(track, aheadProgress);
+  const activeSplit = bounds.dividerHalf > 0.5 ? bounds : aheadBounds.dividerHalf > 0.5 ? aheadBounds : null;
+  const splitSide = activeSplit
+    ? bounds.dividerHalf > 0.5
+      ? (Math.sign(k.lateralOffset) || (k.aiPhase > Math.PI ? 1 : -1))
+      : !k.heldItem && activeSplit.split?.leftPerk === 'boxes'
+      ? -1
+      : !k.heldItem && activeSplit.split?.rightPerk === 'boxes'
+      ? 1
+      : activeSplit.split?.leftPerk === 'fast'
+      ? -1
+      : activeSplit.split?.rightPerk === 'fast'
+      ? 1
+      : k.aiPhase > Math.PI
+      ? 1
+      : -1
+    : 0;
+
   if (!k.finished) {
+    if (activeSplit) {
+      laneTarget = splitSide * (Math.max(bounds.dividerHalf, aheadBounds.dividerHalf) + 5.5);
+    }
+
     // Grab a box if we have no item, or line up a boost pad
     if (!k.heldItem && k.itemRouletteTimer <= 0) {
       let best = 90;
       for (const b of sim.itemBoxes) {
         if (b.respawnTimer > 0) continue;
         const def = projectOntoTrack(track, b.x, b.z, k.sampleIdx);
+        if (activeSplit && Math.sign(def.lateralOffset) !== splitSide) continue;
         const gap = forwardGap(track, k.progress, def.progress);
         if (gap > 4 && gap < best) {
           best = gap;
@@ -1112,10 +1179,43 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
       }
     } else {
       for (const pad of track.boostPads) {
+        if (activeSplit && Math.sign(pad.lateral) !== splitSide) continue;
         const gap = forwardGap(track, k.progress, pad.progress);
         if (gap > 4 && gap < 70) laneTarget = pad.lateral * halfRoad;
       }
     }
+
+    // Optionally take a nearby hidden shortcut when holding a boost
+    const wantsShortcut =
+      (sim.botLevel === 'mean' && k.aiPhase < Math.PI) ||
+      (sim.botLevel === 'normal' && k.aiPhase < 1.25);
+    if (
+      wantsShortcut &&
+      !activeSplit &&
+      (k.boostTimer > 0 || k.heldItem === 'mushroom' || k.heldItem === 'golden_mushroom' || k.heldItem === 'star')
+    ) {
+      for (const sc of track.shortcuts) {
+        const gap = forwardGap(track, k.progress, sc.entryProgress);
+        if (gap > 2 && gap < 55) {
+          laneTarget = sc.side * bounds.wallWidth * 0.95;
+          break;
+        }
+      }
+    }
+
+    // Dodge moving hazards ahead
+    const raceSec = sim.raceTimeMs / 1000;
+    for (const f of track.features) {
+      if (f.kind !== 'moving_hazard') continue;
+      const gap = forwardGap(track, k.progress, f.progress);
+      if (gap > 2 && gap < 48) {
+        const pos = getMovingHazardPosition(track, f, raceSec);
+        if (Math.abs(pos.lateralOffset - laneTarget) < (f.radius || 3.0) + 4.5) {
+          laneTarget = pos.lateralOffset + (pos.lateralOffset > 0 ? -9 : 9);
+        }
+      }
+    }
+
     // Steer around bananas, fake boxes and the kart directly ahead
     for (const h of sim.hazards) {
       if (h.kind !== 'banana' && h.kind !== 'fake_box') continue;
@@ -1136,7 +1236,11 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
     }
   }
 
-  laneTarget = clamp(laneTarget, -halfRoad * 0.78, halfRoad * 0.78);
+  const nearOpening = isShortcutWallOpening(track, k.progress, (Math.sign(laneTarget) || 1) as -1 | 1);
+  if (bounds.dividerHalf > 0.5 && Math.abs(laneTarget) < bounds.dividerHalf + 2.5) {
+    laneTarget = (Math.sign(laneTarget) || splitSide || 1) * (bounds.dividerHalf + 3.0);
+  }
+  laneTarget = clamp(laneTarget, -halfRoad * (nearOpening ? 1.15 : 0.82), halfRoad * (nearOpening ? 1.15 : 0.82));
   k.aiLane += (laneTarget - k.aiLane) * Math.min(1, dt * 2.4);
 
   // Pure pursuit at a look-ahead that grows with speed
@@ -1153,12 +1257,6 @@ function computeBotInput(sim: KartRaceSim, k: KartState, dt: number): KartInputS
   if (k.drifting) {
     // While sliding, keep pointing at the line rather than fighting the drift direction
     steer = clamp(steer + k.driftDir * 0.15, -1, 1);
-  }
-
-  let useItem = false;
-  if (!k.finished && k.heldItem && botWantsItem(sim, k, curvAhead)) {
-    useItem = true;
-    k.aiUseItemDelay = (0.8 + Math.random() * 1.4) * BOT_LEVELS[sim.botLevel].itemDelay;
   }
 
   return {
@@ -1225,7 +1323,8 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   const m = track.samples.length;
   const cls = SPEED_CLASSES[sim.speedClass];
   const style = KART_STYLES[k.kartStyle] || KART_STYLES.classic;
-  const halfRoad = track.roadWidth * 0.5;
+  const bounds = getTrackBoundsAt(track, k.progress);
+  const activeScBefore = k.activeShortcutId ? projectOntoShortcut(track, k.x, k.z) : null;
 
   if (k.statusText && sim.elapsedMs > k.statusUntil) {
     k.statusText = null;
@@ -1369,15 +1468,27 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
 
     const lookIdx = Math.round((Math.max(8, Math.abs(k.speed)) * 0.22) / (track.totalLength / m));
     const aheadSample = track.samples[(k.sampleIdx + lookIdx) % m];
-    const centering = clamp(k.lateralOffset * 0.012, -0.3, 0.3);
-    const assistHeading = aheadSample.angle + centering;
+    let assistHeading: number;
+    let refAngle = sample.angle;
+    if (activeScBefore && activeScBefore.shortcut.id === k.activeShortcutId) {
+      const scAngle = Math.atan2(activeScBefore.point.tx, activeScBefore.point.tz);
+      assistHeading = scAngle + clamp(activeScBefore.lateral * 0.025, -0.35, 0.35);
+      refAngle = scAngle;
+    } else {
+      const targetLat =
+        bounds.dividerHalf > 0.5
+          ? (Math.sign(k.lateralOffset) || 1) * (bounds.dividerHalf + (bounds.halfRoad - bounds.dividerHalf) * 0.5)
+          : 0;
+      const centering = clamp((k.lateralOffset - targetLat) * 0.012, -0.3, 0.3);
+      assistHeading = aheadSample.angle + centering;
+    }
     const assistGain = (k.drifting ? 0.55 : BASE_ASSIST * (1 - 0.8 * Math.min(1, Math.abs(steer)))) * cls.assist;
     k.angle = normalizeAngle(k.angle + normalizeAngle(assistHeading - k.angle) * (1 - Math.exp(-assistGain * dt)));
 
     // Never let a kart turn around, there's no wrong way in a party race
-    const rel = normalizeAngle(k.angle - sample.angle);
+    const rel = normalizeAngle(k.angle - refAngle);
     if (Math.abs(rel) > MAX_ROAD_ANGLE) {
-      k.angle = normalizeAngle(sample.angle + Math.sign(rel) * MAX_ROAD_ANGLE);
+      k.angle = normalizeAngle(refAngle + Math.sign(rel) * MAX_ROAD_ANGLE);
     }
 
     // ── Speed
@@ -1468,42 +1579,116 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
   k.pushX *= pushDecay;
   k.pushZ *= pushDecay;
 
-  // Project onto the spline for progress, off-road and the barriers
+  // Project onto the spline for progress, shortcuts, split dividers, off-road and the barriers
   const prevProgress = k.progress;
   const proj = projectOntoTrack(track, k.x, k.z, k.sampleIdx);
+  const projBounds = getTrackBoundsAt(track, proj.progress);
   k.sampleIdx = proj.sampleIdx;
   k.lateralOffset = proj.lateralOffset;
-  k.offRoad = k.airTimer <= 0 && Math.abs(k.lateralOffset) > halfRoad + 1.2;
 
-  const maxWallOffset = track.wallWidth - 1.2;
-  if (Math.abs(proj.lateralOffset) > maxWallOffset) {
-    const side = Math.sign(proj.lateralOffset);
-    const nx = proj.sample.nx * side;
-    const nz = proj.sample.nz * side;
-    const along = proj.distanceToCenter > 0 ? (k.x - proj.sample.x) * proj.sample.tx + (k.z - proj.sample.z) * proj.sample.tz : 0;
-    k.x = proj.sample.x + proj.sample.tx * along + nx * maxWallOffset;
-    k.z = proj.sample.z + proj.sample.tz * along + nz * maxWallOffset;
-    k.lateralOffset = side * maxWallOffset;
-    // Lose only the speed going into the wall, glance off the rest
-    const into = Math.max(0, Math.sin(k.velAngle) * k.speed * nx + Math.cos(k.velAngle) * k.speed * nz);
-    if (into > 0.5) {
-      k.speed = Math.max(k.speed - into * 0.4, 8);
-      k.pushX -= nx * Math.min(14, into * 0.55);
-      k.pushZ -= nz * Math.min(14, into * 0.55);
-      // Turn the nose back along the road
-      const rel = normalizeAngle(k.velAngle - proj.sample.angle);
-      const bounced = proj.sample.angle + rel * 0.25;
-      k.velAngle = normalizeAngle(bounced);
-      k.angle = normalizeAngle(bounced);
-      if (into > 7 && k.wallCooldown <= 0) {
-        k.wallCooldown = 0.5;
-        pushEvent(sim, 'wall', k, { value: Math.round(into) });
+  // Hidden shortcut entry check
+  if (!k.activeShortcutId) {
+    const nearSide = (Math.sign(proj.lateralOffset) || 1) as -1 | 1;
+    if (isShortcutWallOpening(track, proj.progress, nearSide) && Math.abs(proj.lateralOffset) > projBounds.wallWidth * 0.55) {
+      const scEnter = projectOntoShortcut(track, k.x, k.z);
+      if (scEnter && scEnter.t < 0.85) {
+        k.activeShortcutId = scEnter.shortcut.id;
+        if (k.lastShortcutLap[scEnter.shortcut.id] !== k.lap) {
+          k.lastShortcutLap[scEnter.shortcut.id] = k.lap;
+          pushEvent(sim, 'shortcut', k);
+          setKartStatus(k, `✨ SECRET: ${scEnter.shortcut.name.toUpperCase()}!`, sim.elapsedMs, 1800);
+          if (scEnter.shortcut.kind === 'boost-gate') {
+            k.boostTimer = Math.max(k.boostTimer, 1.5);
+          } else if (scEnter.shortcut.kind === 'hidden-ramp') {
+            k.airDuration = 1.15;
+            k.airTimer = 1.15;
+            k.trickDone = false;
+            pushEvent(sim, 'jump', k);
+          }
+        }
+      }
+    }
+  }
+
+  let newProgress = proj.progress;
+  if (k.activeShortcutId) {
+    const scMatch = projectOntoShortcut(track, k.x, k.z);
+    if (scMatch && scMatch.shortcut.id === k.activeShortcutId) {
+      const scMaxLat = scMatch.shortcut.width * 0.55;
+      if (Math.abs(scMatch.lateral) > scMaxLat) {
+        const scSide = Math.sign(scMatch.lateral);
+        k.x = scMatch.point.x + scMatch.point.nx * scSide * scMaxLat;
+        k.z = scMatch.point.z + scMatch.point.nz * scSide * scMaxLat;
+        const scAngle = Math.atan2(scMatch.point.tx, scMatch.point.tz);
+        const rel = normalizeAngle(k.velAngle - scAngle);
+        k.velAngle = normalizeAngle(scAngle + rel * 0.35);
+        k.angle = normalizeAngle(scAngle + rel * 0.35);
+      }
+      newProgress = scMatch.point.progress;
+      k.offRoad = k.airTimer <= 0 && scMatch.shortcut.kind === 'offroad-cut';
+      if (scMatch.t >= 0.96 || (scMatch.t > 0.15 && Math.abs(proj.lateralOffset) < projBounds.wallWidth - 1.5)) {
+        k.activeShortcutId = null;
+        k.sampleIdx = projectOntoTrack(track, k.x, k.z).sampleIdx;
+      }
+    } else {
+      k.activeShortcutId = null;
+      k.sampleIdx = projectOntoTrack(track, k.x, k.z).sampleIdx;
+    }
+  }
+
+  if (!k.activeShortcutId) {
+    k.offRoad = k.airTimer <= 0 && Math.abs(k.lateralOffset) > projBounds.halfRoad + 1.2;
+
+    if (projBounds.dividerHalf > 0.5 && Math.abs(proj.lateralOffset) < projBounds.dividerHalf + 1.1) {
+      const divSide = Math.sign(proj.lateralOffset) || 1;
+      const targetDiv = divSide * (projBounds.dividerHalf + 1.1);
+      const nx = proj.sample.nx * divSide;
+      const nz = proj.sample.nz * divSide;
+      const along = (k.x - proj.sample.x) * proj.sample.tx + (k.z - proj.sample.z) * proj.sample.tz;
+      k.x = proj.sample.x + proj.sample.tx * along + proj.sample.nx * targetDiv;
+      k.z = proj.sample.z + proj.sample.tz * along + proj.sample.nz * targetDiv;
+      k.lateralOffset = targetDiv;
+      const intoDiv = Math.max(0, -(Math.sin(k.velAngle) * k.speed * nx + Math.cos(k.velAngle) * k.speed * nz));
+      if (intoDiv > 0.5) {
+        k.speed = Math.max(k.speed - intoDiv * 0.25, 10);
+        const rel = normalizeAngle(k.velAngle - proj.sample.angle);
+        const bounced = proj.sample.angle + rel * 0.25;
+        k.velAngle = normalizeAngle(bounced);
+        k.angle = normalizeAngle(bounced);
+      }
+    }
+
+    const wallSide = (Math.sign(proj.lateralOffset) || 1) as -1 | 1;
+    const opening = isShortcutWallOpening(track, proj.progress, wallSide);
+    const maxWallOffset = opening ? projBounds.wallWidth * 1.4 : projBounds.wallWidth - 1.2;
+    if (Math.abs(proj.lateralOffset) > maxWallOffset) {
+      const side = Math.sign(proj.lateralOffset);
+      const nx = proj.sample.nx * side;
+      const nz = proj.sample.nz * side;
+      const along = proj.distanceToCenter > 0 ? (k.x - proj.sample.x) * proj.sample.tx + (k.z - proj.sample.z) * proj.sample.tz : 0;
+      k.x = proj.sample.x + proj.sample.tx * along + nx * maxWallOffset;
+      k.z = proj.sample.z + proj.sample.tz * along + nz * maxWallOffset;
+      k.lateralOffset = side * maxWallOffset;
+      // Lose only the speed going into the wall, glance off the rest
+      const into = Math.max(0, Math.sin(k.velAngle) * k.speed * nx + Math.cos(k.velAngle) * k.speed * nz);
+      if (into > 0.5) {
+        k.speed = Math.max(k.speed - into * 0.4, 8);
+        k.pushX -= nx * Math.min(14, into * 0.55);
+        k.pushZ -= nz * Math.min(14, into * 0.55);
+        // Turn the nose back along the road
+        const rel = normalizeAngle(k.velAngle - proj.sample.angle);
+        const bounced = proj.sample.angle + rel * 0.25;
+        k.velAngle = normalizeAngle(bounced);
+        k.angle = normalizeAngle(bounced);
+        if (into > 7 && k.wallCooldown <= 0) {
+          k.wallCooldown = 0.5;
+          pushEvent(sim, 'wall', k, { value: Math.round(into) });
+        }
       }
     }
   }
 
   // Lap & checkpoint tracking
-  const newProgress = proj.progress;
   if (newProgress >= 0.42 && newProgress <= 0.68) {
     k.passedHalfway = true;
   }
@@ -1568,7 +1753,7 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
     // Ramps launch anyone crossing the road line at speed, once per lap
     for (const ramp of track.ramps) {
       const gap = forwardGap(track, ramp.progress, k.progress);
-      if (gap < 7 && k.speed > 22 && k.lastRampLap[ramp.id] !== k.lap && Math.abs(k.lateralOffset) < halfRoad) {
+      if (gap < 7 && k.speed > 22 && k.lastRampLap[ramp.id] !== k.lap && Math.abs(k.lateralOffset) < projBounds.halfRoad) {
         k.lastRampLap[ramp.id] = k.lap;
         k.airDuration = clamp(0.55 + (k.speed / 60) * 0.5, 0.6, 1.25);
         k.airTimer = k.airDuration;
@@ -1589,6 +1774,45 @@ function stepKart(sim: KartRaceSim, k: KartState, allKarts: KartState[], dt: num
         k.coins = Math.min(MAX_COINS, k.coins + 1);
         sim.stats.coinsCollected[k.id] = (sim.stats.coinsCollected[k.id] || 0) + 1;
         pushEvent(sim, 'coin', k, { x: coin.x, z: coin.z, value: k.coins });
+      }
+    }
+  }
+
+  // Track features: boost_ring, mega_ramp, moving_hazard
+  const raceTimeSec = sim.raceTimeMs / 1000;
+  for (const feat of track.features) {
+    if (feat.kind === 'boost_ring') {
+      if (k.airTimer <= 0.4 && Math.hypot(k.x - feat.x, k.z - feat.z) < 6) {
+        if (k.lastFeatureLap[feat.id] !== k.lap || k.boostTimer < 1.2) {
+          k.lastFeatureLap[feat.id] = k.lap;
+          if (k.boostTimer < 1.2) {
+            k.boostTimer = Math.max(k.boostTimer, 1.45);
+            if (!k.isBot) setKartStatus(k, '⚡ TURBO GATE!', sim.elapsedMs, 900);
+            pushEvent(sim, 'pad', k);
+          }
+        }
+      }
+    } else if (feat.kind === 'mega_ramp') {
+      if (k.airTimer <= 0) {
+        const gap = forwardGap(track, feat.progress, k.progress);
+        if (gap < 8 && k.speed > 20 && k.lastFeatureLap[feat.id] !== k.lap && Math.abs(k.lateralOffset) < projBounds.halfRoad) {
+          k.lastFeatureLap[feat.id] = k.lap;
+          k.airDuration = 1.45;
+          k.airTimer = 1.45;
+          k.trickDone = false;
+          if (k.drifting) {
+            awardDriftBoost(sim, k);
+            clearDrift(k);
+          }
+          pushEvent(sim, 'jump', k);
+        }
+      }
+    } else if (feat.kind === 'moving_hazard') {
+      if (k.airTimer <= 0.15) {
+        const pos = getMovingHazardPosition(track, feat, raceTimeSec);
+        if (Math.hypot(k.x - pos.x, k.z - pos.z) < (feat.radius || 3.0) + 1.4) {
+          spinKart(sim, k, { duration: 1.0, speedMul: 0.35, label: feat.label || '💥 HAZARD HIT!' });
+        }
       }
     }
   }
@@ -2023,6 +2247,7 @@ export function getKartSnapshot(sim: KartRaceSim): KartTelemetrySnapshot {
         itemRoulette: k.itemRouletteTimer > 0,
         coins: k.coins,
         rankDelta: sim.elapsedMs < k.rankDeltaUntil ? k.rankDelta : 0,
+        onShortcut: Boolean(k.activeShortcutId),
         statusText: k.statusText,
       };
     }),

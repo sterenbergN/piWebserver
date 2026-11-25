@@ -59,6 +59,59 @@ export interface RampDef {
   angle: number;
 }
 
+export interface SplitSectionDef {
+  id: string;
+  name?: string;
+  startProgress: number;
+  endProgress: number;
+  extraHalfWidth: number;
+  dividerHalfWidth: number;
+  upperSide?: -1 | 1;
+  theme: 'island' | 'mesa-pillar' | 'ice-bridge' | 'neon-split' | 'lava-chasm' | 'median';
+  leftPerk: 'boosts' | 'coins' | 'boxes' | 'fast';
+  rightPerk: 'boosts' | 'coins' | 'boxes' | 'fast';
+}
+
+export interface ShortcutPoint {
+  x: number;
+  y: number;
+  z: number;
+  progress: number;
+  tx: number;
+  tz: number;
+  nx: number;
+  nz: number;
+}
+
+export interface ShortcutDef {
+  id: string;
+  name: string;
+  entryProgress: number;
+  exitProgress: number;
+  side: -1 | 1;
+  width: number;
+  kind: 'offroad-cut' | 'boost-gate' | 'hidden-ramp';
+  points: ShortcutPoint[];
+}
+
+export type TrackFeatureKind = 'boost_ring' | 'moving_hazard' | 'mega_ramp';
+
+export interface TrackFeatureDef {
+  id: string;
+  kind: TrackFeatureKind;
+  progress: number;
+  lateral: number;
+  x: number;
+  y: number;
+  z: number;
+  angle: number;
+  patrolWidth?: number;
+  speed?: number;
+  phase?: number;
+  radius?: number;
+  label?: string;
+}
+
 export type TrackBiome = 'beach' | 'canyon' | 'snow' | 'space' | 'lava' | 'city';
 
 export interface KartTrack {
@@ -102,12 +155,15 @@ export interface KartTrack {
   itemBoxes: ItemBoxSpawnDef[];
   ramps: RampDef[];
   coins: CoinSpawnDef[];
+  splitSections: SplitSectionDef[];
+  shortcuts: ShortcutDef[];
+  features: TrackFeatureDef[];
 }
 
-export const SAMPLE_COUNT = 440;
+export const SAMPLE_COUNT = 600;
 
 /** Every course is drawn at this size. The one place to make all maps larger or smaller. */
-const TRACK_SCALE = 1.3;
+const TRACK_SCALE = 1.65;
 
 function wrapAngle(a: number): number {
   let r = (a + Math.PI) % (Math.PI * 2);
@@ -281,6 +337,157 @@ export function trackHeightAt(track: Pick<KartTrack, 'samples' | 'totalLength'>,
   return s.y + Math.sin(s.bank) * lateral;
 }
 
+function wrapProgressDist(a: number, b: number): number {
+  const d = Math.abs(a - b);
+  return Math.min(d, 1 - d);
+}
+
+/** Smooth raised-cosine envelope (0..1) inside a split section, tapering to 0 at both ends. */
+export function splitEnvelope(progress: number, split: SplitSectionDef): number {
+  const p = ((progress % 1) + 1) % 1;
+  if (split.startProgress <= split.endProgress) {
+    if (p < split.startProgress || p > split.endProgress) return 0;
+    const t = (p - split.startProgress) / Math.max(1e-6, split.endProgress - split.startProgress);
+    return 0.5 - 0.5 * Math.cos(Math.PI * 2 * t);
+  }
+  // Wrap-around support
+  const span = 1 - split.startProgress + split.endProgress;
+  let rel = -1;
+  if (p >= split.startProgress) rel = p - split.startProgress;
+  else if (p <= split.endProgress) rel = 1 - split.startProgress + p;
+  if (rel < 0) return 0;
+  const t = rel / Math.max(1e-6, span);
+  return 0.5 - 0.5 * Math.cos(Math.PI * 2 * t);
+}
+
+/** Road/barrier/divider bounds at a given progress, accounting for split-path widenings. */
+export function getTrackBoundsAt(
+  track: Pick<KartTrack, 'roadWidth' | 'wallWidth' | 'splitSections'>,
+  progress: number,
+): {
+  halfRoad: number;
+  wallWidth: number;
+  dividerHalf: number;
+  upperSide: -1 | 1 | 0;
+  upperLift: number;
+  split: SplitSectionDef | null;
+} {
+  const p = ((progress % 1) + 1) % 1;
+  let activeSplit: SplitSectionDef | null = null;
+  let env = 0;
+  for (const s of track.splitSections) {
+    const e = splitEnvelope(p, s);
+    if (e > env) {
+      env = e;
+      activeSplit = s;
+    }
+  }
+  const baseHalf = track.roadWidth * 0.5;
+  if (!activeSplit || env <= 0) {
+    return {
+      halfRoad: baseHalf,
+      wallWidth: track.wallWidth,
+      dividerHalf: 0,
+      upperSide: 0,
+      upperLift: 0,
+      split: null,
+    };
+  }
+  return {
+    halfRoad: baseHalf + activeSplit.extraHalfWidth * env,
+    wallWidth: track.wallWidth + activeSplit.extraHalfWidth * env,
+    dividerHalf: activeSplit.dividerHalfWidth * env,
+    upperSide: activeSplit.upperSide ?? 0,
+    upperLift: activeSplit.upperSide ? 4.8 * env : 0,
+    split: activeSplit,
+  };
+}
+
+export function isShortcutWallOpening(
+  track: Pick<KartTrack, 'shortcuts'>,
+  progress: number,
+  side: -1 | 1,
+): boolean {
+  const p = ((progress % 1) + 1) % 1;
+  return track.shortcuts.some(
+    (sc) => sc.side === side && (wrapProgressDist(p, sc.entryProgress) <= 0.015 || wrapProgressDist(p, sc.exitProgress) <= 0.015),
+  );
+}
+
+export function projectOntoShortcut(
+  track: Pick<KartTrack, 'shortcuts'>,
+  x: number,
+  z: number,
+): { shortcut: ShortcutDef; point: ShortcutPoint; dist: number; lateral: number; t: number } | null {
+  let best: { shortcut: ShortcutDef; point: ShortcutPoint; dist: number; lateral: number; t: number } | null = null;
+  for (const sc of track.shortcuts) {
+    const pts = sc.points;
+    if (pts.length < 2) continue;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const sx = b.x - a.x;
+      const sz = b.z - a.z;
+      const lenSq = sx * sx + sz * sz || 1;
+      const u = Math.max(0, Math.min(1, ((x - a.x) * sx + (z - a.z) * sz) / lenSq));
+      const px = a.x + sx * u;
+      const py = a.y + (b.y - a.y) * u;
+      const pz = a.z + sz * u;
+      const tx = a.tx + (b.tx - a.tx) * u;
+      const tz = a.tz + (b.tz - a.tz) * u;
+      const tLen = Math.hypot(tx, tz) || 1;
+      const nTx = tx / tLen;
+      const nTz = tz / tLen;
+      const nx = -nTz;
+      const nz = nTx;
+      const dx = x - px;
+      const dz = z - pz;
+      const dist = Math.hypot(dx, dz);
+      const lateral = dx * nx + dz * nz;
+      if (Math.abs(lateral) < sc.width * 0.65 && (!best || dist < best.dist)) {
+        best = {
+          shortcut: sc,
+          point: {
+            x: px,
+            y: py,
+            z: pz,
+            progress: a.progress + (b.progress - a.progress) * u,
+            tx: nTx,
+            tz: nTz,
+            nx,
+            nz,
+          },
+          dist,
+          lateral,
+          t: (i + u) / (pts.length - 1),
+        };
+      }
+    }
+  }
+  return best;
+}
+
+export function getMovingHazardPosition(
+  track: Pick<KartTrack, 'samples' | 'totalLength' | 'roadWidth' | 'wallWidth' | 'splitSections'>,
+  f: TrackFeatureDef,
+  raceTimeSec: number,
+): { x: number; y: number; z: number; lateralOffset: number; angle: number } {
+  const s = sampleTrackAtProgress(track, f.progress);
+  const bounds = getTrackBoundsAt(track, f.progress);
+  const patrol = f.patrolWidth ?? 0.72;
+  const speed = f.speed ?? 1.6;
+  const phase = f.phase ?? 0;
+  const lateralOffset = Math.sin(raceTimeSec * speed + phase) * bounds.halfRoad * patrol;
+  const lift = bounds.upperSide !== 0 && Math.sign(lateralOffset) === bounds.upperSide ? bounds.upperLift : 0;
+  return {
+    x: s.x + s.nx * lateralOffset,
+    y: s.y + Math.sin(s.bank) * lateralOffset + lift,
+    z: s.z + s.nz * lateralOffset,
+    lateralOffset,
+    angle: s.angle,
+  };
+}
+
 export function projectOntoTrack(
   track: KartTrack,
   x: number,
@@ -310,9 +517,9 @@ export function projectOntoTrack(
 
   if (typeof hintSampleIdx === 'number' && hintSampleIdx >= 0 && hintSampleIdx < m) {
     // A local window keeps karts on their own stretch of road where sections run close together
-    const window = 24;
+    const window = 36;
     for (let offset = -window; offset <= window; offset++) scan((hintSampleIdx + offset + m) % m);
-    if (bestDistSq > track.wallWidth * track.wallWidth * 2.2) {
+    if (bestDistSq > track.wallWidth * track.wallWidth * 2.6) {
       for (let idx = 0; idx < m; idx++) scan(idx);
     }
   } else {
@@ -353,21 +560,46 @@ function createTrack(config: {
   boosts: { progress: number; lateral: number }[];
   itemRows: number[];
   ramps: number[];
+  splitSections: SplitSectionDef[];
+  shortcuts: Omit<ShortcutDef, 'points'>[];
+  features: {
+    kind: TrackFeatureKind;
+    progress: number;
+    lateral: number;
+    patrolWidth?: number;
+    speed?: number;
+    phase?: number;
+    radius?: number;
+    label?: string;
+  }[];
 }): KartTrack {
   const controlPoints = config.controlPoints.map(([x, z]): [number, number] => [x * TRACK_SCALE, z * TRACK_SCALE]);
   const { samples, totalLength } = buildSplineSamples(controlPoints, config.hills);
-  const halfRoad = config.roadWidth * 0.5;
   const at = (progress: number) => sampleTrackAtProgress({ samples, totalLength }, progress);
+  const boundsAt = (progress: number) =>
+    getTrackBoundsAt({ roadWidth: config.roadWidth, wallWidth: config.wallWidth, splitSections: config.splitSections }, progress);
+
+  const surfaceYAt = (progress: number, lateralOffset: number) => {
+    const s = at(progress);
+    const b = boundsAt(progress);
+    const lift = b.upperSide !== 0 && Math.sign(lateralOffset) === b.upperSide ? b.upperLift : 0;
+    return s.y + Math.sin(s.bank) * lateralOffset + lift;
+  };
 
   const boostPads: BoostPadDef[] = config.boosts.map((bp, i) => {
     const s = at(bp.progress);
-    const offset = bp.lateral * halfRoad;
+    const b = boundsAt(bp.progress);
+    let offset = bp.lateral * b.halfRoad;
+    if (b.dividerHalf > 0.5 && Math.abs(offset) < b.dividerHalf + 2.5) {
+      const side = Math.sign(bp.lateral) || 1;
+      offset = side * (b.dividerHalf + (b.halfRoad - b.dividerHalf) * 0.5);
+    }
     return {
       id: `boost_${i}`,
       progress: bp.progress,
-      lateral: bp.lateral,
+      lateral: offset / b.halfRoad,
       x: s.x + s.nx * offset,
-      y: s.y + Math.sin(s.bank) * offset,
+      y: surfaceYAt(bp.progress, offset),
       z: s.z + s.nz * offset,
       angle: s.angle,
     };
@@ -376,14 +608,16 @@ function createTrack(config: {
   const itemBoxes: ItemBoxSpawnDef[] = [];
   config.itemRows.forEach((rowP) => {
     const s = at(rowP);
-    for (const lat of [-0.66, -0.22, 0.22, 0.66]) {
-      const offset = lat * halfRoad;
+    const b = boundsAt(rowP);
+    const lats = b.dividerHalf > 0.5 ? [-0.78, -0.52, 0.52, 0.78] : [-0.66, -0.22, 0.22, 0.66];
+    for (const lat of lats) {
+      const offset = lat * b.halfRoad;
       itemBoxes.push({
         id: `box_${itemBoxes.length}`,
         progress: rowP,
         lateral: lat,
         x: s.x + s.nx * offset,
-        y: s.y + Math.sin(s.bank) * offset,
+        y: surfaceYAt(rowP, offset),
         z: s.z + s.nz * offset,
       });
     }
@@ -394,15 +628,91 @@ function createTrack(config: {
     return { id: `ramp_${i}`, progress, x: s.x, y: s.y, z: s.z, angle: s.angle };
   });
 
-  const wrapProgressDist = (a: number, b: number) => {
-    const d = Math.abs(a - b);
-    return Math.min(d, 1 - d);
-  };
+  const features: TrackFeatureDef[] = config.features.map((f, i) => {
+    const s = at(f.progress);
+    const b = boundsAt(f.progress);
+    const offset = f.lateral * b.halfRoad;
+    return {
+      id: `feat_${i}`,
+      kind: f.kind,
+      progress: f.progress,
+      lateral: f.lateral,
+      x: s.x + s.nx * offset,
+      y: surfaceYAt(f.progress, offset),
+      z: s.z + s.nz * offset,
+      angle: s.angle,
+      patrolWidth: f.patrolWidth,
+      speed: f.speed,
+      phase: f.phase,
+      radius: f.radius,
+      label: f.label,
+    };
+  });
+
+  const shortcuts: ShortcutDef[] = config.shortcuts.map((sc) => {
+    const entryS = at(sc.entryProgress);
+    const exitS = at(sc.exitProgress);
+    const entryB = boundsAt(sc.entryProgress);
+    const exitB = boundsAt(sc.exitProgress);
+    const p0x = entryS.x + entryS.nx * sc.side * (entryB.wallWidth * 0.9);
+    const p0y = entryS.y + Math.sin(entryS.bank) * sc.side * (entryB.wallWidth * 0.9);
+    const p0z = entryS.z + entryS.nz * sc.side * (entryB.wallWidth * 0.9);
+    const p2x = exitS.x + exitS.nx * sc.side * (exitB.wallWidth * 0.9);
+    const p2y = exitS.y + Math.sin(exitS.bank) * sc.side * (exitB.wallWidth * 0.9);
+    const p2z = exitS.z + exitS.nz * sc.side * (exitB.wallWidth * 0.9);
+    const midP = (sc.entryProgress + sc.exitProgress) * 0.5;
+    const midS = at(midP);
+    // Chord midpoint pulled slightly inside the bend so the path stays crisp and clear of main walls
+    const chordMidX = (p0x + p2x) * 0.5;
+    const chordMidZ = (p0z + p2z) * 0.5;
+    const p1x = chordMidX + midS.nx * sc.side * 6;
+    const p1y = (p0y + p2y) * 0.5 + (sc.kind === 'hidden-ramp' ? 2.5 : 0);
+    const p1z = chordMidZ + midS.nz * sc.side * 6;
+
+    const count = 20;
+    const rawPts: { x: number; y: number; z: number; progress: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      const omt = 1 - t;
+      rawPts.push({
+        x: omt * omt * p0x + 2 * omt * t * p1x + t * t * p2x,
+        y: omt * omt * p0y + 2 * omt * t * p1y + t * t * p2y,
+        z: omt * omt * p0z + 2 * omt * t * p1z + t * t * p2z,
+        progress: sc.entryProgress + (sc.exitProgress - sc.entryProgress) * t,
+      });
+    }
+    const points: ShortcutPoint[] = rawPts.map((pt, i) => {
+      const prev = rawPts[Math.max(0, i - 1)];
+      const next = rawPts[Math.min(count - 1, i + 1)];
+      const dx = next.x - prev.x;
+      const dz = next.z - prev.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const tx = dx / len;
+      const tz = dz / len;
+      return {
+        x: pt.x,
+        y: pt.y,
+        z: pt.z,
+        progress: pt.progress,
+        tx,
+        tz,
+        nx: -tz,
+        nz: tx,
+      };
+    });
+    return { ...sc, points };
+  });
+
+  const megaRamps = config.features.filter((f) => f.kind === 'mega_ramp').map((f) => f.progress);
+  const allRampProgresses = [...config.ramps, ...megaRamps];
+  const inSplit = (p: number) => config.splitSections.some((s) => splitEnvelope(p, s) > 0.02);
+
   const isCoinSpotClear = (p: number) =>
     p >= 0.04 &&
     p <= 0.93 &&
+    !inSplit(p) &&
     config.itemRows.every((r) => wrapProgressDist(p, r) >= 0.02) &&
-    config.ramps.every((r) => wrapProgressDist(p, r) >= 0.025);
+    allRampProgresses.every((r) => wrapProgressDist(p, r) >= 0.025);
 
   const validStarts: number[] = [];
   for (let p = 0.04; p <= 0.908 + 1e-9; p += 0.002) {
@@ -422,10 +732,10 @@ function createTrack(config: {
     return chosen;
   };
 
-  let groupStarts = pickStarts(0.075);
-  if (groupStarts.length < 8) groupStarts = pickStarts(0.045);
+  let groupStarts = pickStarts(0.068);
+  if (groupStarts.length < 9) groupStarts = pickStarts(0.042);
   if (groupStarts.length > 10) {
-    const targetGroups = 9;
+    const targetGroups = 10;
     groupStarts = Array.from({ length: targetGroups }, (_, i) =>
       groupStarts[Math.floor((i * groupStarts.length) / targetGroups)],
     );
@@ -438,18 +748,56 @@ function createTrack(config: {
     for (let c = 0; c < 3; c++) {
       const progress = Math.round((baseP + c * 0.011) * 10000) / 10000;
       const s = at(progress);
+      const b = boundsAt(progress);
       const lat = Math.abs(s.curvature) > 0.004 ? -Math.sign(s.curvature) * 0.45 : straightLat;
-      const offset = lat * halfRoad;
+      const offset = lat * b.halfRoad;
       coins.push({
         id: `coin_${coins.length}`,
         progress,
         lateral: lat,
         x: s.x + s.nx * offset,
-        y: s.y + Math.sin(s.bank) * offset,
+        y: surfaceYAt(progress, offset),
         z: s.z + s.nz * offset,
       });
     }
   });
+
+  // Add coins on BOTH branches of each split section
+  for (const split of config.splitSections) {
+    const mid = (split.startProgress + split.endProgress) * 0.5;
+    for (const side of [-1, 1] as const) {
+      for (const offsetP of [-0.016, 0, 0.016]) {
+        const progress = Math.round((mid + offsetP) * 10000) / 10000;
+        const s = at(progress);
+        const b = boundsAt(progress);
+        const laneCenter = side * (b.dividerHalf + (b.halfRoad - b.dividerHalf) * 0.5);
+        coins.push({
+          id: `coin_${coins.length}`,
+          progress,
+          lateral: laneCenter / b.halfRoad,
+          x: s.x + s.nx * laneCenter,
+          y: surfaceYAt(progress, laneCenter),
+          z: s.z + s.nz * laneCenter,
+        });
+      }
+    }
+  }
+
+  // Add coins along each hidden shortcut
+  for (const sc of shortcuts) {
+    for (const idx of [4, 8, 12, 16]) {
+      const pt = sc.points[idx];
+      if (!pt) continue;
+      coins.push({
+        id: `coin_${coins.length}`,
+        progress: pt.progress,
+        lateral: 0,
+        x: pt.x,
+        y: pt.y,
+        z: pt.z,
+      });
+    }
+  }
 
   return {
     id: config.id,
@@ -469,7 +817,10 @@ function createTrack(config: {
     boostPads,
     itemBoxes,
     ramps,
-    coins,
+    coins: coins.slice(0, 45),
+    splitSections: config.splitSections,
+    shortcuts,
+    features,
   };
 }
 
@@ -507,19 +858,51 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     },
     music: { root: 60, bpm: 138, chords: [[0, 4, 7], [5, 9, 12], [9, 12, 16], [7, 11, 14]], lead: [12, 16, 19, 16, 14, 12, 9, 12] },
     controlPoints: [
-      [0, -170], [0, -40], [0, 90], [35, 195], [135, 250], [265, 225], [345, 130], [305, 25],
-      [225, -25], [240, -115], [325, -180], [315, -285], [205, -345], [85, -330], [15, -270],
+      [0, -210], [0, -50], [0, 110], [45, 245], [175, 315], [340, 285], [440, 165], [390, 35],
+      [290, -25], [310, -145], [420, -225], [405, -360], [265, -430], [110, -405], [15, -330],
     ],
     hills: [[2, 3.5, 0.6], [3, 1.6, 2.1]],
     boosts: [
       { progress: 0.1, lateral: 0.3 },
-      { progress: 0.4, lateral: -0.3 },
+      { progress: 0.28, lateral: -0.65 },
+      { progress: 0.34, lateral: -0.65 },
+      { progress: 0.43, lateral: -0.3 },
       { progress: 0.62, lateral: 0.0 },
-      { progress: 0.8, lateral: -0.25 },
-      { progress: 0.27, lateral: 0.3 },
+      { progress: 0.78, lateral: 0.3 },
+      { progress: 0.91, lateral: -0.25 },
     ],
-    itemRows: [0.06, 0.23, 0.36, 0.5, 0.74, 0.86, 0.95],
-    ramps: [0.17],
+    itemRows: [0.06, 0.23, 0.32, 0.5, 0.74, 0.86, 0.95],
+    ramps: [0.17, 0.89],
+    splitSections: [
+      {
+        id: 'palm-oasis',
+        name: 'Palm Oasis',
+        startProgress: 0.24,
+        endProgress: 0.39,
+        extraHalfWidth: 16,
+        dividerHalfWidth: 7,
+        theme: 'island',
+        leftPerk: 'boosts',
+        rightPerk: 'boxes',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'dune-cut',
+        name: 'Dune Cut',
+        entryProgress: 0.65,
+        exitProgress: 0.77,
+        side: -1,
+        width: 14,
+        kind: 'offroad-cut',
+      },
+    ],
+    features: [
+      { kind: 'moving_hazard', progress: 0.12, lateral: 0, patrolWidth: 0.7, speed: 1.5, phase: 0.2, radius: 3.0, label: '🦀 CRAB PINCHED!' },
+      { kind: 'boost_ring', progress: 0.48, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.79, lateral: 0, patrolWidth: 0.72, speed: 1.75, phase: 2.1, radius: 3.0, label: '🦀 CRAB PINCHED!' },
+      { kind: 'mega_ramp', progress: 0.83, lateral: 0 },
+    ],
   }),
 
   'canyon-driftway': createTrack({
@@ -562,12 +945,46 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     hills: [[3, 5, 1.2], [5, 2, 0.4]],
     boosts: [
       { progress: 0.07, lateral: -0.3 },
+      { progress: 0.26, lateral: 0.25 },
       { progress: 0.42, lateral: 0.3 },
-      { progress: 0.69, lateral: -0.2 },
-      { progress: 0.86, lateral: 0.0 },
+      { progress: 0.63, lateral: -0.65 },
+      { progress: 0.69, lateral: -0.65 },
+      { progress: 0.81, lateral: 0.25 },
+      { progress: 0.91, lateral: 0.0 },
     ],
-    itemRows: [0.11, 0.25, 0.37, 0.56, 0.72, 0.8, 0.94],
-    ramps: [0.63],
+    itemRows: [0.11, 0.24, 0.4, 0.56, 0.66, 0.79, 0.94],
+    ramps: [0.14, 0.45],
+    splitSections: [
+      {
+        id: 'twin-mesa',
+        name: 'Twin Mesa',
+        startProgress: 0.58,
+        endProgress: 0.74,
+        extraHalfWidth: 16,
+        dividerHalfWidth: 7.5,
+        upperSide: -1,
+        theme: 'mesa-pillar',
+        leftPerk: 'fast',
+        rightPerk: 'coins',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'bandit-tunnel',
+        name: 'Bandit Tunnel',
+        entryProgress: 0.29,
+        exitProgress: 0.4,
+        side: 1,
+        width: 14,
+        kind: 'boost-gate',
+      },
+    ],
+    features: [
+      { kind: 'boost_ring', progress: 0.26, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.49, lateral: 0, patrolWidth: 0.72, speed: 1.65, phase: 0.7, radius: 3.1, label: '🪨 BOULDER SMASH!' },
+      { kind: 'moving_hazard', progress: 0.84, lateral: 0, patrolWidth: 0.7, speed: 1.9, phase: 2.5, radius: 3.1, label: '🪨 BOULDER SMASH!' },
+      { kind: 'mega_ramp', progress: 0.88, lateral: 0 },
+    ],
   }),
 
   'frostbite-peak': createTrack({
@@ -610,12 +1027,46 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     hills: [[2, 7, 2.4], [4, 2.5, 0.9]],
     boosts: [
       { progress: 0.09, lateral: 0.0 },
-      { progress: 0.45, lateral: -0.3 },
-      { progress: 0.66, lateral: 0.3 },
-      { progress: 0.88, lateral: 0.0 },
+      { progress: 0.23, lateral: -0.25 },
+      { progress: 0.38, lateral: 0.3 },
+      { progress: 0.57, lateral: -0.2 },
+      { progress: 0.73, lateral: 0.65 },
+      { progress: 0.78, lateral: 0.65 },
+      { progress: 0.9, lateral: 0.0 },
     ],
-    itemRows: [0.05, 0.13, 0.28, 0.36, 0.55, 0.78, 0.92],
-    ramps: [0.17],
+    itemRows: [0.05, 0.14, 0.28, 0.36, 0.59, 0.75, 0.93],
+    ramps: [0.17, 0.87],
+    splitSections: [
+      {
+        id: 'glacier-crevasse',
+        name: 'Glacier Crevasse',
+        startProgress: 0.69,
+        endProgress: 0.81,
+        extraHalfWidth: 16,
+        dividerHalfWidth: 7,
+        upperSide: 1,
+        theme: 'ice-bridge',
+        leftPerk: 'boxes',
+        rightPerk: 'boosts',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'ice-cave',
+        name: 'Ice Cave',
+        entryProgress: 0.41,
+        exitProgress: 0.5,
+        side: 1,
+        width: 14,
+        kind: 'boost-gate',
+      },
+    ],
+    features: [
+      { kind: 'boost_ring', progress: 0.09, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.12, lateral: 0, patrolWidth: 0.72, speed: 1.55, phase: 0.4, radius: 3.1, label: '⛄ SNOWBALLED!' },
+      { kind: 'mega_ramp', progress: 0.54, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.64, lateral: 0, patrolWidth: 0.7, speed: 1.85, phase: 1.9, radius: 3.1, label: '⛄ SNOWBALLED!' },
+    ],
   }),
 
   'neon-starway': createTrack({
@@ -661,12 +1112,47 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     boosts: [
       { progress: 0.06, lateral: 0.3 },
       { progress: 0.26, lateral: -0.3 },
-      { progress: 0.5, lateral: 0.0 },
-      { progress: 0.68, lateral: 0.3 },
-      { progress: 0.89, lateral: -0.3 },
+      { progress: 0.39, lateral: 0.0 },
+      { progress: 0.55, lateral: 0.25 },
+      { progress: 0.71, lateral: -0.65 },
+      { progress: 0.77, lateral: -0.65 },
+      { progress: 0.84, lateral: 0.2 },
+      { progress: 0.91, lateral: -0.25 },
     ],
-    itemRows: [0.1, 0.2, 0.3, 0.47, 0.6, 0.73, 0.83, 0.95],
-    ramps: [0.365, 0.625],
+    itemRows: [0.1, 0.2, 0.3, 0.53, 0.66, 0.74, 0.84, 0.95],
+    ramps: [0.27, 0.365],
+    splitSections: [
+      {
+        id: 'twin-star-ribbons',
+        name: 'Twin Star Ribbons',
+        startProgress: 0.67,
+        endProgress: 0.82,
+        extraHalfWidth: 14.5,
+        dividerHalfWidth: 6.5,
+        upperSide: -1,
+        theme: 'neon-split',
+        leftPerk: 'boosts',
+        rightPerk: 'fast',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'starlight-warp',
+        name: 'Starlight Warp',
+        entryProgress: 0.42,
+        exitProgress: 0.53,
+        side: -1,
+        width: 13.5,
+        kind: 'hidden-ramp',
+      },
+    ],
+    features: [
+      { kind: 'boost_ring', progress: 0.06, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.22, lateral: 0, patrolWidth: 0.72, speed: 1.75, phase: 0.5, radius: 3.0, label: '🛸 UFO ZAP!' },
+      { kind: 'mega_ramp', progress: 0.625, lateral: 0 },
+      { kind: 'boost_ring', progress: 0.8, lateral: 0.65 },
+      { kind: 'moving_hazard', progress: 0.89, lateral: 0, patrolWidth: 0.7, speed: 2.0, phase: 2.4, radius: 3.0, label: '🛸 UFO ZAP!' },
+    ],
   }),
 
   'volcano-inferno': createTrack({
@@ -702,19 +1188,53 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     },
     music: { root: 52, bpm: 144, chords: [[0, 3, 7], [1, 4, 8], [-2, 2, 5], [0, 3, 7]], lead: [12, 13, 15, 12, 10, 8, 7, 8] },
     controlPoints: [
-      [0, -190], [0, -70], [-30, 40], [-105, 125], [-95, 235], [0, 305], [125, 320], [220, 255],
-      [240, 160], [320, 95], [385, -5], [330, -105], [235, -125], [175, -200], [195, -300],
-      [110, -365], [10, -320],
+      [0, -210], [0, -75], [-35, 45], [-120, 140], [-110, 265], [0, 345], [140, 360], [250, 290],
+      [270, 180], [360, 110], [435, -5], [375, -120], [265, -145], [195, -225], [220, -340],
+      [125, -410], [10, -355],
     ],
     hills: [[2, 4.5, 3.6], [3, 2.2, 0.5]],
     boosts: [
       { progress: 0.07, lateral: -0.3 },
-      { progress: 0.26, lateral: 0.3 },
-      { progress: 0.55, lateral: 0.0 },
+      { progress: 0.21, lateral: 0.3 },
+      { progress: 0.32, lateral: 0.65 },
+      { progress: 0.37, lateral: 0.65 },
+      { progress: 0.57, lateral: 0.0 },
       { progress: 0.8, lateral: -0.3 },
+      { progress: 0.9, lateral: 0.25 },
     ],
-    itemRows: [0.12, 0.22, 0.38, 0.48, 0.62, 0.71, 0.84, 0.95],
-    ramps: [0.305],
+    itemRows: [0.12, 0.22, 0.34, 0.48, 0.62, 0.71, 0.84, 0.95],
+    ramps: [0.11, 0.86],
+    splitSections: [
+      {
+        id: 'magma-caldera',
+        name: 'Magma Caldera',
+        startProgress: 0.27,
+        endProgress: 0.4,
+        extraHalfWidth: 15.5,
+        dividerHalfWidth: 7,
+        upperSide: 1,
+        theme: 'lava-chasm',
+        leftPerk: 'boxes',
+        rightPerk: 'boosts',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'obsidian-bridge',
+        name: 'Obsidian Bridge',
+        entryProgress: 0.68,
+        exitProgress: 0.79,
+        side: 1,
+        width: 13.5,
+        kind: 'boost-gate',
+      },
+    ],
+    features: [
+      { kind: 'moving_hazard', progress: 0.15, lateral: 0, patrolWidth: 0.7, speed: 1.7, phase: 0.3, radius: 3.0, label: '🌋 LAVA ERUPTION!' },
+      { kind: 'boost_ring', progress: 0.21, lateral: 0 },
+      { kind: 'mega_ramp', progress: 0.54, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.63, lateral: 0, patrolWidth: 0.72, speed: 1.95, phase: 2.2, radius: 3.0, label: '🌋 LAVA ERUPTION!' },
+    ],
   }),
 
   'cyber-metro': createTrack({
@@ -757,13 +1277,48 @@ export const KART_TRACKS: Record<TrackId, KartTrack> = {
     ],
     hills: [[2, 4, 1.0], [6, 1.4, 0.3]],
     boosts: [
-      { progress: 0.08, lateral: 0.3 },
-      { progress: 0.28, lateral: -0.3 },
-      { progress: 0.47, lateral: 0.0 },
-      { progress: 0.68, lateral: 0.3 },
+      { progress: 0.07, lateral: 0.3 },
+      { progress: 0.23, lateral: -0.3 },
+      { progress: 0.36, lateral: 0.0 },
+      { progress: 0.49, lateral: -0.65 },
+      { progress: 0.55, lateral: -0.65 },
+      { progress: 0.71, lateral: 0.3 },
+      { progress: 0.84, lateral: -0.2 },
     ],
-    itemRows: [0.05, 0.14, 0.25, 0.42, 0.59, 0.72, 0.84, 0.94],
-    ramps: [0.53],
+    itemRows: [0.05, 0.14, 0.25, 0.42, 0.52, 0.66, 0.76, 0.94],
+    ramps: [0.09, 0.69],
+    splitSections: [
+      {
+        id: 'skyline-flyover',
+        name: 'Skyline Flyover',
+        startProgress: 0.44,
+        endProgress: 0.59,
+        extraHalfWidth: 15.5,
+        dividerHalfWidth: 7,
+        upperSide: -1,
+        theme: 'median',
+        leftPerk: 'fast',
+        rightPerk: 'boxes',
+      },
+    ],
+    shortcuts: [
+      {
+        id: 'neon-alley',
+        name: 'Neon Alley',
+        entryProgress: 0.87,
+        exitProgress: 0.96,
+        side: -1,
+        width: 14,
+        kind: 'boost-gate',
+      },
+    ],
+    features: [
+      { kind: 'moving_hazard', progress: 0.13, lateral: 0, patrolWidth: 0.7, speed: 1.65, phase: 0.8, radius: 3.0, label: '🤖 DRONE SHOCK!' },
+      { kind: 'boost_ring', progress: 0.22, lateral: 0 },
+      { kind: 'mega_ramp', progress: 0.39, lateral: 0 },
+      { kind: 'moving_hazard', progress: 0.63, lateral: 0, patrolWidth: 0.72, speed: 1.9, phase: 2.7, radius: 3.0, label: '🤖 DRONE SHOCK!' },
+      { kind: 'boost_ring', progress: 0.73, lateral: 0 },
+    ],
   }),
 };
 

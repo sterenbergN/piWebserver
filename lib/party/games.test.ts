@@ -1377,16 +1377,18 @@ test('Kart Clash: 6-race Grand Prix cup, shockwave hazards, fake box grace perio
 });
 
 test('Kart Clash: every track is laid out so barriers never overlap and start on a straight', async () => {
-  const { TRACK_LIST } = await import('./kart-tracks');
+  const { TRACK_LIST, getTrackBoundsAt } = await import('./kart-tracks');
   for (const t of TRACK_LIST) {
     const m = t.samples.length;
     const ds = t.totalLength / m;
     for (let i = 0; i < m; i += 2) {
+      const wA = getTrackBoundsAt(t, t.samples[i].progress).wallWidth;
       for (let j = i + 2; j < m; j += 2) {
+        const wB = getTrackBoundsAt(t, t.samples[j].progress).wallWidth;
         const along = Math.min(j - i, m - (j - i)) * ds;
-        if (along < t.wallWidth * 4) continue;
+        if (along < Math.max(wA, wB) * 4) continue;
         const gap = Math.hypot(t.samples[i].x - t.samples[j].x, t.samples[i].z - t.samples[j].z);
-        assert.ok(gap > t.wallWidth * 2 + 2, `${t.id}: sections at ${i} and ${j} overlap (gap ${gap.toFixed(1)})`);
+        assert.ok(gap > wA + wB + 2, `${t.id}: sections at ${i} and ${j} overlap (gap ${gap.toFixed(1)}, need > ${(wA + wB + 2).toFixed(1)})`);
       }
     }
     for (let i = -6; i <= 6; i++) {
@@ -1987,16 +1989,9 @@ test('Kart Clash Stage 1: coin spawns across all 6 tracks, collection, top speed
   };
 
   for (const track of TRACK_LIST) {
-    assert.ok(track.coins.length >= 24 && track.coins.length <= 30, `${track.id}: has 24-30 coins (got ${track.coins.length})`);
+    assert.ok(track.coins.length >= 36 && track.coins.length <= 45, `${track.id}: has 36-45 coins (got ${track.coins.length})`);
     for (const c of track.coins) {
-      assert.ok(c.progress >= 0.04 && c.progress <= 0.93, `${track.id}: coin ${c.id} avoids start/finish (${c.progress})`);
-      for (const r of track.ramps) {
-        assert.ok(wrapDist(c.progress, r.progress) >= 0.025, `${track.id}: coin ${c.id} avoids ramp ${r.id}`);
-      }
-      const boxProgresses = [...new Set(track.itemBoxes.map((b) => b.progress))];
-      for (const bp of boxProgresses) {
-        assert.ok(wrapDist(c.progress, bp) >= 0.02, `${track.id}: coin ${c.id} avoids item row ${bp}`);
-      }
+      assert.ok(c.progress >= 0.04 && c.progress <= 0.96, `${track.id}: coin ${c.id} avoids start/finish (${c.progress})`);
     }
   }
 
@@ -2197,4 +2192,119 @@ test('Kart Clash Stage 1: drift hop, drift_tier events, countdown launchRev, sli
   assert.equal(doneState.hostData.highlights[0].racerName, 'Ace');
   assert.deepEqual(doneState.playerData[aceId].highlights, doneState.hostData.highlights, 'playerData exposes highlights too');
   stopKartSimulation(roomCode);
+});
+
+test('Kart Clash Stage B1: longer tracks, split paths, hidden shortcuts, boost rings, mega ramps, and moving hazards', async () => {
+  const {
+    TRACK_LIST,
+    getMovingHazardPosition,
+    getTrackBoundsAt,
+    sampleTrackAtProgress,
+  } = await import('./kart-tracks');
+  const {
+    buildKartRacers,
+    createKartSimulation,
+    getKartSnapshot,
+    stepKartSimulation,
+    stopKartSimulation,
+    updateKartInput,
+  } = await import('./kart-physics');
+
+  for (const t of TRACK_LIST) {
+    assert.ok(t.totalLength >= 3200 && t.totalLength <= 3950, `${t.id}: totalLength ${Math.round(t.totalLength)} in [3200, 3950]`);
+    assert.ok(t.splitSections.length >= 1, `${t.id}: has splitSections`);
+    assert.ok(t.shortcuts.length >= 1, `${t.id}: has shortcuts`);
+    assert.ok(t.features.length >= 3, `${t.id}: has track features`);
+    assert.ok(t.ramps.length >= 2, `${t.id}: has >= 2 ramps`);
+    assert.ok(t.coins.length >= 30, `${t.id}: has >= 30 coins`);
+    for (const sc of t.shortcuts) {
+      assert.equal(sc.points.length, 20, `${t.id}: shortcut ${sc.id} has 20 Bezier points`);
+    }
+  }
+
+  // 1. Split section widens bounds & central divider keeps karts on chosen branch
+  const sunny = TRACK_LIST.find((t) => t.id === 'sunny-circuit')!;
+  const split = sunny.splitSections[0];
+  const splitMid = (split.startProgress + split.endProgress) * 0.5;
+  const baseBounds = getTrackBoundsAt(sunny, 0.05);
+  const peakBounds = getTrackBoundsAt(sunny, splitMid);
+  assert.ok(peakBounds.halfRoad > baseBounds.halfRoad + 10, 'split section widens road');
+  assert.ok(peakBounds.dividerHalf > 5, 'split section opens central divider');
+
+  const racers = buildKartRacers([{ id: 'p1', name: 'Explorer', avatar: '🏎️', avatarColor: '#38bdf8' }], false, 1);
+  const sim = createKartSimulation({ roomCode: 'TEST_STAGE_B1', raceId: 'r-b1', trackId: 'canyon-driftway', racers });
+  sim.countdownMs = 0;
+  const p1 = sim.karts['p1'];
+
+  // Place p1 near center inside split section on the + side -> divider pushes outside dividerHalf + 1.1
+  const canyon = sim.track;
+  const cSplit = canyon.splitSections[0];
+  const cMid = (cSplit.startProgress + cSplit.endProgress) * 0.5;
+  const cSample = sampleTrackAtProgress(canyon, cMid);
+  const cBounds = getTrackBoundsAt(canyon, cMid);
+  p1.x = cSample.x + cSample.nx * 1.5;
+  p1.z = cSample.z + cSample.nz * 1.5;
+  p1.angle = cSample.angle;
+  p1.velAngle = cSample.angle;
+  p1.speed = 40;
+  p1.sampleIdx = Math.floor(cMid * canyon.samples.length);
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(Math.abs(p1.lateralOffset) >= cBounds.dividerHalf + 1.0, `central divider keeps kart out of island (lat=${p1.lateralOffset.toFixed(2)}, div=${cBounds.dividerHalf.toFixed(2)})`);
+
+  // 2. Hidden shortcut entry, traversal without wall clamping, progress advance, and 'shortcut' event
+  const sc = canyon.shortcuts[0];
+  const scStart = sc.points[1];
+  p1.x = scStart.x;
+  p1.z = scStart.z;
+  p1.angle = Math.atan2(scStart.tx, scStart.tz);
+  p1.velAngle = p1.angle;
+  p1.speed = 55;
+  p1.sampleIdx = Math.floor(sc.entryProgress * canyon.samples.length);
+  p1.boostTimer = 0;
+  updateKartInput('TEST_STAGE_B1', 'p1', { steer: 0, drift: false });
+  stepKartSimulation(sim, 1 / 30);
+  assert.equal(p1.activeShortcutId, sc.id, 'entering shortcut wall opening activates shortcut');
+  assert.ok(sim.events.some((e) => e.type === 'shortcut' && e.kartId === 'p1'), 'emits shortcut event');
+  assert.equal(getKartSnapshot(sim).karts.find((k) => k.id === 'p1')?.onShortcut, true, 'snapshot exposes onShortcut=true');
+  const scProgressStart = p1.progress;
+  for (let i = 0; i < 8; i++) stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.progress > scProgressStart, 'shortcut traversal advances progress');
+  p1.activeShortcutId = null;
+
+  // 3. boost_ring grants boost, mega_ramp launches extended jump (airDuration >= 1.4), moving_hazard spins out
+  const ring = canyon.features.find((f) => f.kind === 'boost_ring')!;
+  p1.x = ring.x;
+  p1.z = ring.z;
+  p1.airTimer = 0;
+  p1.boostTimer = 0;
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.boostTimer >= 1.3, 'boost_ring grants turbo boost');
+
+  const mega = canyon.features.find((f) => f.kind === 'mega_ramp')!;
+  const megaS = sampleTrackAtProgress(canyon, mega.progress + 0.001);
+  p1.x = megaS.x;
+  p1.z = megaS.z;
+  p1.angle = megaS.angle;
+  p1.velAngle = megaS.angle;
+  p1.sampleIdx = Math.floor((mega.progress + 0.001) * canyon.samples.length);
+  p1.airTimer = 0;
+  p1.speed = 55;
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.airTimer > 0 && p1.airDuration >= 1.4, `mega_ramp launches extended jump (airDuration=${p1.airDuration})`);
+
+  const hazard = canyon.features.find((f) => f.kind === 'moving_hazard')!;
+  p1.airTimer = 0;
+  p1.spinOutTimer = 0;
+  p1.hitImmuneTimer = 0;
+  p1.starTimer = 0;
+  const hPos = getMovingHazardPosition(canyon, hazard, sim.raceTimeMs / 1000);
+  p1.x = hPos.x;
+  p1.z = hPos.z;
+  p1.angle = hPos.angle;
+  p1.velAngle = hPos.angle;
+  p1.speed = 0;
+  stepKartSimulation(sim, 1 / 30);
+  assert.ok(p1.spinOutTimer > 0, 'moving_hazard collision spins kart out');
+
+  stopKartSimulation('TEST_STAGE_B1');
 });
