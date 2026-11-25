@@ -82,9 +82,6 @@ export type ImportPromptOptions = {
 };
 
 export const IMPORT_COUNT = { min: 5, max: 100, default: 25 };
-/** How many existing entries go in the prompt; more just makes it long. */
-const EXISTING_LIMIT = 60;
-
 export function clampCount(n: unknown): number {
   const v = Math.round(Number(n));
   if (!Number.isFinite(v)) return IMPORT_COUNT.default;
@@ -106,7 +103,8 @@ export function buildImportPrompt(key: ImportKey, opts: ImportPromptOptions = {}
   const spec = IMPORT_SPECS[key];
   const count = clampCount(opts.count ?? IMPORT_COUNT.default);
   const theme = opts.theme?.trim();
-  const existing = (opts.existing || []).map((e) => e.trim()).filter(Boolean);
+  // All of them: any left out could come back as a repeat. Entries are short, so even a few hundred stay well within what an AI takes.
+  const existing = [...new Set((opts.existing || []).map((e) => e.trim()).filter(Boolean))];
   const lines = [
     `Write ${count} new entries for a party game played in a room with friends, on a TV and phones.`,
     '',
@@ -125,8 +123,7 @@ export function buildImportPrompt(key: ImportKey, opts: ImportPromptOptions = {}
   ];
   if (existing.length) {
     lines.push('', 'These are already in the list. Don\'t repeat them or write close variations:');
-    lines.push(...existing.slice(0, EXISTING_LIMIT).map((e) => `- ${e}`));
-    if (existing.length > EXISTING_LIMIT) lines.push(`(and ${existing.length - EXISTING_LIMIT} more)`);
+    lines.push(...existing.map((e) => `- ${e}`));
   }
   return lines.join('\n');
 }

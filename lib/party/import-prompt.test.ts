@@ -21,13 +21,12 @@ test('every list has a prompt whose examples read back with its own parser', () 
   }
 });
 
-test('the prompt lists what is already there, up to a limit', () => {
-  const existing = Array.from({ length: 70 }, (_, i) => `Prompt ${i}`);
-  const prompt = buildImportPrompt('quipClash', { existing });
-  assert.match(prompt, /- Prompt 0\n/);
-  assert.match(prompt, /- Prompt 59\n/);
-  assert.doesNotMatch(prompt, /Prompt 60/);
-  assert.match(prompt, /and 10 more/);
+test('the prompt lists everything already there, so none of it comes back', () => {
+  const existing = Array.from({ length: 250 }, (_, i) => `Prompt ${i}`);
+  const prompt = buildImportPrompt('quipClash', { existing: [...existing, 'Prompt 3', '  '] });
+  const listed = prompt.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2));
+  assert.deepEqual(listed, existing, 'every entry, once each, with nothing cut off');
+  assert.doesNotMatch(prompt, /more\)/);
   assert.doesNotMatch(buildImportPrompt('quipClash'), /already in the list/);
   assert.deepEqual(describeExisting('triviaQuestions', lists), ['What is 2+2?']);
   assert.deepEqual(describeExisting('wavelengthSpectrums', lists), ['Hot | Cold']);
