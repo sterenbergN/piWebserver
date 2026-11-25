@@ -871,6 +871,11 @@ function spawnHazard(sim: KartRaceSim, hazard: Omit<KartHazard, 'id' | 'age'>): 
   return h;
 }
 
+/** A blue shell goes after the best-placed racer still going, but never the one who threw it (a leader's shell hunts second place). */
+function blueShellTarget(karts: KartState[], ownerId: string): KartState | null {
+  return [...karts].sort((a, b) => a.rank - b.rank).find((r) => !r.finished && r.id !== ownerId) || null;
+}
+
 export function fireKartItem(sim: KartRaceSim, target: string | KartState) {
   const k = typeof target === 'string' ? sim.karts[target] : target;
   if (!k) return;
@@ -977,9 +982,8 @@ export function fireKartItem(sim: KartRaceSim, target: string | KartState) {
       break;
     }
     case 'spiny_shell': {
-      const ranked = Object.values(sim.karts).sort((a, b) => a.rank - b.rank);
-      const leader = ranked.find((r) => !r.finished) || null;
-      if (leader && leader.id !== k.id) setKartStatus(leader, '🚨 BLUE SHELL INCOMING!', sim.elapsedMs, 3000);
+      const leader = blueShellTarget(Object.values(sim.karts), k.id);
+      if (leader) setKartStatus(leader, '🚨 BLUE SHELL INCOMING!', sim.elapsedMs, 3000);
       spawnHazard(sim, {
         kind: 'spiny_shell',
         ownerId: k.id,
@@ -1970,7 +1974,7 @@ function stepHazards(sim: KartRaceSim, allKarts: KartState[], dt: number) {
       chase(h, target, 94 * shellScale);
     } else if (h.kind === 'spiny_shell') {
       // Always re-aims at whoever is in the lead right now
-      const currentLeader = [...allKarts].sort((a, b) => a.rank - b.rank).find((r) => !r.finished) || null;
+      const currentLeader = blueShellTarget(allKarts, h.ownerId);
       h.targetId = currentLeader ? currentLeader.id : null;
       chase(h, currentLeader, 135 * shellScale);
     }
@@ -2039,7 +2043,7 @@ function stepHazards(sim: KartRaceSim, allKarts: KartState[], dt: number) {
           age: 0,
         });
         for (const other of allKarts) {
-          if (other.id === hitKart.id) continue;
+          if (other.id === hitKart.id || other.id === h.ownerId) continue;
           if (Math.hypot(other.x - h.x, other.z - h.z) < 11) {
             spinKart(sim, other, { duration: 1.0, speedMul: 0.3, label: '💥 CAUGHT IN THE BLAST!', attackerId: h.ownerId });
           }

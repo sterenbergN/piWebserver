@@ -1464,6 +1464,46 @@ test('Kart Clash: green shells bounce once per wall contact and blue shells igno
   stopKartSimulation('TEST_SHELLS');
 });
 
+test('Kart Clash: a blue shell fired from first place goes after second, never its owner', async () => {
+  const { buildKartRacers, createKartSimulation, fireKartItem, stepKartSimulation, stopKartSimulation } = await import('./kart-physics');
+  const racers = buildKartRacers([
+    { id: 'a', name: 'A', avatarColor: '#fff' },
+    { id: 'b', name: 'B', avatarColor: '#fff' },
+    { id: 'c', name: 'C', avatarColor: '#fff' },
+  ]);
+  const sim = createKartSimulation({ roomCode: 'TEST_OWN_BLUE', raceId: 'r', trackId: 'sunny-circuit', racers });
+  sim.countdownMs = 0;
+  stepKartSimulation(sim, 1 / 30);
+  sim.hazards = [];
+  const [a, b, c] = ['a', 'b', 'c'].map((id) => sim.karts[id]);
+  const place = (k: typeof a, idx: number) => {
+    const s = sim.track.samples[idx];
+    k.x = s.x; k.z = s.z; k.sampleIdx = idx; k.speed = 0;
+  };
+  const rank = () => { a.rank = 1; b.rank = 2; c.rank = 3; a.totalProgress = 3; b.totalProgress = 2; c.totalProgress = 1; };
+  // The leader is alone, well ahead of the others
+  place(a, 200); place(b, 60); place(c, 20);
+  rank();
+  a.heldItem = 'spiny_shell';
+  fireKartItem(sim, a);
+  const blue = sim.hazards.find((h) => h.kind === 'spiny_shell')!;
+  assert.equal(blue.targetId, 'b', 'the leader\'s blue shell targets second place');
+  for (let i = 0; i < 3; i++) { rank(); stepKartSimulation(sim, 1 / 30); }
+  assert.equal(a.spinOutTimer, 0, 'the leader is not hit by their own blue shell');
+  assert.equal(blue.targetId, 'b', 're-aiming each tick still skips the owner');
+
+  // Second place right behind the owner: the blast that hits them spares the owner
+  sim.hazards = [];
+  place(b, 202);
+  rank();
+  a.heldItem = 'spiny_shell';
+  fireKartItem(sim, a);
+  for (let i = 0; i < 10 && !b.spinOutTimer; i++) { rank(); stepKartSimulation(sim, 1 / 30); }
+  assert.ok(b.spinOutTimer > 0, 'second place is blue-shelled');
+  assert.equal(a.spinOutTimer, 0, 'the owner is not caught in their own blast');
+  stopKartSimulation('TEST_OWN_BLUE');
+});
+
 test('Kart Clash: players can customise their kart, settings survive a return to the lobby, and a stale phone goes on autopilot', async () => {
   const { roomCode, hostId } = await engine.createRoom('kart-clash');
   const p1 = (await engine.joinRoom(roomCode, 'Garage')) as { playerId: string };
