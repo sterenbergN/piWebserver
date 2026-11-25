@@ -1,16 +1,34 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { DRIFT_TIER_COLORS, ITEM_META, RANK_COLORS, ROULETTE_EMOJIS, formatRaceTime, ordinal } from '@/lib/party/kart-shared';
-import { KART_TRACKS, KartTrack, TRACK_LIST, TrackId } from '@/lib/party/kart-tracks';
+import {
+  DRIFT_TIER_COLORS,
+  DRIFT_TIER_LABELS,
+  ITEM_META,
+  MAX_COINS,
+  RANK_COLORS,
+  ROULETTE_EMOJIS,
+  formatRaceTime,
+  ordinal,
+} from '@/lib/party/kart-shared';
+import { KART_TRACKS, KartTrack, TRACK_LIST, TrackBiome, TrackId } from '@/lib/party/kart-tracks';
 import type { KartEvent, KartTelemetrySnapshot } from '@/lib/party/kart-physics';
 import type { KartHeat } from '@/lib/party/games/kart-clash';
-import type { SoundPrefs } from '@/components/party/audio';
+import { line, partyAudio, type SoundPrefs } from '@/components/party/audio';
 import { CameraMode, KartScene, computeSplitGrid } from '@/components/party/kart/kartScene';
 import { KartAudio } from '@/components/party/kart/kartAudio';
 import TrackMinimap from '@/components/party/kart/TrackMinimap';
 
 type SnapKart = KartTelemetrySnapshot['karts'][number];
+
+const BIOME_BADGES: Record<TrackBiome, string> = {
+  beach: '🌴 Beach',
+  canyon: '🏜️ Canyon',
+  snow: '❄️ Icy',
+  space: '🌈 Space',
+  lava: '🌋 Lava',
+  city: '🌃 Neon City',
+};
 
 const RECORDS_KEY = 'kartLapRecords';
 type LapRecord = { timeMs: number; name: string; avatar: string };
@@ -60,7 +78,8 @@ function DriverHud({ kart, totalLaps, racing, compact }: { kart: SnapKart; total
   const kmh = Math.max(0, Math.round(Math.abs(kart.speed) * 2.2));
   const rankColor = RANK_COLORS[Math.min(RANK_COLORS.length - 1, kart.rank - 1)];
   const suffix = ordinal(kart.rank).replace(String(kart.rank), '');
-  const tierColor = DRIFT_TIER_COLORS[kart.driftLevel];
+  const totalCharge = kart.drifting ? (kart.driftLevel === 3 ? 100 : (kart.driftLevel * 100 + kart.driftCharge) / 3) : 0;
+  const tierLabel = kart.drifting && kart.driftLevel > 0 ? DRIFT_TIER_LABELS[kart.driftLevel] : '';
   return (
     <div className="kart-tile">
       {racing && boosting && (
@@ -69,6 +88,9 @@ function DriverHud({ kart, totalLaps, racing, compact }: { kart: SnapKart; total
           <div className="kart-boost-fx" />
         </>
       )}
+      {racing && kart.slipstreaming && <div className="kart-slipstream-fx" />}
+      {racing && kart.starTimer > 0 && <div className="kart-star-fx" />}
+      {racing && kart.goldenShroomTimer > 0 && kart.starTimer <= 0 && <div className="kart-golden-fx" />}
       {racing && kart.hasIncomingShell && (
         <>
           <div className="kart-warn" />
@@ -94,23 +116,57 @@ function DriverHud({ kart, totalLaps, racing, compact }: { kart: SnapKart; total
       {!kart.finished && (
         <>
           <div className="kart-speedo">
-            <span style={{ textShadow: '0 2px 5px #000' }}>
-              {kmh}<span style={{ fontSize: '0.65em', opacity: 0.75 }}> km/h</span>
-              {kart.offRoad && !compact && <span style={{ marginLeft: '0.5em', color: '#fbbf24' }}>OFF-ROAD</span>}
-            </span>
-            <div className="kart-drift-bar" style={{ opacity: kart.drifting ? 1 : 0.35 }}>
-              <div
-                className="kart-drift-fill"
-                style={{
-                  width: `${kart.drifting ? (kart.driftLevel === 3 ? 100 : (kart.driftLevel * 100 + kart.driftCharge) / 3) : 0}%`,
-                  background: kart.driftLevel === 0 ? '#e2e8f0' : tierColor,
-                  boxShadow: kart.driftLevel > 0 ? `0 0 10px ${tierColor}` : undefined,
-                }}
-              />
+            <div className="kart-speedo-top">
+              <span style={{ textShadow: '0 2px 5px #000', whiteSpace: 'nowrap' }}>
+                {kmh}<span style={{ fontSize: '0.65em', opacity: 0.75 }}> km/h</span>
+                {kart.offRoad && !compact && <span style={{ marginLeft: '0.45em', color: '#fbbf24', fontSize: '0.72em' }}>OFF-ROAD</span>}
+              </span>
+              <span className="kart-coin-pill">🪙 {kart.coins}/{MAX_COINS}</span>
             </div>
+            <div className="kart-drift-segments" style={{ opacity: kart.drifting ? 1 : 0.42 }}>
+              {[0, 1, 2].map((seg) => {
+                const segFill = Math.max(0, Math.min(100, (totalCharge - seg * (100 / 3)) * 3));
+                const segColor = DRIFT_TIER_COLORS[seg + 1];
+                const lit = kart.driftLevel >= seg + 1;
+                return (
+                  <div
+                    key={seg}
+                    className="kart-drift-seg"
+                    style={{
+                      borderColor: lit ? segColor : undefined,
+                      boxShadow: lit ? `0 0 8px ${segColor}` : undefined,
+                    }}
+                  >
+                    <div
+                      className="kart-drift-fill"
+                      style={{
+                        width: `${segFill}%`,
+                        background: segColor,
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            {tierLabel && (
+              <div style={{ fontSize: '0.62em', fontWeight: 900, letterSpacing: '0.06em', color: DRIFT_TIER_COLORS[kart.driftLevel], textAlign: 'right', lineHeight: 1 }}>
+                {tierLabel}
+              </div>
+            )}
           </div>
-          <div className="kart-rank-big" style={{ color: rankColor }} key={kart.rank}>
-            {kart.rank}<small>{suffix}</small>
+          <div className="kart-rank-wrap">
+            {kart.rankDelta !== 0 && (
+              <span
+                key={`${kart.rank}-${kart.rankDelta}`}
+                className="kart-rank-delta"
+                style={{ color: kart.rankDelta > 0 ? '#22c55e' : '#ef4444' }}
+              >
+                {kart.rankDelta > 0 ? '▲' : '▼'}
+              </span>
+            )}
+            <div className="kart-rank-big" style={{ color: rankColor }} key={kart.rank}>
+              {kart.rank}<small>{suffix}</small>
+            </div>
           </div>
         </>
       )}
@@ -134,7 +190,7 @@ function DriverHud({ kart, totalLaps, racing, compact }: { kart: SnapKart; total
 
 function Standings({ karts, fastestLapId }: { karts: SnapKart[]; fastestLapId?: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.08rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.06rem' }}>
       {karts.map((k) => {
         const item = k.heldItem ? ITEM_META[k.heldItem] : null;
         return (
@@ -147,13 +203,21 @@ function Standings({ karts, fastestLapId }: { karts: SnapKart[]; fastestLapId?: 
               opacity: k.isBot ? 0.85 : 1,
             }}
           >
-            <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, k.rank - 1)], fontWeight: 900, textAlign: 'center' }}>{k.rank}</span>
+            <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, k.rank - 1)], fontWeight: 900, textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '1px' }}>
+              {k.rank}
+              {k.rankDelta !== 0 && (
+                <span style={{ fontSize: '0.62rem', color: k.rankDelta > 0 ? '#22c55e' : '#ef4444' }}>
+                  {k.rankDelta > 0 ? '▲' : '▼'}
+                </span>
+              )}
+            </span>
             <span style={{ textAlign: 'center' }}>{k.avatar}</span>
             <span className="kart-rank-name">{k.name}</span>
-            <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'flex', gap: '0.2rem', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'flex', gap: '0.22rem', alignItems: 'center' }}>
               {item && <span>{item.emoji}</span>}
+              <span style={{ color: '#fde047', fontWeight: 800 }}>🪙{k.coins}</span>
               {fastestLapId === k.id && <span title="Fastest lap" style={{ color: '#d946ef' }}>⏱</span>}
-              {k.finished ? '🏁' : `L${k.lap}`}
+              <span>{k.finished ? '🏁' : `L${k.lap}`}</span>
             </span>
           </div>
         );
@@ -189,14 +253,45 @@ function RaceView({
   const [snap, setSnap] = useState<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
   const [aspect, setAspect] = useState(16 / 9);
   const [flashKey, setFlashKey] = useState(0);
+  const [finalLapBannerKey, setFinalLapBannerKey] = useState(0);
+  const [feedItem, setFeedItem] = useState<{ id: number; text: string; color?: string } | null>(null);
   const [needsSoundTap, setNeedsSoundTap] = useState(false);
   const [webglFailed, setWebglFailed] = useState(false);
   const snapRef = useRef<KartTelemetrySnapshot | null>(hd.initialSnapshot || null);
   const prefsRef = useRef(soundPrefs);
+  const lastSpeakAtRef = useRef(0);
+  const finalLapCalledRef = useRef(false);
+  const finishCalledRef = useRef(false);
+  const lastBlueShellAnnounceRef = useRef('');
+  const finalLapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     cameraRef.current = cameraMode;
   }, [cameraMode]);
+
+  useEffect(() => {
+    return partyAudio.onSpeaking((speaking) => {
+      audioRef.current?.setDucking(speaking);
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (finalLapTimeoutRef.current) clearTimeout(finalLapTimeoutRef.current);
+    };
+  }, []);
+
+  const speakCommentary = useCallback((text: string, urgent = false) => {
+    if (prefsRef.current?.voice === false) return;
+    const now = Date.now();
+    if (!urgent && now - lastSpeakAtRef.current < 4500) return;
+    lastSpeakAtRef.current = now;
+    partyAudio.say(text);
+  }, []);
+
+  const pushFeed = useCallback((text: string, color?: string) => {
+    setFeedItem({ id: Date.now() + Math.random(), text, color });
+  }, []);
 
   const handleEvent = useCallback((e: KartEvent) => {
     const karts = snapRef.current?.karts || [];
@@ -205,7 +300,61 @@ function RaceView({
     const human = kart ? !kart.isBot : e.type === 'go' || e.type === 'clash';
     audioRef.current?.event(e, human);
     if (e.type === 'lightning') setFlashKey(Date.now());
-  }, []);
+
+    switch (e.type) {
+      case 'go':
+        speakCommentary(line(['Lights out and away they go!', "And they're off!", 'Green light! Pedal to the metal!']), true);
+        pushFeed('🏁 Green light — GO!', '#22c55e');
+        break;
+      case 'rocket':
+        if (kart && !kart.isBot) {
+          speakCommentary(line(['{name} nails the rocket start!', 'Blistering launch from {name}!'], { name: kart.name }));
+          pushFeed(`🚀 ${kart.avatar} ${kart.name} nailed a Rocket Start!`, '#facc15');
+        }
+        break;
+      case 'lead':
+        if (kart) {
+          speakCommentary(line(['{name} takes the lead!', 'New leader! {name} surges to first!'], { name: kart.name }));
+          pushFeed(`👑 ${kart.avatar} ${kart.name} takes 1st!`, '#facc15');
+        }
+        break;
+      case 'lightning':
+        speakCommentary('Lightning strikes the whole track!');
+        pushFeed(`⚡ ${kart ? `${kart.name} unleashed Lightning!` : 'Lightning struck the track!'}`, '#38bdf8');
+        break;
+      case 'clash':
+        speakCommentary('Pit crew chaos! Watch the track!');
+        pushFeed('💥 Pit crew chaos on the track!', '#f97316');
+        break;
+      case 'final_lap':
+        if (!finalLapCalledRef.current) {
+          finalLapCalledRef.current = true;
+          speakCommentary('Final lap! Everything is on the line!', true);
+        }
+        if (kart && !kart.isBot) {
+          setFinalLapBannerKey(Date.now());
+          if (finalLapTimeoutRef.current) clearTimeout(finalLapTimeoutRef.current);
+          finalLapTimeoutRef.current = setTimeout(() => setFinalLapBannerKey(0), 1800);
+        }
+        pushFeed(`🔔 ${kart ? `${kart.avatar} ${kart.name}` : 'Leader'} on the FINAL LAP!`, '#f97316');
+        break;
+      case 'finish':
+        if (kart && e.value === 1) {
+          if (!finishCalledRef.current) {
+            finishCalledRef.current = true;
+            speakCommentary(`${kart.name} takes the checkered flag!`, true);
+          }
+          pushFeed(`🏆 ${kart.avatar} ${kart.name} wins!`, '#facc15');
+        }
+        break;
+      case 'star':
+        if (kart && !kart.isBot) pushFeed(`⭐ ${kart.avatar} ${kart.name} is invincible!`, '#facc15');
+        break;
+      case 'slipstream':
+        if (kart && !kart.isBot) pushFeed(`💨 ${kart.avatar} ${kart.name} hit a slipstream boost!`, '#38bdf8');
+        break;
+    }
+  }, [pushFeed, speakCommentary]);
 
   // Scene, audio and the render loop live for one race on one track
   useEffect(() => {
@@ -267,6 +416,11 @@ function RaceView({
       snapRef.current = data;
       sceneRef.current?.setSnapshot(data);
       audioRef.current?.update(data);
+      if (data.announcement && data.announcement.startsWith('🚨') && data.announcement !== lastBlueShellAnnounceRef.current) {
+        lastBlueShellAnnounceRef.current = data.announcement;
+        speakCommentary('Watch out! Blue shell incoming!');
+        pushFeed(data.announcement, '#38bdf8');
+      }
       const now = performance.now();
       if (now - lastHud >= HUD_INTERVAL_MS) {
         lastHud = now;
@@ -275,7 +429,7 @@ function RaceView({
       }
     };
     return () => sse.close();
-  }, [raceId, roomCode]);
+  }, [raceId, roomCode, pushFeed, speakCommentary]);
 
   useEffect(() => {
     prefsRef.current = soundPrefs;
@@ -294,10 +448,15 @@ function RaceView({
   const showGo = Boolean(snap && racing && snap.raceTimeMs < 1100);
   const leaderLap = sorted[0]?.lap || 1;
   const spareTiles = cols * rows - views.length;
+  const revvingHumans = humanKarts.filter((k) => k.launchRev > 0);
+  const unlockAllAudio = () => {
+    audioRef.current?.resume();
+    partyAudio.unlock();
+  };
 
   return (
     <div className="kart-race-root">
-      <div className="kart-race-stage" onPointerDown={() => audioRef.current?.resume()}>
+      <div className="kart-race-stage" onPointerDown={unlockAllAudio}>
         <canvas ref={canvasRef} />
 
         {webglFailed && (
@@ -326,6 +485,12 @@ function RaceView({
         )}
         {!snap?.announcement && snap?.finishCountdownMs != null && !snap.celebrating && (
           <div className="kart-announce">🏁 Race ends in {Math.ceil(snap.finishCountdownMs / 1000)}s</div>
+        )}
+
+        {finalLapBannerKey > 0 && (
+          <div className="kart-center-overlay">
+            <div className="kart-final-lap-banner" key={finalLapBannerKey}>🔔 FINAL LAP!</div>
+          </div>
         )}
 
         {flashKey > 0 && <div className="kart-flash" key={flashKey} />}
@@ -374,6 +539,27 @@ function RaceView({
             <div className="kart-chip" style={{ fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)', color: countdownSec === 1 ? '#facc15' : '#fff' }}>
               {countdownSec === 1 ? '🚀 HOLD DRIFT NOW!' : 'Wait for the 1, then hold DRIFT for a rocket start'}
             </div>
+            {revvingHumans.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '0.55rem' }}>
+                {revvingHumans.map((k) => {
+                  const overheat = k.launchRev > 1.2;
+                  return (
+                    <span
+                      key={k.id}
+                      className="kart-chip"
+                      style={{
+                        fontSize: 'clamp(0.78rem, 1.3vw, 1.05rem)',
+                        border: `1.5px solid ${overheat ? '#ef4444' : '#f97316'}`,
+                        color: overheat ? '#fca5a5' : '#fde047',
+                      }}
+                    >
+                      {humanKarts.length > 1 ? `${k.avatar} ${k.name}: ` : ''}
+                      {overheat ? '⚠️ TOO EARLY!' : '🔥 REVVING!'}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
         {showGo && (
@@ -396,8 +582,15 @@ function RaceView({
           <Standings karts={sorted} fastestLapId={snap?.fastestLap?.racerId} />
         </div>
 
+        <div className="kart-side-card kart-feed-ticker">
+          <span style={{ color: 'var(--party-cyan)', flexShrink: 0 }}>📡</span>
+          <span className="kart-feed-ticker-text" key={feedItem?.id ?? 'idle'} style={{ color: feedItem?.color || '#cbd5e1' }}>
+            {feedItem?.text || `${track.emoji} ${snap?.speedClass || '150cc'} · Clean racing`}
+          </span>
+        </div>
+
         <div className="kart-side-card" style={{ display: 'flex', justifyContent: 'center', flex: '1 1 0', minHeight: 110, alignItems: 'center', overflow: 'hidden' }}>
-          <TrackMinimap trackId={trackId} karts={allKarts} size={360} />
+          <TrackMinimap trackId={trackId} karts={allKarts} hazards={snap?.hazards} size={360} />
         </div>
 
         {snap?.fastestLap && (
@@ -417,7 +610,12 @@ function RaceView({
 
         <div style={{ display: 'flex', gap: '0.25rem' }}>
           {needsSoundTap ? (
-            <button type="button" className="kart-side-btn" style={{ background: '#facc15', color: '#000' }} onClick={() => { audioRef.current?.resume(); setNeedsSoundTap(false); }}>
+            <button
+              type="button"
+              className="kart-side-btn"
+              style={{ background: '#facc15', color: '#000' }}
+              onClick={() => { unlockAllAudio(); setNeedsSoundTap(false); }}
+            >
               🔊 Tap for sound
             </button>
           ) : (
@@ -426,7 +624,10 @@ function RaceView({
                 type="button"
                 className="kart-side-btn"
                 data-on={soundPrefs?.music !== false}
-                onClick={() => soundPrefs && setSoundPrefs?.({ ...soundPrefs, music: !soundPrefs.music })}
+                onClick={() => {
+                  const cur = soundPrefs || { music: true, sfx: true, voice: true };
+                  setSoundPrefs?.({ ...cur, music: !cur.music });
+                }}
               >
                 🎵 Music
               </button>
@@ -434,9 +635,25 @@ function RaceView({
                 type="button"
                 className="kart-side-btn"
                 data-on={soundPrefs?.sfx !== false}
-                onClick={() => soundPrefs && setSoundPrefs?.({ ...soundPrefs, sfx: !soundPrefs.sfx })}
+                onClick={() => {
+                  const cur = soundPrefs || { music: true, sfx: true, voice: true };
+                  setSoundPrefs?.({ ...cur, sfx: !cur.sfx });
+                }}
               >
                 🔊 SFX
+              </button>
+              <button
+                type="button"
+                className="kart-side-btn"
+                data-on={soundPrefs?.voice !== false}
+                onClick={() => {
+                  const cur = soundPrefs || { music: true, sfx: true, voice: true };
+                  const nextVoice = cur.voice === false;
+                  if (nextVoice) partyAudio.unlock();
+                  setSoundPrefs?.({ ...cur, voice: nextVoice });
+                }}
+              >
+                🎙️ Voice
               </button>
             </>
           )}
@@ -476,6 +693,11 @@ export default function KartClashHostView({
   const [selectedPlayerForSwap, setSelectedPlayerForSwap] = useState<string | null>(null);
   const [lapRecords, setLapRecords] = useState<Record<string, LapRecord>>({});
   const [newRecord, setNewRecord] = useState<LapRecord | null>(null);
+  const soundPrefsRef = useRef(soundPrefs);
+
+  useEffect(() => {
+    soundPrefsRef.current = soundPrefs;
+  }, [soundPrefs]);
 
   useEffect(() => {
     setLapRecords(loadLapRecords());
@@ -503,6 +725,9 @@ export default function KartClashHostView({
     }
     setLapRecords(next);
     setNewRecord(record);
+    if (soundPrefsRef.current?.voice !== false) {
+      partyAudio.say(`And a brand new lap record by ${record.name}!`, { interrupt: false });
+    }
   }, [resultsKey]);
 
   // ─── Phase 1: HEAT_SETUP (Host-Controlled Tournament Heat Board) ─────────────
@@ -876,6 +1101,17 @@ export default function KartClashHostView({
                     <span className="badge" style={{ fontSize: '0.7rem', flexShrink: 0 }}>{t.difficulty}</span>
                   </div>
                   <div style={{ fontSize: '0.85rem', color: '#d7deea', lineHeight: 1.3, margin: '0.2rem 0 0.25rem' }}>{t.tagline}</div>
+                  <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginBottom: '0.28rem' }}>
+                    <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(255,255,255,0.2)' }}>
+                      {BIOME_BADGES[t.biome]}
+                    </span>
+                    <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(250,204,21,0.35)', color: '#fde047' }}>
+                      ⚡ {t.boostPads.length} boost{t.boostPads.length === 1 ? '' : 's'}
+                    </span>
+                    <span className="badge" style={{ fontSize: '0.68rem', background: 'rgba(5,8,18,0.55)', borderColor: 'rgba(56,189,248,0.35)', color: '#7dd3fc' }}>
+                      🚀 {t.ramps.length} jump{t.ramps.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
                   {lapRecords[`${t.id}:${hd.speedClass}`] && (
                     <div style={{ fontSize: '0.76rem', fontWeight: 800, color: '#f0abfc', marginBottom: '0.3rem' }}>
                       ⏱ Lap record {formatRaceTime(lapRecords[`${t.id}:${hd.speedClass}`].timeMs)} · {lapRecords[`${t.id}:${hd.speedClass}`].avatar} {lapRecords[`${t.id}:${hd.speedClass}`].name}
@@ -960,41 +1196,42 @@ export default function KartClashHostView({
     const cup: any[] = hd.cupStandings || [];
     const qualifiers: string[] = hd.qualifiers || [];
     const predictors: string[] = hd.correctPredictors || [];
+    const highlights: { emoji: string; label: string; racerName: string; detail: string }[] = hd.highlights || [];
     const fastestLap = hd.fastestLap;
     const podium: { row: any; height: number; medal: string; color: string; delay: number }[] = [
-      { row: standings[1], height: 96, medal: '🥈', color: '#cbd5e1', delay: 200 },
-      { row: standings[0], height: 142, medal: '🥇', color: '#facc15', delay: 450 },
-      { row: standings[2], height: 68, medal: '🥉', color: '#f59e0b', delay: 0 },
+      { row: standings[1], height: 78, medal: '🥈', color: '#cbd5e1', delay: 200 },
+      { row: standings[0], height: 112, medal: '🥇', color: '#facc15', delay: 450 },
+      { row: standings[2], height: 56, medal: '🥉', color: '#f59e0b', delay: 0 },
     ];
     const nextLabel = hd.format === 'grand-prix'
       ? (hd.raceNumber >= hd.totalRaces ? 'Final standings' : `Race ${hd.raceNumber + 1} of ${hd.totalRaces}`)
       : 'Back to the heat board';
 
     return (
-      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '1240px' }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--party-cyan)' }}>
+      <div className="phase-enter center-stack" style={{ width: '100%', maxWidth: '1240px', paddingBottom: '4.5rem', gap: '0.35rem' }}>
+        <div style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--party-cyan)' }}>
           {hd.heatName}
           {hd.trackId && KART_TRACKS[hd.trackId as TrackId] ? ` · ${KART_TRACKS[hd.trackId as TrackId].emoji} ${KART_TRACKS[hd.trackId as TrackId].name}` : ''}
         </div>
-        <div className="host-phase-title" style={{ marginBottom: '0.5rem', fontSize: 'clamp(1.5rem, 6vh, 3.4rem)' }}>
+        <div className="host-phase-title" style={{ marginBottom: '0.2rem', fontSize: 'clamp(1.35rem, 4.4vh, 2.7rem)' }}>
           <span className="host-emoji">🏁</span> Race Results
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: '1.1rem', width: '100%', alignItems: 'start' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem', minWidth: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: '0.85rem', width: '100%', alignItems: 'start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', minWidth: 0 }}>
             <div className="kart-podium">
               {podium.map(({ row, height, medal, color, delay }, i) => row ? (
-                <div key={row.id} className="kart-podium-col" style={{ animationDelay: `${delay}ms`, flex: i === 1 ? 1.2 : 1 }}>
-                  {i === 1 && <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>👑</span>}
-                  <span style={{ fontSize: i === 1 ? '3.2rem' : '2.5rem', lineHeight: 1.1 }}>{row.avatar}</span>
-                  <span style={{ fontWeight: 900, fontSize: i === 1 ? '1.15rem' : '1rem', color: row.color, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
+                <div key={row.id} className="kart-podium-col" style={{ animationDelay: `${delay}ms`, flex: i === 1 ? 1.2 : 1, gap: '0.12rem' }}>
+                  {i === 1 && <span style={{ fontSize: '1.35rem', lineHeight: 1 }}>👑</span>}
+                  <span style={{ fontSize: i === 1 ? '2.5rem' : '2rem', lineHeight: 1.05 }}>{row.avatar}</span>
+                  <span style={{ fontWeight: 900, fontSize: i === 1 ? '1.05rem' : '0.92rem', color: row.color, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
                   <div
                     style={{
                       width: '100%',
                       height: `min(${height}px, ${(height / 10.8).toFixed(1)}vh)`,
                       background: `linear-gradient(180deg, ${color}, ${color}55)`,
                       border: `2px solid ${color}`,
-                      borderRadius: '14px 14px 0 0',
+                      borderRadius: '12px 12px 0 0',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
@@ -1004,53 +1241,81 @@ export default function KartClashHostView({
                       color: '#0b0f1a',
                     }}
                   >
-                    <span style={{ fontSize: '1.8rem', lineHeight: 1 }}>{medal}</span>
-                    {row.points > 0 && <span style={{ fontSize: '0.95rem' }}>+{row.points.toLocaleString()}</span>}
+                    <span style={{ fontSize: '1.5rem', lineHeight: 1 }}>{medal}</span>
+                    {row.points > 0 && <span style={{ fontSize: '0.86rem' }}>+{row.points.toLocaleString()}</span>}
                   </div>
                 </div>
               ) : <div key={i} style={{ flex: 1 }} />)}
             </div>
 
             {newRecord && (
-              <div style={{ textAlign: 'center', background: 'linear-gradient(90deg, #d946ef, #f59e0b)', color: '#10060f', borderRadius: '12px', padding: '0.5rem 0.9rem', fontWeight: 900, fontSize: '1.05rem' }}>
+              <div style={{ textAlign: 'center', background: 'linear-gradient(90deg, #d946ef, #f59e0b)', color: '#10060f', borderRadius: '10px', padding: '0.35rem 0.75rem', fontWeight: 900, fontSize: '0.92rem' }}>
                 🏆 NEW LAP RECORD! {newRecord.avatar} {newRecord.name} · {formatRaceTime(newRecord.timeMs)}
               </div>
             )}
 
             {fastestLap && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', background: 'rgba(217,70,239,0.16)', border: '1.5px solid #d946ef', borderRadius: '12px', padding: '0.5rem 0.9rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', background: 'rgba(217,70,239,0.16)', border: '1.5px solid #d946ef', borderRadius: '10px', padding: '0.36rem 0.75rem', fontSize: '0.88rem' }}>
                 <span style={{ fontWeight: 900 }}>⏱ Fastest lap · {fastestLap.racerName}</span>
                 <span style={{ fontFamily: 'monospace', fontWeight: 900, color: '#f0abfc' }}>{formatRaceTime(fastestLap.timeMs)}</span>
               </div>
             )}
 
+            {highlights.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', justifyContent: 'center' }}>
+                {highlights.map((hl) => (
+                  <div
+                    key={hl.label}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.32rem',
+                      background: 'rgba(56,189,248,0.12)',
+                      border: '1px solid rgba(56,189,248,0.35)',
+                      borderRadius: '999px',
+                      padding: '0.22rem 0.65rem',
+                      fontSize: '0.78rem',
+                      fontWeight: 800,
+                    }}
+                  >
+                    <span>{hl.emoji}</span>
+                    <span style={{ color: 'var(--party-cyan)' }}>{hl.label}:</span>
+                    <span>{hl.racerName}</span>
+                    <span style={{ color: 'var(--party-text-muted)', fontSize: '0.72rem' }}>({hl.detail})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {predictors.length > 0 && (
-              <div style={{ background: 'rgba(250, 204, 21, 0.12)', border: '1.5px solid var(--party-yellow)', borderRadius: '12px', padding: '0.5rem 0.9rem', color: 'var(--party-yellow)', fontWeight: 900 }}>
+              <div style={{ background: 'rgba(250, 204, 21, 0.12)', border: '1.5px solid var(--party-yellow)', borderRadius: '10px', padding: '0.35rem 0.75rem', color: 'var(--party-yellow)', fontWeight: 900, fontSize: '0.86rem' }}>
                 🔮 Pit Crew Bonus (+300): {predictors.map((pid) => state.players?.[pid]?.name).filter(Boolean).join(', ')} called it!
               </div>
             )}
 
             {cup.length > 1 && (
-              <div style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--party-border)', borderRadius: '14px', padding: '0.6rem 0.8rem' }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--party-yellow)', marginBottom: '0.3rem' }}>
+              <div style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--party-border)', borderRadius: '12px', padding: '0.45rem 0.7rem' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--party-yellow)', marginBottom: '0.2rem' }}>
                   🏆 {hd.format === 'grand-prix' ? `Cup standings after race ${hd.raceNumber} of ${hd.totalRaces}` : 'Tournament standings'}
                 </div>
-                {cup.map((row, i) => (
-                  <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.6rem 1.6rem minmax(0, 1fr) auto auto', gap: '0.35rem', alignItems: 'center', padding: '0.14rem 0', fontWeight: 800 }}>
-                    <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, i)] }}>{i + 1}</span>
-                    <span>{row.avatar}</span>
-                    <span style={{ color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {row.name}{row.isBot ? <span style={{ fontSize: '0.68rem', color: 'var(--party-text-muted)', marginLeft: '0.35rem' }}>BOT</span> : null}
-                    </span>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--party-green)' }}>{row.gained ? `+${row.gained.toLocaleString()}` : ''}</span>
-                    <span style={{ fontFamily: 'monospace', minWidth: '4.2ch', textAlign: 'right' }}>{row.score.toLocaleString()}</span>
-                  </div>
-                ))}
+                <div style={cup.length > 6 ? { maxHeight: '148px', overflowY: 'auto', paddingRight: '0.2rem' } : undefined}>
+                  {cup.map((row, i) => (
+                    <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1.4rem 1.4rem minmax(0, 1fr) auto auto', gap: '0.3rem', alignItems: 'center', padding: '0.08rem 0', fontWeight: 800, fontSize: '0.84rem' }}>
+                      <span style={{ color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, i)] }}>{i + 1}</span>
+                      <span>{row.avatar}</span>
+                      <span style={{ color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {row.name}{row.isBot ? <span style={{ fontSize: '0.65rem', color: 'var(--party-text-muted)', marginLeft: '0.3rem' }}>BOT</span> : null}
+                      </span>
+                      <span style={{ fontSize: '0.76rem', color: 'var(--party-green)' }}>{row.gained ? `+${row.gained.toLocaleString()}` : ''}</span>
+                      <span style={{ fontFamily: 'monospace', minWidth: '4ch', textAlign: 'right' }}>{row.score.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.24rem', minWidth: 0 }}>
             {standings.map((row, i) => {
               const isQual = qualifiers.includes(row.id);
               return (
@@ -1061,33 +1326,34 @@ export default function KartClashHostView({
                     animationDelay: `${600 + i * 70}ms`,
                     flexDirection: 'row',
                     justifyContent: 'space-between',
-                    padding: '0.42rem 0.8rem',
-                    borderRadius: '12px',
+                    padding: '0.3rem 0.7rem',
+                    borderRadius: '10px',
                     background: row.isBot ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.09)',
                     border: `1.5px solid ${row.rank === 1 ? 'var(--party-yellow)' : isQual ? 'var(--party-green)' : 'rgba(255,255,255,0.1)'}`,
                     opacity: row.isBot ? 0.78 : 1,
+                    fontSize: '0.9rem',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
-                    <span style={{ fontFamily: 'var(--party-font-display)', fontSize: '1.15rem', fontWeight: 900, width: '2.1rem', color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, row.rank - 1)] }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', minWidth: 0 }}>
+                    <span style={{ fontFamily: 'var(--party-font-display)', fontSize: '1.05rem', fontWeight: 900, width: '2rem', color: RANK_COLORS[Math.min(RANK_COLORS.length - 1, row.rank - 1)] }}>
                       {ordinal(row.rank)}
                     </span>
-                    <span style={{ fontSize: '1.2rem' }}>{row.avatar}</span>
+                    <span style={{ fontSize: '1.1rem' }}>{row.avatar}</span>
                     <span style={{ fontWeight: 900, color: row.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {row.name}
                     </span>
-                    {row.isBot && <span style={{ fontSize: '0.68rem', color: 'var(--party-text-muted)', fontWeight: 800 }}>BOT</span>}
+                    {row.isBot && <span style={{ fontSize: '0.65rem', color: 'var(--party-text-muted)', fontWeight: 800 }}>BOT</span>}
                     {hd.format === 'tournament' && isQual && !hd.isFinalHeat && (hd.heats?.length || 0) > 1 && (
-                      <span className="badge" style={{ borderColor: 'var(--party-green)', color: 'var(--party-green)', fontWeight: 900, fontSize: '0.68rem' }}>
+                      <span className="badge" style={{ borderColor: 'var(--party-green)', color: 'var(--party-green)', fontWeight: 900, fontSize: '0.65rem' }}>
                         ✅ Finals
                       </span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', flexShrink: 0 }}>
-                    <span style={{ fontFamily: 'monospace', color: 'var(--party-text-muted)', fontSize: '0.88rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+                    <span style={{ fontFamily: 'monospace', color: 'var(--party-text-muted)', fontSize: '0.84rem' }}>
                       {row.dnf || !row.timeMs ? 'DNF' : formatRaceTime(row.timeMs)}
                     </span>
-                    <span style={{ fontWeight: 900, color: row.isBot ? 'var(--party-text-muted)' : 'var(--party-green)', minWidth: '3.4rem', textAlign: 'right' }}>
+                    <span style={{ fontWeight: 900, color: row.isBot ? 'var(--party-text-muted)' : 'var(--party-green)', minWidth: '3.2rem', textAlign: 'right' }}>
                       +{row.points.toLocaleString()}
                     </span>
                   </div>
@@ -1097,16 +1363,16 @@ export default function KartClashHostView({
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem', marginTop: '0.55rem', flexWrap: 'wrap' }}>
           {secondsLeft !== null && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '260px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '250px' }}>
               <div className="host-timer-bar-wrap" style={{ flex: 1, height: '6px', margin: 0 }}>
                 <div className="host-timer-bar" style={{ width: `${pct}%`, background: 'var(--party-green)' }} />
               </div>
-              <div style={{ fontSize: '1rem', fontWeight: 900, fontFamily: 'monospace' }}>{Math.ceil(secondsLeft)}s</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 900, fontFamily: 'monospace' }}>{Math.ceil(secondsLeft)}s</div>
             </div>
           )}
-          <button type="button" onClick={() => sendAction({ type: 'NEXT_KART_STEP' })} className="party-btn party-btn-primary party-btn-inline" style={{ fontSize: '0.95rem', padding: '0.55rem 1.2rem' }}>
+          <button type="button" onClick={() => sendAction({ type: 'NEXT_KART_STEP' })} className="party-btn party-btn-primary party-btn-inline" style={{ fontSize: '0.95rem', padding: '0.5rem 1.2rem' }}>
             {nextLabel} →
           </button>
         </div>

@@ -66,14 +66,42 @@ function onPhase(state: HostState, prevPhase: string): { say?: string; card?: { 
   const intro = starting ? { title: g.title, subtitle: g.tagline } : undefined;
   switch (`${state.gameType}:${state.phase}`) {
     case 'kart-clash:HEAT_SETUP':
-      return { card: intro || { title: 'Tournament Heats', subtitle: 'Set the bracket and launch the next heat!' }, sfx: 'whoosh', say: 'Set up your tournament heats and get ready to race!' };
+      return {
+        card: intro || { title: 'Tournament Heats', subtitle: 'Set the bracket and launch the next heat!' },
+        sfx: 'whoosh',
+        say: line([
+          'Set up your tournament heats and get ready to race!',
+          'Drivers, check the bracket! Set your heats and hit the grid!',
+        ]),
+      };
     case 'kart-clash:TRACK_VOTE':
-      return { card: intro || { title: h.heatName || 'Vote for the Track!', subtitle: 'Pick a course on your phone' }, sfx: 'whoosh', say: 'Vote for a track on your phones!' };
+      return {
+        card: intro || { title: h.heatName || 'Vote for the Track!', subtitle: 'Pick a course on your phone' },
+        sfx: 'whoosh',
+        say: line([
+          'Vote for the next track on your phones!',
+          'Pick your battleground! Vote for a course now!',
+        ]),
+      };
     case 'kart-clash:RACING':
-      return { sfx: 'slam', say: `${h.trackName || 'Race time'}! Hold drift on the one for a rocket start!` };
+      return {
+        sfx: 'slam',
+        say: line(
+          [
+            'Welcome to {track}! Hold drift right on one for a rocket start!',
+            '{track} awaits! Drivers to your marks!',
+          ],
+          { track: h.trackName || 'the grid' },
+        ),
+      };
     case 'kart-clash:RACE_RESULTS': {
-      const winnerName = h.topHumanId ? state.players[h.topHumanId]?.name : null;
-      return { sfx: 'fanfare', say: winnerName ? `${winnerName} takes the checkered flag!` : 'Checkered flag!' };
+      const winnerName = h.winnerName || (h.topHumanId ? state.players[h.topHumanId]?.name : null);
+      return {
+        sfx: 'fanfare',
+        say: winnerName
+          ? line(['What a finish! {name} wins the race!', 'Checkered flag! Victory goes to {name}!'], { name: winnerName })
+          : 'Checkered flag! What a race!',
+      };
     }
     case 'quip-clash:PROMPTING':
       return { card: intro || { title: 'Next Round!', subtitle: 'New prompts on your phones' }, sfx: 'whoosh',
