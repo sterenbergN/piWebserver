@@ -2436,3 +2436,18 @@ test('Kart Clash: Mean bots line up and take boost-gate shortcuts without needin
     stopKartSimulation(room);
   }
 });
+
+test('Kart Clash: boost pads lie on the road, following its camber, hills and raised decks', async () => {
+  const { TRACK_LIST, boostPadSurface, projectOntoTrack, roadSurfaceY } = await import('./kart-tracks');
+  for (const t of TRACK_LIST) {
+    for (const pad of t.boostPads) {
+      const { points } = boostPadSurface(t, pad, { lift: 0 });
+      for (const pt of points) {
+        // Where the road actually is under this corner of the pad
+        const proj = projectOntoTrack(t, pt.x, pt.z);
+        const roadY = roadSurfaceY(t, proj.progress, proj.lateralOffset);
+        assert.ok(Math.abs(pt.y - roadY) < 0.06, `${t.id} ${pad.id}: pad point is ${(pt.y - roadY).toFixed(2)} off the road`);
+      }
+    }
+  }
+});

@@ -9,6 +9,7 @@ import {
   KartTrack,
   SplitSectionDef,
   TrackFeatureDef,
+  boostPadSurface,
   getMovingHazardPosition,
   getTrackBoundsAt,
   isShortcutWallOpening,
@@ -738,6 +739,34 @@ function sailboatGeometry() {
     colored(placed(new THREE.ConeGeometry(3.4, 9.6, 3), 0, 7.6, -1.6, { sz: 0.12 }), '#ffffff'),
     colored(placed(new THREE.ConeGeometry(2.1, 7.2, 3), 0, 6.2, 2.0, { sz: 0.1 }), '#38bdf8'),
   ]);
+}
+
+/** All boost pads in one mesh, each laid on the road surface so it follows camber, hills and decks. */
+function buildBoostPadGeometry(track: KartTrack): THREE.BufferGeometry | null {
+  if (!track.boostPads.length) return null;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  for (const pad of track.boostPads) {
+    const { cols, rows, points } = boostPadSurface(track, pad);
+    const base = pos.length / 3;
+    for (const pt of points) {
+      pos.push(pt.x, pt.y, pt.z);
+      uv.push(pt.u, pt.v);
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const a = base + r * (cols + 1) + c;
+        const b = a + cols + 1;
+        idx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  return geo;
 }
 
 function findStraightawaySpots(track: KartTrack, count: number) {
@@ -2742,18 +2771,15 @@ export class KartScene {
     padTex.repeat.set(1, 2);
     padTex.anisotropy = anisotropy;
     this.animated.push({ tex: padTex, speed: 1.1 });
-    const padMat = this.track2(new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false, transparent: true, opacity: 0.96 }));
-    const padGeo = new THREE.PlaneGeometry(7.4, 10);
-    padGeo.rotateX(-Math.PI / 2);
-    const padMesh = this.track2(new THREE.InstancedMesh(this.track2(padGeo), padMat, track.boostPads.length));
-    track.boostPads.forEach((pad, i) => {
-      this.dummy.position.set(pad.x, pad.y + 0.16, pad.z);
-      this.dummy.rotation.set(0, pad.angle + Math.PI, 0);
-      this.dummy.updateMatrix();
-      padMesh.setMatrixAt(i, this.dummy.matrix);
-    });
-    padMesh.frustumCulled = false;
-    group.add(padMesh);
+    const padMat = this.track2(
+      new THREE.MeshBasicMaterial({ map: padTex, toneMapped: false, transparent: true, opacity: 0.96, side: THREE.DoubleSide }),
+    );
+    const padGeo = buildBoostPadGeometry(track);
+    if (padGeo) {
+      const padMesh = new THREE.Mesh(this.track2(padGeo), padMat);
+      padMesh.frustumCulled = false;
+      group.add(padMesh);
+    }
 
     // Ramps
     const rampTex = this.track2(makeChevronTexture('#ffffff', '#22d3ee', '#0ea5e9'));
@@ -2825,12 +2851,13 @@ export class KartScene {
         outer.position.y = 3.5;
         const inner = new THREE.Mesh(this.track2(new THREE.TorusGeometry(4.1, 0.22, 8, 20)), ringInnerMat);
         inner.position.y = 3.5;
-        const pylonGeo = this.track2(new THREE.BoxGeometry(0.9, 3.8, 0.9));
+        // Legs reach below the road so they stay planted where the road is banked
+        const pylonGeo = this.track2(new THREE.BoxGeometry(0.9, 4.6, 0.9));
         const pylonMat = this.track2(new THREE.MeshLambertMaterial({ color: '#0f172a' }));
         const lp = new THREE.Mesh(pylonGeo, pylonMat);
-        lp.position.set(-5.2, 1.8, 0);
+        lp.position.set(-5.2, 1.4, 0);
         const rp = new THREE.Mesh(pylonGeo, pylonMat);
-        rp.position.set(5.2, 1.8, 0);
+        rp.position.set(5.2, 1.4, 0);
         portal.add(outer, inner, lp, rp);
         group.add(portal);
         this.boostRings.push({ ring: outer, inner });

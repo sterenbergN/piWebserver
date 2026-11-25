@@ -513,6 +513,55 @@ export function getMovingHazardPosition(
   };
 }
 
+/** Road surface height at a progress and lateral offset, including a split's raised deck. */
+export function roadSurfaceY(
+  track: Pick<KartTrack, 'samples' | 'totalLength' | 'roadWidth' | 'wallWidth' | 'splitSections'>,
+  progress: number,
+  lateral: number,
+): number {
+  const s = sampleTrackAtProgress(track, progress);
+  const b = getTrackBoundsAt(track, progress);
+  const lift = b.upperSide !== 0 && Math.sign(lateral) === b.upperSide ? b.upperLift : 0;
+  return s.y + Math.sin(s.bank) * lateral + lift;
+}
+
+export const BOOST_PAD_WIDTH = 7.4;
+export const BOOST_PAD_LENGTH = 10;
+
+/**
+ * A boost pad as a grid of points laid on the road (it follows the camber, hills and a raised
+ * deck instead of being a flat card that sinks into one side). `u` runs across the pad (0 on the
+ * left), `v` along it (0 at the back).
+ */
+export function boostPadSurface(
+  track: Pick<KartTrack, 'samples' | 'totalLength' | 'roadWidth' | 'wallWidth' | 'splitSections'>,
+  pad: Pick<BoostPadDef, 'progress' | 'lateral'>,
+  opts: { cols?: number; rows?: number; lift?: number } = {},
+): { cols: number; rows: number; points: { x: number; y: number; z: number; u: number; v: number }[] } {
+  const cols = opts.cols ?? 4;
+  const rows = opts.rows ?? 6;
+  const lift = opts.lift ?? 0.12;
+  const center = pad.lateral * getTrackBoundsAt(track, pad.progress).halfRoad;
+  const points: { x: number; y: number; z: number; u: number; v: number }[] = [];
+  for (let r = 0; r <= rows; r++) {
+    const v = r / rows;
+    const p = pad.progress + ((v - 0.5) * BOOST_PAD_LENGTH) / track.totalLength;
+    const s = sampleTrackAtProgress(track, p);
+    for (let c = 0; c <= cols; c++) {
+      const u = c / cols;
+      const lat = center + (u - 0.5) * BOOST_PAD_WIDTH;
+      points.push({
+        x: s.x + s.nx * lat,
+        y: roadSurfaceY(track, p, lat) + lift,
+        z: s.z + s.nz * lat,
+        u,
+        v,
+      });
+    }
+  }
+  return { cols, rows, points };
+}
+
 export function projectOntoTrack(
   track: KartTrack,
   x: number,
